@@ -179,4 +179,218 @@ mod tests {
         assert!(list.find_by_name(b"user.test").is_some());
         assert!(list.find_by_name(b"user.missing").is_none());
     }
+
+    // ==================== Additional Comprehensive Tests ====================
+
+    #[test]
+    fn list_default_is_empty() {
+        let list = XattrList::default();
+        assert!(list.is_empty());
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn with_entries_constructor() {
+        let entries = vec![
+            XattrEntry::new("user.a", b"a".to_vec()),
+            XattrEntry::new("user.b", b"b".to_vec()),
+        ];
+        let list = XattrList::with_entries(entries);
+
+        assert_eq!(list.len(), 2);
+        assert!(!list.is_empty());
+    }
+
+    #[test]
+    fn entries_accessor() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.test", b"value".to_vec()));
+
+        let entries = list.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name(), b"user.test");
+    }
+
+    #[test]
+    fn entries_mut_accessor() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.test", b"old".to_vec()));
+
+        let entries = list.entries_mut();
+        entries[0].set_full_value(b"new".to_vec());
+
+        assert_eq!(list.entries()[0].datum(), b"new");
+    }
+
+    #[test]
+    fn iter_mut() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.a", b"a".to_vec()));
+        list.push(XattrEntry::new("user.b", b"b".to_vec()));
+
+        for entry in list.iter_mut() {
+            entry.mark_todo();
+        }
+
+        assert!(list.entries()[0].state().needs_send());
+        assert!(list.entries()[1].state().needs_send());
+    }
+
+    #[test]
+    fn has_abbreviated_returns_false_for_all_full() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.a", b"value_a".to_vec()));
+        list.push(XattrEntry::new("user.b", b"value_b".to_vec()));
+
+        assert!(!list.has_abbreviated());
+    }
+
+    #[test]
+    fn abbreviated_indices_multiple() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::abbreviated("user.abbrev1", vec![0u8; 16], 100)); // 0
+        list.push(XattrEntry::new("user.full1", b"small".to_vec())); // 1
+        list.push(XattrEntry::abbreviated("user.abbrev2", vec![0u8; 16], 200)); // 2
+        list.push(XattrEntry::new("user.full2", b"small".to_vec())); // 3
+        list.push(XattrEntry::abbreviated("user.abbrev3", vec![0u8; 16], 300)); // 4
+
+        let indices = list.abbreviated_indices();
+        assert_eq!(indices, vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn todo_indices() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.a", b"a".to_vec()));
+        list.push(XattrEntry::new("user.b", b"b".to_vec()));
+        list.push(XattrEntry::new("user.c", b"c".to_vec()));
+
+        list.entries_mut()[0].mark_todo();
+        list.entries_mut()[2].mark_todo();
+
+        let indices = list.todo_indices();
+        assert_eq!(indices, vec![0, 2]);
+    }
+
+    #[test]
+    fn mark_todo_by_index() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.a", b"a".to_vec()));
+        list.push(XattrEntry::new("user.b", b"b".to_vec()));
+
+        list.mark_todo(1);
+
+        assert!(!list.entries()[0].state().needs_send());
+        assert!(list.entries()[1].state().needs_send());
+    }
+
+    #[test]
+    fn mark_todo_out_of_bounds_is_noop() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.test", b"value".to_vec()));
+
+        // Should not panic, just do nothing
+        list.mark_todo(100);
+
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn set_full_value_by_index() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::abbreviated("user.test", vec![0u8; 16], 100));
+
+        list.set_full_value(0, vec![1u8; 100]);
+
+        assert!(!list.entries()[0].is_abbreviated());
+        assert_eq!(list.entries()[0].datum(), &vec![1u8; 100]);
+    }
+
+    #[test]
+    fn set_full_value_out_of_bounds_is_noop() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.test", b"value".to_vec()));
+
+        // Should not panic, just do nothing
+        list.set_full_value(100, vec![1u8; 50]);
+
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn find_index_by_name() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.first", b"first".to_vec()));
+        list.push(XattrEntry::new("user.second", b"second".to_vec()));
+        list.push(XattrEntry::new("user.third", b"third".to_vec()));
+
+        assert_eq!(list.find_index_by_name(b"user.first"), Some(0));
+        assert_eq!(list.find_index_by_name(b"user.second"), Some(1));
+        assert_eq!(list.find_index_by_name(b"user.third"), Some(2));
+        assert_eq!(list.find_index_by_name(b"user.missing"), None);
+    }
+
+    #[test]
+    fn into_iterator() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.a", b"a".to_vec()));
+        list.push(XattrEntry::new("user.b", b"b".to_vec()));
+
+        let collected: Vec<_> = list.into_iter().collect();
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn ref_into_iterator() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.a", b"a".to_vec()));
+        list.push(XattrEntry::new("user.b", b"b".to_vec()));
+
+        let names: Vec<_> = (&list).into_iter().map(|e| e.name_str()).collect();
+        assert_eq!(names, vec!["user.a", "user.b"]);
+    }
+
+    #[test]
+    fn from_iterator() {
+        let entries = vec![
+            XattrEntry::new("user.x", b"x".to_vec()),
+            XattrEntry::new("user.y", b"y".to_vec()),
+        ];
+
+        let list: XattrList = entries.into_iter().collect();
+
+        assert_eq!(list.len(), 2);
+        assert_eq!(list.entries()[0].name(), b"user.x");
+        assert_eq!(list.entries()[1].name(), b"user.y");
+    }
+
+    #[test]
+    fn many_entries() {
+        let mut list = XattrList::new();
+        for i in 0..100 {
+            list.push(XattrEntry::new(
+                format!("user.attr{}", i),
+                format!("value{}", i).into_bytes(),
+            ));
+        }
+
+        assert_eq!(list.len(), 100);
+        assert!(!list.is_empty());
+
+        // Verify first and last
+        assert_eq!(list.entries()[0].name(), b"user.attr0");
+        assert_eq!(list.entries()[99].name(), b"user.attr99");
+    }
+
+    #[test]
+    fn find_by_name_returns_correct_entry() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.first", b"first_value".to_vec()));
+        list.push(XattrEntry::new("user.second", b"second_value".to_vec()));
+
+        let found = list.find_by_name(b"user.second");
+        assert!(found.is_some());
+        let entry = found.unwrap();
+        assert_eq!(entry.datum(), b"second_value");
+    }
 }

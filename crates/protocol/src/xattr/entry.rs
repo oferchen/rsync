@@ -178,4 +178,153 @@ mod tests {
         assert_eq!(entry.datum(), &full_value);
         assert_eq!(entry.state(), XattrState::Done);
     }
+
+    // ==================== Additional Comprehensive Tests ====================
+
+    #[test]
+    fn xattr_state_needs_request_only_for_abbrev() {
+        assert!(XattrState::Abbrev.needs_request());
+        assert!(!XattrState::Done.needs_request());
+        assert!(!XattrState::Todo.needs_request());
+    }
+
+    #[test]
+    fn xattr_state_needs_send_only_for_todo() {
+        assert!(!XattrState::Abbrev.needs_send());
+        assert!(!XattrState::Done.needs_send());
+        assert!(XattrState::Todo.needs_send());
+    }
+
+    #[test]
+    fn entry_name_accessor() {
+        let entry = XattrEntry::new("user.test_name", b"value".to_vec());
+        assert_eq!(entry.name(), b"user.test_name");
+    }
+
+    #[test]
+    fn entry_name_str_conversion() {
+        let entry = XattrEntry::new("user.test", b"value".to_vec());
+        assert_eq!(entry.name_str(), "user.test");
+    }
+
+    #[test]
+    fn entry_datum_accessor() {
+        let value = b"test_value".to_vec();
+        let entry = XattrEntry::new("user.test", value.clone());
+        assert_eq!(entry.datum(), &value);
+    }
+
+    #[test]
+    fn entry_datum_len_matches_value_length() {
+        let value = vec![0u8; 50];
+        let entry = XattrEntry::new("user.test", value.clone());
+        assert_eq!(entry.datum_len(), 50);
+        assert_eq!(entry.datum().len(), entry.datum_len());
+    }
+
+    #[test]
+    fn abbreviated_entry_datum_len_differs_from_checksum_len() {
+        let checksum = vec![0u8; 16]; // MD5 checksum length
+        let entry = XattrEntry::abbreviated("user.test", checksum.clone(), 1000);
+
+        assert_eq!(entry.datum_len(), 1000);
+        assert_eq!(entry.datum().len(), 16);
+        assert!(entry.is_abbreviated());
+    }
+
+    #[test]
+    fn mark_todo_changes_state() {
+        let mut entry = XattrEntry::new("user.test", b"value".to_vec());
+        assert_eq!(entry.state(), XattrState::Done);
+
+        entry.mark_todo();
+        assert_eq!(entry.state(), XattrState::Todo);
+        assert!(entry.state().needs_send());
+    }
+
+    #[test]
+    fn mark_done_changes_state() {
+        let checksum = vec![0u8; 16];
+        let mut entry = XattrEntry::abbreviated("user.test", checksum, 100);
+        assert_eq!(entry.state(), XattrState::Abbrev);
+
+        entry.mark_done();
+        assert_eq!(entry.state(), XattrState::Done);
+    }
+
+    #[test]
+    fn set_state_directly() {
+        let mut entry = XattrEntry::new("user.test", b"value".to_vec());
+
+        entry.set_state(XattrState::Abbrev);
+        assert_eq!(entry.state(), XattrState::Abbrev);
+
+        entry.set_state(XattrState::Todo);
+        assert_eq!(entry.state(), XattrState::Todo);
+
+        entry.set_state(XattrState::Done);
+        assert_eq!(entry.state(), XattrState::Done);
+    }
+
+    #[test]
+    fn should_abbreviate_boundary_values() {
+        // Exactly at MAX_FULL_DATUM (32)
+        let at_boundary = XattrEntry::new("user.at", vec![0u8; MAX_FULL_DATUM]);
+        assert!(!at_boundary.should_abbreviate());
+
+        // One byte over
+        let over_boundary = XattrEntry::new("user.over", vec![0u8; MAX_FULL_DATUM + 1]);
+        assert!(over_boundary.should_abbreviate());
+    }
+
+    #[test]
+    fn empty_value_not_abbreviated() {
+        let entry = XattrEntry::new("user.empty", vec![]);
+        assert!(!entry.should_abbreviate());
+        assert!(!entry.is_abbreviated());
+        assert_eq!(entry.datum_len(), 0);
+    }
+
+    #[test]
+    fn set_full_value_updates_datum_len() {
+        let checksum = vec![0u8; 16];
+        let mut entry = XattrEntry::abbreviated("user.test", checksum, 100);
+        assert_eq!(entry.datum_len(), 100);
+
+        let new_value = vec![1u8; 200];
+        entry.set_full_value(new_value.clone());
+
+        assert_eq!(entry.datum_len(), 200);
+        assert_eq!(entry.datum(), &new_value);
+    }
+
+    #[test]
+    fn entry_with_binary_name() {
+        let binary_name = vec![b'u', b's', b'e', b'r', b'.', 0xFF, 0xFE];
+        let entry = XattrEntry::new(binary_name.clone(), b"value".to_vec());
+        assert_eq!(entry.name(), &binary_name);
+    }
+
+    #[test]
+    fn entry_with_binary_value() {
+        let binary_value = vec![0x00, 0x01, 0xFF, 0xFE, 0x00];
+        let entry = XattrEntry::new("user.binary", binary_value.clone());
+        assert_eq!(entry.datum(), &binary_value);
+    }
+
+    #[test]
+    fn entry_with_large_value() {
+        let large_value = vec![0xABu8; 64 * 1024]; // 64KB
+        let entry = XattrEntry::new("user.large", large_value.clone());
+
+        assert!(entry.should_abbreviate());
+        assert_eq!(entry.datum_len(), 64 * 1024);
+        assert_eq!(entry.datum(), &large_value);
+    }
+
+    #[test]
+    fn xattr_state_default_is_done() {
+        let default_state = XattrState::default();
+        assert_eq!(default_state, XattrState::Done);
+    }
 }
