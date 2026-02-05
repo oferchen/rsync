@@ -26,3 +26,11 @@ thiserror = "2.0"
 
 [dev-dependencies]
 proptest = "1.8"
+
+[[test]]
+name = "bwlimit_rate_limiting"
+required-features = ["test-support"]
+
+[[test]]
+name = "comprehensive_coverage"
+required-features = ["test-support"]

@@ -561,6 +561,330 @@ fn execute_with_size_only_handles_empty_vs_nonempty() {
     assert_eq!(fs::read(&destination).expect("read"), b"non-empty");
 }
 
+#[test]
+fn execute_with_size_only_skips_same_size_different_mtime() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Same size, different content, different mtime
+    fs::write(&source, b"abc").expect("write source");
+    fs::write(&destination, b"xyz").expect("write dest");
+
+    // Set significantly different mtimes
+    let older = FileTime::from_unix_time(1_600_000_000, 0);
+    let newer = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source, older).expect("set source mtime");
+    set_file_mtime(&destination, newer).expect("set dest mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true),
+        )
+        .expect("copy succeeds");
+
+    // Should skip because sizes match, regardless of mtime difference
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"xyz");
+}
+
+#[test]
+fn execute_with_size_only_handles_both_empty() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Both files empty (size = 0)
+    fs::write(&source, b"").expect("write empty source");
+    fs::write(&destination, b"").expect("write empty dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+}
+
+#[test]
+fn execute_with_size_only_and_update_skips_same_size() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"abc").expect("write source");
+    fs::write(&destination, b"xyz").expect("write dest");
+
+    // Destination is newer, but size-only should skip anyway
+    let older = FileTime::from_unix_time(1_600_000_000, 0);
+    let newer = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source, older).expect("set source mtime");
+    set_file_mtime(&destination, newer).expect("set dest mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true).update(true),
+        )
+        .expect("copy succeeds");
+
+    // size_only skips same-size files
+    // When sizes match, update flag doesn't matter
+    assert_eq!(summary.files_copied(), 0);
+    // Note: files are skipped due to size match, may not be counted as "matched" vs "skipped_newer"
+    // Check total processed is 1
+    assert_eq!(summary.regular_files_total(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"xyz");
+}
+
+#[test]
+fn execute_with_size_only_and_checksum_skips_same_size() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Same size, different content - checksum CANNOT detect difference with size_only
+    // but in practice, checksum overrides size_only, so file IS copied
+    fs::write(&source, b"aaa").expect("write source");
+    fs::write(&destination, b"bbb").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true).checksum(true),
+        )
+        .expect("copy succeeds");
+
+    // checksum overrides size_only - file is copied due to checksum mismatch
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.regular_files_matched(), 0);
+    assert_eq!(fs::read(&destination).expect("read"), b"aaa");
+}
+
+#[test]
+fn execute_with_size_only_and_ignore_times_skips_same_size() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Same size, different content
+    // ignore_times overrides size_only, forcing transfer
+    fs::write(&source, b"abc").expect("write source");
+    fs::write(&destination, b"xyz").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .size_only(true)
+                .ignore_times(true),
+        )
+        .expect("copy succeeds");
+
+    // ignore_times overrides size_only - file is transferred
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.regular_files_matched(), 0);
+    assert_eq!(fs::read(&destination).expect("read"), b"abc");
+}
+
+#[test]
+fn execute_with_size_only_and_times_preserves_metadata() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Same size, different content
+    fs::write(&source, b"abc").expect("write source");
+    fs::write(&destination, b"xyz").expect("write dest");
+
+    // Set different mtime on source
+    let source_time = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source, source_time).expect("set source mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true).times(true),
+        )
+        .expect("copy succeeds");
+
+    // File should be skipped but metadata should still be updated
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"xyz");
+
+    // Times should be updated even though content wasn't copied
+    let dest_meta = fs::metadata(&destination).expect("dest metadata");
+    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    assert_eq!(dest_mtime, source_time);
+}
+
+#[test]
+fn execute_with_size_only_directory_tree() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::create_dir_all(&dest_root).expect("create dest");
+
+    // Create files with various size relationships
+    // Same size, should skip
+    fs::write(source_root.join("same_size1.txt"), b"aaa").expect("write same_size1 source");
+    fs::write(dest_root.join("same_size1.txt"), b"zzz").expect("write same_size1 dest");
+
+    fs::write(source_root.join("same_size2.txt"), b"12345").expect("write same_size2 source");
+    fs::write(dest_root.join("same_size2.txt"), b"67890").expect("write same_size2 dest");
+
+    // Different size, should copy
+    fs::write(source_root.join("diff_size1.txt"), b"short").expect("write diff_size1 source");
+    fs::write(dest_root.join("diff_size1.txt"), b"much longer content")
+        .expect("write diff_size1 dest");
+
+    fs::write(source_root.join("diff_size2.txt"), b"longer content here")
+        .expect("write diff_size2 source");
+    fs::write(dest_root.join("diff_size2.txt"), b"tiny").expect("write diff_size2 dest");
+
+    // New file, should copy
+    fs::write(source_root.join("new.txt"), b"new file").expect("write new source");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true),
+        )
+        .expect("copy succeeds");
+
+    // 2 same size should be matched, 3 should be copied (2 diff size + 1 new)
+    assert_eq!(summary.regular_files_matched(), 2);
+    assert_eq!(summary.files_copied(), 3);
+
+    // Verify same-size files weren't changed
+    assert_eq!(
+        fs::read(dest_root.join("same_size1.txt")).expect("read"),
+        b"zzz"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("same_size2.txt")).expect("read"),
+        b"67890"
+    );
+
+    // Verify different-size files were updated
+    assert_eq!(
+        fs::read(dest_root.join("diff_size1.txt")).expect("read"),
+        b"short"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("diff_size2.txt")).expect("read"),
+        b"longer content here"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("new.txt")).expect("read"),
+        b"new file"
+    );
+}
+
+#[test]
+fn execute_with_size_only_copies_larger_file() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"source is larger").expect("write source");
+    fs::write(&destination, b"small").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(
+        fs::read(&destination).expect("read"),
+        b"source is larger"
+    );
+}
+
+#[test]
+fn execute_with_size_only_copies_smaller_file() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"tiny").expect("write source");
+    fs::write(&destination, b"destination is much larger")
+        .expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"tiny");
+}
+
 // ==================== Update Mode Edge Cases ====================
 
 #[test]

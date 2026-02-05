@@ -73,7 +73,7 @@ impl FileListWalker {
             return Ok(());
         }
 
-        debug_log!(Flist, 3, "entering directory: {:?}", fs_path);
+        debug_log!(Flist, 2, "entering directory: {:?}", fs_path);
         let state = DirectoryState::new(fs_path, relative_prefix, depth)?;
         self.stack.push(state);
         Ok(())
@@ -85,7 +85,7 @@ impl FileListWalker {
         relative_path: PathBuf,
         depth: usize,
     ) -> Result<FileListEntry, FileListError> {
-        debug_log!(Flist, 4, "processing entry: {:?}", relative_path);
+        debug_log!(Flist, 3, "processing entry: {:?}", relative_path);
 
         let metadata = fs::symlink_metadata(&full_path)
             .map_err(|error| FileListError::metadata(full_path.clone(), error))?;

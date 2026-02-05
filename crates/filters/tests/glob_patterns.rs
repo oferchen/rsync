@@ -399,9 +399,10 @@ fn anchored_matches_only_root() {
 fn internal_slash_matches_segment() {
     let set = FilterSet::from_rules([FilterRule::exclude("build/output")]).unwrap();
 
-    // Matches the path segment anywhere
+    // Pattern with internal / is anchored, so matches only at root
     assert!(!set.allows(Path::new("build/output"), false));
-    assert!(!set.allows(Path::new("project/build/output"), false));
+    // Not matched in nested paths (anchored pattern)
+    assert!(set.allows(Path::new("project/build/output"), false));
 
     // Does not match different path
     assert!(set.allows(Path::new("src/output"), false));

@@ -10,7 +10,17 @@ use super::paths::{
     partial_destination_path, partial_directory_destination_path, temporary_destination_path,
 };
 
-pub(crate) fn remove_existing_destination(path: &Path) -> Result<(), LocalCopyError> {
+/// Removes an existing destination file.
+///
+/// This function removes a file at the given path. If the file does not exist,
+/// the function succeeds without error. This is useful for cleanup operations
+/// where the file may or may not exist.
+///
+/// # Errors
+///
+/// Returns an error if the file exists but cannot be removed due to permissions
+/// or other I/O errors.
+pub fn remove_existing_destination(path: &Path) -> Result<(), LocalCopyError> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -22,7 +32,13 @@ pub(crate) fn remove_existing_destination(path: &Path) -> Result<(), LocalCopyEr
     }
 }
 
-pub(crate) fn remove_incomplete_destination(destination: &Path) {
+/// Removes an incomplete destination file, ignoring errors.
+///
+/// This function attempts to remove a file that represents an incomplete transfer.
+/// Unlike [`remove_existing_destination`], this function silently ignores all errors
+/// including permission errors, as it's typically called during error recovery where
+/// the original error should be preserved.
+pub fn remove_incomplete_destination(destination: &Path) {
     if let Err(error) = fs::remove_file(destination)
         && error.kind() != io::ErrorKind::NotFound
     {
@@ -30,7 +46,39 @@ pub(crate) fn remove_incomplete_destination(destination: &Path) {
     }
 }
 
-pub(crate) struct DestinationWriteGuard {
+/// A guard for atomic file writes via temporary files.
+///
+/// This type provides atomic file updates by writing to a temporary file and then
+/// renaming it to the final destination on commit. If the guard is dropped without
+/// calling [`commit`](Self::commit), the temporary file is automatically cleaned up
+/// (unless in partial mode).
+///
+/// # Modes
+///
+/// - **Normal mode** (`partial = false`): Temporary files are created with a unique
+///   name (including process ID and counter) and are automatically cleaned up on failure.
+/// - **Partial mode** (`partial = true`): Temporary files are preserved on failure to
+///   allow for transfer resumption. These files use the `.rsync-partial-` prefix.
+///
+/// # Example
+///
+/// ```no_run
+/// use engine::local_copy::DestinationWriteGuard;
+/// use std::io::Write;
+/// use std::path::Path;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let dest = Path::new("output.txt");
+/// let (guard, mut file) = DestinationWriteGuard::new(dest, false, None, None)?;
+///
+/// file.write_all(b"Hello, world!")?;
+/// drop(file);
+///
+/// guard.commit()?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct DestinationWriteGuard {
     final_path: PathBuf,
     temp_path: PathBuf,
     preserve_on_error: bool,
@@ -38,7 +86,30 @@ pub(crate) struct DestinationWriteGuard {
 }
 
 impl DestinationWriteGuard {
-    pub(crate) fn new(
+    /// Creates a new write guard with an associated temporary file.
+    ///
+    /// This function creates a temporary file for writing and returns both the guard
+    /// and an open file handle. The temporary file is created in the same directory as
+    /// the destination (or in `temp_dir` if provided) to ensure atomic rename operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `destination` - The final destination path for the file
+    /// * `partial` - If `true`, creates a partial file that is preserved on failure
+    /// * `partial_dir` - Optional directory for partial files (only used if `partial` is `true`)
+    /// * `temp_dir` - Optional directory for temporary files (only used if `partial` is `false`)
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple of `(DestinationWriteGuard, File)` where the file is open for writing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The temporary file cannot be created
+    /// - The destination directory does not exist
+    /// - Permission is denied
+    pub fn new(
         destination: &Path,
         partial: bool,
         partial_dir: Option<&Path>,
@@ -105,11 +176,29 @@ impl DestinationWriteGuard {
         }
     }
 
-    pub(crate) fn staging_path(&self) -> &Path {
+    /// Returns the path to the staging (temporary) file.
+    ///
+    /// This path can be used to access or modify the temporary file directly
+    /// before it is committed to the final destination.
+    pub fn staging_path(&self) -> &Path {
         &self.temp_path
     }
 
-    pub(crate) fn commit(mut self) -> Result<(), LocalCopyError> {
+    /// Commits the temporary file to the final destination.
+    ///
+    /// This method atomically moves the temporary file to the final destination path
+    /// using rename operations when possible. If the rename fails due to crossing
+    /// filesystem boundaries, it falls back to copy-and-delete.
+    ///
+    /// If the destination already exists, it is removed before the rename.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The rename or copy operation fails
+    /// - The destination cannot be removed
+    /// - Permission is denied
+    pub fn commit(mut self) -> Result<(), LocalCopyError> {
         match fs::rename(&self.temp_path, &self.final_path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -138,11 +227,20 @@ impl DestinationWriteGuard {
         Ok(())
     }
 
-    pub(crate) fn final_path(&self) -> &Path {
+    /// Returns the final destination path.
+    ///
+    /// This is the path where the file will be located after calling [`commit`](Self::commit).
+    pub fn final_path(&self) -> &Path {
         &self.final_path
     }
 
-    pub(crate) fn discard(mut self) {
+    /// Discards the temporary file without committing.
+    ///
+    /// In normal mode, this removes the temporary file. In partial mode, the file
+    /// is preserved to allow for transfer resumption.
+    ///
+    /// This method consumes the guard, preventing accidental use after discard.
+    pub fn discard(mut self) {
         if self.preserve_on_error {
             self.committed = true;
             return;

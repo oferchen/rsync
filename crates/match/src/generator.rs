@@ -1,6 +1,15 @@
 //! crates/match/src/generator.rs
 //!
 //! Delta token generation pipeline.
+//!
+//! # DEBUG_DELTASUM Tracing Levels
+//!
+//! This module implements rsync-compatible DEBUG_DELTASUM tracing at 4 levels:
+//!
+//! - **Level 1**: Basic delta operations summary (match_report equivalent)
+//! - **Level 2**: Workflow milestones (hash search start/end, statistics)
+//! - **Level 3**: Detailed checksum information (potential matches, search params)
+//! - **Level 4**: Per-iteration offset tracking (very verbose)
 
 use std::io::{self, Read};
 
@@ -75,9 +84,33 @@ impl DeltaGenerator {
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
 
+        // Statistics for DEBUG_DELTASUM level 2
+        let mut hash_hits = 0u64;
+        let mut false_alarms = 0u64;
+        let mut matches = 0u64;
+        let mut offset = 0u64;
+
         let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
+
+        // DEBUG_DELTASUM level 2: Log hash search start (mirrors upstream match.c)
+        debug_log!(
+            Deltasum,
+            2,
+            "hash search b={} len={}",
+            block_len,
+            index.block_length()
+        );
+
+        // DEBUG_DELTASUM level 3: Log detailed search parameters
+        debug_log!(
+            Deltasum,
+            3,
+            "hash search s->blength={} buffer_len={}",
+            block_len,
+            self.buffer_len
+        );
 
         loop {
             if buffer_pos == buffer_len {
@@ -103,6 +136,7 @@ impl DeltaGenerator {
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 // Evicted byte becomes a literal
                 pending_literals.push(outgoing_byte);
+                offset += 1;
             } else {
                 // Window not yet full: use optimized single-byte update
                 rolling.update_byte(byte);
@@ -114,8 +148,32 @@ impl DeltaGenerator {
             }
 
             let digest = rolling.digest();
+
+            // DEBUG_DELTASUM level 4: Per-iteration offset tracking (very verbose)
+            debug_log!(
+                Deltasum,
+                4,
+                "offset={} sum={:04x}{:04x}",
+                offset,
+                digest.sum1(),
+                digest.sum2()
+            );
+
             // Get contiguous slice for matching (O(1) when not wrapped, rare O(n) rotation otherwise)
+            hash_hits += 1;
             if let Some(block_index) = index.find_match_bytes(digest, window.as_slice()) {
+                matches += 1;
+
+                // DEBUG_DELTASUM level 3: Log potential match details
+                debug_log!(
+                    Deltasum,
+                    3,
+                    "potential match at {} i={} sum={:08x}",
+                    offset,
+                    block_index,
+                    digest.value()
+                );
+
                 // Flush any pending literals before the copy token
                 if !pending_literals.is_empty() {
                     literal_bytes += pending_literals.len() as u64;
@@ -135,7 +193,10 @@ impl DeltaGenerator {
 
                 window.clear();
                 rolling.reset();
+                offset += block_len as u64;
                 continue;
+            } else {
+                false_alarms += 1;
             }
         }
 
@@ -150,13 +211,26 @@ impl DeltaGenerator {
             tokens.push(DeltaToken::Literal(pending_literals));
         }
 
+        // DEBUG_DELTASUM level 2: Log completion with statistics (mirrors upstream match.c)
+        debug_log!(Deltasum, 2, "done hash search");
         debug_log!(
             Deltasum,
             2,
-            "delta generated: {} tokens, {} total bytes, {} literal bytes",
+            "false_alarms={} hash_hits={} matches={}",
+            false_alarms,
+            hash_hits,
+            matches
+        );
+
+        // DEBUG_DELTASUM level 1: Basic summary (match_report equivalent)
+        debug_log!(
+            Deltasum,
+            1,
+            "delta: {} tokens, {} total, {} literal, {} matched",
             tokens.len(),
             total_bytes,
-            literal_bytes
+            literal_bytes,
+            total_bytes.saturating_sub(literal_bytes)
         );
 
         Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))

@@ -186,16 +186,36 @@ fn compile_patterns(
 ///
 /// Returns `Cow::Borrowed` when no stripping is needed (most common case),
 /// avoiding a heap allocation.
+///
+/// A pattern is anchored if:
+/// - It starts with '/', OR
+/// - It contains '/' anywhere in the pattern (besides trailing '/')
 fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
-    let anchored = pattern.starts_with('/');
+    let starts_with_slash = pattern.starts_with('/');
     let directory_only = pattern.ends_with('/');
 
+    // Check if pattern contains internal slashes (besides leading/trailing)
+    let core_pattern = if directory_only && pattern.len() > 1 {
+        &pattern[..pattern.len() - 1]
+    } else {
+        pattern
+    };
+
+    let core_pattern_no_leading = if starts_with_slash && core_pattern.len() > 1 {
+        &core_pattern[1..]
+    } else {
+        core_pattern
+    };
+
+    let has_internal_slash = core_pattern_no_leading.contains('/');
+    let anchored = starts_with_slash || has_internal_slash;
+
     // Fast path: no stripping needed
-    if !anchored && !directory_only {
-        return (false, false, Cow::Borrowed(pattern));
+    if !starts_with_slash && !directory_only {
+        return (anchored, false, Cow::Borrowed(pattern));
     }
 
-    let start = if anchored { 1 } else { 0 };
+    let start = if starts_with_slash { 1 } else { 0 };
     let end = if directory_only && pattern.len() > start {
         pattern.len() - 1
     } else {
@@ -270,7 +290,8 @@ mod tests {
     #[test]
     fn normalise_pattern_nested_path() {
         let (anchored, dir_only, core) = normalise_pattern("src/lib/");
-        assert!(!anchored);
+        // Pattern contains internal slash, so it should be anchored
+        assert!(anchored);
         assert!(dir_only);
         assert_eq!(core, "src/lib");
     }
