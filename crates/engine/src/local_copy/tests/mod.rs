@@ -350,3 +350,6 @@ include!("concurrent_modification.rs");
 #[cfg(unix)]
 include!("execute_ownership_preservation.rs");
 include!("execute_xattrs.rs");
+#[cfg(unix)]
+include!("execute_special_characters.rs");
+include!("execute_long_paths.rs");

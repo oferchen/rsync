@@ -34,3 +34,11 @@ required-features = ["test-support"]
 [[test]]
 name = "comprehensive_coverage"
 required-features = ["test-support"]
+
+[[test]]
+name = "bwlimit_comprehensive"
+required-features = ["test-support"]
+
+[[test]]
+name = "bwlimit_scenarios"
+required-features = ["test-support"]
