@@ -618,17 +618,21 @@ mod very_high_rates {
         let mut session = recorded_sleep_session();
         session.clear();
 
-        // 1 MB/s
-        let mut limiter = BandwidthLimiter::new(nz(1_000_000));
+        // 50 KB/s - slower rate so 10 KB writes trigger > 100ms sleep each
+        let mut limiter = BandwidthLimiter::new(nz(50_000));
 
-        // Accumulate many small writes
-        for _ in 0..200 {
-            let _ = limiter.register(1000);
+        // Each 10 KB write at 50 KB/s = 200ms (above minimum threshold)
+        for _ in 0..3 {
+            let _ = limiter.register(10_000);
         }
 
-        // Total: 200,000 bytes at 1 MB/s = 200 ms
+        // Total: 30,000 bytes at 50 KB/s = 600 ms
         let total = session.total_duration();
-        assert!(total >= Duration::from_millis(150));
+        assert!(
+            total >= Duration::from_millis(500),
+            "Expected >= 500ms, got {:?}",
+            total
+        );
     }
 
     #[test]
