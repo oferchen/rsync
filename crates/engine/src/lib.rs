@@ -133,9 +133,9 @@ pub use fuzzy::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
 
 // Local filesystem copy operations
 pub use local_copy::{
-    DeleteTiming, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions,
-    LocalCopyPlan, LocalCopySummary, ReferenceDirectory, ReferenceDirectoryKind, SkipCompressList,
-    SkipCompressParseError,
+    BuilderError, DeleteTiming, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind,
+    LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan, LocalCopySummary, ReferenceDirectory,
+    ReferenceDirectoryKind, SkipCompressList, SkipCompressParseError,
 };
 
 // File signature generation for delta transfers

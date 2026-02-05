@@ -2,6 +2,7 @@
 
 mod backup;
 mod batch;
+mod builder;
 mod compression;
 mod deletion;
 mod filters;
@@ -13,4 +14,5 @@ mod path_behavior;
 mod staging;
 mod types;
 
+pub use builder::{BuilderError, LocalCopyOptionsBuilder};
 pub use types::{DeleteTiming, LocalCopyOptions, ReferenceDirectory, ReferenceDirectoryKind};
