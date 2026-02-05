@@ -56,6 +56,7 @@ mod openssl_support;
 mod sha1;
 mod sha256;
 mod sha512;
+pub mod strategy;
 mod xxhash;
 
 pub use md4::{Md4, digest_batch as md4_digest_batch};
