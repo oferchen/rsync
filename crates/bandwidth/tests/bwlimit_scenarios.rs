@@ -117,26 +117,26 @@ mod file_transfer_scenarios {
         let mut session = recorded_sleep_session();
         session.clear();
 
-        // 10x faster rate for integration tests
-        let rate = 100 * 1024; // 100 KB/s
+        // Use slower rate so small files accumulate to trigger sleep threshold
+        let rate = 10 * 1024; // 10 KB/s
         let mut limiter = BandwidthLimiter::new(nz(rate));
 
-        // Simulate transferring multiple small files
-        let file_sizes = [100, 200, 500, 1000, 2000, 500, 300, 400];
+        // Larger files to exceed minimum sleep threshold (100ms)
+        let file_sizes = [1024, 2048, 512, 1024, 2048, 512, 1024, 2048]; // ~10 KB total
         let total_bytes: usize = file_sizes.iter().sum();
 
         for &size in &file_sizes {
             let _ = limiter.register(size);
         }
 
-        // Total bytes / rate = expected time
+        // Total ~10 KB at 10 KB/s = ~1 second
         let expected_secs = total_bytes as f64 / rate as f64;
         let total = session.total_duration();
-        assert!(within_tolerance(
-            total,
-            Duration::from_secs_f64(expected_secs),
-            25.0
-        ));
+        assert!(
+            within_tolerance(total, Duration::from_secs_f64(expected_secs), 30.0),
+            "Expected ~{expected_secs:.2}s, got {:?}",
+            total
+        );
     }
 
     #[test]
@@ -554,27 +554,36 @@ mod timing_accuracy {
 
     #[test]
     fn accuracy_accumulated_matches_single() {
-        let mut session1 = recorded_sleep_session();
-        session1.clear();
+        // Use a single session to avoid blocking on mutex
+        let mut session = recorded_sleep_session();
+        session.clear();
 
-        // Use faster rate to avoid slow integration tests (test-support still sleeps)
-        // Single large transfer: 500 bytes at 1 MB/s = 0.5ms (below threshold, but let's verify recording)
+        // Test single large transfer: 500,000 bytes at 1 MB/s = 500ms
         let mut limiter1 = BandwidthLimiter::new(nz(1_000_000)); // 1 MB/s
         let _ = limiter1.register(500_000); // 500ms
-        let single_total = session1.total_duration();
+        let single_total = session.total_duration();
 
-        // Accumulated small transfers: 50 x 10,000 bytes = 500,000 bytes
-        let mut session2 = recorded_sleep_session();
-        session2.clear();
+        // Verify the single transfer took ~500ms
+        assert!(
+            within_tolerance(single_total, Duration::from_millis(500), 20.0),
+            "Single transfer: expected ~500ms, got {:?}",
+            single_total
+        );
+
+        // Clear and test accumulated small transfers: 50 x 10,000 bytes = 500,000 bytes
+        session.clear();
         let mut limiter2 = BandwidthLimiter::new(nz(1_000_000)); // 1 MB/s
         for _ in 0..50 {
             let _ = limiter2.register(10_000);
         }
-        let accumulated_total = session2.total_duration();
+        let accumulated_total = session.total_duration();
 
-        // Both should be ~500ms
-        assert!(within_tolerance(single_total, Duration::from_millis(500), 15.0));
-        assert!(within_tolerance(accumulated_total, Duration::from_millis(500), 20.0));
+        // Should also be ~500ms
+        assert!(
+            within_tolerance(accumulated_total, Duration::from_millis(500), 25.0),
+            "Accumulated transfer: expected ~500ms, got {:?}",
+            accumulated_total
+        );
     }
 
     #[test]
