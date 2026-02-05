@@ -346,3 +346,7 @@ include!("execute_timestamp_preservation.rs");
 include!("disk_full_errors.rs");
 #[cfg(unix)]
 include!("permission_errors.rs");
+include!("concurrent_modification.rs");
+#[cfg(unix)]
+include!("execute_ownership_preservation.rs");
+include!("execute_xattrs.rs");
