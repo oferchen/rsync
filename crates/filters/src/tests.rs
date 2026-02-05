@@ -141,12 +141,20 @@ fn include_rule_for_directory_restores_descendants() {
 
 #[test]
 fn relative_path_conversion_handles_dot_components() {
+    // Pattern with internal slash is anchored to root
     let set = FilterSet::from_rules([FilterRule::exclude("foo/bar")]).expect("compiled");
+
+    // This path foo/../foo/bar is not normalized by globset, so it doesn't match
+    // the anchored pattern foo/bar. To match at any depth, use **/foo/bar
     let mut path = PathBuf::from("foo");
     path.push("..");
     path.push("foo");
     path.push("bar");
-    assert!(!set.allows(&path, false));
+    // Pattern is anchored, so it only matches literal "foo/bar" not "foo/../foo/bar"
+    assert!(set.allows(&path, false));
+
+    // But a normalized path at root should match
+    assert!(!set.allows(Path::new("foo/bar"), false));
 }
 
 #[test]

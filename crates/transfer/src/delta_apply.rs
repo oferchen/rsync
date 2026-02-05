@@ -6,6 +6,15 @@
 //! to reconstruct files. It mirrors upstream rsync's `receive_data()` function from
 //! `receiver.c:240`.
 //!
+//! # DEBUG_DELTASUM Tracing Levels
+//!
+//! This module implements rsync-compatible DEBUG_DELTASUM tracing at 4 levels:
+//!
+//! - **Level 1**: Basic delta application summary (total stats)
+//! - **Level 2**: Token processing milestones (start/end markers)
+//! - **Level 3**: Per-token details (literal vs block reference)
+//! - **Level 4**: Detailed offset and checksum tracking (very verbose)
+//!
 //! # Upstream Reference
 //!
 //! - `receiver.c:240` - `receive_data()` - Main delta application loop
@@ -19,6 +28,7 @@ use std::path::Path;
 
 use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use engine::signature::FileSignature;
+use logging::debug_log;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use crate::constants::{CHUNK_SIZE, leading_zero_count, trailing_zero_count};
@@ -250,6 +260,10 @@ pub struct DeltaApplyResult {
     pub literal_bytes: u64,
     /// Number of bytes copied from basis file.
     pub matched_bytes: u64,
+    /// Number of literal tokens processed.
+    pub literal_tokens: u64,
+    /// Number of block reference tokens processed.
+    pub block_tokens: u64,
 }
 
 /// Applies delta data to reconstruct a file.
@@ -312,6 +326,15 @@ impl<'a> DeltaApplicator<'a> {
 
     /// Applies literal data.
     pub fn apply_literal(&mut self, data: &[u8]) -> io::Result<()> {
+        // DEBUG_DELTASUM level 3: Log literal token details
+        debug_log!(
+            Deltasum,
+            3,
+            "recv literal data len={} offset={}",
+            data.len(),
+            self.stats.bytes_written
+        );
+
         self.checksum_verifier.update(data);
 
         if let Some(ref mut sparse) = self.sparse_state {
@@ -322,6 +345,7 @@ impl<'a> DeltaApplicator<'a> {
 
         self.stats.bytes_written += data.len() as u64;
         self.stats.literal_bytes += data.len() as u64;
+        self.stats.literal_tokens += 1;
         Ok(())
     }
 
@@ -372,6 +396,17 @@ impl<'a> DeltaApplicator<'a> {
             block_len as usize
         };
 
+        // DEBUG_DELTASUM level 3: Log block reference details
+        debug_log!(
+            Deltasum,
+            3,
+            "recv block ref idx={} basis_offset={} len={} output_offset={}",
+            block_idx,
+            offset,
+            bytes_to_copy,
+            self.stats.bytes_written
+        );
+
         // Use cached MapFile - data stays in 256KB sliding window
         let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
 
@@ -385,6 +420,7 @@ impl<'a> DeltaApplicator<'a> {
 
         self.stats.bytes_written += bytes_to_copy as u64;
         self.stats.matched_bytes += bytes_to_copy as u64;
+        self.stats.block_tokens += 1;
         Ok(())
     }
 
@@ -399,13 +435,29 @@ impl<'a> DeltaApplicator<'a> {
         reader.read_exact(&mut buf)?;
         let token = i32::from_le_bytes(buf);
 
+        // DEBUG_DELTASUM level 4: Per-token tracking (very verbose)
+        debug_log!(Deltasum, 4, "recv token={} offset={}", token, self.stats.bytes_written);
+
         match token.cmp(&0) {
-            std::cmp::Ordering::Equal => Ok(false),
+            std::cmp::Ordering::Equal => {
+                // DEBUG_DELTASUM level 2: Token stream end marker
+                debug_log!(Deltasum, 2, "recv data complete, final offset={}", self.stats.bytes_written);
+                Ok(false)
+            },
             std::cmp::Ordering::Greater => {
                 let len = token as usize;
                 // Reuse TokenBuffer - grows but never shrinks
                 self.token_buffer.resize_for(len);
                 reader.read_exact(self.token_buffer.as_mut_slice())?;
+
+                // DEBUG_DELTASUM level 3: Log literal token details
+                debug_log!(
+                    Deltasum,
+                    3,
+                    "recv literal data len={} offset={}",
+                    len,
+                    self.stats.bytes_written
+                );
 
                 // Apply literal data inline to avoid borrow conflict
                 let data = self.token_buffer.as_slice();
@@ -419,6 +471,7 @@ impl<'a> DeltaApplicator<'a> {
 
                 self.stats.bytes_written += len as u64;
                 self.stats.literal_bytes += len as u64;
+                self.stats.literal_tokens += 1;
                 Ok(true)
             }
             std::cmp::Ordering::Less => {
@@ -445,6 +498,15 @@ impl<'a> DeltaApplicator<'a> {
         let computed = self.checksum_verifier.finalize();
         let cmp_len = computed.len().min(expected.len());
 
+        // DEBUG_DELTASUM level 3: Log checksum verification details
+        debug_log!(
+            Deltasum,
+            3,
+            "recv checksum verify expected={:02x?} computed={:02x?}",
+            &expected[..cmp_len.min(4)], // Show first 4 bytes
+            &computed[..cmp_len.min(4)]
+        );
+
         if computed[..cmp_len] != expected[..cmp_len] {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -456,6 +518,19 @@ impl<'a> DeltaApplicator<'a> {
             ));
         }
 
+        // DEBUG_DELTASUM level 1: Basic summary (mirrors upstream receive_data)
+        debug_log!(
+            Deltasum,
+            1,
+            "recv: {} tokens ({} literal, {} block), {} bytes total ({} literal, {} matched)",
+            self.stats.literal_tokens + self.stats.block_tokens,
+            self.stats.literal_tokens,
+            self.stats.block_tokens,
+            self.stats.bytes_written,
+            self.stats.literal_bytes,
+            self.stats.matched_bytes
+        );
+
         Ok(self.stats)
     }
 }
@@ -465,6 +540,9 @@ pub fn apply_delta_stream<R: Read>(
     reader: &mut R,
     applicator: &mut DeltaApplicator<'_>,
 ) -> io::Result<()> {
+    // DEBUG_DELTASUM level 2: Log delta application start (mirrors upstream receive_data)
+    debug_log!(Deltasum, 2, "recv delta stream start");
+
     while applicator.apply_token(reader)? {}
     Ok(())
 }

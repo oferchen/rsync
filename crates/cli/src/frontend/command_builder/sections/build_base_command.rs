@@ -17,13 +17,13 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .long("human-readable")
                     .value_name("LEVEL")
                     .help(
-                        "Output numbers in a human-readable format; optional LEVEL selects 0, 1, or 2.",
+                        "Output numbers in a human-readable format; optional LEVEL selects 0, 1, or 2. Can be repeated to increase level.",
                     )
                     .num_args(0..=1)
                     .default_missing_value("1")
                     .require_equals(true)
                     .value_parser(OsStringValueParser::new())
-                    .action(ArgAction::Set)
+                    .action(ArgAction::Append)
                     .overrides_with("no-human-readable"),
             )
             .arg(

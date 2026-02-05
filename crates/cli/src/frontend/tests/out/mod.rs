@@ -5,6 +5,7 @@ pub(super) use std::io;
 
 mod acceptance;
 mod checksum;
+mod custom_format;
 mod formatting;
 #[cfg(unix)]
 mod identity;

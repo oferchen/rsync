@@ -524,3 +524,494 @@ fn complex_structure_sorting() {
     assert!(gitignore_idx < cargo_idx, ".gitignore before Cargo.toml");
     assert!(cargo_idx < readme_idx, "Cargo.toml before README.md");
 }
+
+// ============================================================================
+// Large File List Sorting Tests
+// ============================================================================
+
+/// Verifies sorting maintains order with large number of files.
+///
+/// This test ensures the sorting algorithm scales correctly and maintains
+/// stable ordering even with hundreds of files.
+#[test]
+fn large_file_list_sorting() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("large_sort");
+    fs::create_dir(&root).expect("create root");
+
+    // Create 1000 files with predictable names
+    let file_count = 1000;
+    for i in 0..file_count {
+        // Format with leading zeros to ensure lexicographic = numeric order
+        let name = format!("file_{:04}.txt", i);
+        fs::write(root.join(&name), b"data").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), file_count, "should find all files");
+
+    // Verify files are in expected order
+    for i in 0..file_count {
+        let expected = PathBuf::from(format!("file_{:04}.txt", i));
+        assert_eq!(
+            paths[i], expected,
+            "file at index {i} should be {expected:?}"
+        );
+    }
+}
+
+/// Verifies sorting with large number of files having similar prefixes.
+///
+/// Tests that sorting correctly handles many files that differ only in
+/// suffix, which can stress string comparison algorithms.
+#[test]
+fn large_file_list_similar_names() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("similar_names");
+    fs::create_dir(&root).expect("create root");
+
+    // Create files with long common prefix
+    let prefix = "very_long_common_prefix_that_makes_comparison_interesting_";
+    let file_count = 500;
+
+    for i in 0..file_count {
+        let name = format!("{prefix}{i:04}.txt");
+        fs::write(root.join(&name), b"data").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), file_count);
+
+    // Verify sorted order
+    for i in 0..file_count {
+        let expected = PathBuf::from(format!("{prefix}{i:04}.txt"));
+        assert_eq!(paths[i], expected);
+    }
+}
+
+/// Verifies sorting with many files in nested directories.
+///
+/// Tests that large file lists maintain correct order across directory
+/// boundaries.
+#[test]
+fn large_nested_directory_sorting() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("large_nested");
+    fs::create_dir(&root).expect("create root");
+
+    // Create 10 directories with 50 files each
+    let dir_count = 10;
+    let files_per_dir = 50;
+
+    for d in 0..dir_count {
+        let dir_name = format!("dir_{:02}", d);
+        let dir_path = root.join(&dir_name);
+        fs::create_dir(&dir_path).expect("create dir");
+
+        for f in 0..files_per_dir {
+            let file_name = format!("file_{:02}.txt", f);
+            fs::write(dir_path.join(&file_name), b"data").expect("write file");
+        }
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    // Should have dir_count directories + (dir_count * files_per_dir) files
+    let expected_count = dir_count + (dir_count * files_per_dir);
+    assert_eq!(paths.len(), expected_count);
+
+    // Verify directories are visited in order
+    let mut dir_indices = Vec::new();
+    for d in 0..dir_count {
+        let dir_name = format!("dir_{:02}", d);
+        let idx = paths
+            .iter()
+            .position(|p| p == &PathBuf::from(&dir_name))
+            .expect("find directory");
+        dir_indices.push(idx);
+    }
+
+    // Verify directories are in ascending order
+    for i in 0..dir_indices.len() - 1 {
+        assert!(
+            dir_indices[i] < dir_indices[i + 1],
+            "directories should be in sorted order"
+        );
+    }
+}
+
+// ============================================================================
+// Binary/Byte-Level Sorting Tests
+// ============================================================================
+
+/// Verifies sorting is based on byte values, not character interpretation.
+///
+/// Ensures that sorting works at the byte level, which is important for
+/// filenames with non-UTF8 sequences or unusual byte patterns.
+#[cfg(unix)]
+#[test]
+fn binary_byte_sorting() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("binary_sort");
+    fs::create_dir(&root).expect("create root");
+
+    // Create files with specific byte sequences
+    // Using raw bytes to ensure we test byte-level sorting
+    let byte_sequences = [
+        b"file_\x00.txt".as_slice(),  // null byte
+        b"file_\x01.txt",             // control char
+        b"file_\x7f.txt",             // DEL
+        b"file_\x80.txt",             // high bit set
+        b"file_\xff.txt",             // max byte
+        b"file_a.txt",                // normal ASCII
+    ];
+
+    for bytes in byte_sequences {
+        let name = std::ffi::OsStr::from_bytes(bytes);
+        let path = root.join(name);
+        // Some filesystems may not support certain byte sequences
+        let _ = fs::write(path, b"data");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    // Verify all successfully created files are in ascending byte order
+    for i in 0..paths.len().saturating_sub(1) {
+        let bytes1 = paths[i].as_os_str().as_bytes();
+        let bytes2 = paths[i + 1].as_os_str().as_bytes();
+        assert!(
+            bytes1 < bytes2,
+            "files should be sorted by byte values: {:?} < {:?}",
+            bytes1,
+            bytes2
+        );
+    }
+}
+
+// ============================================================================
+// Comprehensive Special Character Sorting Tests
+// ============================================================================
+
+/// Verifies complete ASCII punctuation sorting order.
+///
+/// Tests the full range of ASCII punctuation characters to ensure
+/// they sort correctly relative to each other.
+#[test]
+fn comprehensive_punctuation_sorting() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("punct_sort");
+    fs::create_dir(&root).expect("create root");
+
+    // ASCII punctuation in order: ! " # $ % & ' ( ) * + , - . /
+    // and : ; < = > ? @
+    // and [ \ ] ^ _ `
+    // and { | } ~
+    let punctuation = [
+        "file!.txt",
+        "file#.txt",
+        "file$.txt",
+        "file%.txt",
+        "file&.txt",
+        "file'.txt",
+        "file(.txt",
+        "file).txt",
+        "file+.txt",
+        "file,.txt",
+        "file-.txt",
+        "file;.txt",
+        "file=.txt",
+        "file@.txt",
+        "file[.txt",
+        "file].txt",
+        "file^.txt",
+        "file_.txt",
+        "file`.txt",
+        "file{.txt",
+        "file}.txt",
+        "file~.txt",
+    ];
+
+    for name in &punctuation {
+        fs::write(root.join(name), b"").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), punctuation.len());
+
+    // Verify sorted order
+    for i in 0..paths.len() - 1 {
+        assert!(
+            paths[i] < paths[i + 1],
+            "{:?} should come before {:?}",
+            paths[i],
+            paths[i + 1]
+        );
+    }
+}
+
+/// Verifies sorting with mixed alphanumeric and special characters.
+///
+/// Tests realistic filenames that mix letters, numbers, and punctuation.
+#[test]
+fn mixed_alphanumeric_special_sorting() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("mixed_sort");
+    fs::create_dir(&root).expect("create root");
+
+    // Mix of realistic filenames with various characters
+    let filenames = [
+        "01-intro.txt",
+        "02-basics.txt",
+        "10-advanced.txt",
+        "README.md",
+        "TODO.txt",
+        "_helpers.rs",
+        "a-file.txt",
+        "b_file.txt",
+        "config.json",
+        "data-2024.csv",
+        "index.html",
+        "log_file.txt",
+        "setup.sh",
+        "test_case_1.rs",
+        "zz-end.txt",
+    ];
+
+    for name in &filenames {
+        fs::write(root.join(name), b"").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), filenames.len());
+
+    // Verify they're sorted
+    for i in 0..paths.len() - 1 {
+        assert!(
+            paths[i] < paths[i + 1],
+            "file at index {i} {:?} should come before {:?}",
+            paths[i],
+            paths[i + 1]
+        );
+    }
+}
+
+// ============================================================================
+// Case Sensitivity Extended Tests
+// ============================================================================
+
+/// Verifies case-sensitive sorting with extensive examples.
+///
+/// This test expands on the basic case sensitivity test to verify
+/// correct sorting across the full alphabet.
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn extended_case_sensitive_sorting() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("case_extended");
+    fs::create_dir(&root).expect("create root");
+
+    // Create files testing case sensitivity across multiple letters
+    let names = [
+        "AAA", "AAa", "AaA", "Aaa", "aAA", "aAa", "aaA", "aaa", "BBB", "BBb", "bBB", "bbb",
+    ];
+
+    for name in &names {
+        fs::write(root.join(name), b"").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), names.len());
+
+    // Verify uppercase letters come before lowercase in each position
+    // 'A' (0x41) < 'a' (0x61)
+    let expected_order = [
+        "AAA", "AAa", "AaA", "Aaa", "BBB", "BBb", "aAA", "aAa", "aaA", "aaa", "bBB", "bbb",
+    ];
+
+    for (i, expected) in expected_order.iter().enumerate() {
+        assert_eq!(
+            paths[i],
+            PathBuf::from(expected),
+            "position {i} should be {expected}"
+        );
+    }
+}
+
+/// Verifies sorting behavior with mixed case and numbers.
+///
+/// Tests that case-sensitive sorting works correctly when filenames
+/// contain both letters and digits.
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn case_sensitive_with_numbers() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("case_num");
+    fs::create_dir(&root).expect("create root");
+
+    let names = [
+        "file1A", "file1a", "file2A", "file2a", "File1A", "File1a", "File2A", "File2a",
+    ];
+
+    for name in &names {
+        fs::write(root.join(name), b"").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), names.len());
+
+    // 'F' (0x46) < 'f' (0x66), so File* comes before file*
+    // Within each prefix, '1' < '2', and 'A' < 'a'
+    let expected = [
+        "File1A", "File1a", "File2A", "File2a", "file1A", "file1a", "file2A", "file2a",
+    ];
+
+    for (i, exp) in expected.iter().enumerate() {
+        assert_eq!(paths[i], PathBuf::from(exp));
+    }
+}
+
+// ============================================================================
+// Locale-Independent Sorting Tests
+// ============================================================================
+
+/// Verifies sorting is locale-independent.
+///
+/// Ensures that the sorting order doesn't change based on system locale
+/// settings, which is critical for rsync compatibility across different
+/// systems.
+#[test]
+fn locale_independent_sorting() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("locale");
+    fs::create_dir(&root).expect("create root");
+
+    // These characters might sort differently under different locales
+    // but should always sort by byte value in our implementation
+    let names = [
+        "file-a.txt",
+        "file-A.txt",
+        "file-b.txt",
+        "file-B.txt",
+        "file_a.txt",
+        "file_A.txt",
+    ];
+
+    for name in &names {
+        fs::write(root.join(name), b"").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    // Verify sorting is purely lexicographic/byte-based
+    // '-' (0x2D) < '_' (0x5F)
+    // 'A' (0x41) < 'a' (0x61)
+    for i in 0..paths.len() - 1 {
+        let bytes1 = paths[i].as_os_str();
+        let bytes2 = paths[i + 1].as_os_str();
+        assert!(
+            bytes1 < bytes2,
+            "sorting should be byte-order based, not locale-based"
+        );
+    }
+}
+
+// ============================================================================
+// Stability and Consistency Tests
+// ============================================================================
+
+/// Verifies that sorting produces identical results across multiple runs.
+///
+/// Tests that the sorting is deterministic by running the same traversal
+/// multiple times and comparing results.
+#[test]
+fn sorting_determinism_stress_test() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("determinism");
+    fs::create_dir(&root).expect("create root");
+
+    // Create files with names designed to test sorting edge cases
+    let names = [
+        ".", "..", "...", "0", "00", "000", "1", "9", "A", "Z", "_", "a", "z", "~",
+    ];
+
+    for name in &names {
+        // Skip special directory entries
+        if *name == "." || *name == ".." {
+            continue;
+        }
+        let _ = fs::write(root.join(name), b"");
+    }
+
+    // Run traversal 10 times
+    let results: Vec<Vec<PathBuf>> = (0..10)
+        .map(|_| {
+            let walker = FileListBuilder::new(&root).build().expect("build walker");
+            collect_relative_paths(walker)
+        })
+        .collect();
+
+    // All results should be identical
+    let first = &results[0];
+    for (i, result) in results.iter().enumerate() {
+        assert_eq!(
+            first, result,
+            "run {i} produced different results from first run"
+        );
+    }
+}
+
+/// Verifies correct sorting of files with same prefix but different lengths.
+///
+/// Tests that shorter filenames come before longer ones when one is a prefix
+/// of the other.
+#[test]
+fn prefix_length_sorting() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("prefix");
+    fs::create_dir(&root).expect("create root");
+
+    let names = [
+        "a",
+        "aa",
+        "aaa",
+        "aaaa",
+        "ab",
+        "aba",
+        "abaa",
+        "abb",
+        "b",
+        "ba",
+        "baa",
+    ];
+
+    for name in &names {
+        fs::write(root.join(name), b"").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), names.len());
+
+    // Verify expected order (shorter prefix before longer)
+    for (i, expected) in names.iter().enumerate() {
+        assert_eq!(paths[i], PathBuf::from(expected));
+    }
+}

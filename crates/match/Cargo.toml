@@ -36,5 +36,14 @@ tracing = ["dep:tracing"]
 parallel = ["dep:rayon"]
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 protocol = { path = "../protocol" }
 tempfile = "3.15"
+
+[[bench]]
+name = "delta_matching_benchmark"
+harness = false
+
+[[bench]]
+name = "profiling_analysis"
+harness = false
