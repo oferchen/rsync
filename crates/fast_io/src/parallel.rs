@@ -6,8 +6,8 @@
 use rayon::prelude::*;
 use std::io;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 
 /// Result of a parallel operation on multiple items.
 #[derive(Debug)]
@@ -199,10 +199,7 @@ impl ParallelExecutor {
     /// # Returns
     ///
     /// A `ParallelResult` with bytes copied for each successful operation.
-    pub fn copy_files<P: AsRef<Path> + Sync>(
-        &self,
-        operations: &[(P, P)],
-    ) -> ParallelResult<u64> {
+    pub fn copy_files<P: AsRef<Path> + Sync>(&self, operations: &[(P, P)]) -> ParallelResult<u64> {
         self.process(operations, |(src, dst)| {
             std::fs::copy(src.as_ref(), dst.as_ref())
         })
@@ -230,7 +227,8 @@ impl ParallelStats {
     /// Records a successful operation.
     pub fn record_success(&self, bytes: u64) {
         self.items_processed.fetch_add(1, AtomicOrdering::Relaxed);
-        self.bytes_processed.fetch_add(bytes, AtomicOrdering::Relaxed);
+        self.bytes_processed
+            .fetch_add(bytes, AtomicOrdering::Relaxed);
     }
 
     /// Records a failed operation.

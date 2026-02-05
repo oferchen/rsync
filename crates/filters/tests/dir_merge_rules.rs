@@ -220,11 +220,7 @@ fn recursive_expansion_preserves_dir_merge() {
     // They are evaluated during directory traversal
     let dir = TempDir::new().unwrap();
     let rules_path = dir.path().join("rules.txt");
-    fs::write(
-        &rules_path,
-        ": .rsync-filter\n+ *.txt\n- *.bak\n",
-    )
-    .unwrap();
+    fs::write(&rules_path, ": .rsync-filter\n+ *.txt\n- *.bak\n").unwrap();
 
     let rules = filters::merge::read_rules_recursive(&rules_path, 10).unwrap();
     assert_eq!(rules.len(), 3);
@@ -300,8 +296,7 @@ fn dir_merge_with_modifiers_via_parsing() {
 
 #[test]
 fn dir_merge_side_specific() {
-    let rule = FilterRule::dir_merge(".rsync-filter")
-        .with_sides(true, false);
+    let rule = FilterRule::dir_merge(".rsync-filter").with_sides(true, false);
     assert!(rule.applies_to_sender());
     assert!(!rule.applies_to_receiver());
 }
@@ -357,7 +352,7 @@ fn dir_merge_clone() {
 #[test]
 fn dir_merge_debug() {
     let rule = FilterRule::dir_merge(".rsync-filter");
-    let debug = format!("{:?}", rule);
+    let debug = format!("{rule:?}");
     assert!(debug.contains("DirMerge"));
     assert!(debug.contains(".rsync-filter"));
 }

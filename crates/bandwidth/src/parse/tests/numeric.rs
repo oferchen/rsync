@@ -210,7 +210,10 @@ fn pow_u128_exponent_one_any_base() {
 fn pow_u128_large_base_small_exponent() {
     // Large base with small exponent should work
     assert_eq!(pow_u128(u32::MAX, 1).unwrap(), u128::from(u32::MAX));
-    assert_eq!(pow_u128(u32::MAX, 2).unwrap(), u128::from(u32::MAX) * u128::from(u32::MAX));
+    assert_eq!(
+        pow_u128(u32::MAX, 2).unwrap(),
+        u128::from(u32::MAX) * u128::from(u32::MAX)
+    );
 }
 
 #[test]
@@ -228,7 +231,10 @@ fn pow_u128_ten_powers() {
     assert_eq!(pow_u128(10, 2).unwrap(), 100);
     assert_eq!(pow_u128(10, 9).unwrap(), 1_000_000_000);
     assert_eq!(pow_u128(10, 18).unwrap(), 1_000_000_000_000_000_000);
-    assert_eq!(pow_u128(10, 38).unwrap(), 100_000_000_000_000_000_000_000_000_000_000_000_000);
+    assert_eq!(
+        pow_u128(10, 38).unwrap(),
+        100_000_000_000_000_000_000_000_000_000_000_000_000
+    );
 }
 
 #[test]

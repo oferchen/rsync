@@ -407,11 +407,7 @@ mod clear_rules {
 
     #[test]
     fn multiple_clears() {
-        let rules = parse_rules(
-            "- *.a\n!\n- *.b\n!\n- *.c",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("- *.a\n!\n- *.b\n!\n- *.c", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // Only last rule after last clear is active
@@ -422,7 +418,8 @@ mod clear_rules {
 
     #[test]
     fn clear_at_end_results_in_empty_set() {
-        let rules = parse_rules("- *.tmp\n+ important/\nP critical/\n!", Path::new("test")).unwrap();
+        let rules =
+            parse_rules("- *.tmp\n+ important/\nP critical/\n!", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         assert!(set.is_empty());
@@ -798,11 +795,7 @@ mod combined_filter_types {
 
     #[test]
     fn include_exclude_protect_combined() {
-        let rules = parse_rules(
-            "+ *.rs\n- *.tmp\nP Cargo.lock",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("+ *.rs\n- *.tmp\nP Cargo.lock", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // Include works
@@ -980,11 +973,7 @@ mod rule_ordering {
 
     #[test]
     fn first_match_wins_include_before_exclude() {
-        let rules = parse_rules(
-            "+ important.txt\n- *.txt",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("+ important.txt\n- *.txt", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // Important.txt included by first rule
@@ -996,11 +985,7 @@ mod rule_ordering {
 
     #[test]
     fn first_match_wins_exclude_before_include() {
-        let rules = parse_rules(
-            "- secret.txt\n+ *.txt",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("- secret.txt\n+ *.txt", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // secret.txt excluded by first rule
@@ -1012,11 +997,7 @@ mod rule_ordering {
 
     #[test]
     fn specific_before_general() {
-        let rules = parse_rules(
-            "- test_*.rs\n+ *.rs\n- *",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("- test_*.rs\n+ *.rs\n- *", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // test_*.rs excluded
@@ -1031,11 +1012,7 @@ mod rule_ordering {
 
     #[test]
     fn anchored_before_unanchored() {
-        let rules = parse_rules(
-            "+ /build\n- build",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("+ /build\n- build", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // Root build included
@@ -1047,11 +1024,7 @@ mod rule_ordering {
 
     #[test]
     fn directory_before_file_pattern() {
-        let rules = parse_rules(
-            "+ build/\n- build",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("+ build/\n- build", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // Directory build included
@@ -1101,11 +1074,7 @@ mod rule_ordering {
 
     #[test]
     fn ordering_with_clear() {
-        let rules = parse_rules(
-            "- *.a\n- *.b\n!\n+ *.a\n- *.a",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("- *.a\n- *.b\n!\n+ *.a\n- *.a", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // Rules before clear are gone, new ordering applies
@@ -1150,11 +1119,7 @@ mod rule_ordering {
 
     #[test]
     fn multiple_matching_patterns_first_wins() {
-        let rules = parse_rules(
-            "+ *.txt\n- readme.txt\n+ readme.*",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("+ *.txt\n- readme.txt\n+ readme.*", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // readme.txt matches *.txt first, so it's included
@@ -1164,11 +1129,7 @@ mod rule_ordering {
 
     #[test]
     fn perishable_rules_skipped_for_deletion() {
-        let rules = parse_rules(
-            "-p *.tmp\n+ keep/**",
-            Path::new("test"),
-        )
-        .unwrap();
+        let rules = parse_rules("-p *.tmp\n+ keep/**", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // Transfer: perishable exclude applies

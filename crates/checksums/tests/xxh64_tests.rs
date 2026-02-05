@@ -54,10 +54,8 @@ mod known_test_vectors {
         let digest = Xxh64::digest(0, b"");
         let hash = digest_to_u64(digest);
         assert_eq!(
-            hash,
-            0xef46db3751d8e999,
-            "XXH64 of empty string with seed 0 should be 0xef46db3751d8e999, got 0x{:016x}",
-            hash
+            hash, 0xef46db3751d8e999,
+            "XXH64 of empty string with seed 0 should be 0xef46db3751d8e999, got 0x{hash:016x}"
         );
     }
 
@@ -69,8 +67,7 @@ mod known_test_vectors {
         let expected = expected_le_bytes(0xef46db3751d8e999);
         assert_eq!(
             digest, expected,
-            "XXH64 empty string bytes: expected {:?}, got {:?}",
-            expected, digest
+            "XXH64 empty string bytes: expected {expected:?}, got {digest:?}"
         );
     }
 
@@ -178,7 +175,10 @@ mod known_test_vectors {
         // Should differ from all zeros
         let zeros = [0u8; 64];
         let zeros_digest = Xxh64::digest(0, &zeros);
-        assert_ne!(digest, zeros_digest, "Different inputs should produce different hashes");
+        assert_ne!(
+            digest, zeros_digest,
+            "Different inputs should produce different hashes"
+        );
 
         let expected = xxhash_rust::xxh64::xxh64(&ones, 0).to_le_bytes();
         assert_eq!(digest, expected);
@@ -202,10 +202,8 @@ mod known_test_vectors {
         // The documented result is 0xb559b98d844e0635 (from pypi xxhash docs)
         // which equals 13067679811253438005 as integer
         assert_eq!(
-            hash,
-            0xb559b98d844e0635,
-            "XXH64('xxhash', seed=20141025) should be 0xb559b98d844e0635, got 0x{:016x}",
-            hash
+            hash, 0xb559b98d844e0635,
+            "XXH64('xxhash', seed=20141025) should be 0xb559b98d844e0635, got 0x{hash:016x}"
         );
     }
 }
@@ -265,7 +263,10 @@ mod empty_input {
         let digest = hasher.finalize();
 
         let oneshot = Xxh64::digest(0, b"");
-        assert_eq!(digest, oneshot, "Multiple empty updates should equal empty one-shot");
+        assert_eq!(
+            digest, oneshot,
+            "Multiple empty updates should equal empty one-shot"
+        );
     }
 
     #[test]
@@ -336,10 +337,14 @@ mod various_input_sizes {
     fn size_1_byte_all_256_values() {
         for byte in 0u8..=255 {
             let digest = Xxh64::digest(0, &[byte]);
-            assert_eq!(digest.len(), 8, "Byte {:02x} should produce 8-byte digest", byte);
+            assert_eq!(
+                digest.len(),
+                8,
+                "Byte {byte:02x} should produce 8-byte digest"
+            );
 
             let expected = xxhash_rust::xxh64::xxh64(&[byte], 0).to_le_bytes();
-            assert_eq!(digest, expected, "Byte {:02x} mismatch", byte);
+            assert_eq!(digest, expected, "Byte {byte:02x} mismatch");
         }
     }
 
@@ -579,15 +584,16 @@ mod various_input_sizes {
 
     #[test]
     fn prime_sizes() {
-        let primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53,
-                      59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 127, 131, 251, 509,
-                      1021, 2039, 4093, 8191];
+        let primes = [
+            2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83,
+            89, 97, 101, 127, 131, 251, 509, 1021, 2039, 4093, 8191,
+        ];
 
         for &size in &primes {
             let data = generate_data(size);
             let digest = Xxh64::digest(0, &data);
             let expected = xxhash_rust::xxh64::xxh64(&data, 0).to_le_bytes();
-            assert_eq!(digest, expected, "Prime size {} mismatch", size);
+            assert_eq!(digest, expected, "Prime size {size} mismatch");
         }
     }
 
@@ -595,13 +601,15 @@ mod various_input_sizes {
 
     #[test]
     fn power_of_two_minus_one_sizes() {
-        let sizes = [1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767];
+        let sizes = [
+            1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767,
+        ];
 
         for &size in &sizes {
             let data = generate_data(size);
             let digest = Xxh64::digest(0, &data);
             let expected = xxhash_rust::xxh64::xxh64(&data, 0).to_le_bytes();
-            assert_eq!(digest, expected, "Size {} (2^n - 1) mismatch", size);
+            assert_eq!(digest, expected, "Size {size} (2^n - 1) mismatch");
         }
     }
 
@@ -609,7 +617,9 @@ mod various_input_sizes {
 
     #[test]
     fn streaming_matches_oneshot_various_sizes() {
-        let sizes = [0, 1, 2, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024, 4096];
+        let sizes = [
+            0, 1, 2, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024, 4096,
+        ];
 
         for &size in &sizes {
             let data = generate_data(size);
@@ -620,7 +630,7 @@ mod various_input_sizes {
             hasher.update(&data);
             let streaming = hasher.finalize();
 
-            assert_eq!(oneshot, streaming, "Size {} streaming mismatch", size);
+            assert_eq!(oneshot, streaming, "Size {size} streaming mismatch");
         }
     }
 }
@@ -643,7 +653,11 @@ mod seed_variations {
     #[test]
     fn seed_one() {
         let digest = Xxh64::digest(1, b"test");
-        assert_ne!(digest, Xxh64::digest(0, b"test"), "Seed 1 should differ from seed 0");
+        assert_ne!(
+            digest,
+            Xxh64::digest(0, b"test"),
+            "Seed 1 should differ from seed 0"
+        );
         let expected = xxhash_rust::xxh64::xxh64(b"test", 1).to_le_bytes();
         assert_eq!(digest, expected);
     }
@@ -683,7 +697,7 @@ mod seed_variations {
         for power in [1u64, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096] {
             let digest = Xxh64::digest(power, b"test");
             let expected = xxhash_rust::xxh64::xxh64(b"test", power).to_le_bytes();
-            assert_eq!(digest, expected, "Seed {} mismatch", power);
+            assert_eq!(digest, expected, "Seed {power} mismatch");
         }
     }
 
@@ -704,16 +718,28 @@ mod seed_variations {
         for &seed in &seeds {
             let digest = Xxh64::digest(seed, b"test");
             let expected = xxhash_rust::xxh64::xxh64(b"test", seed).to_le_bytes();
-            assert_eq!(digest, expected, "Seed 0x{:016x} mismatch", seed);
+            assert_eq!(digest, expected, "Seed 0x{seed:016x} mismatch");
         }
     }
 
     #[test]
     fn different_seeds_produce_different_hashes() {
         let data = b"seed test data";
-        let seeds = [0u64, 1, 42, 256, 65535, 0x12345678, u32::MAX as u64, u64::MAX];
+        let seeds = [
+            0u64,
+            1,
+            42,
+            256,
+            65535,
+            0x12345678,
+            u32::MAX as u64,
+            u64::MAX,
+        ];
 
-        let digests: Vec<_> = seeds.iter().map(|&seed| Xxh64::digest(seed, data)).collect();
+        let digests: Vec<_> = seeds
+            .iter()
+            .map(|&seed| Xxh64::digest(seed, data))
+            .collect();
 
         // All digests should be unique
         for i in 0..digests.len() {
@@ -788,7 +814,10 @@ mod streaming_incremental {
         let streaming = hasher.finalize();
 
         let oneshot = Xxh64::digest(0, data);
-        assert_eq!(streaming, oneshot, "Byte-by-byte streaming should match one-shot");
+        assert_eq!(
+            streaming, oneshot,
+            "Byte-by-byte streaming should match one-shot"
+        );
     }
 
     #[test]
@@ -812,8 +841,8 @@ mod streaming_incremental {
 
         let mut hasher = Xxh64::new(0);
         hasher.update(&data[..third]);
-        hasher.update(&data[third..2*third]);
-        hasher.update(&data[2*third..]);
+        hasher.update(&data[third..2 * third]);
+        hasher.update(&data[2 * third..]);
         let streaming = hasher.finalize();
 
         let oneshot = Xxh64::digest(0, data);
@@ -825,7 +854,9 @@ mod streaming_incremental {
         let data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
         let oneshot = Xxh64::digest(0, &data);
 
-        for chunk_size in [1, 2, 3, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 1000] {
+        for chunk_size in [
+            1, 2, 3, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 1000,
+        ] {
             let mut hasher = Xxh64::new(0);
             for chunk in data.chunks(chunk_size) {
                 hasher.update(chunk);
@@ -833,8 +864,7 @@ mod streaming_incremental {
             let streaming = hasher.finalize();
             assert_eq!(
                 oneshot, streaming,
-                "Chunk size {} should produce same result as one-shot",
-                chunk_size
+                "Chunk size {chunk_size} should produce same result as one-shot"
             );
         }
     }
@@ -855,7 +885,10 @@ mod streaming_incremental {
         let streaming = hasher.finalize();
 
         let oneshot = Xxh64::digest(0, data);
-        assert_eq!(streaming, oneshot, "Empty updates interspersed should not affect result");
+        assert_eq!(
+            streaming, oneshot,
+            "Empty updates interspersed should not affect result"
+        );
     }
 
     #[test]
@@ -871,7 +904,10 @@ mod streaming_incremental {
         let digest1 = hasher1.finalize();
         let digest2 = hasher2.finalize();
 
-        assert_ne!(digest1, digest2, "Different continuations should produce different hashes");
+        assert_ne!(
+            digest1, digest2,
+            "Different continuations should produce different hashes"
+        );
 
         // Verify cloned hasher produces correct result
         let expected_b = Xxh64::digest(42, b"partial data B");
@@ -895,7 +931,10 @@ mod streaming_incremental {
             cloned.update(&data[i..]);
             let cloned_digest = cloned.finalize();
 
-            assert_eq!(cloned_digest, full_digest, "Clone at position {} should produce correct result", i);
+            assert_eq!(
+                cloned_digest, full_digest,
+                "Clone at position {i} should produce correct result"
+            );
         }
     }
 
@@ -918,7 +957,10 @@ mod streaming_incremental {
             offset = end;
         }
         let streaming = hasher.finalize();
-        assert_eq!(oneshot, streaming, "Irregular chunk streaming should match one-shot");
+        assert_eq!(
+            oneshot, streaming,
+            "Irregular chunk streaming should match one-shot"
+        );
     }
 
     #[test]
@@ -935,8 +977,7 @@ mod streaming_incremental {
             let streaming = hasher.finalize();
             assert_eq!(
                 oneshot, streaming,
-                "1MB with chunk size {} should match one-shot",
-                chunk_size
+                "1MB with chunk size {chunk_size} should match one-shot"
             );
         }
     }
@@ -969,7 +1010,10 @@ mod streaming_incremental {
         hasher2.update(data);
         let digest2 = hasher2.finalize();
 
-        assert_eq!(digest1, digest2, "new() and with_seed() should behave identically");
+        assert_eq!(
+            digest1, digest2,
+            "new() and with_seed() should behave identically"
+        );
     }
 
     #[test]
@@ -1012,7 +1056,11 @@ mod verification {
 
         let digest = Xxh64::digest(0, b"test");
         assert_eq!(digest.len(), 8, "Digest array should have 8 elements");
-        assert_eq!(digest.as_ref().len(), 8, "Digest as ref should have 8 bytes");
+        assert_eq!(
+            digest.as_ref().len(),
+            8,
+            "Digest as ref should have 8 bytes"
+        );
     }
 
     #[test]
@@ -1062,7 +1110,10 @@ mod verification {
 
         // Verify against xxhash-rust reference
         let expected_hash = xxhash_rust::xxh64::xxh64(b"test", 0);
-        assert_eq!(from_le, expected_hash, "Should match xxhash-rust when read as little-endian");
+        assert_eq!(
+            from_le, expected_hash,
+            "Should match xxhash-rust when read as little-endian"
+        );
     }
 
     #[test]
@@ -1082,8 +1133,7 @@ mod verification {
         let diff = (hash1 ^ hash2).count_ones();
         assert!(
             diff >= 20,
-            "Avalanche effect: {} bits differ, expected >= 20",
-            diff
+            "Avalanche effect: {diff} bits differ, expected >= 20"
         );
     }
 
@@ -1093,7 +1143,7 @@ mod verification {
         let mut or_accumulator = 0u64;
 
         for i in 0..10000 {
-            let data = format!("input_{}", i);
+            let data = format!("input_{i}");
             let digest = Xxh64::digest(0, data.as_bytes());
             let hash = u64::from_le_bytes(digest);
             or_accumulator |= hash;
@@ -1113,13 +1163,13 @@ mod verification {
         let mut bit_counts = [0u32; 64];
 
         for i in 0..10000 {
-            let data = format!("distribution_test_{}", i);
+            let data = format!("distribution_test_{i}");
             let digest = Xxh64::digest(0, data.as_bytes());
             let hash = u64::from_le_bytes(digest);
 
-            for bit in 0..64 {
+            for (bit, count) in bit_counts.iter_mut().enumerate() {
                 if (hash >> bit) & 1 == 1 {
-                    bit_counts[bit] += 1;
+                    *count += 1;
                 }
             }
         }
@@ -1128,9 +1178,7 @@ mod verification {
         for (bit, &count) in bit_counts.iter().enumerate() {
             assert!(
                 count > 4000 && count < 6000,
-                "Bit {} has count {}, expected ~5000 (40%-60% range)",
-                bit,
-                count
+                "Bit {bit} has count {count}, expected ~5000 (40%-60% range)"
             );
         }
     }
@@ -1142,7 +1190,7 @@ mod verification {
         let mut max_hash = 0u64;
 
         for i in 0..10000 {
-            let data = format!("range_test_{}", i);
+            let data = format!("range_test_{i}");
             let digest = Xxh64::digest(0, data.as_bytes());
             let hash = u64::from_le_bytes(digest);
             min_hash = min_hash.min(hash);
@@ -1153,8 +1201,7 @@ mod verification {
         let range = max_hash - min_hash;
         assert!(
             range > u64::MAX / 2,
-            "Hash range {} is too small for a 64-bit hash",
-            range
+            "Hash range {range} is too small for a 64-bit hash"
         );
     }
 }
@@ -1191,7 +1238,8 @@ mod compatibility {
                 let our_digest = Xxh64::digest(seed, input);
                 let reference = xxhash_rust::xxh64::xxh64(input, seed).to_le_bytes();
                 assert_eq!(
-                    our_digest, reference,
+                    our_digest,
+                    reference,
                     "Mismatch for input {:?} with seed {}",
                     String::from_utf8_lossy(input),
                     seed
@@ -1210,8 +1258,7 @@ mod compatibility {
                 let reference = xxhash_rust::xxh64::xxh64(&data, seed).to_le_bytes();
                 assert_eq!(
                     our_digest, reference,
-                    "Mismatch for size {} with seed {}",
-                    size, seed
+                    "Mismatch for size {size} with seed {seed}"
                 );
             }
         }
@@ -1227,7 +1274,7 @@ mod compatibility {
             let our_digest = our_hasher.finalize();
 
             let reference = xxhash_rust::xxh64::xxh64(data, seed).to_le_bytes();
-            assert_eq!(our_digest, reference, "Streaming mismatch for seed {}", seed);
+            assert_eq!(our_digest, reference, "Streaming mismatch for seed {seed}");
         }
     }
 
@@ -1244,9 +1291,13 @@ mod compatibility {
             let digest = Xxh64::digest(seed, data);
             let hash = u64::from_le_bytes(digest);
             assert_eq!(
-                hash, expected_hash,
+                hash,
+                expected_hash,
                 "Regression: seed={}, data={:?}, expected=0x{:016x}, got=0x{:016x}",
-                seed, String::from_utf8_lossy(data), expected_hash, hash
+                seed,
+                String::from_utf8_lossy(data),
+                expected_hash,
+                hash
             );
         }
     }
@@ -1273,9 +1324,11 @@ mod compatibility {
         for (i, (seed, data)) in test_cases.iter().enumerate() {
             let digest = Xxh64::digest(*seed, data);
             assert_eq!(
-                hashes[i], digest,
+                hashes[i],
+                digest,
                 "Hash should be consistent for seed={}, data={:?}",
-                seed, String::from_utf8_lossy(data)
+                seed,
+                String::from_utf8_lossy(data)
             );
         }
     }
@@ -1301,7 +1354,7 @@ mod edge_cases {
             assert_eq!(digest, hasher.finalize());
 
             let expected = xxhash_rust::xxh64::xxh64(&data, 0).to_le_bytes();
-            assert_eq!(digest, expected, "Size {} boundary test failed", size);
+            assert_eq!(digest, expected, "Size {size} boundary test failed");
         }
     }
 
@@ -1311,7 +1364,7 @@ mod edge_cases {
             let data = vec![0xCD; size];
             let digest = Xxh64::digest(0, &data);
             let expected = xxhash_rust::xxh64::xxh64(&data, 0).to_le_bytes();
-            assert_eq!(digest, expected, "Size {} boundary test failed", size);
+            assert_eq!(digest, expected, "Size {size} boundary test failed");
         }
     }
 
@@ -1346,7 +1399,9 @@ mod edge_cases {
 
     #[test]
     fn alternating_patterns() {
-        let alternating: Vec<u8> = (0..1000).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
+        let alternating: Vec<u8> = (0..1000)
+            .map(|i| if i % 2 == 0 { 0xAA } else { 0x55 })
+            .collect();
         let digest = Xxh64::digest(0, &alternating);
         let expected = xxhash_rust::xxh64::xxh64(&alternating, 0).to_le_bytes();
         assert_eq!(digest, expected);
@@ -1379,7 +1434,7 @@ mod edge_cases {
             "Hello, World!",
             "Rust programming",
             "Unicode: \u{1F600} \u{1F389}", // Emojis
-            "\u{4E2D}\u{6587}", // Chinese characters
+            "\u{4E2D}\u{6587}",             // Chinese characters
             "\u{0420}\u{0443}\u{0441}\u{0441}\u{043A}\u{0438}\u{0439}", // Russian
         ];
 
@@ -1387,7 +1442,7 @@ mod edge_cases {
             let bytes = s.as_bytes();
             let digest = Xxh64::digest(0, bytes);
             let expected = xxhash_rust::xxh64::xxh64(bytes, 0).to_le_bytes();
-            assert_eq!(digest, expected, "UTF-8 string {:?} mismatch", s);
+            assert_eq!(digest, expected, "UTF-8 string {s:?} mismatch");
         }
     }
 

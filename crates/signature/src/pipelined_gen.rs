@@ -12,8 +12,8 @@
 
 use std::io::{self, Read};
 
-use checksums::pipelined::{DoubleBufferedReader, PipelineConfig};
 use checksums::RollingDigest;
+use checksums::pipelined::{DoubleBufferedReader, PipelineConfig};
 
 use crate::algorithm::SignatureAlgorithm;
 use crate::block::SignatureBlock;
@@ -22,18 +22,10 @@ use crate::generation::SignatureError;
 use crate::layout::SignatureLayout;
 
 /// Configuration for pipelined signature generation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PipelinedSignatureConfig {
     /// Underlying pipeline configuration.
     pub pipeline: PipelineConfig,
-}
-
-impl Default for PipelinedSignatureConfig {
-    fn default() -> Self {
-        Self {
-            pipeline: PipelineConfig::default(),
-        }
-    }
 }
 
 impl PipelinedSignatureConfig {
@@ -100,10 +92,7 @@ pub fn generate_signature_pipelined<R: Read + Send + 'static>(
     if strong_len > algorithm.digest_len() {
         return Err(SignatureError::DigestLengthMismatch {
             algorithm,
-            requested: layout
-                .strong_sum_length()
-                .try_into()
-                .expect("strong sum length must be non-zero"),
+            requested: layout.strong_sum_length().into(),
         });
     }
 
@@ -173,10 +162,7 @@ pub fn generate_signature_pipelined<R: Read + Send + 'static>(
     if block_index < expected_blocks_usize {
         return Err(SignatureError::Io(io::Error::new(
             io::ErrorKind::UnexpectedEof,
-            format!(
-                "expected {} blocks, got {}",
-                expected_blocks_usize, block_index
-            ),
+            format!("expected {expected_blocks_usize} blocks, got {block_index}"),
         )));
     }
 
@@ -190,7 +176,7 @@ mod tests {
     use checksums::strong::Md5Seed;
     use protocol::ProtocolVersion;
     use std::io::Cursor;
-    use std::num::{NonZeroU32, NonZeroU8};
+    use std::num::{NonZeroU8, NonZeroU32};
 
     fn make_layout(len: u64, block_size: Option<u32>, checksum_len: u8) -> SignatureLayout {
         calculate_signature_layout(SignatureLayoutParams::new(
@@ -282,9 +268,9 @@ mod tests {
             .zip(sig_pipelined.blocks().iter())
             .enumerate()
         {
-            assert_eq!(seq.rolling(), pip.rolling(), "block {} rolling mismatch", i);
-            assert_eq!(seq.strong(), pip.strong(), "block {} strong mismatch", i);
-            assert_eq!(seq.len(), pip.len(), "block {} len mismatch", i);
+            assert_eq!(seq.rolling(), pip.rolling(), "block {i} rolling mismatch");
+            assert_eq!(seq.strong(), pip.strong(), "block {i} strong mismatch");
+            assert_eq!(seq.len(), pip.len(), "block {i} len mismatch");
         }
     }
 

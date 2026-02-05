@@ -283,8 +283,9 @@ fn dir_merge_between_include_exclude() {
         &rules_path,
         "+ *.txt\n\
          : .rsync-filter\n\
-         - *.bak\n"
-    ).unwrap();
+         - *.bak\n",
+    )
+    .unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 3);
@@ -302,8 +303,9 @@ fn multiple_dir_merges_different_files() {
         &rules_path,
         ": .rsync-filter\n\
          : .gitignore\n\
-         : .hgignore\n"
-    ).unwrap();
+         : .hgignore\n",
+    )
+    .unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 3);
@@ -330,8 +332,9 @@ fn dir_merge_and_merge_interleaved() {
              . {}\n\
              : .gitignore\n",
             nested.display()
-        )
-    ).unwrap();
+        ),
+    )
+    .unwrap();
 
     let rules = filters::merge::read_rules_recursive(&rules_path, 10).unwrap();
     assert_eq!(rules.len(), 3);
@@ -349,8 +352,9 @@ fn dir_merge_with_protect_rules() {
         &rules_path,
         "P /important/\n\
          : .rsync-filter\n\
-         R /temp/\n"
-    ).unwrap();
+         R /temp/\n",
+    )
+    .unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 3);
@@ -369,8 +373,9 @@ fn dir_merge_after_clear() {
         "- *.tmp\n\
          !\n\
          : .rsync-filter\n\
-         + *.txt\n"
-    ).unwrap();
+         + *.txt\n",
+    )
+    .unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 4);
@@ -404,10 +409,16 @@ fn dir_merge_modifiers_different_order_same_result() {
 
         let rules = filters::merge::read_rules(&rules_path).unwrap();
         assert_eq!(rules.len(), 1);
-        assert!(rules[0].is_perishable(), "Failed for pattern: {}", pattern);
-        assert!(rules[0].applies_to_sender(), "Failed for pattern: {}", pattern);
-        assert!(!rules[0].applies_to_receiver(), "Failed for pattern: {}", pattern);
-        assert!(rules[0].is_no_inherit(), "Failed for pattern: {}", pattern);
+        assert!(rules[0].is_perishable(), "Failed for pattern: {pattern}");
+        assert!(
+            rules[0].applies_to_sender(),
+            "Failed for pattern: {pattern}"
+        );
+        assert!(
+            !rules[0].applies_to_receiver(),
+            "Failed for pattern: {pattern}"
+        );
+        assert!(rules[0].is_no_inherit(), "Failed for pattern: {pattern}");
     }
 }
 
@@ -526,8 +537,9 @@ fn dir_merge_after_comment_line() {
     fs::write(
         &rules_path,
         "# Comment line\n\
-         : .rsync-filter\n"
-    ).unwrap();
+         : .rsync-filter\n",
+    )
+    .unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
@@ -543,8 +555,9 @@ fn dir_merge_with_empty_lines_around() {
         &rules_path,
         "\n\
          : .rsync-filter\n\
-         \n"
-    ).unwrap();
+         \n",
+    )
+    .unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);

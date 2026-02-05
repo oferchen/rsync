@@ -41,19 +41,18 @@ mod state;
 mod trace;
 mod write;
 
+pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_SAME_RDEV_PRE28};
 pub use hardlink::{DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable};
+pub use incremental::{
+    IncrementalFileList, IncrementalFileListBuilder, IncrementalFileListIter, StreamingFileList,
+};
 pub use read::{FileListReader, read_file_entry};
 pub use sort::{
     CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
 };
 pub use state::{FileListCompressionState, FileListStats};
-pub use write::{FileListWriter, write_file_entry};
-pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
-pub use incremental::{
-    IncrementalFileList, IncrementalFileListBuilder, IncrementalFileListIter, StreamingFileList,
-};
 pub use trace::{
     ProcessRole, output_flist, output_flist_entry, trace_clean_result, trace_file_count_progress,
     trace_file_list_stats, trace_files_to_consider, trace_flist_eof, trace_flist_expand,
@@ -61,3 +60,4 @@ pub use trace::{
     trace_receiving_flist_for_dir, trace_recv_file_list_done, trace_send_file_list_done,
     trace_sort_start, trace_struct_sizes, trace_write_entry,
 };
+pub use write::{FileListWriter, write_file_entry};

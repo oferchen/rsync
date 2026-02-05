@@ -58,7 +58,7 @@ impl TestFileEntry {
         Self {
             name: name.into(),
             size,
-            mode: 0o100644, // regular file with rw-r--r--
+            mode: 0o100644,    // regular file with rw-r--r--
             mtime: 1704067200, // 2024-01-01 00:00:00 UTC
             is_dir: false,
             link_target: None,
@@ -250,17 +250,12 @@ impl WireFormatGenerator {
     /// Calculates the common prefix length between current and previous name.
     fn calculate_same_len(&self, name: &[u8]) -> usize {
         let max_len = std::cmp::min(255, std::cmp::min(name.len(), self.prev_name.len()));
-        let mut same_len = 0;
 
-        for i in 0..max_len {
-            if name[i] == self.prev_name[i] {
-                same_len += 1;
-            } else {
-                break;
-            }
-        }
-
-        same_len
+        name.iter()
+            .zip(self.prev_name.iter())
+            .take(max_len)
+            .take_while(|(a, b)| a == b)
+            .count()
     }
 
     /// Writes a varint (variable-length integer).
@@ -312,7 +307,7 @@ pub fn generate_flat_directory(num_files: usize) -> Vec<u8> {
     let mut writer = WireFormatGenerator::with_defaults();
 
     for i in 0..num_files {
-        let entry = TestFileEntry::file(format!("file{:04}.txt", i), 100 + i as u64);
+        let entry = TestFileEntry::file(format!("file{i:04}.txt"), 100 + i as u64);
         writer.write_entry(&entry).expect("write entry");
     }
 
@@ -330,14 +325,14 @@ pub fn generate_nested_directories(depth: usize, files_per_dir: usize) -> Vec<u8
         if d > 0 {
             path.push('/');
         }
-        path.push_str(&format!("dir{}", d));
+        path.push_str(&format!("dir{d}"));
 
         let dir_entry = TestFileEntry::dir(&path);
         writer.write_entry(&dir_entry).expect("write dir");
 
         // Write files in this directory
         for f in 0..files_per_dir {
-            let file_path = format!("{}/file{}.txt", path, f);
+            let file_path = format!("{path}/file{f}.txt");
             let file_entry = TestFileEntry::file(file_path, 100);
             writer.write_entry(&file_entry).expect("write file");
         }
@@ -352,15 +347,18 @@ pub fn generate_out_of_order_entries() -> Vec<u8> {
     let mut writer = WireFormatGenerator::with_defaults();
 
     // File in subdirectory (child) - written before parent
-    writer.write_entry(&TestFileEntry::file("parent/child/file.txt", 100))
+    writer
+        .write_entry(&TestFileEntry::file("parent/child/file.txt", 100))
         .expect("write file");
 
     // Parent directory - written after child
-    writer.write_entry(&TestFileEntry::dir("parent"))
+    writer
+        .write_entry(&TestFileEntry::dir("parent"))
         .expect("write parent");
 
     // Another file at root level
-    writer.write_entry(&TestFileEntry::file("root_file.txt", 200))
+    writer
+        .write_entry(&TestFileEntry::file("root_file.txt", 200))
         .expect("write root file");
 
     writer.write_end_marker().expect("write end marker");

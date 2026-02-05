@@ -26,8 +26,6 @@
 //! tracing::debug!(target: "rsync::delta", "computing delta");
 //! ```
 
-#![cfg(feature = "tracing")]
-
 use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
 use super::thread_local::{debug_gte, emit_debug, emit_info, info_gte};
@@ -56,8 +54,16 @@ impl RsyncLayer {
         // Match against rsync module paths - look for :: separator or exact word match
         match target {
             t if t.contains("::copy") || t == "copy" => Some(InfoFlag::Copy),
-            t if t.contains("::del") || t.contains("::delete") || t == "del" || t == "delete" => Some(InfoFlag::Del),
-            t if t.contains("::flist") || t.contains("::file_list") || t == "flist" || t == "file_list" => Some(InfoFlag::Flist),
+            t if t.contains("::del") || t.contains("::delete") || t == "del" || t == "delete" => {
+                Some(InfoFlag::Del)
+            }
+            t if t.contains("::flist")
+                || t.contains("::file_list")
+                || t == "flist"
+                || t == "file_list" =>
+            {
+                Some(InfoFlag::Flist)
+            }
             t if t.contains("::misc") || t == "misc" => Some(InfoFlag::Misc),
             t if t.contains("::mount") || t == "mount" => Some(InfoFlag::Mount),
             t if t.contains("::name") || t == "name" => Some(InfoFlag::Name),
@@ -84,23 +90,69 @@ impl RsyncLayer {
             t if t.contains("::connect") || t == "connect" => Some(DebugFlag::Connect),
             t if t.contains("::cmd") || t == "cmd" => Some(DebugFlag::Cmd),
             // Check deltasum before del to avoid false matches
-            t if t.contains("::deltasum") || t.contains("::delta") || t == "deltasum" || t == "delta" => Some(DebugFlag::Deltasum),
-            t if t.contains("::del") || t.contains("::delete") || t == "del" || t == "delete" => Some(DebugFlag::Del),
+            t if t.contains("::deltasum")
+                || t.contains("::delta")
+                || t == "deltasum"
+                || t == "delta" =>
+            {
+                Some(DebugFlag::Deltasum)
+            }
+            t if t.contains("::del") || t.contains("::delete") || t == "del" || t == "delete" => {
+                Some(DebugFlag::Del)
+            }
             t if t.contains("::dup") || t == "dup" => Some(DebugFlag::Dup),
             t if t.contains("::exit") || t == "exit" => Some(DebugFlag::Exit),
             t if t.contains("::filter") || t == "filter" => Some(DebugFlag::Filter),
-            t if t.contains("::flist") || t.contains("::file_list") || t == "flist" || t == "file_list" => Some(DebugFlag::Flist),
+            t if t.contains("::flist")
+                || t.contains("::file_list")
+                || t == "flist"
+                || t == "file_list" =>
+            {
+                Some(DebugFlag::Flist)
+            }
             t if t.contains("::fuzzy") || t == "fuzzy" => Some(DebugFlag::Fuzzy),
-            t if t.contains("::genr") || t.contains("::generator") || t == "genr" || t == "generator" => Some(DebugFlag::Genr),
+            t if t.contains("::genr")
+                || t.contains("::generator")
+                || t == "genr"
+                || t == "generator" =>
+            {
+                Some(DebugFlag::Genr)
+            }
             t if t.contains("::hash") || t == "hash" => Some(DebugFlag::Hash),
-            t if t.contains("::hlink") || t.contains("::hardlink") || t == "hlink" || t == "hardlink" => Some(DebugFlag::Hlink),
+            t if t.contains("::hlink")
+                || t.contains("::hardlink")
+                || t == "hlink"
+                || t == "hardlink" =>
+            {
+                Some(DebugFlag::Hlink)
+            }
             t if t.contains("::iconv") || t == "iconv" => Some(DebugFlag::Iconv),
             t if t.contains("::io") || t == "io" => Some(DebugFlag::Io),
             t if t.contains("::nstr") || t == "nstr" => Some(DebugFlag::Nstr),
-            t if t.contains("::own") || t.contains("::ownership") || t == "own" || t == "ownership" => Some(DebugFlag::Own),
-            t if t.contains("::proto") || t.contains("::protocol") || t == "proto" || t == "protocol" => Some(DebugFlag::Proto),
-            t if t.contains("::recv") || t.contains("::receiver") || t == "recv" || t == "receiver" => Some(DebugFlag::Recv),
-            t if t.contains("::send") || t.contains("::sender") || t == "send" || t == "sender" => Some(DebugFlag::Send),
+            t if t.contains("::own")
+                || t.contains("::ownership")
+                || t == "own"
+                || t == "ownership" =>
+            {
+                Some(DebugFlag::Own)
+            }
+            t if t.contains("::proto")
+                || t.contains("::protocol")
+                || t == "proto"
+                || t == "protocol" =>
+            {
+                Some(DebugFlag::Proto)
+            }
+            t if t.contains("::recv")
+                || t.contains("::receiver")
+                || t == "recv"
+                || t == "receiver" =>
+            {
+                Some(DebugFlag::Recv)
+            }
+            t if t.contains("::send") || t.contains("::sender") || t == "send" || t == "sender" => {
+                Some(DebugFlag::Send)
+            }
             t if t.contains("::time") || t == "time" => Some(DebugFlag::Time),
             _ => None,
         }

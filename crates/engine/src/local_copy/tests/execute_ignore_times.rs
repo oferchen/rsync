@@ -573,9 +573,9 @@ fn ignore_times_recursive_transfers_all_files() {
 
     // Create multiple files with matching timestamps and sizes
     for i in 1..=5 {
-        let filename = format!("file{}.txt", i);
-        let content_source = format!("source content {}", i);
-        let content_dest = format!("dest content!! {}", i); // Same length
+        let filename = format!("file{i}.txt");
+        let content_source = format!("source content {i}");
+        let content_dest = format!("dest content!! {i}"); // Same length
 
         fs::write(source_root.join(&filename), content_source.as_bytes())
             .expect("write source file");
@@ -607,8 +607,8 @@ fn ignore_times_recursive_transfers_all_files() {
 
     // Verify all files have source content
     for i in 1..=5 {
-        let filename = format!("file{}.txt", i);
-        let expected = format!("source content {}", i);
+        let filename = format!("file{i}.txt");
+        let expected = format!("source content {i}");
         assert_eq!(
             fs::read(dest_root.join(&filename)).expect("read file"),
             expected.as_bytes()

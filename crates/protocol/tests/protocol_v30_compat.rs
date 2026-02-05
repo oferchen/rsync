@@ -28,11 +28,11 @@
 //! - `flist.c`: File list encoding changes
 //! - `io.c`: Protocol I/O and varint encoding
 
-use protocol::{
-    ChecksumAlgorithm, CompressionAlgorithm, CompatibilityFlags, KnownCompatibilityFlag, ProtocolVersion, ProtocolVersionAdvertisement,
-    negotiate_capabilities, select_highest_mutual,
-};
 use protocol::codec::create_protocol_codec;
+use protocol::{
+    ChecksumAlgorithm, CompatibilityFlags, CompressionAlgorithm, KnownCompatibilityFlag,
+    ProtocolVersion, ProtocolVersionAdvertisement, negotiate_capabilities, select_highest_mutual,
+};
 
 /// Helper wrapper for testing protocol version advertisement.
 #[derive(Clone, Copy, Debug)]
@@ -58,8 +58,7 @@ mod protocol_30_handshake {
         let result = select_highest_mutual([TestVersion(30)]);
         assert!(
             result.is_ok(),
-            "Protocol 30 negotiation must succeed: {:?}",
-            result
+            "Protocol 30 negotiation must succeed: {result:?}"
         );
         assert_eq!(result.unwrap().as_u8(), 30);
     }
@@ -100,10 +99,7 @@ mod protocol_30_handshake {
     #[test]
     fn version_30_from_peer_advertisement_succeeds() {
         let result = ProtocolVersion::from_peer_advertisement(30);
-        assert!(
-            result.is_ok(),
-            "from_peer_advertisement(30) should succeed"
-        );
+        assert!(result.is_ok(), "from_peer_advertisement(30) should succeed");
         assert_eq!(result.unwrap(), ProtocolVersion::V30);
     }
 
@@ -125,15 +121,18 @@ mod protocol_30_handshake {
     #[test]
     fn version_30_display_formatting() {
         let version = ProtocolVersion::V30;
-        let display = format!("{}", version);
-        assert!(display.contains("30"), "Display should include version number");
+        let display = format!("{version}");
+        assert!(
+            display.contains("30"),
+            "Display should include version number"
+        );
     }
 
     /// Protocol 30 Debug formatting works.
     #[test]
     fn version_30_debug_formatting() {
         let version = ProtocolVersion::V30;
-        let debug = format!("{:?}", version);
+        let debug = format!("{version:?}");
         assert!(debug.contains("30"), "Debug should include version number");
     }
 }
@@ -184,10 +183,7 @@ mod protocol_30_binary_negotiation {
         assert!(v30.uses_binary_negotiation());
 
         // They should differ
-        assert_ne!(
-            v28.uses_binary_negotiation(),
-            v30.uses_binary_negotiation()
-        );
+        assert_ne!(v28.uses_binary_negotiation(), v30.uses_binary_negotiation());
     }
 
     /// Protocol 30 codec is modern, not legacy.
@@ -373,8 +369,7 @@ mod protocol_30_capability_negotiation {
 
         assert!(
             result.is_ok(),
-            "Protocol 30 capability negotiation should succeed: {:?}",
-            result
+            "Protocol 30 capability negotiation should succeed: {result:?}"
         );
 
         let negotiated = result.unwrap();
@@ -393,28 +388,15 @@ mod protocol_30_capability_negotiation {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            true,
-            false,
-            true,
-        );
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
         assert!(result.is_ok());
-        assert!(
-            !stdout.is_empty(),
-            "Should send capability lists for v30"
-        );
+        assert!(!stdout.is_empty(), "Should send capability lists for v30");
 
         // Output should contain varint-encoded strings
         // First byte is varint length of checksum list
-        assert!(
-            stdout[0] > 0,
-            "First byte should be non-zero varint length"
-        );
+        assert!(stdout[0] > 0, "First byte should be non-zero varint length");
     }
 
     /// Protocol 30 negotiation differs from v28/v29 defaults.
@@ -479,21 +461,12 @@ mod protocol_30_capability_negotiation {
             let mut stdin = client_response;
             let mut stdout = Vec::new();
 
-            let result = negotiate_capabilities(
-                protocol,
-                &mut stdin,
-                &mut stdout,
-                true,
-                true,
-                false,
-                true,
-            );
+            let result =
+                negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
             assert!(
                 result.is_ok(),
-                "Should support {:?}: {:?}",
-                expected_checksum,
-                result
+                "Should support {expected_checksum:?}: {result:?}"
             );
             assert_eq!(result.unwrap().checksum, expected_checksum);
         }
@@ -513,21 +486,12 @@ mod protocol_30_capability_negotiation {
             let mut stdin = client_response;
             let mut stdout = Vec::new();
 
-            let result = negotiate_capabilities(
-                protocol,
-                &mut stdin,
-                &mut stdout,
-                true,
-                true,
-                false,
-                true,
-            );
+            let result =
+                negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
             assert!(
                 result.is_ok(),
-                "Should support {:?}: {:?}",
-                expected_compression,
-                result
+                "Should support {expected_compression:?}: {result:?}"
             );
             assert_eq!(result.unwrap().compression, expected_compression);
         }
@@ -574,11 +538,7 @@ mod protocol_30_capability_negotiation {
             true,
         );
 
-        assert!(
-            result.is_ok(),
-            "Should fall back gracefully: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "Should fall back gracefully: {result:?}");
 
         // Should use MD5 default and None compression
         let negotiated = result.unwrap();
@@ -653,7 +613,7 @@ mod protocol_30_incremental_recursion {
     #[test]
     fn version_30_inc_recurse_flag_display() {
         let flag = KnownCompatibilityFlag::IncRecurse;
-        let display = format!("{}", flag);
+        let display = format!("{flag}");
         assert!(
             display.contains("IncRecurse") || display.contains("INC_RECURSE"),
             "Display should show flag name"
@@ -682,7 +642,10 @@ mod protocol_30_incremental_recursion {
         );
 
         assert!(result.is_ok());
-        assert!(!stdout.is_empty(), "Should send lists with VARINT_FLIST_FLAGS");
+        assert!(
+            !stdout.is_empty(),
+            "Should send lists with VARINT_FLIST_FLAGS"
+        );
     }
 
     /// Protocol 30 SAFE_FILE_LIST flag is supported.
@@ -744,11 +707,7 @@ mod protocol_30_backward_compatibility {
     /// Protocol 30 is selected over v28 and v29 when all are available.
     #[test]
     fn version_30_preferred_over_legacy() {
-        let result = select_highest_mutual([
-            TestVersion(28),
-            TestVersion(29),
-            TestVersion(30),
-        ]);
+        let result = select_highest_mutual([TestVersion(28), TestVersion(29), TestVersion(30)]);
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap().as_u8(),
@@ -769,10 +728,7 @@ mod protocol_30_backward_compatibility {
             v29.supports_sender_receiver_modifiers()
         );
         assert_eq!(v30.supports_flist_times(), v29.supports_flist_times());
-        assert_eq!(
-            v30.supports_extended_flags(),
-            v29.supports_extended_flags()
-        );
+        assert_eq!(v30.supports_extended_flags(), v29.supports_extended_flags());
 
         // v30 adds new features
         assert!(v30.uses_binary_negotiation());
@@ -793,11 +749,7 @@ mod protocol_30_backward_compatibility {
 
         for &version in &versions {
             let result = select_highest_mutual([TestVersion(version)]);
-            assert!(
-                result.is_ok(),
-                "Version {} should be negotiable",
-                version
-            );
+            assert!(result.is_ok(), "Version {version} should be negotiable");
         }
     }
 
@@ -805,19 +757,11 @@ mod protocol_30_backward_compatibility {
     #[test]
     fn version_30_mixed_version_negotiation() {
         // Peer advertises v30 first, then legacy versions
-        let result = select_highest_mutual([
-            TestVersion(30),
-            TestVersion(29),
-            TestVersion(28),
-        ]);
+        let result = select_highest_mutual([TestVersion(30), TestVersion(29), TestVersion(28)]);
         assert_eq!(result.unwrap().as_u8(), 30);
 
         // Legacy versions first, then v30
-        let result = select_highest_mutual([
-            TestVersion(28),
-            TestVersion(29),
-            TestVersion(30),
-        ]);
+        let result = select_highest_mutual([TestVersion(28), TestVersion(29), TestVersion(30)]);
         assert_eq!(result.unwrap().as_u8(), 30);
     }
 }
@@ -839,15 +783,8 @@ mod protocol_30_edge_cases {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            true,
-            false,
-            true,
-        );
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
         // Should fall back to MD5 when client sends unknown checksum
         assert!(result.is_ok(), "Should fall back to default");
@@ -889,15 +826,8 @@ mod protocol_30_edge_cases {
         let mut stdin = &truncated[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            false,
-            false,
-            true,
-        );
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, true);
 
         // Should fail with UnexpectedEof
         assert!(result.is_err());
@@ -961,15 +891,8 @@ mod protocol_30_integration {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let capabilities = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            true,
-            false,
-            true,
-        );
+        let capabilities =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
         assert!(capabilities.is_ok());
         let caps = capabilities.unwrap();
@@ -1001,15 +924,8 @@ mod protocol_30_integration {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let capabilities = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            true,
-            false,
-            true,
-        );
+        let capabilities =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
         assert!(capabilities.is_ok());
     }
@@ -1032,15 +948,8 @@ mod protocol_30_integration {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            true,
-            false,
-            true,
-        );
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
         assert!(result.is_ok());
         let caps = result.unwrap();

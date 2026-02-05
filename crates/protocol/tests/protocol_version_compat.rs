@@ -22,14 +22,10 @@
 //!
 //! Protocol details are based on rsync 3.4.1 source code.
 
+use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{
-    CompatibilityFlags, NegotiationError, ProtocolVersion,
-    ProtocolVersionAdvertisement, SUPPORTED_PROTOCOLS, format_legacy_daemon_greeting,
-    select_highest_mutual,
-};
-use protocol::codec::{
-    NdxCodec, ProtocolCodec,
-    create_ndx_codec, create_protocol_codec,
+    CompatibilityFlags, NegotiationError, ProtocolVersion, ProtocolVersionAdvertisement,
+    SUPPORTED_PROTOCOLS, format_legacy_daemon_greeting, select_highest_mutual,
 };
 use std::io::Cursor;
 
@@ -1055,7 +1051,10 @@ mod cross_version_compatibility {
                 let mut cursor = Cursor::new(&buf);
                 let read = codec.read_file_size(&mut cursor).unwrap();
 
-                assert_eq!(read, size, "v{version} file_size roundtrip failed for {size}");
+                assert_eq!(
+                    read, size,
+                    "v{version} file_size roundtrip failed for {size}"
+                );
             }
         }
     }
@@ -1080,7 +1079,10 @@ mod cross_version_compatibility {
 
             for &expected in &test_indices {
                 let read = read_codec.read_ndx(&mut cursor).unwrap();
-                assert_eq!(read, expected, "v{version} ndx roundtrip failed for {expected}");
+                assert_eq!(
+                    read, expected,
+                    "v{version} ndx roundtrip failed for {expected}"
+                );
             }
         }
     }
@@ -1231,7 +1233,7 @@ mod wire_format_verification {
         for (flag, expected) in test_cases {
             let mut buf = Vec::new();
             flag.encode_to_vec(&mut buf).unwrap();
-            assert_eq!(buf, expected, "Flag {:?} wire format mismatch", flag);
+            assert_eq!(buf, expected, "Flag {flag:?} wire format mismatch");
         }
     }
 }
@@ -1323,16 +1325,40 @@ mod version_iteration {
 
     #[test]
     fn version_navigation() {
-        assert_eq!(ProtocolVersion::V28.next_newer(), Some(ProtocolVersion::V29));
-        assert_eq!(ProtocolVersion::V29.next_newer(), Some(ProtocolVersion::V30));
-        assert_eq!(ProtocolVersion::V30.next_newer(), Some(ProtocolVersion::V31));
-        assert_eq!(ProtocolVersion::V31.next_newer(), Some(ProtocolVersion::V32));
+        assert_eq!(
+            ProtocolVersion::V28.next_newer(),
+            Some(ProtocolVersion::V29)
+        );
+        assert_eq!(
+            ProtocolVersion::V29.next_newer(),
+            Some(ProtocolVersion::V30)
+        );
+        assert_eq!(
+            ProtocolVersion::V30.next_newer(),
+            Some(ProtocolVersion::V31)
+        );
+        assert_eq!(
+            ProtocolVersion::V31.next_newer(),
+            Some(ProtocolVersion::V32)
+        );
         assert_eq!(ProtocolVersion::V32.next_newer(), None);
 
-        assert_eq!(ProtocolVersion::V32.next_older(), Some(ProtocolVersion::V31));
-        assert_eq!(ProtocolVersion::V31.next_older(), Some(ProtocolVersion::V30));
-        assert_eq!(ProtocolVersion::V30.next_older(), Some(ProtocolVersion::V29));
-        assert_eq!(ProtocolVersion::V29.next_older(), Some(ProtocolVersion::V28));
+        assert_eq!(
+            ProtocolVersion::V32.next_older(),
+            Some(ProtocolVersion::V31)
+        );
+        assert_eq!(
+            ProtocolVersion::V31.next_older(),
+            Some(ProtocolVersion::V30)
+        );
+        assert_eq!(
+            ProtocolVersion::V30.next_older(),
+            Some(ProtocolVersion::V29)
+        );
+        assert_eq!(
+            ProtocolVersion::V29.next_older(),
+            Some(ProtocolVersion::V28)
+        );
         assert_eq!(ProtocolVersion::V28.next_older(), None);
     }
 

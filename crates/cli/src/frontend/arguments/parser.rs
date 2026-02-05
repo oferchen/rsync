@@ -57,9 +57,10 @@ where
                 Some(existing) => {
                     // Use the higher level
                     match (existing, level) {
-                        (HumanReadableMode::Disabled, other) | (other, HumanReadableMode::Disabled) => other,
-                        (HumanReadableMode::Enabled, HumanReadableMode::Combined) |
-                        (HumanReadableMode::Combined, _) => HumanReadableMode::Combined,
+                        (HumanReadableMode::Disabled, other)
+                        | (other, HumanReadableMode::Disabled) => other,
+                        (HumanReadableMode::Enabled, HumanReadableMode::Combined)
+                        | (HumanReadableMode::Combined, _) => HumanReadableMode::Combined,
                         _ => existing,
                     }
                 }

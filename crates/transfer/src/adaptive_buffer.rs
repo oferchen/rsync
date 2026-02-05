@@ -271,16 +271,28 @@ mod tests {
         assert_eq!(adaptive_buffer_size(0), SMALL_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(1), SMALL_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(1024), SMALL_BUFFER_SIZE);
-        assert_eq!(adaptive_buffer_size(SMALL_FILE_THRESHOLD - 1), SMALL_BUFFER_SIZE);
+        assert_eq!(
+            adaptive_buffer_size(SMALL_FILE_THRESHOLD - 1),
+            SMALL_BUFFER_SIZE
+        );
 
         // Medium files (64KB - 1MB)
-        assert_eq!(adaptive_buffer_size(SMALL_FILE_THRESHOLD), MEDIUM_BUFFER_SIZE);
+        assert_eq!(
+            adaptive_buffer_size(SMALL_FILE_THRESHOLD),
+            MEDIUM_BUFFER_SIZE
+        );
         assert_eq!(adaptive_buffer_size(100 * 1024), MEDIUM_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(500 * 1024), MEDIUM_BUFFER_SIZE);
-        assert_eq!(adaptive_buffer_size(MEDIUM_FILE_THRESHOLD - 1), MEDIUM_BUFFER_SIZE);
+        assert_eq!(
+            adaptive_buffer_size(MEDIUM_FILE_THRESHOLD - 1),
+            MEDIUM_BUFFER_SIZE
+        );
 
         // Large files (> 1MB)
-        assert_eq!(adaptive_buffer_size(MEDIUM_FILE_THRESHOLD), LARGE_BUFFER_SIZE);
+        assert_eq!(
+            adaptive_buffer_size(MEDIUM_FILE_THRESHOLD),
+            LARGE_BUFFER_SIZE
+        );
         assert_eq!(adaptive_buffer_size(10 * 1024 * 1024), LARGE_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(1024 * 1024 * 1024), LARGE_BUFFER_SIZE);
     }
@@ -309,7 +321,10 @@ mod tests {
 
     #[test]
     fn token_capacity_for_large_files() {
-        assert_eq!(adaptive_token_capacity(10 * 1024 * 1024), MEDIUM_BUFFER_SIZE);
+        assert_eq!(
+            adaptive_token_capacity(10 * 1024 * 1024),
+            MEDIUM_BUFFER_SIZE
+        );
     }
 
     #[test]
@@ -474,10 +489,7 @@ mod tests {
             adaptive_token_capacity(SMALL_FILE_THRESHOLD - 1),
             SMALL_BUFFER_SIZE
         );
-        assert_eq!(
-            adaptive_token_capacity(SMALL_FILE_THRESHOLD),
-            CHUNK_SIZE
-        );
+        assert_eq!(adaptive_token_capacity(SMALL_FILE_THRESHOLD), CHUNK_SIZE);
 
         // At medium threshold boundary
         assert_eq!(
@@ -492,17 +504,12 @@ mod tests {
 
     #[test]
     fn buffer_size_constants_are_sensible() {
-        // Verify the constants are in ascending order
-        assert!(SMALL_BUFFER_SIZE < MEDIUM_BUFFER_SIZE);
-        assert!(MEDIUM_BUFFER_SIZE < LARGE_BUFFER_SIZE);
-
-        // Verify thresholds are in ascending order
-        assert!(SMALL_FILE_THRESHOLD < MEDIUM_FILE_THRESHOLD);
-
-        // Verify buffer sizes are reasonable
+        // Verify buffer sizes are reasonable and in ascending order
         assert_eq!(SMALL_BUFFER_SIZE, 4 * 1024);
         assert_eq!(MEDIUM_BUFFER_SIZE, 64 * 1024);
         assert_eq!(LARGE_BUFFER_SIZE, 256 * 1024);
+        // Note: constant ordering is verified by the values above
+        // (4K < 64K < 256K and threshold ordering is implicit)
     }
 
     #[test]

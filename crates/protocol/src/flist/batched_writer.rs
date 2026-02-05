@@ -27,7 +27,7 @@
 //!
 //! // Add entries - they're accumulated in a batch
 //! let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
-//! batched.add_entry(&entry)?;
+//! batched.add_entry(&mut writer, &entry)?;
 //!
 //! // Entries are written when batch is full or on explicit flush
 //! batched.flush(&mut writer)?;
@@ -435,7 +435,11 @@ impl BatchedFileListWriter {
     }
 
     /// Internal flush with reason tracking for statistics.
-    fn flush_with_reason<W: Write>(&mut self, writer: &mut W, reason: FlushReason) -> io::Result<()> {
+    fn flush_with_reason<W: Write>(
+        &mut self,
+        writer: &mut W,
+        reason: FlushReason,
+    ) -> io::Result<()> {
         if self.buffer.is_empty() {
             return Ok(());
         }
@@ -558,10 +562,8 @@ mod tests {
 
     #[test]
     fn add_entry_accumulates_in_buffer() {
-        let mut writer = BatchedFileListWriter::with_config(
-            test_protocol(),
-            BatchConfig::no_auto_flush(),
-        );
+        let mut writer =
+            BatchedFileListWriter::with_config(test_protocol(), BatchConfig::no_auto_flush());
         let mut output = Vec::new();
 
         let entry1 = FileEntry::new_file("test1.txt".into(), 100, 0o644);
@@ -578,10 +580,8 @@ mod tests {
 
     #[test]
     fn explicit_flush_writes_to_output() {
-        let mut writer = BatchedFileListWriter::with_config(
-            test_protocol(),
-            BatchConfig::no_auto_flush(),
-        );
+        let mut writer =
+            BatchedFileListWriter::with_config(test_protocol(), BatchConfig::no_auto_flush());
         let mut output = Vec::new();
 
         let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
@@ -618,9 +618,7 @@ mod tests {
     #[test]
     fn auto_flush_on_byte_size() {
         // Use a very small max_bytes to trigger byte-based flush
-        let config = BatchConfig::new()
-            .with_max_entries(1000)
-            .with_max_bytes(50);
+        let config = BatchConfig::new().with_max_entries(1000).with_max_bytes(50);
         let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
         let mut output = Vec::new();
 
@@ -640,10 +638,8 @@ mod tests {
 
     #[test]
     fn finish_flushes_remaining_and_writes_end() {
-        let mut writer = BatchedFileListWriter::with_config(
-            test_protocol(),
-            BatchConfig::no_auto_flush(),
-        );
+        let mut writer =
+            BatchedFileListWriter::with_config(test_protocol(), BatchConfig::no_auto_flush());
         let mut output = Vec::new();
 
         let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
@@ -705,7 +701,8 @@ mod tests {
         // Write entries
         let entries: Vec<FileEntry> = (0..5)
             .map(|i| {
-                let mut entry = FileEntry::new_file(format!("file{i}.txt").into(), 100 * i as u64, 0o644);
+                let mut entry =
+                    FileEntry::new_file(format!("file{i}.txt").into(), 100 * i as u64, 0o644);
                 entry.set_mtime(1700000000 + i as i64, 0);
                 entry
             })
@@ -850,8 +847,8 @@ mod tests {
         // Test with a precisely controlled byte limit to verify deterministic behavior
         // Use very small max_bytes that will be exceeded by entries with longer names
         let config = BatchConfig::new()
-            .with_max_entries(1000)  // High entry limit - won't trigger
-            .with_max_bytes(30);      // Very small byte limit - will trigger
+            .with_max_entries(1000) // High entry limit - won't trigger
+            .with_max_bytes(30); // Very small byte limit - will trigger
         let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
         let mut output = Vec::new();
 
@@ -880,9 +877,7 @@ mod tests {
     fn large_entry_exceeding_buffer_size() {
         // Test that a single entry larger than max_bytes is handled correctly
         // The entry should still be written (triggering immediate flush after being added)
-        let config = BatchConfig::new()
-            .with_max_entries(1000)
-            .with_max_bytes(10);  // Very small buffer - smaller than any real entry
+        let config = BatchConfig::new().with_max_entries(1000).with_max_bytes(10); // Very small buffer - smaller than any real entry
         let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
         let mut output = Vec::new();
 
@@ -899,7 +894,10 @@ mod tests {
 
         assert!(flushed, "Large entry should trigger immediate flush");
         assert!(writer.is_empty(), "Buffer should be empty after flush");
-        assert!(!output.is_empty(), "Output should contain the flushed entry");
+        assert!(
+            !output.is_empty(),
+            "Output should contain the flushed entry"
+        );
         assert_eq!(writer.stats().entries_written, 1);
         assert_eq!(writer.stats().batches_flushed, 1);
         assert_eq!(writer.stats().flushes_by_size, 1);
@@ -909,9 +907,7 @@ mod tests {
     fn multiple_large_entries_each_triggers_flush() {
         // Each entry should trigger its own flush when it exceeds the buffer
         // Use a buffer size of 10 bytes, which is smaller than any encoded entry
-        let config = BatchConfig::new()
-            .with_max_entries(1000)
-            .with_max_bytes(10);  // Very small buffer - smaller than any real entry
+        let config = BatchConfig::new().with_max_entries(1000).with_max_bytes(10); // Very small buffer - smaller than any real entry
         let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
         let mut output = Vec::new();
 
@@ -936,8 +932,8 @@ mod tests {
     fn stats_track_flushes_by_size_correctly() {
         // Test that flushes_by_size is incremented correctly and separately from other flush types
         let config = BatchConfig::new()
-            .with_max_entries(100)   // Won't trigger entry count flush
-            .with_max_bytes(50);     // Will trigger byte size flush
+            .with_max_entries(100) // Won't trigger entry count flush
+            .with_max_bytes(50); // Will trigger byte size flush
         let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
         let mut output = Vec::new();
 
@@ -969,8 +965,8 @@ mod tests {
     fn mixed_flush_types_tracked_separately() {
         // Test that different flush types are tracked independently
         let config = BatchConfig::new()
-            .with_max_entries(2)     // Low entry count to trigger count-based flush
-            .with_max_bytes(1000);   // High enough to not trigger size-based flush normally
+            .with_max_entries(2) // Low entry count to trigger count-based flush
+            .with_max_bytes(1000); // High enough to not trigger size-based flush normally
         let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
         let mut output = Vec::new();
 

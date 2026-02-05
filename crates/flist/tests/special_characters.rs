@@ -645,10 +645,7 @@ fn multiple_control_characters() {
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
-    create_test_file(
-        &root,
-        OsStr::from_bytes(b"file\x01\x02\x03\x04\x05.txt"),
-    );
+    create_test_file(&root, OsStr::from_bytes(b"file\x01\x02\x03\x04\x05.txt"));
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
     let paths = collect_relative_paths(walker);
@@ -1218,7 +1215,9 @@ fn deeply_nested_special_characters() {
     let paths = collect_relative_paths(walker);
 
     assert_eq!(paths.len(), 4);
-    assert!(paths.contains(&PathBuf::from("dir with space/dir'quote/dir*glob/deep file.txt")));
+    assert!(paths.contains(&PathBuf::from(
+        "dir with space/dir'quote/dir*glob/deep file.txt"
+    )));
 }
 
 /// Tests entry metadata access with special character filenames.

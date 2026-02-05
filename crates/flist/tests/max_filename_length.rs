@@ -77,7 +77,7 @@ fn file_with_255_byte_name() {
     // Create filename that is exactly 255 bytes
     let filename = create_max_length_filename(MAX_FILENAME_BYTES, ".txt");
     assert_eq!(
-        filename.as_bytes().len(),
+        filename.len(),
         MAX_FILENAME_BYTES,
         "filename should be exactly 255 bytes"
     );
@@ -126,19 +126,14 @@ fn multiple_files_with_max_length_names() {
         let walker = FileListBuilder::new(&root).build().expect("build walker");
         let paths = collect_relative_paths(walker);
 
-        assert_eq!(
-            paths.len(),
-            created_count,
-            "should find all created files"
-        );
+        assert_eq!(paths.len(), created_count, "should find all created files");
 
         // Verify all created files are found
         for filename in &filenames {
             if root.join(filename).exists() {
                 assert!(
                     paths.contains(&PathBuf::from(filename)),
-                    "should find file with max-length name: {}",
-                    filename
+                    "should find file with max-length name: {filename}"
                 );
             }
         }
@@ -161,7 +156,7 @@ fn file_with_254_byte_name() {
     fs::create_dir(&root).expect("create root");
 
     let filename = create_max_length_filename(254, ".txt");
-    assert_eq!(filename.as_bytes().len(), 254);
+    assert_eq!(filename.len(), 254);
 
     fs::write(root.join(&filename), b"content").expect("create file");
 
@@ -249,7 +244,7 @@ fn directory_with_255_byte_name() {
     fs::create_dir(&root).expect("create root");
 
     let dirname = create_max_length_filename(MAX_FILENAME_BYTES, "_dir");
-    assert_eq!(dirname.as_bytes().len(), MAX_FILENAME_BYTES);
+    assert_eq!(dirname.len(), MAX_FILENAME_BYTES);
 
     if try_create_dir(&root, &dirname) {
         let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -259,9 +254,8 @@ fn directory_with_255_byte_name() {
         assert_eq!(paths[0], PathBuf::from(&dirname));
 
         // Verify it's recognized as a directory
-        let entries = collect_all_entries(
-            FileListBuilder::new(&root).build().expect("build walker"),
-        );
+        let entries =
+            collect_all_entries(FileListBuilder::new(&root).build().expect("build walker"));
         let dir_entry = entries.iter().find(|e| !e.is_root()).expect("find dir");
         assert!(dir_entry.metadata().is_dir());
     }
@@ -286,7 +280,7 @@ fn traverse_into_max_length_directory() {
         // Should have directory and file
         assert_eq!(paths.len(), 2);
         assert!(paths.contains(&PathBuf::from(&dirname)));
-        assert!(paths.contains(&PathBuf::from(format!("{}/inner.txt", dirname))));
+        assert!(paths.contains(&PathBuf::from(format!("{dirname}/inner.txt"))));
     }
 }
 
@@ -304,7 +298,7 @@ fn multiple_files_in_max_length_directory() {
 
         // Create multiple files inside
         for i in 0..5 {
-            fs::write(dir_path.join(format!("file{}.txt", i)), b"data")
+            fs::write(dir_path.join(format!("file{i}.txt")), b"data")
                 .expect("create file in max dir");
         }
 
@@ -319,11 +313,10 @@ fn multiple_files_in_max_length_directory() {
 
         // Verify all files are found
         for i in 0..5 {
-            let expected = PathBuf::from(format!("{}/file{}.txt", dirname, i));
+            let expected = PathBuf::from(format!("{dirname}/file{i}.txt"));
             assert!(
                 paths.contains(&expected),
-                "should find file in max-length dir: {:?}",
-                expected
+                "should find file in max-length dir: {expected:?}"
             );
         }
     }
@@ -352,8 +345,8 @@ fn nested_directories_with_max_length_parent() {
         // Should have: parent_dir, child_dir, file = 3 entries
         assert_eq!(paths.len(), 3);
         assert!(paths.contains(&PathBuf::from(&parent_dirname)));
-        assert!(paths.contains(&PathBuf::from(format!("{}/child", parent_dirname))));
-        assert!(paths.contains(&PathBuf::from(format!("{}/child/file.txt", parent_dirname))));
+        assert!(paths.contains(&PathBuf::from(format!("{parent_dirname}/child"))));
+        assert!(paths.contains(&PathBuf::from(format!("{parent_dirname}/child/file.txt"))));
     }
 }
 
@@ -383,8 +376,7 @@ fn max_length_file_in_max_length_directory() {
             let expected_file_path = PathBuf::from(&dirname).join(&filename);
             assert!(
                 paths.contains(&expected_file_path),
-                "should find file with path: {:?}",
-                expected_file_path
+                "should find file with path: {expected_file_path:?}"
             );
         }
     }
@@ -408,8 +400,7 @@ fn deeply_nested_max_length_directories() {
             let path2 = path1.join(&dir2);
             if try_create_dir(&path2, &dir3) {
                 let path3 = path2.join(&dir3);
-                fs::write(path3.join("deep.txt"), b"deep content")
-                    .expect("create deep file");
+                fs::write(path3.join("deep.txt"), b"deep content").expect("create deep file");
 
                 let walker = FileListBuilder::new(&root).build().expect("build walker");
                 let paths = collect_relative_paths(walker);
@@ -419,12 +410,9 @@ fn deeply_nested_max_length_directories() {
 
                 // Verify all levels are found
                 assert!(paths.contains(&PathBuf::from(&dir1)));
-                assert!(paths.contains(&PathBuf::from(format!("{}/{}", dir1, dir2))));
-                assert!(paths.contains(&PathBuf::from(format!("{}/{}/{}", dir1, dir2, dir3))));
-                assert!(paths.contains(&PathBuf::from(format!(
-                    "{}/{}/{}/deep.txt",
-                    dir1, dir2, dir3
-                ))));
+                assert!(paths.contains(&PathBuf::from(format!("{dir1}/{dir2}"))));
+                assert!(paths.contains(&PathBuf::from(format!("{dir1}/{dir2}/{dir3}"))));
+                assert!(paths.contains(&PathBuf::from(format!("{dir1}/{dir2}/{dir3}/deep.txt"))));
             }
         }
     }
@@ -441,7 +429,7 @@ fn long_path_with_max_length_components() {
     // Each component is 200 bytes, well under 255 limit
     let mut current_path = root.clone();
     let dir_names: Vec<String> = (0..5)
-        .map(|i| create_max_length_filename(200, &format!("_level{}", i)))
+        .map(|i| create_max_length_filename(200, &format!("_level{i}")))
         .collect();
 
     let mut all_created = true;
@@ -454,8 +442,7 @@ fn long_path_with_max_length_components() {
     }
 
     if all_created {
-        fs::write(current_path.join("deep_file.txt"), b"deep content")
-            .expect("create deep file");
+        fs::write(current_path.join("deep_file.txt"), b"deep content").expect("create deep file");
 
         let walker = FileListBuilder::new(&root).build().expect("build walker");
         let paths = collect_relative_paths(walker);
@@ -668,7 +655,7 @@ fn hidden_file_with_max_length_name() {
 
     // Start with dot, fill remaining 254 bytes
     let filename = format!(".{}", "a".repeat(MAX_FILENAME_BYTES - 1));
-    assert_eq!(filename.as_bytes().len(), MAX_FILENAME_BYTES);
+    assert_eq!(filename.len(), MAX_FILENAME_BYTES);
 
     if try_create_file(&root, &filename, b"hidden content") {
         let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -695,13 +682,12 @@ fn max_length_utf8_filename() {
     // Leave room for extension: (255 - 4) / 3 = 83 characters + ".txt"
     let cjk_char = "\u{4e2d}"; // Chinese character (3 bytes)
     let filename = format!("{}.txt", cjk_char.repeat(83));
-    let byte_len = filename.as_bytes().len();
+    let byte_len = filename.len();
 
     // Should be at or near 255 bytes: 83 * 3 + 4 = 253 bytes
     assert!(
         byte_len <= MAX_FILENAME_BYTES,
-        "UTF-8 filename should be <= 255 bytes, got {}",
-        byte_len
+        "UTF-8 filename should be <= 255 bytes, got {byte_len}"
     );
 
     if try_create_file(&root, &filename, b"utf8 content") {
@@ -729,13 +715,12 @@ fn max_length_emoji_filename() {
     // Leave room for extension: (255 - 4) / 4 = 62 emojis + ".txt"
     let emoji = "\u{1f600}"; // Grinning face (4 bytes)
     let filename = format!("{}.txt", emoji.repeat(62));
-    let byte_len = filename.as_bytes().len();
+    let byte_len = filename.len();
 
     // Should be at or near 255 bytes: 62 * 4 + 4 = 252 bytes
     assert!(
         byte_len <= MAX_FILENAME_BYTES,
-        "emoji filename should be <= 255 bytes, got {}",
-        byte_len
+        "emoji filename should be <= 255 bytes, got {byte_len}"
     );
 
     if try_create_file(&root, &filename, b"emoji content") {
@@ -761,7 +746,7 @@ fn max_length_mixed_utf8_filename() {
     let cjk_count = remaining_bytes / 3;
     let filename = format!("{}{}.txt", ascii_part, cjk_char.repeat(cjk_count));
 
-    let byte_len = filename.as_bytes().len();
+    let byte_len = filename.len();
     assert!(byte_len <= MAX_FILENAME_BYTES);
 
     if try_create_file(&root, &filename, b"mixed content") {
@@ -786,11 +771,9 @@ fn max_length_filename_with_spaces() {
 
     // Create filename with spaces at max length
     let filename = format!("{} file.txt", "space".repeat(49)); // ~250 bytes
-    let byte_len = filename.as_bytes().len();
+    let byte_len = filename.len();
 
-    if byte_len <= MAX_FILENAME_BYTES
-        && try_create_file(&root, &filename, b"spaced content")
-    {
+    if byte_len <= MAX_FILENAME_BYTES && try_create_file(&root, &filename, b"spaced content") {
         let walker = FileListBuilder::new(&root).build().expect("build walker");
         let paths = collect_relative_paths(walker);
 
@@ -808,12 +791,10 @@ fn max_length_filename_with_special_chars() {
 
     // Create filename with special characters approaching max length
     let base = "a".repeat(MAX_FILENAME_BYTES - 20);
-    let filename = format!("{}*?[].txt", base);
-    let byte_len = filename.as_bytes().len();
+    let filename = format!("{base}*?[].txt");
+    let byte_len = filename.len();
 
-    if byte_len <= MAX_FILENAME_BYTES
-        && try_create_file(&root, &filename, b"special content")
-    {
+    if byte_len <= MAX_FILENAME_BYTES && try_create_file(&root, &filename, b"special content") {
         let walker = FileListBuilder::new(&root).build().expect("build walker");
         let paths = collect_relative_paths(walker);
 

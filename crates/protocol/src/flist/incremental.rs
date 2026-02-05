@@ -181,9 +181,8 @@ impl IncrementalFileList {
     /// The entry's parent directory is guaranteed to have been yielded previously
     /// (or is the root directory).
     pub fn pop(&mut self) -> Option<FileEntry> {
-        self.ready.pop_front().map(|entry| {
+        self.ready.pop_front().inspect(|_entry| {
             self.entries_yielded += 1;
-            entry
         })
     }
 
@@ -261,14 +260,6 @@ impl IncrementalFileList {
         }
         orphans
     }
-
-    /// Creates an iterator that yields entries as they become ready.
-    ///
-    /// This is a convenience method for consuming the incremental list.
-    #[must_use]
-    pub fn into_iter(self) -> IncrementalFileListIter {
-        IncrementalFileListIter { inner: self }
-    }
 }
 
 /// Iterator over incrementally available file entries.
@@ -281,6 +272,16 @@ impl Iterator for IncrementalFileListIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.pop()
+    }
+}
+
+impl IntoIterator for IncrementalFileList {
+    type Item = FileEntry;
+    type IntoIter = IncrementalFileListIter;
+
+    /// Creates an iterator that yields entries as they become ready.
+    fn into_iter(self) -> Self::IntoIter {
+        IncrementalFileListIter { inner: self }
     }
 }
 

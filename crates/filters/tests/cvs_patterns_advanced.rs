@@ -6,7 +6,7 @@
 //! - Pattern specificity and override scenarios
 //! - Directory traversal implications
 
-use filters::{FilterAction, FilterRule, FilterSet, cvs_exclusion_rules, cvs_default_patterns};
+use filters::{FilterAction, FilterRule, FilterSet, cvs_default_patterns, cvs_exclusion_rules};
 use std::path::Path;
 
 // =============================================================================
@@ -19,14 +19,14 @@ fn cvs_patterns_no_duplicates() {
     let mut seen = std::collections::HashSet::new();
 
     for pattern in &patterns {
-        assert!(seen.insert(pattern), "Duplicate pattern found: {}", pattern);
+        assert!(seen.insert(pattern), "Duplicate pattern found: {pattern}");
     }
 }
 
 #[test]
 fn cvs_patterns_all_trimmed() {
     for pattern in cvs_default_patterns() {
-        assert_eq!(pattern, pattern.trim(), "Pattern not trimmed: {:?}", pattern);
+        assert_eq!(pattern, pattern.trim(), "Pattern not trimmed: {pattern:?}");
         assert!(!pattern.is_empty(), "Empty pattern found");
     }
 }
@@ -41,8 +41,7 @@ fn cvs_patterns_directory_consistency() {
             // These should be actual directory names
             assert!(
                 !pattern.contains('*') || *pattern == "**/",
-                "Directory pattern with wildcard: {}",
-                pattern
+                "Directory pattern with wildcard: {pattern}"
             );
         }
     }
@@ -232,10 +231,7 @@ fn explicit_exclude_before_cvs() {
 #[test]
 fn explicit_include_then_exclude_with_cvs() {
     // Complex layering: include, then exclude, with CVS underneath
-    let rules = vec![
-        FilterRule::include("src/"),
-        FilterRule::exclude("*.tmp"),
-    ];
+    let rules = vec![FilterRule::include("src/"), FilterRule::exclude("*.tmp")];
     let set = FilterSet::from_rules_with_cvs(rules, false).unwrap();
 
     // Include src directory
@@ -312,10 +308,7 @@ fn perishable_cvs_with_explicit_protect() {
 
 #[test]
 fn perishable_cvs_with_explicit_risk() {
-    let rules = vec![
-        FilterRule::protect("*.o"),
-        FilterRule::risk("main.o"),
-    ];
+    let rules = vec![FilterRule::protect("*.o"), FilterRule::risk("main.o")];
     let set = FilterSet::from_rules_with_cvs(rules, true).unwrap();
 
     // Transfer: excluded by perishable CVS
@@ -347,7 +340,7 @@ fn perishable_cvs_delete_excluded_behavior() {
 #[test]
 fn cvs_with_show_hide_rules() {
     let rules = vec![
-        FilterRule::show("*.o"),  // Sender-only include
+        FilterRule::show("*.o"),   // Sender-only include
         FilterRule::hide("*.bak"), // Sender-only exclude
     ];
     let set = FilterSet::from_rules_with_cvs(rules, false).unwrap();

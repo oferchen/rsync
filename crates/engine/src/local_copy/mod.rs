@@ -54,6 +54,7 @@
 pub mod buffer_pool;
 mod compressor;
 mod context;
+#[cfg(feature = "batch-sync")]
 mod deferred_sync;
 mod dir_merge;
 mod error;
@@ -99,8 +100,10 @@ pub(crate) use dir_merge::{
     resolve_dir_merge_path,
 };
 
-pub use executor::{DestinationWriteGuard, remove_existing_destination, remove_incomplete_destination};
 pub(crate) use executor::*;
+pub use executor::{
+    DestinationWriteGuard, remove_existing_destination, remove_incomplete_destination,
+};
 
 pub(crate) use hard_links::HardLinkTracker;
 

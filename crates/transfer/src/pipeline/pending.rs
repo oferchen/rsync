@@ -111,13 +111,18 @@ impl PendingTransfer {
     /// Returns (file_path, basis_path, signature, target_size).
     #[must_use]
     pub fn into_parts(self) -> (PathBuf, Option<PathBuf>, Option<FileSignature>, u64) {
-        (self.file_path, self.basis_path, self.signature, self.target_size)
+        (
+            self.file_path,
+            self.basis_path,
+            self.signature,
+            self.target_size,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::num::{NonZeroU32, NonZeroU8};
+    use std::num::{NonZeroU8, NonZeroU32};
 
     use engine::SignatureLayout;
 

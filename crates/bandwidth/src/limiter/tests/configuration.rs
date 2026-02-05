@@ -274,10 +274,7 @@ fn update_limit_preserves_burst_setting() {
     session.clear();
 
     let burst = NonZeroU64::new(4096).unwrap();
-    let mut limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024).unwrap(),
-        Some(burst),
-    );
+    let mut limiter = BandwidthLimiter::with_burst(NonZeroU64::new(1024).unwrap(), Some(burst));
 
     // Update only the limit
     limiter.update_limit(NonZeroU64::new(2048).unwrap());
@@ -401,7 +398,10 @@ fn limiter_change_disabled_dominates() {
         LimiterChange::Enabled,
         LimiterChange::Disabled,
     ] {
-        assert_eq!(change.combine(LimiterChange::Disabled), LimiterChange::Disabled);
+        assert_eq!(
+            change.combine(LimiterChange::Disabled),
+            LimiterChange::Disabled
+        );
     }
 }
 
@@ -447,10 +447,7 @@ fn reset_clears_all_mutable_state() {
 #[test]
 fn reset_preserves_burst_configuration() {
     let burst = NonZeroU64::new(4096).unwrap();
-    let mut limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024).unwrap(),
-        Some(burst),
-    );
+    let mut limiter = BandwidthLimiter::with_burst(NonZeroU64::new(1024).unwrap(), Some(burst));
 
     // Accumulate debt and reset
     let _ = limiter.register(10000);
@@ -552,10 +549,7 @@ fn limit_bytes_consistent_after_operations() {
 #[test]
 fn burst_bytes_consistent_after_operations() {
     let burst = NonZeroU64::new(4096).unwrap();
-    let mut limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024).unwrap(),
-        Some(burst),
-    );
+    let mut limiter = BandwidthLimiter::with_burst(NonZeroU64::new(1024).unwrap(), Some(burst));
 
     // Various operations shouldn't change burst_bytes
     let _ = limiter.register(1000);
