@@ -1,15 +1,23 @@
 #![deny(unsafe_code)]
-//! Wire protocol serialization for signatures and deltas.
+//! Wire protocol serialization for signatures, deltas, and file entries.
 //!
 //! This module provides the serialization and deserialization logic for the
 //! rsync protocol's data structures. The formats mirror upstream rsync 3.4.1
 //! to ensure interoperability.
 //!
-//! For file list encoding/decoding, see the [`crate::flist`] module which
-//! provides the full-featured implementation used in production.
+//! # Submodules
+//!
+//! - [`file_entry`] - Low-level file entry wire format encoding functions
+//! - [`signature`] - Signature block encoding for delta generation
+//! - [`delta`] - Delta token encoding for file reconstruction
+//! - [`compressed_token`] - Compressed token stream handling
+//!
+//! For high-level file list encoding/decoding, see the [`crate::flist`] module
+//! which provides [`crate::flist::FileListWriter`] and [`crate::flist::FileListReader`].
 
 pub mod compressed_token;
 pub mod delta;
+pub mod file_entry;
 pub mod signature;
 
 pub use self::compressed_token::{
@@ -35,3 +43,19 @@ pub use self::delta::{
     write_whole_file_delta,
 };
 pub use self::signature::{SignatureBlock, read_signature, write_signature};
+
+// File entry wire format encoding
+pub use self::file_entry::{
+    // Flag encoding
+    encode_end_marker, encode_flags,
+    // Name encoding
+    calculate_name_prefix_len, encode_name,
+    // Metadata encoding
+    encode_atime, encode_checksum, encode_crtime, encode_gid, encode_mode, encode_mtime,
+    encode_mtime_nsec, encode_owner_name, encode_rdev, encode_size, encode_symlink_target,
+    encode_uid,
+    // Hardlink encoding
+    encode_hardlink_dev_ino, encode_hardlink_idx,
+    // Flag calculation helpers
+    calculate_basic_flags, calculate_device_flags, calculate_hardlink_flags, calculate_time_flags,
+};
