@@ -550,8 +550,9 @@ fn apply_permissions_from_entry(
 
             if needs_chmod {
                 let permissions = PermissionsExt::from_mode(mode);
-                fs::set_permissions(destination, permissions)
-                    .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+                fs::set_permissions(destination, permissions).map_err(|error| {
+                    MetadataError::new("preserve permissions", destination, error)
+                })?;
             }
         }
 
@@ -585,8 +586,9 @@ fn apply_permissions_from_entry(
                 .permissions();
             if dest_perms.readonly() != readonly {
                 dest_perms.set_readonly(readonly);
-                fs::set_permissions(destination, dest_perms)
-                    .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+                fs::set_permissions(destination, dest_perms).map_err(|error| {
+                    MetadataError::new("preserve permissions", destination, error)
+                })?;
             }
         }
     }
@@ -1241,7 +1243,8 @@ mod tests {
         // Verify all three have the same epoch timestamp
         let time1 = FileTime::from_last_modification_time(&meta1);
         let time2 = FileTime::from_last_modification_time(&meta2);
-        let time3 = FileTime::from_last_modification_time(&fs::metadata(&file3).expect("metadata file3"));
+        let time3 =
+            FileTime::from_last_modification_time(&fs::metadata(&file3).expect("metadata file3"));
 
         assert_eq!(time1, epoch_time);
         assert_eq!(time2, epoch_time);
@@ -1266,7 +1269,10 @@ mod tests {
         let dest_meta = fs::metadata(&dest_dir).expect("dest metadata");
         let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-        assert_eq!(dest_mtime, epoch_time, "directory mtime should be preserved at epoch");
+        assert_eq!(
+            dest_mtime, epoch_time,
+            "directory mtime should be preserved at epoch"
+        );
     }
 
     #[cfg(unix)]
@@ -1284,8 +1290,7 @@ mod tests {
 
         // Set symlink timestamp to Unix epoch
         let epoch_time = FileTime::from_unix_time(0, 500_000_000);
-        set_symlink_file_times(&source_link, epoch_time, epoch_time)
-            .expect("set link epoch time");
+        set_symlink_file_times(&source_link, epoch_time, epoch_time).expect("set link epoch time");
 
         let metadata = fs::symlink_metadata(&source_link).expect("metadata");
         apply_symlink_metadata(&dest_link, &metadata).expect("apply symlink metadata");
@@ -1293,7 +1298,10 @@ mod tests {
         let dest_meta = fs::symlink_metadata(&dest_link).expect("dest metadata");
         let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-        assert_eq!(dest_mtime, epoch_time, "symlink mtime should be preserved at epoch");
+        assert_eq!(
+            dest_mtime, epoch_time,
+            "symlink mtime should be preserved at epoch"
+        );
     }
 
     #[test]
@@ -1309,8 +1317,7 @@ mod tests {
         entry.set_mtime(0, 0);
 
         let opts = MetadataOptions::new().preserve_times(true);
-        apply_metadata_from_file_entry(&dest, &entry, &opts)
-            .expect("apply from entry with epoch");
+        apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry with epoch");
 
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
@@ -1365,7 +1372,7 @@ mod tests {
         assert_ne!(epoch_zero, epoch_nsec);
 
         // Test that we can format for debugging (this just ensures no panic)
-        let debug_str = format!("{:?}", epoch_zero);
+        let debug_str = format!("{epoch_zero:?}");
         assert!(!debug_str.is_empty());
     }
 

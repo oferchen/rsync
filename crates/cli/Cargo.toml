@@ -14,13 +14,26 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr"]
-xattr = ["core/xattr"]
-acl = ["core/acl"]
+
+# ============================================================================
+# Compression Features
+# ============================================================================
 zstd = ["core/zstd", "compress/zstd"]
 lz4 = ["core/lz4", "compress/lz4"]
+
+# ============================================================================
+# Metadata Features
+# ============================================================================
+xattr = ["core/xattr"]
+acl = ["core/acl"]
+
+# ============================================================================
+# Performance Optimization Features
+# ============================================================================
+
 # Parallel file operations - enables rayon-based parallelism for checksum mode
 # Also enables engine optimization features for maximum performance
-parallel = ["engine/parallel", "engine/optimized-buffers", "engine/lazy-metadata", "engine/batch-sync"]
+parallel = ["engine/parallel", "engine/optimized-buffers", "engine/lazy-metadata", "engine/batch-sync", "checksums/parallel"]
 
 [dependencies]
 clap = { version = "4.5.17", features = ["std"] }

@@ -169,16 +169,16 @@ pub const KNOWN_SIGNATURES: &[MagicSignature] = &[
     // Video formats
     MagicSignature::new(0, b"\x00\x00\x00\x1c\x66\x74\x79\x70", FileCategory::Video), // MP4/MOV ftyp
     MagicSignature::new(0, b"\x00\x00\x00\x20\x66\x74\x79\x70", FileCategory::Video), // MP4 variant
-    MagicSignature::new(0, b"\x1a\x45\xdf\xa3", FileCategory::Video), // MKV/WEBM
-    MagicSignature::new(0, b"RIFF", FileCategory::Video),             // AVI (check for AVI later)
+    MagicSignature::new(0, b"\x1a\x45\xdf\xa3", FileCategory::Video),                 // MKV/WEBM
+    MagicSignature::new(0, b"RIFF", FileCategory::Video), // AVI (check for AVI later)
     // Audio formats
-    MagicSignature::new(0, b"ID3", FileCategory::Audio),           // MP3 with ID3
-    MagicSignature::new(0, b"\xff\xfb", FileCategory::Audio),      // MP3 frame sync
-    MagicSignature::new(0, b"\xff\xfa", FileCategory::Audio),      // MP3 frame sync
-    MagicSignature::new(0, b"fLaC", FileCategory::Audio),          // FLAC
-    MagicSignature::new(0, b"OggS", FileCategory::Audio),          // OGG (Vorbis/Opus)
-    MagicSignature::new(4, b"ftyp", FileCategory::Audio),          // M4A/AAC
-    MagicSignature::new(0, b"RIFF", FileCategory::Audio),          // WAV (check for WAVE later)
+    MagicSignature::new(0, b"ID3", FileCategory::Audio), // MP3 with ID3
+    MagicSignature::new(0, b"\xff\xfb", FileCategory::Audio), // MP3 frame sync
+    MagicSignature::new(0, b"\xff\xfa", FileCategory::Audio), // MP3 frame sync
+    MagicSignature::new(0, b"fLaC", FileCategory::Audio), // FLAC
+    MagicSignature::new(0, b"OggS", FileCategory::Audio), // OGG (Vorbis/Opus)
+    MagicSignature::new(4, b"ftyp", FileCategory::Audio), // M4A/AAC
+    MagicSignature::new(0, b"RIFF", FileCategory::Audio), // WAV (check for WAVE later)
     // Document formats
     MagicSignature::new(0, b"%PDF", FileCategory::Document), // PDF
 ];
@@ -285,8 +285,8 @@ impl CompressionDecider {
         // Archives and compressed files
         for ext in &[
             "zip", "gz", "gzip", "bz2", "bzip2", "xz", "lzma", "7z", "rar", "zst", "zstd", "lz4",
-            "lzo", "z", "cab", "arj", "lzh", "tar.gz", "tar.bz2", "tar.xz", "tar.zst", "tgz", "tbz", "tbz2",
-            "txz",
+            "lzo", "z", "cab", "arj", "lzh", "tar.gz", "tar.bz2", "tar.xz", "tar.zst", "tgz",
+            "tbz", "tbz2", "txz",
         ] {
             self.skip_extensions.insert((*ext).to_owned());
         }
@@ -307,9 +307,7 @@ impl CompressionDecider {
         }
 
         // Disk images (often compressed or encrypted)
-        for ext in &[
-            "iso", "img", "dmg", "vhd", "vhdx", "vmdk", "qcow", "qcow2",
-        ] {
+        for ext in &["iso", "img", "dmg", "vhd", "vhdx", "vmdk", "qcow", "qcow2"] {
             self.skip_extensions.insert((*ext).to_owned());
         }
     }
@@ -845,7 +843,9 @@ mod tests {
         let data: Vec<u8> = (0..4096)
             .map(|_| {
                 // PCG-style PRNG for high-quality randomness
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let xorshifted = (((state >> 18) ^ state) >> 27) as u32;
                 let rot = (state >> 59) as u32;
                 ((xorshifted >> rot) | (xorshifted << ((32u32.wrapping_sub(rot)) & 31))) as u8

@@ -934,7 +934,7 @@ mod tests {
             let expected: Vec<u8> = (offset..offset + chunk_size)
                 .map(|i| (i % 256) as u8)
                 .collect();
-            assert_eq!(data, &expected[..], "Mismatch at offset {}", offset);
+            assert_eq!(data, &expected[..], "Mismatch at offset {offset}");
         }
     }
 
@@ -959,12 +959,7 @@ mod tests {
                 continue;
             }
             let data = map.map_ptr(offset as u64, 100).unwrap();
-            assert_eq!(
-                data[0],
-                (offset % 256) as u8,
-                "Mismatch at offset {}",
-                offset
-            );
+            assert_eq!(data[0], (offset % 256) as u8, "Mismatch at offset {offset}");
         }
     }
 
@@ -1492,8 +1487,7 @@ mod tests {
     fn threshold_boundary_one_below() {
         let threshold = 1000u64;
         let temp = create_test_file((threshold - 1) as usize);
-        let strategy =
-            AdaptiveMapStrategy::open_with_threshold(temp.path(), threshold).unwrap();
+        let strategy = AdaptiveMapStrategy::open_with_threshold(temp.path(), threshold).unwrap();
 
         assert!(strategy.is_buffered());
     }
@@ -1502,8 +1496,7 @@ mod tests {
     fn threshold_boundary_exactly_at() {
         let threshold = 1000u64;
         let temp = create_test_file(threshold as usize);
-        let strategy =
-            AdaptiveMapStrategy::open_with_threshold(temp.path(), threshold).unwrap();
+        let strategy = AdaptiveMapStrategy::open_with_threshold(temp.path(), threshold).unwrap();
 
         assert!(strategy.is_mmap());
     }
@@ -1512,8 +1505,7 @@ mod tests {
     fn threshold_boundary_one_above() {
         let threshold = 1000u64;
         let temp = create_test_file((threshold + 1) as usize);
-        let strategy =
-            AdaptiveMapStrategy::open_with_threshold(temp.path(), threshold).unwrap();
+        let strategy = AdaptiveMapStrategy::open_with_threshold(temp.path(), threshold).unwrap();
 
         assert!(strategy.is_mmap());
     }
@@ -1557,14 +1549,7 @@ mod tests {
         let mut map = MapFile::open_mmap(temp.path()).unwrap();
 
         // Random access at various points
-        let test_offsets = [
-            0,
-            1024,
-            size / 4,
-            size / 2,
-            3 * size / 4,
-            size - 1024,
-        ];
+        let test_offsets = [0, 1024, size / 4, size / 2, 3 * size / 4, size - 1024];
 
         for &offset in &test_offsets {
             let data = map.map_ptr(offset as u64, 1024).unwrap();
@@ -1600,12 +1585,7 @@ mod tests {
             let buf_data = buffered.map_ptr(offset as u64, 1024).unwrap().to_vec();
             let mmap_data = mmap.map_ptr(offset as u64, 1024).unwrap();
 
-            assert_eq!(
-                buf_data,
-                mmap_data,
-                "Data mismatch at offset {}",
-                offset
-            );
+            assert_eq!(buf_data, mmap_data, "Data mismatch at offset {offset}");
         }
     }
 
@@ -2070,8 +2050,7 @@ mod tests {
 
         assert!(
             strategy.is_buffered(),
-            "File at {} bytes (1 below threshold) should use buffered",
-            size
+            "File at {size} bytes (1 below threshold) should use buffered"
         );
     }
 
@@ -2084,8 +2063,7 @@ mod tests {
 
         assert!(
             strategy.is_mmap(),
-            "File at {} bytes (exactly at threshold) should use mmap",
-            size
+            "File at {size} bytes (exactly at threshold) should use mmap"
         );
     }
 
@@ -2098,8 +2076,7 @@ mod tests {
 
         assert!(
             strategy.is_mmap(),
-            "File at {} bytes (1 above threshold) should use mmap",
-            size
+            "File at {size} bytes (1 above threshold) should use mmap"
         );
     }
 
@@ -2154,7 +2131,10 @@ mod tests {
         assert_eq!(small_strategy.window_size(), MAX_MAP_SIZE);
 
         // Mmap window is the entire file
-        assert_eq!(large_strategy.window_size(), (MMAP_THRESHOLD + 1024) as usize);
+        assert_eq!(
+            large_strategy.window_size(),
+            (MMAP_THRESHOLD + 1024) as usize
+        );
     }
 
     #[test]
@@ -2177,10 +2157,8 @@ mod tests {
             let mmap_data = mmap.map_ptr(offset as u64, 100).unwrap();
 
             assert_eq!(
-                buf_data,
-                mmap_data,
-                "Data mismatch at offset {} between buffered and mmap strategies",
-                offset
+                buf_data, mmap_data,
+                "Data mismatch at offset {offset} between buffered and mmap strategies"
             );
         }
     }
@@ -2220,11 +2198,11 @@ mod tests {
     fn adaptive_strategy_selection_multiple_threshold_boundaries() {
         // Test multiple boundary values to ensure consistent behavior
         let boundaries = [
-            (100, 99, true, false),   // threshold=100, size=99 -> buffered
-            (100, 100, false, true),  // threshold=100, size=100 -> mmap
-            (100, 101, false, true),  // threshold=100, size=101 -> mmap
-            (1, 0, true, false),      // threshold=1, size=0 -> buffered
-            (1, 1, false, true),      // threshold=1, size=1 -> mmap
+            (100, 99, true, false),  // threshold=100, size=99 -> buffered
+            (100, 100, false, true), // threshold=100, size=100 -> mmap
+            (100, 101, false, true), // threshold=100, size=101 -> mmap
+            (1, 0, true, false),     // threshold=1, size=0 -> buffered
+            (1, 1, false, true),     // threshold=1, size=1 -> mmap
         ];
 
         for (threshold, size, expect_buffered, expect_mmap) in boundaries {
@@ -2235,18 +2213,12 @@ mod tests {
             assert_eq!(
                 strategy.is_buffered(),
                 expect_buffered,
-                "threshold={}, size={}: expected is_buffered={}",
-                threshold,
-                size,
-                expect_buffered
+                "threshold={threshold}, size={size}: expected is_buffered={expect_buffered}"
             );
             assert_eq!(
                 strategy.is_mmap(),
                 expect_mmap,
-                "threshold={}, size={}: expected is_mmap={}",
-                threshold,
-                size,
-                expect_mmap
+                "threshold={threshold}, size={size}: expected is_mmap={expect_mmap}"
             );
         }
     }
@@ -2270,7 +2242,15 @@ mod tests {
     #[test]
     fn adaptive_strategy_selection_file_size_preserved() {
         // Ensure file_size() works correctly for both strategies
-        let sizes = [0, 1, 100, 1000, MMAP_THRESHOLD as usize - 1, MMAP_THRESHOLD as usize, MMAP_THRESHOLD as usize + 1];
+        let sizes = [
+            0,
+            1,
+            100,
+            1000,
+            MMAP_THRESHOLD as usize - 1,
+            MMAP_THRESHOLD as usize,
+            MMAP_THRESHOLD as usize + 1,
+        ];
 
         for size in sizes {
             let temp = create_test_file(size);
@@ -2279,8 +2259,7 @@ mod tests {
             assert_eq!(
                 strategy.file_size(),
                 size as u64,
-                "File size mismatch for size={}",
-                size
+                "File size mismatch for size={size}"
             );
         }
     }

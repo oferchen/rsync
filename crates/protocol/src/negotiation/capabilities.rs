@@ -2547,7 +2547,10 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("unsupported compression algorithm"));
+        assert!(
+            err.to_string()
+                .contains("unsupported compression algorithm")
+        );
         assert!(err.to_string().contains("bzip2"));
     }
 
@@ -2567,10 +2570,10 @@ mod tests {
     fn capability_fallback_exact_match_required() {
         // These should NOT match any algorithm
         let test_cases = [
-            ("md5-hmac", ChecksumAlgorithm::MD5), // suffix
+            ("md5-hmac", ChecksumAlgorithm::MD5),   // suffix
             ("prefix-md5", ChecksumAlgorithm::MD5), // prefix
-            ("MD5", ChecksumAlgorithm::MD5),      // uppercase
-            ("Md5", ChecksumAlgorithm::MD5),      // mixed case
+            ("MD5", ChecksumAlgorithm::MD5),        // uppercase
+            ("Md5", ChecksumAlgorithm::MD5),        // mixed case
         ];
 
         for (name, _) in test_cases {
@@ -2605,8 +2608,8 @@ mod tests {
     fn capability_fallback_whitespace_variations() {
         // Various whitespace-only or whitespace-heavy lists
         let lists = [
-            "   ",                  // only spaces
-            "\t\t\t",              // only tabs
+            "   ",                // only spaces
+            "\t\t\t",             // only tabs
             "  \t  \n  ",         // mixed whitespace
             "   md5   ",          // md5 with lots of space
             "  \t md5 \n sha1  ", // mixed with valid algorithms
@@ -2633,15 +2636,8 @@ mod tests {
         let mut stdin = &truncated[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            false,
-            false,
-            true,
-        );
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, true);
 
         // Should fail with UnexpectedEof
         assert!(result.is_err());

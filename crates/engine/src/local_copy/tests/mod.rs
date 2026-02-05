@@ -336,6 +336,8 @@ include!("execute_update.rs");
 #[cfg(unix)]
 include!("execute_usermap_groupmap.rs");
 include!("execute_zero_length.rs");
+include!("execute_max_delete.rs");
 include!("itemize_changes.rs");
 include!("list_only.rs");
 include!("partial_dir.rs");
+include!("checksum_algorithm_behavior.rs");

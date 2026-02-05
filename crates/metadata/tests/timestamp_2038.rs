@@ -12,7 +12,7 @@
 //! - No overflow errors occur at the boundary
 
 use filetime::{FileTime, set_file_times};
-use metadata::{apply_file_metadata, apply_directory_metadata, apply_symlink_metadata};
+use metadata::{apply_directory_metadata, apply_file_metadata, apply_symlink_metadata};
 use std::fs;
 use tempfile::tempdir;
 
@@ -55,8 +55,14 @@ fn file_metadata_preserves_timestamp_at_2038_boundary() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, atime, "atime should be preserved at 2038 boundary");
-    assert_eq!(dest_mtime, mtime, "mtime should be preserved at 2038 boundary");
+    assert_eq!(
+        dest_atime, atime,
+        "atime should be preserved at 2038 boundary"
+    );
+    assert_eq!(
+        dest_mtime, mtime,
+        "mtime should be preserved at 2038 boundary"
+    );
 }
 
 #[test]
@@ -175,8 +181,14 @@ fn directory_metadata_preserves_timestamp_beyond_2038() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, atime, "directory atime should be preserved beyond 2038");
-    assert_eq!(dest_mtime, mtime, "directory mtime should be preserved beyond 2038");
+    assert_eq!(
+        dest_atime, atime,
+        "directory atime should be preserved beyond 2038"
+    );
+    assert_eq!(
+        dest_mtime, mtime,
+        "directory mtime should be preserved beyond 2038"
+    );
 }
 
 #[cfg(unix)]
@@ -203,8 +215,14 @@ fn symlink_metadata_preserves_timestamp_beyond_2038() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    assert_eq!(dest_atime, atime, "symlink atime should be preserved beyond 2038");
-    assert_eq!(dest_mtime, mtime, "symlink mtime should be preserved beyond 2038");
+    assert_eq!(
+        dest_atime, atime,
+        "symlink atime should be preserved beyond 2038"
+    );
+    assert_eq!(
+        dest_mtime, mtime,
+        "symlink mtime should be preserved beyond 2038"
+    );
 }
 
 #[test]
@@ -220,9 +238,9 @@ fn round_trip_preserves_timestamps_across_2038_boundary() {
     ];
 
     for (filename, timestamp, nsec) in test_cases {
-        let file1 = temp.path().join(format!("1_{}", filename));
-        let file2 = temp.path().join(format!("2_{}", filename));
-        let file3 = temp.path().join(format!("3_{}", filename));
+        let file1 = temp.path().join(format!("1_{filename}"));
+        let file2 = temp.path().join(format!("2_{filename}"));
+        let file3 = temp.path().join(format!("3_{filename}"));
 
         fs::write(&file1, b"round trip test").expect("write file1");
         fs::write(&file2, b"round trip test").expect("write file2");
@@ -246,8 +264,7 @@ fn round_trip_preserves_timestamps_across_2038_boundary() {
 
         assert_eq!(
             final_mtime, original_time,
-            "Round trip should preserve timestamp for {} ({})",
-            filename, timestamp
+            "Round trip should preserve timestamp for {filename} ({timestamp})"
         );
     }
 }
@@ -268,11 +285,17 @@ fn no_overflow_at_i32_max_boundary() {
     let result = apply_file_metadata(&dest, &metadata);
 
     // Should not panic or produce an error
-    assert!(result.is_ok(), "Should handle i32::MAX timestamp without overflow");
+    assert!(
+        result.is_ok(),
+        "Should handle i32::MAX timestamp without overflow"
+    );
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime, critical_timestamp, "Timestamp at i32::MAX should be preserved");
+    assert_eq!(
+        dest_mtime, critical_timestamp,
+        "Timestamp at i32::MAX should be preserved"
+    );
 }
 
 #[test]
@@ -290,11 +313,17 @@ fn no_overflow_just_past_i32_max() {
     let metadata = fs::metadata(&source).expect("source metadata");
     let result = apply_file_metadata(&dest, &metadata);
 
-    assert!(result.is_ok(), "Should handle i32::MAX + 1 timestamp without overflow");
+    assert!(
+        result.is_ok(),
+        "Should handle i32::MAX + 1 timestamp without overflow"
+    );
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime, past_overflow, "Timestamp past i32::MAX should be preserved");
+    assert_eq!(
+        dest_mtime, past_overflow,
+        "Timestamp past i32::MAX should be preserved"
+    );
 }
 
 #[test]
@@ -320,8 +349,7 @@ fn nanosecond_precision_preserved_beyond_2038() {
 
         assert_eq!(
             dest_mtime, time_with_nsec,
-            "Nanosecond precision should be preserved: {} ns at year 2100",
-            nsec
+            "Nanosecond precision should be preserved: {nsec} ns at year 2100"
         );
     }
 }
@@ -348,14 +376,12 @@ fn file_entry_set_mtime_handles_64bit_timestamps() {
         assert_eq!(
             entry.mtime(),
             timestamp,
-            "FileEntry should store 64-bit timestamp: {}",
-            timestamp
+            "FileEntry should store 64-bit timestamp: {timestamp}"
         );
         assert_eq!(
             entry.mtime_nsec(),
             nsec,
-            "FileEntry should store nanoseconds: {}",
-            nsec
+            "FileEntry should store nanoseconds: {nsec}"
         );
     }
 }
@@ -363,7 +389,7 @@ fn file_entry_set_mtime_handles_64bit_timestamps() {
 #[cfg(unix)]
 #[test]
 fn apply_metadata_from_file_entry_handles_post_2038_timestamps() {
-    use metadata::{apply_metadata_from_file_entry, MetadataOptions};
+    use metadata::{MetadataOptions, apply_metadata_from_file_entry};
     use protocol::flist::FileEntry;
     use std::path::PathBuf;
 
@@ -437,13 +463,16 @@ fn extreme_range_64bit_timestamps() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime, large_timestamp, "Extreme timestamp should be preserved");
+    assert_eq!(
+        dest_mtime, large_timestamp,
+        "Extreme timestamp should be preserved"
+    );
 }
 
 #[cfg(unix)]
 #[test]
 fn metadata_options_respect_times_flag_post_2038() {
-    use metadata::{apply_file_metadata_with_options, MetadataOptions};
+    use metadata::{MetadataOptions, apply_file_metadata_with_options};
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
@@ -465,7 +494,10 @@ fn metadata_options_respect_times_flag_post_2038() {
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
     // Time should NOT match because times preservation was disabled
-    assert_ne!(dest_mtime, future_time, "Times should not be preserved when flag is false");
+    assert_ne!(
+        dest_mtime, future_time,
+        "Times should not be preserved when flag is false"
+    );
 
     // Now apply with times enabled
     let options = MetadataOptions::new().preserve_times(true);
@@ -475,5 +507,8 @@ fn metadata_options_respect_times_flag_post_2038() {
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
     // Time should match now
-    assert_eq!(dest_mtime, future_time, "Times should be preserved when flag is true");
+    assert_eq!(
+        dest_mtime, future_time,
+        "Times should be preserved when flag is true"
+    );
 }

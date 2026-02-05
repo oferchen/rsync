@@ -64,16 +64,16 @@ fn basic_utf8_accented_characters() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "cafe\u{0301}.txt",     // cafe with combining acute accent (e + combining acute)
-        "caf\u{00e9}.txt",      // cafe with precomposed e-acute
-        "se\u{00f1}or.txt",     // senor with n-tilde
-        "na\u{00ef}ve.txt",     // naive with i-diaeresis
+        "cafe\u{0301}.txt", // cafe with combining acute accent (e + combining acute)
+        "caf\u{00e9}.txt",  // cafe with precomposed e-acute
+        "se\u{00f1}or.txt", // senor with n-tilde
+        "na\u{00ef}ve.txt", // naive with i-diaeresis
         "r\u{00e9}sum\u{00e9}.txt", // resume with accents
-        "\u{00fc}ber.txt",      // uber with u-umlaut
-        "fa\u{00e7}ade.txt",    // facade with c-cedilla
-        "pr\u{00ea}t.txt",      // pret with e-circumflex
+        "\u{00fc}ber.txt",  // uber with u-umlaut
+        "fa\u{00e7}ade.txt", // facade with c-cedilla
+        "pr\u{00ea}t.txt",  // pret with e-circumflex
         "\u{00e0}_la_carte.txt", // a with grave accent
-        "\u{00f8}re.txt",       // ore with o-slash (Danish)
+        "\u{00f8}re.txt",   // ore with o-slash (Danish)
         "\u{00e5}ngstr\u{00f6}m.txt", // angstrom with Swedish characters
     ];
 
@@ -142,13 +142,13 @@ fn japanese_filenames() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "\u{65e5}\u{672c}\u{8a9e}.txt",             // "Japanese" in kanji
+        "\u{65e5}\u{672c}\u{8a9e}.txt",                 // "Japanese" in kanji
         "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}.txt", // "Hello" in hiragana
         "\u{30b3}\u{30f3}\u{30d4}\u{30e5}\u{30fc}\u{30bf}.txt", // "Computer" in katakana
-        "\u{6771}\u{4eac}.txt",                     // "Tokyo" in kanji
-        "\u{5bcc}\u{58eb}\u{5c71}.txt",             // "Mt. Fuji" in kanji
+        "\u{6771}\u{4eac}.txt",                         // "Tokyo" in kanji
+        "\u{5bcc}\u{58eb}\u{5c71}.txt",                 // "Mt. Fuji" in kanji
         "\u{3042}\u{3044}\u{3046}\u{3048}\u{304a}.txt", // aiueo in hiragana
-        "test_\u{65e5}\u{672c}\u{8a9e}_test.txt",   // mixed with ASCII
+        "test_\u{65e5}\u{672c}\u{8a9e}_test.txt",       // mixed with ASCII
     ];
 
     let mut created_count = 0;
@@ -187,13 +187,13 @@ fn chinese_filenames() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "\u{4e2d}\u{6587}.txt",                     // "Chinese" in Chinese
-        "\u{4f60}\u{597d}.txt",                     // "Hello" in Chinese
-        "\u{5317}\u{4eac}.txt",                     // "Beijing" in Chinese
-        "\u{4e0a}\u{6d77}.txt",                     // "Shanghai" in Chinese
-        "\u{53f0}\u{5317}.txt",                     // "Taipei" in Traditional Chinese
-        "\u{7e41}\u{9ad4}\u{5b57}.txt",             // "Traditional characters" in Traditional
-        "\u{7b80}\u{4f53}\u{5b57}.txt",             // "Simplified characters" in Simplified
+        "\u{4e2d}\u{6587}.txt",         // "Chinese" in Chinese
+        "\u{4f60}\u{597d}.txt",         // "Hello" in Chinese
+        "\u{5317}\u{4eac}.txt",         // "Beijing" in Chinese
+        "\u{4e0a}\u{6d77}.txt",         // "Shanghai" in Chinese
+        "\u{53f0}\u{5317}.txt",         // "Taipei" in Traditional Chinese
+        "\u{7e41}\u{9ad4}\u{5b57}.txt", // "Traditional characters" in Traditional
+        "\u{7b80}\u{4f53}\u{5b57}.txt", // "Simplified characters" in Simplified
     ];
 
     let mut created_count = 0;
@@ -222,11 +222,11 @@ fn korean_filenames() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "\u{d55c}\u{ad6d}\u{c5b4}.txt",             // "Korean" in Korean
+        "\u{d55c}\u{ad6d}\u{c5b4}.txt",                 // "Korean" in Korean
         "\u{c548}\u{b155}\u{d558}\u{c138}\u{c694}.txt", // "Hello" in Korean
-        "\u{c11c}\u{c6b8}.txt",                     // "Seoul" in Korean
-        "\u{bd80}\u{c0b0}.txt",                     // "Busan" in Korean
-        "\u{ac00}\u{b098}\u{b2e4}.txt",             // "ga na da" in Korean
+        "\u{c11c}\u{c6b8}.txt",                         // "Seoul" in Korean
+        "\u{bd80}\u{c0b0}.txt",                         // "Busan" in Korean
+        "\u{ac00}\u{b098}\u{b2e4}.txt",                 // "ga na da" in Korean
     ];
 
     let mut created_count = 0;
@@ -255,15 +255,15 @@ fn cjk_nested_directories() {
     fs::create_dir(&root).expect("create root");
 
     // Create nested structure: root/japanese_dir/chinese_dir/korean_file.txt
-    let japanese_dir = "\u{65e5}\u{672c}";   // "Japan"
-    let chinese_dir = "\u{4e2d}\u{56fd}";    // "China"
+    let japanese_dir = "\u{65e5}\u{672c}"; // "Japan"
+    let chinese_dir = "\u{4e2d}\u{56fd}"; // "China"
     let korean_file = "\u{d55c}\u{ad6d}.txt"; // "Korea.txt"
 
     if try_create_dir(&root, japanese_dir) {
         let jp_path = root.join(japanese_dir);
-        if try_create_dir(&jp_path.as_path(), chinese_dir) {
+        if try_create_dir(jp_path.as_path(), chinese_dir) {
             let cn_path = jp_path.join(chinese_dir);
-            if try_create_file(&cn_path.as_path(), korean_file, b"content") {
+            if try_create_file(cn_path.as_path(), korean_file, b"content") {
                 let walker = FileListBuilder::new(&root).build().expect("build walker");
                 let paths = collect_relative_paths(walker);
 
@@ -294,15 +294,15 @@ fn emoji_filenames() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "\u{1f389}.txt",        // Party popper emoji
-        "\u{1f680}.txt",        // Rocket emoji
-        "\u{1f4c1}.txt",        // File folder emoji
-        "\u{2764}\u{fe0f}.txt", // Red heart emoji with variation selector
-        "\u{1f600}.txt",        // Grinning face emoji
-        "\u{1f4bb}.txt",        // Laptop emoji
-        "\u{2705}.txt",         // Check mark emoji
+        "\u{1f389}.txt",           // Party popper emoji
+        "\u{1f680}.txt",           // Rocket emoji
+        "\u{1f4c1}.txt",           // File folder emoji
+        "\u{2764}\u{fe0f}.txt",    // Red heart emoji with variation selector
+        "\u{1f600}.txt",           // Grinning face emoji
+        "\u{1f4bb}.txt",           // Laptop emoji
+        "\u{2705}.txt",            // Check mark emoji
         "test_\u{1f389}_file.txt", // Mixed ASCII and emoji
-        "\u{1f1ef}\u{1f1f5}.txt", // Flag emoji (Japan flag - regional indicators)
+        "\u{1f1ef}\u{1f1f5}.txt",  // Flag emoji (Japan flag - regional indicators)
     ];
 
     let mut created_count = 0;
@@ -376,14 +376,14 @@ fn multi_byte_utf8_sequences() {
     // - 4 bytes: Emoji, rare CJK (U+10000 to U+10FFFF)
 
     let names = [
-        "ascii.txt",                          // 1-byte characters
-        "\u{00e9}\u{00f1}\u{00fc}.txt",        // 2-byte Latin extended
-        "\u{03b1}\u{03b2}\u{03b3}.txt",        // 2-byte Greek letters (alpha, beta, gamma)
-        "\u{0430}\u{0431}\u{0432}.txt",        // 2-byte Cyrillic letters
-        "\u{4e2d}\u{6587}.txt",                // 3-byte CJK
-        "\u{20ac}\u{00a3}\u{00a5}.txt",        // Currency symbols (euro, pound, yen)
-        "\u{1f600}\u{1f389}.txt",              // 4-byte emoji
-        "\u{10000}.txt",                       // Linear B syllable (4-byte)
+        "ascii.txt",                    // 1-byte characters
+        "\u{00e9}\u{00f1}\u{00fc}.txt", // 2-byte Latin extended
+        "\u{03b1}\u{03b2}\u{03b3}.txt", // 2-byte Greek letters (alpha, beta, gamma)
+        "\u{0430}\u{0431}\u{0432}.txt", // 2-byte Cyrillic letters
+        "\u{4e2d}\u{6587}.txt",         // 3-byte CJK
+        "\u{20ac}\u{00a3}\u{00a5}.txt", // Currency symbols (euro, pound, yen)
+        "\u{1f600}\u{1f389}.txt",       // 4-byte emoji
+        "\u{10000}.txt",                // Linear B syllable (4-byte)
         // Mix of different byte lengths
         "a\u{00e9}\u{4e2d}\u{1f600}.txt",
     ];
@@ -416,7 +416,7 @@ fn utf8_byte_length_preservation() {
     // Japanese word that is 9 bytes in UTF-8: 3 characters * 3 bytes each
     let japanese_name = "\u{65e5}\u{672c}\u{8a9e}.txt"; // "Japanese"
     assert_eq!(
-        japanese_name.as_bytes().len(),
+        japanese_name.len(),
         13,
         "3 kanji (3 bytes each) + 4 for .txt = 13 bytes"
     );
@@ -522,7 +522,7 @@ fn precomposed_vs_decomposed() {
     };
 
     assert!(
-        paths.len() >= 1 && paths.len() <= 2,
+        !paths.is_empty() && paths.len() <= 2,
         "should find 1 or 2 files depending on filesystem normalization"
     );
     assert_eq!(paths.len(), expected_count);
@@ -576,7 +576,7 @@ fn hebrew_filenames() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "\u{05e9}\u{05dc}\u{05d5}\u{05dd}.txt",     // "Shalom" (Hello) in Hebrew
+        "\u{05e9}\u{05dc}\u{05d5}\u{05dd}.txt", // "Shalom" (Hello) in Hebrew
         "\u{05e2}\u{05d1}\u{05e8}\u{05d9}\u{05ea}.txt", // "Hebrew" in Hebrew
         "\u{05d9}\u{05e8}\u{05d5}\u{05e9}\u{05dc}\u{05d9}\u{05dd}.txt", // "Jerusalem" in Hebrew
         // With vowel points (nikkud)
@@ -620,8 +620,8 @@ fn bidirectional_text() {
         // Hebrew, ASCII, Arabic
         "\u{05e2}\u{05d1}\u{05e8}\u{05d9}_test_\u{0639}\u{0631}\u{0628}\u{064a}.txt",
         // With explicit bidi control characters
-        "\u{202a}LTR\u{202c}.txt",  // LTR embedding
-        "\u{202b}RTL\u{202c}.txt",  // RTL embedding
+        "\u{202a}LTR\u{202c}.txt", // LTR embedding
+        "\u{202b}RTL\u{202c}.txt", // RTL embedding
     ];
 
     let mut created_count = 0;
@@ -656,7 +656,7 @@ fn mixed_scripts_single_filename() {
 
     let names = [
         // ASCII + CJK
-        "hello_\u{4e16}\u{754c}.txt",             // "hello_world" with Chinese "world"
+        "hello_\u{4e16}\u{754c}.txt", // "hello_world" with Chinese "world"
         // Latin + Greek
         "alpha_\u{03b1}_beta_\u{03b2}.txt",
         // Latin + Cyrillic
@@ -712,22 +712,22 @@ fn mixed_scripts_nested_paths() {
     let arabic_file = "\u{0645}\u{0644}\u{0641}.txt"; // "File" in Arabic
 
     fs::create_dir(root.join(latin_dir)).expect("create latin dir");
-    if try_create_dir(&root.join(latin_dir), japanese_dir) {
-        if try_create_file(
+    if try_create_dir(&root.join(latin_dir), japanese_dir)
+        && try_create_file(
             &root.join(latin_dir).join(japanese_dir),
             arabic_file,
             b"content",
-        ) {
-            let walker = FileListBuilder::new(&root).build().expect("build walker");
-            let paths = collect_relative_paths(walker);
+        )
+    {
+        let walker = FileListBuilder::new(&root).build().expect("build walker");
+        let paths = collect_relative_paths(walker);
 
-            // Should have the nested structure
-            assert!(paths.contains(&PathBuf::from(latin_dir)));
-            assert!(paths.contains(&PathBuf::from(format!("{latin_dir}/{japanese_dir}"))));
-            assert!(paths.contains(&PathBuf::from(format!(
-                "{latin_dir}/{japanese_dir}/{arabic_file}"
-            ))));
-        }
+        // Should have the nested structure
+        assert!(paths.contains(&PathBuf::from(latin_dir)));
+        assert!(paths.contains(&PathBuf::from(format!("{latin_dir}/{japanese_dir}"))));
+        assert!(paths.contains(&PathBuf::from(format!(
+            "{latin_dir}/{japanese_dir}/{arabic_file}"
+        ))));
     }
 }
 
@@ -766,11 +766,11 @@ fn visually_similar_filenames() {
 
     // These look similar but are different characters
     let names = [
-        "a.txt",         // Latin lowercase a
-        "\u{0430}.txt",  // Cyrillic lowercase a (looks identical)
-        "\u{03b1}.txt",  // Greek lowercase alpha
-        "A.txt",         // Latin uppercase A
-        "\u{0410}.txt",  // Cyrillic uppercase A
+        "a.txt",        // Latin lowercase a
+        "\u{0430}.txt", // Cyrillic lowercase a (looks identical)
+        "\u{03b1}.txt", // Greek lowercase alpha
+        "A.txt",        // Latin uppercase A
+        "\u{0410}.txt", // Cyrillic uppercase A
     ];
 
     let mut created_count = 0;
@@ -788,10 +788,7 @@ fn visually_similar_filenames() {
         paths.len() <= created_count,
         "should not create more files than attempted"
     );
-    assert!(
-        paths.len() >= 1,
-        "should create at least one file"
-    );
+    assert!(!paths.is_empty(), "should create at least one file");
 }
 
 /// Verifies handling of filenames with zero-width characters.
@@ -802,10 +799,10 @@ fn zero_width_characters() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "test\u{200b}file.txt",   // Zero-width space
-        "test\u{200c}file.txt",   // Zero-width non-joiner
-        "test\u{200d}file.txt",   // Zero-width joiner
-        "test\u{feff}file.txt",   // Byte order mark / zero-width no-break space
+        "test\u{200b}file.txt", // Zero-width space
+        "test\u{200c}file.txt", // Zero-width non-joiner
+        "test\u{200d}file.txt", // Zero-width joiner
+        "test\u{feff}file.txt", // Byte order mark / zero-width no-break space
     ];
 
     let mut created_count = 0;
@@ -833,11 +830,11 @@ fn utf8_sorting_order() {
 
     // Create files that should sort in a specific order (by byte value)
     let names = [
-        "aaa.txt",                // ASCII
-        "bbb.txt",                // ASCII
-        "\u{00e9}file.txt",       // Latin Extended (2 bytes)
-        "\u{4e2d}file.txt",       // CJK (3 bytes)
-        "\u{1f600}file.txt",      // Emoji (4 bytes)
+        "aaa.txt",           // ASCII
+        "bbb.txt",           // ASCII
+        "\u{00e9}file.txt",  // Latin Extended (2 bytes)
+        "\u{4e2d}file.txt",  // CJK (3 bytes)
+        "\u{1f600}file.txt", // Emoji (4 bytes)
     ];
 
     for name in &names {
@@ -888,31 +885,30 @@ fn path_methods_utf8() {
     let root = temp.path().join("path_test");
     fs::create_dir(&root).expect("create root");
 
-    let dir_name = "\u{4e2d}\u{6587}_dir";  // Chinese directory
+    let dir_name = "\u{4e2d}\u{6587}_dir"; // Chinese directory
     let file_name = "\u{65e5}\u{672c}.txt"; // Japanese file
 
-    if try_create_dir(&root, dir_name) {
-        if try_create_file(&root.join(dir_name), file_name, b"data") {
-            let walker = FileListBuilder::new(&root).build().expect("build walker");
-            let entries = collect_all_entries(walker);
+    if try_create_dir(&root, dir_name) && try_create_file(&root.join(dir_name), file_name, b"data")
+    {
+        let walker = FileListBuilder::new(&root).build().expect("build walker");
+        let entries = collect_all_entries(walker);
 
-            // Find the file entry
-            let file_entry = entries
-                .iter()
-                .find(|e| e.relative_path().ends_with(file_name))
-                .expect("should find file entry");
+        // Find the file entry
+        let file_entry = entries
+            .iter()
+            .find(|e| e.relative_path().ends_with(file_name))
+            .expect("should find file entry");
 
-            // Verify relative path
-            let expected_relative = Path::new(dir_name).join(file_name);
-            assert_eq!(file_entry.relative_path(), expected_relative);
+        // Verify relative path
+        let expected_relative = Path::new(dir_name).join(file_name);
+        assert_eq!(file_entry.relative_path(), expected_relative);
 
-            // Verify full path
-            let expected_full = root.join(dir_name).join(file_name);
-            assert_eq!(file_entry.full_path(), expected_full);
+        // Verify full path
+        let expected_full = root.join(dir_name).join(file_name);
+        assert_eq!(file_entry.full_path(), expected_full);
 
-            // Verify full path exists
-            assert!(file_entry.full_path().exists());
-        }
+        // Verify full path exists
+        assert!(file_entry.full_path().exists());
     }
 }
 
@@ -929,13 +925,13 @@ fn supplementary_plane_characters() {
 
     // Characters from various SMP blocks (U+10000 and above, 4 bytes in UTF-8)
     let names = [
-        "\u{10000}.txt",          // Linear B Syllable B008 A
-        "\u{10300}.txt",          // Old Italic Letter A
-        "\u{10400}.txt",          // Deseret Capital Letter Long I
-        "\u{10800}.txt",          // Cypriot Syllable A
-        "\u{1d400}.txt",          // Mathematical Bold Capital A
-        "\u{20000}.txt",          // CJK Extension B character
-        "\u{1f300}.txt",          // Cyclone (weather emoji)
+        "\u{10000}.txt", // Linear B Syllable B008 A
+        "\u{10300}.txt", // Old Italic Letter A
+        "\u{10400}.txt", // Deseret Capital Letter Long I
+        "\u{10800}.txt", // Cypriot Syllable A
+        "\u{1d400}.txt", // Mathematical Bold Capital A
+        "\u{20000}.txt", // CJK Extension B character
+        "\u{1f300}.txt", // Cyclone (weather emoji)
     ];
 
     let mut created_count = 0;
@@ -965,12 +961,12 @@ fn mathematical_symbols() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "\u{221e}.txt",           // Infinity symbol
-        "\u{2211}.txt",           // Summation
-        "\u{222b}.txt",           // Integral
-        "\u{2202}.txt",           // Partial differential
-        "\u{03c0}.txt",           // Pi
-        "\u{221a}.txt",           // Square root
+        "\u{221e}.txt",            // Infinity symbol
+        "\u{2211}.txt",            // Summation
+        "\u{222b}.txt",            // Integral
+        "\u{2202}.txt",            // Partial differential
+        "\u{03c0}.txt",            // Pi
+        "\u{221a}.txt",            // Square root
         "x\u{00b2}+y\u{00b2}.txt", // x squared + y squared
     ];
 
@@ -997,11 +993,11 @@ fn currency_symbols() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "\u{20ac}100.txt",        // Euro sign
-        "\u{00a3}100.txt",        // Pound sign
-        "\u{00a5}100.txt",        // Yen sign
-        "\u{20b9}100.txt",        // Indian Rupee sign
-        "\u{20bf}100.txt",        // Bitcoin sign
+        "\u{20ac}100.txt",                      // Euro sign
+        "\u{00a3}100.txt",                      // Pound sign
+        "\u{00a5}100.txt",                      // Yen sign
+        "\u{20b9}100.txt",                      // Indian Rupee sign
+        "\u{20bf}100.txt",                      // Bitcoin sign
         "price_\u{0024}_\u{20ac}_\u{00a3}.txt", // Dollar, Euro, Pound
     ];
 

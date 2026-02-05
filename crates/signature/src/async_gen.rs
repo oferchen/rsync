@@ -47,7 +47,10 @@ use std::fs;
 use std::io;
 use std::num::NonZeroU8;
 use std::path::PathBuf;
-use std::sync::{mpsc::{self, Receiver, Sender}, Arc};
+use std::sync::{
+    Arc,
+    mpsc::{self, Receiver, Sender},
+};
 use std::thread::{self, JoinHandle};
 
 use protocol::ProtocolVersion;
@@ -315,12 +318,9 @@ impl AsyncSignatureGenerator {
         // Wait for all workers to finish
         let workers = std::mem::take(&mut self.workers);
         for handle in workers {
-            handle.join().map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    "signature worker thread panicked",
-                )
-            })?;
+            handle
+                .join()
+                .map_err(|_| io::Error::other("signature worker thread panicked"))?;
         }
 
         Ok(())
@@ -384,7 +384,11 @@ fn generate_signature_sync(request: SignatureRequest) -> SignatureResult {
         let layout = calculate_signature_layout(params)?;
 
         // Generate signature
-        Ok(generate_file_signature(basis_file, layout, request.checksum_algorithm)?)
+        Ok(generate_file_signature(
+            basis_file,
+            layout,
+            request.checksum_algorithm,
+        )?)
     })();
 
     match result {
@@ -447,9 +451,7 @@ mod tests {
 
     #[test]
     fn test_async_signature_multiple() {
-        let files: Vec<_> = (0..5)
-            .map(|_| create_test_file(512).unwrap())
-            .collect();
+        let files: Vec<_> = (0..5).map(|_| create_test_file(512).unwrap()).collect();
 
         let config = AsyncSignatureConfig::default().with_threads(2);
         let mut generator = AsyncSignatureGenerator::new(config);

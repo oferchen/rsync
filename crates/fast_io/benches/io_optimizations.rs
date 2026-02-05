@@ -12,16 +12,14 @@
 use std::fs::File;
 use std::io::{BufWriter, IoSlice, Read, Write};
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
-use tempfile::{tempdir, NamedTempFile};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use tempfile::{NamedTempFile, tempdir};
 
-#[cfg(feature = "mmap")]
+#[cfg(all(feature = "mmap", not(all(target_os = "linux", feature = "io_uring"))))]
 use fast_io::MmapReader;
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-use fast_io::{is_io_uring_available, IoUringConfig, IoUringReader, IoUringWriter};
+use fast_io::{IoUringConfig, IoUringReader, IoUringWriter, is_io_uring_available};
 
 // ============================================================================
 // Test Data Generation
@@ -88,11 +86,10 @@ fn bench_vectored_io(c: &mut Criterion) {
                 b.iter(|| {
                     let mut file = File::create(&path).unwrap();
 
-                    let io_slices: Vec<IoSlice> =
-                        chunks.iter().map(|c| IoSlice::new(c)).collect();
+                    let io_slices: Vec<IoSlice> = chunks.iter().map(|c| IoSlice::new(c)).collect();
 
                     // Single vectored write call - reduces syscalls
-                    file.write_vectored(&io_slices).unwrap();
+                    let _ = file.write_vectored(&io_slices).unwrap();
                     file.sync_all().unwrap();
                 });
                 let _ = std::fs::remove_file(&path);
@@ -124,26 +121,22 @@ fn bench_adaptive_buffers(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(file_size as u64));
 
         // Fixed small buffer (4KB - suboptimal for large files)
-        group.bench_with_input(
-            BenchmarkId::new("fixed_4kb", name),
-            &path,
-            |b, path| {
-                b.iter(|| {
-                    let mut f = File::open(path).unwrap();
-                    let mut buf = vec![0u8; 4 * 1024];
-                    let mut total = 0;
-                    loop {
-                        let n = f.read(&mut buf).unwrap();
-                        if n == 0 {
-                            break;
-                        }
-                        black_box(&buf[..n]);
-                        total += n;
+        group.bench_with_input(BenchmarkId::new("fixed_4kb", name), &path, |b, path| {
+            b.iter(|| {
+                let mut f = File::open(path).unwrap();
+                let mut buf = vec![0u8; 4 * 1024];
+                let mut total = 0;
+                loop {
+                    let n = f.read(&mut buf).unwrap();
+                    if n == 0 {
+                        break;
                     }
-                    total
-                });
-            },
-        );
+                    black_box(&buf[..n]);
+                    total += n;
+                }
+                total
+            });
+        });
 
         // Adaptive buffer (optimal for file size)
         group.bench_with_input(
@@ -246,20 +239,16 @@ fn bench_io_uring_writes(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         // Standard I/O baseline
-        group.bench_with_input(
-            BenchmarkId::new("standard_io", name),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let dir = tempdir().unwrap();
-                    let path = dir.path().join("test.bin");
-                    let file = File::create(&path).unwrap();
-                    let mut writer = BufWriter::new(file);
-                    writer.write_all(data).unwrap();
-                    writer.flush().unwrap();
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("standard_io", name), &data, |b, data| {
+            b.iter(|| {
+                let dir = tempdir().unwrap();
+                let path = dir.path().join("test.bin");
+                let file = File::create(&path).unwrap();
+                let mut writer = BufWriter::new(file);
+                writer.write_all(data).unwrap();
+                writer.flush().unwrap();
+            });
+        });
 
         // io_uring optimized writes
         group.bench_with_input(BenchmarkId::new("io_uring", name), &data, |b, data| {
@@ -281,7 +270,7 @@ fn bench_io_uring_writes(c: &mut Criterion) {
 // Benchmark: Memory-Mapped I/O vs Standard I/O
 // ============================================================================
 
-#[cfg(feature = "mmap")]
+#[cfg(all(feature = "mmap", not(all(target_os = "linux", feature = "io_uring"))))]
 fn bench_mmap_io(c: &mut Criterion) {
     let mut group = c.benchmark_group("mmap_io");
 
@@ -337,37 +326,37 @@ fn bench_buffered_writes(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(total_size as u64));
 
         // Unbuffered writes (direct File::write)
+        group.bench_with_input(BenchmarkId::new("unbuffered", name), &data, |b, data| {
+            b.iter(|| {
+                let dir = tempdir().unwrap();
+                let path = dir.path().join("test.bin");
+                let mut file = File::create(&path).unwrap();
+
+                for _ in 0..num_chunks {
+                    file.write_all(data).unwrap();
+                }
+                file.sync_all().unwrap();
+            });
+        });
+
+        // Buffered writes with optimal buffer
         group.bench_with_input(
-            BenchmarkId::new("unbuffered", name),
+            BenchmarkId::new("buffered_256kb", name),
             &data,
             |b, data| {
                 b.iter(|| {
                     let dir = tempdir().unwrap();
                     let path = dir.path().join("test.bin");
-                    let mut file = File::create(&path).unwrap();
+                    let file = File::create(&path).unwrap();
+                    let mut writer = BufWriter::with_capacity(256 * 1024, file);
 
                     for _ in 0..num_chunks {
-                        file.write_all(data).unwrap();
+                        writer.write_all(data).unwrap();
                     }
-                    file.sync_all().unwrap();
+                    writer.flush().unwrap();
                 });
             },
         );
-
-        // Buffered writes with optimal buffer
-        group.bench_with_input(BenchmarkId::new("buffered_256kb", name), &data, |b, data| {
-            b.iter(|| {
-                let dir = tempdir().unwrap();
-                let path = dir.path().join("test.bin");
-                let file = File::create(&path).unwrap();
-                let mut writer = BufWriter::with_capacity(256 * 1024, file);
-
-                for _ in 0..num_chunks {
-                    writer.write_all(data).unwrap();
-                }
-                writer.flush().unwrap();
-            });
-        });
     }
 
     group.finish();
@@ -396,10 +385,7 @@ criterion_group!(
     bench_buffered_writes,
 );
 
-#[cfg(not(any(
-    all(target_os = "linux", feature = "io_uring"),
-    feature = "mmap"
-)))]
+#[cfg(not(any(all(target_os = "linux", feature = "io_uring"), feature = "mmap")))]
 criterion_group!(
     io_optimizations,
     bench_vectored_io,

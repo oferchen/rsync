@@ -106,14 +106,16 @@ fn read_directory_entries_sorted_parallel(
     // Phase 2: Fetch metadata in parallel using rayon
     let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = pending
         .into_par_iter()
-        .map(|(file_name, entry_path)| match fs::symlink_metadata(&entry_path) {
-            Ok(metadata) => Ok(DirectoryEntry {
-                file_name,
-                path: entry_path,
-                metadata,
-            }),
-            Err(error) => Err((entry_path, error)),
-        })
+        .map(
+            |(file_name, entry_path)| match fs::symlink_metadata(&entry_path) {
+                Ok(metadata) => Ok(DirectoryEntry {
+                    file_name,
+                    path: entry_path,
+                    metadata,
+                }),
+                Err(error) => Err((entry_path, error)),
+            },
+        )
         .collect();
 
     // Collect results, returning first error encountered
@@ -449,11 +451,8 @@ mod tests {
 
         // Also create enough files to potentially trigger parallel path
         for i in 0..40 {
-            std::fs::write(
-                temp.path().join(format!("file_{i:02}.txt")),
-                b"content",
-            )
-            .expect("write");
+            std::fs::write(temp.path().join(format!("file_{i:02}.txt")), b"content")
+                .expect("write");
         }
 
         let result = super::read_directory_entries_sorted_parallel(temp.path());
@@ -466,9 +465,7 @@ mod tests {
             let curr = &entries[i].file_name;
             assert!(
                 compare_file_names(prev, curr) != Ordering::Greater,
-                "entries not sorted: {:?} > {:?}",
-                prev,
-                curr
+                "entries not sorted: {prev:?} > {curr:?}"
             );
         }
     }
@@ -480,8 +477,7 @@ mod tests {
 
         // Create target files
         for i in 0..35 {
-            std::fs::write(temp.path().join(format!("target_{i}.txt")), b"content")
-                .expect("write");
+            std::fs::write(temp.path().join(format!("target_{i}.txt")), b"content").expect("write");
         }
 
         // Create symlinks on Unix

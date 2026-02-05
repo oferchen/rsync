@@ -25,13 +25,11 @@
 //!
 //! Based on rsync 3.4.1 source code (protocol.c, compat.c).
 
+use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{
-    CompatibilityFlags, ProtocolVersion, ProtocolVersionAdvertisement,
-    format_legacy_daemon_greeting, parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_details,
-    select_highest_mutual, LEGACY_DAEMON_PREFIX,
-};
-use protocol::codec::{
-    NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec,
+    CompatibilityFlags, LEGACY_DAEMON_PREFIX, ProtocolVersion, ProtocolVersionAdvertisement,
+    format_legacy_daemon_greeting, parse_legacy_daemon_greeting,
+    parse_legacy_daemon_greeting_details, select_highest_mutual,
 };
 use std::io::Cursor;
 
@@ -144,11 +142,7 @@ mod handshake {
             29,
             "Parsed version must be 29"
         );
-        assert_eq!(
-            parsed_greeting.subprotocol(),
-            0,
-            "Sub-protocol must be 0"
-        );
+        assert_eq!(parsed_greeting.subprotocol(), 0, "Sub-protocol must be 0");
     }
 
     /// Test protocol 29 greeting byte-level format.
@@ -221,11 +215,7 @@ mod handshake {
     /// Test protocol 29 handshake with duplicates.
     #[test]
     fn v29_handshake_with_duplicates() {
-        let result = select_highest_mutual([
-            TestVersion(29),
-            TestVersion(29),
-            TestVersion(28),
-        ]);
+        let result = select_highest_mutual([TestVersion(29), TestVersion(29), TestVersion(28)]);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().as_u8(), 29);
     }
@@ -453,8 +443,7 @@ mod wire_format {
             codec.write_file_size(&mut buf, size).unwrap();
             assert_eq!(
                 buf, expected_bytes,
-                "File size {} must encode as {:?}",
-                size, expected_bytes
+                "File size {size} must encode as {expected_bytes:?}"
             );
             assert_eq!(buf.len(), 4, "Must use 4-byte fixed encoding");
         }
@@ -501,7 +490,7 @@ mod wire_format {
             let mut cursor = Cursor::new(&buf);
             let decoded = codec.read_file_size(&mut cursor).unwrap();
 
-            assert_eq!(decoded, value, "File size {} must roundtrip", value);
+            assert_eq!(decoded, value, "File size {value} must roundtrip");
         }
     }
 
@@ -549,7 +538,7 @@ mod wire_format {
             let mut cursor = Cursor::new(&buf);
             let decoded = read_codec.read_ndx(&mut cursor).unwrap();
 
-            assert_eq!(decoded, ndx, "NDX {} must roundtrip", ndx);
+            assert_eq!(decoded, ndx, "NDX {ndx} must roundtrip");
         }
     }
 
@@ -577,7 +566,7 @@ mod wire_format {
             assert_eq!(buf.len(), 4);
 
             // Verify little-endian
-            let expected = (value as i32).to_le_bytes();
+            let expected = value.to_le_bytes();
             assert_eq!(buf, expected);
         }
     }
@@ -663,11 +652,11 @@ mod wire_format {
 
         // Test boundary values
         let edge_cases = [
-            (i64::MAX, true),           // Maximum value
-            (0x7FFF_FFFF, false),       // Max 32-bit signed
-            (0x8000_0000, true),        // Just over 32-bit
-            (0xFFFF_FFFF, true),        // Max 32-bit unsigned
-            (-1i64, true),              // Negative (special handling)
+            (i64::MAX, true),     // Maximum value
+            (0x7FFF_FFFF, false), // Max 32-bit signed
+            (0x8000_0000, true),  // Just over 32-bit
+            (0xFFFF_FFFF, true),  // Max 32-bit unsigned
+            (-1i64, true),        // Negative (special handling)
         ];
 
         for (value, needs_longint) in edge_cases {
@@ -678,17 +667,17 @@ mod wire_format {
                 // Should use longint encoding (12 bytes)
                 // Note: -1 might be handled specially
                 if value > 0 {
-                    assert_eq!(buf.len(), 12, "Value {} needs longint", value);
+                    assert_eq!(buf.len(), 12, "Value {value} needs longint");
                 }
             } else {
                 // Should use regular 4-byte encoding
-                assert_eq!(buf.len(), 4, "Value {} uses fixed encoding", value);
+                assert_eq!(buf.len(), 4, "Value {value} uses fixed encoding");
             }
 
             // Verify roundtrip
             let mut cursor = Cursor::new(&buf);
             let decoded = codec.read_file_size(&mut cursor).unwrap();
-            assert_eq!(decoded, value, "Value {} must roundtrip", value);
+            assert_eq!(decoded, value, "Value {value} must roundtrip");
         }
     }
 

@@ -59,9 +59,9 @@
 //! completed transfers can be batched to further reduce network round-trips.
 //! This is configured via [`PipelineConfig::ack_batch_size`].
 
+pub mod async_signature;
 mod pending;
 mod state;
-pub mod async_signature;
 
 pub use pending::PendingTransfer;
 pub use state::PipelineState;
@@ -134,7 +134,7 @@ impl PipelineConfig {
     /// # Arguments
     ///
     /// * `size` - Number of ACKs to batch (1-256). Values outside this range
-    ///            are clamped.
+    ///   are clamped.
     #[must_use]
     pub fn with_ack_batch_size(mut self, size: usize) -> Self {
         self.ack_batch_size = size.clamp(MIN_BATCH_SIZE, MAX_BATCH_SIZE);

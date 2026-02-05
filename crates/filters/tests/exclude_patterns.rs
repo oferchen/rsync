@@ -1063,10 +1063,8 @@ mod case_sensitivity {
     #[test]
     fn case_insensitive_workaround() {
         // Match README regardless of case using character classes
-        let set = FilterSet::from_rules([FilterRule::exclude(
-            "[Rr][Ee][Aa][Dd][Mm][Ee].[Mm][Dd]",
-        )])
-        .unwrap();
+        let set = FilterSet::from_rules([FilterRule::exclude("[Rr][Ee][Aa][Dd][Mm][Ee].[Mm][Dd]")])
+            .unwrap();
 
         assert!(!set.allows(Path::new("README.md"), false));
         assert!(!set.allows(Path::new("readme.md"), false));

@@ -23,7 +23,10 @@ fn human_readable_formats_kilobytes() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    assert!(rendered.contains("1.02K"), "expected K suffix, got: {rendered}");
+    assert!(
+        rendered.contains("1.02K"),
+        "expected K suffix, got: {rendered}"
+    );
 }
 
 #[test]
@@ -46,7 +49,10 @@ fn human_readable_formats_megabytes() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    assert!(rendered.contains("1.05M"), "expected M suffix, got: {rendered}");
+    assert!(
+        rendered.contains("1.05M"),
+        "expected M suffix, got: {rendered}"
+    );
 }
 
 #[test]
@@ -72,7 +78,10 @@ fn human_readable_formats_gigabytes() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    assert!(rendered.contains("1.07G"), "expected G suffix, got: {rendered}");
+    assert!(
+        rendered.contains("1.07G"),
+        "expected G suffix, got: {rendered}"
+    );
 }
 
 #[test]

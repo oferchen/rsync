@@ -134,7 +134,8 @@ impl MmapReader {
     /// Advises the kernel to prefetch the specified range.
     #[cfg(unix)]
     pub fn advise_willneed(&self, offset: usize, len: usize) -> io::Result<()> {
-        self.mmap.advise_range(memmap2::Advice::WillNeed, offset, len)?;
+        self.mmap
+            .advise_range(memmap2::Advice::WillNeed, offset, len)?;
         Ok(())
     }
 }
@@ -257,7 +258,9 @@ impl FileReaderFactory for AdaptiveReaderFactory {
         if size >= self.threshold {
             Ok(AdaptiveReader::Mmap(MmapReader::open(path)?))
         } else {
-            Ok(AdaptiveReader::Std(crate::traits::StdFileReader::open(path)?))
+            Ok(AdaptiveReader::Std(crate::traits::StdFileReader::open(
+                path,
+            )?))
         }
     }
 }

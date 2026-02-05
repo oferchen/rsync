@@ -253,7 +253,11 @@ fn v31_downgrades_to_v28_for_oldest_peer() {
 #[test]
 fn v31_selects_highest_older_version_available() {
     let result = select_highest_mutual([28, 29, 30]).unwrap();
-    assert_eq!(result, ProtocolVersion::V30, "should select v30 over v28/v29");
+    assert_eq!(
+        result,
+        ProtocolVersion::V30,
+        "should select v30 over v28/v29"
+    );
 }
 
 /// Verifies feature differences between v31 and v30.
@@ -556,11 +560,7 @@ fn v31_in_supported_protocol_numbers() {
 #[test]
 fn v31_in_protocol_bitmap() {
     let bitmap = ProtocolVersion::supported_protocol_bitmap();
-    assert_ne!(
-        bitmap & (1u64 << 31),
-        0,
-        "bit 31 should be set in bitmap"
-    );
+    assert_ne!(bitmap & (1u64 << 31), 0, "bit 31 should be set in bitmap");
 }
 
 /// Verifies v31 is within supported range bounds.
@@ -672,8 +672,20 @@ fn v31_mixed_version_infrastructure() {
     let latest_server = [28, 29, 30, 31, 32];
 
     // v31 client should adapt to each
-    assert_eq!(select_highest_mutual(old_server).unwrap(), ProtocolVersion::V29);
-    assert_eq!(select_highest_mutual(medium_server).unwrap(), ProtocolVersion::V30);
-    assert_eq!(select_highest_mutual(modern_server).unwrap(), ProtocolVersion::V31);
-    assert_eq!(select_highest_mutual(latest_server).unwrap(), ProtocolVersion::V32);
+    assert_eq!(
+        select_highest_mutual(old_server).unwrap(),
+        ProtocolVersion::V29
+    );
+    assert_eq!(
+        select_highest_mutual(medium_server).unwrap(),
+        ProtocolVersion::V30
+    );
+    assert_eq!(
+        select_highest_mutual(modern_server).unwrap(),
+        ProtocolVersion::V31
+    );
+    assert_eq!(
+        select_highest_mutual(latest_server).unwrap(),
+        ProtocolVersion::V32
+    );
 }

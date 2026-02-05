@@ -74,7 +74,10 @@ fn exit_code_2_is_protocol() {
 #[test]
 fn exit_code_2_description() {
     assert_eq!(ExitCode::Protocol.description(), "protocol incompatibility");
-    assert_eq!(format!("{}", ExitCode::Protocol), "protocol incompatibility");
+    assert_eq!(
+        format!("{}", ExitCode::Protocol),
+        "protocol incompatibility"
+    );
 }
 
 #[test]
@@ -553,7 +556,10 @@ fn exit_code_124_is_command_failed() {
 
 #[test]
 fn exit_code_124_description() {
-    assert_eq!(ExitCode::CommandFailed.description(), "remote command failed");
+    assert_eq!(
+        ExitCode::CommandFailed.description(),
+        "remote command failed"
+    );
 }
 
 #[test]
@@ -761,10 +767,7 @@ fn all_exit_codes_have_descriptions() {
 
     for code in all_codes {
         let desc = code.description();
-        assert!(
-            !desc.is_empty(),
-            "Exit code {code:?} has empty description"
-        );
+        assert!(!desc.is_empty(), "Exit code {code:?} has empty description");
         assert!(
             desc.len() > 3,
             "Exit code {code:?} has suspiciously short description: {desc}"
@@ -1189,8 +1192,14 @@ fn exit_code_descriptions_match_upstream_log_c() {
         ExitCode::ConnectionTimeout.description(),
         "timeout waiting for daemon connection"
     );
-    assert_eq!(ExitCode::CommandFailed.description(), "remote command failed");
-    assert_eq!(ExitCode::CommandKilled.description(), "remote command killed");
+    assert_eq!(
+        ExitCode::CommandFailed.description(),
+        "remote command failed"
+    );
+    assert_eq!(
+        ExitCode::CommandKilled.description(),
+        "remote command killed"
+    );
     assert_eq!(
         ExitCode::CommandRun.description(),
         "remote command could not be run"
@@ -1219,6 +1228,514 @@ fn exit_code_gaps_are_intentional() {
                 ExitCode::from_i32(value).is_none(),
                 "Exit code {value} should not be defined (in gap range)"
             );
+        }
+    }
+}
+
+// ============================================================================
+// Upstream rsync errcode.h Compliance Tests
+// ============================================================================
+
+/// Tests that verify exact compliance with upstream rsync's errcode.h
+mod upstream_compliance {
+    use super::*;
+
+    /// Upstream rsync errcode.h defines these exact values.
+    /// Reference: rsync-3.4.1/errcode.h
+    #[test]
+    fn rerr_ok_is_0() {
+        assert_eq!(ExitCode::Ok.as_i32(), 0);
+    }
+
+    #[test]
+    fn rerr_syntax_is_1() {
+        assert_eq!(ExitCode::Syntax.as_i32(), 1);
+    }
+
+    #[test]
+    fn rerr_protocol_is_2() {
+        assert_eq!(ExitCode::Protocol.as_i32(), 2);
+    }
+
+    #[test]
+    fn rerr_fileselect_is_3() {
+        assert_eq!(ExitCode::FileSelect.as_i32(), 3);
+    }
+
+    #[test]
+    fn rerr_unsupported_is_4() {
+        assert_eq!(ExitCode::Unsupported.as_i32(), 4);
+    }
+
+    #[test]
+    fn rerr_startclient_is_5() {
+        assert_eq!(ExitCode::StartClient.as_i32(), 5);
+    }
+
+    #[test]
+    fn rerr_socketio_is_10() {
+        assert_eq!(ExitCode::SocketIo.as_i32(), 10);
+    }
+
+    #[test]
+    fn rerr_fileio_is_11() {
+        assert_eq!(ExitCode::FileIo.as_i32(), 11);
+    }
+
+    #[test]
+    fn rerr_streamio_is_12() {
+        assert_eq!(ExitCode::StreamIo.as_i32(), 12);
+    }
+
+    #[test]
+    fn rerr_messageio_is_13() {
+        assert_eq!(ExitCode::MessageIo.as_i32(), 13);
+    }
+
+    #[test]
+    fn rerr_ipc_is_14() {
+        assert_eq!(ExitCode::Ipc.as_i32(), 14);
+    }
+
+    #[test]
+    fn rerr_crashed_is_15() {
+        assert_eq!(ExitCode::Crashed.as_i32(), 15);
+    }
+
+    #[test]
+    fn rerr_terminated_is_16() {
+        assert_eq!(ExitCode::Terminated.as_i32(), 16);
+    }
+
+    #[test]
+    fn rerr_signal1_is_19() {
+        assert_eq!(ExitCode::Signal1.as_i32(), 19);
+    }
+
+    #[test]
+    fn rerr_signal_is_20() {
+        assert_eq!(ExitCode::Signal.as_i32(), 20);
+    }
+
+    #[test]
+    fn rerr_waitchild_is_21() {
+        assert_eq!(ExitCode::WaitChild.as_i32(), 21);
+    }
+
+    #[test]
+    fn rerr_malloc_is_22() {
+        assert_eq!(ExitCode::Malloc.as_i32(), 22);
+    }
+
+    #[test]
+    fn rerr_partial_is_23() {
+        assert_eq!(ExitCode::PartialTransfer.as_i32(), 23);
+    }
+
+    #[test]
+    fn rerr_vanished_is_24() {
+        assert_eq!(ExitCode::Vanished.as_i32(), 24);
+    }
+
+    #[test]
+    fn rerr_del_limit_is_25() {
+        assert_eq!(ExitCode::DeleteLimit.as_i32(), 25);
+    }
+
+    #[test]
+    fn rerr_timeout_is_30() {
+        assert_eq!(ExitCode::Timeout.as_i32(), 30);
+    }
+
+    #[test]
+    fn rerr_contimeout_is_35() {
+        assert_eq!(ExitCode::ConnectionTimeout.as_i32(), 35);
+    }
+
+    #[test]
+    fn rerr_cmd_failed_is_124() {
+        assert_eq!(ExitCode::CommandFailed.as_i32(), 124);
+    }
+
+    #[test]
+    fn rerr_cmd_killed_is_125() {
+        assert_eq!(ExitCode::CommandKilled.as_i32(), 125);
+    }
+
+    #[test]
+    fn rerr_cmd_run_is_126() {
+        assert_eq!(ExitCode::CommandRun.as_i32(), 126);
+    }
+
+    #[test]
+    fn rerr_cmd_notfound_is_127() {
+        assert_eq!(ExitCode::CommandNotFound.as_i32(), 127);
+    }
+}
+
+// ============================================================================
+// Process Exit Code Integration Tests
+// ============================================================================
+
+/// Tests for std::process::ExitCode conversion
+mod process_exit_code {
+    use super::*;
+
+    #[test]
+    fn all_exit_codes_convert_to_process_exit_code() {
+        let all_codes = [
+            ExitCode::Ok,
+            ExitCode::Syntax,
+            ExitCode::Protocol,
+            ExitCode::FileSelect,
+            ExitCode::Unsupported,
+            ExitCode::StartClient,
+            ExitCode::SocketIo,
+            ExitCode::FileIo,
+            ExitCode::StreamIo,
+            ExitCode::MessageIo,
+            ExitCode::Ipc,
+            ExitCode::Crashed,
+            ExitCode::Terminated,
+            ExitCode::Signal1,
+            ExitCode::Signal,
+            ExitCode::WaitChild,
+            ExitCode::Malloc,
+            ExitCode::PartialTransfer,
+            ExitCode::Vanished,
+            ExitCode::DeleteLimit,
+            ExitCode::Timeout,
+            ExitCode::ConnectionTimeout,
+            ExitCode::CommandFailed,
+            ExitCode::CommandKilled,
+            ExitCode::CommandRun,
+            ExitCode::CommandNotFound,
+        ];
+
+        for code in all_codes {
+            // Verify conversion doesn't panic
+            let _process_code: std::process::ExitCode = code.into();
+        }
+    }
+
+    #[test]
+    fn exit_codes_within_u8_range() {
+        // All upstream rsync exit codes should fit in u8 (0-255)
+        let all_codes = [
+            ExitCode::Ok,
+            ExitCode::Syntax,
+            ExitCode::Protocol,
+            ExitCode::FileSelect,
+            ExitCode::Unsupported,
+            ExitCode::StartClient,
+            ExitCode::SocketIo,
+            ExitCode::FileIo,
+            ExitCode::StreamIo,
+            ExitCode::MessageIo,
+            ExitCode::Ipc,
+            ExitCode::Crashed,
+            ExitCode::Terminated,
+            ExitCode::Signal1,
+            ExitCode::Signal,
+            ExitCode::WaitChild,
+            ExitCode::Malloc,
+            ExitCode::PartialTransfer,
+            ExitCode::Vanished,
+            ExitCode::DeleteLimit,
+            ExitCode::Timeout,
+            ExitCode::ConnectionTimeout,
+            ExitCode::CommandFailed,
+            ExitCode::CommandKilled,
+            ExitCode::CommandRun,
+            ExitCode::CommandNotFound,
+        ];
+
+        for code in all_codes {
+            let value = code.as_i32();
+            assert!(
+                (0..=255).contains(&value),
+                "Exit code {code:?} ({value}) should be in u8 range"
+            );
+        }
+    }
+
+    #[test]
+    fn highest_exit_code_is_127() {
+        // The highest defined exit code should be 127 (CommandNotFound)
+        assert_eq!(ExitCode::CommandNotFound.as_i32(), 127);
+
+        let all_values: Vec<i32> = [
+            ExitCode::Ok,
+            ExitCode::Syntax,
+            ExitCode::Protocol,
+            ExitCode::FileSelect,
+            ExitCode::Unsupported,
+            ExitCode::StartClient,
+            ExitCode::SocketIo,
+            ExitCode::FileIo,
+            ExitCode::StreamIo,
+            ExitCode::MessageIo,
+            ExitCode::Ipc,
+            ExitCode::Crashed,
+            ExitCode::Terminated,
+            ExitCode::Signal1,
+            ExitCode::Signal,
+            ExitCode::WaitChild,
+            ExitCode::Malloc,
+            ExitCode::PartialTransfer,
+            ExitCode::Vanished,
+            ExitCode::DeleteLimit,
+            ExitCode::Timeout,
+            ExitCode::ConnectionTimeout,
+            ExitCode::CommandFailed,
+            ExitCode::CommandKilled,
+            ExitCode::CommandRun,
+            ExitCode::CommandNotFound,
+        ]
+        .iter()
+        .map(|c| c.as_i32())
+        .collect();
+
+        let max = all_values.iter().max().unwrap();
+        assert_eq!(*max, 127, "Maximum exit code should be 127");
+    }
+}
+
+// ============================================================================
+// Exit Code Semantic Tests
+// ============================================================================
+
+/// Tests that verify the semantic meaning of exit codes
+mod exit_code_semantics {
+    use super::*;
+
+    #[test]
+    fn ok_is_only_success_code() {
+        let all_codes = [
+            ExitCode::Ok,
+            ExitCode::Syntax,
+            ExitCode::Protocol,
+            ExitCode::FileSelect,
+            ExitCode::Unsupported,
+            ExitCode::StartClient,
+            ExitCode::SocketIo,
+            ExitCode::FileIo,
+            ExitCode::StreamIo,
+            ExitCode::MessageIo,
+            ExitCode::Ipc,
+            ExitCode::Crashed,
+            ExitCode::Terminated,
+            ExitCode::Signal1,
+            ExitCode::Signal,
+            ExitCode::WaitChild,
+            ExitCode::Malloc,
+            ExitCode::PartialTransfer,
+            ExitCode::Vanished,
+            ExitCode::DeleteLimit,
+            ExitCode::Timeout,
+            ExitCode::ConnectionTimeout,
+            ExitCode::CommandFailed,
+            ExitCode::CommandKilled,
+            ExitCode::CommandRun,
+            ExitCode::CommandNotFound,
+        ];
+
+        let success_codes: Vec<_> = all_codes.iter().filter(|c| c.is_success()).collect();
+
+        assert_eq!(success_codes.len(), 1, "Only Ok should be success");
+        assert_eq!(*success_codes[0], ExitCode::Ok);
+    }
+
+    #[test]
+    fn fatal_codes_indicate_unrecoverable_errors() {
+        // Fatal errors mean the transfer cannot continue
+        let fatal_codes = [
+            ExitCode::Protocol,
+            ExitCode::StartClient,
+            ExitCode::SocketIo,
+            ExitCode::StreamIo,
+            ExitCode::Ipc,
+            ExitCode::Crashed,
+            ExitCode::Terminated,
+            ExitCode::Malloc,
+            ExitCode::Timeout,
+            ExitCode::ConnectionTimeout,
+        ];
+
+        for code in fatal_codes {
+            assert!(code.is_fatal(), "{code:?} should be fatal (unrecoverable)");
+        }
+    }
+
+    #[test]
+    fn partial_codes_indicate_incomplete_transfer() {
+        // Partial codes mean some files were transferred but not all
+        let partial_codes = [
+            ExitCode::PartialTransfer,
+            ExitCode::Vanished,
+            ExitCode::DeleteLimit,
+        ];
+
+        for code in partial_codes {
+            assert!(
+                code.is_partial(),
+                "{code:?} should be partial (incomplete transfer)"
+            );
+        }
+    }
+
+    #[test]
+    fn command_codes_are_shell_related() {
+        // Command exit codes (124-127) relate to remote shell execution
+        let command_codes = [
+            (124, ExitCode::CommandFailed),
+            (125, ExitCode::CommandKilled),
+            (126, ExitCode::CommandRun),
+            (127, ExitCode::CommandNotFound),
+        ];
+
+        for (value, code) in command_codes {
+            assert_eq!(code.as_i32(), value, "{code:?} should be {value}");
+            assert!(
+                code.description().contains("remote command")
+                    || code.description().contains("command"),
+                "{code:?} description should mention 'command'"
+            );
+        }
+    }
+
+    #[test]
+    fn io_codes_are_in_10_range() {
+        // I/O related exit codes are in the 10-14 range
+        let io_codes = [
+            (10, ExitCode::SocketIo),
+            (11, ExitCode::FileIo),
+            (12, ExitCode::StreamIo),
+            (13, ExitCode::MessageIo),
+            (14, ExitCode::Ipc),
+        ];
+
+        for (value, code) in io_codes {
+            assert_eq!(code.as_i32(), value, "{code:?} should be {value}");
+        }
+    }
+
+    #[test]
+    fn signal_codes_are_in_15_20_range() {
+        // Signal-related exit codes are 15-16 and 19-21
+        let signal_codes = [
+            (15, ExitCode::Crashed),
+            (16, ExitCode::Terminated),
+            (19, ExitCode::Signal1),
+            (20, ExitCode::Signal),
+            (21, ExitCode::WaitChild),
+        ];
+
+        for (value, code) in signal_codes {
+            assert_eq!(code.as_i32(), value, "{code:?} should be {value}");
+        }
+    }
+
+    #[test]
+    fn transfer_result_codes_are_in_23_25_range() {
+        // Transfer result codes are 23-25
+        let transfer_codes = [
+            (23, ExitCode::PartialTransfer),
+            (24, ExitCode::Vanished),
+            (25, ExitCode::DeleteLimit),
+        ];
+
+        for (value, code) in transfer_codes {
+            assert_eq!(code.as_i32(), value, "{code:?} should be {value}");
+            assert!(code.is_partial(), "{code:?} should be partial");
+        }
+    }
+}
+
+// ============================================================================
+// Display and Debug Format Tests
+// ============================================================================
+
+/// Tests for string formatting of exit codes
+mod exit_code_formatting {
+    use super::*;
+
+    #[test]
+    fn display_format_is_description() {
+        let all_codes = [
+            ExitCode::Ok,
+            ExitCode::Syntax,
+            ExitCode::Protocol,
+            ExitCode::FileSelect,
+            ExitCode::PartialTransfer,
+            ExitCode::Timeout,
+        ];
+
+        for code in all_codes {
+            let display = format!("{}", code);
+            let description = code.description();
+            assert_eq!(
+                display, description,
+                "{code:?} Display should match description"
+            );
+        }
+    }
+
+    #[test]
+    fn debug_format_contains_variant_name() {
+        let code = ExitCode::PartialTransfer;
+        let debug = format!("{:?}", code);
+        assert!(
+            debug.contains("PartialTransfer"),
+            "Debug should contain variant name"
+        );
+    }
+
+    #[test]
+    fn descriptions_are_lowercase_except_abbreviations() {
+        // Upstream rsync descriptions are mostly lowercase
+        // Exceptions: I/O abbreviations and proper names
+        let all_codes = [
+            ExitCode::Ok,
+            ExitCode::Syntax,
+            ExitCode::Protocol,
+            ExitCode::FileSelect,
+            ExitCode::Unsupported,
+            ExitCode::StartClient,
+            ExitCode::SocketIo,
+            ExitCode::FileIo,
+            ExitCode::StreamIo,
+            ExitCode::MessageIo,
+            ExitCode::Ipc,
+            ExitCode::Crashed,
+            ExitCode::Terminated,
+            ExitCode::Signal1,
+            ExitCode::Signal,
+            ExitCode::WaitChild,
+            ExitCode::Malloc,
+            ExitCode::PartialTransfer,
+            ExitCode::Vanished,
+            ExitCode::DeleteLimit,
+            ExitCode::Timeout,
+            ExitCode::ConnectionTimeout,
+            ExitCode::CommandFailed,
+            ExitCode::CommandKilled,
+            ExitCode::CommandRun,
+            ExitCode::CommandNotFound,
+        ];
+
+        for code in all_codes {
+            let desc = code.description();
+            // First character should be lowercase (following upstream convention)
+            // Exception: signal names like SIGSEGV
+            if !desc.contains("SIG") {
+                let first_char = desc.chars().next().unwrap();
+                assert!(
+                    first_char.is_lowercase(),
+                    "{code:?}: description '{}' should start lowercase",
+                    desc
+                );
+            }
         }
     }
 }

@@ -4,8 +4,6 @@
 //! These macros provide ergonomic wrappers around standard tracing macros
 //! with appropriate targets for rsync subsystems.
 
-#![cfg(feature = "tracing")]
-
 /// Emit a copy operation trace.
 ///
 /// # Example

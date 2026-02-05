@@ -8,7 +8,9 @@
 mod wire_format_generator;
 
 use transfer::receiver::TransferStats;
-use wire_format_generator::{generate_flat_directory, generate_nested_directories, generate_out_of_order_entries};
+use wire_format_generator::{
+    generate_flat_directory, generate_nested_directories, generate_out_of_order_entries,
+};
 
 /// Verifies TransferStats has all incremental mode fields.
 #[test]
@@ -96,23 +98,44 @@ fn incremental_transfer_failed_directory_skips_children() {
     let mut writer = wire_format_generator::WireFormatGenerator::with_defaults();
 
     // Parent directory that will fail to be created (simulated)
-    writer.write_entry(&wire_format_generator::TestFileEntry::dir("unwritable"))
+    writer
+        .write_entry(&wire_format_generator::TestFileEntry::dir("unwritable"))
         .expect("write dir");
 
     // Children under the failed directory - these should be skipped
-    writer.write_entry(&wire_format_generator::TestFileEntry::file("unwritable/child1.txt", 100))
+    writer
+        .write_entry(&wire_format_generator::TestFileEntry::file(
+            "unwritable/child1.txt",
+            100,
+        ))
         .expect("write child1");
-    writer.write_entry(&wire_format_generator::TestFileEntry::file("unwritable/child2.txt", 200))
+    writer
+        .write_entry(&wire_format_generator::TestFileEntry::file(
+            "unwritable/child2.txt",
+            200,
+        ))
         .expect("write child2");
-    writer.write_entry(&wire_format_generator::TestFileEntry::dir("unwritable/subdir"))
+    writer
+        .write_entry(&wire_format_generator::TestFileEntry::dir(
+            "unwritable/subdir",
+        ))
         .expect("write subdir");
-    writer.write_entry(&wire_format_generator::TestFileEntry::file("unwritable/subdir/nested.txt", 300))
+    writer
+        .write_entry(&wire_format_generator::TestFileEntry::file(
+            "unwritable/subdir/nested.txt",
+            300,
+        ))
         .expect("write nested");
 
     // A separate directory that should succeed
-    writer.write_entry(&wire_format_generator::TestFileEntry::dir("writable"))
+    writer
+        .write_entry(&wire_format_generator::TestFileEntry::dir("writable"))
         .expect("write writable dir");
-    writer.write_entry(&wire_format_generator::TestFileEntry::file("writable/file.txt", 400))
+    writer
+        .write_entry(&wire_format_generator::TestFileEntry::file(
+            "writable/file.txt",
+            400,
+        ))
         .expect("write writable file");
 
     writer.write_end_marker().expect("write end marker");
@@ -124,7 +147,10 @@ fn incremental_transfer_failed_directory_skips_children() {
 
     // Should have reasonable size for the entries
     // 1 failed dir + 2 children + 1 subdir + 1 nested + 1 writable dir + 1 file = 7 entries
-    assert!(wire_data.len() > 100, "wire data should contain multiple entries");
+    assert!(
+        wire_data.len() > 100,
+        "wire data should contain multiple entries"
+    );
 }
 
 /// Placeholder for upstream rsync interop test.

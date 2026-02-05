@@ -90,17 +90,11 @@ fn sleep_for_splits_large_durations_into_chunks() {
 fn duration_from_microseconds_handles_exact_second_boundaries() {
     // Exactly 1 second
     let one_sec = super::super::MICROS_PER_SECOND;
-    assert_eq!(
-        duration_from_microseconds(one_sec),
-        Duration::from_secs(1)
-    );
+    assert_eq!(duration_from_microseconds(one_sec), Duration::from_secs(1));
 
     // Exactly 60 seconds
     let one_min = 60 * super::super::MICROS_PER_SECOND;
-    assert_eq!(
-        duration_from_microseconds(one_min),
-        Duration::from_secs(60)
-    );
+    assert_eq!(duration_from_microseconds(one_min), Duration::from_secs(60));
 
     // Exactly 3600 seconds (1 hour)
     let one_hour = 3600 * super::super::MICROS_PER_SECOND;
@@ -113,10 +107,7 @@ fn duration_from_microseconds_handles_exact_second_boundaries() {
 #[test]
 fn duration_from_microseconds_handles_small_values() {
     // 1 microsecond
-    assert_eq!(
-        duration_from_microseconds(1),
-        Duration::from_micros(1)
-    );
+    assert_eq!(duration_from_microseconds(1), Duration::from_micros(1));
 
     // 999,999 microseconds (just under 1 second)
     let almost_sec = duration_from_microseconds(999_999);
@@ -127,10 +118,7 @@ fn duration_from_microseconds_handles_small_values() {
 #[test]
 fn duration_from_microseconds_handles_millis_boundary() {
     // Exactly 1 millisecond = 1000 microseconds
-    assert_eq!(
-        duration_from_microseconds(1_000),
-        Duration::from_millis(1)
-    );
+    assert_eq!(duration_from_microseconds(1_000), Duration::from_millis(1));
 
     // 1.5 milliseconds
     let one_and_half = duration_from_microseconds(1_500);

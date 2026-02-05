@@ -16,7 +16,7 @@ use std::io::{Cursor, Read};
 mod lz4_frame_tests {
     use super::*;
     use compress::lz4::frame::{
-        compress_to_vec, decompress_to_vec, CountingLz4Decoder, CountingLz4Encoder,
+        CountingLz4Decoder, CountingLz4Encoder, compress_to_vec, decompress_to_vec,
     };
     use compress::zlib::CompressionLevel;
     use std::io::IoSliceMut;
@@ -31,8 +31,7 @@ mod lz4_frame_tests {
 
     #[test]
     fn frame_encoder_with_sink_works() {
-        let mut encoder =
-            CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
+        let mut encoder = CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
         encoder.write(b"test").unwrap();
 
         let (compressed, bytes) = encoder.finish_into_inner().unwrap();
@@ -41,8 +40,7 @@ mod lz4_frame_tests {
 
     #[test]
     fn frame_encoder_tracks_bytes_written() {
-        let mut encoder =
-            CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
+        let mut encoder = CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
 
         assert_eq!(encoder.bytes_written(), 0);
 
@@ -56,8 +54,7 @@ mod lz4_frame_tests {
 
     #[test]
     fn frame_encoder_get_ref_and_get_mut() {
-        let mut encoder =
-            CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
+        let mut encoder = CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
 
         assert!(encoder.get_ref().is_empty());
 
@@ -212,10 +209,10 @@ mod lz4_frame_tests {
 mod lz4_raw_tests {
     use super::*;
     use compress::lz4::raw::{
-        compress_block, compress_block_to_vec, compressed_size_from_header, decode_header,
-        decompress_block, decompress_block_to_vec, encode_header, is_deflated_data,
-        read_compressed_block, write_compressed_block, DEFLATED_DATA, HEADER_SIZE,
-        MAX_BLOCK_SIZE, MAX_DECOMPRESSED_SIZE,
+        DEFLATED_DATA, HEADER_SIZE, MAX_BLOCK_SIZE, MAX_DECOMPRESSED_SIZE, compress_block,
+        compress_block_to_vec, compressed_size_from_header, decode_header, decompress_block,
+        decompress_block_to_vec, encode_header, is_deflated_data, read_compressed_block,
+        write_compressed_block,
     };
     use lz4_flex::block::get_maximum_output_size;
 
@@ -372,10 +369,10 @@ mod lz4_raw_tests {
 #[cfg(feature = "zstd")]
 mod zstd_tests {
     use super::*;
-    use compress::zstd::{
-        compress_to_vec, decompress_to_vec, CountingZstdDecoder, CountingZstdEncoder,
-    };
     use compress::zlib::CompressionLevel;
+    use compress::zstd::{
+        CountingZstdDecoder, CountingZstdEncoder, compress_to_vec, decompress_to_vec,
+    };
     use std::io::IoSliceMut;
 
     #[test]
@@ -623,7 +620,8 @@ fn all_algorithms_roundtrip_correctly() {
     let test_data = b"Cross-algorithm roundtrip test data".repeat(50);
 
     // Zlib
-    let zlib_compressed = zlib::compress_to_vec(&test_data, zlib::CompressionLevel::Default).unwrap();
+    let zlib_compressed =
+        zlib::compress_to_vec(&test_data, zlib::CompressionLevel::Default).unwrap();
     let zlib_decompressed = zlib::decompress_to_vec(&zlib_compressed).unwrap();
     assert_eq!(zlib_decompressed, test_data);
 
@@ -631,7 +629,8 @@ fn all_algorithms_roundtrip_correctly() {
     #[cfg(feature = "lz4")]
     {
         use compress::lz4;
-        let lz4_compressed = lz4::compress_to_vec(&test_data, zlib::CompressionLevel::Default).unwrap();
+        let lz4_compressed =
+            lz4::compress_to_vec(&test_data, zlib::CompressionLevel::Default).unwrap();
         let lz4_decompressed = lz4::decompress_to_vec(&lz4_compressed).unwrap();
         assert_eq!(lz4_decompressed, test_data);
     }
@@ -640,7 +639,8 @@ fn all_algorithms_roundtrip_correctly() {
     #[cfg(feature = "zstd")]
     {
         use compress::zstd;
-        let zstd_compressed = zstd::compress_to_vec(&test_data, zlib::CompressionLevel::Default).unwrap();
+        let zstd_compressed =
+            zstd::compress_to_vec(&test_data, zlib::CompressionLevel::Default).unwrap();
         let zstd_decompressed = zstd::decompress_to_vec(&zstd_compressed).unwrap();
         assert_eq!(zstd_decompressed, test_data);
     }

@@ -113,7 +113,7 @@ fn delay_updates_no_temp_files_remain_after_success() {
 
     // Create multiple files to ensure all temp files are cleaned up
     for i in 0..10 {
-        fs::write(source_root.join(format!("file{}.txt", i)), format!("content{}", i))
+        fs::write(source_root.join(format!("file{i}.txt")), format!("content{i}"))
             .expect("write source file");
     }
 
@@ -148,8 +148,7 @@ fn delay_updates_no_temp_files_remain_after_success() {
 
     assert!(
         temp_files.is_empty(),
-        "temp files should not remain after successful copy: {:?}",
-        temp_files
+        "temp files should not remain after successful copy: {temp_files:?}"
     );
 }
 

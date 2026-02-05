@@ -245,22 +245,24 @@ pub fn collect_with_batched_stats(
     let results: Vec<_> = paths
         .into_iter()
         .zip(metadata_results)
-        .map(|((full_path, relative_path, depth, is_root), metadata_result)| {
-            match metadata_result {
-                Ok(metadata) => {
-                    // Extract metadata from Arc
-                    let metadata = (*metadata).clone();
-                    Ok(FileListEntry {
-                        full_path,
-                        relative_path,
-                        metadata,
-                        depth,
-                        is_root,
-                    })
+        .map(
+            |((full_path, relative_path, depth, is_root), metadata_result)| {
+                match metadata_result {
+                    Ok(metadata) => {
+                        // Extract metadata from Arc
+                        let metadata = (*metadata).clone();
+                        Ok(FileListEntry {
+                            full_path,
+                            relative_path,
+                            metadata,
+                            depth,
+                            is_root,
+                        })
+                    }
+                    Err(e) => Err((full_path, e)),
                 }
-                Err(e) => Err((full_path, e)),
-            }
-        })
+            },
+        )
         .collect();
 
     // Partition into successes and failures

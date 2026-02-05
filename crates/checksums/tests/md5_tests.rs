@@ -69,8 +69,7 @@ mod rfc1321_test_vectors {
     fn rfc1321_alphanumeric_mixed_case() {
         // MD5("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
         // = d174ab98d277d9f5a5611c2c9f419d9f
-        let digest =
-            Md5::digest(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+        let digest = Md5::digest(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
         assert_eq!(to_hex(&digest), "d174ab98d277d9f5a5611c2c9f419d9f");
     }
 
@@ -248,7 +247,7 @@ mod single_byte {
     #[test]
     fn single_byte_a() {
         // Same as RFC vector
-        let digest = Md5::digest(&[b'a']);
+        let digest = Md5::digest(b"a");
         assert_eq!(to_hex(&digest), "0cc175b9c0f1b6a831c399e269772661");
     }
 
@@ -423,7 +422,7 @@ mod various_sizes {
         for offset in [-3_i32, -2, -1, 0, 1, 2, 3] {
             for multiplier in [1, 2, 4, 8, 16] {
                 let base_size = 64 * multiplier;
-                let size = (base_size as i32 + offset).max(0) as usize;
+                let size = (base_size + offset).max(0) as usize;
                 let data = generate_data(size);
 
                 let oneshot = Md5::digest(&data);
@@ -547,10 +546,7 @@ mod streaming_api {
                 hasher.update(chunk);
             }
             let result = hasher.finalize();
-            assert_eq!(
-                result, expected,
-                "Mismatch with chunk_size={chunk_size}"
-            );
+            assert_eq!(result, expected, "Mismatch with chunk_size={chunk_size}");
         }
     }
 
@@ -694,7 +690,8 @@ mod system_md5sum_comparison {
             if let Some(system_hash) = system_md5sum(data) {
                 let our_hash = to_hex(&Md5::digest(data));
                 assert_eq!(
-                    our_hash, system_hash,
+                    our_hash,
+                    system_hash,
                     "RFC vector {:?} hash mismatch with system md5sum",
                     String::from_utf8_lossy(data)
                 );
@@ -754,11 +751,7 @@ mod system_md5sum_comparison {
     #[test]
     fn compare_repeated_patterns_with_system() {
         // Test repeated patterns of various sizes
-        let patterns: &[&[u8]] = &[
-            &[0xAA; 1000],
-            &[0x00; 1000],
-            &[0xFF; 1000],
-        ];
+        let patterns: &[&[u8]] = &[&[0xAA; 1000], &[0x00; 1000], &[0xFF; 1000]];
 
         for pattern in patterns {
             if let Some(system_hash) = system_md5sum(pattern) {
@@ -872,7 +865,7 @@ mod edge_cases {
     #[test]
     fn debug_format_contains_md5() {
         let hasher = Md5::new();
-        let debug = format!("{:?}", hasher);
+        let debug = format!("{hasher:?}");
         assert!(debug.contains("Md5"));
     }
 

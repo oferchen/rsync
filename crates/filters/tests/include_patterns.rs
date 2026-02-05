@@ -17,10 +17,7 @@ use std::path::Path;
 /// Verifies simple extension-based include pattern.
 #[test]
 fn include_simple_extension_pattern() {
-    let rules = [
-        FilterRule::include("*.txt"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("*.txt"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // .txt files should be included
@@ -37,10 +34,7 @@ fn include_simple_extension_pattern() {
 /// Verifies include pattern with prefix wildcard.
 #[test]
 fn include_prefix_wildcard() {
-    let rules = [
-        FilterRule::include("test_*"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("test_*"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new("test_main.rs"), false));
@@ -54,10 +48,7 @@ fn include_prefix_wildcard() {
 /// Verifies include pattern with suffix wildcard.
 #[test]
 fn include_suffix_wildcard() {
-    let rules = [
-        FilterRule::include("*_test"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("*_test"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new("unit_test"), false));
@@ -69,10 +60,7 @@ fn include_suffix_wildcard() {
 /// Verifies include pattern with wildcard in the middle.
 #[test]
 fn include_middle_wildcard() {
-    let rules = [
-        FilterRule::include("file_*_v2"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("file_*_v2"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new("file_data_v2"), false));
@@ -86,10 +74,7 @@ fn include_middle_wildcard() {
 /// Verifies include pattern with question mark single-char wildcard.
 #[test]
 fn include_question_mark_wildcard() {
-    let rules = [
-        FilterRule::include("log?.txt"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("log?.txt"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new("log1.txt"), false));
@@ -180,10 +165,7 @@ fn include_multiple_extensions() {
 /// Verifies basic directory include pattern.
 #[test]
 fn include_directory_pattern() {
-    let rules = [
-        FilterRule::include("src/"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("src/"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Directory should be included
@@ -219,10 +201,7 @@ fn include_nested_directory_pattern() {
 /// Verifies wildcard in directory pattern.
 #[test]
 fn include_wildcard_directory_pattern() {
-    let rules = [
-        FilterRule::include("test*/"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("test*/"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new("tests"), true));
@@ -256,10 +235,7 @@ fn include_multiple_directories() {
 /// Verifies directory pattern at any depth (unanchored).
 #[test]
 fn include_directory_any_depth() {
-    let rules = [
-        FilterRule::include("fixtures/"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("fixtures/"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Should match at any depth
@@ -276,10 +252,7 @@ fn include_directory_any_depth() {
 /// Verifies anchored include pattern at root.
 #[test]
 fn include_anchored_at_root() {
-    let rules = [
-        FilterRule::include("/Cargo.toml"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("/Cargo.toml"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Should match only at root
@@ -293,10 +266,7 @@ fn include_anchored_at_root() {
 /// Verifies anchored include pattern with directory.
 #[test]
 fn include_anchored_directory() {
-    let rules = [
-        FilterRule::include("/src/"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("/src/"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Root src directory
@@ -310,10 +280,7 @@ fn include_anchored_directory() {
 /// Verifies anchored path pattern with multiple components.
 #[test]
 fn include_anchored_multi_component() {
-    let rules = [
-        FilterRule::include("/src/bin/"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("/src/bin/"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new("src/bin"), true));
@@ -345,10 +312,7 @@ fn include_anchored_with_wildcard() {
 #[test]
 fn include_unanchored_with_slash() {
     // Pattern with internal slash is anchored (rsync semantics)
-    let rules = [
-        FilterRule::include("src/main.rs"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("src/main.rs"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Should match at root
@@ -379,10 +343,7 @@ fn include_anchor_to_root_method() {
 /// Verifies leading double-star pattern.
 #[test]
 fn include_leading_double_star() {
-    let rules = [
-        FilterRule::include("**/test.rs"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("**/test.rs"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Should match at any depth
@@ -398,10 +359,7 @@ fn include_leading_double_star() {
 /// Verifies trailing double-star pattern.
 #[test]
 fn include_trailing_double_star() {
-    let rules = [
-        FilterRule::include("docs/**"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("docs/**"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // All contents under docs
@@ -464,7 +422,10 @@ fn include_multiple_double_stars() {
 
     assert!(set.allows(Path::new("tests/fixtures/data.json"), false));
     assert!(set.allows(Path::new("tests/unit/fixtures/mock.js"), false));
-    assert!(set.allows(Path::new("packages/app/tests/integration/fixtures/setup.ts"), false));
+    assert!(set.allows(
+        Path::new("packages/app/tests/integration/fixtures/setup.ts"),
+        false
+    ));
 
     assert!(!set.allows(Path::new("tests/unit/test.js"), false));
 }
@@ -472,10 +433,7 @@ fn include_multiple_double_stars() {
 /// Verifies double-star with extension pattern.
 #[test]
 fn include_double_star_extension() {
-    let rules = [
-        FilterRule::include("**/*.rs"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("**/*.rs"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new("main.rs"), false));
@@ -545,10 +503,7 @@ fn include_within_excluded_path() {
 /// Verifies include extension exception within excluded pattern.
 #[test]
 fn include_extension_exception() {
-    let rules = [
-        FilterRule::include("*.rs"),
-        FilterRule::exclude("test_*"),
-    ];
+    let rules = [FilterRule::include("*.rs"), FilterRule::exclude("test_*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // .rs files are included (first rule)
@@ -601,10 +556,10 @@ fn exclude_after_include_takes_precedence() {
 #[test]
 fn complex_include_exclude_interaction() {
     let rules = [
-        FilterRule::include("src/**/fixtures/**"),  // Include fixtures in src
-        FilterRule::exclude("src/**/test_*.rs"),    // Exclude test files
-        FilterRule::include("src/**/*.rs"),         // Include .rs files in src
-        FilterRule::exclude("*"),                   // Exclude everything else
+        FilterRule::include("src/**/fixtures/**"), // Include fixtures in src
+        FilterRule::exclude("src/**/test_*.rs"),   // Exclude test files
+        FilterRule::include("src/**/*.rs"),        // Include .rs files in src
+        FilterRule::exclude("*"),                  // Exclude everything else
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -664,9 +619,9 @@ fn order_multiple_specific_patterns() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    assert!(set.allows(Path::new("a.txt"), false));  // First rule
+    assert!(set.allows(Path::new("a.txt"), false)); // First rule
     assert!(!set.allows(Path::new("b.txt"), false)); // Second rule
-    assert!(set.allows(Path::new("c.txt"), false));  // Third rule
+    assert!(set.allows(Path::new("c.txt"), false)); // Third rule
     assert!(!set.allows(Path::new("d.txt"), false)); // Fourth rule
 }
 
@@ -693,10 +648,7 @@ fn order_nested_patterns() {
 /// Verifies that the default is include when no rule matches.
 #[test]
 fn order_default_include_no_match() {
-    let rules = [
-        FilterRule::exclude("*.bak"),
-        FilterRule::exclude("*.tmp"),
-    ];
+    let rules = [FilterRule::exclude("*.bak"), FilterRule::exclude("*.tmp")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // No rule matches, so default is include
@@ -736,8 +688,8 @@ fn order_clear_resets() {
 #[test]
 fn order_anchored_unanchored() {
     let rules = [
-        FilterRule::include("/config.json"),  // Anchored at root
-        FilterRule::exclude("config.json"),   // Matches anywhere
+        FilterRule::include("/config.json"), // Anchored at root
+        FilterRule::exclude("config.json"),  // Matches anywhere
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -916,10 +868,7 @@ fn multiple_includes_depth_patterns() {
 /// Verifies include with hidden files (dot prefix).
 #[test]
 fn include_hidden_files() {
-    let rules = [
-        FilterRule::include(".*"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include(".*"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new(".gitignore"), false));
@@ -980,10 +929,7 @@ fn include_paths_with_spaces() {
 /// Verifies include pattern case sensitivity.
 #[test]
 fn include_case_sensitivity() {
-    let rules = [
-        FilterRule::include("README.md"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::include("README.md"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Exact case matches
@@ -1006,10 +952,7 @@ fn include_empty_pattern() {
 /// Verifies include with show (sender-only include).
 #[test]
 fn include_show_sender_only() {
-    let rules = [
-        FilterRule::show("*.log"),
-        FilterRule::exclude("*"),
-    ];
+    let rules = [FilterRule::show("*.log"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Show is sender-only include, so allows() checks sender side
@@ -1029,10 +972,7 @@ fn include_with_modifiers() {
         .with_sender(true)
         .with_receiver(true);
 
-    let set = FilterSet::from_rules([
-        rule,
-        FilterRule::exclude("*"),
-    ]).unwrap();
+    let set = FilterSet::from_rules([rule, FilterRule::exclude("*")]).unwrap();
 
     assert!(set.allows(Path::new("main.rs"), false));
 }

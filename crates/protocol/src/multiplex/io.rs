@@ -81,7 +81,8 @@ pub fn send_msgs_vectored<W: Write>(
     let mut headers = Vec::with_capacity(messages.len());
     for (code, payload) in messages {
         let payload_len = ensure_payload_length(payload.len())?;
-        let header = MessageHeader::new(*code, payload_len).map_err(map_envelope_error_for_input)?;
+        let header =
+            MessageHeader::new(*code, payload_len).map_err(map_envelope_error_for_input)?;
         headers.push(header);
     }
 
@@ -1074,8 +1075,8 @@ mod tests {
 
     #[test]
     fn send_msgs_vectored_handles_interrupted_write() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct InterruptingWriter {
             buffer: Vec<u8>,
@@ -1085,10 +1086,7 @@ mod tests {
         impl Write for InterruptingWriter {
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
                 if self.interrupt_count.fetch_sub(1, Ordering::SeqCst) > 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Interrupted,
-                        "interrupted",
-                    ));
+                    return Err(io::Error::new(io::ErrorKind::Interrupted, "interrupted"));
                 }
                 self.buffer.extend_from_slice(buf);
                 Ok(buf.len())
@@ -1096,10 +1094,7 @@ mod tests {
 
             fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
                 if self.interrupt_count.fetch_sub(1, Ordering::SeqCst) > 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Interrupted,
-                        "interrupted",
-                    ));
+                    return Err(io::Error::new(io::ErrorKind::Interrupted, "interrupted"));
                 }
                 let mut total = 0;
                 for buf in bufs {

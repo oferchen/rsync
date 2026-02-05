@@ -316,7 +316,10 @@ fn parse_tb_decimal() {
 fn parse_pb_decimal() {
     // 1PB = 1,000,000,000,000,000 bytes
     let result = parse_bandwidth_argument("1PB").unwrap();
-    assert_eq!(result, Some(NonZeroU64::new(1_000_000_000_000_000).unwrap()));
+    assert_eq!(
+        result,
+        Some(NonZeroU64::new(1_000_000_000_000_000).unwrap())
+    );
 }
 
 // ========================================================================

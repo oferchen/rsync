@@ -119,11 +119,7 @@ mod block_size_selection {
                 "file size {size} should use default block size 700"
             );
             assert_eq!(layout.block_count(), 1, "should fit in one block");
-            assert_eq!(
-                layout.remainder(),
-                size as u32,
-                "entire file is remainder"
-            );
+            assert_eq!(layout.remainder(), size as u32, "entire file is remainder");
         }
     }
 
@@ -172,10 +168,10 @@ mod block_size_selection {
     #[test]
     fn medium_files_scale_block_size() {
         let test_cases = [
-            (500_000u64, 700u32, 800u32),       // Just over threshold
-            (1_048_576, 900, 1200),             // 1 MB
-            (10_485_760, 3000, 3500),           // 10 MB
-            (104_857_600, 10_000, 11_000),      // 100 MB
+            (500_000u64, 700u32, 800u32),  // Just over threshold
+            (1_048_576, 900, 1200),        // 1 MB
+            (10_485_760, 3000, 3500),      // 10 MB
+            (104_857_600, 10_000, 11_000), // 100 MB
         ];
 
         for (file_size, min_block, max_block) in test_cases {
@@ -255,10 +251,10 @@ mod block_size_selection {
     #[test]
     fn block_count_grows_sublinearly() {
         let test_cases = [
-            (1_000_000u64, 1_000u64),      // 1 MB -> 1K blocks
-            (10_000_000, 3_165),           // 10 MB -> ~3K blocks
-            (100_000_000, 10_000),         // 100 MB -> ~10K blocks
-            (1_000_000_000, 31_630),       // 1 GB -> ~32K blocks
+            (1_000_000u64, 1_000u64), // 1 MB -> 1K blocks
+            (10_000_000, 3_165),      // 10 MB -> ~3K blocks
+            (100_000_000, 10_000),    // 100 MB -> ~10K blocks
+            (1_000_000_000, 31_630),  // 1 GB -> ~32K blocks
         ];
 
         for (file_size, expected_blocks) in test_cases {
@@ -460,8 +456,8 @@ mod signature_accuracy {
         let mut modified = original.clone();
 
         // Modify 100 bytes in the middle
-        for i in 5_000..5_100 {
-            modified[i] = modified[i].wrapping_add(1);
+        for byte in modified.iter_mut().skip(5_000).take(100) {
+            *byte = byte.wrapping_add(1);
         }
 
         // Use small 100-byte blocks
@@ -484,7 +480,11 @@ mod signature_accuracy {
 
         // Count differing blocks
         let mut diff_count = 0;
-        for (orig, modif) in sig_original.blocks().iter().zip(sig_modified.blocks().iter()) {
+        for (orig, modif) in sig_original
+            .blocks()
+            .iter()
+            .zip(sig_modified.blocks().iter())
+        {
             if orig.strong() != modif.strong() {
                 diff_count += 1;
             }
@@ -507,8 +507,8 @@ mod signature_accuracy {
         let mut modified = original.clone();
 
         // Modify 100 bytes in the middle
-        for i in 5_000..5_100 {
-            modified[i] = modified[i].wrapping_add(1);
+        for byte in modified.iter_mut().skip(5_000).take(100) {
+            *byte = byte.wrapping_add(1);
         }
 
         // Use large 5000-byte blocks
@@ -531,7 +531,11 @@ mod signature_accuracy {
 
         // Count differing blocks
         let mut diff_count = 0;
-        for (orig, modif) in sig_original.blocks().iter().zip(sig_modified.blocks().iter()) {
+        for (orig, modif) in sig_original
+            .blocks()
+            .iter()
+            .zip(sig_modified.blocks().iter())
+        {
             if orig.strong() != modif.strong() {
                 diff_count += 1;
             }
@@ -539,10 +543,7 @@ mod signature_accuracy {
 
         // With 5000-byte blocks, we expect 1 large block to differ
         // (the second block containing bytes 5000-9999)
-        assert_eq!(
-            diff_count, 1,
-            "large blocks contain more data per block"
-        );
+        assert_eq!(diff_count, 1, "large blocks contain more data per block");
     }
 
     /// Block boundaries matter for change detection.
@@ -554,8 +555,8 @@ mod signature_accuracy {
         let mut modified = original.clone();
 
         // Modify 200 bytes spanning block boundary at 5000
-        for i in 4_900..5_100 {
-            modified[i] = modified[i].wrapping_add(1);
+        for byte in modified.iter_mut().skip(4_900).take(200) {
+            *byte = byte.wrapping_add(1);
         }
 
         // Use 1000-byte blocks (boundary at 5000)
@@ -578,7 +579,11 @@ mod signature_accuracy {
 
         // Count differing blocks
         let mut diff_count = 0;
-        for (orig, modif) in sig_original.blocks().iter().zip(sig_modified.blocks().iter()) {
+        for (orig, modif) in sig_original
+            .blocks()
+            .iter()
+            .zip(sig_modified.blocks().iter())
+        {
             if orig.strong() != modif.strong() {
                 diff_count += 1;
             }
@@ -739,14 +744,14 @@ mod round_trip {
     #[test]
     fn file_size_calculation_from_layout() {
         let test_cases = [
-            (0u64, 700u32),      // Empty file
-            (1, 700),            // Single byte
-            (700, 700),          // Exact block
-            (701, 700),          // One byte over
-            (1400, 700),         // Two exact blocks
-            (1500, 700),         // Two blocks + remainder
-            (10_000, 1_000),     // Ten exact blocks
-            (10_500, 1_000),     // Ten blocks + remainder
+            (0u64, 700u32),  // Empty file
+            (1, 700),        // Single byte
+            (700, 700),      // Exact block
+            (701, 700),      // One byte over
+            (1400, 700),     // Two exact blocks
+            (1500, 700),     // Two blocks + remainder
+            (10_000, 1_000), // Ten exact blocks
+            (10_500, 1_000), // Ten blocks + remainder
         ];
 
         for (file_size, block_size) in test_cases {
@@ -821,10 +826,7 @@ mod round_trip {
                 sig2.blocks()[i].strong(),
                 "strong checksums should be deterministic"
             );
-            assert_eq!(
-                sig2.blocks()[i].rolling(),
-                sig3.blocks()[i].rolling()
-            );
+            assert_eq!(sig2.blocks()[i].rolling(), sig3.blocks()[i].rolling());
             assert_eq!(sig2.blocks()[i].strong(), sig3.blocks()[i].strong());
         }
     }
@@ -882,10 +884,10 @@ mod round_trip {
     #[test]
     fn last_block_matches_remainder() {
         let test_cases = [
-            (1_500u64, 700u32),   // Remainder = 100
-            (2_500, 1_000),       // Remainder = 500
-            (10_100, 1_000),      // Remainder = 100
-            (5_001, 1_000),       // Remainder = 1
+            (1_500u64, 700u32), // Remainder = 100
+            (2_500, 1_000),     // Remainder = 500
+            (10_100, 1_000),    // Remainder = 100
+            (5_001, 1_000),     // Remainder = 1
         ];
 
         for (file_size, block_size) in test_cases {

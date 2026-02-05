@@ -11,16 +11,16 @@ use std::io::{Cursor, Read, Write};
 use std::num::NonZeroU8;
 use std::path::Path;
 
+use compress::CountingSink;
 use compress::algorithm::{CompressionAlgorithm, CompressionAlgorithmParseError};
 use compress::skip_compress::{
-    AdaptiveCompressor, CompressionDecider, CompressionDecision, FileCategory, MagicSignature,
-    DEFAULT_COMPRESSION_THRESHOLD, DEFAULT_SAMPLE_SIZE, KNOWN_SIGNATURES,
+    AdaptiveCompressor, CompressionDecider, CompressionDecision, DEFAULT_COMPRESSION_THRESHOLD,
+    DEFAULT_SAMPLE_SIZE, FileCategory, KNOWN_SIGNATURES, MagicSignature,
 };
 use compress::zlib::{
-    compress_to_vec as zlib_compress, decompress_to_vec as zlib_decompress, CompressionLevel,
-    CountingZlibDecoder, CountingZlibEncoder,
+    CompressionLevel, CountingZlibDecoder, CountingZlibEncoder, compress_to_vec as zlib_compress,
+    decompress_to_vec as zlib_decompress,
 };
-use compress::CountingSink;
 
 // =============================================================================
 // SECTION 1: Compression/Decompression Round-trips
@@ -102,7 +102,7 @@ mod round_trips {
     #[cfg(feature = "lz4")]
     #[test]
     fn lz4_raw_round_trip() {
-        use compress::lz4::raw::{compress_block_to_vec, decompress_block_to_vec, MAX_BLOCK_SIZE};
+        use compress::lz4::raw::{MAX_BLOCK_SIZE, compress_block_to_vec, decompress_block_to_vec};
 
         let test_cases = [
             ("empty", vec![]),
@@ -158,7 +158,10 @@ mod round_trips {
     fn zlib_round_trip_large_data() {
         let data = b"Large data pattern for stress testing compression. ".repeat(20_000);
         let compressed = zlib_compress(&data, CompressionLevel::Default).unwrap();
-        assert!(compressed.len() < data.len(), "Compression should reduce size");
+        assert!(
+            compressed.len() < data.len(),
+            "Compression should reduce size"
+        );
         let decompressed = zlib_decompress(&compressed).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -198,7 +201,10 @@ mod streaming {
             assert_eq!(bytes as usize, compressed.len());
 
             let decompressed = zlib_decompress(&compressed).unwrap();
-            assert_eq!(decompressed, data, "chunk size {chunk_size} round-trip failed");
+            assert_eq!(
+                decompressed, data,
+                "chunk size {chunk_size} round-trip failed"
+            );
         }
     }
 
@@ -244,7 +250,7 @@ mod streaming {
     #[test]
     fn zlib_streaming_encoder_write_fmt() {
         let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
-        write!(&mut encoder, "Formatted: {}, {}", 42, "test").unwrap();
+        write!(&mut encoder, "Formatted: {}, test", 42).unwrap();
         let (compressed, _) = encoder.finish_into_inner().unwrap();
         let decompressed = zlib_decompress(&compressed).unwrap();
         assert_eq!(decompressed, b"Formatted: 42, test");
@@ -397,7 +403,13 @@ mod skip_compress {
     fn should_compress_extension_detection() {
         let decider = CompressionDecider::with_default_skip_list();
 
-        let skip_files = ["photo.jpg", "video.mp4", "audio.mp3", "archive.zip", "document.pdf"];
+        let skip_files = [
+            "photo.jpg",
+            "video.mp4",
+            "audio.mp3",
+            "archive.zip",
+            "document.pdf",
+        ];
         for file in skip_files {
             assert_eq!(
                 decider.should_compress(Path::new(file), None),
@@ -509,7 +521,9 @@ mod skip_compress {
         let mut state: u64 = 0x853c49e6748fea9b;
         let random: Vec<u8> = (0..4096)
             .map(|_| {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let xorshifted = (((state >> 18) ^ state) >> 27) as u32;
                 let rot = (state >> 59) as u32;
                 ((xorshifted >> rot) | (xorshifted << ((32u32.wrapping_sub(rot)) & 31))) as u8
@@ -522,7 +536,9 @@ mod skip_compress {
     fn compression_decider_configuration() {
         let mut decider = CompressionDecider::new();
 
-        assert!((decider.compression_threshold() - DEFAULT_COMPRESSION_THRESHOLD).abs() < f64::EPSILON);
+        assert!(
+            (decider.compression_threshold() - DEFAULT_COMPRESSION_THRESHOLD).abs() < f64::EPSILON
+        );
         decider.set_compression_threshold(0.85);
         assert!((decider.compression_threshold() - 0.85).abs() < f64::EPSILON);
         decider.set_compression_threshold(2.0);
@@ -609,7 +625,10 @@ mod skip_compress {
             assert!(!sig.bytes.is_empty(), "Signature should not be empty");
             let mut test_data = vec![0u8; sig.offset + sig.bytes.len()];
             test_data[sig.offset..].copy_from_slice(sig.bytes);
-            assert!(sig.matches(&test_data), "Signature should match its own bytes");
+            assert!(
+                sig.matches(&test_data),
+                "Signature should match its own bytes"
+            );
         }
     }
 
@@ -666,7 +685,10 @@ mod compression_levels {
         }
 
         // Level 0 is valid (CompressionLevel::None)
-        assert_eq!(CompressionLevel::from_numeric(0).unwrap(), CompressionLevel::None);
+        assert_eq!(
+            CompressionLevel::from_numeric(0).unwrap(),
+            CompressionLevel::None
+        );
 
         // Invalid levels
         assert!(CompressionLevel::from_numeric(10).is_err());
@@ -787,8 +809,8 @@ mod error_handling {
     #[test]
     fn lz4_raw_error_cases() {
         use compress::lz4::raw::{
-            compress_block, compress_block_to_vec, decompress_block,
-            encode_header, RawLz4Error, MAX_BLOCK_SIZE, MAX_DECOMPRESSED_SIZE,
+            MAX_BLOCK_SIZE, MAX_DECOMPRESSED_SIZE, RawLz4Error, compress_block,
+            compress_block_to_vec, decompress_block, encode_header,
         };
 
         let large_input = vec![0u8; MAX_BLOCK_SIZE + 1];
@@ -999,22 +1021,43 @@ mod algorithm {
 
     #[test]
     fn compression_algorithm_default() {
-        assert_eq!(CompressionAlgorithm::default_algorithm(), CompressionAlgorithm::Zlib);
+        assert_eq!(
+            CompressionAlgorithm::default_algorithm(),
+            CompressionAlgorithm::Zlib
+        );
         assert_eq!(CompressionAlgorithm::default(), CompressionAlgorithm::Zlib);
     }
 
     #[test]
     fn compression_algorithm_parsing() {
-        assert_eq!("zlib".parse::<CompressionAlgorithm>().unwrap(), CompressionAlgorithm::Zlib);
-        assert_eq!("zlibx".parse::<CompressionAlgorithm>().unwrap(), CompressionAlgorithm::Zlib);
-        assert_eq!("ZLIB".parse::<CompressionAlgorithm>().unwrap(), CompressionAlgorithm::Zlib);
-        assert_eq!("  zlib  ".parse::<CompressionAlgorithm>().unwrap(), CompressionAlgorithm::Zlib);
+        assert_eq!(
+            "zlib".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+        assert_eq!(
+            "zlibx".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+        assert_eq!(
+            "ZLIB".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+        assert_eq!(
+            "  zlib  ".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zlib
+        );
 
         #[cfg(feature = "lz4")]
-        assert_eq!("lz4".parse::<CompressionAlgorithm>().unwrap(), CompressionAlgorithm::Lz4);
+        assert_eq!(
+            "lz4".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Lz4
+        );
 
         #[cfg(feature = "zstd")]
-        assert_eq!("zstd".parse::<CompressionAlgorithm>().unwrap(), CompressionAlgorithm::Zstd);
+        assert_eq!(
+            "zstd".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Zstd
+        );
     }
 
     #[test]
@@ -1054,9 +1097,9 @@ mod algorithm {
 #[cfg(feature = "lz4")]
 mod lz4_raw_comprehensive {
     use compress::lz4::raw::{
-        compress_block, compress_block_to_vec, compressed_size_from_header, decode_header,
-        decompress_block, decompress_block_to_vec, encode_header, is_deflated_data,
-        read_compressed_block, write_compressed_block, HEADER_SIZE, MAX_BLOCK_SIZE,
+        HEADER_SIZE, MAX_BLOCK_SIZE, compress_block, compress_block_to_vec,
+        compressed_size_from_header, decode_header, decompress_block, decompress_block_to_vec,
+        encode_header, is_deflated_data, read_compressed_block, write_compressed_block,
     };
     use lz4_flex::block::get_maximum_output_size;
     use std::io::Cursor;
@@ -1077,7 +1120,10 @@ mod lz4_raw_comprehensive {
         }
 
         for flag in [0x00, 0x80, 0xC0, 0xFF] {
-            assert!(!is_deflated_data(flag), "0x{flag:02x} should not be deflated");
+            assert!(
+                !is_deflated_data(flag),
+                "0x{flag:02x} should not be deflated"
+            );
         }
     }
 
@@ -1096,7 +1142,8 @@ mod lz4_raw_comprehensive {
         for size in [0, 1, 10, 100, 1000, 10000, MAX_BLOCK_SIZE] {
             let input: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
             let compressed = compress_block_to_vec(&input).expect("compress");
-            let decompressed = decompress_block_to_vec(&compressed, size.max(1)).expect("decompress");
+            let decompressed =
+                decompress_block_to_vec(&compressed, size.max(1)).expect("decompress");
             assert_eq!(decompressed, input, "size {size} roundtrip failed");
         }
     }
@@ -1131,7 +1178,10 @@ mod lz4_raw_comprehensive {
     fn highly_compressible_data() {
         let input = vec![0u8; 10000];
         let compressed = compress_block_to_vec(&input).expect("compress");
-        assert!(compressed.len() < input.len() / 10, "zeros should compress very well");
+        assert!(
+            compressed.len() < input.len() / 10,
+            "zeros should compress very well"
+        );
 
         let decompressed = decompress_block_to_vec(&compressed, input.len()).expect("decompress");
         assert_eq!(decompressed, input);
@@ -1153,7 +1203,9 @@ mod lz4_raw_comprehensive {
 #[cfg(feature = "zstd")]
 mod zstd_comprehensive {
     use super::*;
-    use compress::zstd::{compress_to_vec, decompress_to_vec, CountingZstdDecoder, CountingZstdEncoder};
+    use compress::zstd::{
+        CountingZstdDecoder, CountingZstdEncoder, compress_to_vec, decompress_to_vec,
+    };
     use std::io::IoSliceMut;
 
     #[test]
@@ -1166,7 +1218,8 @@ mod zstd_comprehensive {
 
     #[test]
     fn encoder_with_custom_sink() {
-        let mut encoder = CountingZstdEncoder::with_sink(Vec::new(), CompressionLevel::Default).unwrap();
+        let mut encoder =
+            CountingZstdEncoder::with_sink(Vec::new(), CompressionLevel::Default).unwrap();
         assert_eq!(encoder.bytes_written(), 0);
         encoder.write(b"test data").unwrap();
 
@@ -1179,7 +1232,8 @@ mod zstd_comprehensive {
 
     #[test]
     fn encoder_accessors() {
-        let mut encoder = CountingZstdEncoder::with_sink(Vec::new(), CompressionLevel::Default).unwrap();
+        let mut encoder =
+            CountingZstdEncoder::with_sink(Vec::new(), CompressionLevel::Default).unwrap();
         assert!(encoder.get_ref().is_empty());
         encoder.get_mut().extend_from_slice(b"prefix");
         assert!(encoder.get_ref().starts_with(b"prefix"));
@@ -1233,7 +1287,11 @@ mod zstd_comprehensive {
     fn all_compression_levels() {
         let data = b"testing all zstd compression levels".repeat(100);
 
-        for level in [CompressionLevel::Fast, CompressionLevel::Default, CompressionLevel::Best] {
+        for level in [
+            CompressionLevel::Fast,
+            CompressionLevel::Default,
+            CompressionLevel::Best,
+        ] {
             let compressed = compress_to_vec(&data, level).unwrap();
             let decompressed = decompress_to_vec(&compressed).unwrap();
             assert_eq!(decompressed, data);
@@ -1255,7 +1313,9 @@ mod zstd_comprehensive {
 #[cfg(feature = "lz4")]
 mod lz4_frame_comprehensive {
     use super::*;
-    use compress::lz4::frame::{compress_to_vec, decompress_to_vec, CountingLz4Decoder, CountingLz4Encoder};
+    use compress::lz4::frame::{
+        CountingLz4Decoder, CountingLz4Encoder, compress_to_vec, decompress_to_vec,
+    };
     use std::io::IoSliceMut;
 
     #[test]
@@ -1335,7 +1395,11 @@ mod lz4_frame_comprehensive {
     fn all_compression_levels() {
         let data = b"testing all lz4 compression levels".repeat(100);
 
-        for level in [CompressionLevel::Fast, CompressionLevel::Default, CompressionLevel::Best] {
+        for level in [
+            CompressionLevel::Fast,
+            CompressionLevel::Default,
+            CompressionLevel::Best,
+        ] {
             let compressed = compress_to_vec(&data, level).unwrap();
             let decompressed = decompress_to_vec(&compressed).unwrap();
             assert_eq!(decompressed, data);

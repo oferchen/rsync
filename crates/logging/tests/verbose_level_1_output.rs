@@ -145,10 +145,7 @@ fn verbose_1_shows_absolute_paths() {
 
     assert_eq!(
         messages,
-        vec![
-            "/usr/local/bin/file.txt",
-            "/home/user/documents/data.csv"
-        ]
+        vec!["/usr/local/bin/file.txt", "/home/user/documents/data.csv"]
     );
 }
 
@@ -275,7 +272,11 @@ fn verbose_1_includes_statistics() {
     info_log!(Stats, 1, "Number of created files: 3");
     info_log!(Stats, 1, "Total file size: 1,024 bytes");
     info_log!(Stats, 1, "Total transferred file size: 1,024 bytes");
-    info_log!(Stats, 1, "sent 1,024 bytes  received 256 bytes  1,280.00 bytes/sec");
+    info_log!(
+        Stats,
+        1,
+        "sent 1,024 bytes  received 256 bytes  1,280.00 bytes/sec"
+    );
 
     let events = drain_events();
     assert_eq!(events.len(), 5);
@@ -536,7 +537,15 @@ fn verbose_1_no_files_transferred() {
     // No Name events should appear
     let name_events: Vec<_> = events
         .iter()
-        .filter(|e| matches!(e, DiagnosticEvent::Info { flag: InfoFlag::Name, .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                DiagnosticEvent::Info {
+                    flag: InfoFlag::Name,
+                    ..
+                }
+            )
+        })
         .collect();
     assert_eq!(name_events.len(), 0);
 }

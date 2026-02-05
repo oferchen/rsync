@@ -12,8 +12,7 @@ use std::num::NonZeroU8;
 use std::time::{Duration, Instant};
 
 use compress::zlib::{
-    compress_to_vec, decompress_to_vec, CompressionLevel,
-    CountingZlibDecoder, CountingZlibEncoder,
+    CompressionLevel, CountingZlibDecoder, CountingZlibEncoder, compress_to_vec, decompress_to_vec,
 };
 
 /// Test data generators for different content types.
@@ -79,9 +78,10 @@ mod test_data {
             for j in 0..data_len.min(size - data.len()) {
                 data.push((j + i) as u8);
             }
-            for _ in 0..zero_len.min(size.saturating_sub(data.len())) {
-                data.push(0);
-            }
+            data.extend(std::iter::repeat_n(
+                0,
+                zero_len.min(size.saturating_sub(data.len())),
+            ));
             i += 1;
         }
         data.truncate(size);
@@ -203,7 +203,10 @@ fn all_levels_work_with_streaming_encoder() {
         );
 
         let decompressed = decompress_to_vec(&compressed).expect("decompress");
-        assert_eq!(decompressed, data, "level {level} streaming round-trip failed");
+        assert_eq!(
+            decompressed, data,
+            "level {level} streaming round-trip failed"
+        );
     }
 }
 
@@ -398,7 +401,10 @@ fn compress_empty_data_all_levels() {
         let decompressed = decompress_to_vec(&compressed)
             .unwrap_or_else(|e| panic!("level {level} decompression failed on empty: {e}"));
 
-        assert!(decompressed.is_empty(), "level {level}: expected empty output");
+        assert!(
+            decompressed.is_empty(),
+            "level {level}: expected empty output"
+        );
     }
 }
 
@@ -414,7 +420,10 @@ fn compress_single_byte_all_levels() {
         let decompressed = decompress_to_vec(&compressed)
             .unwrap_or_else(|e| panic!("level {level} decompression failed on single byte: {e}"));
 
-        assert_eq!(decompressed, data, "level {level}: single byte round-trip failed");
+        assert_eq!(
+            decompressed, data,
+            "level {level}: single byte round-trip failed"
+        );
     }
 }
 
@@ -449,8 +458,7 @@ fn compress_large_data_all_levels() {
         );
         assert!(
             result.compressed_size < data.len(),
-            "level {} did not compress 1MB of text",
-            level
+            "level {level} did not compress 1MB of text"
         );
     }
 }
@@ -581,10 +589,10 @@ fn level_zero_produces_larger_output_than_higher_levels() {
 
     let level_0_compressed =
         compress_to_vec(&data, CompressionLevel::None).expect("level 0 compress");
-    let level_1_compressed =
-        compress_to_vec(&data, CompressionLevel::from_numeric(1).unwrap()).expect("level 1 compress");
-    let level_9_compressed =
-        compress_to_vec(&data, CompressionLevel::from_numeric(9).unwrap()).expect("level 9 compress");
+    let level_1_compressed = compress_to_vec(&data, CompressionLevel::from_numeric(1).unwrap())
+        .expect("level 1 compress");
+    let level_9_compressed = compress_to_vec(&data, CompressionLevel::from_numeric(9).unwrap())
+        .expect("level 9 compress");
 
     // Level 0 should produce larger output than compressed levels for compressible data
     assert!(
@@ -625,8 +633,7 @@ fn level_zero_with_empty_data() {
 
     let compressed = compress_to_vec(data, CompressionLevel::None).expect("level 0 empty compress");
 
-    let decompressed =
-        decompress_to_vec(&compressed).expect("level 0 empty decompress");
+    let decompressed = decompress_to_vec(&compressed).expect("level 0 empty decompress");
 
     assert!(decompressed.is_empty(), "level 0: expected empty output");
 }
@@ -638,8 +645,7 @@ fn level_zero_with_single_byte() {
     let compressed =
         compress_to_vec(data, CompressionLevel::None).expect("level 0 single byte compress");
 
-    let decompressed =
-        decompress_to_vec(&compressed).expect("level 0 single byte decompress");
+    let decompressed = decompress_to_vec(&compressed).expect("level 0 single byte decompress");
 
     assert_eq!(decompressed, data, "level 0: single byte round-trip failed");
 }
@@ -651,13 +657,9 @@ fn level_zero_with_all_byte_values() {
 
     let compressed =
         compress_to_vec(&data, CompressionLevel::None).expect("level 0 all-bytes compress");
-    let decompressed =
-        decompress_to_vec(&compressed).expect("level 0 all-bytes decompress");
+    let decompressed = decompress_to_vec(&compressed).expect("level 0 all-bytes decompress");
 
-    assert_eq!(
-        decompressed, data,
-        "level 0: all-bytes round-trip failed"
-    );
+    assert_eq!(decompressed, data, "level 0: all-bytes round-trip failed");
 }
 
 #[test]
@@ -702,8 +704,8 @@ fn compression_level_presets_produce_valid_output() {
     ];
 
     for (name, level) in presets {
-        let compressed =
-            compress_to_vec(&data, level).unwrap_or_else(|e| panic!("{name} compression failed: {e}"));
+        let compressed = compress_to_vec(&data, level)
+            .unwrap_or_else(|e| panic!("{name} compression failed: {e}"));
 
         let decompressed = decompress_to_vec(&compressed)
             .unwrap_or_else(|e| panic!("{name} decompression failed: {e}"));

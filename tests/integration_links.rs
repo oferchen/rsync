@@ -296,7 +296,11 @@ fn multiple_hardlinks_to_same_inode() {
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
     // Create a file and multiple hard links to it
-    fs::write(src_dir.join("original.txt"), b"shared content between all links").unwrap();
+    fs::write(
+        src_dir.join("original.txt"),
+        b"shared content between all links",
+    )
+    .unwrap();
     fs::hard_link(src_dir.join("original.txt"), src_dir.join("link1.txt")).unwrap();
     fs::hard_link(src_dir.join("original.txt"), src_dir.join("link2.txt")).unwrap();
     fs::hard_link(src_dir.join("original.txt"), src_dir.join("link3.txt")).unwrap();
@@ -391,7 +395,11 @@ fn hardlinks_across_directories() {
     fs::create_dir(src_dir.join("dir_c")).unwrap();
 
     // Create file in dir_a and hardlink to it from dir_b and dir_c
-    fs::write(src_dir.join("dir_a/file.txt"), b"cross-directory linked content").unwrap();
+    fs::write(
+        src_dir.join("dir_a/file.txt"),
+        b"cross-directory linked content",
+    )
+    .unwrap();
     fs::hard_link(
         src_dir.join("dir_a/file.txt"),
         src_dir.join("dir_b/link.txt"),
@@ -465,7 +473,9 @@ fn hardlinks_across_directories() {
 
     // Link count should be 4
     assert_eq!(
-        fs::metadata(dest_dir.join("dir_a/file.txt")).unwrap().nlink(),
+        fs::metadata(dest_dir.join("dir_a/file.txt"))
+            .unwrap()
+            .nlink(),
         4,
         "cross-directory hardlinks should maintain link count"
     );
@@ -540,13 +550,18 @@ fn hardlink_preservation_with_archive_flag() {
         "file2_link should be hardlinked to file2"
     );
     assert_eq!(
-        fs::metadata(dest_dir.join("deep/file2.txt")).unwrap().nlink(),
+        fs::metadata(dest_dir.join("deep/file2.txt"))
+            .unwrap()
+            .nlink(),
         2,
         "file2 group should have nlink=2"
     );
 
     // Verify content
-    assert_eq!(fs::read(dest_dir.join("file1.txt")).unwrap(), b"content one");
+    assert_eq!(
+        fs::read(dest_dir.join("file1.txt")).unwrap(),
+        b"content one"
+    );
     assert_eq!(
         fs::read(dest_dir.join("deep/file2.txt")).unwrap(),
         b"content two"
@@ -635,17 +650,23 @@ fn inode_relationships_maintained_across_transfer() {
 
     // Verify link counts
     assert_eq!(
-        fs::metadata(dest_dir.join("group_a_1.txt")).unwrap().nlink(),
+        fs::metadata(dest_dir.join("group_a_1.txt"))
+            .unwrap()
+            .nlink(),
         3,
         "group_a should have nlink=3"
     );
     assert_eq!(
-        fs::metadata(dest_dir.join("group_b_1.txt")).unwrap().nlink(),
+        fs::metadata(dest_dir.join("group_b_1.txt"))
+            .unwrap()
+            .nlink(),
         2,
         "group_b should have nlink=2"
     );
     assert_eq!(
-        fs::metadata(dest_dir.join("standalone.txt")).unwrap().nlink(),
+        fs::metadata(dest_dir.join("standalone.txt"))
+            .unwrap()
+            .nlink(),
         1,
         "standalone should have nlink=1"
     );

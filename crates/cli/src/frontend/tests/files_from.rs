@@ -89,8 +89,7 @@ fn files_from_handles_crlf_line_endings() {
     let list_path = tmp.path().join("crlf.list");
 
     // Windows-style CRLF line endings
-    std::fs::write(&list_path, "file1.txt\r\nfile2.txt\r\nfile3.txt\r\n")
-        .expect("write list");
+    std::fs::write(&list_path, "file1.txt\r\nfile2.txt\r\nfile3.txt\r\n").expect("write list");
 
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
@@ -287,8 +286,8 @@ fn from0_disables_comment_handling() {
     bytes.push(0);
     std::fs::write(&list_path, bytes).expect("write list");
 
-    let entries = load_file_list_operands(&[list_path.into_os_string()], true)
-        .expect("load entries");
+    let entries =
+        load_file_list_operands(&[list_path.into_os_string()], true).expect("load entries");
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0], "#notacomment");

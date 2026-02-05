@@ -40,5 +40,17 @@ rustflags = ["-C", "target-feature=+crt-static"]
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "target-cpu=x86-64-v3"]  # AVX2, FMA, BMI1/2
 
+# Coverage configuration for cargo-llvm-cov
+# These settings optimize coverage collection and reporting
+[env]
+# Exclude test files from coverage metrics (focus on implementation code)
+CARGO_LLVM_COV_SHOW_ENV = "0"
+
 [alias]
 xtask = "run --package xtask --"
+
+# Coverage aliases for convenience
+cov = "llvm-cov --workspace --all-features"
+cov-html = "llvm-cov --workspace --all-features --html --output-dir target/coverage/html"
+cov-lcov = "llvm-cov --workspace --all-features --lcov --output-path target/coverage/lcov.info"
+cov-open = "llvm-cov --workspace --all-features --html --output-dir target/coverage/html --open"

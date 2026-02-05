@@ -34,7 +34,11 @@ fn test_tracing_with_verbosity_level_2() {
     assert_eq!(events.len(), 1);
 
     match &events[0] {
-        DiagnosticEvent::Debug { flag, level, message } => {
+        DiagnosticEvent::Debug {
+            flag,
+            level,
+            message,
+        } => {
             assert_eq!(*flag, DebugFlag::Deltasum);
             assert_eq!(*level, 1);
             assert_eq!(message, "delta test");

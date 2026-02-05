@@ -79,8 +79,7 @@ fn mode_0000_preserves_across_multiple_files() {
         assert_eq!(
             metadata.permissions().mode() & 0o777,
             0o000,
-            "file {} should have mode 0000",
-            file_name
+            "file {file_name} should have mode 0000"
         );
     }
 }
@@ -296,7 +295,7 @@ fn mode_0000_nested_directory_structure() {
     ];
 
     for (path, expected_content) in &dest_files {
-        assert!(path.exists(), "file should exist: {:?}", path);
+        assert!(path.exists(), "file should exist: {path:?}");
         let metadata = fs::metadata(path).expect("file metadata");
         assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
         assert_eq!(fs::read(path).expect("read file"), *expected_content);

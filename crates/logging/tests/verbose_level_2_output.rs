@@ -374,7 +374,11 @@ fn verbose_level_2_backup_messages_match_format() {
 
     // Backup file creation messages
     info_log!(Backup, 2, "backing up \"data.txt\" to \"data.txt~\"");
-    info_log!(Backup, 2, "backup: renamed \"config.ini\" to \"config.ini~\"");
+    info_log!(
+        Backup,
+        2,
+        "backup: renamed \"config.ini\" to \"config.ini~\""
+    );
 
     let events = drain_events();
     assert_eq!(events.len(), 2);
@@ -425,9 +429,7 @@ fn verbose_level_2_remove_messages_match_format() {
         .collect();
 
     assert_eq!(remove_msgs.len(), 2);
-    assert!(
-        remove_msgs[0].contains("removing") || remove_msgs[0].contains("deleting")
-    );
+    assert!(remove_msgs[0].contains("removing") || remove_msgs[0].contains("deleting"));
 }
 
 // ============================================================================

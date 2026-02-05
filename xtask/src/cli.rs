@@ -204,8 +204,35 @@ pub enum InteropCommand {
     /// Validate message formats against upstream rsync.
     Messages(InteropCommonArgs),
 
+    /// Compare behavior between oc-rsync and upstream rsync.
+    Behavior(BehaviorArgs),
+
     /// Run all validations (exit codes + messages).
     All,
+}
+
+/// Arguments for the behavior comparison command.
+#[derive(Parser, Debug, Clone, Default)]
+pub struct BehaviorArgs {
+    /// Test against specific upstream version (3.0.9, 3.1.3, 3.4.1).
+    #[arg(long, value_name = "VER")]
+    pub version: Option<String>,
+
+    /// Run only a specific scenario by name.
+    #[arg(long, value_name = "NAME")]
+    pub scenario: Option<String>,
+
+    /// Enable verbose output.
+    #[arg(short, long)]
+    pub verbose: bool,
+
+    /// Show stdout/stderr from rsync commands.
+    #[arg(short = 'o', long)]
+    pub show_output: bool,
+
+    /// Stop on first failure.
+    #[arg(long)]
+    pub fail_fast: bool,
 }
 
 /// Common arguments for interop subcommands.
@@ -547,6 +574,33 @@ mod tests {
                     assert_eq!(common.version, Some("3.4.1".to_owned()));
                 }
                 _ => panic!("expected exit-codes subcommand"),
+            },
+            _ => panic!("expected interop command"),
+        }
+    }
+
+    #[test]
+    fn parse_interop_behavior() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "interop",
+            "behavior",
+            "--version",
+            "3.4.1",
+            "--scenario",
+            "copy_single_file",
+            "--verbose",
+            "--fail-fast",
+        ]);
+        match cli.command {
+            Command::Interop(args) => match args.command {
+                Some(InteropCommand::Behavior(behavior)) => {
+                    assert_eq!(behavior.version, Some("3.4.1".to_owned()));
+                    assert_eq!(behavior.scenario, Some("copy_single_file".to_owned()));
+                    assert!(behavior.verbose);
+                    assert!(behavior.fail_fast);
+                }
+                _ => panic!("expected behavior subcommand"),
             },
             _ => panic!("expected interop command"),
         }

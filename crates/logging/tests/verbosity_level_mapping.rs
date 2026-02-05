@@ -10,9 +10,7 @@
 //! 3. --quiet (level 0) reduces output to minimal
 //! 4. Verbosity affects message filtering correctly
 
-use logging::{
-    DebugFlag, InfoFlag, VerbosityConfig, debug_log, drain_events, info_log, init,
-};
+use logging::{DebugFlag, InfoFlag, VerbosityConfig, debug_log, drain_events, info_log, init};
 
 // ============================================================================
 // Test 1: -v (Verbose Level 1) Mapping
@@ -318,9 +316,7 @@ fn quiet_level_0_less_than_level_1() {
 /// Verifies verbosity levels are strictly progressive.
 #[test]
 fn verbosity_levels_are_progressive() {
-    let levels: Vec<VerbosityConfig> = (0..=5)
-        .map(VerbosityConfig::from_verbose_level)
-        .collect();
+    let levels: Vec<VerbosityConfig> = (0..=5).map(VerbosityConfig::from_verbose_level).collect();
 
     // Check that specific flags increase or stay constant
     for i in 1..levels.len() {
@@ -527,7 +523,7 @@ fn debug_messages_require_level_2_or_higher() {
         }
 
         let events = drain_events();
-        assert_eq!(events.len(), 0, "Level {} should filter all debug", level);
+        assert_eq!(events.len(), 0, "Level {level} should filter all debug");
     }
 
     // Level 2 should allow debug
@@ -546,7 +542,7 @@ fn debug_messages_require_level_2_or_higher() {
     }
 
     let events2 = drain_events();
-    assert!(events2.len() > 0, "Level 2 should allow debug messages");
+    assert!(!events2.is_empty(), "Level 2 should allow debug messages");
 }
 
 /// Verifies progressive filtering with specific deltasum levels.

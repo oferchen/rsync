@@ -22,11 +22,11 @@
 //!
 //! Protocol details are based on rsync 3.4.1 source code.
 
+use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{
     CompatibilityFlags, KnownCompatibilityFlag, NegotiationError, ProtocolVersion,
     ProtocolVersionAdvertisement, format_legacy_daemon_greeting, select_highest_mutual,
 };
-use protocol::codec::{create_ndx_codec, create_protocol_codec, NdxCodec, ProtocolCodec};
 use std::io::Cursor;
 
 /// Helper wrapper for testing protocol version advertisement.
@@ -741,11 +741,12 @@ mod version_negotiation {
 
         for &v1 in &versions {
             for &v2 in &versions {
-                let result = select_highest_mutual([
-                    TestVersion(u32::from(v1)),
-                    TestVersion(u32::from(v2)),
-                ]);
-                assert!(result.is_ok(), "Negotiation between {v1} and {v2} must succeed");
+                let result =
+                    select_highest_mutual([TestVersion(u32::from(v1)), TestVersion(u32::from(v2))]);
+                assert!(
+                    result.is_ok(),
+                    "Negotiation between {v1} and {v2} must succeed"
+                );
 
                 let expected = std::cmp::max(v1, v2);
                 assert_eq!(
@@ -846,7 +847,7 @@ mod capability_flags_per_version {
             supports_perishable_modifier: true, // Added in v30
             supports_flist_times: true,
             uses_old_prefixes: false,
-            uses_safe_file_list: true,        // Added in v30
+            uses_safe_file_list: true, // Added in v30
             safe_file_list_always_enabled: false,
             uses_varint_flist_flags: true, // Added in v30
             supports_extended_flags: true,
@@ -872,7 +873,7 @@ mod capability_flags_per_version {
     fn test_version_capability_matrix() {
         for caps in VERSION_CAPABILITIES.iter() {
             let protocol = ProtocolVersion::from_supported(caps.version)
-                .expect(&format!("Protocol {} should be supported", caps.version));
+                .unwrap_or_else(|| panic!("Protocol {} should be supported", caps.version));
 
             assert_eq!(
                 protocol.uses_legacy_ascii_negotiation(),
@@ -965,7 +966,10 @@ mod capability_flags_per_version {
                 "AVOID_XATTR_OPTIM",
             ),
             (CompatibilityFlags::CHECKSUM_SEED_FIX, "CHKSUM_SEED_FIX"),
-            (CompatibilityFlags::INPLACE_PARTIAL_DIR, "INPLACE_PARTIAL_DIR"),
+            (
+                CompatibilityFlags::INPLACE_PARTIAL_DIR,
+                "INPLACE_PARTIAL_DIR",
+            ),
             (CompatibilityFlags::VARINT_FLIST_FLAGS, "VARINT_FLIST_FLAGS"),
             (CompatibilityFlags::ID0_NAMES, "ID0_NAMES"),
         ];
@@ -973,12 +977,12 @@ mod capability_flags_per_version {
         for (flag, name) in all_flags {
             let mut buf = Vec::new();
             flag.encode_to_vec(&mut buf)
-                .expect(&format!("Encoding {} should succeed", name));
+                .unwrap_or_else(|_| panic!("Encoding {name} should succeed"));
 
             let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-                .expect(&format!("Decoding {} should succeed", name));
+                .unwrap_or_else(|_| panic!("Decoding {name} should succeed"));
 
-            assert_eq!(decoded, flag, "Round-trip for {} should preserve flag", name);
+            assert_eq!(decoded, flag, "Round-trip for {name} should preserve flag");
         }
     }
 
@@ -990,10 +994,22 @@ mod capability_flags_per_version {
 
         // Each variant should map to the correct flag bits
         let expected_mappings = [
-            (KnownCompatibilityFlag::IncRecurse, CompatibilityFlags::INC_RECURSE),
-            (KnownCompatibilityFlag::SymlinkTimes, CompatibilityFlags::SYMLINK_TIMES),
-            (KnownCompatibilityFlag::SymlinkIconv, CompatibilityFlags::SYMLINK_ICONV),
-            (KnownCompatibilityFlag::SafeFileList, CompatibilityFlags::SAFE_FILE_LIST),
+            (
+                KnownCompatibilityFlag::IncRecurse,
+                CompatibilityFlags::INC_RECURSE,
+            ),
+            (
+                KnownCompatibilityFlag::SymlinkTimes,
+                CompatibilityFlags::SYMLINK_TIMES,
+            ),
+            (
+                KnownCompatibilityFlag::SymlinkIconv,
+                CompatibilityFlags::SYMLINK_ICONV,
+            ),
+            (
+                KnownCompatibilityFlag::SafeFileList,
+                CompatibilityFlags::SAFE_FILE_LIST,
+            ),
             (
                 KnownCompatibilityFlag::AvoidXattrOptimization,
                 CompatibilityFlags::AVOID_XATTR_OPTIMIZATION,
@@ -1010,15 +1026,17 @@ mod capability_flags_per_version {
                 KnownCompatibilityFlag::VarintFlistFlags,
                 CompatibilityFlags::VARINT_FLIST_FLAGS,
             ),
-            (KnownCompatibilityFlag::Id0Names, CompatibilityFlags::ID0_NAMES),
+            (
+                KnownCompatibilityFlag::Id0Names,
+                CompatibilityFlags::ID0_NAMES,
+            ),
         ];
 
         for (variant, expected_flag) in expected_mappings {
             assert_eq!(
                 variant.as_flag(),
                 expected_flag,
-                "{:?} should map to correct flag",
-                variant
+                "{variant:?} should map to correct flag"
             );
         }
     }
@@ -1044,36 +1062,31 @@ mod capability_flags_per_version {
             if prev_sender_receiver {
                 assert!(
                     protocol.supports_sender_receiver_modifiers(),
-                    "sender_receiver must stay enabled at {}",
-                    protocol
+                    "sender_receiver must stay enabled at {protocol}"
                 );
             }
             if prev_perishable {
                 assert!(
                     protocol.supports_perishable_modifier(),
-                    "perishable must stay enabled at {}",
-                    protocol
+                    "perishable must stay enabled at {protocol}"
                 );
             }
             if prev_flist_times {
                 assert!(
                     protocol.supports_flist_times(),
-                    "flist_times must stay enabled at {}",
-                    protocol
+                    "flist_times must stay enabled at {protocol}"
                 );
             }
             if prev_safe_flist {
                 assert!(
                     protocol.uses_safe_file_list(),
-                    "safe_flist must stay enabled at {}",
-                    protocol
+                    "safe_flist must stay enabled at {protocol}"
                 );
             }
             if prev_varint_flist {
                 assert!(
                     protocol.uses_varint_flist_flags(),
-                    "varint_flist must stay enabled at {}",
-                    protocol
+                    "varint_flist must stay enabled at {protocol}"
                 );
             }
 
@@ -1125,7 +1138,10 @@ mod capability_flags_per_version {
                 let mut cursor = Cursor::new(&buf);
                 let read = codec.read_file_size(&mut cursor).unwrap();
 
-                assert_eq!(read, size, "v{} file_size roundtrip failed for {}", version, size);
+                assert_eq!(
+                    read, size,
+                    "v{version} file_size roundtrip failed for {size}"
+                );
             }
         }
     }

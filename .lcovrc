@@ -1,0 +1,14 @@
+# LCOV Configuration for Rsync Test Coverage
+# This file configures how lcov processes coverage data
+
+# Exclude external dependencies and generated code
+geninfo_exclude_pattern = /usr/include/*,*/target/debug/build/*,*/rustc/*,*/.cargo/*
+
+# Branch coverage settings
+lcov_branch_coverage = 1
+
+# Function coverage settings
+lcov_function_coverage = 1
+
+# Don't fail on empty source files
+geninfo_unexecuted_blocks = 0

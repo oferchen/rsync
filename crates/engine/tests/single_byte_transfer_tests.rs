@@ -59,7 +59,8 @@ fn build_index(data: &[u8]) -> Option<DeltaSignatureIndex> {
         NonZeroU8::new(16).unwrap(),
     );
     let layout = calculate_signature_layout(params).ok()?;
-    let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4).ok()?;
+    let signature =
+        generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4).ok()?;
     DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
 }
 
@@ -71,8 +72,7 @@ fn apply_and_reconstruct(
 ) -> Vec<u8> {
     let mut basis_cursor = Cursor::new(basis);
     let mut output = Vec::new();
-    apply_delta(&mut basis_cursor, &mut output, index, script)
-        .expect("apply_delta should succeed");
+    apply_delta(&mut basis_cursor, &mut output, index, script).expect("apply_delta should succeed");
     output
 }
 
@@ -136,8 +136,9 @@ fn single_byte_all_values() {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature = generate_file_signature(Cursor::new(&data), layout, SignatureAlgorithm::Md4)
-            .expect("signature generation should succeed for all byte values");
+        let signature =
+            generate_file_signature(Cursor::new(&data), layout, SignatureAlgorithm::Md4)
+                .expect("signature generation should succeed for all byte values");
 
         assert_eq!(signature.blocks().len(), 1);
         assert_eq!(signature.total_bytes(), 1);
@@ -220,7 +221,11 @@ fn delta_single_byte_different() {
     let script = generate_delta(&input[..], &index).expect("delta");
 
     assert_eq!(script.total_bytes(), 1);
-    assert_eq!(script.literal_bytes(), 1, "different byte should be literal");
+    assert_eq!(
+        script.literal_bytes(),
+        1,
+        "different byte should be literal"
+    );
 
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, input);
@@ -251,7 +256,10 @@ fn delta_single_byte_to_empty() {
     let input: &[u8] = &[];
     let script = generate_delta(input, &index).expect("delta");
 
-    assert!(script.tokens().is_empty(), "empty input should produce no tokens");
+    assert!(
+        script.tokens().is_empty(),
+        "empty input should produce no tokens"
+    );
     assert_eq!(script.total_bytes(), 0);
     assert_eq!(script.literal_bytes(), 0);
 
@@ -312,7 +320,11 @@ fn block_matching_single_byte_cannot_match() {
 
     // Single byte cannot match because it's smaller than block size
     assert_eq!(script.literal_bytes(), 1, "single byte must be literal");
-    assert_eq!(script.copy_bytes(), 0, "single byte cannot be copied as block");
+    assert_eq!(
+        script.copy_bytes(),
+        0,
+        "single byte cannot be copied as block"
+    );
 
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, input);
@@ -352,8 +364,7 @@ fn no_false_matches_single_byte() {
         assert_eq!(
             script.literal_bytes(),
             1,
-            "byte 0x{:02X} should be literal",
-            byte_val
+            "byte 0x{byte_val:02X} should be literal"
         );
         assert_eq!(script.copy_bytes(), 0, "no copies for single byte");
 
@@ -383,8 +394,7 @@ fn round_trip_all_byte_values() {
         assert_eq!(
             reconstructed,
             &input[..],
-            "round-trip failed for byte 0x{:02X}",
-            byte_val
+            "round-trip failed for byte 0x{byte_val:02X}"
         );
     }
 }
@@ -399,7 +409,10 @@ fn round_trip_null_byte() {
     let script = generate_delta(&input[..], &index).expect("delta");
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
 
-    assert_eq!(reconstructed, input, "null byte should round-trip correctly");
+    assert_eq!(
+        reconstructed, input,
+        "null byte should round-trip correctly"
+    );
 }
 
 /// Verifies round-trip with maximum byte (0xFF).
@@ -475,7 +488,10 @@ fn single_byte_at_start_of_input() {
     let script = generate_delta(&input[..], &index).expect("delta");
 
     // Should have literal for leading byte, then ability to find matching block
-    assert!(script.literal_bytes() >= 1, "leading byte should be literal");
+    assert!(
+        script.literal_bytes() >= 1,
+        "leading byte should be literal"
+    );
 
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, input);
@@ -485,7 +501,11 @@ fn single_byte_at_start_of_input() {
 #[test]
 fn delta_token_single_byte_literal() {
     let literal = DeltaToken::Literal(vec![0x42]);
-    assert_eq!(literal.byte_len(), 1, "single-byte literal should report len 1");
+    assert_eq!(
+        literal.byte_len(),
+        1,
+        "single-byte literal should report len 1"
+    );
     assert!(literal.is_literal(), "should be identified as literal");
 }
 
@@ -534,8 +554,7 @@ fn single_byte_various_buffer_sizes() {
         assert_eq!(
             script.total_bytes(),
             1,
-            "buffer size {} should produce same result",
-            buffer_size
+            "buffer size {buffer_size} should produce same result"
         );
         assert_eq!(script.literal_bytes(), 1);
 
@@ -588,9 +607,9 @@ fn stress_alternating_single_bytes() {
 
     // Create input that alternates between matching and non-matching bytes
     let mut input = Vec::new();
-    for i in 0..100 {
+    for (i, &byte) in basis.iter().enumerate().take(100) {
         if i % 2 == 0 {
-            input.push(basis[i]);
+            input.push(byte);
         } else {
             input.push(0xFF);
         }
@@ -631,11 +650,7 @@ fn apply_delta_single_byte_literal() {
     let index = build_index(&basis).expect("index");
 
     // Manually construct a script with a single-byte literal
-    let script = engine::DeltaScript::new(
-        vec![DeltaToken::Literal(vec![0x42])],
-        1,
-        1,
-    );
+    let script = engine::DeltaScript::new(vec![DeltaToken::Literal(vec![0x42])], 1, 1);
 
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, [0x42]);
@@ -660,5 +675,8 @@ fn single_byte_between_copies() {
 
     // Verify we have both copies and literals
     assert!(script.copy_bytes() > 0, "should have copy tokens");
-    assert!(script.literal_bytes() >= 1, "should have literal for single byte");
+    assert!(
+        script.literal_bytes() >= 1,
+        "should have literal for single byte"
+    );
 }

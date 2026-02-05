@@ -9,11 +9,10 @@
 
 use std::io::{Cursor, IoSlice, IoSliceMut, Read, Write};
 
-use compress::zlib::{
-    compress_to_vec, decompress_to_vec, CompressionLevel, CountingZlibDecoder,
-    CountingZlibEncoder,
-};
 use compress::CountingSink;
+use compress::zlib::{
+    CompressionLevel, CountingZlibDecoder, CountingZlibEncoder, compress_to_vec, decompress_to_vec,
+};
 
 // =============================================================================
 // SECTION 1: Streaming Compression Edge Cases
@@ -100,7 +99,10 @@ fn encoder_very_large_single_write() {
     encoder.write_all(&data).unwrap();
 
     let (compressed, _) = encoder.finish_into_inner().unwrap();
-    assert!(compressed.len() < data.len(), "Should compress repetitive data");
+    assert!(
+        compressed.len() < data.len(),
+        "Should compress repetitive data"
+    );
 
     let decompressed = decompress_to_vec(&compressed).unwrap();
     assert_eq!(decompressed, data);
@@ -148,9 +150,9 @@ fn encoder_write_fmt_formatted_output() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
     // Test write_fmt implementation
-    write!(&mut encoder, "Number: {}, String: {}", 42, "test").unwrap();
+    write!(&mut encoder, "Number: {}, String: test", 42).unwrap();
     writeln!(&mut encoder).unwrap();
-    write!(&mut encoder, "Float: {:.2}", 3.14159).unwrap();
+    write!(&mut encoder, "Float: {:.2}", std::f64::consts::PI).unwrap();
 
     let (compressed, _) = encoder.finish_into_inner().unwrap();
     let decompressed = decompress_to_vec(&compressed).unwrap();
@@ -378,7 +380,13 @@ fn decompress_truncated_at_various_positions() {
     let mut different_data = 0;
 
     // Try truncating at various positions
-    for cut_point in [1, 2, compressed.len() / 4, compressed.len() / 2, compressed.len() - 1] {
+    for cut_point in [
+        1,
+        2,
+        compressed.len() / 4,
+        compressed.len() / 2,
+        compressed.len() - 1,
+    ] {
         if cut_point >= compressed.len() {
             continue;
         }
@@ -409,7 +417,13 @@ fn decompress_bit_flips_at_various_positions() {
     let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
 
     // Try flipping bits at various positions
-    for flip_pos in [0, 1, compressed.len() / 4, compressed.len() / 2, compressed.len() - 1] {
+    for flip_pos in [
+        0,
+        1,
+        compressed.len() / 4,
+        compressed.len() / 2,
+        compressed.len() - 1,
+    ] {
         if flip_pos >= compressed.len() {
             continue;
         }
@@ -426,10 +440,8 @@ fn decompress_bit_flips_at_various_positions() {
             // or we got lucky with padding
             if decompressed.len() == data.len() {
                 // Allow for the small possibility that flipping a padding bit doesn't affect output
-                assert!(
-                    decompressed == data || decompressed != data,
-                    "Bit flip at {flip_pos} should affect output or we're in padding"
-                );
+                // Bit flip either affects output or we're in padding
+                let _ = (decompressed == data, flip_pos);
             }
         }
     }
@@ -614,7 +626,9 @@ fn compress_all_different_bytes() {
 #[test]
 fn compress_alternating_pattern() {
     let size = 10_000;
-    let data: Vec<u8> = (0..size).map(|i| if i % 2 == 0 { 0x00 } else { 0xFF }).collect();
+    let data: Vec<u8> = (0..size)
+        .map(|i| if i % 2 == 0 { 0x00 } else { 0xFF })
+        .collect();
 
     let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
     let decompressed = decompress_to_vec(&compressed).unwrap();
@@ -666,7 +680,7 @@ fn counting_sink_write_vectored_sums_all_buffers() {
 #[test]
 fn counting_sink_flush_always_succeeds() {
     let mut sink = CountingSink;
-    sink.write(b"data").unwrap();
+    sink.write_all(b"data").unwrap();
     assert!(sink.flush().is_ok());
     assert!(sink.flush().is_ok()); // Multiple flushes ok
 }
@@ -692,7 +706,10 @@ fn lz4_frame_empty_input() {
     use compress::lz4::frame::{compress_to_vec, decompress_to_vec};
 
     let compressed = compress_to_vec(&[], CompressionLevel::Default).unwrap();
-    assert!(!compressed.is_empty(), "LZ4 frame for empty input should have headers");
+    assert!(
+        !compressed.is_empty(),
+        "LZ4 frame for empty input should have headers"
+    );
 
     let decompressed = decompress_to_vec(&compressed).unwrap();
     assert!(decompressed.is_empty());

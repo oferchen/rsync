@@ -161,14 +161,18 @@ name = "bin"
 version = "0.5.3"
 dependencies = [
  "assert_cmd",
+ "checksums",
  "cli",
  "core",
  "daemon",
  "dhat",
+ "engine",
+ "fast_io",
  "filetime",
  "libc",
  "mimalloc",
  "tempfile",
+ "transfer",
  "windows-gnu-eh",
 ]
 
@@ -306,13 +310,13 @@ dependencies = [
  "logging",
  "md-5",
  "md4",
- "md5-simd",
  "openssl",
  "proptest",
  "rand 0.8.5",
  "rayon",
  "sha1",
  "sha2",
+ "tempfile",
  "thiserror 2.0.17",
  "xxh3",
  "xxhash-rust",
@@ -1305,17 +1309,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "md5-simd"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "md-5",
- "rand 0.8.5",
- "rayon",
- "tempfile",
-]
-
-[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1661,6 +1654,7 @@ version = "0.5.3"
 dependencies = [
  "bytes",
  "compress",
+ "criterion",
  "encoding_rs",
  "flate2",
  "logging",

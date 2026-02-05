@@ -448,3 +448,570 @@ fn backup_dir_creates_missing_directories() {
     assert!(backup.exists(), "backup missing at {}", backup.display());
     assert_eq!(fs::read(&backup).expect("read backup"), b"original");
 }
+
+#[test]
+fn backup_not_created_in_dry_run_mode() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"new content").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"original content").expect("write dest");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect("dry-run succeeds");
+
+    // Backup should NOT be created in dry-run mode
+    let backup = dest_root.join("file.txt~");
+    assert!(!backup.exists(), "backup should not exist in dry-run mode");
+
+    // Original file should be unchanged
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read dest"),
+        b"original content"
+    );
+}
+
+#[test]
+fn backup_created_when_deleting_with_delete_option() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Create source with only one file
+    let source_file = ctx.source.join("keep.txt");
+    fs::write(&source_file, b"keep this").expect("write source");
+
+    // Create destination with extra file that will be deleted
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    fs::write(dest_root.join("keep.txt"), b"old keep").expect("write keep");
+    fs::write(dest_root.join("delete_me.txt"), b"delete me").expect("write delete_me");
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .delete(true)
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Deleted file should be backed up
+    let backup_deleted = backup_dir.join("source/delete_me.txt~");
+    assert!(backup_deleted.exists(), "backup of deleted file missing at {}", backup_deleted.display());
+    assert_eq!(fs::read(&backup_deleted).expect("read backup"), b"delete me");
+
+    // File should be deleted from destination
+    assert!(!dest_root.join("delete_me.txt").exists(), "deleted file should not exist");
+
+    // Keep file should have backup of its old version
+    let backup_keep = backup_dir.join("source/keep.txt~");
+    assert!(backup_keep.exists(), "backup of modified file missing");
+    assert_eq!(fs::read(&backup_keep).expect("read backup"), b"old keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn backup_preserves_symlinks_in_directory() {
+    use std::os::unix::fs::symlink;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Create source directory with a symlink
+    let source_link = ctx.source.join("link");
+    symlink("new_target", &source_link).expect("create source symlink");
+
+    // Create destination directory with existing symlink pointing elsewhere
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing_link = dest_root.join("link");
+    symlink("old_target", &existing_link).expect("create dest symlink");
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .links(true)
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Backup should be a symlink pointing to old target
+    let backup = backup_dir.join("source/link~");
+    assert!(backup.symlink_metadata().is_ok(), "backup symlink missing at {}", backup.display());
+    assert!(backup.symlink_metadata().expect("metadata").file_type().is_symlink());
+    assert_eq!(
+        fs::read_link(&backup).expect("read backup link"),
+        PathBuf::from("old_target")
+    );
+
+    // Destination should now point to new target
+    assert_eq!(
+        fs::read_link(dest_root.join("link")).expect("read dest link"),
+        PathBuf::from("new_target")
+    );
+}
+
+#[test]
+fn backup_with_special_characters_in_filename() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Create source file with special characters
+    let source_file = ctx.source.join("file with spaces & special!.txt");
+    fs::write(&source_file, b"new content").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file with spaces & special!.txt");
+    fs::write(&existing, b"old content").expect("write dest");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let backup = dest_root.join("file with spaces & special!.txt~");
+    assert!(backup.exists(), "backup missing at {}", backup.display());
+    assert_eq!(fs::read(&backup).expect("read backup"), b"old content");
+    assert_eq!(
+        fs::read(dest_root.join("file with spaces & special!.txt")).expect("read dest"),
+        b"new content"
+    );
+}
+
+#[test]
+fn backup_suffix_with_date_format() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"updated").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"original").expect("write dest");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // Use a date-like suffix
+    let options = LocalCopyOptions::default().with_backup_suffix(Some(".2024-01-15"));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let backup = dest_root.join("file.txt.2024-01-15");
+    assert!(backup.exists(), "backup missing at {}", backup.display());
+    assert_eq!(fs::read(&backup).expect("read backup"), b"original");
+}
+
+#[test]
+fn backup_directory_outside_destination_tree() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+    let external_backup = temp.path().join("external_backups");
+
+    fs::create_dir_all(&source).expect("create source");
+    fs::create_dir_all(&dest).expect("create dest");
+    // Don't create external_backup - it should be created automatically
+
+    let source_file = source.join("file.txt");
+    fs::write(&source_file, b"new version").expect("write source");
+
+    let dest_root = dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"old version").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .with_backup_directory(Some(external_backup.clone()));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Backup should be in external directory, not under dest
+    let backup = external_backup.join("source/file.txt~");
+    assert!(backup.exists(), "backup missing at {}", backup.display());
+    assert_eq!(fs::read(&backup).expect("read backup"), b"old version");
+
+    // Verify no backup in destination
+    let backup_in_dest = dest_root.join("file.txt~");
+    assert!(!backup_in_dest.exists(), "backup should not be in destination");
+}
+
+#[test]
+fn backup_only_when_content_differs() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Create source and dest with different content
+    let source_file = ctx.source.join("different.txt");
+    fs::write(&source_file, b"new content").expect("write source different");
+
+    let same_file = ctx.source.join("same.txt");
+    fs::write(&same_file, b"identical").expect("write source same");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    let existing_different = dest_root.join("different.txt");
+    fs::write(&existing_different, b"old content").expect("write dest different");
+
+    let existing_same = dest_root.join("same.txt");
+    fs::write(&existing_same, b"identical").expect("write dest same");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Backup should exist for the file that was different
+    let backup_different = dest_root.join("different.txt~");
+    assert!(backup_different.exists(), "backup of different file should exist");
+    assert_eq!(fs::read(&backup_different).expect("read backup"), b"old content");
+
+    // No backup for same content (file wasn't modified)
+    let backup_same = dest_root.join("same.txt~");
+    assert!(!backup_same.exists(), "backup of identical file should not exist");
+}
+
+#[test]
+fn backup_with_empty_suffix() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"new").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"old").expect("write dest");
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // Empty suffix means backup file has same name as original
+    let options = LocalCopyOptions::default()
+        .with_backup_directory(Some(backup_dir.clone()))
+        .with_backup_suffix(Some(""));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Backup should have the same name as original (no suffix)
+    let backup = backup_dir.join("source/file.txt");
+    assert!(backup.exists(), "backup missing at {}", backup.display());
+    assert_eq!(fs::read(&backup).expect("read backup"), b"old");
+}
+
+#[test]
+fn backup_overwrites_existing_backup() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let dest_file = dest_root.join("file.txt");
+    let backup_path = dest_root.join("file.txt~");
+
+    // First sync: v1 -> v2
+    fs::write(&dest_file, b"version 1").expect("write v1");
+    fs::write(&source_file, b"version 2").expect("write source v2");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options.clone())
+        .expect("first sync succeeds");
+
+    assert_eq!(fs::read(&backup_path).expect("read backup"), b"version 1");
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"version 2");
+
+    // Second sync: v2 -> v3 (should overwrite backup with v2)
+    fs::write(&source_file, b"version 3").expect("write source v3");
+
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("second sync succeeds");
+
+    // Backup should now contain v2, not v1
+    assert_eq!(fs::read(&backup_path).expect("read backup"), b"version 2");
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"version 3");
+}
+
+#[test]
+fn backup_with_delete_after() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Create source with one file
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
+
+    // Create destination with extra files to be deleted
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    fs::write(dest_root.join("keep.txt"), b"old").expect("write old keep");
+    fs::write(dest_root.join("extra1.txt"), b"extra1").expect("write extra1");
+    fs::write(dest_root.join("extra2.txt"), b"extra2").expect("write extra2");
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .delete_after(true)
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // All deleted files should be backed up
+    let backup1 = backup_dir.join("source/extra1.txt~");
+    let backup2 = backup_dir.join("source/extra2.txt~");
+    assert!(backup1.exists(), "backup of extra1 missing at {}", backup1.display());
+    assert!(backup2.exists(), "backup of extra2 missing at {}", backup2.display());
+    assert_eq!(fs::read(&backup1).expect("read backup1"), b"extra1");
+    assert_eq!(fs::read(&backup2).expect("read backup2"), b"extra2");
+
+    // Modified file should also be backed up
+    let backup_keep = backup_dir.join("source/keep.txt~");
+    assert!(backup_keep.exists(), "backup of keep.txt missing");
+    assert_eq!(fs::read(&backup_keep).expect("read backup"), b"old");
+}
+
+#[test]
+fn backup_with_nested_delete() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Create source with nested structure
+    test_helpers::create_test_tree(&ctx.source, &[
+        ("keep/file.txt", Some(b"keep")),
+    ]);
+
+    // Create destination with extra nested files to delete
+    let dest_root = ctx.dest.join("source");
+    test_helpers::create_test_tree(&dest_root, &[
+        ("keep/file.txt", Some(b"old")),
+        ("delete_dir/nested/deep.txt", Some(b"deep content")),
+        ("delete_dir/shallow.txt", Some(b"shallow content")),
+    ]);
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .delete(true)
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Check that nested deleted files are backed up with proper structure
+    // Note: directory deletion may not back up individual files - this tests the behavior
+    let backup_keep = backup_dir.join("source/keep/file.txt~");
+    assert!(backup_keep.exists(), "backup of modified file missing at {}", backup_keep.display());
+    assert_eq!(fs::read(&backup_keep).expect("read backup"), b"old");
+
+    // Verify delete_dir and contents are removed
+    assert!(!dest_root.join("delete_dir").exists(), "delete_dir should be removed");
+}
+
+#[test]
+fn backup_enabled_implicitly_by_backup_dir() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"new").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"old").expect("write dest");
+
+    let backup_dir = ctx.dest.join("backups");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // Only set backup_dir, not backup(true) - should still enable backups
+    let options = LocalCopyOptions::default()
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let backup = backup_dir.join("source/file.txt~");
+    assert!(backup.exists(), "backup should be created when backup_dir is set");
+    assert_eq!(fs::read(&backup).expect("read backup"), b"old");
+}
+
+#[test]
+fn backup_enabled_implicitly_by_suffix() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"new").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"old").expect("write dest");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // Only set suffix, not backup(true) - should still enable backups
+    let options = LocalCopyOptions::default()
+        .with_backup_suffix(Some(".backup"));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let backup = dest_root.join("file.txt.backup");
+    assert!(backup.exists(), "backup should be created when suffix is set");
+    assert_eq!(fs::read(&backup).expect("read backup"), b"old");
+}
+
+#[test]
+fn no_backup_when_file_is_new() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Create source file that doesn't exist in destination
+    let source_file = ctx.source.join("new_file.txt");
+    fs::write(&source_file, b"brand new").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    // Note: no existing file in destination
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // File should be created
+    assert!(dest_root.join("new_file.txt").exists());
+
+    // But no backup should exist (nothing to back up)
+    let backup = dest_root.join("new_file.txt~");
+    assert!(!backup.exists(), "backup should not exist for new file");
+}
+
+#[test]
+fn backup_multiple_files_same_directory() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Create multiple source files
+    test_helpers::create_test_tree(&ctx.source, &[
+        ("file1.txt", Some(b"content1-new")),
+        ("file2.txt", Some(b"content2-new")),
+        ("file3.txt", Some(b"content3-new")),
+    ]);
+
+    // Create existing destination files
+    let dest_root = ctx.dest.join("source");
+    test_helpers::create_test_tree(&dest_root, &[
+        ("file1.txt", Some(b"content1-old")),
+        ("file2.txt", Some(b"content2-old")),
+        ("file3.txt", Some(b"content3-old")),
+    ]);
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_suffix(Some(".bak"));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // All files should be backed up
+    for i in 1..=3 {
+        let backup = dest_root.join(format!("file{}.txt.bak", i));
+        assert!(backup.exists(), "backup{} missing at {}", i, backup.display());
+        assert_eq!(
+            fs::read(&backup).expect("read backup"),
+            format!("content{}-old", i).as_bytes()
+        );
+        assert_eq!(
+            fs::read(dest_root.join(format!("file{}.txt", i))).expect("read dest"),
+            format!("content{}-new", i).as_bytes()
+        );
+    }
+}

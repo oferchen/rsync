@@ -212,10 +212,7 @@ fn burst_handling_debt_never_exceeds_burst() {
 
     // Debt absolutely must be <= burst
     let debt = limiter.accumulated_debt_for_testing();
-    assert!(
-        debt <= 200,
-        "Debt {debt} exceeded burst limit 200"
-    );
+    assert!(debt <= 200, "Debt {debt} exceeded burst limit 200");
 }
 
 #[test]
@@ -521,7 +518,7 @@ fn clone_creates_independent_limiter() {
 fn debug_output_contains_relevant_info() {
     let limiter = BandwidthLimiter::with_burst(nz(12345), Some(nz(6789)));
 
-    let debug = format!("{:?}", limiter);
+    let debug = format!("{limiter:?}");
 
     // Should contain limit and burst values
     assert!(debug.contains("12345") || debug.contains("limit"));

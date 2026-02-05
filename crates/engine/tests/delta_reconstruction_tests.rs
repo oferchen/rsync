@@ -17,7 +17,7 @@ use engine::{
 use protocol::ProtocolVersion;
 use signature::SignatureAlgorithm;
 use std::io::Cursor;
-use std::num::{NonZeroU32, NonZeroU8};
+use std::num::{NonZeroU8, NonZeroU32};
 
 // ============================================================================
 // Test Utilities
@@ -54,11 +54,7 @@ fn create_signature_index_with_block_size(basis: &[u8], block_hint: u32) -> Delt
 }
 
 /// Applies a delta script to reconstruct the target file.
-fn reconstruct_file(
-    basis: &[u8],
-    index: &DeltaSignatureIndex,
-    script: &DeltaScript,
-) -> Vec<u8> {
+fn reconstruct_file(basis: &[u8], index: &DeltaSignatureIndex, script: &DeltaScript) -> Vec<u8> {
     let mut basis_cursor = Cursor::new(basis);
     let mut output = Vec::new();
     apply_delta(&mut basis_cursor, &mut output, index, script)
@@ -302,8 +298,7 @@ fn multiple_consecutive_literals() {
 
     let reconstructed = reconstruct_file(&basis, &index, &script);
     assert_eq!(
-        reconstructed,
-        b"First Second Third",
+        reconstructed, b"First Second Third",
         "multiple literals should be concatenated correctly"
     );
 }
@@ -347,8 +342,7 @@ fn empty_literal_tokens() {
 
     let reconstructed = reconstruct_file(&basis, &index, &script);
     assert_eq!(
-        reconstructed,
-        b"BeforeAfter",
+        reconstructed, b"BeforeAfter",
         "empty literals should not break reconstruction"
     );
 }
@@ -504,9 +498,7 @@ fn identical_file_matches_source() {
     let literal_bytes = script.literal_bytes();
     assert!(
         copy_bytes > literal_bytes * 10,
-        "identical file should be mostly delta blocks: copy={}, literal={}",
-        copy_bytes,
-        literal_bytes
+        "identical file should be mostly delta blocks: copy={copy_bytes}, literal={literal_bytes}"
     );
 }
 
@@ -517,8 +509,8 @@ fn modified_file_matches_source() {
     let mut target = basis.clone();
 
     // Modify a small region
-    for i in 5000..5100 {
-        target[i] = 0xFF;
+    for byte in target.iter_mut().skip(5000).take(100) {
+        *byte = 0xFF;
     }
 
     let script = generate_and_verify(&basis, &target);
@@ -602,8 +594,7 @@ fn file_with_reordered_blocks_matches_source() {
         .count();
     assert!(
         copy_count >= 4,
-        "should find all reordered blocks: found {}",
-        copy_count
+        "should find all reordered blocks: found {copy_count}"
     );
 }
 
@@ -709,12 +700,17 @@ fn text_file_line_insertion() {
     // (rsync doesn't use delta transfer for files smaller than block size)
     let mut original_lines = Vec::new();
     for i in 1..=200 {
-        original_lines.push(format!("Line {:03}: This is some text content for the file.\n", i));
+        original_lines.push(format!(
+            "Line {i:03}: This is some text content for the file.\n"
+        ));
     }
     let original_text = original_lines.join("");
 
     let mut modified_lines = original_lines.clone();
-    modified_lines.insert(100, "INSERTED LINE: This is new content added in the middle.\n".to_string());
+    modified_lines.insert(
+        100,
+        "INSERTED LINE: This is new content added in the middle.\n".to_string(),
+    );
     let modified_text = modified_lines.join("");
 
     let basis = original_text.as_bytes();
