@@ -290,6 +290,7 @@ include!("execute_existing.rs");
 include!("execute_delta.rs");
 include!("execute_whole_file.rs");
 include!("execute_symlinks.rs");
+include!("execute_symlink_edge_cases.rs");
 include!("execute_copy_links.rs");
 include!("execute_dirlinks.rs");
 include!("execute_metadata.rs");
@@ -341,3 +342,7 @@ include!("itemize_changes.rs");
 include!("list_only.rs");
 include!("partial_dir.rs");
 include!("checksum_algorithm_behavior.rs");
+include!("execute_timestamp_preservation.rs");
+include!("disk_full_errors.rs");
+#[cfg(unix)]
+include!("permission_errors.rs");
