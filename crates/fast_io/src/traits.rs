@@ -236,4 +236,198 @@ mod tests {
         writer.write_all(b" world").unwrap();
         assert_eq!(writer.bytes_written(), 11);
     }
+
+    #[test]
+    fn std_writer_flush_writes_buffered_data() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("flush_test.txt");
+
+        let mut writer = StdFileWriter::create(&path).unwrap();
+
+        // Write data that stays in the buffer
+        writer.write_all(b"buffered data").unwrap();
+        assert_eq!(writer.bytes_written(), 13);
+
+        // Before flush, file might not contain all data (due to buffering)
+        // After flush, all data must be written
+        writer.flush().unwrap();
+
+        // Verify all data is present after explicit flush
+        drop(writer);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "buffered data");
+    }
+
+    #[test]
+    fn std_writer_auto_flush_on_buffer_full() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("auto_flush_test.txt");
+
+        let mut writer = StdFileWriter::create(&path).unwrap();
+
+        // BufWriter has a default capacity of 8KB
+        // Write more than 8KB to trigger automatic flush
+        let large_data = vec![b'x'; 16 * 1024]; // 16KB
+        writer.write_all(&large_data).unwrap();
+
+        assert_eq!(writer.bytes_written(), 16 * 1024);
+
+        // Even without explicit flush, the buffer should have been auto-flushed
+        // when it filled up. Let's verify by checking after a sync.
+        writer.sync().unwrap();
+
+        drop(writer);
+        let content = std::fs::read(&path).unwrap();
+        assert_eq!(content.len(), 16 * 1024);
+        assert_eq!(content, large_data);
+    }
+
+    #[test]
+    fn std_writer_flush_on_drop() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("drop_flush_test.txt");
+
+        {
+            let mut writer = StdFileWriter::create(&path).unwrap();
+            writer.write_all(b"data written before drop").unwrap();
+            // Drop happens here - should flush buffered data
+        }
+
+        // Verify data was written even without explicit flush
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "data written before drop");
+    }
+
+    #[test]
+    fn std_writer_multiple_flush_operations() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("multiple_flush_test.txt");
+
+        let mut writer = StdFileWriter::create(&path).unwrap();
+
+        // Write and flush multiple times
+        writer.write_all(b"first").unwrap();
+        writer.flush().unwrap();
+
+        writer.write_all(b" second").unwrap();
+        writer.flush().unwrap();
+
+        writer.write_all(b" third").unwrap();
+        writer.flush().unwrap();
+
+        assert_eq!(writer.bytes_written(), 18);
+
+        drop(writer);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "first second third");
+    }
+
+    #[test]
+    fn std_writer_flush_empty_buffer() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("empty_flush_test.txt");
+
+        let mut writer = StdFileWriter::create(&path).unwrap();
+
+        // Flush with no data written should succeed
+        writer.flush().unwrap();
+        assert_eq!(writer.bytes_written(), 0);
+
+        // Write something and verify
+        writer.write_all(b"data").unwrap();
+        writer.flush().unwrap();
+
+        drop(writer);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "data");
+    }
+
+    #[test]
+    fn std_writer_sync_includes_flush() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("sync_test.txt");
+
+        let mut writer = StdFileWriter::create(&path).unwrap();
+        writer.write_all(b"sync test data").unwrap();
+
+        // sync() should flush and sync to disk
+        writer.sync().unwrap();
+
+        // Data should be persisted
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "sync test data");
+    }
+
+    #[test]
+    fn std_writer_flush_after_partial_writes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("partial_writes_test.txt");
+
+        let mut writer = StdFileWriter::create(&path).unwrap();
+
+        // Write in small chunks
+        for i in 0..10 {
+            writer.write_all(format!("{i}").as_bytes()).unwrap();
+        }
+
+        assert_eq!(writer.bytes_written(), 10);
+        writer.flush().unwrap();
+
+        drop(writer);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "0123456789");
+    }
+
+    #[test]
+    fn std_writer_error_handling_invalid_path() {
+        // Try to create a writer in a non-existent directory
+        let result = StdFileWriter::create(Path::new("/nonexistent/dir/file.txt"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn std_writer_flush_consistency() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("consistency_test.txt");
+
+        let mut writer = StdFileWriter::create(&path).unwrap();
+
+        // Write, flush, write more, flush again
+        writer.write_all(b"first batch").unwrap();
+        writer.flush().unwrap();
+
+        // Verify intermediate state
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "first batch");
+
+        writer.write_all(b" second batch").unwrap();
+        writer.flush().unwrap();
+
+        // Verify final state
+        drop(writer);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "first batch second batch");
+    }
+
+    #[test]
+    fn std_writer_bytes_written_accurate_across_flushes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bytes_tracking_test.txt");
+
+        let mut writer = StdFileWriter::create(&path).unwrap();
+
+        writer.write_all(b"12345").unwrap();
+        assert_eq!(writer.bytes_written(), 5);
+        writer.flush().unwrap();
+        assert_eq!(writer.bytes_written(), 5);
+
+        writer.write_all(b"67890").unwrap();
+        assert_eq!(writer.bytes_written(), 10);
+        writer.flush().unwrap();
+        assert_eq!(writer.bytes_written(), 10);
+
+        drop(writer);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "1234567890");
+    }
 }

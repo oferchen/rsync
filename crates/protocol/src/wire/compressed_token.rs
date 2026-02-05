@@ -176,6 +176,7 @@ impl CompressedTokenEncoder {
     #[must_use]
     pub fn new(level: CompressionLevel, protocol_version: u32) -> Self {
         let compression = match level {
+            CompressionLevel::None => Compression::new(0),
             CompressionLevel::Fast => Compression::fast(),
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),

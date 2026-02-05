@@ -86,6 +86,8 @@ use flate2::{
 /// Compression levels recognised by the zlib encoder.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompressionLevel {
+    /// No compression (level 0) - data is stored without deflation.
+    None,
     /// Favour speed over compression ratio.
     Fast,
     /// Use zlib's default balance between speed and ratio.
@@ -97,15 +99,22 @@ pub enum CompressionLevel {
 }
 
 impl CompressionLevel {
-    /// Creates a [`CompressionLevel::Precise`] value from an explicit numeric level.
+    /// Creates a [`CompressionLevel`] value from an explicit numeric level.
+    ///
+    /// Level 0 returns [`CompressionLevel::None`] (no compression).
+    /// Levels 1-9 return [`CompressionLevel::Precise`].
     ///
     /// # Errors
     ///
     /// Returns [`CompressionLevelError`] when `level` falls outside the inclusive
-    /// range `1..=9` accepted by zlib.
+    /// range `0..=9` accepted by zlib.
     pub fn from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
-        if !(1..=9).contains(&level) {
+        if level > 9 {
             return Err(CompressionLevelError::new(level));
+        }
+
+        if level == 0 {
+            return Ok(Self::None);
         }
 
         let as_u8 = u8::try_from(level).map_err(|_| CompressionLevelError::new(level))?;
@@ -123,6 +132,7 @@ impl CompressionLevel {
 impl From<CompressionLevel> for Compression {
     fn from(level: CompressionLevel) -> Self {
         match level {
+            CompressionLevel::None => Compression::none(),
             CompressionLevel::Fast => Compression::fast(),
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
@@ -134,7 +144,7 @@ impl From<CompressionLevel> for Compression {
 /// Error returned when a requested compression level falls outside the
 /// permissible zlib range.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
-#[error("compression level {level} is outside the supported range 1-9")]
+#[error("compression level {level} is outside the supported range 0-9")]
 pub struct CompressionLevelError {
     level: u32,
 }
@@ -546,5 +556,256 @@ mod tests {
 
         let decompressed = decompress_to_vec(&compressed).expect("decompress empty stream");
         assert!(decompressed.is_empty());
+    }
+
+    #[test]
+    fn compression_level_1_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(1).expect("level 1 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 1");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 1");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn compression_level_2_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(2).expect("level 2 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 2");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 2");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn compression_level_3_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(3).expect("level 3 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 3");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 3");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn compression_level_4_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(4).expect("level 4 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 4");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 4");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn compression_level_5_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(5).expect("level 5 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 5");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 5");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn compression_level_6_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(6).expect("level 6 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 6");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 6");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn compression_level_7_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(7).expect("level 7 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 7");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 7");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn compression_level_8_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(8).expect("level 8 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 8");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 8");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn compression_level_9_compresses_successfully() {
+        let level = CompressionLevel::from_numeric(9).expect("level 9 is valid");
+        let payload = b"The quick brown fox jumps over the lazy dog".repeat(10);
+        let compressed = compress_to_vec(&payload, level).expect("compress with level 9");
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 9");
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn higher_compression_levels_produce_smaller_output() {
+        // Test with highly compressible data
+        let payload = b"AAAAAAAAAA".repeat(100);
+
+        // Collect sizes for all levels
+        let mut sizes = Vec::new();
+        for level in 1..=9 {
+            let compression_level = CompressionLevel::from_numeric(level)
+                .expect("levels 1-9 are valid");
+            let compressed = compress_to_vec(&payload, compression_level)
+                .expect("compression succeeds");
+            sizes.push((level, compressed.len()));
+        }
+
+        // Level 9 (best compression) should produce smaller output than level 1 (fast)
+        // for highly compressible data
+        let level1_size = sizes[0].1;
+        let level9_size = sizes[8].1;
+        assert!(
+            level9_size < level1_size,
+            "level 9 ({} bytes) should be smaller than level 1 ({} bytes)",
+            level9_size,
+            level1_size
+        );
+
+        // Level 5 should be no larger than level 1 (intermediate levels should improve or match)
+        let level5_size = sizes[4].1;
+        assert!(
+            level5_size <= level1_size,
+            "level 5 ({} bytes) should be <= level 1 ({} bytes)",
+            level5_size,
+            level1_size
+        );
+
+        // Level 9 should be no larger than level 5
+        assert!(
+            level9_size <= level5_size,
+            "level 9 ({} bytes) should be <= level 5 ({} bytes)",
+            level9_size,
+            level5_size
+        );
+    }
+
+    #[test]
+    fn all_levels_roundtrip_correctly() {
+        let payload = b"Test payload with various characters: 123!@# ABC xyz".repeat(20);
+
+        for level in 1..=9 {
+            let compression_level = CompressionLevel::from_numeric(level)
+                .expect("levels 1-9 are valid");
+            let compressed = compress_to_vec(&payload, compression_level)
+                .expect("compression succeeds");
+            let decompressed = decompress_to_vec(&compressed)
+                .expect("decompression succeeds");
+
+            assert_eq!(
+                decompressed, payload,
+                "level {} failed to roundtrip correctly",
+                level
+            );
+        }
+    }
+
+    #[test]
+    fn all_levels_handle_empty_input() {
+        for level in 1..=9 {
+            let compression_level = CompressionLevel::from_numeric(level)
+                .expect("levels 1-9 are valid");
+            let compressed = compress_to_vec(b"", compression_level)
+                .expect("compress empty input");
+            let decompressed = decompress_to_vec(&compressed)
+                .expect("decompress empty input");
+
+            assert!(
+                decompressed.is_empty(),
+                "level {} failed to handle empty input",
+                level
+            );
+        }
+    }
+
+    #[test]
+    fn all_levels_handle_single_byte() {
+        for level in 1..=9 {
+            let compression_level = CompressionLevel::from_numeric(level)
+                .expect("levels 1-9 are valid");
+            let payload = b"X";
+            let compressed = compress_to_vec(payload, compression_level)
+                .expect("compress single byte");
+            let decompressed = decompress_to_vec(&compressed)
+                .expect("decompress single byte");
+
+            assert_eq!(
+                decompressed, payload,
+                "level {} failed to handle single byte",
+                level
+            );
+        }
+    }
+
+    #[test]
+    fn all_levels_handle_incompressible_data() {
+        // Random-looking data that compresses poorly
+        let payload: Vec<u8> = (0..256).map(|i| (i * 137 + 73) as u8).collect();
+
+        for level in 1..=9 {
+            let compression_level = CompressionLevel::from_numeric(level)
+                .expect("levels 1-9 are valid");
+            let compressed = compress_to_vec(&payload, compression_level)
+                .expect("compress incompressible data");
+            let decompressed = decompress_to_vec(&compressed)
+                .expect("decompress incompressible data");
+
+            assert_eq!(
+                decompressed, payload,
+                "level {} failed with incompressible data",
+                level
+            );
+
+            // Incompressible data may actually expand slightly due to framing overhead
+            // Just verify it didn't balloon unreasonably
+            assert!(
+                compressed.len() < payload.len() * 2,
+                "level {} produced unreasonably large output for incompressible data",
+                level
+            );
+        }
+    }
+
+    #[test]
+    fn all_levels_work_with_counting_encoder() {
+        let payload = b"Counting encoder test payload".repeat(5);
+
+        for level in 1..=9 {
+            let compression_level = CompressionLevel::from_numeric(level)
+                .expect("levels 1-9 are valid");
+
+            let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), compression_level);
+            encoder.write(&payload).expect("write to encoder");
+            let (compressed, bytes_written) = encoder
+                .finish_into_inner()
+                .expect("finish encoder");
+
+            assert_eq!(
+                bytes_written as usize,
+                compressed.len(),
+                "level {} counting encoder byte count mismatch",
+                level
+            );
+
+            let decompressed = decompress_to_vec(&compressed)
+                .expect("decompress");
+            assert_eq!(
+                decompressed, payload,
+                "level {} counting encoder roundtrip failed",
+                level
+            );
+        }
     }
 }
