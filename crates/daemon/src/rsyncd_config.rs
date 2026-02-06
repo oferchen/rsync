@@ -21,9 +21,10 @@
 //! # Example
 //!
 //! ```no_run
-//! use daemon::rsyncd_config::RsyncdConfig;
+//! use daemon::rsyncd_config::{RsyncdConfig, ConfigError};
 //! use std::path::Path;
 //!
+//! # fn example() -> Result<(), ConfigError> {
 //! let config = RsyncdConfig::from_file(Path::new("/etc/rsyncd.conf"))?;
 //!
 //! // Access global settings
@@ -33,7 +34,8 @@
 //! if let Some(module) = config.get_module("mymodule") {
 //!     println!("Module path: {}", module.path().display());
 //! }
-//! # Ok::<(), daemon::rsyncd_config::ConfigError>(())
+//! # Ok(())
+//! # }
 //! ```
 
 use std::collections::HashMap;
