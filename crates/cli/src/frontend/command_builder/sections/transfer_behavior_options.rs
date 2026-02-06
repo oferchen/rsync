@@ -332,7 +332,8 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_name("DIR")
                     .help("Skip creating destination files that match DIR.")
                     .value_parser(OsStringValueParser::new())
-                    .action(ArgAction::Append),
+                    .action(ArgAction::Append)
+                    .conflicts_with_all(["copy-dest", "link-dest"]),
             )
             .arg(
                 Arg::new("copy-dest")
@@ -340,7 +341,8 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_name("DIR")
                     .help("Copy matching files from DIR instead of the source.")
                     .value_parser(OsStringValueParser::new())
-                    .action(ArgAction::Append),
+                    .action(ArgAction::Append)
+                    .conflicts_with_all(["compare-dest", "link-dest"]),
             )
             .arg(
                 Arg::new("link-dest")
@@ -348,7 +350,8 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_name("DIR")
                     .help("Hard-link matching files from DIR into the destination.")
                     .value_parser(OsStringValueParser::new())
-                    .action(ArgAction::Append),
+                    .action(ArgAction::Append)
+                    .conflicts_with_all(["compare-dest", "copy-dest"]),
             )
             .arg(
                 Arg::new("cvs-exclude")
@@ -360,6 +363,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("filter")
                     .long("filter")
+                    .short('f')
                     .value_name("RULE")
                     .help("Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'protect PATTERN', 'risk PATTERN', 'merge[,MODS] FILE' or '.[,MODS] FILE', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE').")
                     .value_parser(OsStringValueParser::new())
