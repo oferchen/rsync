@@ -26,6 +26,7 @@ pub use file::{
 #[cfg(test)]
 pub(crate) use file::{
     files_checksum_match, maybe_preallocate_destination, partial_destination_path,
+    temporary_destination_path,
 };
 pub(crate) use reference::{ReferenceDecision, ReferenceQuery, find_reference_action};
 pub(crate) use sources::copy_sources;
