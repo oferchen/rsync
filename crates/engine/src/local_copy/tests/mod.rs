@@ -19,6 +19,8 @@ use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
 
+mod deletion_strategies;
+
 #[cfg(all(unix, feature = "xattr"))]
 use xattr;
 
