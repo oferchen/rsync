@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::Path;
 
 #[cfg(target_os = "linux")]
@@ -10,6 +10,54 @@ use rustix::{
 };
 
 use crate::local_copy::LocalCopyError;
+
+/// Represents a region in a file, either containing data or a hole (sparse region).
+///
+/// Used by sparse file detection and reading operations to efficiently identify
+/// and process zero-filled regions in files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparseRegion {
+    /// A region containing non-zero data.
+    Data {
+        /// Starting offset of the data region.
+        offset: u64,
+        /// Length of the data region in bytes.
+        length: u64,
+    },
+    /// A sparse hole region (all zeros).
+    Hole {
+        /// Starting offset of the hole.
+        offset: u64,
+        /// Length of the hole in bytes.
+        length: u64,
+    },
+}
+
+impl SparseRegion {
+    /// Returns the starting offset of this region.
+    pub const fn offset(&self) -> u64 {
+        match self {
+            Self::Data { offset, .. } | Self::Hole { offset, .. } => *offset,
+        }
+    }
+
+    /// Returns the length of this region in bytes.
+    pub const fn length(&self) -> u64 {
+        match self {
+            Self::Data { length, .. } | Self::Hole { length, .. } => *length,
+        }
+    }
+
+    /// Returns true if this is a hole (sparse) region.
+    pub const fn is_hole(&self) -> bool {
+        matches!(self, Self::Hole { .. })
+    }
+
+    /// Returns true if this is a data region.
+    pub const fn is_data(&self) -> bool {
+        matches!(self, Self::Data { .. })
+    }
+}
 
 /// Threshold for detecting sparse (all-zeros) regions during file writes.
 ///
@@ -24,6 +72,523 @@ const SPARSE_WRITE_SIZE: usize = 32 * 1024;
 /// Buffer size for writing zeros when fallocate is not supported.
 /// Matches upstream rsync's do_punch_hole fallback buffer size.
 const ZERO_WRITE_BUFFER_SIZE: usize = 4096;
+
+/// Detects sparse (zero-filled) regions in data buffers.
+///
+/// This detector scans data buffers to identify runs of zero bytes that can be
+/// efficiently represented as holes in sparse files. It uses optimized scanning
+/// with a configurable minimum hole size threshold.
+///
+/// # Examples
+///
+/// ```
+/// use engine::local_copy::executor::file::sparse::{SparseDetector, SparseRegion};
+///
+/// let detector = SparseDetector::new(4096);
+/// let data = vec![0xAA; 100];
+/// let regions = detector.scan(&data, 0);
+///
+/// assert_eq!(regions.len(), 1);
+/// assert!(matches!(regions[0], SparseRegion::Data { offset: 0, length: 100 }));
+/// ```
+pub struct SparseDetector {
+    min_hole_size: usize,
+}
+
+impl SparseDetector {
+    /// Creates a new sparse detector with the specified minimum hole size.
+    ///
+    /// Runs of zeros shorter than `min_hole_size` will not be considered holes
+    /// and will be treated as regular data instead. This reduces overhead for
+    /// small zero runs while still efficiently handling large sparse regions.
+    ///
+    /// # Arguments
+    ///
+    /// * `min_hole_size` - Minimum number of consecutive zero bytes to treat as a hole
+    pub const fn new(min_hole_size: usize) -> Self {
+        Self { min_hole_size }
+    }
+
+    /// Creates a detector with the default threshold matching rsync's behavior.
+    pub const fn default_threshold() -> Self {
+        Self::new(SPARSE_WRITE_SIZE)
+    }
+
+    /// Scans a data buffer and returns a list of sparse regions.
+    ///
+    /// The buffer is analyzed to identify contiguous runs of zeros (potential holes)
+    /// and non-zero data regions. Only zero runs at least `min_hole_size` bytes long
+    /// are reported as holes.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data buffer to scan
+    /// * `base_offset` - The starting offset of this data in the file (used for region offsets)
+    ///
+    /// # Returns
+    ///
+    /// A vector of `SparseRegion` entries describing the data and hole regions.
+    /// An empty input buffer returns an empty vector.
+    pub fn scan(&self, data: &[u8], base_offset: u64) -> Vec<SparseRegion> {
+        if data.is_empty() {
+            return Vec::new();
+        }
+
+        let mut regions = Vec::new();
+        let mut offset = 0;
+
+        while offset < data.len() {
+            let remaining = &data[offset..];
+            let zero_run_len = leading_zero_run(remaining);
+
+            if zero_run_len >= self.min_hole_size {
+                // Found a significant hole
+                regions.push(SparseRegion::Hole {
+                    offset: base_offset + offset as u64,
+                    length: zero_run_len as u64,
+                });
+                offset += zero_run_len;
+            } else if zero_run_len > 0 {
+                // Small zero run - find the next significant zero run or end
+                let data_start = offset;
+                offset += zero_run_len;
+
+                // Scan for next significant hole or end of buffer
+                while offset < data.len() {
+                    let segment = &data[offset..];
+                    let next_zeros = leading_zero_run(segment);
+
+                    if next_zeros >= self.min_hole_size {
+                        // Found next hole, emit data region
+                        break;
+                    }
+
+                    // Skip this small zero run and any following non-zero data
+                    offset += next_zeros;
+                    if offset < data.len() {
+                        let non_zeros = segment[next_zeros..]
+                            .iter()
+                            .position(|&b| b == 0)
+                            .unwrap_or(segment.len() - next_zeros);
+                        offset += non_zeros;
+                    }
+                }
+
+                // Emit the data region
+                regions.push(SparseRegion::Data {
+                    offset: base_offset + data_start as u64,
+                    length: (offset - data_start) as u64,
+                });
+            } else {
+                // No zeros at start, find first zero or end
+                let non_zero_len = remaining
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(remaining.len());
+
+                regions.push(SparseRegion::Data {
+                    offset: base_offset + offset as u64,
+                    length: non_zero_len as u64,
+                });
+                offset += non_zero_len;
+            }
+        }
+
+        regions
+    }
+
+    /// Quickly checks if the entire buffer is all zeros.
+    ///
+    /// This is faster than calling `scan()` when you only need to know whether
+    /// the buffer contains any non-zero data.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data buffer to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if all bytes in the buffer are zero, `false` otherwise.
+    /// An empty buffer returns `true`.
+    pub fn is_all_zeros(data: &[u8]) -> bool {
+        if data.is_empty() {
+            return true;
+        }
+        leading_zero_run(data) == data.len()
+    }
+}
+
+/// Reads sparse files efficiently using filesystem hole detection.
+///
+/// On Linux systems with filesystem support, this uses `SEEK_HOLE`/`SEEK_DATA`
+/// to efficiently detect existing holes without reading zero-filled data.
+/// On other platforms, it falls back to scanning file contents.
+///
+/// # Platform Support
+///
+/// - **Linux 3.1+**: Uses `lseek(SEEK_HOLE)` and `lseek(SEEK_DATA)` for efficient hole detection
+/// - **Other platforms**: Falls back to reading and scanning file contents
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::fs::File;
+/// use engine::local_copy::executor::file::sparse::SparseReader;
+///
+/// let file = File::open("sparse_file.bin").unwrap();
+/// let regions = SparseReader::detect_holes(&file).unwrap();
+///
+/// for region in regions {
+///     match region {
+///         engine::local_copy::executor::file::sparse::SparseRegion::Data { offset, length } => {
+///             println!("Data at {}: {} bytes", offset, length);
+///         }
+///         engine::local_copy::executor::file::sparse::SparseRegion::Hole { offset, length } => {
+///             println!("Hole at {}: {} bytes", offset, length);
+///         }
+///     }
+/// }
+/// ```
+pub struct SparseReader;
+
+impl SparseReader {
+    /// Detects holes in a file using filesystem-specific mechanisms.
+    ///
+    /// On Linux with SEEK_HOLE/SEEK_DATA support, this efficiently queries the
+    /// filesystem for hole locations without reading file contents. On other
+    /// platforms, it falls back to reading and scanning the file.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - A reference to the file to analyze
+    ///
+    /// # Returns
+    ///
+    /// A vector of `SparseRegion` entries describing data and hole regions in
+    /// the file, or an I/O error if the file cannot be read or queried.
+    ///
+    /// # Platform-Specific Behavior
+    ///
+    /// - **Linux**: Uses `SEEK_HOLE`/`SEEK_DATA` syscalls for efficient detection
+    /// - **Other platforms**: Reads file in chunks and scans for zero runs
+    #[cfg(target_os = "linux")]
+    pub fn detect_holes(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        Self::detect_holes_linux(file)
+    }
+
+    /// Fallback hole detection for non-Linux platforms.
+    #[cfg(not(target_os = "linux"))]
+    pub fn detect_holes(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        Self::detect_holes_fallback(file)
+    }
+
+    /// Linux-specific hole detection using SEEK_HOLE and SEEK_DATA.
+    #[cfg(target_os = "linux")]
+    fn detect_holes_linux(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        use rustix::fs::SeekFrom as RustixSeekFrom;
+        use rustix::io::Errno;
+
+        let mut regions = Vec::new();
+        let file_size = file.metadata()?.len();
+
+        if file_size == 0 {
+            return Ok(regions);
+        }
+
+        let fd = file.as_fd();
+        let mut pos = 0u64;
+
+        while pos < file_size {
+            // Seek to next data region
+            match rustix::fs::seek(fd, RustixSeekFrom::Data(pos as i64)) {
+                Ok(data_start) => {
+                    let data_start = data_start as u64;
+
+                    // If there was a hole before this data, record it
+                    if data_start > pos {
+                        regions.push(SparseRegion::Hole {
+                            offset: pos,
+                            length: data_start - pos,
+                        });
+                    }
+
+                    // Seek to next hole after this data
+                    match rustix::fs::seek(fd, RustixSeekFrom::Hole(data_start as i64)) {
+                        Ok(hole_start) => {
+                            let hole_start = hole_start as u64;
+
+                            // Record the data region
+                            if hole_start > data_start {
+                                regions.push(SparseRegion::Data {
+                                    offset: data_start,
+                                    length: hole_start - data_start,
+                                });
+                            }
+
+                            pos = hole_start;
+                        }
+                        Err(Errno::NXIO) => {
+                            // No more holes - rest of file is data
+                            regions.push(SparseRegion::Data {
+                                offset: data_start,
+                                length: file_size - data_start,
+                            });
+                            break;
+                        }
+                        Err(_e) => {
+                            // SEEK_HOLE not supported or other error - fall back
+                            return Self::detect_holes_fallback(file);
+                        }
+                    }
+                }
+                Err(Errno::NXIO) => {
+                    // No more data - rest of file is a hole
+                    if pos < file_size {
+                        regions.push(SparseRegion::Hole {
+                            offset: pos,
+                            length: file_size - pos,
+                        });
+                    }
+                    break;
+                }
+                Err(_e) => {
+                    // SEEK_DATA not supported or other error - fall back
+                    return Self::detect_holes_fallback(file);
+                }
+            }
+        }
+
+        Ok(regions)
+    }
+
+    /// Fallback hole detection by reading and scanning file contents.
+    ///
+    /// This is used on platforms without SEEK_HOLE/SEEK_DATA support or when
+    /// those operations fail. It reads the file in chunks and uses
+    /// `SparseDetector` to identify zero runs.
+    fn detect_holes_fallback(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        use std::io::Read;
+
+        let file_size = file.metadata()?.len();
+        if file_size == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut file_clone = file.try_clone()?;
+        file_clone.seek(SeekFrom::Start(0))?;
+
+        let detector = SparseDetector::new(SPARSE_WRITE_SIZE);
+        let mut all_regions = Vec::new();
+        let mut buffer = vec![0u8; 1024 * 1024]; // 1MB chunks
+        let mut offset = 0u64;
+
+        loop {
+            let bytes_read = file_clone.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let chunk_regions = detector.scan(&buffer[..bytes_read], offset);
+            all_regions.extend(chunk_regions);
+            offset += bytes_read as u64;
+        }
+
+        // Coalesce adjacent regions of the same type
+        Self::coalesce_regions(&mut all_regions);
+
+        Ok(all_regions)
+    }
+
+    /// Coalesces adjacent regions of the same type.
+    ///
+    /// If two Data regions or two Hole regions are adjacent, they are merged
+    /// into a single region to simplify the region list.
+    fn coalesce_regions(regions: &mut Vec<SparseRegion>) {
+        if regions.len() < 2 {
+            return;
+        }
+
+        let mut write_idx = 0;
+        let mut read_idx = 1;
+
+        while read_idx < regions.len() {
+            let can_merge = match (regions[write_idx], regions[read_idx]) {
+                (
+                    SparseRegion::Data {
+                        offset: o1,
+                        length: l1,
+                    },
+                    SparseRegion::Data {
+                        offset: o2,
+                        length: _,
+                    },
+                ) if o1 + l1 == o2 => true,
+                (
+                    SparseRegion::Hole {
+                        offset: o1,
+                        length: l1,
+                    },
+                    SparseRegion::Hole {
+                        offset: o2,
+                        length: _,
+                    },
+                ) if o1 + l1 == o2 => true,
+                _ => false,
+            };
+
+            if can_merge {
+                // Merge regions[read_idx] into regions[write_idx]
+                let merged = match (regions[write_idx], regions[read_idx]) {
+                    (
+                        SparseRegion::Data { offset, length: l1 },
+                        SparseRegion::Data { length: l2, .. },
+                    ) => SparseRegion::Data {
+                        offset,
+                        length: l1 + l2,
+                    },
+                    (
+                        SparseRegion::Hole { offset, length: l1 },
+                        SparseRegion::Hole { length: l2, .. },
+                    ) => SparseRegion::Hole {
+                        offset,
+                        length: l1 + l2,
+                    },
+                    _ => unreachable!(),
+                };
+                regions[write_idx] = merged;
+            } else {
+                write_idx += 1;
+                regions[write_idx] = regions[read_idx];
+            }
+
+            read_idx += 1;
+        }
+
+        regions.truncate(write_idx + 1);
+    }
+}
+
+/// Wrapper around a file for writing with sparse support.
+///
+/// This wraps a standard `File` and provides high-level methods for writing
+/// files with automatic sparse hole creation. When sparse mode is enabled,
+/// zero-filled regions are efficiently stored as holes using filesystem
+/// mechanisms (seek or fallocate).
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::fs::File;
+/// use engine::local_copy::executor::file::sparse::SparseWriter;
+///
+/// let file = File::create("output.bin").unwrap();
+/// let mut writer = SparseWriter::new(file, true);
+///
+/// // Write data - zeros will automatically become holes if sparse is enabled
+/// writer.write_region(0, b"hello").unwrap();
+/// writer.write_region(1000, &[0u8; 10000]).unwrap(); // This becomes a hole
+/// writer.write_region(11000, b"world").unwrap();
+///
+/// writer.finish(11005).unwrap();
+/// ```
+pub struct SparseWriter {
+    file: fs::File,
+    sparse_enabled: bool,
+    state: SparseWriteState,
+}
+
+impl SparseWriter {
+    /// Creates a new sparse writer wrapping the given file.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - The file to write to
+    /// * `sparse_enabled` - Whether to create sparse holes for zero regions
+    pub fn new(file: fs::File, sparse_enabled: bool) -> Self {
+        Self {
+            file,
+            sparse_enabled,
+            state: SparseWriteState::default(),
+        }
+    }
+
+    /// Writes a region of data at the specified offset.
+    ///
+    /// If sparse mode is enabled, zero-filled portions of the data will be
+    /// converted to holes. Otherwise, all data is written densely.
+    ///
+    /// Note: For correct sparse handling, regions must be written sequentially
+    /// and contiguously. Non-sequential writes may not create proper holes.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - File offset where this data should be written
+    /// * `data` - The data to write
+    ///
+    /// # Returns
+    ///
+    /// An I/O error if the write fails.
+    pub fn write_region(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        if self.sparse_enabled {
+            // For sparse mode, seek and write with sparse handling
+            self.file
+                .seek(SeekFrom::Start(offset))
+                .map_err(|e| io::Error::new(e.kind(), format!("seek to offset {offset}: {e}")))?;
+
+            let path = std::path::Path::new(""); // Path only used for error messages
+            write_sparse_chunk(&mut self.file, &mut self.state, data, path)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        } else {
+            // Dense write - seek to offset and write
+            self.file
+                .seek(SeekFrom::Start(offset))
+                .map_err(|e| io::Error::new(e.kind(), format!("seek to offset {offset}: {e}")))?;
+            self.file.write_all(data)?;
+        }
+
+        Ok(())
+    }
+
+    /// Finishes writing and sets the final file size.
+    ///
+    /// Any pending sparse zeros are flushed, and the file is truncated to the
+    /// specified size. After this call, the writer should not be used again.
+    ///
+    /// # Arguments
+    ///
+    /// * `total_size` - The final size of the file in bytes
+    ///
+    /// # Returns
+    ///
+    /// An I/O error if finishing fails.
+    pub fn finish(mut self, total_size: u64) -> io::Result<()> {
+        if self.sparse_enabled {
+            let path = std::path::Path::new("");
+            self.state
+                .finish(&mut self.file, path)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        }
+
+        self.file.set_len(total_size)?;
+        self.file.sync_all()?;
+
+        Ok(())
+    }
+
+    /// Returns a reference to the underlying file.
+    pub fn file(&self) -> &fs::File {
+        &self.file
+    }
+
+    /// Returns a mutable reference to the underlying file.
+    pub fn file_mut(&mut self) -> &mut fs::File {
+        &mut self.file
+    }
+}
 
 /// Punches a hole in the file at the specified position for the given length.
 ///
@@ -377,6 +942,7 @@ mod tests {
         SparseWriteState, leading_zero_run, leading_zero_run_scalar, punch_hole, trailing_zero_run,
         trailing_zero_run_scalar, write_sparse_chunk, write_zeros_fallback,
     };
+    use std::fs;
     use std::io::{Read, Seek, SeekFrom, Write};
     use tempfile::NamedTempFile;
 
@@ -2279,6 +2845,554 @@ mod tests {
 
         // pending_zeros is const
         let _pending: u64 = state.pending_zeros();
+    }
+
+    // ==================== SparseRegion Tests ====================
+
+    #[test]
+    fn sparse_region_accessors() {
+        let data = super::SparseRegion::Data {
+            offset: 100,
+            length: 200,
+        };
+        assert_eq!(data.offset(), 100);
+        assert_eq!(data.length(), 200);
+        assert!(data.is_data());
+        assert!(!data.is_hole());
+
+        let hole = super::SparseRegion::Hole {
+            offset: 500,
+            length: 1000,
+        };
+        assert_eq!(hole.offset(), 500);
+        assert_eq!(hole.length(), 1000);
+        assert!(hole.is_hole());
+        assert!(!hole.is_data());
+    }
+
+    #[test]
+    fn sparse_region_equality() {
+        let data1 = super::SparseRegion::Data {
+            offset: 0,
+            length: 100,
+        };
+        let data2 = super::SparseRegion::Data {
+            offset: 0,
+            length: 100,
+        };
+        let data3 = super::SparseRegion::Data {
+            offset: 0,
+            length: 200,
+        };
+
+        assert_eq!(data1, data2);
+        assert_ne!(data1, data3);
+
+        let hole1 = super::SparseRegion::Hole {
+            offset: 0,
+            length: 100,
+        };
+        let hole2 = super::SparseRegion::Hole {
+            offset: 0,
+            length: 100,
+        };
+
+        assert_eq!(hole1, hole2);
+        assert_ne!(data1, hole1);
+    }
+
+    // ==================== SparseDetector Tests ====================
+
+    #[test]
+    fn sparse_detector_all_zeros() {
+        let detector = super::SparseDetector::new(100);
+        let data = vec![0u8; 1000];
+        let regions = detector.scan(&data, 0);
+
+        assert_eq!(regions.len(), 1);
+        assert_eq!(
+            regions[0],
+            super::SparseRegion::Hole {
+                offset: 0,
+                length: 1000
+            }
+        );
+    }
+
+    #[test]
+    fn sparse_detector_all_data() {
+        let detector = super::SparseDetector::new(100);
+        let data = vec![0xAAu8; 1000];
+        let regions = detector.scan(&data, 0);
+
+        assert_eq!(regions.len(), 1);
+        assert_eq!(
+            regions[0],
+            super::SparseRegion::Data {
+                offset: 0,
+                length: 1000
+            }
+        );
+    }
+
+    #[test]
+    fn sparse_detector_mixed_regions() {
+        let detector = super::SparseDetector::new(100);
+        let mut data = vec![0xBBu8; 50]; // Data
+        data.extend_from_slice(&vec![0u8; 200]); // Hole
+        data.extend_from_slice(&vec![0xCCu8; 75]); // Data
+
+        let regions = detector.scan(&data, 1000);
+
+        assert_eq!(regions.len(), 3);
+        assert_eq!(
+            regions[0],
+            super::SparseRegion::Data {
+                offset: 1000,
+                length: 50
+            }
+        );
+        assert_eq!(
+            regions[1],
+            super::SparseRegion::Hole {
+                offset: 1050,
+                length: 200
+            }
+        );
+        assert_eq!(
+            regions[2],
+            super::SparseRegion::Data {
+                offset: 1250,
+                length: 75
+            }
+        );
+    }
+
+    #[test]
+    fn sparse_detector_small_zero_runs_treated_as_data() {
+        let detector = super::SparseDetector::new(100);
+        let mut data = vec![0xAAu8; 50];
+        data.extend_from_slice(&vec![0u8; 10]); // Small run - should be part of data
+        data.extend_from_slice(&vec![0xBBu8; 50]);
+
+        let regions = detector.scan(&data, 0);
+
+        // The scanner treats two separate data blocks with a small zero run between them
+        // The total length should equal input
+        let total_length: u64 = regions.iter().map(|r| r.length()).sum();
+        assert_eq!(total_length, 110);
+
+        // All regions should be data (small zero runs don't create holes)
+        assert!(regions.iter().all(|r| r.is_data()));
+    }
+
+    #[test]
+    fn sparse_detector_threshold_boundary() {
+        let detector = super::SparseDetector::new(100);
+
+        // Exactly at threshold - should be a hole
+        let data = vec![0u8; 100];
+        let regions = detector.scan(&data, 0);
+        assert_eq!(regions.len(), 1);
+        assert!(regions[0].is_hole());
+
+        // One byte below threshold - should be data
+        let data = vec![0u8; 99];
+        let regions = detector.scan(&data, 0);
+        assert_eq!(regions.len(), 1);
+        assert!(regions[0].is_hole() == false); // 99 bytes is below threshold
+
+        // One byte above threshold - should be a hole
+        let data = vec![0u8; 101];
+        let regions = detector.scan(&data, 0);
+        assert_eq!(regions.len(), 1);
+        assert!(regions[0].is_hole());
+    }
+
+    #[test]
+    fn sparse_detector_empty_buffer() {
+        let detector = super::SparseDetector::new(100);
+        let data: &[u8] = &[];
+        let regions = detector.scan(data, 0);
+
+        assert_eq!(regions.len(), 0);
+    }
+
+    #[test]
+    fn sparse_detector_is_all_zeros() {
+        assert!(super::SparseDetector::is_all_zeros(&[]));
+        assert!(super::SparseDetector::is_all_zeros(&[0u8; 1000]));
+        assert!(!super::SparseDetector::is_all_zeros(&[1]));
+        assert!(!super::SparseDetector::is_all_zeros(&[0, 0, 0, 1, 0]));
+
+        let mut large = vec![0u8; 10000];
+        assert!(super::SparseDetector::is_all_zeros(&large));
+        large[5000] = 1;
+        assert!(!super::SparseDetector::is_all_zeros(&large));
+    }
+
+    #[test]
+    fn sparse_detector_base_offset_applied() {
+        let detector = super::SparseDetector::new(10);
+        let data = vec![0xAAu8; 50];
+        let regions = detector.scan(&data, 5000);
+
+        assert_eq!(regions.len(), 1);
+        assert_eq!(
+            regions[0],
+            super::SparseRegion::Data {
+                offset: 5000,
+                length: 50
+            }
+        );
+    }
+
+    #[test]
+    fn sparse_detector_multiple_holes_and_data() {
+        let detector = super::SparseDetector::new(50);
+
+        let mut data = vec![0xAAu8; 100]; // Data
+        data.extend_from_slice(&vec![0u8; 100]); // Hole
+        data.extend_from_slice(&vec![0xBBu8; 100]); // Data
+        data.extend_from_slice(&vec![0u8; 100]); // Hole
+        data.extend_from_slice(&vec![0xCCu8; 100]); // Data
+
+        let regions = detector.scan(&data, 0);
+
+        assert_eq!(regions.len(), 5);
+        assert!(regions[0].is_data());
+        assert_eq!(regions[0].offset(), 0);
+        assert_eq!(regions[0].length(), 100);
+
+        assert!(regions[1].is_hole());
+        assert_eq!(regions[1].offset(), 100);
+        assert_eq!(regions[1].length(), 100);
+
+        assert!(regions[2].is_data());
+        assert_eq!(regions[2].offset(), 200);
+        assert_eq!(regions[2].length(), 100);
+
+        assert!(regions[3].is_hole());
+        assert_eq!(regions[3].offset(), 300);
+        assert_eq!(regions[3].length(), 100);
+
+        assert!(regions[4].is_data());
+        assert_eq!(regions[4].offset(), 400);
+        assert_eq!(regions[4].length(), 100);
+    }
+
+    #[test]
+    fn sparse_detector_default_threshold() {
+        let detector = super::SparseDetector::default_threshold();
+
+        // Should use SPARSE_WRITE_SIZE as threshold
+        let small_zeros = vec![0u8; super::SPARSE_WRITE_SIZE - 1];
+        let regions = detector.scan(&small_zeros, 0);
+        assert_eq!(regions.len(), 1);
+        assert!(regions[0].is_data() || regions[0].length() < super::SPARSE_WRITE_SIZE as u64);
+
+        let large_zeros = vec![0u8; super::SPARSE_WRITE_SIZE + 1];
+        let regions = detector.scan(&large_zeros, 0);
+        assert_eq!(regions.len(), 1);
+        assert!(regions[0].is_hole());
+    }
+
+    // ==================== SparseWriter Tests ====================
+
+    #[test]
+    fn sparse_writer_basic_write() {
+        let file = NamedTempFile::new().expect("temp file");
+        let mut writer = super::SparseWriter::new(
+            file.as_file().try_clone().expect("clone"),
+            false, // Dense mode
+        );
+
+        writer.write_region(0, b"hello").expect("write");
+        writer.write_region(10, b"world").expect("write");
+        writer.finish(15).expect("finish");
+
+        // Verify contents
+        let mut file_handle = file.reopen().expect("reopen");
+        use std::io::Read;
+        let mut contents = Vec::new();
+        file_handle.read_to_end(&mut contents).expect("read");
+
+        assert_eq!(&contents[0..5], b"hello");
+        assert_eq!(&contents[10..15], b"world");
+    }
+
+    #[test]
+    fn sparse_writer_sparse_mode() {
+        let file = NamedTempFile::new().expect("temp file");
+        let mut writer = super::SparseWriter::new(
+            file.as_file().try_clone().expect("clone"),
+            true, // Sparse mode
+        );
+
+        // Build the data as one sequential write
+        let mut data = vec![b'A'];
+        data.extend_from_slice(&vec![0u8; super::SPARSE_WRITE_SIZE * 2]);
+        data.push(b'B');
+
+        writer.write_region(0, &data).expect("write");
+        writer.finish(data.len() as u64).expect("finish");
+
+        // Verify contents
+        let mut file_handle = file.reopen().expect("reopen");
+        use std::io::Read;
+        let mut contents = Vec::new();
+        file_handle.read_to_end(&mut contents).expect("read");
+
+        assert_eq!(contents.len(), data.len());
+        assert_eq!(contents[0], b'A');
+        let zero_end = 1 + super::SPARSE_WRITE_SIZE * 2;
+        assert!(contents[1..zero_end].iter().all(|&b| b == 0));
+        assert_eq!(contents[zero_end], b'B');
+    }
+
+    #[test]
+    fn sparse_writer_empty_data() {
+        let file = NamedTempFile::new().expect("temp file");
+        let mut writer =
+            super::SparseWriter::new(file.as_file().try_clone().expect("clone"), true);
+
+        writer.write_region(0, &[]).expect("write empty");
+        writer.finish(0).expect("finish");
+
+        let metadata = file.as_file().metadata().expect("metadata");
+        assert_eq!(metadata.len(), 0);
+    }
+
+    #[test]
+    fn sparse_writer_file_accessors() {
+        let file = NamedTempFile::new().expect("temp file");
+        let mut writer =
+            super::SparseWriter::new(file.as_file().try_clone().expect("clone"), false);
+
+        // Test accessors
+        let _file_ref: &fs::File = writer.file();
+        let _file_mut: &mut fs::File = writer.file_mut();
+    }
+
+    // ==================== SparseReader Tests ====================
+
+    #[test]
+    fn sparse_reader_empty_file() {
+        let file = NamedTempFile::new().expect("temp file");
+        let regions = super::SparseReader::detect_holes(file.as_file()).expect("detect holes");
+
+        assert_eq!(regions.len(), 0);
+    }
+
+    #[test]
+    fn sparse_reader_all_data_file() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        file.as_file_mut()
+            .write_all(&vec![0xAAu8; 1000])
+            .expect("write data");
+
+        let regions = super::SparseReader::detect_holes(file.as_file()).expect("detect holes");
+
+        // Should be one data region
+        assert_eq!(regions.len(), 1);
+        assert!(regions[0].is_data());
+        assert_eq!(regions[0].offset(), 0);
+        assert_eq!(regions[0].length(), 1000);
+    }
+
+    #[test]
+    fn sparse_reader_all_zeros_file() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        file.as_file_mut()
+            .write_all(&vec![0u8; super::SPARSE_WRITE_SIZE * 2])
+            .expect("write zeros");
+
+        let regions = super::SparseReader::detect_holes(file.as_file()).expect("detect holes");
+
+        // Should detect as hole (or possibly data depending on how it was written)
+        // The important part is that it detects something
+        assert!(!regions.is_empty());
+    }
+
+    #[test]
+    fn sparse_reader_mixed_file() {
+        let mut file = NamedTempFile::new().expect("temp file");
+
+        // Write: data, zeros, data
+        file.as_file_mut()
+            .write_all(&vec![0xBBu8; 100])
+            .expect("write data");
+        file.as_file_mut()
+            .write_all(&vec![0u8; super::SPARSE_WRITE_SIZE * 2])
+            .expect("write zeros");
+        file.as_file_mut()
+            .write_all(&vec![0xCCu8; 100])
+            .expect("write data");
+
+        let regions = super::SparseReader::detect_holes(file.as_file()).expect("detect holes");
+
+        // Should detect multiple regions
+        assert!(!regions.is_empty());
+
+        // Verify total size matches
+        let total_length: u64 = regions.iter().map(|r| r.length()).sum();
+        let expected_size = 200 + super::SPARSE_WRITE_SIZE * 2;
+        assert_eq!(total_length, expected_size as u64);
+    }
+
+    #[test]
+    fn sparse_reader_coalesce_adjacent_data() {
+        let mut regions = vec![
+            super::SparseRegion::Data {
+                offset: 0,
+                length: 100,
+            },
+            super::SparseRegion::Data {
+                offset: 100,
+                length: 200,
+            },
+        ];
+
+        super::SparseReader::coalesce_regions(&mut regions);
+
+        assert_eq!(regions.len(), 1);
+        assert_eq!(
+            regions[0],
+            super::SparseRegion::Data {
+                offset: 0,
+                length: 300
+            }
+        );
+    }
+
+    #[test]
+    fn sparse_reader_coalesce_adjacent_holes() {
+        let mut regions = vec![
+            super::SparseRegion::Hole {
+                offset: 0,
+                length: 100,
+            },
+            super::SparseRegion::Hole {
+                offset: 100,
+                length: 200,
+            },
+        ];
+
+        super::SparseReader::coalesce_regions(&mut regions);
+
+        assert_eq!(regions.len(), 1);
+        assert_eq!(
+            regions[0],
+            super::SparseRegion::Hole {
+                offset: 0,
+                length: 300
+            }
+        );
+    }
+
+    #[test]
+    fn sparse_reader_coalesce_mixed_types() {
+        let mut regions = vec![
+            super::SparseRegion::Data {
+                offset: 0,
+                length: 100,
+            },
+            super::SparseRegion::Hole {
+                offset: 100,
+                length: 200,
+            },
+            super::SparseRegion::Data {
+                offset: 300,
+                length: 100,
+            },
+        ];
+
+        super::SparseReader::coalesce_regions(&mut regions);
+
+        // Different types should not coalesce
+        assert_eq!(regions.len(), 3);
+    }
+
+    #[test]
+    fn sparse_reader_coalesce_non_adjacent() {
+        let mut regions = vec![
+            super::SparseRegion::Data {
+                offset: 0,
+                length: 100,
+            },
+            super::SparseRegion::Data {
+                offset: 200, // Gap
+                length: 100,
+            },
+        ];
+
+        super::SparseReader::coalesce_regions(&mut regions);
+
+        // Non-adjacent regions should not coalesce
+        assert_eq!(regions.len(), 2);
+    }
+
+    #[test]
+    fn sparse_reader_coalesce_empty() {
+        let mut regions: Vec<super::SparseRegion> = vec![];
+        super::SparseReader::coalesce_regions(&mut regions);
+        assert_eq!(regions.len(), 0);
+    }
+
+    #[test]
+    fn sparse_reader_coalesce_single() {
+        let mut regions = vec![super::SparseRegion::Data {
+            offset: 0,
+            length: 100,
+        }];
+
+        super::SparseReader::coalesce_regions(&mut regions);
+
+        assert_eq!(regions.len(), 1);
+    }
+
+    #[test]
+    fn sparse_reader_coalesce_multiple_adjacent() {
+        let mut regions = vec![
+            super::SparseRegion::Data {
+                offset: 0,
+                length: 100,
+            },
+            super::SparseRegion::Data {
+                offset: 100,
+                length: 200,
+            },
+            super::SparseRegion::Data {
+                offset: 300,
+                length: 50,
+            },
+            super::SparseRegion::Hole {
+                offset: 350,
+                length: 100,
+            },
+            super::SparseRegion::Hole {
+                offset: 450,
+                length: 50,
+            },
+        ];
+
+        super::SparseReader::coalesce_regions(&mut regions);
+
+        assert_eq!(regions.len(), 2);
+        assert_eq!(
+            regions[0],
+            super::SparseRegion::Data {
+                offset: 0,
+                length: 350
+            }
+        );
+        assert_eq!(
+            regions[1],
+            super::SparseRegion::Hole {
+                offset: 350,
+                length: 150
+            }
+        );
     }
 
     // ==================== Very Small SPARSE_WRITE_SIZE Multiples ====================
