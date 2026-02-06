@@ -26,7 +26,9 @@ mod index;
 mod ring_buffer;
 mod script;
 
-pub use fuzzy::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
+pub use fuzzy::{
+    FuzzyMatch, FuzzyMatcher, FUZZY_LEVEL_1, FUZZY_LEVEL_2, compute_similarity_score,
+};
 pub use generator::{DeltaGenerator, generate_delta};
 pub use index::DeltaSignatureIndex;
 pub use script::{DeltaScript, DeltaToken, apply_delta};
