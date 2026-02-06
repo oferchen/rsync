@@ -7,7 +7,11 @@ use crate::local_copy::LocalCopyError;
 use super::super::super::COPY_BUFFER_SIZE;
 
 pub(crate) enum AppendMode {
+    /// Append is not active; proceed with normal transfer.
     Disabled,
+    /// Destination is already at least as large as the source; skip the file.
+    Skip,
+    /// Destination is shorter; append starting from the given offset.
     Append(u64),
 }
 
@@ -30,11 +34,21 @@ pub(crate) fn determine_append_mode(
     };
 
     let existing_len = existing.len();
-    if existing_len == 0 || existing_len >= file_size {
+    if existing_len == 0 {
         reader
             .seek(SeekFrom::Start(0))
             .map_err(|error| LocalCopyError::io("copy file", source, error))?;
         return Ok(AppendMode::Disabled);
+    }
+
+    // Upstream rsync: "If a file needs to be transferred and its size on the
+    // receiver is the same or longer than the size on the sender, the file is
+    // skipped."
+    if existing_len >= file_size {
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+        return Ok(AppendMode::Skip);
     }
 
     if append_verify {
@@ -181,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn determine_append_mode_disabled_when_existing_larger() {
+    fn determine_append_mode_skips_when_existing_larger() {
         let temp = tempdir().expect("tempdir");
         let source_path = temp.path().join("source.txt");
         let dest_path = temp.path().join("dest.txt");
@@ -201,7 +215,31 @@ mod tests {
         )
         .expect("determine");
 
-        assert!(matches!(result, AppendMode::Disabled));
+        assert!(matches!(result, AppendMode::Skip));
+    }
+
+    #[test]
+    fn determine_append_mode_skips_when_existing_equal_size() {
+        let temp = tempdir().expect("tempdir");
+        let source_path = temp.path().join("source.txt");
+        let dest_path = temp.path().join("dest.txt");
+        fs::write(&source_path, b"same size").expect("write source");
+        fs::write(&dest_path, b"same size").expect("write dest");
+        let mut reader = fs::File::open(&source_path).expect("open source");
+        let dest_meta = fs::metadata(&dest_path).expect("dest metadata");
+
+        let result = determine_append_mode(
+            true,
+            false,
+            &mut reader,
+            &source_path,
+            &dest_path,
+            Some(&dest_meta),
+            9, // source is 9 bytes
+        )
+        .expect("determine");
+
+        assert!(matches!(result, AppendMode::Skip));
     }
 
     #[test]
@@ -227,7 +265,7 @@ mod tests {
 
         match result {
             AppendMode::Append(offset) => assert_eq!(offset, 6), // "source" is 6 bytes
-            AppendMode::Disabled => panic!("expected Append mode"),
+            AppendMode::Disabled | AppendMode::Skip => panic!("expected Append mode"),
         }
     }
 
@@ -254,7 +292,7 @@ mod tests {
 
         match result {
             AppendMode::Append(offset) => assert_eq!(offset, 15),
-            AppendMode::Disabled => panic!("expected Append mode"),
+            AppendMode::Disabled | AppendMode::Skip => panic!("expected Append mode"),
         }
     }
 

@@ -91,8 +91,8 @@ fn append_skips_when_destination_larger_than_source() {
 
     // Destination is larger than source
     fs::write(&source, b"short content").expect("write source");
-    fs::write(&destination, b"much longer destination file content here")
-        .expect("write larger dest");
+    let original_dest = b"much longer destination file content here";
+    fs::write(&destination, original_dest).expect("write larger dest");
 
     let operands = vec![
         source.into_os_string(),
@@ -107,11 +107,12 @@ fn append_skips_when_destination_larger_than_source() {
         )
         .expect("copy succeeds");
 
-    // File should be transferred (destination larger gets overwritten)
-    assert_eq!(summary.files_copied(), 1);
+    // Upstream rsync: when dest >= source size in append mode, the file is skipped.
+    assert_eq!(summary.files_copied(), 0);
     assert_eq!(
         fs::read(&destination).expect("read dest"),
-        b"short content"
+        original_dest,
+        "destination should be preserved when it is larger than source in append mode"
     );
 }
 
@@ -731,7 +732,7 @@ fn append_verify_binary_data_with_matching_prefix() {
 // ==================== Edge Cases ====================
 
 #[test]
-fn append_with_empty_source() {
+fn append_with_empty_source_skips_when_dest_has_content() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("empty.txt");
     let destination = temp.path().join("dest.txt");
@@ -752,8 +753,39 @@ fn append_with_empty_source() {
         )
         .expect("copy succeeds");
 
-    // Empty source should overwrite destination
-    assert_eq!(summary.files_copied(), 1);
+    // Upstream rsync: dest >= source size (0), so the file is skipped in append mode.
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"has content",
+        "destination should be preserved when source is empty in append mode"
+    );
+}
+
+#[test]
+fn append_with_empty_source_and_empty_dest() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("empty.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"").expect("write empty source");
+    fs::write(&destination, b"").expect("write empty dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().append(true),
+        )
+        .expect("copy succeeds");
+
+    // Both empty: dest size (0) == source size (0), so file is transferred normally
+    // (empty dest falls through to disabled mode, then normal copy)
     assert_eq!(fs::read(&destination).expect("read dest"), b"");
 }
 
@@ -821,7 +853,14 @@ fn append_dry_run_reports_but_preserves_files() {
 
 #[test]
 fn append_matches_upstream_append_semantics() {
-    // This test documents the expected behavior matching upstream rsync --append
+    // This test documents the expected behavior matching upstream rsync --append.
+    //
+    // From the rsync man page:
+    // "This causes rsync to update a file by appending data onto the end of
+    //  the file, which presumes that the data that already exists on the
+    //  receiving side is identical with the start of the file on the sending
+    //  side. If a file needs to be transferred and its size on the receiver
+    //  is the same or longer than the size on the sender, the file is skipped."
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
@@ -829,19 +868,19 @@ fn append_matches_upstream_append_semantics() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Case 1: dest shorter than source -> append
+    // Case 1: dest shorter than source -> append remaining data
     fs::write(source_root.join("case1.txt"), b"complete content").expect("write case1 src");
     fs::write(dest_root.join("case1.txt"), b"complete").expect("write case1 dst partial");
 
-    // Case 2: dest equals source size -> skip (if mtime/size match)
+    // Case 2: dest equals source size -> skip (append mode skips when dest >= source)
     fs::write(source_root.join("case2.txt"), b"same size").expect("write case2 src");
     fs::write(dest_root.join("case2.txt"), b"same size").expect("write case2 dst");
 
-    // Case 3: dest longer than source -> re-transfer
+    // Case 3: dest longer than source -> skip (upstream skips when dest >= source)
     fs::write(source_root.join("case3.txt"), b"short").expect("write case3 src");
     fs::write(dest_root.join("case3.txt"), b"much longer content").expect("write case3 dst");
 
-    // Case 4: dest doesn't exist -> create
+    // Case 4: dest doesn't exist -> create from scratch
     fs::write(source_root.join("case4.txt"), b"new").expect("write case4 src");
 
     let mut source_operand = source_root.into_os_string();
@@ -856,8 +895,9 @@ fn append_matches_upstream_append_semantics() {
         )
         .expect("copy succeeds");
 
-    // Cases 1, 3, and 4 should be copied (and possibly case2 depending on mtime)
-    assert!(summary.files_copied() >= 3);
+    // Case 1 (partial) and case 4 (new) should be copied.
+    // Case 2 (equal size) and case 3 (dest larger) are skipped.
+    assert!(summary.files_copied() >= 2);
 
     assert_eq!(
         fs::read(dest_root.join("case1.txt")).expect("case1"),
@@ -867,16 +907,227 @@ fn append_matches_upstream_append_semantics() {
     assert_eq!(
         fs::read(dest_root.join("case2.txt")).expect("case2"),
         b"same size",
-        "case2: same size -> preserved or copied"
+        "case2: same size -> skipped, preserved"
     );
     assert_eq!(
         fs::read(dest_root.join("case3.txt")).expect("case3"),
-        b"short",
-        "case3: dest longer -> re-transferred"
+        b"much longer content",
+        "case3: dest longer -> skipped, preserved (upstream behavior)"
     );
     assert_eq!(
         fs::read(dest_root.join("case4.txt")).expect("case4"),
         b"new",
         "case4: no dest -> created"
+    );
+}
+
+// ==================== Skip Behavior Tests ====================
+
+#[test]
+fn append_skips_when_destination_exactly_equals_source_size() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Same size but different content
+    fs::write(&source, b"AAAA").expect("write source");
+    fs::write(&destination, b"BBBB").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().append(true),
+        )
+        .expect("copy succeeds");
+
+    // In append mode, equal size means skip regardless of content.
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"BBBB",
+        "destination content preserved when sizes are equal in append mode"
+    );
+}
+
+#[test]
+fn append_skips_when_dest_one_byte_larger() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"ABC").expect("write source");
+    fs::write(&destination, b"ABCD").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().append(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"ABCD",
+        "destination preserved when one byte larger"
+    );
+}
+
+#[test]
+fn append_verify_also_skips_when_dest_larger() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"short").expect("write source");
+    fs::write(&destination, b"longer content here").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().append_verify(true),
+        )
+        .expect("copy succeeds");
+
+    // append-verify should also skip when dest >= source
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"longer content here",
+        "destination preserved with append-verify when dest is larger"
+    );
+}
+
+#[test]
+fn append_dry_run_skips_when_dest_larger() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"small").expect("write source");
+    fs::write(&destination, b"bigger destination file").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::DryRun,
+            LocalCopyOptions::default().append(true),
+        )
+        .expect("dry run succeeds");
+
+    // Dry run should also report skip
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"bigger destination file"
+    );
+}
+
+#[test]
+fn append_skip_preserves_large_destination() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("dest.bin");
+
+    // Small source, large destination
+    let source_content = vec![0xABu8; 100];
+    let dest_content: Vec<u8> = (0..=255).cycle().take(1024 * 512).collect();
+
+    fs::write(&source, &source_content).expect("write source");
+    fs::write(&destination, &dest_content).expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().append(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        dest_content,
+        "large destination file preserved in append skip"
+    );
+}
+
+#[test]
+fn append_recursive_skips_completed_files() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::create_dir_all(&dest_root).expect("create dest");
+
+    // File 1: dest shorter -> append
+    fs::write(source_root.join("partial.txt"), b"full content of file")
+        .expect("write partial source");
+    fs::write(dest_root.join("partial.txt"), b"full content")
+        .expect("write partial dest");
+
+    // File 2: dest equal size -> skip
+    fs::write(source_root.join("equal.txt"), b"equal").expect("write equal source");
+    fs::write(dest_root.join("equal.txt"), b"equal").expect("write equal dest");
+
+    // File 3: dest larger -> skip
+    fs::write(source_root.join("larger.txt"), b"sm").expect("write small source");
+    fs::write(dest_root.join("larger.txt"), b"larger_dest_content").expect("write larger dest");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().append(true),
+    )
+    .expect("copy succeeds");
+
+    // Partial file should be completed
+    assert_eq!(
+        fs::read(dest_root.join("partial.txt")).expect("read partial"),
+        b"full content of file"
+    );
+    // Equal size should be preserved
+    assert_eq!(
+        fs::read(dest_root.join("equal.txt")).expect("read equal"),
+        b"equal"
+    );
+    // Larger dest should be preserved
+    assert_eq!(
+        fs::read(dest_root.join("larger.txt")).expect("read larger"),
+        b"larger_dest_content",
+        "larger destination skipped in append mode"
     );
 }
