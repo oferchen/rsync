@@ -22,7 +22,7 @@ pub(crate) fn locate_filter_arguments(args: &[OsString]) -> (Vec<usize>, Vec<usi
             continue;
         }
 
-        if arg == "--filter" {
+        if arg == "--filter" || arg == "-f" {
             filter_indices.push(index);
             expect_filter_value = true;
             continue;
