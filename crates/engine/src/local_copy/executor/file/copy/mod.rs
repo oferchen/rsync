@@ -17,13 +17,19 @@ use crate::local_copy::{
 pub(crate) use transfer::take_fsync_call_count;
 use transfer::{TransferFlags, execute_transfer};
 
+/// Copies a single file from source to destination.
+///
+/// Returns `Ok(true)` when the file was processed (transferred, matched, or
+/// otherwise kept in the destination).  Returns `Ok(false)` when the file
+/// was silently skipped due to size-based filters (`--min-size` /
+/// `--max-size`), which is relevant for `--prune-empty-dirs` accounting.
 pub(crate) fn copy_file(
     context: &mut CopyContext,
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
     relative: Option<&Path>,
-) -> Result<(), LocalCopyError> {
+) -> Result<bool, LocalCopyError> {
     context.enforce_timeout()?;
     let metadata_options = context.metadata_options();
     let mode = context.mode();
@@ -50,13 +56,13 @@ pub(crate) fn copy_file(
     if let Some(min_limit) = context.min_file_size_limit()
         && file_size < min_limit
     {
-        return Ok(());
+        return Ok(false);
     }
 
     if let Some(max_limit) = context.max_file_size_limit()
         && file_size > max_limit
     {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut existing_metadata = match fs::symlink_metadata(destination) {
@@ -99,7 +105,7 @@ pub(crate) fn copy_file(
             Duration::default(),
             Some(metadata_snapshot),
         ));
-        return Ok(());
+        return Ok(true);
     }
 
     if let Some(parent) = destination.parent() {
@@ -117,7 +123,7 @@ pub(crate) fn copy_file(
                 existing_metadata: existing_metadata.as_ref(),
             },
         )?;
-        return Ok(());
+        return Ok(true);
     }
 
     if existing::handle_existing_skips(
@@ -127,7 +133,7 @@ pub(crate) fn copy_file(
         record_path.as_path(),
         existing_metadata.as_ref(),
     )? {
-        return Ok(());
+        return Ok(true);
     }
 
     // Upstream rsync disables sparse writes whenever `--preallocate` is active
@@ -172,7 +178,7 @@ pub(crate) fn copy_file(
     )?;
 
     if link_outcome.completed {
-        return Ok(());
+        return Ok(true);
     }
 
     let transfer_flags = TransferFlags {
@@ -206,5 +212,6 @@ pub(crate) fn copy_file(
         transfer_flags,
         mode,
         link_outcome.copy_source_override,
-    )
+    )?;
+    Ok(true)
 }

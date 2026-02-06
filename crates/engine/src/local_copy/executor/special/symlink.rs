@@ -198,7 +198,7 @@ pub(crate) fn copy_symlink(
             }
 
             if target_type.is_file() {
-                copy_file(context, source, destination, &target_metadata, relative)?;
+                let _ = copy_file(context, source, destination, &target_metadata, relative)?;
                 return Ok(());
             }
 
