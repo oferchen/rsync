@@ -13,7 +13,7 @@ use std::io::Read;
 use std::io::{self, Write};
 #[cfg(unix)]
 use std::io::{Seek, SeekFrom};
-use std::num::{NonZeroU8, NonZeroU64};
+use std::num::{NonZeroU8, NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -1034,4 +1034,6 @@ include!("execute_ownership_preservation.rs");
 include!("execute_xattrs.rs");
 #[cfg(unix)]
 include!("execute_special_characters.rs");
+include!("execute_force.rs");
 include!("execute_long_paths.rs");
+include!("execute_block_size.rs");
