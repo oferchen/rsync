@@ -86,7 +86,7 @@ fn execute_copies_file_with_long_name() {
     fs::create_dir(&source).expect("create source");
 
     // Create file with long filename (220 bytes to leave room for temp file prefix/suffix)
-    // rsync adds ".rsync-tmp-" prefix and "-PID-N" suffix to temp files
+    // rsync adds ".~tmp~" prefix and ".PID.N" suffix to temp files
     let long_filename = create_filename_of_length(220, ".txt");
     let source_file = source.join(&long_filename);
     fs::write(&source_file, b"long name content").expect("write source");

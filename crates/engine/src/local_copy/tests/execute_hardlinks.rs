@@ -44,7 +44,7 @@ fn execute_with_delay_updates_preserves_hard_links() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         assert!(
-            !name.starts_with(".rsync-tmp-") && !name.starts_with(".rsync-partial-"),
+            !name.starts_with(".~tmp~") && !name.starts_with(".rsync-partial-"),
             "unexpected temporary file left behind: {name}"
         );
     }
