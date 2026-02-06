@@ -788,7 +788,7 @@ mod exit_code_enum_values {
     /// Verifies unknown codes return None.
     #[test]
     fn from_i32_returns_none_for_unknown() {
-        let unknown_codes = [-1, 6, 7, 8, 9, 17, 18, 26, 27, 28, 29, 31, 100, 999];
+        let unknown_codes = [-1, 7, 8, 9, 17, 18, 26, 27, 28, 29, 31, 100, 999];
 
         for value in unknown_codes {
             assert!(
@@ -808,6 +808,7 @@ mod exit_code_enum_values {
             ExitCode::FileSelect,
             ExitCode::Unsupported,
             ExitCode::StartClient,
+            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::FileIo,
             ExitCode::StreamIo,
