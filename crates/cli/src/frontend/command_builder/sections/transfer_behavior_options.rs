@@ -13,6 +13,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("temp-dir")
                     .long("temp-dir")
+                    .short('T')
                     .visible_alias("tmp-dir")
                     .value_name("DIR")
                     .help("Store temporary files in DIR while transferring.")
@@ -552,6 +553,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("omit-link-times")
                     .long("omit-link-times")
+                    .short('J')
                     .help("Skip preserving symlink modification times.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("no-omit-link-times"),
