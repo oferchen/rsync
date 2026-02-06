@@ -232,6 +232,8 @@ mod parse_checksum_tests;
 mod parse_compress_tests;
 #[path = "parse_filter.rs"]
 mod parse_filter_tests;
+#[path = "filter_behavior_comprehensive.rs"]
+mod filter_behavior_comprehensive_tests;
 #[path = "parse_max.rs"]
 mod parse_max_tests;
 #[path = "parse_modify.rs"]
