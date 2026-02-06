@@ -90,6 +90,13 @@ pub(crate) struct CopyContext<'a> {
     last_progress: Instant,
     created_entries: Vec<CreatedEntry>,
     destination_root: PathBuf,
+    /// Number of leading path components in `relative` that represent the
+    /// transfer root name (e.g. the source directory name when copying
+    /// without a trailing slash).  These components inflate the depth
+    /// visible to `symlink_target_is_safe` and must be excluded when
+    /// computing the safety-relative path for `--safe-links` /
+    /// `--copy-unsafe-links`.
+    safety_depth_offset: usize,
     /// Shared buffer pool for file I/O operations.
     #[cfg(feature = "optimized-buffers")]
     buffer_pool: Arc<BufferPool>,

@@ -63,6 +63,11 @@ pub(crate) fn symlink_target_is_safe(target: &Path, link_relative: &Path) -> boo
         }
     }
 
+    // The last component of link_relative is the symlink filename itself,
+    // not a directory level.  Symlink targets resolve relative to the
+    // *containing* directory, so exclude the filename from the depth budget.
+    depth = (depth - 1).max(0);
+
     for component in target.components() {
         match component {
             Component::ParentDir => {
@@ -154,8 +159,14 @@ pub(crate) fn copy_symlink(
     }
 
     // build a "relative" path to check symlink safety
+    //
+    // When copying a directory without a trailing slash, the `relative` path
+    // starts with the source directory name (e.g. "source/a/b/link").  That
+    // first component is the transfer root itself, not an actual depth level,
+    // so strip it via `strip_safety_prefix` to avoid inflating the depth
+    // budget in `symlink_target_is_safe`.
     let safety_relative = relative
-        .map(Path::to_path_buf)
+        .map(|r| context.strip_safety_prefix(r).to_path_buf())
         .or_else(|| {
             destination
                 .strip_prefix(context.destination_root())
@@ -165,8 +176,8 @@ pub(crate) fn copy_symlink(
         .or_else(|| destination.file_name().map(PathBuf::from))
         .unwrap_or_else(|| destination.to_path_buf());
 
-    let unsafe_target =
-        context.safe_links_enabled() && !symlink_target_is_safe(&target, &safety_relative);
+    let unsafe_target = (context.safe_links_enabled() || context.copy_unsafe_links_enabled())
+        && !symlink_target_is_safe(&target, &safety_relative);
 
     // If the link is unsafe but we were told to copy what it points to, do that.
     if unsafe_target {
@@ -465,9 +476,9 @@ mod tests {
     #[test]
     fn unsafe_escapes_root() {
         // Link at root level, target goes up - escapes
-        // "link" has depth 1, so 2 parent dirs escapes
+        // "link" has depth 0 (filename excluded), so 1 parent dir escapes
         assert!(!symlink_target_is_safe(
-            Path::new("../../outside"),
+            Path::new("../outside"),
             Path::new("link")
         ));
     }
@@ -475,9 +486,9 @@ mod tests {
     #[test]
     fn unsafe_escapes_with_multiple_parents() {
         // More parent components than depth allows
-        // dir/link has depth 2, so 3 parent dirs escapes
+        // dir/link has depth 1 (filename excluded), so 2 parent dirs escapes
         assert!(!symlink_target_is_safe(
-            Path::new("../../../outside"),
+            Path::new("../../outside"),
             Path::new("dir/link")
         ));
     }
@@ -530,10 +541,10 @@ mod tests {
     #[test]
     fn unsafe_deep_escape() {
         // Even deep links can't escape past root
-        // link at a/b/c/link has depth 4 (includes link name)
-        // So 5 parent dirs would be needed to escape
+        // link at a/b/c/link has depth 3 (filename excluded)
+        // So 4 parent dirs would be needed to escape
         assert!(!symlink_target_is_safe(
-            Path::new("../../../../../outside"),
+            Path::new("../../../../outside"),
             Path::new("a/b/c/link")
         ));
     }
@@ -574,9 +585,9 @@ mod tests {
     #[test]
     fn safe_exactly_at_boundary() {
         // Going up exactly as many levels as depth allows
-        // link at a/b/c/link has depth 4, so 4 parent dirs is exactly at boundary
+        // link at a/b/c/link has depth 3 (filename excluded), so 3 parent dirs is exactly at boundary
         assert!(symlink_target_is_safe(
-            Path::new("../../../../file.txt"),
+            Path::new("../../../file.txt"),
             Path::new("a/b/c/link")
         ));
     }
@@ -584,9 +595,9 @@ mod tests {
     #[test]
     fn unsafe_one_past_boundary() {
         // Going up one more level than allowed
-        // link at a/b/c/link has depth 4, so 5 parent dirs escapes
+        // link at a/b/c/link has depth 3 (filename excluded), so 4 parent dirs escapes
         assert!(!symlink_target_is_safe(
-            Path::new("../../../../../file.txt"),
+            Path::new("../../../../file.txt"),
             Path::new("a/b/c/link")
         ));
     }
