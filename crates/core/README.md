@@ -25,6 +25,9 @@ at the Rust implementation.
   CLI and daemon binaries.
 - [`bandwidth`](src/bandwidth.rs) re-exports the [`bandwidth`](../bandwidth/README.md)
   crate so callers share the same parsing and pacing primitives.
+- [`signal`](src/signal/mod.rs) provides Unix signal handling for graceful
+  shutdown and cleanup, matching upstream rsync's signal behavior for SIGINT,
+  SIGTERM, SIGHUP, and SIGPIPE.
 
 ## Invariants
 
