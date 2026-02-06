@@ -78,7 +78,11 @@ fn decide_entry_action(
         return Ok(EntryAction::CopyDirectory);
     }
 
-    if entry_type.is_symlink() {
+    // Only treat as a symlink when the effective type is still a symlink
+    // (i.e., --copy-links did NOT resolve it to the referent).  When
+    // --copy-links is active and the target is a FIFO or device, we must
+    // fall through to the FIFO / device branches below.
+    if entry_type.is_symlink() && effective_type.is_symlink() {
         if context.links_enabled() {
             return Ok(EntryAction::CopySymlink);
         }
@@ -171,13 +175,18 @@ pub(crate) fn plan_directory_entries<'a>(
             &mut keep_name,
         )?;
 
+        // When --copy-unsafe-links is active, the planner must dereference
+        // unsafe symlinks before the executor sees them.  When only
+        // --safe-links is active (without --copy-unsafe-links), we leave
+        // the CopySymlink action in place so that copy_symlink() can
+        // handle it and record the SkippedUnsafeSymlink event properly.
         if matches!(action, EntryAction::CopySymlink)
-            && context.safe_links_enabled()
             && context.copy_unsafe_links_enabled()
         {
             match fs::read_link(entry.path.as_path()) {
                 Ok(target) => {
-                    if !symlink_target_is_safe(&target, relative_path.as_path()) {
+                    let safety_rel = context.strip_safety_prefix(relative_path.as_path());
+                    if !symlink_target_is_safe(&target, safety_rel) {
                         match follow_symlink_metadata(entry.path.as_path()) {
                             Ok(target_metadata) => {
                                 let target_type = target_metadata.file_type();
@@ -310,7 +319,7 @@ pub(crate) fn plan_directory_entries_parallel<'a>(
     // Determine what needs to be prefetched based on context options
     let config = PrefetchConfig {
         follow_symlinks: context.copy_links_enabled() || context.copy_dirlinks_enabled(),
-        read_symlink_targets: context.safe_links_enabled() && context.copy_unsafe_links_enabled(),
+        read_symlink_targets: context.copy_unsafe_links_enabled(),
         check_devices: context.one_file_system_enabled() && root_device.is_some(),
     };
 
@@ -391,28 +400,32 @@ fn plan_directory_entries_with_prefetch<'a>(
             &mut keep_name,
         )?;
 
-        // Handle safe_links with prefetched symlink target
+        // Handle --copy-unsafe-links with prefetched symlink target.
+        // When only --safe-links is active (no --copy-unsafe-links), we
+        // leave CopySymlink so that copy_symlink() records
+        // SkippedUnsafeSymlink properly.
         if matches!(action, EntryAction::CopySymlink)
-            && context.safe_links_enabled()
             && context.copy_unsafe_links_enabled()
         {
             if let Some(ref result) = prefetch.symlink_target {
                 match result {
                     Ok(target) => {
-                        if !symlink_target_is_safe(target, relative_path.as_path()) {
+                        let safety_rel = context.strip_safety_prefix(relative_path.as_path());
+                        if !symlink_target_is_safe(target, safety_rel) {
                             // Use prefetched metadata or re-fetch
-                            let target_metadata =
-                                if let Some(ref meta_result) = prefetch.symlink_target_metadata {
-                                    meta_result.as_ref().map_err(|e| {
-                                        LocalCopyError::io(
-                                            "read symlink target metadata",
-                                            entry.path.clone(),
-                                            std::io::Error::other(e.to_string()),
-                                        )
-                                    })?
-                                } else {
-                                    &follow_symlink_metadata(entry.path.as_path())?
-                                };
+                            let target_metadata = if let Some(ref meta_result) =
+                                prefetch.symlink_target_metadata
+                            {
+                                meta_result.as_ref().map_err(|e| {
+                                    LocalCopyError::io(
+                                        "read symlink target metadata",
+                                        entry.path.clone(),
+                                        std::io::Error::other(e.to_string()),
+                                    )
+                                })?
+                            } else {
+                                &follow_symlink_metadata(entry.path.as_path())?
+                            };
 
                             let target_type = target_metadata.file_type();
                             if target_type.is_dir() {

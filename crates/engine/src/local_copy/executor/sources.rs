@@ -202,6 +202,10 @@ fn handle_directory_contents_copy(
         target_root = destination_path.join(root);
     }
 
+    // Trailing-slash copy: contents become the transfer root directly,
+    // so no extra prefix in the relative path.
+    context.set_safety_depth_offset(0);
+
     copy_directory_recursive(
         context,
         source_path,
@@ -254,6 +258,11 @@ fn handle_directory_copy(
     } else {
         destination_path.to_path_buf()
     };
+
+    // Non-trailing-slash copy: the relative path starts with the source
+    // directory name, which inflates the depth seen by safe-links checks.
+    // Record an offset of 1 so that safety-relative paths exclude it.
+    context.set_safety_depth_offset(1);
 
     copy_directory_recursive(
         context,
@@ -531,7 +540,11 @@ fn handle_non_directory_source(
             non_empty_path(relative.as_path()),
             proc_ctx.root_device,
         )?;
-    } else if file_type.is_symlink() {
+    } else if file_type.is_symlink() && effective_type.is_symlink() {
+        // Only preserve as a symlink when --copy-links did NOT resolve the
+        // referent.  When copy_links is active and the target is a special
+        // file (FIFO / device), the effective_type will differ from
+        // file_type and we must fall through to the FIFO / device branches.
         handle_symlink_copy(
             context,
             source_path,
@@ -592,6 +605,9 @@ fn process_single_source(
     destination_behaves_like_directory: bool,
     multiple_sources: bool,
 ) -> Result<(), LocalCopyError> {
+    // Reset safety depth offset for each source.  Directory copy handlers
+    // will set the correct value before recursing.
+    context.set_safety_depth_offset(0);
     context.enforce_timeout()?;
 
     let source_path = source.path();
