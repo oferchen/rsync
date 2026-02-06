@@ -10,6 +10,8 @@ pub mod auth;
 pub mod bandwidth;
 /// Centralized exit code definitions matching upstream rsync's `errcode.h`.
 pub mod exit_code;
+/// Signal handling for graceful shutdown and cleanup.
+pub mod signal;
 /// Branding constants shared across binaries and packaging layers.
 pub use ::branding::branding;
 /// Client orchestration helpers consumed by the CLI binary.
