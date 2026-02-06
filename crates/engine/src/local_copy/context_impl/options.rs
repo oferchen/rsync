@@ -32,6 +32,32 @@ impl<'a> CopyContext<'a> {
         self.options.safe_links_enabled()
     }
 
+    /// Returns the number of leading relative-path components that represent
+    /// the transfer root name and should be excluded when computing safe-links
+    /// depth.
+    pub(super) const fn safety_depth_offset(&self) -> usize {
+        self.safety_depth_offset
+    }
+
+    /// Sets the safety depth offset.  Call with `1` before entering a
+    /// whole-directory copy (no trailing slash), `0` for a contents copy.
+    pub(super) fn set_safety_depth_offset(&mut self, offset: usize) {
+        self.safety_depth_offset = offset;
+    }
+
+    /// Strips the transfer-root prefix from a relative path, producing a
+    /// path suitable for `symlink_target_is_safe`.
+    pub(super) fn strip_safety_prefix<'p>(&self, relative: &'p Path) -> &'p Path {
+        if self.safety_depth_offset == 0 {
+            return relative;
+        }
+        let mut components = relative.components();
+        for _ in 0..self.safety_depth_offset {
+            components.next();
+        }
+        components.as_path()
+    }
+
     pub(super) const fn copy_dirlinks_enabled(&self) -> bool {
         self.options.copy_dirlinks_enabled()
     }

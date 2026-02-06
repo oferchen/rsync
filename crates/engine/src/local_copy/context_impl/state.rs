@@ -65,6 +65,7 @@ impl<'a> CopyContext<'a> {
             last_progress: Instant::now(),
             created_entries: Vec::new(),
             destination_root,
+            safety_depth_offset: 0,
             #[cfg(feature = "optimized-buffers")]
             buffer_pool,
             #[cfg(feature = "batch-sync")]
