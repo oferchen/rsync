@@ -100,13 +100,42 @@ fn parse_args_collects_filter_files() {
 }
 
 #[test]
-fn parse_args_collects_reference_destinations() {
+fn parse_args_collects_compare_dest() {
     let parsed = parse_args([
         OsString::from(RSYNC),
         OsString::from("--compare-dest"),
-        OsString::from("compare"),
+        OsString::from("compare1"),
+        OsString::from("--compare-dest"),
+        OsString::from("compare2"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed.compare_destinations,
+        vec![OsString::from("compare1"), OsString::from("compare2")]
+    );
+}
+
+#[test]
+fn parse_args_collects_copy_dest() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
         OsString::from("--copy-dest"),
         OsString::from("copy"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.copy_destinations, vec![OsString::from("copy")]);
+}
+
+#[test]
+fn parse_args_collects_link_dest() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
         OsString::from("--link-dest"),
         OsString::from("link"),
         OsString::from("source"),
@@ -114,9 +143,49 @@ fn parse_args_collects_reference_destinations() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.compare_destinations, vec![OsString::from("compare")]);
-    assert_eq!(parsed.copy_destinations, vec![OsString::from("copy")]);
     assert_eq!(parsed.link_destinations, vec![OsString::from("link")]);
+}
+
+#[test]
+fn parse_args_rejects_mixed_compare_dest_and_copy_dest() {
+    let result = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--compare-dest"),
+        OsString::from("compare"),
+        OsString::from("--copy-dest"),
+        OsString::from("copy"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ]);
+    assert!(result.is_err(), "mixing --compare-dest and --copy-dest should be rejected");
+}
+
+#[test]
+fn parse_args_rejects_mixed_compare_dest_and_link_dest() {
+    let result = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--compare-dest"),
+        OsString::from("compare"),
+        OsString::from("--link-dest"),
+        OsString::from("link"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ]);
+    assert!(result.is_err(), "mixing --compare-dest and --link-dest should be rejected");
+}
+
+#[test]
+fn parse_args_rejects_mixed_copy_dest_and_link_dest() {
+    let result = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--copy-dest"),
+        OsString::from("copy"),
+        OsString::from("--link-dest"),
+        OsString::from("link"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ]);
+    assert!(result.is_err(), "mixing --copy-dest and --link-dest should be rejected");
 }
 
 #[test]
