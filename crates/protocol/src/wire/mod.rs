@@ -8,6 +8,7 @@
 //! # Submodules
 //!
 //! - [`file_entry`] - Low-level file entry wire format encoding functions
+//! - [`file_entry_decode`] - Low-level file entry wire format decoding functions
 //! - [`signature`] - Signature block encoding for delta generation
 //! - [`delta`] - Delta token encoding for file reconstruction
 //! - [`compressed_token`] - Compressed token stream handling
@@ -18,6 +19,7 @@
 pub mod compressed_token;
 pub mod delta;
 pub mod file_entry;
+pub mod file_entry_decode;
 pub mod signature;
 
 pub use self::compressed_token::{
@@ -58,4 +60,17 @@ pub use self::file_entry::{
     encode_hardlink_dev_ino, encode_hardlink_idx,
     // Flag calculation helpers
     calculate_basic_flags, calculate_device_flags, calculate_hardlink_flags, calculate_time_flags,
+};
+
+// File entry wire format decoding
+pub use self::file_entry_decode::{
+    // Flag decoding
+    decode_end_marker, decode_flags,
+    // Name decoding
+    decode_name,
+    // Metadata decoding
+    decode_atime, decode_checksum, decode_crtime, decode_gid, decode_mode, decode_mtime,
+    decode_mtime_nsec, decode_rdev, decode_size, decode_symlink_target, decode_uid,
+    // Hardlink decoding
+    decode_hardlink_dev_ino, decode_hardlink_idx,
 };
