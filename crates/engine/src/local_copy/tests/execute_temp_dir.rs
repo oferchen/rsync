@@ -841,3 +841,436 @@ fn execute_with_temp_dir_and_delete_removes_extraneous() {
         "extraneous file should be deleted"
     );
 }
+
+// ==================== Default Behavior (No Temp Dir) ====================
+
+#[test]
+fn execute_without_temp_dir_creates_temps_alongside_destination() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"no temp dir test").expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"no temp dir test"
+    );
+    // No stray temp files should remain in the destination directory
+    let parent = destination.parent().unwrap();
+    let stray_temps: Vec<_> = fs::read_dir(parent)
+        .expect("read dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".~tmp~"))
+        .collect();
+    assert!(
+        stray_temps.is_empty(),
+        "no temp files should remain in destination directory after successful transfer"
+    );
+}
+
+// ==================== Temp File Name Format Tests ====================
+
+#[test]
+fn execute_with_temp_dir_uses_upstream_temp_prefix() {
+    // Verify the temp file uses .~tmp~ prefix matching upstream rsync
+    let temp_path = temporary_destination_path(Path::new("/path/to/file.txt"), 42, None);
+    let name = temp_path
+        .file_name()
+        .expect("file name")
+        .to_string_lossy();
+    assert!(
+        name.starts_with(".~tmp~"),
+        "temp file should use .~tmp~ prefix: got {name}"
+    );
+    assert!(
+        name.contains("file.txt"),
+        "temp file name should contain original filename: got {name}"
+    );
+    assert!(
+        name.contains(&std::process::id().to_string()),
+        "temp file name should contain process ID: got {name}"
+    );
+}
+
+#[test]
+fn execute_with_temp_dir_format_in_custom_directory() {
+    // When temp_dir is set, temp file should go into that directory
+    let temp_dir = Path::new("/my/temp");
+    let temp_path =
+        temporary_destination_path(Path::new("/destination/subdir/file.txt"), 1, Some(temp_dir));
+    assert!(
+        temp_path.starts_with(temp_dir),
+        "temp file should be in custom temp directory"
+    );
+    let name = temp_path
+        .file_name()
+        .expect("file name")
+        .to_string_lossy();
+    assert!(
+        name.starts_with(".~tmp~"),
+        "temp file in custom dir should use .~tmp~ prefix"
+    );
+    assert!(
+        name.contains("file.txt"),
+        "temp file should use filename only, not full subpath"
+    );
+    // The temp file should be directly in temp_dir, not in a subdirectory
+    assert_eq!(
+        temp_path.parent().unwrap(),
+        temp_dir,
+        "temp file should be directly in temp_dir, not nested"
+    );
+}
+
+// ==================== Temp Dir with Whole File Transfer ====================
+
+#[test]
+fn execute_with_temp_dir_and_whole_file_mode() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    let temp_staging = temp.path().join("staging");
+    fs::create_dir_all(&temp_staging).expect("staging dir");
+
+    fs::write(&source, b"whole file content").expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .with_temp_directory(Some(&temp_staging))
+                .whole_file(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"whole file content"
+    );
+
+    // Staging directory should be clean
+    let staging_files: Vec<_> = fs::read_dir(&temp_staging)
+        .expect("read staging")
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(staging_files.is_empty());
+}
+
+// ==================== Options Round-Trip Tests ====================
+
+#[test]
+fn temp_dir_option_round_trip_via_builder() {
+    let options = LocalCopyOptions::builder()
+        .temp_dir(Some("/tmp/staging"))
+        .build()
+        .expect("valid options");
+
+    assert_eq!(
+        options.temp_directory_path(),
+        Some(Path::new("/tmp/staging"))
+    );
+}
+
+#[test]
+fn temp_dir_option_builder_none_clears() {
+    let options = LocalCopyOptions::builder()
+        .temp_dir(Some("/tmp/staging"))
+        .temp_dir(None::<&str>)
+        .build()
+        .expect("valid options");
+
+    assert!(options.temp_directory_path().is_none());
+}
+
+#[test]
+fn temp_dir_option_does_not_affect_partial_mode() {
+    // Setting temp_dir should NOT enable partial mode (unlike partial_dir)
+    let options =
+        LocalCopyOptions::default().with_temp_directory(Some(PathBuf::from("/tmp/staging")));
+    assert!(
+        !options.partial_enabled(),
+        "temp_dir should not enable partial mode"
+    );
+    assert!(
+        options.temp_directory_path().is_some(),
+        "temp_dir should be set"
+    );
+}
+
+// ==================== Binary Content Integrity ====================
+
+#[test]
+fn execute_with_temp_dir_preserves_binary_content_exactly() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("binary.dat");
+    let destination = temp.path().join("dest.dat");
+    let temp_staging = temp.path().join("staging");
+    fs::create_dir_all(&temp_staging).expect("staging dir");
+
+    // Create a file with all possible byte values to test binary fidelity
+    let binary_content: Vec<u8> = (0..=255).cycle().take(8192).collect();
+    fs::write(&source, &binary_content).expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().with_temp_directory(Some(&temp_staging)),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        binary_content,
+        "binary content must be preserved exactly"
+    );
+}
+
+// ==================== Idempotent Transfer with Temp Dir ====================
+
+#[test]
+fn execute_with_temp_dir_second_run_skips_identical_files() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    let temp_staging = temp.path().join("staging");
+    fs::create_dir_all(&temp_staging).expect("staging dir");
+
+    let content = b"idempotent content";
+    fs::write(&source, content).expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+
+    // First copy -- preserve times so the mtime comparison works on the second run
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let summary1 = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .with_temp_directory(Some(&temp_staging))
+                .times(true),
+        )
+        .expect("first copy succeeds");
+    assert_eq!(summary1.files_copied(), 1);
+
+    // Second copy - should detect file is already up to date (same size + mtime)
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let summary2 = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .with_temp_directory(Some(&temp_staging))
+                .times(true),
+        )
+        .expect("second copy succeeds");
+
+    // Files should be matched (skipped), not copied again
+    assert_eq!(
+        summary2.files_copied(), 0,
+        "identical file should be skipped on second run"
+    );
+}
+
+// ==================== Temp Dir Interaction with Checksum ====================
+
+#[test]
+fn execute_with_temp_dir_and_checksum_mode() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    let temp_staging = temp.path().join("staging");
+    fs::create_dir_all(&temp_staging).expect("staging dir");
+
+    fs::write(&source, b"checksum test content").expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .with_temp_directory(Some(&temp_staging))
+                .checksum(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"checksum test content"
+    );
+}
+
+// ==================== Concurrent Unique Temp Files ====================
+
+#[test]
+fn execute_with_temp_dir_unique_temp_names_across_files() {
+    // Verify that multiple files in the same temp dir get unique temp names
+    let td = Path::new("/tmp/staging");
+
+    let temp1 = temporary_destination_path(Path::new("/dest/file1.txt"), 0, Some(td));
+    let temp2 = temporary_destination_path(Path::new("/dest/file2.txt"), 1, Some(td));
+
+    assert_ne!(
+        temp1, temp2,
+        "different destination files should get different temp paths"
+    );
+    // Both should be in the temp dir
+    assert!(temp1.starts_with(td));
+    assert!(temp2.starts_with(td));
+}
+
+#[test]
+fn execute_with_temp_dir_unique_counter_per_file() {
+    // Same destination file with different unique IDs should get different temp paths
+    let td = Path::new("/tmp/staging");
+    let dest = Path::new("/dest/file.txt");
+
+    let temp1 = temporary_destination_path(dest, 0, Some(td));
+    let temp2 = temporary_destination_path(dest, 1, Some(td));
+
+    assert_ne!(
+        temp1, temp2,
+        "same destination with different unique IDs should get different temp paths"
+    );
+}
+
+// ==================== Temp Dir with Backup Mode ====================
+
+#[test]
+fn execute_with_temp_dir_and_backup() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    let temp_staging = temp.path().join("staging");
+    fs::create_dir_all(&source_root).expect("source dir");
+    fs::create_dir_all(&dest_root).expect("dest dir");
+    fs::create_dir_all(&temp_staging).expect("staging dir");
+
+    fs::write(source_root.join("file.txt"), b"updated content").expect("write source");
+    fs::write(dest_root.join("file.txt"), b"original content").expect("write existing");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .with_temp_directory(Some(&temp_staging))
+                .backup(true)
+                .ignore_times(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read dest"),
+        b"updated content"
+    );
+    // Backup file should exist with default suffix ~
+    assert!(
+        dest_root.join("file.txt~").exists(),
+        "backup file should exist"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("file.txt~")).expect("read backup"),
+        b"original content"
+    );
+}
+
+// ==================== Temp Dir with Nested Source and Flat Staging ====================
+
+#[test]
+fn execute_with_temp_dir_nested_source_uses_flat_staging() {
+    // When copying nested directory structures with --temp-dir,
+    // temp files should all go into the flat temp directory
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    let temp_staging = temp.path().join("staging");
+    fs::create_dir_all(source_root.join("a").join("b")).expect("nested dirs");
+    fs::create_dir_all(&temp_staging).expect("staging dir");
+
+    fs::write(source_root.join("top.txt"), b"top level").expect("write");
+    fs::write(source_root.join("a").join("mid.txt"), b"mid level").expect("write");
+    fs::write(
+        source_root.join("a").join("b").join("deep.txt"),
+        b"deep level",
+    )
+    .expect("write");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().with_temp_directory(Some(&temp_staging)),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 3);
+
+    // Verify all files exist at correct destinations
+    assert_eq!(
+        fs::read(dest_root.join("top.txt")).expect("read"),
+        b"top level"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("a").join("mid.txt")).expect("read"),
+        b"mid level"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("a").join("b").join("deep.txt")).expect("read"),
+        b"deep level"
+    );
+
+    // Verify staging directory is clean
+    let staging_files: Vec<_> = fs::read_dir(&temp_staging)
+        .expect("read staging")
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(
+        staging_files.is_empty(),
+        "staging directory should be clean after successful transfer"
+    );
+}
