@@ -1333,7 +1333,7 @@ mod fuzzy_matching {
         );
     }
 
-    /// Verifies fuzzy matching searches additional basis directories.
+    /// Verifies fuzzy matching searches additional basis directories (level 2).
     #[test]
     fn searches_additional_fuzzy_basis_dirs() {
         let temp1 = TempDir::new().expect("create temp dir 1");
@@ -1342,7 +1342,9 @@ mod fuzzy_matching {
         // Put the similar file in the second directory
         fs::write(temp2.path().join("config_v1.json"), "old config").expect("write file");
 
-        let matcher = FuzzyMatcher::new().with_fuzzy_basis_dirs(vec![temp2.path().to_path_buf()]);
+        // Use level 2 fuzzy matching to search additional directories
+        let matcher = FuzzyMatcher::with_level(2)
+            .with_fuzzy_basis_dirs(vec![temp2.path().to_path_buf()]);
 
         let result = matcher.find_fuzzy_basis(
             OsStr::new("config_v2.json"),
