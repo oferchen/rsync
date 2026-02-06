@@ -260,9 +260,25 @@ pub(super) fn execute_transfer(
         existing_metadata,
         file_size,
     )?;
+    if matches!(append_mode, AppendMode::Skip) {
+        // Upstream rsync skips the file when dest >= source size in append mode.
+        context.record_hard_link(metadata, destination);
+        context.summary_mut().record_regular_file_matched();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
+        context.record(LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            LocalCopyAction::MetadataReused,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        ));
+        return Ok(());
+    }
     let append_offset = match append_mode {
         AppendMode::Append(offset) => offset,
-        AppendMode::Disabled => 0,
+        AppendMode::Disabled | AppendMode::Skip => 0,
     };
     reader
         .seek(SeekFrom::Start(append_offset))
