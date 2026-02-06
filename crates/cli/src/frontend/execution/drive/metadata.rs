@@ -29,7 +29,7 @@ pub(crate) struct MetadataSettings {
     pub(crate) copy_unsafe_links: bool,
     pub(crate) keep_dirlinks: bool,
     pub(crate) relative: bool,
-    pub(crate) one_file_system: bool,
+    pub(crate) one_file_system: u8,
     pub(crate) chmod_modifiers: Option<ChmodModifiers>,
     pub(crate) user_mapping: Option<UserMapping>,
     pub(crate) group_mapping: Option<GroupMapping>,
@@ -59,7 +59,7 @@ pub(crate) struct MetadataInputs<'a> {
     pub(crate) copy_unsafe_links: Option<bool>,
     pub(crate) keep_dirlinks: Option<bool>,
     pub(crate) relative: Option<bool>,
-    pub(crate) one_file_system: Option<bool>,
+    pub(crate) one_file_system: Option<u8>,
     pub(crate) chmod: &'a [OsString],
 }
 
@@ -159,7 +159,7 @@ pub(crate) fn compute_metadata_settings(
     let copy_unsafe_links_setting = copy_unsafe_links.unwrap_or(false);
     let keep_dirlinks_flag = keep_dirlinks.unwrap_or(false);
     let relative_paths = relative.unwrap_or(false);
-    let one_file_system_setting = one_file_system.unwrap_or(false);
+    let one_file_system_setting = one_file_system.unwrap_or(0);
 
     let mut modifiers: Option<ChmodModifiers> = None;
     for spec in chmod {
@@ -727,20 +727,29 @@ mod tests {
     }
 
     #[test]
-    fn one_file_system_defaults_to_false() {
+    fn one_file_system_defaults_to_zero() {
         let inputs = default_inputs();
         let result = compute_metadata_settings(inputs).unwrap();
 
-        assert!(!result.one_file_system);
+        assert_eq!(result.one_file_system, 0);
     }
 
     #[test]
-    fn one_file_system_explicit_true() {
+    fn one_file_system_explicit_single() {
         let mut inputs = default_inputs();
-        inputs.one_file_system = Some(true);
+        inputs.one_file_system = Some(1);
         let result = compute_metadata_settings(inputs).unwrap();
 
-        assert!(result.one_file_system);
+        assert_eq!(result.one_file_system, 1);
+    }
+
+    #[test]
+    fn one_file_system_explicit_double() {
+        let mut inputs = default_inputs();
+        inputs.one_file_system = Some(2);
+        let result = compute_metadata_settings(inputs).unwrap();
+
+        assert_eq!(result.one_file_system, 2);
     }
 
     // ==================== chmod tests ====================

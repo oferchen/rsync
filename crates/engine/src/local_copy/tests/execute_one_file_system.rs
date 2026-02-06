@@ -524,3 +524,234 @@ fn one_file_system_with_symlinks_follows_on_same_fs() {
     assert!(dest_root.join("linkdir").join("link").exists());
     assert!(summary.files_copied() >= 1);
 }
+
+// --- Double -xx (level 2) tests ---
+
+#[test]
+fn double_one_file_system_skips_root_source_that_is_mount_point() {
+    // With -xx, if the source directory itself is a mount point (its device
+    // differs from its parent's device), the entire source should be skipped.
+    let temp = tempdir().expect("tempdir");
+    let parent_dir = temp.path().join("parent");
+    let source_root = parent_dir.join("mounted_src");
+
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+    let subdir = source_root.join("sub");
+    fs::create_dir_all(&subdir).expect("create subdir");
+    fs::write(subdir.join("nested.txt"), b"nested").expect("write nested");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Parent directory is on device 1, source directory is on device 2 (mount point)
+    let report = with_device_id_override(
+        |path, _metadata| {
+            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mounted_src"))
+                || path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("sub"))
+            {
+                Some(2) // mount point
+            } else {
+                Some(1) // parent
+            }
+        },
+        || {
+            plan.execute_with_report(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default()
+                    .with_one_file_system_level(2)
+                    .collect_events(true),
+            )
+        },
+    )
+    .expect("copy executes");
+
+    // With -xx, the source itself is a mount point, so nothing should be copied
+    assert!(!dest_root.join("file.txt").exists());
+    assert!(!dest_root.join("sub").exists());
+
+    // Verify mount point skip was recorded
+    let records = report.records();
+    let skipped = records
+        .iter()
+        .any(|r| r.action() == &LocalCopyAction::SkippedMountPoint);
+    assert!(skipped, "root mount point should be recorded as skipped with -xx");
+}
+
+#[test]
+fn double_one_file_system_allows_source_on_same_device_as_parent() {
+    // With -xx, if the source directory is on the same device as its parent,
+    // it should proceed normally (not skipped at root level).
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let subdir = source_root.join("sub");
+
+    fs::create_dir_all(&subdir).expect("create subdir");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+    fs::write(subdir.join("nested.txt"), b"nested").expect("write nested");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // All on device 1 (same filesystem as parent)
+    let summary = with_device_id_override(
+        |_path, _metadata| Some(1),
+        || {
+            plan.execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().with_one_file_system_level(2),
+            )
+        },
+    )
+    .expect("copy succeeds");
+
+    // All files should be copied since source is on same device as parent
+    assert_eq!(summary.files_copied(), 2);
+    assert!(dest_root.join("file.txt").exists());
+    assert!(dest_root.join("sub").join("nested.txt").exists());
+}
+
+#[test]
+fn single_x_does_not_skip_root_mount_point() {
+    // With single -x (level 1), a root-level source that is a mount point
+    // should still be processed -- only subdirectory crossings are skipped.
+    let temp = tempdir().expect("tempdir");
+    let parent_dir = temp.path().join("parent");
+    let source_root = parent_dir.join("mounted_src");
+
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Parent directory on device 1, source on device 2 (mount point),
+    // but with single -x, root mount points are NOT skipped.
+    let summary = with_device_id_override(
+        |path, _metadata| {
+            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mounted_src")) {
+                Some(2) // mount point
+            } else {
+                Some(1) // parent
+            }
+        },
+        || {
+            plan.execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().one_file_system(true), // level 1
+            )
+        },
+    )
+    .expect("copy succeeds");
+
+    // With single -x, the root mount point source should NOT be skipped
+    assert_eq!(summary.files_copied(), 1);
+    assert!(dest_root.join("file.txt").exists());
+}
+
+#[test]
+fn double_one_file_system_still_skips_subdirectory_mount_points() {
+    // With -xx, mount points within the source tree should still be skipped
+    // (same as single -x behavior for subdirectories).
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let same_fs = source_root.join("same_fs");
+    let mount_point = source_root.join("mount_point");
+
+    fs::create_dir_all(&same_fs).expect("create same_fs");
+    fs::create_dir_all(&mount_point).expect("create mount_point");
+
+    fs::write(same_fs.join("local.txt"), b"same fs").expect("write local");
+    fs::write(mount_point.join("other.txt"), b"other fs").expect("write other");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let report = with_device_id_override(
+        |path, _metadata| {
+            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount_point")) {
+                Some(2) // different device
+            } else {
+                Some(1) // same device
+            }
+        },
+        || {
+            plan.execute_with_report(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default()
+                    .with_one_file_system_level(2)
+                    .collect_events(true),
+            )
+        },
+    )
+    .expect("copy executes");
+
+    // File on same filesystem should be copied
+    assert!(dest_root.join("same_fs").join("local.txt").exists());
+    // Mount point subdirectory should be skipped
+    assert!(!dest_root.join("mount_point").join("other.txt").exists());
+
+    // Verify skip was recorded
+    let records = report.records();
+    let mount_skipped = records
+        .iter()
+        .any(|r| r.action() == &LocalCopyAction::SkippedMountPoint);
+    assert!(mount_skipped, "subdirectory mount point should still be skipped with -xx");
+}
+
+#[test]
+fn level_zero_does_not_skip_any_mount_points() {
+    // With level 0 (disabled), nothing should be skipped
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let mount = source_root.join("mount");
+
+    fs::create_dir_all(&mount).expect("create mount");
+    fs::write(source_root.join("local.txt"), b"local").expect("write local");
+    fs::write(mount.join("other.txt"), b"other").expect("write other");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = with_device_id_override(
+        |path, _metadata| {
+            if path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("mount")) {
+                Some(2)
+            } else {
+                Some(1)
+            }
+        },
+        || {
+            plan.execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().with_one_file_system_level(0),
+            )
+        },
+    )
+    .expect("copy succeeds");
+
+    // Everything should be copied
+    assert_eq!(summary.files_copied(), 2);
+    assert!(dest_root.join("local.txt").exists());
+    assert!(dest_root.join("mount").join("other.txt").exists());
+}
