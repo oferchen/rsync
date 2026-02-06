@@ -78,6 +78,7 @@ pub mod async_io;
 
 pub mod delta;
 pub mod error;
+pub mod hardlink;
 pub mod local_copy;
 pub mod walk;
 
@@ -130,6 +131,11 @@ pub use error::{EngineError, EngineResult};
 
 // Fuzzy matching for finding similar basis files
 pub use fuzzy::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
+
+// Hardlink detection and resolution
+pub use hardlink::{
+    HardlinkAction, HardlinkGroup, HardlinkKey, HardlinkResolver, HardlinkTracker,
+};
 
 // Local filesystem copy operations
 pub use local_copy::{
