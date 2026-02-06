@@ -33,7 +33,7 @@ pub(super) fn handle_dry_run(
     let file_type = metadata.file_type();
     if context.update_enabled()
         && let Some(existing) = existing_metadata
-        && super::super::comparison::destination_is_newer(metadata, existing)
+        && super::super::comparison::destination_is_newer(metadata, existing, context.options().modify_window())
     {
         context.summary_mut().record_regular_file_skipped_newer();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
