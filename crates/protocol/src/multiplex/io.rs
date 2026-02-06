@@ -279,7 +279,7 @@ fn read_header<R: Read>(reader: &mut R) -> io::Result<MessageHeader> {
 }
 
 /// Internal helper for vectored writes; exposed for testing.
-fn write_all_vectored<W: Write + ?Sized>(
+pub(super) fn write_all_vectored<W: Write + ?Sized>(
     writer: &mut W,
     mut header: &[u8],
     mut payload: &[u8],
