@@ -562,7 +562,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
     ) -> LocalCopyOptions {
         options = options
             .with_stop_at(config.stop_at())
-            .whole_file(config.whole_file())
+            .whole_file_option(config.whole_file_raw())
             .open_noatime(config.open_noatime())
             .owner(config.preserve_owner())
             .with_owner_override(config.owner_override())

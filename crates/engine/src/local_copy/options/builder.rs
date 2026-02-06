@@ -133,7 +133,7 @@ pub struct LocalCopyOptionsBuilder {
 
     // Path behavior options
     open_noatime: bool,
-    whole_file: bool,
+    whole_file: Option<bool>,
     copy_links: bool,
     preserve_symlinks: bool,
     copy_dirlinks: bool,
@@ -255,7 +255,7 @@ impl LocalCopyOptionsBuilder {
             compression_level: CompressionLevel::Default,
             skip_compress: SkipCompressList::default(),
             open_noatime: false,
-            whole_file: true,
+            whole_file: None,
             copy_links: false,
             preserve_symlinks: false,
             copy_dirlinks: false,
@@ -572,10 +572,26 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
-    /// Enables whole-file transfer mode.
+    /// Controls whole-file transfer mode.
+    ///
+    /// - `Some(true)` forces whole-file transfers (--whole-file / -W).
+    /// - `Some(false)` forces delta-transfer mode (--no-whole-file).
+    /// - `None` uses automatic detection: whole-file for local copies
+    ///   unless a batch-writing option is in effect.
     #[must_use]
     pub fn whole_file(mut self, enabled: bool) -> Self {
-        self.whole_file = enabled;
+        self.whole_file = Some(enabled);
+        self
+    }
+
+    /// Sets the whole-file transfer mode as a tri-state option.
+    ///
+    /// - `Some(true)` forces whole-file transfers (--whole-file / -W).
+    /// - `Some(false)` forces delta-transfer mode (--no-whole-file).
+    /// - `None` uses automatic detection based on transfer context.
+    #[must_use]
+    pub fn whole_file_option(mut self, option: Option<bool>) -> Self {
+        self.whole_file = option;
         self
     }
 

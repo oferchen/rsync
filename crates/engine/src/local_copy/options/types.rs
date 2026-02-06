@@ -102,7 +102,7 @@ pub struct LocalCopyOptions {
     pub(super) compression_level: CompressionLevel,
     pub(super) skip_compress: SkipCompressList,
     pub(super) open_noatime: bool,
-    pub(super) whole_file: bool,
+    pub(super) whole_file: Option<bool>,
     pub(super) copy_links: bool,
     pub(super) preserve_symlinks: bool,
     pub(super) copy_dirlinks: bool,
@@ -194,7 +194,7 @@ impl LocalCopyOptions {
             compression_level: CompressionLevel::Default,
             skip_compress: SkipCompressList::default(),
             open_noatime: false,
-            whole_file: true,
+            whole_file: None,
             copy_links: false,
             preserve_symlinks: false,
             copy_dirlinks: false,
@@ -340,7 +340,7 @@ mod tests {
         assert!(opts.max_deletions.is_none());
         assert!(!opts.preallocate);
         assert!(!opts.fsync);
-        assert!(opts.whole_file);
+        assert!(opts.whole_file.is_none());
         assert!(opts.recursive);
     }
 

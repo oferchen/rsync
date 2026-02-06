@@ -2,11 +2,37 @@ use super::types::LocalCopyOptions;
 
 impl LocalCopyOptions {
     /// Controls whether whole-file transfers are forced even when delta mode is requested.
+    ///
+    /// Passing `true` forces whole-file mode (`--whole-file` / `-W`).
+    /// Passing `false` forces delta-transfer mode (`--no-whole-file`).
+    /// Use [`whole_file_auto`](Self::whole_file_auto) to restore automatic detection.
     #[must_use]
     #[doc(alias = "--whole-file")]
     #[doc(alias = "--no-whole-file")]
     pub const fn whole_file(mut self, whole: bool) -> Self {
-        self.whole_file = whole;
+        self.whole_file = Some(whole);
+        self
+    }
+
+    /// Sets the whole-file transfer mode as a tri-state option.
+    ///
+    /// - `Some(true)` forces whole-file transfers (`--whole-file` / `-W`).
+    /// - `Some(false)` forces delta-transfer mode (`--no-whole-file`).
+    /// - `None` uses automatic detection: whole-file for local copies unless a
+    ///   batch-writing option is in effect.
+    #[must_use]
+    pub const fn whole_file_option(mut self, option: Option<bool>) -> Self {
+        self.whole_file = option;
+        self
+    }
+
+    /// Restores automatic whole-file detection (clears any explicit override).
+    ///
+    /// In auto mode, local copies default to whole-file transfers unless a
+    /// batch-writing option is in effect, in which case delta transfers are used.
+    #[must_use]
+    pub const fn whole_file_auto(mut self) -> Self {
+        self.whole_file = None;
         self
     }
 
@@ -170,8 +196,25 @@ impl LocalCopyOptions {
     }
 
     /// Reports whether whole-file transfers are requested.
+    ///
+    /// When the option is `None` (auto-detect), this returns `true` for local
+    /// copies unless a batch-writing option is in effect. When explicitly set,
+    /// returns the forced value.
     #[must_use]
     pub const fn whole_file_enabled(&self) -> bool {
+        match self.whole_file {
+            Some(v) => v,
+            None => self.batch_writer.is_none(),
+        }
+    }
+
+    /// Returns the raw tri-state whole-file setting.
+    ///
+    /// - `Some(true)`: explicitly forced whole-file mode.
+    /// - `Some(false)`: explicitly forced delta-transfer mode.
+    /// - `None`: automatic detection (whole-file for local unless batch-writing).
+    #[must_use]
+    pub const fn whole_file_raw(&self) -> Option<bool> {
         self.whole_file
     }
 
@@ -549,8 +592,10 @@ mod tests {
     }
 
     #[test]
-    fn default_whole_file_is_true() {
+    fn default_whole_file_is_auto() {
         let opts = LocalCopyOptions::new();
+        assert!(opts.whole_file_raw().is_none());
+        // Auto mode defaults to whole-file when no batch writer is set
         assert!(opts.whole_file_enabled());
     }
 }

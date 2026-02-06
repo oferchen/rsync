@@ -570,3 +570,201 @@ fn execute_whole_file_vs_delta_transfer_comparison() {
         fs::read(&dest_delta).expect("read dest delta")
     );
 }
+
+
+#[test]
+fn whole_file_auto_defaults_to_whole_for_local_copy() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    let content = b"auto detection defaults to whole file for local";
+    fs::write(&source, content).expect("write source");
+    fs::write(&destination, b"old content").expect("write destination");
+    set_file_mtime(&destination, FileTime::from_unix_time(1, 0)).expect("set dest mtime");
+    set_file_mtime(&source, FileTime::from_unix_time(2, 0)).expect("set source mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Default options: whole_file is None (auto-detect)
+    let options = LocalCopyOptions::default();
+    assert!(options.whole_file_raw().is_none(), "default should be auto (None)");
+    assert!(options.whole_file_enabled(), "auto should resolve to true for local copy");
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("auto whole file copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.bytes_copied(), content.len() as u64);
+    assert_eq!(summary.matched_bytes(), 0, "auto mode should use whole file for local");
+}
+
+#[test]
+fn whole_file_option_none_preserves_auto_detection() {
+    let options = LocalCopyOptions::default();
+    assert!(options.whole_file_raw().is_none());
+
+    // Setting to None explicitly should keep auto mode
+    let options = options.whole_file_option(None);
+    assert!(options.whole_file_raw().is_none());
+    assert!(options.whole_file_enabled());
+}
+
+#[test]
+fn whole_file_option_some_true_forces_whole_file() {
+    let options = LocalCopyOptions::default().whole_file_option(Some(true));
+    assert_eq!(options.whole_file_raw(), Some(true));
+    assert!(options.whole_file_enabled());
+}
+
+#[test]
+fn whole_file_option_some_false_forces_delta() {
+    let options = LocalCopyOptions::default().whole_file_option(Some(false));
+    assert_eq!(options.whole_file_raw(), Some(false));
+    assert!(!options.whole_file_enabled());
+}
+
+#[test]
+fn whole_file_auto_restores_none() {
+    // Start with explicitly set whole_file
+    let options = LocalCopyOptions::default().whole_file(true);
+    assert_eq!(options.whole_file_raw(), Some(true));
+
+    // Restore auto mode
+    let options = options.whole_file_auto();
+    assert!(options.whole_file_raw().is_none());
+    assert!(options.whole_file_enabled());
+}
+
+#[test]
+fn whole_file_setter_overrides_auto() {
+    let options = LocalCopyOptions::default();
+    assert!(options.whole_file_raw().is_none());
+
+    // .whole_file(true) should set Some(true), overriding None
+    let options = options.whole_file(true);
+    assert_eq!(options.whole_file_raw(), Some(true));
+
+    // .whole_file(false) should set Some(false)
+    let options = options.whole_file(false);
+    assert_eq!(options.whole_file_raw(), Some(false));
+    assert!(!options.whole_file_enabled());
+}
+
+#[test]
+fn execute_whole_file_auto_mode_copies_correctly() {
+    // Verify that auto mode (None) produces correct file content
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+
+    let content: Vec<u8> = (0..=255).cycle().take(4096).collect();
+    fs::write(&source, &content).expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Use default (auto) mode
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("auto mode copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read dest"), content);
+}
+
+#[test]
+fn whole_file_builder_sets_some_true() {
+    let options = LocalCopyOptions::builder()
+        .whole_file(true)
+        .build()
+        .expect("valid options");
+    assert_eq!(options.whole_file_raw(), Some(true));
+    assert!(options.whole_file_enabled());
+}
+
+#[test]
+fn whole_file_builder_sets_some_false() {
+    let options = LocalCopyOptions::builder()
+        .whole_file(false)
+        .build()
+        .expect("valid options");
+    assert_eq!(options.whole_file_raw(), Some(false));
+    assert!(!options.whole_file_enabled());
+}
+
+#[test]
+fn whole_file_builder_default_is_none() {
+    let options = LocalCopyOptions::builder()
+        .build()
+        .expect("valid options");
+    assert!(options.whole_file_raw().is_none());
+    // Auto mode without batch writer defaults to whole-file
+    assert!(options.whole_file_enabled());
+}
+
+#[test]
+fn whole_file_builder_option_none_is_auto() {
+    let options = LocalCopyOptions::builder()
+        .whole_file_option(None)
+        .build()
+        .expect("valid options");
+    assert!(options.whole_file_raw().is_none());
+    assert!(options.whole_file_enabled());
+}
+
+#[test]
+fn execute_no_whole_file_explicit_forces_delta_even_for_local() {
+    // --no-whole-file should force delta transfer even for local copies
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("dest.bin");
+
+    let common = vec![b'M'; 4096];
+    let extra = vec![b'N'; 1024];
+
+    fs::write(&destination, &common).expect("write dest");
+    set_file_mtime(&destination, FileTime::from_unix_time(1, 0)).expect("set dest mtime");
+
+    let mut source_content = common.clone();
+    source_content.extend_from_slice(&extra);
+    let source_len = source_content.len() as u64;
+    fs::write(&source, &source_content).expect("write source");
+    set_file_mtime(&source, FileTime::from_unix_time(2, 0)).expect("set source mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Use whole_file_option(Some(false)) to simulate --no-whole-file
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().whole_file_option(Some(false)),
+        )
+        .expect("forced delta succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert!(
+        summary.matched_bytes() > 0,
+        "--no-whole-file should force delta matching"
+    );
+    assert!(
+        summary.bytes_copied() < source_len,
+        "delta should transfer less than full size"
+    );
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        source_content
+    );
+}

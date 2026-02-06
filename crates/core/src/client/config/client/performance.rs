@@ -37,11 +37,23 @@ impl ClientConfig {
     }
 
     /// Reports whether whole-file transfers should be used.
+    ///
+    /// Returns `true` when explicitly forced or when auto-detecting for local
+    /// copies. Returns `false` when explicitly forced to delta mode.
     #[must_use]
     #[doc(alias = "--whole-file")]
     #[doc(alias = "-W")]
     #[doc(alias = "--no-whole-file")]
     pub const fn whole_file(&self) -> bool {
+        match self.whole_file {
+            Some(v) => v,
+            None => true,
+        }
+    }
+
+    /// Returns the raw tri-state whole-file setting.
+    #[must_use]
+    pub const fn whole_file_raw(&self) -> Option<bool> {
         self.whole_file
     }
 
