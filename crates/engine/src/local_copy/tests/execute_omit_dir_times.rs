@@ -677,3 +677,466 @@ fn omit_dir_times_in_report_mode() {
     assert!(dir_created_count >= 2);
     assert!(summary.directories_created() >= 2);
 }
+
+// ============================================================================
+// Baseline / control tests
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn without_omit_dir_times_directory_mtime_is_preserved() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&source_root, dir_mtime).expect("set source mtime");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .omit_dir_times(false);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_metadata = fs::metadata(&dest_root).expect("dest metadata");
+    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+
+    // Without omit_dir_times, the directory mtime SHOULD match the source
+    assert_eq!(
+        dest_mtime, dir_mtime,
+        "directory mtime should be preserved when --omit-dir-times is not set"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn without_omit_dir_times_nested_dirs_preserve_mtimes() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested = source_root.join("sub1").join("sub2");
+    fs::create_dir_all(&nested).expect("create nested");
+    fs::write(nested.join("file.txt"), b"content").expect("write file");
+
+    let root_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    let sub1_mtime = FileTime::from_unix_time(1_700_000_000, 0);
+    let sub2_mtime = FileTime::from_unix_time(1_800_000_000, 0);
+
+    set_file_mtime(&nested, sub2_mtime).expect("set sub2 mtime");
+    set_file_mtime(nested.parent().unwrap(), sub1_mtime).expect("set sub1 mtime");
+    set_file_mtime(&source_root, root_mtime).expect("set root mtime");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .omit_dir_times(false);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_root_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_root).expect("root metadata")
+    );
+    let dest_sub1_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("sub1")).expect("sub1 metadata")
+    );
+    let dest_sub2_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("sub1").join("sub2")).expect("sub2 metadata")
+    );
+
+    assert_eq!(dest_root_mtime, root_mtime, "root mtime should be preserved");
+    assert_eq!(dest_sub1_mtime, sub1_mtime, "sub1 mtime should be preserved");
+    assert_eq!(dest_sub2_mtime, sub2_mtime, "sub2 mtime should be preserved");
+}
+
+// ============================================================================
+// Incremental / second-pass tests
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn omit_dir_times_incremental_copy_does_not_update_dir_mtime() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let source_file = source_root.join("file.txt");
+    fs::write(&source_file, b"content").expect("write file");
+
+    let file_mtime = FileTime::from_unix_time(1_500_000_000, 0);
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&source_file, file_mtime).expect("set file mtime");
+    set_file_mtime(&source_root, dir_mtime).expect("set dir mtime");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest");
+
+    // Use trailing slash to copy contents
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+
+    // First copy
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .omit_dir_times(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("first copy succeeds");
+
+    // Record destination directory mtime after first copy
+    let _first_dir_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_root).expect("dest metadata")
+    );
+
+    // Second copy (incremental) - file unchanged so file matches, but dir
+    // timestamp should still not be set from source
+    let mut source_operand2 = source_root.clone().into_os_string();
+    source_operand2.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands2 = vec![source_operand2, dest_root.clone().into_os_string()];
+    let plan2 = LocalCopyPlan::from_operands(&operands2).expect("plan");
+    let options2 = LocalCopyOptions::default()
+        .times(true)
+        .omit_dir_times(true);
+
+    plan2
+        .execute_with_options(LocalCopyExecution::Apply, options2)
+        .expect("second copy succeeds");
+
+    let second_dir_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_root).expect("dest metadata")
+    );
+
+    // Directory mtime should NOT have been set to match source
+    assert_ne!(
+        second_dir_mtime, dir_mtime,
+        "directory mtime should not be set to source mtime on incremental copy"
+    );
+
+    // File mtime should still be preserved
+    let dest_file = dest_root.join("file.txt");
+    let dest_file_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_file).expect("file metadata")
+    );
+    assert_eq!(
+        dest_file_mtime, file_mtime,
+        "file mtime should be preserved on incremental copy"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn omit_dir_times_incremental_with_new_file_preserves_new_file_time() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let source_file1 = source_root.join("file1.txt");
+    fs::write(&source_file1, b"content1").expect("write file1");
+
+    let file1_mtime = FileTime::from_unix_time(1_500_000_000, 0);
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&source_file1, file1_mtime).expect("set file1 mtime");
+    set_file_mtime(&source_root, dir_mtime).expect("set dir mtime");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest");
+
+    // Use trailing slash to copy contents
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+
+    // First copy
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .omit_dir_times(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("first copy succeeds");
+
+    // Add a second file
+    let source_file2 = source_root.join("file2.txt");
+    fs::write(&source_file2, b"content2").expect("write file2");
+
+    let file2_mtime = FileTime::from_unix_time(1_550_000_000, 0);
+    set_file_mtime(&source_file2, file2_mtime).expect("set file2 mtime");
+
+    // Update dir mtime after adding the file
+    let new_dir_mtime = FileTime::from_unix_time(1_650_000_000, 0);
+    set_file_mtime(&source_root, new_dir_mtime).expect("set new dir mtime");
+
+    // Second copy (incremental)
+    let mut source_operand2 = source_root.clone().into_os_string();
+    source_operand2.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands2 = vec![source_operand2, dest_root.clone().into_os_string()];
+    let plan2 = LocalCopyPlan::from_operands(&operands2).expect("plan");
+    let options2 = LocalCopyOptions::default()
+        .times(true)
+        .omit_dir_times(true);
+
+    plan2
+        .execute_with_options(LocalCopyExecution::Apply, options2)
+        .expect("second copy succeeds");
+
+    // Directory mtime should NOT match source (neither old nor new)
+    let dest_dir_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_root).expect("dest metadata")
+    );
+    assert_ne!(dest_dir_mtime, dir_mtime);
+    assert_ne!(dest_dir_mtime, new_dir_mtime);
+
+    // Both file mtimes should be preserved
+    let dest_file1 = dest_root.join("file1.txt");
+    let dest_file1_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_file1).expect("file1 metadata")
+    );
+    assert_eq!(dest_file1_mtime, file1_mtime, "file1 mtime should be preserved");
+
+    let dest_file2 = dest_root.join("file2.txt");
+    let dest_file2_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_file2).expect("file2 metadata")
+    );
+    assert_eq!(dest_file2_mtime, file2_mtime, "file2 mtime should be preserved");
+}
+
+// ============================================================================
+// Mixed content tests
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn omit_dir_times_mixed_tree_files_have_correct_timestamps() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let sub_a = source_root.join("dir_a");
+    let sub_b = source_root.join("dir_b");
+    fs::create_dir_all(&sub_a).expect("create dir_a");
+    fs::create_dir_all(&sub_b).expect("create dir_b");
+
+    // Create files with distinct timestamps
+    let file_a = sub_a.join("file_a.txt");
+    let file_b = sub_b.join("file_b.txt");
+    let file_root = source_root.join("file_root.txt");
+    fs::write(&file_a, b"aaa").expect("write file_a");
+    fs::write(&file_b, b"bbb").expect("write file_b");
+    fs::write(&file_root, b"root").expect("write file_root");
+
+    let file_a_mtime = FileTime::from_unix_time(1_400_000_000, 0);
+    let file_b_mtime = FileTime::from_unix_time(1_450_000_000, 0);
+    let file_root_mtime = FileTime::from_unix_time(1_480_000_000, 0);
+    let dir_a_mtime = FileTime::from_unix_time(1_500_000_000, 0);
+    let dir_b_mtime = FileTime::from_unix_time(1_550_000_000, 0);
+    let root_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+
+    set_file_mtime(&file_a, file_a_mtime).expect("set file_a mtime");
+    set_file_mtime(&file_b, file_b_mtime).expect("set file_b mtime");
+    set_file_mtime(&file_root, file_root_mtime).expect("set file_root mtime");
+    set_file_mtime(&sub_a, dir_a_mtime).expect("set dir_a mtime");
+    set_file_mtime(&sub_b, dir_b_mtime).expect("set dir_b mtime");
+    set_file_mtime(&source_root, root_mtime).expect("set root mtime");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .omit_dir_times(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // All file mtimes SHOULD be preserved
+    let dest_file_a_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("dir_a").join("file_a.txt")).expect("file_a metadata")
+    );
+    let dest_file_b_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("dir_b").join("file_b.txt")).expect("file_b metadata")
+    );
+    let dest_file_root_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("file_root.txt")).expect("file_root metadata")
+    );
+
+    assert_eq!(dest_file_a_mtime, file_a_mtime, "file_a mtime should be preserved");
+    assert_eq!(dest_file_b_mtime, file_b_mtime, "file_b mtime should be preserved");
+    assert_eq!(dest_file_root_mtime, file_root_mtime, "file_root mtime should be preserved");
+
+    // All directory mtimes should NOT be preserved
+    let dest_root_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_root).expect("root metadata")
+    );
+    let dest_dir_a_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("dir_a")).expect("dir_a metadata")
+    );
+    let dest_dir_b_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("dir_b")).expect("dir_b metadata")
+    );
+
+    assert_ne!(dest_root_mtime, root_mtime, "root mtime should not be preserved");
+    assert_ne!(dest_dir_a_mtime, dir_a_mtime, "dir_a mtime should not be preserved");
+    assert_ne!(dest_dir_b_mtime, dir_b_mtime, "dir_b mtime should not be preserved");
+}
+
+// ============================================================================
+// Option interaction tests
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn omit_dir_times_false_explicitly_preserves_dir_mtimes() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&source_root, dir_mtime).expect("set source mtime");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // Explicitly set omit_dir_times(false) with times(true) - should preserve dir mtime
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .omit_dir_times(false);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_metadata = fs::metadata(&dest_root).expect("dest metadata");
+    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+
+    assert_eq!(
+        dest_mtime, dir_mtime,
+        "directory mtime should be preserved when omit_dir_times is explicitly false"
+    );
+}
+
+#[test]
+fn omit_dir_times_option_default_is_false() {
+    let options = LocalCopyOptions::default();
+    assert!(
+        !options.omit_dir_times_enabled(),
+        "omit_dir_times should default to false"
+    );
+}
+
+#[test]
+fn omit_dir_times_option_builder_round_trip() {
+    let options = LocalCopyOptions::default()
+        .omit_dir_times(true);
+    assert!(options.omit_dir_times_enabled());
+
+    let options = LocalCopyOptions::default()
+        .omit_dir_times(false);
+    assert!(!options.omit_dir_times_enabled());
+
+    // Toggle: set true then false
+    let options = LocalCopyOptions::default()
+        .omit_dir_times(true)
+        .omit_dir_times(false);
+    assert!(!options.omit_dir_times_enabled());
+
+    // Toggle: set false then true
+    let options = LocalCopyOptions::default()
+        .omit_dir_times(false)
+        .omit_dir_times(true);
+    assert!(options.omit_dir_times_enabled());
+}
+
+#[cfg(unix)]
+#[test]
+fn omit_dir_times_with_archive_style_options() {
+    use filetime::{FileTime, set_file_mtime};
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested = source_root.join("subdir");
+    fs::create_dir_all(&nested).expect("create nested");
+    fs::write(nested.join("file.txt"), b"data").expect("write file");
+
+    let file_mtime = FileTime::from_unix_time(1_500_000_000, 0);
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+
+    set_file_mtime(&nested.join("file.txt"), file_mtime).expect("set file mtime");
+    set_file_mtime(&nested, dir_mtime).expect("set nested dir mtime");
+    set_file_mtime(&source_root, dir_mtime).expect("set root dir mtime");
+
+    fs::set_permissions(&nested, PermissionsExt::from_mode(0o755)).expect("set nested perms");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Simulate archive-like options + omit_dir_times (like rsync -aO)
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .times(true)
+        .permissions(true)
+        .omit_dir_times(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // File timestamp should be preserved
+    let dest_file = dest_root.join("subdir").join("file.txt");
+    let dest_file_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_file).expect("file metadata")
+    );
+    assert_eq!(dest_file_mtime, file_mtime, "file mtime should be preserved");
+
+    // Directory timestamps should NOT be preserved
+    let dest_root_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_root).expect("root metadata")
+    );
+    assert_ne!(dest_root_mtime, dir_mtime, "root dir mtime should not be preserved");
+
+    let dest_nested_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("subdir")).expect("nested metadata")
+    );
+    assert_ne!(dest_nested_mtime, dir_mtime, "nested dir mtime should not be preserved");
+
+    // Directory permissions should still be preserved
+    let dest_nested_mode = fs::metadata(dest_root.join("subdir"))
+        .expect("nested metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(dest_nested_mode, 0o755, "directory permissions should be preserved");
+}
