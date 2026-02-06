@@ -106,7 +106,8 @@ pub(crate) use dir_merge::{
 
 pub(crate) use executor::*;
 pub use executor::{
-    DestinationWriteGuard, remove_existing_destination, remove_incomplete_destination,
+    DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetector, SparseReader,
+    SparseRegion, SparseWriter, remove_existing_destination, remove_incomplete_destination,
 };
 
 pub(crate) use hard_links::HardLinkTracker;
