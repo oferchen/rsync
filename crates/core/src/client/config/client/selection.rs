@@ -99,6 +99,16 @@ impl ClientConfig {
     #[doc(alias = "--one-file-system")]
     #[doc(alias = "-x")]
     pub const fn one_file_system(&self) -> bool {
+        self.one_file_system >= 1
+    }
+
+    /// Returns the filesystem boundary traversal level.
+    ///
+    /// - `0` means disabled
+    /// - `1` means single `-x` (skip different filesystems during recursion)
+    /// - `2` means double `-xx` (also skip root-level mount points)
+    #[must_use]
+    pub const fn one_file_system_level(&self) -> u8 {
         self.one_file_system
     }
 
@@ -236,6 +246,7 @@ mod tests {
     fn one_file_system_default_is_false() {
         let config = default_config();
         assert!(!config.one_file_system());
+        assert_eq!(config.one_file_system_level(), 0);
     }
 
     // Tests for implied dirs

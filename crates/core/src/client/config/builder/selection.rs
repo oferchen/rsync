@@ -30,8 +30,8 @@ impl ClientConfigBuilder {
         recursive: bool,
         /// Enables or disables copying of directory entries when recursion is disabled.
         dirs: bool,
-        /// Enables or disables traversal across filesystem boundaries.
-        one_file_system: bool,
+        /// Sets the filesystem boundary traversal level (0=off, 1=single -x, 2=double -xx).
+        one_file_system: u8,
         /// Enables destination path creation prior to copying.
         mkpath: bool,
         /// Enables or disables removal of conflicting destination entries prior to updates.
@@ -177,8 +177,16 @@ mod tests {
 
     #[test]
     fn one_file_system_sets_flag() {
-        let config = builder().one_file_system(true).build();
+        let config = builder().one_file_system(1).build();
         assert!(config.one_file_system());
+        assert_eq!(config.one_file_system_level(), 1);
+    }
+
+    #[test]
+    fn one_file_system_level_two() {
+        let config = builder().one_file_system(2).build();
+        assert!(config.one_file_system());
+        assert_eq!(config.one_file_system_level(), 2);
     }
 
     #[test]

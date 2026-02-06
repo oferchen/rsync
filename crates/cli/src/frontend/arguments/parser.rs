@@ -305,8 +305,17 @@ where
     let write_devices =
         tri_state_flag_positive_first(&matches, "write-devices", "no-write-devices");
     let relative = tri_state_flag_positive_first(&matches, "relative", "no-relative");
-    let one_file_system =
-        tri_state_flag_positive_first(&matches, "one-file-system", "no-one-file-system");
+    let one_file_system = {
+        let count = matches.get_count("one-file-system");
+        let negated = matches.get_flag("no-one-file-system");
+        if negated && count == 0 {
+            Some(0u8)
+        } else if count > 0 {
+            Some(count.min(2))
+        } else {
+            None
+        }
+    };
     let implied_dirs = tri_state_flag_positive_first(&matches, "implied-dirs", "no-implied-dirs");
     let msgs_to_stderr = tri_state_flag_positive_first(&matches, "msgs2stderr", "no-msgs2stderr");
     let stderr_mode = matches.remove_one::<OsString>("stderr");

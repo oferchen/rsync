@@ -158,7 +158,7 @@ mod short_options {
     #[test]
     fn one_file_system_short_flag() {
         let parsed = parse_test_args(["-x", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.one_file_system, Some(true));
+        assert_eq!(parsed.one_file_system, Some(1));
     }
 
     #[test]
@@ -543,7 +543,7 @@ mod long_options {
     #[test]
     fn one_file_system_long_flag() {
         let parsed = parse_test_args(["--one-file-system", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.one_file_system, Some(true));
+        assert_eq!(parsed.one_file_system, Some(1));
     }
 
     #[test]
@@ -862,7 +862,7 @@ mod negation_flags {
     #[test]
     fn no_one_file_system_flag() {
         let parsed = parse_test_args(["--no-one-file-system", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.one_file_system, Some(false));
+        assert_eq!(parsed.one_file_system, Some(0));
     }
 
     #[test]

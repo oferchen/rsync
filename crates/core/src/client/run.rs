@@ -623,7 +623,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .safe_links(config.safe_links())
             .devices(config.preserve_devices())
             .specials(config.preserve_specials())
-            .one_file_system(config.one_file_system())
+            .with_one_file_system_level(config.one_file_system_level())
             .relative_paths(config.relative_paths())
             .dirs(config.dirs())
             .implied_dirs(config.implied_dirs())

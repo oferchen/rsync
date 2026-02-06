@@ -648,6 +648,31 @@ fn process_single_source(
         None
     };
 
+    // With -xx (level >= 2), skip root-level source directories that are mount
+    // points -- i.e. their device ID differs from their parent directory.
+    if context.one_file_system_level() >= 2 && file_type.is_dir() {
+        if let Some(parent) = source_path.parent() {
+            if let Ok(parent_meta) = fs::symlink_metadata(parent) {
+                if let Some(parent_dev) = device_identifier(parent, &parent_meta) {
+                    if let Some(source_dev) = root_device {
+                        if source_dev != parent_dev {
+                            let record_relative = relative_root
+                                .as_deref()
+                                .and_then(|p| non_empty_path(p))
+                                .or_else(|| {
+                                    source_path
+                                        .file_name()
+                                        .map(|n| Path::new(n))
+                                });
+                            context.record_skipped_mount_point(record_relative);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let proc_ctx = SourceProcessingContext {
         source,
         source_path,

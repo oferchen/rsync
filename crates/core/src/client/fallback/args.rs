@@ -159,8 +159,8 @@ pub struct RemoteFallbackArgs {
     pub specials: Option<bool>,
     /// Optional `--relative`/`--no-relative` toggle.
     pub relative: Option<bool>,
-    /// Optional `--one-file-system`/`--no-one-file-system` toggle.
-    pub one_file_system: Option<bool>,
+    /// Filesystem boundary traversal level (0=off, 1=single -x, 2=double -xx).
+    pub one_file_system: Option<u8>,
     /// Optional `--implied-dirs`/`--no-implied-dirs` toggle.
     pub implied_dirs: Option<bool>,
     /// Enables `--mkpath`.

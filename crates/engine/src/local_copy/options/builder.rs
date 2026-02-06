@@ -186,7 +186,7 @@ pub struct LocalCopyOptionsBuilder {
 
     // Path options
     relative_paths: bool,
-    one_file_system: bool,
+    one_file_system: u8,
     recursive: bool,
     dirs: bool,
     devices: bool,
@@ -298,7 +298,7 @@ impl LocalCopyOptionsBuilder {
             collect_events: false,
             preserve_hard_links: false,
             relative_paths: false,
-            one_file_system: false,
+            one_file_system: 0,
             recursive: true,
             dirs: false,
             devices: false,
@@ -996,9 +996,24 @@ impl LocalCopyOptionsBuilder {
     }
 
     /// Enables one-file-system mode.
+    ///
+    /// Passing `true` sets the level to 1 (single `-x`).
+    /// Passing `false` disables it (level 0).
+    /// Use [`one_file_system_level`](Self::one_file_system_level) for finer control.
     #[must_use]
     pub fn one_file_system(mut self, enabled: bool) -> Self {
-        self.one_file_system = enabled;
+        self.one_file_system = if enabled { 1 } else { 0 };
+        self
+    }
+
+    /// Sets the one-file-system level directly.
+    ///
+    /// - `0`: disabled (default).
+    /// - `1`: single `-x` -- skip directories on different filesystems during recursion.
+    /// - `2`: double `-xx` -- also skip mount-point directories at the transfer root level.
+    #[must_use]
+    pub fn one_file_system_level(mut self, level: u8) -> Self {
+        self.one_file_system = level;
         self
     }
 

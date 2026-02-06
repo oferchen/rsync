@@ -292,7 +292,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.sparse() {
             flags.push('S');
         }
-        if self.config.one_file_system() {
+        for _ in 0..self.config.one_file_system_level() {
             flags.push('x');
         }
         if self.config.relative_paths() {
