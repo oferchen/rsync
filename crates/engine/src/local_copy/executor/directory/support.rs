@@ -160,12 +160,19 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
     }
 }
 
+/// Returns `true` when the given file type represents a "special" file
+/// eligible for the `--specials` flag.
+///
+/// In upstream rsync, `--specials` covers both named pipes (FIFOs) and
+/// Unix-domain sockets.  Sockets cannot carry data in the same way as
+/// FIFOs, but rsync still recreates the socket node at the destination
+/// when `--specials` is active.
 pub(crate) fn is_fifo(file_type: fs::FileType) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::FileTypeExt;
 
-        file_type.is_fifo()
+        file_type.is_fifo() || file_type.is_socket()
     }
 
     #[cfg(not(unix))]
@@ -271,6 +278,39 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let metadata = std::fs::metadata(temp.path()).expect("metadata");
         assert!(!is_fifo(metadata.file_type()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_fifo_returns_true_for_fifo() {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.fifo");
+        mknodat(
+            CWD,
+            &path,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o600u32.into()),
+            makedev(0, 0),
+        )
+        .expect("mknodat fifo");
+
+        let metadata = std::fs::symlink_metadata(&path).expect("metadata");
+        assert!(is_fifo(metadata.file_type()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn is_fifo_returns_true_for_socket() {
+        use std::os::unix::net::UnixListener;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.sock");
+        let _listener = UnixListener::bind(&path).expect("bind socket");
+
+        let metadata = std::fs::symlink_metadata(&path).expect("metadata");
+        assert!(is_fifo(metadata.file_type()));
     }
 
     // ==================== is_device tests ====================
