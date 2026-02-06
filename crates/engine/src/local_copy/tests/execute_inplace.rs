@@ -813,6 +813,166 @@ fn execute_inplace_records_copy_event() {
     assert_eq!(records[0].bytes_transferred(), 10);
 }
 
+// ==================== Delta Transfer with Inplace Tests ====================
+
+#[test]
+fn execute_inplace_with_delta_transfer_skips_matched_blocks() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Create a destination file with some content
+    let dest_content = b"Hello world! This is a test file with some content that will be partially reused.";
+    fs::write(&destination, dest_content).expect("write destination");
+
+    // Create a source file that reuses some blocks from destination
+    let source_content = b"Hello world! This is a NEW test file with DIFFERENT content that will be partially reused.";
+    fs::write(&source, source_content).expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .inplace(true)
+                .whole_file(false), // Enable delta transfer
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read dest"), source_content);
+}
+
+#[test]
+fn execute_inplace_with_delta_transfer_updates_existing_file() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Create a simpler test case - just modify the middle of a file
+    let dest_content = b"AAAAAAAAAA BBBBBBBBBB CCCCCCCCCC DDDDDDDDDD";
+    fs::write(&destination, dest_content).expect("write destination");
+
+    // Set destination to an older time to ensure copy happens
+    let old_time = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&destination, old_time).expect("set dest mtime");
+
+    // Source keeps the A's and D's but changes B's and C's
+    let source_content = b"AAAAAAAAAA XXXXXXXXXX YYYYYYYYYY DDDDDDDDDD";
+    fs::write(&source, source_content).expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .inplace(true)
+                .whole_file(false), // Enable delta transfer
+        )
+        .expect("copy succeeds");
+
+    // The file should be copied
+    assert_eq!(summary.files_copied(), 1, "File should be copied");
+
+    // Verify the content matches
+    let final_content = fs::read(&destination).expect("read dest");
+    assert_eq!(final_content, source_content,
+        "Content should match after inplace delta transfer");
+}
+
+#[test]
+fn execute_inplace_with_delta_preserves_inode() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+
+        let dest_content = b"Original file content with some data";
+        fs::write(&destination, dest_content).expect("write destination");
+
+        let original_inode = fs::metadata(&destination)
+            .expect("destination metadata")
+            .ino();
+
+        let source_content = b"Modified file content with different data";
+        fs::write(&source, source_content).expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .inplace(true)
+                .whole_file(false), // Enable delta transfer
+        )
+        .expect("copy succeeds");
+
+        let updated_inode = fs::metadata(&destination)
+            .expect("destination metadata")
+            .ino();
+
+        assert_eq!(
+            updated_inode, original_inode,
+            "inplace with delta should preserve inode"
+        );
+        assert_eq!(fs::read(&destination).expect("read dest"), source_content);
+    }
+}
+
+#[test]
+fn execute_inplace_with_delta_truncates_when_smaller() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Large destination
+    let dest_content = b"This is a very long destination file with lots of content that will be replaced by a much smaller file.";
+    fs::write(&destination, dest_content).expect("write destination");
+
+    // Small source
+    let source_content = b"Small file";
+    fs::write(&source, source_content).expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .inplace(true)
+            .whole_file(false), // Enable delta transfer
+    )
+    .expect("copy succeeds");
+
+    let final_content = fs::read(&destination).expect("read dest");
+    assert_eq!(final_content, source_content);
+    assert_eq!(
+        fs::metadata(&destination).expect("metadata").len(),
+        source_content.len() as u64,
+        "file should be truncated to new size"
+    );
+}
+
 // ==================== Dry Run Tests ====================
 
 #[test]

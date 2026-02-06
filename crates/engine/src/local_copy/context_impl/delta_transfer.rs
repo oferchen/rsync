@@ -20,13 +20,25 @@ impl<'a> CopyContext<'a> {
         initial_bytes: u64,
         start: Instant,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
-        let mut destination_reader = fs::File::open(destination).map_err(|error| {
-            LocalCopyError::io(
-                "read existing destination",
-                destination.to_path_buf(),
-                error,
-            )
-        })?;
+        // Check if we're doing inplace writes by comparing file descriptors
+        // For inplace mode, the writer IS the destination file (opened for write)
+        // For normal mode, the writer is a temp file
+        // We detect this by checking if we can successfully open another handle to destination
+        let inplace_mode = self.inplace_enabled();
+
+        // For inplace mode, we don't need a separate reader - the matched blocks are already there
+        // For normal mode, we open the old destination to read matched blocks
+        let mut destination_reader = if !inplace_mode {
+            Some(fs::File::open(destination).map_err(|error| {
+                LocalCopyError::io(
+                    "read existing destination",
+                    destination.to_path_buf(),
+                    error,
+                )
+            })?)
+        } else {
+            None
+        };
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
@@ -40,6 +52,8 @@ impl<'a> CopyContext<'a> {
         let mut read_buffer = vec![0u8; buffer.len().max(index.block_length())];
         let mut buffer_len = 0usize;
         let mut buffer_pos = 0usize;
+        // Track output position for inplace mode (where we seek to write each block)
+        let mut output_position = 0u64;
         // Check timeout every 256KB to reduce clock_gettime syscalls
         // (smaller interval than regular copy since delta is more CPU-intensive)
         const TIMEOUT_CHECK_INTERVAL: usize = 256 * 1024;
@@ -87,6 +101,12 @@ impl<'a> CopyContext<'a> {
             if let Some(block_index) = index.find_match_window(digest, &window, &mut scratch) {
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
+                    // For inplace mode, seek to the output position before writing
+                    if inplace_mode {
+                        writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
+                            LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
+                        })?;
+                    }
                     let flushed = self.flush_literal_chunk(
                         writer,
                         pending_literals.as_slice(),
@@ -104,6 +124,7 @@ impl<'a> CopyContext<'a> {
                     };
                     literal_bytes = literal_bytes.saturating_add(literal_written);
                     total_bytes = total_bytes.saturating_add(flushed_len as u64);
+                    output_position = output_position.saturating_add(flushed_len as u64);
                     let progressed = initial_bytes.saturating_add(total_bytes);
                     self.notify_progress(
                         relative,
@@ -116,18 +137,29 @@ impl<'a> CopyContext<'a> {
 
                 let block = index.block(block_index);
                 let block_len = block.len();
-                let matched = MatchedBlock::new(block, index.block_length());
-                self.copy_matched_block(
-                    &mut destination_reader,
-                    writer,
-                    buffer,
-                    destination,
-                    matched,
-                    SparseCopy {
-                        enabled: sparse,
-                        state: &mut sparse_state,
-                    },
-                )?;
+
+                // For inplace mode, matched blocks are already in place - just skip them!
+                // For normal mode, copy them from old destination to new temp file
+                if inplace_mode {
+                    // Matched block is already at the correct position in the file
+                    // Just advance our output position tracker
+                    output_position = output_position.saturating_add(block_len as u64);
+                } else {
+                    // Normal mode: copy the matched block from old destination to temp file
+                    let matched = MatchedBlock::new(block, index.block_length());
+                    self.copy_matched_block(
+                        destination_reader.as_mut().expect("destination reader required for normal delta mode"),
+                        writer,
+                        buffer,
+                        destination,
+                        matched,
+                        SparseCopy {
+                            enabled: sparse,
+                            state: &mut sparse_state,
+                        },
+                    )?;
+                }
+
                 total_bytes = total_bytes.saturating_add(block_len as u64);
                 let progressed = initial_bytes.saturating_add(total_bytes);
                 self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
@@ -149,6 +181,12 @@ impl<'a> CopyContext<'a> {
 
         if !pending_literals.is_empty() {
             let flushed_len = pending_literals.len();
+            // For inplace mode, seek to the output position before writing final literals
+            if inplace_mode {
+                writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
+                    LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
+                })?;
+            }
             let flushed = self.flush_literal_chunk(
                 writer,
                 pending_literals.as_slice(),
@@ -166,6 +204,7 @@ impl<'a> CopyContext<'a> {
                 flushed as u64
             };
             literal_bytes = literal_bytes.saturating_add(literal_written);
+            output_position = output_position.saturating_add(flushed_len as u64);
             let progressed = initial_bytes.saturating_add(total_bytes);
             self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
         }
@@ -180,6 +219,16 @@ impl<'a> CopyContext<'a> {
                 )
             })?;
             self.register_progress();
+        } else if inplace_mode {
+            // For inplace mode without sparse, truncate the file to the final output size
+            // This handles the case where the new file is smaller than the old one
+            writer.set_len(output_position).map_err(|error| {
+                LocalCopyError::io(
+                    "truncate destination file",
+                    destination.to_path_buf(),
+                    error,
+                )
+            })?;
         }
 
         let outcome = if let Some(encoder) = compressor {
