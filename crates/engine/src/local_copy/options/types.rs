@@ -176,6 +176,11 @@ pub struct LocalCopyOptions {
     /// When enabled, stores/restores privileged metadata via xattrs instead
     /// of actually requiring root privileges.
     pub(super) fake_super: bool,
+    /// When enabled, `--delete` proceeds even when I/O errors occurred during
+    /// the transfer. Without this flag, deletions are suppressed when any I/O
+    /// errors are recorded, preventing data loss when the sender could not read
+    /// all files.
+    pub(super) ignore_errors: bool,
 }
 
 impl LocalCopyOptions {
@@ -272,6 +277,7 @@ impl LocalCopyOptions {
             batch_writer: None,
             super_mode: None,
             fake_super: false,
+            ignore_errors: false,
         }
     }
 }

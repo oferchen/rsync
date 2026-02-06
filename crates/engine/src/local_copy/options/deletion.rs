@@ -134,6 +134,25 @@ impl LocalCopyOptions {
     pub const fn delete_excluded_enabled(&self) -> bool {
         self.delete_excluded
     }
+
+    /// Tells `--delete` to proceed even when I/O errors occurred during the
+    /// transfer.
+    ///
+    /// Without this option, rsync suppresses deletions when any I/O errors are
+    /// recorded so that files are not removed from the destination when the
+    /// sender could not read all source files.
+    #[must_use]
+    #[doc(alias = "--ignore-errors")]
+    pub const fn ignore_errors(mut self, ignore: bool) -> Self {
+        self.ignore_errors = ignore;
+        self
+    }
+
+    /// Reports whether I/O errors should be ignored for deletion purposes.
+    #[must_use]
+    pub const fn ignore_errors_enabled(&self) -> bool {
+        self.ignore_errors
+    }
 }
 
 #[cfg(test)]
@@ -278,5 +297,25 @@ mod tests {
     #[test]
     fn delete_timing_default_is_during() {
         assert_eq!(DeleteTiming::default(), DeleteTiming::During);
+    }
+
+    #[test]
+    fn ignore_errors_enables() {
+        let opts = LocalCopyOptions::new().ignore_errors(true);
+        assert!(opts.ignore_errors_enabled());
+    }
+
+    #[test]
+    fn ignore_errors_default_is_false() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.ignore_errors_enabled());
+    }
+
+    #[test]
+    fn ignore_errors_can_be_toggled() {
+        let opts = LocalCopyOptions::new()
+            .ignore_errors(true)
+            .ignore_errors(false);
+        assert!(!opts.ignore_errors_enabled());
     }
 }
