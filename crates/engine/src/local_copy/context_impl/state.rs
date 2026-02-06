@@ -72,6 +72,7 @@ impl<'a> CopyContext<'a> {
             deferred_sync,
             #[cfg(feature = "parallel")]
             checksum_cache: None,
+            io_errors_occurred: false,
         }
     }
 
@@ -536,5 +537,27 @@ impl<'a> CopyContext<'a> {
         self.deferred_sync
             .flush()
             .map_err(|error| LocalCopyError::io("flush syncs", PathBuf::new(), error))
+    }
+
+    /// Records that an I/O error occurred during the transfer.
+    ///
+    /// When I/O errors are recorded and `--ignore-errors` is not set,
+    /// deletion operations are suppressed to prevent data loss.
+    pub(super) fn record_io_error(&mut self) {
+        self.io_errors_occurred = true;
+    }
+
+    /// Reports whether any I/O errors occurred during the transfer.
+    pub(super) const fn io_errors_occurred(&self) -> bool {
+        self.io_errors_occurred
+    }
+
+    /// Reports whether deletions should proceed despite I/O errors.
+    ///
+    /// Returns `true` if:
+    /// - No I/O errors occurred, OR
+    /// - `--ignore-errors` is enabled
+    pub(super) const fn deletions_allowed(&self) -> bool {
+        !self.io_errors_occurred || self.options.ignore_errors_enabled()
     }
 }
