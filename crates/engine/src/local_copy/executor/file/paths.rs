@@ -44,7 +44,7 @@ pub(crate) fn temporary_destination_path(
         || "temp".to_owned(),
         |name| name.to_string_lossy().to_string(),
     );
-    let temp_name = format!(".rsync-tmp-{file_name}-{}-{}", process::id(), unique);
+    let temp_name = format!(".~tmp~{file_name}.{}.{}", process::id(), unique);
     match temp_dir {
         Some(dir) => dir.join(temp_name),
         None => destination.with_file_name(temp_name),
@@ -81,7 +81,7 @@ mod tests {
     fn temporary_destination_path_adds_prefix() {
         let dest = Path::new("/path/to/file.txt");
         let temp = temporary_destination_path(dest, 42, None);
-        assert!(temp.to_string_lossy().contains(".rsync-tmp-"));
+        assert!(temp.to_string_lossy().contains(".~tmp~"));
         assert!(temp.to_string_lossy().contains("file.txt"));
     }
 

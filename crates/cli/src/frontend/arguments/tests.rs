@@ -218,8 +218,11 @@ mod short_options {
         assert_eq!(parsed.omit_dir_times, Some(true));
     }
 
-    // Note: -J (omit-link-times) short option is not supported in this implementation
-    // Use --omit-link-times long option instead (tested in long_options module)
+    #[test]
+    fn omit_link_times_short_flag() {
+        let parsed = parse_test_args(["-J", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.omit_link_times, Some(true));
+    }
 
     #[test]
     fn atimes_short_flag() {
@@ -632,7 +635,7 @@ mod long_options {
         let parsed = parse_test_args(["-avI", "src/", "dst/"]).expect("parse");
         assert!(parsed.ignore_times);
         assert!(parsed.archive);
-        assert!(parsed.verbose > 0);
+        assert!(parsed.verbosity > 0);
     }
 
     #[test]
