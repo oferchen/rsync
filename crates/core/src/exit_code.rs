@@ -65,6 +65,11 @@ pub enum ExitCode {
     /// Returned when the initial handshake with the daemon fails.
     StartClient = 5,
 
+    /// Daemon unable to append to log-file (RERR_LOG_FAILURE = 6).
+    ///
+    /// Returned when the daemon cannot write to its log file.
+    LogFileAppend = 6,
+
     /// Error in socket I/O (RERR_SOCKETIO = 10).
     ///
     /// Returned for network-level errors during transfer.
@@ -189,6 +194,7 @@ impl ExitCode {
             Self::FileSelect => "errors selecting input/output files, dirs",
             Self::Unsupported => "requested action not supported",
             Self::StartClient => "error starting client-server protocol",
+            Self::LogFileAppend => "daemon unable to append to log-file",
             Self::SocketIo => "error in socket IO",
             Self::FileIo => "error in file IO",
             Self::StreamIo => "error in rsync protocol data stream",
@@ -225,6 +231,7 @@ impl ExitCode {
             self,
             Self::Protocol
                 | Self::StartClient
+                | Self::LogFileAppend
                 | Self::SocketIo
                 | Self::StreamIo
                 | Self::Ipc
@@ -266,6 +273,7 @@ impl ExitCode {
             3 => Some(Self::FileSelect),
             4 => Some(Self::Unsupported),
             5 => Some(Self::StartClient),
+            6 => Some(Self::LogFileAppend),
             10 => Some(Self::SocketIo),
             11 => Some(Self::FileIo),
             12 => Some(Self::StreamIo),
@@ -289,6 +297,69 @@ impl ExitCode {
             _ => None,
         }
     }
+
+    /// Maps a `std::io::Error` to an appropriate exit code.
+    ///
+    /// This helper provides consistent exit code mapping for I/O errors
+    /// across the codebase, matching upstream rsync's error handling.
+    ///
+    /// # Mapping Rules
+    ///
+    /// - `NotFound`, `PermissionDenied`, `AlreadyExists` → `FileSelect`
+    /// - `ConnectionRefused`, `ConnectionReset`, `ConnectionAborted`,
+    ///   `BrokenPipe`, `AddrInUse`, `AddrNotAvailable`, `NotConnected` → `SocketIo`
+    /// - `TimedOut` → `Timeout`
+    /// - `UnexpectedEof`, `InvalidData` → `StreamIo`
+    /// - `Interrupted` by signal → `Signal`
+    /// - All other I/O errors → `FileIo`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::exit_code::ExitCode;
+    /// use std::io::{Error, ErrorKind};
+    ///
+    /// let err = Error::from(ErrorKind::NotFound);
+    /// assert_eq!(ExitCode::from_io_error(&err), ExitCode::FileSelect);
+    ///
+    /// let err = Error::from(ErrorKind::ConnectionRefused);
+    /// assert_eq!(ExitCode::from_io_error(&err), ExitCode::SocketIo);
+    ///
+    /// let err = Error::from(ErrorKind::TimedOut);
+    /// assert_eq!(ExitCode::from_io_error(&err), ExitCode::Timeout);
+    /// ```
+    #[must_use]
+    pub fn from_io_error(error: &std::io::Error) -> Self {
+        use std::io::ErrorKind;
+
+        match error.kind() {
+            // File selection errors
+            ErrorKind::NotFound | ErrorKind::PermissionDenied | ErrorKind::AlreadyExists => {
+                Self::FileSelect
+            }
+
+            // Network/socket errors
+            ErrorKind::ConnectionRefused
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::AddrInUse
+            | ErrorKind::AddrNotAvailable
+            | ErrorKind::NotConnected => Self::SocketIo,
+
+            // Timeout errors
+            ErrorKind::TimedOut => Self::Timeout,
+
+            // Protocol/stream errors
+            ErrorKind::UnexpectedEof | ErrorKind::InvalidData => Self::StreamIo,
+
+            // Signal interruption
+            ErrorKind::Interrupted => Self::Signal,
+
+            // Default to file I/O error for everything else
+            _ => Self::FileIo,
+        }
+    }
 }
 
 impl fmt::Display for ExitCode {
@@ -309,6 +380,29 @@ impl From<ExitCode> for std::process::ExitCode {
         let value = code.as_i32().clamp(0, 255) as u8;
         Self::from(value)
     }
+}
+
+/// Returns a human-readable description for a given exit code value.
+///
+/// This function provides a convenient way to get error descriptions
+/// without needing to convert to the `ExitCode` enum first. It returns
+/// the description if the code is valid, or a generic "unknown error"
+/// message otherwise.
+///
+/// # Examples
+///
+/// ```
+/// use core::exit_code::exit_code_description;
+///
+/// assert_eq!(exit_code_description(0), "success");
+/// assert_eq!(exit_code_description(23), "partial transfer");
+/// assert_eq!(exit_code_description(999), "unknown error code: 999");
+/// ```
+#[must_use]
+pub fn exit_code_description(code: i32) -> String {
+    ExitCode::from_i32(code)
+        .map(|c| c.description().to_string())
+        .unwrap_or_else(|| format!("unknown error code: {code}"))
 }
 
 /// Trait for types that have an associated exit code.
@@ -515,6 +609,7 @@ mod tests {
         assert_eq!(ExitCode::FileSelect.as_i32(), 3);
         assert_eq!(ExitCode::Unsupported.as_i32(), 4);
         assert_eq!(ExitCode::StartClient.as_i32(), 5);
+        assert_eq!(ExitCode::LogFileAppend.as_i32(), 6);
         assert_eq!(ExitCode::SocketIo.as_i32(), 10);
         assert_eq!(ExitCode::FileIo.as_i32(), 11);
         assert_eq!(ExitCode::StreamIo.as_i32(), 12);
@@ -556,7 +651,7 @@ mod tests {
     #[test]
     fn from_i32_returns_none_for_unknown() {
         assert_eq!(ExitCode::from_i32(-1), None);
-        assert_eq!(ExitCode::from_i32(6), None);
+        assert_eq!(ExitCode::from_i32(7), None); // 7-9 are not used
         assert_eq!(ExitCode::from_i32(100), None);
         assert_eq!(ExitCode::from_i32(999), None);
     }
@@ -640,6 +735,7 @@ mod tests {
             ExitCode::FileSelect,
             ExitCode::Unsupported,
             ExitCode::StartClient,
+            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::FileIo,
             ExitCode::StreamIo,
@@ -664,6 +760,238 @@ mod tests {
             assert!(
                 !code.description().is_empty(),
                 "Empty description for {code:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_io_error_maps_file_errors() {
+        use std::io::{Error, ErrorKind};
+
+        let err = Error::from(ErrorKind::NotFound);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::FileSelect);
+
+        let err = Error::from(ErrorKind::PermissionDenied);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::FileSelect);
+
+        let err = Error::from(ErrorKind::AlreadyExists);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::FileSelect);
+    }
+
+    #[test]
+    fn from_io_error_maps_network_errors() {
+        use std::io::{Error, ErrorKind};
+
+        let err = Error::from(ErrorKind::ConnectionRefused);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::SocketIo);
+
+        let err = Error::from(ErrorKind::ConnectionReset);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::SocketIo);
+
+        let err = Error::from(ErrorKind::ConnectionAborted);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::SocketIo);
+
+        let err = Error::from(ErrorKind::BrokenPipe);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::SocketIo);
+
+        let err = Error::from(ErrorKind::AddrInUse);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::SocketIo);
+
+        let err = Error::from(ErrorKind::AddrNotAvailable);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::SocketIo);
+
+        let err = Error::from(ErrorKind::NotConnected);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::SocketIo);
+    }
+
+    #[test]
+    fn from_io_error_maps_timeout_errors() {
+        use std::io::{Error, ErrorKind};
+
+        let err = Error::from(ErrorKind::TimedOut);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::Timeout);
+    }
+
+    #[test]
+    fn from_io_error_maps_stream_errors() {
+        use std::io::{Error, ErrorKind};
+
+        let err = Error::from(ErrorKind::UnexpectedEof);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::StreamIo);
+
+        let err = Error::from(ErrorKind::InvalidData);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::StreamIo);
+    }
+
+    #[test]
+    fn from_io_error_maps_signal_interruption() {
+        use std::io::{Error, ErrorKind};
+
+        let err = Error::from(ErrorKind::Interrupted);
+        assert_eq!(ExitCode::from_io_error(&err), ExitCode::Signal);
+    }
+
+    #[test]
+    fn from_io_error_defaults_to_file_io() {
+        use std::io::{Error, ErrorKind};
+
+        // Test various error kinds that should default to FileIo
+        for kind in [
+            ErrorKind::WriteZero,
+            ErrorKind::InvalidInput,
+            ErrorKind::Other,
+            ErrorKind::OutOfMemory,
+        ] {
+            let err = Error::from(kind);
+            assert_eq!(
+                ExitCode::from_io_error(&err),
+                ExitCode::FileIo,
+                "ErrorKind::{kind:?} should map to FileIo"
+            );
+        }
+    }
+
+    #[test]
+    fn exit_code_description_function_works() {
+        assert_eq!(exit_code_description(0), "success");
+        assert_eq!(exit_code_description(1), "syntax or usage error");
+        assert_eq!(exit_code_description(23), "partial transfer");
+        assert_eq!(
+            exit_code_description(6),
+            "daemon unable to append to log-file"
+        );
+    }
+
+    #[test]
+    fn exit_code_description_handles_unknown() {
+        assert_eq!(exit_code_description(999), "unknown error code: 999");
+        assert_eq!(exit_code_description(-1), "unknown error code: -1");
+        assert_eq!(exit_code_description(7), "unknown error code: 7");
+    }
+
+    #[test]
+    fn all_upstream_exit_codes_present() {
+        // Verify all exit codes from the upstream rsync man page are present
+        // This ensures we maintain compatibility with rsync 3.4.1
+
+        // From the man page and errcode.h:
+        assert_eq!(ExitCode::Ok.as_i32(), 0, "Success");
+        assert_eq!(ExitCode::Syntax.as_i32(), 1, "Syntax or usage error");
+        assert_eq!(ExitCode::Protocol.as_i32(), 2, "Protocol incompatibility");
+        assert_eq!(
+            ExitCode::FileSelect.as_i32(),
+            3,
+            "Errors selecting input/output files, dirs"
+        );
+        assert_eq!(
+            ExitCode::Unsupported.as_i32(),
+            4,
+            "Requested action not supported"
+        );
+        assert_eq!(
+            ExitCode::StartClient.as_i32(),
+            5,
+            "Error starting client-server protocol"
+        );
+        assert_eq!(
+            ExitCode::LogFileAppend.as_i32(),
+            6,
+            "Daemon unable to append to log-file"
+        );
+        assert_eq!(ExitCode::SocketIo.as_i32(), 10, "Error in socket I/O");
+        assert_eq!(ExitCode::FileIo.as_i32(), 11, "Error in file I/O");
+        assert_eq!(
+            ExitCode::StreamIo.as_i32(),
+            12,
+            "Error in rsync protocol data stream"
+        );
+        assert_eq!(
+            ExitCode::MessageIo.as_i32(),
+            13,
+            "Errors with program diagnostics"
+        );
+        assert_eq!(ExitCode::Ipc.as_i32(), 14, "Error in IPC code");
+        assert_eq!(
+            ExitCode::Signal.as_i32(),
+            20,
+            "Received SIGUSR1 or SIGINT"
+        );
+        assert_eq!(
+            ExitCode::WaitChild.as_i32(),
+            21,
+            "Some error returned by waitpid()"
+        );
+        assert_eq!(
+            ExitCode::Malloc.as_i32(),
+            22,
+            "Error allocating core memory buffers"
+        );
+        assert_eq!(
+            ExitCode::PartialTransfer.as_i32(),
+            23,
+            "Partial transfer due to error"
+        );
+        assert_eq!(
+            ExitCode::Vanished.as_i32(),
+            24,
+            "Partial transfer due to vanished source files"
+        );
+        assert_eq!(
+            ExitCode::DeleteLimit.as_i32(),
+            25,
+            "The --max-delete limit stopped deletions"
+        );
+        assert_eq!(
+            ExitCode::Timeout.as_i32(),
+            30,
+            "Timeout in data send/receive"
+        );
+        assert_eq!(
+            ExitCode::ConnectionTimeout.as_i32(),
+            35,
+            "Timeout waiting for daemon connection"
+        );
+    }
+
+    #[test]
+    fn from_i32_covers_all_exit_codes() {
+        // Ensure every ExitCode variant can be round-tripped through from_i32
+        let all_codes = [
+            ExitCode::Ok,
+            ExitCode::Syntax,
+            ExitCode::Protocol,
+            ExitCode::FileSelect,
+            ExitCode::Unsupported,
+            ExitCode::StartClient,
+            ExitCode::LogFileAppend,
+            ExitCode::SocketIo,
+            ExitCode::FileIo,
+            ExitCode::StreamIo,
+            ExitCode::MessageIo,
+            ExitCode::Ipc,
+            ExitCode::Crashed,
+            ExitCode::Terminated,
+            ExitCode::Signal1,
+            ExitCode::Signal,
+            ExitCode::WaitChild,
+            ExitCode::Malloc,
+            ExitCode::PartialTransfer,
+            ExitCode::Vanished,
+            ExitCode::DeleteLimit,
+            ExitCode::Timeout,
+            ExitCode::ConnectionTimeout,
+            ExitCode::CommandFailed,
+            ExitCode::CommandKilled,
+            ExitCode::CommandRun,
+            ExitCode::CommandNotFound,
+        ];
+
+        for code in all_codes {
+            let value = code.as_i32();
+            assert_eq!(
+                ExitCode::from_i32(value),
+                Some(code),
+                "Failed to round-trip {code:?} (value: {value})"
             );
         }
     }
