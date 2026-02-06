@@ -1286,6 +1286,40 @@ impl LocalCopyOptionsBuilder {
             });
         }
 
+        // --compare-dest, --copy-dest, and --link-dest are mutually exclusive
+        // (upstream rsync enforces this). Multiple directories of the same kind
+        // are allowed, but mixing kinds is not.
+        {
+            use super::types::ReferenceDirectoryKind;
+            let mut has_compare = false;
+            let mut has_copy = false;
+            let mut has_link = false;
+            for reference in &self.reference_directories {
+                match reference.kind() {
+                    ReferenceDirectoryKind::Compare => has_compare = true,
+                    ReferenceDirectoryKind::Copy => has_copy = true,
+                    ReferenceDirectoryKind::Link => has_link = true,
+                }
+            }
+            let kind_count = has_compare as u8 + has_copy as u8 + has_link as u8;
+            if kind_count > 1 {
+                let first = if has_compare {
+                    "--compare-dest"
+                } else {
+                    "--copy-dest"
+                };
+                let second = if has_link {
+                    "--link-dest"
+                } else {
+                    "--copy-dest"
+                };
+                return Err(BuilderError::ConflictingOptions {
+                    option1: first,
+                    option2: second,
+                });
+            }
+        }
+
         Ok(())
     }
 
