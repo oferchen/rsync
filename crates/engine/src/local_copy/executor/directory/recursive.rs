@@ -255,14 +255,14 @@ fn process_planned_entry(
             if let Some(rel_path) = record_relative {
                 capture_batch_file_entry(context, rel_path, entry_metadata)?;
             }
-            copy_file(
+            let kept = copy_file(
                 context,
                 planned.entry.path.as_path(),
                 &target_path,
                 entry_metadata,
                 Some(planned.relative.as_path()),
             )?;
-            Ok(true)
+            Ok(kept)
         }
         EntryAction::CopySymlink => {
             ensure_directory(context)?;
@@ -321,14 +321,14 @@ fn process_planned_entry(
             if let Some(rel_path) = record_relative {
                 capture_batch_file_entry(context, rel_path, entry_metadata)?;
             }
-            copy_file(
+            let kept = copy_file(
                 context,
                 planned.entry.path.as_path(),
                 &target_path,
                 entry_metadata,
                 Some(planned.relative.as_path()),
             )?;
-            Ok(true)
+            Ok(kept)
         }
     }
 }
