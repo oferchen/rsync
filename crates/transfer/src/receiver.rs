@@ -2442,6 +2442,7 @@ mod tests {
             iconv: None,
             ignore_errors: false,
             fsync: false,
+            checksum_seed: None,
         }
     }
 
@@ -3338,6 +3339,7 @@ mod tests {
             iconv: None,
             ignore_errors: false,
             fsync: false,
+            checksum_seed: None,
         }
     }
 

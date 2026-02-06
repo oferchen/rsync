@@ -71,6 +71,18 @@ pub struct ProtocolSetupConfig<'a> {
     /// - `true`: Exchange compression algorithm lists
     /// - `false`: Skip compression negotiation, use defaults
     pub do_compression: bool,
+
+    /// Optional user-specified checksum seed from `--checksum-seed=NUM`.
+    ///
+    /// When `Some(seed)`, the server uses this fixed seed instead of generating
+    /// a random one. This makes transfers reproducible (useful for testing/debugging).
+    ///
+    /// When `None`, the server generates a seed from current time XOR PID
+    /// (matching upstream rsync's default behavior).
+    ///
+    /// A value of `0` means "use current time" in upstream rsync, which is
+    /// equivalent to `None` (the default random seed generation).
+    pub checksum_seed: Option<u32>,
 }
 
 /// Parses client capabilities from the `-e` option argument.
@@ -486,16 +498,29 @@ pub fn setup_protocol(
     // Checksum seed exchange (ALL protocols, upstream compat.c:750)
     // - Server: generates and WRITES the seed
     // - Client: READS the seed from server
+    //
+    // --checksum-seed behavior (upstream rsync options.c:835):
+    // - None: generate random seed (time ^ (pid << 6))
+    // - Some(0): use current time (upstream treats 0 as "use time()")
+    // - Some(N): use N as the fixed seed
     let checksum_seed = if config.is_server {
-        // Server: generate and send seed
-        let seed = {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i32;
-            let pid = std::process::id() as i32;
-            timestamp ^ (pid << 6)
+        // Server: generate or use fixed seed, then send
+        let seed = match config.checksum_seed {
+            Some(0) | None => {
+                // Default behavior: generate from current time XOR PID
+                // --checksum-seed=0 means "use current time" in upstream rsync
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i32;
+                let pid = std::process::id() as i32;
+                timestamp ^ (pid << 6)
+            }
+            Some(fixed_seed) => {
+                // --checksum-seed=NUM: use the exact seed value for reproducibility
+                fixed_seed as i32
+            }
         };
         let seed_bytes = seed.to_le_bytes();
         stdout.write_all(&seed_bytes)?;
@@ -669,6 +694,7 @@ mod tests {
             is_server: true,
             is_daemon_mode: false,
             do_compression: false,
+            checksum_seed: None,
         };
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -704,6 +730,7 @@ mod tests {
             is_server: true,
             is_daemon_mode: false,
             do_compression: false,
+            checksum_seed: None,
         };
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -742,6 +769,7 @@ mod tests {
             is_server: true,
             is_daemon_mode: true, // server advertises, client reads
             do_compression: false,
+            checksum_seed: None,
         };
 
         let result =
@@ -793,6 +821,7 @@ mod tests {
             is_server: false,  // CLIENT mode
             is_daemon_mode: true,
             do_compression: false,
+            checksum_seed: None,
         };
 
         let result =
@@ -831,6 +860,7 @@ mod tests {
             is_server: true,
             is_daemon_mode: false,
             do_compression: false,
+            checksum_seed: None,
         };
 
         let mut stdout1 = Vec::new();
@@ -884,6 +914,7 @@ mod tests {
             is_server: false, // CLIENT
             is_daemon_mode: false,
             do_compression: false,
+            checksum_seed: None,
         };
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -923,6 +954,7 @@ mod tests {
             is_server: true,
             is_daemon_mode: true,
             do_compression: false,
+            checksum_seed: None,
         };
 
         let result_minimal = setup_protocol(&mut stdout, &mut stdin, &config_minimal)
@@ -950,6 +982,7 @@ mod tests {
             is_server: true,
             is_daemon_mode: true,
             do_compression: false,
+            checksum_seed: None,
         };
 
         let result_full = setup_protocol(&mut stdout, &mut stdin, &config_full)
@@ -989,6 +1022,7 @@ mod tests {
             is_server: true,
             is_daemon_mode: true,
             do_compression: false,
+            checksum_seed: None,
         };
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)

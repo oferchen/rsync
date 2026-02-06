@@ -43,6 +43,7 @@ fn test_config() -> ServerConfig {
         iconv: None,
         ignore_errors: false,
         fsync: false,
+        checksum_seed: None,
     }
 }
 
@@ -60,6 +61,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         iconv: None,
         ignore_errors: false,
         fsync: false,
+        checksum_seed: None,
     }
 }
 
