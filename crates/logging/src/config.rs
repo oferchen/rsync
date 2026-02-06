@@ -147,7 +147,7 @@ impl VerbosityConfig {
                 config.debug.iconv = 2;
                 config.debug.acl = 1;
                 config.debug.backup = 1;
-                config.debug.fuzzy = 1;
+                config.debug.fuzzy = 2;
                 config.debug.genr = 1;
                 config.debug.own = 2;
                 config.debug.recv = 1;
