@@ -451,7 +451,7 @@ fn handle_device_copy(
     );
 
     if context.copy_devices_as_files_enabled() {
-        copy_file(context, source_path, &target, metadata, record_path)?;
+        let _ = copy_file(context, source_path, &target, metadata, record_path)?;
     } else if !context.devices_enabled() {
         context.record_skipped_non_regular(record_path);
         return Ok(true); // Continue to next source
@@ -516,7 +516,7 @@ fn handle_non_directory_source(
             prefer_root_destination,
             false,
         );
-        copy_file(
+        let _ = copy_file(
             context,
             source_path,
             &target,

@@ -102,9 +102,15 @@ fn execute_prunes_empty_directories_with_size_filters() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
+    // When prune_empty_dirs is enabled and all files are below min_file_size,
+    // the directories should be pruned because no files were actually kept.
+    // This matches upstream rsync behavior: --prune-empty-dirs removes
+    // directories that end up empty after size-based filtering.
     let target_root = destination_root.join("source");
-    assert!(target_root.exists());
-    assert!(target_root.join("nested").is_dir());
+    assert!(
+        !target_root.join("nested").exists(),
+        "nested dir should be pruned (all files below min-size)"
+    );
     assert!(!target_root.join("nested").join("tiny.bin").exists());
     assert_eq!(summary.files_copied(), 0);
 }
