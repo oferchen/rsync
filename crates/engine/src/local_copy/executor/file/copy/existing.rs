@@ -15,7 +15,7 @@ pub(super) fn handle_existing_skips(
 ) -> Result<bool, LocalCopyError> {
     if context.update_enabled()
         && let Some(existing) = existing_metadata
-        && super::super::comparison::destination_is_newer(metadata, existing)
+        && super::super::comparison::destination_is_newer(metadata, existing, context.options().modify_window())
     {
         context.summary_mut().record_regular_file_skipped_newer();
         context.record_hard_link(metadata, destination);

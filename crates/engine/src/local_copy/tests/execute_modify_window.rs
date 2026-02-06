@@ -414,14 +414,20 @@ fn modify_window_with_update_skips_when_dest_newer_outside_window() {
     );
 }
 
+/// When --update and --modify-window are combined, timestamps within the
+/// window are treated as equal. This means --update does NOT consider the
+/// destination as newer, so the normal quick-check proceeds.
+///
+/// Variant A: same size, timestamps within window -> skip (quick-check passes)
 #[test]
 fn modify_window_with_update_treats_within_window_as_equal() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    fs::write(&source, b"source").expect("write source");
-    fs::write(&destination, b"dest").expect("write dest");
+    // Same content and size so the quick-check will pass
+    fs::write(&source, b"content").expect("write source");
+    fs::write(&destination, b"content").expect("write dest");
 
     // Dest is 0.5 seconds newer (within 1-second window, so considered "equal")
     let base_time = FileTime::from_unix_time(1_700_000_000, 0);
@@ -435,7 +441,10 @@ fn modify_window_with_update_treats_within_window_as_equal() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // With --update and modify-window=1, timestamps are considered equal
+    // With --update and modify-window=1, timestamps within the window are
+    // considered equal so --update does NOT skip (dest is not strictly newer).
+    // Then the normal quick-check runs: size matches and mtime is within
+    // window, so the file is skipped.
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
@@ -445,9 +454,51 @@ fn modify_window_with_update_treats_within_window_as_equal() {
         )
         .expect("copy succeeds");
 
-    // File should be skipped (timestamps considered equal, and equal counts as not-older)
     assert_eq!(summary.files_copied(), 0);
-    assert_eq!(fs::read(&destination).expect("read dest"), b"dest");
+    assert_eq!(fs::read(&destination).expect("read dest"), b"content");
+}
+
+/// Variant B: different sizes, timestamps within window -> copy proceeds
+/// because --update sees equal timestamps and the quick-check detects
+/// the size mismatch.
+#[test]
+fn modify_window_with_update_copies_when_sizes_differ_within_window() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Different sizes so the quick-check will fail
+    fs::write(&source, b"source data").expect("write source");
+    fs::write(&destination, b"dest").expect("write dest");
+
+    // Dest is 0.5 seconds newer (within 1-second window)
+    let base_time = FileTime::from_unix_time(1_700_000_000, 0);
+    let slightly_newer = FileTime::from_unix_time(1_700_000_000, 500_000_000);
+    set_file_times(&source, base_time, base_time).expect("set source times");
+    set_file_times(&destination, slightly_newer, slightly_newer).expect("set dest times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // --update does not skip because timestamps are within the window (equal).
+    // The quick-check detects size mismatch, so the file is copied.
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .update(true)
+                .with_modify_window(Duration::from_secs(1)),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"source data"
+    );
 }
 
 #[test]
