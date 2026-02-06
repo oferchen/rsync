@@ -110,6 +110,12 @@ impl LocalCopyError {
         }
     }
 
+    /// Reports whether this is an I/O error (filesystem interaction failure).
+    #[must_use]
+    pub const fn is_io_error(&self) -> bool {
+        matches!(self.kind, LocalCopyErrorKind::Io { .. })
+    }
+
     /// Provides access to the underlying error kind.
     #[must_use]
     pub const fn kind(&self) -> &LocalCopyErrorKind {

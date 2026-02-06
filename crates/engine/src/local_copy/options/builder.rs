@@ -227,6 +227,9 @@ pub struct LocalCopyOptionsBuilder {
     // Super-user mode
     super_mode: Option<bool>,
     fake_super: bool,
+
+    // Error handling
+    ignore_errors: bool,
 }
 
 impl Default for LocalCopyOptionsBuilder {
@@ -329,6 +332,7 @@ impl LocalCopyOptionsBuilder {
             batch_writer: None,
             super_mode: None,
             fake_super: false,
+            ignore_errors: false,
         }
     }
 
@@ -1216,6 +1220,16 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    // ==================== Error Handling ====================
+
+    /// Tells `--delete` to proceed even when I/O errors occurred during the
+    /// transfer.
+    #[must_use]
+    pub fn ignore_errors(mut self, enabled: bool) -> Self {
+        self.ignore_errors = enabled;
+        self
+    }
+
     // ==================== Batch Mode ====================
 
     /// Sets the batch writer.
@@ -1371,6 +1385,7 @@ impl LocalCopyOptionsBuilder {
             batch_writer: self.batch_writer,
             super_mode: self.super_mode,
             fake_super: self.fake_super,
+            ignore_errors: self.ignore_errors,
         })
     }
 
@@ -1468,6 +1483,7 @@ impl LocalCopyOptionsBuilder {
             batch_writer: self.batch_writer,
             super_mode: self.super_mode,
             fake_super: self.fake_super,
+            ignore_errors: self.ignore_errors,
         }
     }
 }

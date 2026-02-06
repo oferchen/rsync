@@ -163,6 +163,12 @@ fn handle_post_transfer_deletions(
         return Ok(());
     }
 
+    // When I/O errors occurred and --ignore-errors is not set, suppress
+    // deletions to prevent data loss (upstream rsync behavior).
+    if !context.deletions_allowed() {
+        return Ok(());
+    }
+
     match delete_timing.unwrap_or(DeleteTiming::During) {
         DeleteTiming::Before => {
             // Already handled by apply_pre_transfer_deletions
@@ -657,16 +663,31 @@ pub(crate) fn copy_directory_recursive(
     }
 
     // Process each planned entry
+    let mut first_entry_io_error: Option<LocalCopyError> = None;
     for planned in &plan.planned_entries {
-        let entry_kept = process_planned_entry(
+        let result = process_planned_entry(
             context,
             planned,
             destination,
             &mut ensure_directory,
             root_device,
-        )?;
-        if entry_kept {
-            kept_any = true;
+        );
+        match result {
+            Ok(entry_kept) => {
+                if entry_kept {
+                    kept_any = true;
+                }
+            }
+            Err(error) if error.is_io_error() && context.options().delete_extraneous() => {
+                // Record the I/O error so deletions can be suppressed unless
+                // --ignore-errors is set, but continue processing remaining
+                // entries so the deletion phase can still execute.
+                context.record_io_error();
+                if first_entry_io_error.is_none() {
+                    first_entry_io_error = Some(error);
+                }
+            }
+            Err(error) => return Err(error),
         }
     }
 
@@ -687,6 +708,9 @@ pub(crate) fn copy_directory_recursive(
     // Handle empty directory pruning
     if prune_enabled && !kept_any {
         handle_empty_directory_pruning(context, destination, created_directory_on_disk)?;
+        if let Some(error) = first_entry_io_error {
+            return Err(error);
+        }
         return Ok(false);
     }
 
@@ -706,6 +730,12 @@ pub(crate) fn copy_directory_recursive(
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls,
         )?;
+    }
+
+    // If there were I/O errors during entry processing, propagate the first
+    // one now that deletions and metadata finalization have completed.
+    if let Some(error) = first_entry_io_error {
+        return Err(error);
     }
 
     Ok(true)
