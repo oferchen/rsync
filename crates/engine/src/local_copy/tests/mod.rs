@@ -1039,3 +1039,5 @@ include!("execute_force.rs");
 include!("execute_long_paths.rs");
 include!("execute_block_size.rs");
 include!("execute_super.rs");
+include!("execute_archive.rs");
+include!("execute_ignore_errors.rs");
