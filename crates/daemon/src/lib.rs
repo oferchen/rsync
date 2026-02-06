@@ -162,6 +162,7 @@ mod cli;
 mod config;
 mod daemon;
 mod error;
+pub mod rsyncd_config;
 mod systemd;
 
 #[cfg(test)]
