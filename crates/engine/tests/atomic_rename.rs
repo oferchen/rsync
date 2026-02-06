@@ -44,8 +44,8 @@ fn temp_file_is_created_during_transfer() {
         "staging path should differ from destination"
     );
     assert!(
-        staging.to_string_lossy().contains(".rsync-tmp-"),
-        "staging path should have rsync temp prefix"
+        staging.to_string_lossy().contains(".~tmp~"),
+        "staging path should have upstream rsync .~tmp~ prefix"
     );
     assert!(!dest.exists(), "destination should not exist until commit");
 
