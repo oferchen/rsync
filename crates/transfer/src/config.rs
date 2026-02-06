@@ -85,6 +85,22 @@ pub struct ServerConfig {
     /// - `receiver.c:340`: `if (do_fsync && (fd != -1) && fsync(fd) != 0) { ... }`
     /// - `options.c`: `--fsync` flag (long-form only, no short character)
     pub fsync: bool,
+    /// Optional user-specified checksum seed from `--checksum-seed=NUM`.
+    ///
+    /// When `Some(seed)`, the server uses this fixed seed instead of generating
+    /// a random one. This makes transfers reproducible (useful for testing/debugging).
+    ///
+    /// When `None`, the server generates a seed from current time XOR PID
+    /// (matching upstream rsync's default behavior).
+    ///
+    /// A value of `0` means "use current time" in upstream rsync, which is
+    /// equivalent to `None` (the default random seed generation).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:835`: `--checksum-seed=NUM`
+    /// - `compat.c:750`: `checksum_seed = (int32)time(NULL);` (default)
+    pub checksum_seed: Option<u32>,
 }
 
 impl ServerConfig {
@@ -122,6 +138,7 @@ impl ServerConfig {
             iconv: None,
             ignore_errors: false,
             fsync: false,
+            checksum_seed: None,
         })
     }
 }
