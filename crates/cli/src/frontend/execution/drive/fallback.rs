@@ -98,7 +98,7 @@ pub(crate) struct FallbackInputs {
     pub(crate) write_devices: Option<bool>,
     pub(crate) specials: Option<bool>,
     pub(crate) relative: Option<bool>,
-    pub(crate) one_file_system: Option<bool>,
+    pub(crate) one_file_system: Option<u8>,
     pub(crate) implied_dirs: Option<bool>,
     pub(crate) mkpath: bool,
     pub(crate) prune_empty_dirs: Option<bool>,

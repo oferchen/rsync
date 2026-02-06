@@ -107,6 +107,10 @@ impl<'a> CopyContext<'a> {
         self.options.one_file_system_enabled()
     }
 
+    pub(super) const fn one_file_system_level(&self) -> u8 {
+        self.options.one_file_system_level()
+    }
+
     pub(super) fn record_hard_link(&mut self, metadata: &fs::Metadata, destination: &Path) {
         if self.options.hard_links_enabled() {
             self.hard_links.record(metadata, destination);

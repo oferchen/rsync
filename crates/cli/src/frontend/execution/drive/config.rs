@@ -89,7 +89,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) munge_links: bool,
     pub(crate) fuzzy: bool,
     pub(crate) relative_paths: bool,
-    pub(crate) one_file_system: bool,
+    pub(crate) one_file_system: u8,
     pub(crate) implied_dirs: bool,
     pub(crate) human_readable: bool,
     pub(crate) mkpath: bool,

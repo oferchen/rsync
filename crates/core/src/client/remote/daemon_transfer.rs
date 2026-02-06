@@ -809,7 +809,7 @@ fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.sparse() {
         flags.push('S');
     }
-    if config.one_file_system() {
+    for _ in 0..config.one_file_system_level() {
         flags.push('x');
     }
     if config.relative_paths() {

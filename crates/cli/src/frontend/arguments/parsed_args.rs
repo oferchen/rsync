@@ -912,12 +912,17 @@ pub struct ParsedArgs {
     /// Do not cross filesystem boundaries.
     ///
     /// When recursing, skip directories that are on different filesystems.
-    /// Can be specified twice to skip all mount points.
+    /// Can be specified twice (`-xx`) to also skip root-level mount points.
+    ///
+    /// - `None`: not specified (default).
+    /// - `Some(0)`: explicitly disabled via `--no-one-file-system`.
+    /// - `Some(1)`: single `-x` -- skip cross-filesystem directories during recursion.
+    /// - `Some(2)`: double `-xx` -- also skip root-level source mount points.
     ///
     /// Corresponds to: `--one-file-system`, `-x` / `--no-one-file-system`
     ///
     /// Default: `None`
-    pub one_file_system: Option<bool>,
+    pub one_file_system: Option<u8>,
 
     /// Create implied directories in relative mode.
     ///

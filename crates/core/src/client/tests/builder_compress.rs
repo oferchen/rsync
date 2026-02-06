@@ -415,12 +415,25 @@ fn local_copy_options_honour_temp_directory_setting() {
 fn local_copy_options_respect_one_file_system_setting() {
     let enabled = ClientConfig::builder()
         .transfer_args([OsString::from("src"), OsString::from("dst")])
-        .one_file_system(true)
+        .one_file_system(1)
         .build();
 
     let enabled_options = build_local_copy_options(&enabled, None);
     assert!(enabled.one_file_system());
+    assert_eq!(enabled.one_file_system_level(), 1);
     assert!(enabled_options.one_file_system_enabled());
+    assert_eq!(enabled_options.one_file_system_level(), 1);
+
+    let double = ClientConfig::builder()
+        .transfer_args([OsString::from("src"), OsString::from("dst")])
+        .one_file_system(2)
+        .build();
+
+    let double_options = build_local_copy_options(&double, None);
+    assert!(double.one_file_system());
+    assert_eq!(double.one_file_system_level(), 2);
+    assert!(double_options.one_file_system_enabled());
+    assert_eq!(double_options.one_file_system_level(), 2);
 
     let default = ClientConfig::builder()
         .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -428,7 +441,9 @@ fn local_copy_options_respect_one_file_system_setting() {
 
     let default_options = build_local_copy_options(&default, None);
     assert!(!default.one_file_system());
+    assert_eq!(default.one_file_system_level(), 0);
     assert!(!default_options.one_file_system_enabled());
+    assert_eq!(default_options.one_file_system_level(), 0);
 }
 
 #[test]
