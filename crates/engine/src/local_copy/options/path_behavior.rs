@@ -181,17 +181,48 @@ impl LocalCopyOptions {
     }
 
     /// Restricts traversal to a single filesystem when enabled.
+    ///
+    /// - `false` / `0`: disabled (default).
+    /// - `true` / `1`: single `-x` -- skip directories on different filesystems
+    ///   during recursion.
+    /// - `2`: double `-xx` -- also skip mount-point directories that appear at
+    ///   the transfer root level.
     #[must_use]
     #[doc(alias = "--one-file-system")]
     #[doc(alias = "-x")]
     pub const fn one_file_system(mut self, enabled: bool) -> Self {
-        self.one_file_system = enabled;
+        self.one_file_system = if enabled { 1 } else { 0 };
+        self
+    }
+
+    /// Sets the one-file-system level directly.
+    ///
+    /// - `0`: disabled (default).
+    /// - `1`: single `-x` -- skip directories on different filesystems during
+    ///   recursion.
+    /// - `2`: double `-xx` -- also skip mount-point directories at the transfer
+    ///   root level.
+    #[must_use]
+    #[doc(alias = "--one-file-system")]
+    #[doc(alias = "-x")]
+    pub const fn with_one_file_system_level(mut self, level: u8) -> Self {
+        self.one_file_system = level;
         self
     }
 
     /// Returns `true` when the copy should remain on the source filesystem.
     #[must_use]
     pub const fn one_file_system_enabled(&self) -> bool {
+        self.one_file_system >= 1
+    }
+
+    /// Returns the raw one-file-system level.
+    ///
+    /// - `0`: disabled.
+    /// - `1`: single `-x`.
+    /// - `2`: double `-xx` (also skips root-level mount points).
+    #[must_use]
+    pub const fn one_file_system_level(&self) -> u8 {
         self.one_file_system
     }
 
@@ -569,6 +600,7 @@ mod tests {
     fn one_file_system_enables() {
         let opts = LocalCopyOptions::new().one_file_system(true);
         assert!(opts.one_file_system_enabled());
+        assert_eq!(opts.one_file_system_level(), 1);
     }
 
     #[test]
@@ -577,6 +609,28 @@ mod tests {
             .one_file_system(true)
             .one_file_system(false);
         assert!(!opts.one_file_system_enabled());
+        assert_eq!(opts.one_file_system_level(), 0);
+    }
+
+    #[test]
+    fn one_file_system_level_zero_disables() {
+        let opts = LocalCopyOptions::new().with_one_file_system_level(0);
+        assert!(!opts.one_file_system_enabled());
+        assert_eq!(opts.one_file_system_level(), 0);
+    }
+
+    #[test]
+    fn one_file_system_level_one_enables() {
+        let opts = LocalCopyOptions::new().with_one_file_system_level(1);
+        assert!(opts.one_file_system_enabled());
+        assert_eq!(opts.one_file_system_level(), 1);
+    }
+
+    #[test]
+    fn one_file_system_level_two_enables_double() {
+        let opts = LocalCopyOptions::new().with_one_file_system_level(2);
+        assert!(opts.one_file_system_enabled());
+        assert_eq!(opts.one_file_system_level(), 2);
     }
 
     #[test]

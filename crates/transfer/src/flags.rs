@@ -50,8 +50,9 @@ pub struct ParsedServerFlags {
     pub whole_file: bool,
     /// Sparse file handling (`S` flag, `--sparse`).
     pub sparse: bool,
-    /// One file system only (`x` flag, `--one-file-system`).
-    pub one_file_system: bool,
+    /// One file system level (`x` flag count, `--one-file-system`).
+    /// 0 = off, 1 = single -x, 2 = double -xx.
+    pub one_file_system: u8,
     /// Relative paths (`R` flag, `--relative`).
     pub relative: bool,
     /// Keep partially transferred files (`P` flag, `--partial`).
@@ -156,7 +157,7 @@ impl ParsedServerFlags {
             b'd' => self.delete = true,
             b'W' => self.whole_file = true,
             b'S' => self.sparse = true,
-            b'x' => self.one_file_system = true,
+            b'x' => self.one_file_system = self.one_file_system.saturating_add(1),
             b'R' => self.relative = true,
             b'P' => self.partial = true,
             b'u' => self.update = true,
@@ -291,5 +292,25 @@ mod tests {
         let flags = ParsedServerFlags::parse("-rm").unwrap();
         assert!(flags.recursive);
         assert!(flags.prune_empty_dirs);
+    }
+
+    #[test]
+    fn parses_single_one_file_system_flag() {
+        let flags = ParsedServerFlags::parse("-rx").unwrap();
+        assert!(flags.recursive);
+        assert_eq!(flags.one_file_system, 1);
+    }
+
+    #[test]
+    fn parses_double_one_file_system_flag() {
+        let flags = ParsedServerFlags::parse("-rxx").unwrap();
+        assert!(flags.recursive);
+        assert_eq!(flags.one_file_system, 2);
+    }
+
+    #[test]
+    fn one_file_system_not_set_by_default() {
+        let flags = ParsedServerFlags::parse("-r").unwrap();
+        assert_eq!(flags.one_file_system, 0);
     }
 }

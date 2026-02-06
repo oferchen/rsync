@@ -735,8 +735,8 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                 Arg::new("one-file-system")
                     .long("one-file-system")
                     .short('x')
-                    .help("Do not cross filesystem boundaries during traversal.")
-                    .action(ArgAction::SetTrue)
+                    .help("Do not cross filesystem boundaries during traversal. Specify twice (-xx) to also skip root-level mount points.")
+                    .action(ArgAction::Count)
                     .overrides_with("no-one-file-system"),
             )
             .arg(

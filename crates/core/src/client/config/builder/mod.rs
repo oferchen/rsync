@@ -171,7 +171,7 @@ pub struct ClientConfigBuilder {
     copy_devices: bool,
     write_devices: bool,
     relative_paths: bool,
-    one_file_system: bool,
+    one_file_system: u8,
     implied_dirs: Option<bool>,
     mkpath: bool,
     prune_empty_dirs: bool,
