@@ -295,7 +295,6 @@ fn execute_preserves_symlink_hard_links() {
 
 #[cfg(unix)]
 #[test]
-#[ignore] // TODO: Safe links filtering
 fn safe_links_skips_symlink_pointing_outside_transfer_tree() {
     use std::os::unix::fs::symlink;
 
@@ -415,7 +414,6 @@ fn safe_links_preserves_symlink_pointing_inside_transfer_tree() {
 
 #[cfg(unix)]
 #[test]
-#[ignore] // TODO: Safe links evaluation
 fn safe_links_evaluates_relative_symlinks_correctly() {
     use std::os::unix::fs::symlink;
 
@@ -696,7 +694,6 @@ fn safe_links_skips_symlink_to_directory_when_unsafe() {
 
 #[cfg(unix)]
 #[test]
-#[ignore] // TODO: Safe links multi-level
 fn safe_links_with_multiple_depth_levels() {
     use std::os::unix::fs::symlink;
 
@@ -756,9 +753,95 @@ fn safe_links_with_multiple_depth_levels() {
     assert!(!dest_root.join("a/b/c/d/escape").exists());
 }
 
+/// Verifies that safe_links works correctly when copying a directory with a
+/// trailing slash (content copy) vs without (whole-directory copy).  Both
+/// must produce the same safety verdict for identical symlinks.
 #[cfg(unix)]
 #[test]
-#[ignore] // TODO: Safe links behavior
+fn safe_links_trailing_slash_vs_no_trailing_slash() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    // Create a nested structure with a symlink that exactly reaches the root
+    let subdir = source_root.join("sub");
+    fs::create_dir(&subdir).expect("create sub");
+    fs::write(source_root.join("target.txt"), b"t").expect("write target");
+
+    // Safe: goes up 1 from sub/ (depth 1), reaching root
+    let safe_link = subdir.join("safe");
+    symlink(Path::new("../target.txt"), &safe_link).expect("create safe link");
+
+    // Unsafe: goes up 2 from sub/ (depth 1), escaping
+    let unsafe_link = subdir.join("unsafe");
+    symlink(Path::new("../../outside.txt"), &unsafe_link).expect("create unsafe link");
+
+    // Test 1: Copy WITHOUT trailing slash (source -> dest1)
+    let dest1 = temp.path().join("dest1");
+    let operands1 = vec![
+        source_root.clone().into_os_string(),
+        dest1.clone().into_os_string(),
+    ];
+    let plan1 = LocalCopyPlan::from_operands(&operands1).expect("plan");
+    let options1 = LocalCopyOptions::default()
+        .links(true)
+        .safe_links(true)
+        .collect_events(true);
+    let report1 = plan1
+        .execute_with_report(LocalCopyExecution::Apply, options1)
+        .expect("copy without trailing slash");
+
+    // Test 2: Copy WITH trailing slash (source/ -> dest2)
+    let dest2 = temp.path().join("dest2");
+    fs::create_dir_all(&dest2).expect("create dest2");
+    let mut source_os = source_root.into_os_string();
+    source_os.push("/");
+    let operands2 = vec![source_os, dest2.clone().into_os_string()];
+    let plan2 = LocalCopyPlan::from_operands(&operands2).expect("plan");
+    let options2 = LocalCopyOptions::default()
+        .links(true)
+        .safe_links(true)
+        .collect_events(true);
+    let report2 = plan2
+        .execute_with_report(LocalCopyExecution::Apply, options2)
+        .expect("copy with trailing slash");
+
+    // Both should produce the same safety verdicts
+    let summary1 = report1.summary();
+    let summary2 = report2.summary();
+
+    assert_eq!(summary1.symlinks_copied(), 1, "no-trailing-slash: 1 safe link");
+    assert_eq!(summary1.symlinks_total(), 2, "no-trailing-slash: 2 total links");
+    assert_eq!(summary2.symlinks_copied(), 1, "trailing-slash: 1 safe link");
+    assert_eq!(summary2.symlinks_total(), 2, "trailing-slash: 2 total links");
+
+    // Verify safe link exists and unsafe link is skipped (no trailing slash)
+    assert!(dest1.join("sub/safe").exists());
+    assert!(!dest1.join("sub/unsafe").exists());
+
+    // Verify safe link exists and unsafe link is skipped (trailing slash)
+    assert!(dest2.join("sub/safe").exists());
+    assert!(!dest2.join("sub/unsafe").exists());
+
+    // Verify SkippedUnsafeSymlink records
+    let skips1 = report1
+        .records()
+        .iter()
+        .filter(|r| matches!(r.action(), LocalCopyAction::SkippedUnsafeSymlink))
+        .count();
+    let skips2 = report2
+        .records()
+        .iter()
+        .filter(|r| matches!(r.action(), LocalCopyAction::SkippedUnsafeSymlink))
+        .count();
+    assert_eq!(skips1, 1, "no-trailing-slash: 1 skipped unsafe");
+    assert_eq!(skips2, 1, "trailing-slash: 1 skipped unsafe");
+}
+
+#[cfg(unix)]
+#[test]
 fn safe_links_disabled_allows_all_symlinks() {
     use std::os::unix::fs::symlink;
 
@@ -793,8 +876,10 @@ fn safe_links_disabled_allows_all_symlinks() {
         .expect("copy succeeds");
 
     assert_eq!(summary.symlinks_copied(), 2);
-    assert!(dest_root.join("abs_link").exists());
-    assert!(dest_root.join("source/escape_link").exists());
+    // Use symlink_metadata because .exists() follows symlinks, and the
+    // targets may not resolve from the new destination location.
+    assert!(fs::symlink_metadata(dest_root.join("abs_link")).is_ok());
+    assert!(fs::symlink_metadata(dest_root.join("escape_link")).is_ok());
 }
 
 // ==================== --copy-unsafe-links Tests ====================
@@ -848,7 +933,6 @@ fn copy_unsafe_links_dereferences_absolute_symlink_to_file() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "copy_unsafe_links relative path computation needs fix - tracking issue TBD"]
 fn copy_unsafe_links_dereferences_escaping_relative_symlink() {
     use std::os::unix::fs::symlink;
 
@@ -938,7 +1022,6 @@ fn copy_unsafe_links_preserves_safe_symlink() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "copy_unsafe_links relative path computation needs fix"]
 fn copy_unsafe_links_dereferences_directory_symlink() {
     use std::os::unix::fs::symlink;
 
@@ -988,7 +1071,6 @@ fn copy_unsafe_links_dereferences_directory_symlink() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "copy_unsafe_links relative path computation needs fix"]
 fn copy_unsafe_links_in_recursive_copy() {
     use std::os::unix::fs::symlink;
 
@@ -1054,14 +1136,14 @@ fn copy_unsafe_links_in_recursive_copy() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "copy_unsafe_links relative path computation needs fix"]
-fn copy_unsafe_links_without_safe_links_preserves_all() {
+fn copy_unsafe_links_without_safe_links_dereferences() {
     use std::os::unix::fs::symlink;
 
     let temp = tempdir().expect("tempdir");
     let source_dir = temp.path().join("src");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create src dir");
+    fs::create_dir_all(&dest_dir).expect("create dest dir");
 
     let outside_file = temp.path().join("outside.txt");
     fs::write(&outside_file, b"external").expect("write outside file");
@@ -1076,7 +1158,8 @@ fn copy_unsafe_links_without_safe_links_preserves_all() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // copy_unsafe_links without safe_links should preserve the symlink
+    // copy_unsafe_links without safe_links should still detect and dereference
+    // unsafe symlinks (the engine checks copy_unsafe_links independently)
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
@@ -1088,18 +1171,18 @@ fn copy_unsafe_links_without_safe_links_preserves_all() {
 
     let destination_path = dest_dir.join("escape-link");
     let metadata = fs::symlink_metadata(&destination_path).expect("destination metadata");
-    assert!(metadata.file_type().is_symlink());
+    assert!(metadata.file_type().is_file());
+    assert!(!metadata.file_type().is_symlink());
     assert_eq!(
-        fs::read_link(&destination_path).expect("read symlink"),
-        Path::new("../outside.txt")
+        fs::read(&destination_path).expect("read dereferenced file"),
+        b"external"
     );
-    // assert_eq!(summary.symlinks_copied(), 1);  // Depends on safe_links behavior
-    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.symlinks_copied(), 0);
 }
 
 #[cfg(unix)]
 #[test]
-#[ignore = "copy_unsafe_links relative path computation needs fix"]
 fn copy_unsafe_links_combined_with_safe_links_behavior() {
     use std::os::unix::fs::symlink;
 
@@ -1107,6 +1190,7 @@ fn copy_unsafe_links_combined_with_safe_links_behavior() {
     let source_dir = temp.path().join("src");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create src dir");
+    fs::create_dir_all(&dest_dir).expect("create dest dir");
 
     let outside_file = temp.path().join("outside.txt");
     fs::write(&outside_file, b"external").expect("write outside file");
@@ -1139,6 +1223,7 @@ fn copy_unsafe_links_combined_with_safe_links_behavior() {
 
     // Clean up for next test
     fs::remove_dir_all(&dest_dir).ok();
+    fs::create_dir_all(&dest_dir).expect("recreate dest dir");
 
     // With both safe_links and copy_unsafe_links, unsafe symlink should be dereferenced
     let summary_copy = plan
@@ -1164,7 +1249,6 @@ fn copy_unsafe_links_combined_with_safe_links_behavior() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "copy_unsafe_links relative path computation needs fix"]
 fn copy_unsafe_links_deeply_nested_symlink() {
     use std::os::unix::fs::symlink;
 
@@ -1219,7 +1303,6 @@ fn copy_unsafe_links_deeply_nested_symlink() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "copy_unsafe_links relative path computation needs fix"]
 fn copy_unsafe_links_with_mixed_safe_and_unsafe_in_tree() {
     use std::os::unix::fs::symlink;
 
@@ -1301,7 +1384,6 @@ fn copy_unsafe_links_with_mixed_safe_and_unsafe_in_tree() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "copy_unsafe_links relative path computation needs fix"]
 fn copy_unsafe_links_dereferences_symlink_chain() {
     use std::os::unix::fs::symlink;
 
@@ -1322,6 +1404,7 @@ fn copy_unsafe_links_dereferences_symlink_chain() {
     symlink(&intermediate_link, &source_link).expect("create chain link");
 
     let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest dir");
     let operands = vec![
         source_link.into_os_string(),
         dest_dir.clone().into_os_string(),
