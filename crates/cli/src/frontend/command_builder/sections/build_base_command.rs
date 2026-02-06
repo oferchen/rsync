@@ -381,6 +381,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("ignore-times")
                     .long("ignore-times")
+                    .short('I')
                     .help("Disable quick checks based on size and modification time.")
                     .action(ArgAction::SetTrue),
             )

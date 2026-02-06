@@ -622,6 +622,20 @@ mod long_options {
     }
 
     #[test]
+    fn ignore_times_short_flag() {
+        let parsed = parse_test_args(["-I", "src/", "dst/"]).expect("parse");
+        assert!(parsed.ignore_times);
+    }
+
+    #[test]
+    fn ignore_times_in_combined_short_flags() {
+        let parsed = parse_test_args(["-avI", "src/", "dst/"]).expect("parse");
+        assert!(parsed.ignore_times);
+        assert!(parsed.archive);
+        assert!(parsed.verbose > 0);
+    }
+
+    #[test]
     fn size_only_long_flag() {
         let parsed = parse_test_args(["--size-only", "src/", "dst/"]).expect("parse");
         assert!(parsed.size_only);
