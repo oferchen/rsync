@@ -103,7 +103,9 @@ pub mod batch {
 #[doc(hidden)]
 pub mod fuzzy {
     //! Re-exports from the [`matching`] crate for backward compatibility.
-    pub use matching::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
+    pub use matching::{
+        FuzzyMatch, FuzzyMatcher, FUZZY_LEVEL_1, FUZZY_LEVEL_2, compute_similarity_score,
+    };
 }
 
 // Re-export signature types from the dedicated signature crate for backward compatibility.
@@ -130,7 +132,7 @@ pub use delta::{
 pub use error::{EngineError, EngineResult};
 
 // Fuzzy matching for finding similar basis files
-pub use fuzzy::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
+pub use fuzzy::{FuzzyMatch, FuzzyMatcher, FUZZY_LEVEL_1, FUZZY_LEVEL_2, compute_similarity_score};
 
 // Hardlink detection and resolution
 pub use hardlink::{
