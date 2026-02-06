@@ -294,6 +294,7 @@ pub fn run_server_with_handshake<W: Write>(
         is_server,
         is_daemon_mode,
         do_compression,
+        checksum_seed: config.checksum_seed,
     };
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
 
