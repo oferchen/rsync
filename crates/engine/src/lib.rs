@@ -143,7 +143,8 @@ pub use hardlink::{
 pub use local_copy::{
     BuilderError, DeleteTiming, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind,
     LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan, LocalCopySummary, ReferenceDirectory,
-    ReferenceDirectoryKind, SkipCompressList, SkipCompressParseError,
+    ReferenceDirectoryKind, SkipCompressList, SkipCompressParseError, SparseDetector, SparseReader,
+    SparseRegion, SparseWriter,
 };
 
 // File signature generation for delta transfers

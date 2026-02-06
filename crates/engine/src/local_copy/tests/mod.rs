@@ -1022,6 +1022,7 @@ include!("execute_max_delete.rs");
 include!("itemize_changes.rs");
 include!("list_only.rs");
 include!("partial_dir.rs");
+include!("partial_transfers.rs");
 include!("checksum_algorithm_behavior.rs");
 include!("execute_timestamp_preservation.rs");
 include!("disk_full_errors.rs");
