@@ -158,6 +158,7 @@
 //! # demo().unwrap();
 //! ```
 
+pub mod auth;
 mod cli;
 mod config;
 mod daemon;
