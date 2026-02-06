@@ -3,7 +3,13 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-/// Creates a FIFO at `destination` so metadata can be applied afterwards.
+/// Creates a special file node (FIFO or socket) at `destination` matching
+/// the source metadata, so that further metadata can be applied afterwards.
+///
+/// In upstream rsync, `--specials` covers both named pipes (FIFOs) and
+/// Unix-domain sockets.  When the source is a socket the destination is
+/// recreated as a socket node; when the source is a FIFO the destination
+/// is recreated as a FIFO.
 pub fn create_fifo(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
     create_fifo_inner(destination, metadata)
 }
@@ -28,17 +34,29 @@ pub fn create_device_node(
 fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
     use rustix::fs::{CWD, makedev, mknodat};
     use rustix::fs::{FileType, Mode};
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+    let node_type = if metadata.file_type().is_socket() {
+        FileType::Socket
+    } else {
+        FileType::Fifo
+    };
+
+    let context = if matches!(node_type, FileType::Socket) {
+        "create socket"
+    } else {
+        "create fifo"
+    };
 
     let mode_bits = permissions_mode(
-        "create fifo",
+        context,
         destination,
         metadata.permissions().mode() & 0o777,
     )?;
     let mode = Mode::from_bits_truncate(mode_bits.into());
 
-    mknodat(CWD, destination, FileType::Fifo, mode, makedev(0, 0))
-        .map_err(|error| MetadataError::new("create fifo", destination, io::Error::from(error)))?;
+    mknodat(CWD, destination, node_type, mode, makedev(0, 0))
+        .map_err(|error| MetadataError::new(context, destination, io::Error::from(error)))?;
 
     Ok(())
 }
@@ -102,10 +120,13 @@ fn create_device_node_inner(
     )
 ))]
 fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+    let is_socket = metadata.file_type().is_socket();
+    let context = if is_socket { "create socket" } else { "create fifo" };
 
     let mode_bits = permissions_mode(
-        "create fifo",
+        context,
         destination,
         metadata.permissions().mode() & 0o777,
     )?;
@@ -113,8 +134,15 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
     // so this cast is infallible and does not require a checked conversion.
     let mode: libc::mode_t = mode_bits as libc::mode_t;
 
-    apple_fs::mkfifo(destination, mode)
-        .map_err(|error| MetadataError::new("create fifo", destination, error))
+    if is_socket {
+        // On Apple platforms, create a socket node via mknod with S_IFSOCK.
+        let full_mode = libc::S_IFSOCK | mode;
+        apple_fs::mknod(destination, full_mode, 0)
+            .map_err(|error| MetadataError::new(context, destination, error))
+    } else {
+        apple_fs::mkfifo(destination, mode)
+            .map_err(|error| MetadataError::new(context, destination, error))
+    }
 }
 
 #[cfg(all(
