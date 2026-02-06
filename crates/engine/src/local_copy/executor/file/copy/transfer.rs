@@ -269,7 +269,9 @@ pub(super) fn execute_transfer(
         .map_err(|error| LocalCopyError::io("copy file", source, error))?;
 
     // delta signature if we can
-    let delta_signature = if append_offset == 0 && !whole_file_enabled && !inplace_enabled {
+    // For inplace mode, we can use delta transfer as long as we're careful about reading
+    // from the destination file before writing to avoid clobbering data we haven't read yet.
+    let delta_signature = if append_offset == 0 && !whole_file_enabled {
         match existing_metadata {
             Some(existing) if existing.is_file() => {
                 build_delta_signature(destination, existing, context.block_size_override())?
@@ -312,10 +314,14 @@ pub(super) fn execute_transfer(
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
         file
     } else if inplace_enabled {
+        // For inplace mode with delta transfer, we must NOT truncate the file
+        // because we need to read existing blocks during delta reconstruction.
+        // The file will be truncated to the final size after the copy completes.
+        let should_truncate = delta_signature.is_none();
         fs::OpenOptions::new()
             .create(true)
             .write(true)
-            .truncate(true)
+            .truncate(should_truncate)
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?
     } else {

@@ -56,6 +56,7 @@ mod compressor;
 mod context;
 #[cfg(feature = "batch-sync")]
 mod deferred_sync;
+pub mod deletion;
 mod dir_merge;
 mod error;
 mod executor;
