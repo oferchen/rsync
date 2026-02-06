@@ -1,7 +1,7 @@
 //! Deletion helpers for extraneous or source entries.
 
 use std::collections::HashSet;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -36,6 +36,17 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
         }
     };
 
+    // When --partial-dir is configured with a relative path, protect it from
+    // deletion.  Upstream rsync avoids deleting the partial-dir directory so
+    // that partial files survive across invocations even when --delete is
+    // active.  Absolute partial-dir paths live outside the destination tree
+    // and do not need protection.
+    let protected_partial_dir_name: Option<OsString> = context
+        .partial_directory_path()
+        .filter(|p| p.is_relative())
+        .and_then(|p| p.file_name())
+        .map(OsStr::to_os_string);
+
     for entry in read_dir {
         context.enforce_timeout()?;
         let entry = entry
@@ -44,6 +55,13 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
 
         if keep.contains(name.as_os_str()) {
             continue;
+        }
+
+        // Protect relative partial-dir from deletion (upstream rsync behavior).
+        if let Some(ref protected) = protected_partial_dir_name {
+            if name.as_os_str() == protected.as_os_str() {
+                continue;
+            }
         }
 
         let name_path = PathBuf::from(name.as_os_str());
