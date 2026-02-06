@@ -61,8 +61,8 @@ pub use legacy::{
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub use multiplex::MultiplexCodec;
 pub use multiplex::{
-    BorrowedMessageFrame, BorrowedMessageFrames, MessageFrame, recv_msg, recv_msg_into, send_frame,
-    send_msg, send_msgs_vectored,
+    BorrowedMessageFrame, BorrowedMessageFrames, MessageFrame, MplexReader, MplexWriter, recv_msg,
+    recv_msg_into, send_frame, send_msg, send_msgs_vectored,
 };
 pub use negotiation::{
     BufferedPrefixTooSmall, ChecksumAlgorithm, CompressionAlgorithm, NegotiationPrologue,
