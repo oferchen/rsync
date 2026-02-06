@@ -261,7 +261,7 @@ impl ClientConfigBuilder {
             compression_setting: self.compression_setting,
             skip_compress: self.skip_compress,
             open_noatime: self.open_noatime,
-            whole_file: self.whole_file.unwrap_or(true),
+            whole_file: self.whole_file,
             checksum: self.checksum,
             checksum_choice: self.checksum_choice,
             checksum_seed: self.checksum_seed,

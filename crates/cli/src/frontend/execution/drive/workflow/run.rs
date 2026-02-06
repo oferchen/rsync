@@ -529,7 +529,7 @@ where
     let fsync_flag = fsync_option.unwrap_or(false);
     let inplace_enabled = inplace.unwrap_or(false);
     let append_enabled = append.unwrap_or(false);
-    let whole_file_enabled = whole_file_option.unwrap_or(true);
+    let whole_file_enabled = whole_file_option;
 
     let checksum_for_config = checksum.unwrap_or(false);
     let fuzzy_enabled = fuzzy.unwrap_or(false);
@@ -626,7 +626,7 @@ where
         inplace: inplace_enabled,
         append: append_enabled,
         append_verify,
-        whole_file: whole_file_enabled,
+        whole_file: whole_file_enabled,  // Pass Option<bool> through for tri-state semantics
         force_fallback: batch_config.is_some(),
         timeout: timeout_setting,
         connect_timeout: connect_timeout_setting,
