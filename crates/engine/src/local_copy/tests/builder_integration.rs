@@ -175,14 +175,14 @@ fn builder_unchecked_skips_validation() {
 }
 
 #[test]
-fn builder_with_reference_directories() {
+fn builder_with_reference_directories_same_kind() {
     let options = LocalCopyOptions::builder()
         .reference_directory(ReferenceDirectory::new(
             ReferenceDirectoryKind::Compare,
             "/old/backup",
         ))
         .reference_directory(ReferenceDirectory::new(
-            ReferenceDirectoryKind::Link,
+            ReferenceDirectoryKind::Compare,
             "/previous/backup",
         ))
         .build()
@@ -191,7 +191,25 @@ fn builder_with_reference_directories() {
     let refs = options.reference_directories();
     assert_eq!(refs.len(), 2);
     assert_eq!(refs[0].kind(), ReferenceDirectoryKind::Compare);
-    assert_eq!(refs[1].kind(), ReferenceDirectoryKind::Link);
+    assert_eq!(refs[1].kind(), ReferenceDirectoryKind::Compare);
+}
+
+#[test]
+fn builder_rejects_mixed_reference_directory_kinds() {
+    let result = LocalCopyOptions::builder()
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            "/old/backup",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            "/previous/backup",
+        ))
+        .build();
+
+    assert!(result.is_err(), "mixing --compare-dest and --link-dest should be rejected");
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("conflicting"));
 }
 
 #[test]
