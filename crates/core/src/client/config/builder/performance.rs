@@ -79,6 +79,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the whole-file option as a tri-state value.
+    ///
+    /// - `Some(true)`: force whole-file mode (`-W`).
+    /// - `Some(false)`: force delta mode (`--no-whole-file`).
+    /// - `None`: auto-detect (whole-file for local, delta for remote/batch).
+    #[must_use]
+    pub const fn whole_file_option(mut self, whole_file: Option<bool>) -> Self {
+        self.whole_file = whole_file;
+        self
+    }
+
     builder_setter! {
         /// Applies an explicit delta-transfer block size override.
         #[doc(alias = "--block-size")]
