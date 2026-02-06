@@ -76,6 +76,8 @@ mod common;
 pub mod lz4;
 /// Compression tuning based on file type detection.
 pub mod skip_compress;
+/// Strategy pattern for runtime compression algorithm selection.
+pub mod strategy;
 pub mod zlib;
 #[cfg(feature = "zstd")]
 pub mod zstd;
@@ -85,3 +87,11 @@ pub use skip_compress::{
     AdaptiveCompressor, CompressionDecider, CompressionDecision, DEFAULT_COMPRESSION_THRESHOLD,
     DEFAULT_SAMPLE_SIZE, FileCategory,
 };
+pub use strategy::{
+    CompressionAlgorithmKind, CompressionStrategy, CompressionStrategySelector,
+    NoCompressionStrategy, ZlibStrategy,
+};
+#[cfg(feature = "zstd")]
+pub use strategy::ZstdStrategy;
+#[cfg(feature = "lz4")]
+pub use strategy::Lz4Strategy;
