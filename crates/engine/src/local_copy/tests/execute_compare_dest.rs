@@ -326,12 +326,10 @@ fn compare_dest_multiple_directories_transfers_when_none_match() {
 
 /// Tests recursive transfer with compare-dest.
 ///
-/// TODO: Recursive compare-dest path resolution needs implementation.
 /// When syncing directories recursively, the relative path from source base
 /// should be used to look up files in compare-dest (e.g., source/subdir/file.txt
 /// should check compare-dest/subdir/file.txt, not compare-dest/file.txt).
 #[test]
-#[ignore = "recursive compare-dest path resolution not yet implemented"]
 fn compare_dest_with_recursive_transfer() {
     let temp = tempdir().expect("tempdir");
     let source_dir = temp.path().join("source");
@@ -358,8 +356,12 @@ fn compare_dest_with_recursive_transfer() {
     set_file_mtime(&compare_file1, timestamp).expect("set compare file1 mtime");
     set_file_mtime(&compare_file2, timestamp).expect("set compare file2 mtime");
 
+    // Use trailing separator so contents of source are synced into dest
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
     let operands = vec![
-        source_dir.into_os_string(),
+        source_operand,
         dest_dir.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
