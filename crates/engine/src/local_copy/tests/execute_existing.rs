@@ -843,3 +843,284 @@ fn existing_matches_upstream_rsync_semantics() {
         "new directory should be skipped"
     );
 }
+
+
+// ============================================================================
+// Combined --existing + --ignore-existing Tests
+// ============================================================================
+
+#[test]
+fn existing_combined_with_ignore_existing_skips_all_files() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    fs::write(source_root.join("changed.txt"), b"new content").expect("write source changed");
+    fs::write(dest_root.join("changed.txt"), b"old content").expect("write dest changed");
+    fs::write(source_root.join("new.txt"), b"brand new").expect("write source new");
+    fs::write(source_root.join("same.txt"), b"identical").expect("write source same");
+    fs::write(dest_root.join("same.txt"), b"identical").expect("write dest same");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .ignore_existing(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0, "no files should be transferred");
+    assert_eq!(summary.regular_files_total(), 3);
+    assert!(summary.regular_files_skipped_missing() >= 1);
+    assert!(summary.regular_files_ignored_existing() >= 2);
+    assert_eq!(fs::read(dest_root.join("changed.txt")).expect("read"), b"old content");
+    assert!(!dest_root.join("new.txt").exists());
+    assert_eq!(fs::read(dest_root.join("same.txt")).expect("read"), b"identical");
+}
+
+#[test]
+fn existing_combined_with_ignore_existing_and_delete_removes_extraneous() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    fs::write(source_root.join("keep.txt"), b"source content").expect("write source keep");
+    fs::write(dest_root.join("keep.txt"), b"dest content").expect("write dest keep");
+    fs::write(dest_root.join("extra.txt"), b"extraneous").expect("write dest extra");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .ignore_existing(true)
+                .delete(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0, "no files should be transferred");
+    assert_eq!(fs::read(dest_root.join("keep.txt")).expect("read keep"), b"dest content");
+    assert!(!dest_root.join("extra.txt").exists(), "extraneous file should be deleted");
+    assert!(summary.items_deleted() >= 1);
+}
+
+#[test]
+fn existing_combined_with_ignore_existing_dry_run() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    fs::write(source_root.join("present.txt"), b"new").expect("write source present");
+    fs::write(dest_root.join("present.txt"), b"old").expect("write dest present");
+    fs::write(source_root.join("missing.txt"), b"new file").expect("write source missing");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::DryRun,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .ignore_existing(true),
+        )
+        .expect("dry run succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_total(), 2);
+    assert!(summary.regular_files_skipped_missing() >= 1);
+    assert!(summary.regular_files_ignored_existing() >= 1);
+    assert_eq!(fs::read(dest_root.join("present.txt")).expect("read"), b"old");
+    assert!(!dest_root.join("missing.txt").exists());
+}
+
+#[test]
+fn existing_combined_with_ignore_existing_single_file_existing() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"updated content").expect("write source");
+    fs::write(&destination, b"original content").expect("write dest");
+
+    let operands = vec![source.into_os_string(), destination.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .ignore_existing(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_total(), 1);
+    assert_eq!(summary.regular_files_ignored_existing(), 1);
+    assert_eq!(fs::read(&destination).expect("read dest"), b"original content");
+}
+
+#[test]
+fn existing_combined_with_ignore_existing_single_file_missing() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"new content").expect("write source");
+
+    let operands = vec![source.into_os_string(), destination.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .ignore_existing(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_total(), 1);
+    assert_eq!(summary.regular_files_skipped_missing(), 1);
+    assert!(!destination.exists());
+}
+
+#[test]
+fn existing_combined_with_ignore_existing_with_records() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    fs::write(source_root.join("exists.txt"), b"updated").expect("write source exists");
+    fs::write(dest_root.join("exists.txt"), b"original").expect("write dest exists");
+    fs::write(source_root.join("missing.txt"), b"new file").expect("write source missing");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let report = plan
+        .execute_with_report(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .ignore_existing(true)
+                .collect_events(true),
+        )
+        .expect("copy succeeds");
+
+    let summary = report.summary();
+    assert_eq!(summary.files_copied(), 0);
+
+    let records = report.records();
+    assert!(
+        records.iter().any(|record| {
+            record.action() == &LocalCopyAction::SkippedExisting
+                && record.relative_path() == std::path::Path::new("exists.txt")
+        }),
+        "should have SkippedExisting record for exists.txt"
+    );
+    assert!(
+        records.iter().any(|record| {
+            record.action() == &LocalCopyAction::SkippedMissingDestination
+                && record.relative_path() == std::path::Path::new("missing.txt")
+        }),
+        "should have SkippedMissingDestination record for missing.txt"
+    );
+}
+
+#[test]
+fn existing_combined_with_ignore_existing_recursive_nested() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(dest_root.join("subdir")).expect("create dest subdir");
+
+    fs::write(source_root.join("root_exists.txt"), b"updated").expect("write");
+    fs::write(dest_root.join("root_exists.txt"), b"original").expect("write");
+    fs::write(source_root.join("root_new.txt"), b"brand new").expect("write");
+    fs::write(source_root.join("subdir/sub_exists.txt"), b"updated sub").expect("write");
+    fs::write(dest_root.join("subdir/sub_exists.txt"), b"original sub").expect("write");
+    fs::write(source_root.join("subdir/sub_new.txt"), b"brand new sub").expect("write");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .ignore_existing(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_total(), 4);
+    assert!(summary.regular_files_skipped_missing() >= 2);
+    assert!(summary.regular_files_ignored_existing() >= 2);
+    assert_eq!(fs::read(dest_root.join("root_exists.txt")).expect("read"), b"original");
+    assert_eq!(fs::read(dest_root.join("subdir/sub_exists.txt")).expect("read"), b"original sub");
+    assert!(!dest_root.join("root_new.txt").exists());
+    assert!(!dest_root.join("subdir/sub_new.txt").exists());
+}
+
+#[test]
+fn existing_combined_with_ignore_existing_and_update() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    fs::write(source_root.join("file.txt"), b"newer").expect("write source");
+    fs::write(dest_root.join("file.txt"), b"older").expect("write dest");
+    fs::write(source_root.join("new.txt"), b"new file").expect("write new");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .ignore_existing(true)
+                .update(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_total(), 2);
+    assert_eq!(fs::read(dest_root.join("file.txt")).expect("read"), b"older");
+    assert!(!dest_root.join("new.txt").exists());
+}
