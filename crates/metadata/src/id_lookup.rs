@@ -53,12 +53,13 @@ static GID_CACHE: LazyLock<RwLock<HashMap<RawGid, RawGid>>> =
 /// Maps a remote UID to a local UID.
 ///
 /// When `numeric_ids` is true, returns the UID unchanged.
+/// UID 0 (root) is never mapped via name lookup, matching upstream rsync behavior.
 /// Otherwise, looks up the name for the remote UID and finds the local UID with that name.
 /// If lookup fails, returns the original UID.
 ///
 /// Results are cached to avoid repeated NSS lookups for files with the same owner.
 pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
-    if numeric_ids {
+    if numeric_ids || uid == 0 {
         return Some(ownership::uid_from_raw(uid));
     }
 
@@ -97,12 +98,13 @@ fn map_uid_uncached(uid: RawUid) -> RawUid {
 /// Maps a remote GID to a local GID.
 ///
 /// When `numeric_ids` is true, returns the GID unchanged.
+/// GID 0 (root/wheel) is never mapped via name lookup, matching upstream rsync behavior.
 /// Otherwise, looks up the name for the remote GID and finds the local GID with that name.
 /// If lookup fails, returns the original GID.
 ///
 /// Results are cached to avoid repeated NSS lookups for files with the same group.
 pub fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
-    if numeric_ids {
+    if numeric_ids || gid == 0 {
         return Some(ownership::gid_from_raw(gid));
     }
 
@@ -367,8 +369,8 @@ mod tests {
 
     #[test]
     fn map_uid_non_numeric_attempts_name_lookup() {
-        // UID 0 (root) should always exist on Unix systems
-        let result = map_uid(0, false);
+        // Use non-zero UID to exercise the name lookup path (uid 0 bypasses it)
+        let result = map_uid(1000, false);
         assert!(result.is_some());
     }
 
@@ -389,8 +391,8 @@ mod tests {
 
     #[test]
     fn map_gid_non_numeric_attempts_name_lookup() {
-        // GID 0 (root/wheel) should always exist on Unix systems
-        let result = map_gid(0, false);
+        // Use non-zero GID to exercise the name lookup path (gid 0 bypasses it)
+        let result = map_gid(1000, false);
         assert!(result.is_some());
     }
 
@@ -539,8 +541,8 @@ mod tests {
         clear_id_caches();
         let initial_size = uid_cache_size();
 
-        // Perform non-numeric lookup to trigger caching
-        let _ = map_uid(0, false);
+        // Use non-zero UID to trigger name-based caching (uid 0 bypasses cache)
+        let _ = map_uid(1000, false);
 
         // Cache should now contain at least one entry
         assert!(
@@ -555,8 +557,8 @@ mod tests {
         clear_id_caches();
         let initial_size = gid_cache_size();
 
-        // Perform non-numeric lookup to trigger caching
-        let _ = map_gid(0, false);
+        // Use non-zero GID to trigger name-based caching (gid 0 bypasses cache)
+        let _ = map_gid(1000, false);
 
         // Cache should now contain at least one entry
         assert!(
@@ -593,10 +595,10 @@ mod tests {
         let _lock = cache_lock().lock().unwrap();
         clear_id_caches();
 
-        // Multiple lookups for the same UID should return same result
-        let first = map_uid(0, false);
-        let second = map_uid(0, false);
-        let third = map_uid(0, false);
+        // Use non-zero UID to exercise the name-lookup + caching path
+        let first = map_uid(1000, false);
+        let second = map_uid(1000, false);
+        let third = map_uid(1000, false);
 
         assert_eq!(first, second);
         assert_eq!(second, third);
@@ -608,14 +610,103 @@ mod tests {
     #[test]
     fn clear_id_caches_empties_both_caches() {
         let _lock = cache_lock().lock().unwrap();
-        // Populate caches
-        let _ = map_uid(0, false);
-        let _ = map_gid(0, false);
+        // Populate caches with non-zero IDs (uid/gid 0 bypass cache)
+        let _ = map_uid(1000, false);
+        let _ = map_gid(1000, false);
 
         // Clear and verify
         clear_id_caches();
 
         assert_eq!(uid_cache_size(), 0, "UID cache should be empty after clear");
         assert_eq!(gid_cache_size(), 0, "GID cache should be empty after clear");
+    }
+
+    // ==================== UID/GID 0 bypass tests (upstream invariant) ====================
+    //
+    // From the rsync man page: "The special uid 0 and the special group 0 are
+    // never mapped via user/group names even if the --numeric-ids option is not
+    // specified."
+
+    #[test]
+    fn map_uid_zero_bypasses_name_lookup_even_without_numeric_ids() {
+        // uid 0 must be returned as-is even when numeric_ids is false
+        let result = map_uid(0, false);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().as_raw(), 0);
+    }
+
+    #[test]
+    fn map_gid_zero_bypasses_name_lookup_even_without_numeric_ids() {
+        // gid 0 must be returned as-is even when numeric_ids is false
+        let result = map_gid(0, false);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().as_raw(), 0);
+    }
+
+    #[test]
+    fn map_uid_zero_does_not_populate_cache() {
+        let _lock = cache_lock().lock().unwrap();
+        clear_id_caches();
+
+        let _ = map_uid(0, false);
+
+        assert_eq!(
+            uid_cache_size(),
+            0,
+            "UID 0 should bypass cache entirely, not populate it"
+        );
+    }
+
+    #[test]
+    fn map_gid_zero_does_not_populate_cache() {
+        let _lock = cache_lock().lock().unwrap();
+        clear_id_caches();
+
+        let _ = map_gid(0, false);
+
+        assert_eq!(
+            gid_cache_size(),
+            0,
+            "GID 0 should bypass cache entirely, not populate it"
+        );
+    }
+
+    #[test]
+    fn map_uid_zero_with_numeric_ids_true() {
+        // uid 0 with numeric_ids=true should also return 0 unchanged
+        let result = map_uid(0, true);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().as_raw(), 0);
+    }
+
+    #[test]
+    fn map_gid_zero_with_numeric_ids_true() {
+        // gid 0 with numeric_ids=true should also return 0 unchanged
+        let result = map_gid(0, true);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().as_raw(), 0);
+    }
+
+    #[test]
+    fn non_zero_ids_still_use_name_lookup_when_numeric_ids_false() {
+        let _lock = cache_lock().lock().unwrap();
+        clear_id_caches();
+
+        // Non-zero IDs with numeric_ids=false should go through the name
+        // lookup path and populate the cache, confirming the bypass is
+        // specific to ID 0.
+        let _ = map_uid(1000, false);
+        assert!(
+            uid_cache_size() > 0,
+            "Non-zero UID should populate cache via name lookup path"
+        );
+
+        clear_id_caches();
+
+        let _ = map_gid(1000, false);
+        assert!(
+            gid_cache_size() > 0,
+            "Non-zero GID should populate cache via name lookup path"
+        );
     }
 }
