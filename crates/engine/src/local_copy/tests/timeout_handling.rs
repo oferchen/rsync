@@ -519,3 +519,201 @@ fn timeout_exit_code_matches_core_exit_code() {
     // ExitCode::Timeout = 30 (from core/src/exit_code.rs)
     assert_eq!(super::filter_program::TIMEOUT_EXIT_CODE, 30);
 }
+
+// =============================================================================
+// Timeout Option Wiring Tests
+// =============================================================================
+
+/// Verifies that `LocalCopyOptions::with_timeout(Some(...))` correctly stores
+/// the value and `timeout()` returns it.
+#[test]
+fn options_with_timeout_stores_and_retrieves_value() {
+    let duration = Duration::from_secs(45);
+    let opts = LocalCopyOptions::new().with_timeout(Some(duration));
+    assert_eq!(opts.timeout(), Some(duration));
+}
+
+/// Setting timeout to `None` effectively disables inactivity timeout.
+#[test]
+fn options_with_timeout_none_disables_timeout() {
+    let opts = LocalCopyOptions::new()
+        .with_timeout(Some(Duration::from_secs(60)))
+        .with_timeout(None);
+    assert!(opts.timeout().is_none());
+}
+
+/// Default options have no timeout configured.
+#[test]
+fn options_default_has_no_timeout() {
+    let opts = LocalCopyOptions::new();
+    assert!(opts.timeout().is_none());
+}
+
+/// Verify that `Default::default()` also yields no timeout.
+#[test]
+fn options_default_trait_has_no_timeout() {
+    let opts = LocalCopyOptions::default();
+    assert!(opts.timeout().is_none());
+}
+
+/// Timeout can be overwritten multiple times; only the last value applies.
+#[test]
+fn options_timeout_last_write_wins() {
+    let opts = LocalCopyOptions::new()
+        .with_timeout(Some(Duration::from_secs(10)))
+        .with_timeout(Some(Duration::from_secs(30)))
+        .with_timeout(Some(Duration::from_secs(120)));
+    assert_eq!(opts.timeout(), Some(Duration::from_secs(120)));
+}
+
+/// A very small timeout (1 ms) is faithfully stored.
+#[test]
+fn options_with_very_small_timeout() {
+    let duration = Duration::from_millis(1);
+    let opts = LocalCopyOptions::new().with_timeout(Some(duration));
+    assert_eq!(opts.timeout(), Some(duration));
+}
+
+/// A very large timeout (24 hours) is faithfully stored.
+#[test]
+fn options_with_very_large_timeout() {
+    let duration = Duration::from_secs(86400);
+    let opts = LocalCopyOptions::new().with_timeout(Some(duration));
+    assert_eq!(opts.timeout(), Some(duration));
+}
+
+/// Timeout with zero duration is technically stored (means "timeout
+/// immediately"), even though upstream rsync treats 0 as "disable".
+/// The LocalCopyOptions layer preserves the value as-is; the
+/// upstream semantics are handled at the CLI parsing layer.
+#[test]
+fn options_with_zero_duration_timeout() {
+    let duration = Duration::from_secs(0);
+    let opts = LocalCopyOptions::new().with_timeout(Some(duration));
+    assert_eq!(opts.timeout(), Some(Duration::ZERO));
+}
+
+// =============================================================================
+// Stop-At Option Wiring Tests
+// =============================================================================
+
+/// Verify stop_at option can be set and read back.
+#[test]
+fn options_stop_at_stores_and_retrieves_deadline() {
+    let deadline = SystemTime::now();
+    let opts = LocalCopyOptions::new().with_stop_at(Some(deadline));
+    assert!(opts.stop_at().is_some());
+}
+
+/// Setting stop_at to None clears any previously set deadline.
+#[test]
+fn options_stop_at_none_clears_deadline() {
+    let deadline = SystemTime::now();
+    let opts = LocalCopyOptions::new()
+        .with_stop_at(Some(deadline))
+        .with_stop_at(None);
+    assert!(opts.stop_at().is_none());
+}
+
+/// Default options have no stop-at deadline.
+#[test]
+fn options_default_has_no_stop_at() {
+    let opts = LocalCopyOptions::new();
+    assert!(opts.stop_at().is_none());
+}
+
+// =============================================================================
+// Timeout Error `is_io_error()` Method Tests
+// =============================================================================
+
+/// Timeout errors are *not* I/O errors; `is_io_error()` must return false.
+#[test]
+fn timeout_error_is_not_io_error() {
+    let error = LocalCopyError::timeout(Duration::from_secs(30));
+    assert!(!error.is_io_error());
+}
+
+/// Stop-at errors are also not I/O errors.
+#[test]
+fn stop_at_error_is_not_io_error() {
+    let error = LocalCopyError::stop_at_reached(SystemTime::now());
+    assert!(!error.is_io_error());
+}
+
+/// Only `Io` variant errors report `is_io_error() == true`.
+#[test]
+fn io_error_is_io_error() {
+    let error = LocalCopyError::io(
+        "read",
+        PathBuf::from("/tmp/test"),
+        io::Error::new(io::ErrorKind::TimedOut, "operation timed out"),
+    );
+    assert!(error.is_io_error());
+}
+
+// =============================================================================
+// Timeout and Stop-At Interaction Tests
+// =============================================================================
+
+/// Both timeout and stop-at can be configured simultaneously.
+#[test]
+fn options_timeout_and_stop_at_coexist() {
+    let timeout = Duration::from_secs(60);
+    let deadline = SystemTime::now();
+    let opts = LocalCopyOptions::new()
+        .with_timeout(Some(timeout))
+        .with_stop_at(Some(deadline));
+    assert_eq!(opts.timeout(), Some(timeout));
+    assert!(opts.stop_at().is_some());
+}
+
+/// Clearing timeout does not affect stop-at, and vice versa.
+#[test]
+fn options_clearing_timeout_preserves_stop_at() {
+    let deadline = SystemTime::now();
+    let opts = LocalCopyOptions::new()
+        .with_timeout(Some(Duration::from_secs(60)))
+        .with_stop_at(Some(deadline))
+        .with_timeout(None);
+    assert!(opts.timeout().is_none());
+    assert!(opts.stop_at().is_some());
+}
+
+#[test]
+fn options_clearing_stop_at_preserves_timeout() {
+    let deadline = SystemTime::now();
+    let opts = LocalCopyOptions::new()
+        .with_timeout(Some(Duration::from_secs(60)))
+        .with_stop_at(Some(deadline))
+        .with_stop_at(None);
+    assert_eq!(opts.timeout(), Some(Duration::from_secs(60)));
+    assert!(opts.stop_at().is_none());
+}
+
+// =============================================================================
+// Stop-At Error Details Tests
+// =============================================================================
+
+/// Stop-at error message mentions "stopping at requested limit".
+#[test]
+fn stop_at_error_message_mentions_stopping() {
+    let error = LocalCopyError::stop_at_reached(SystemTime::now());
+    let message = error.to_string();
+    assert!(
+        message.contains("stopping"),
+        "message should mention stopping: {message}"
+    );
+}
+
+/// Stop-at error preserves the deadline in the kind.
+#[test]
+fn stop_at_error_preserves_deadline_in_kind() {
+    let deadline = SystemTime::now();
+    let error = LocalCopyError::stop_at_reached(deadline);
+    match error.kind() {
+        LocalCopyErrorKind::StopAtReached { target } => {
+            assert_eq!(*target, deadline);
+        }
+        _ => panic!("Expected StopAtReached variant"),
+    }
+}
