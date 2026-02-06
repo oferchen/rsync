@@ -205,6 +205,70 @@ impl LocalCopyOptions {
     pub const fn numeric_ids_enabled(&self) -> bool {
         self.numeric_ids
     }
+
+    /// Configures `--super` mode.
+    ///
+    /// When set to `Some(true)`, the receiving side attempts super-user
+    /// activities (ownership preservation, device/special creation) even if
+    /// the process is not running as root. `Some(false)` explicitly disables
+    /// these attempts. `None` defers to the default behaviour, which checks
+    /// the effective UID at runtime.
+    #[must_use]
+    #[doc(alias = "--super")]
+    pub const fn super_mode(mut self, mode: Option<bool>) -> Self {
+        self.super_mode = mode;
+        self
+    }
+
+    /// Reports the configured `--super` mode.
+    #[must_use]
+    pub const fn super_mode_setting(&self) -> Option<bool> {
+        self.super_mode
+    }
+
+    /// Returns whether super-user activities should be attempted.
+    ///
+    /// When `--super` is explicitly set, that value is returned directly.
+    /// Otherwise the decision falls back to checking whether the effective
+    /// user is root (UID 0 on Unix).
+    #[must_use]
+    pub fn am_root(&self) -> bool {
+        match self.super_mode {
+            Some(value) => value,
+            None => is_effective_root(),
+        }
+    }
+
+    /// Configures `--fake-super` mode.
+    ///
+    /// When enabled, privileged metadata (ownership, device numbers) is
+    /// stored in extended attributes (`user.rsync.%stat`) instead of being
+    /// applied directly. This allows backup and restore operations without
+    /// root privileges.
+    #[must_use]
+    #[doc(alias = "--fake-super")]
+    pub const fn fake_super(mut self, enabled: bool) -> Self {
+        self.fake_super = enabled;
+        self
+    }
+
+    /// Reports whether `--fake-super` mode is enabled.
+    #[must_use]
+    pub const fn fake_super_enabled(&self) -> bool {
+        self.fake_super
+    }
+}
+
+/// Returns whether the current process is running as the effective root user.
+#[cfg(unix)]
+fn is_effective_root() -> bool {
+    rustix::process::geteuid().is_root()
+}
+
+/// On non-Unix platforms, there is no concept of a root user.
+#[cfg(not(unix))]
+fn is_effective_root() -> bool {
+    false
 }
 
 #[cfg(all(unix, feature = "xattr"))]
@@ -322,5 +386,48 @@ mod tests {
     fn group_mapping_none_by_default() {
         let options = LocalCopyOptions::new();
         assert!(options.group_mapping().is_none());
+    }
+
+    #[test]
+    fn super_mode_none_by_default() {
+        let options = LocalCopyOptions::new();
+        assert_eq!(options.super_mode_setting(), None);
+    }
+
+    #[test]
+    fn super_mode_set_true() {
+        let options = LocalCopyOptions::new().super_mode(Some(true));
+        assert_eq!(options.super_mode_setting(), Some(true));
+        assert!(options.am_root());
+    }
+
+    #[test]
+    fn super_mode_set_false() {
+        let options = LocalCopyOptions::new().super_mode(Some(false));
+        assert_eq!(options.super_mode_setting(), Some(false));
+        assert!(!options.am_root());
+    }
+
+    #[test]
+    fn super_mode_none_defers_to_euid() {
+        let options = LocalCopyOptions::new();
+        // am_root() should reflect whether we are actually root
+        let expected = is_effective_root();
+        assert_eq!(options.am_root(), expected);
+    }
+
+    #[test]
+    fn fake_super_disabled_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(!options.fake_super_enabled());
+    }
+
+    #[test]
+    fn fake_super_round_trip() {
+        let options = LocalCopyOptions::new().fake_super(true);
+        assert!(options.fake_super_enabled());
+
+        let disabled = options.fake_super(false);
+        assert!(!disabled.fake_super_enabled());
     }
 }

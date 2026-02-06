@@ -223,6 +223,10 @@ pub struct LocalCopyOptionsBuilder {
 
     // Batch mode
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
+
+    // Super-user mode
+    super_mode: Option<bool>,
+    fake_super: bool,
 }
 
 impl Default for LocalCopyOptionsBuilder {
@@ -323,6 +327,8 @@ impl LocalCopyOptionsBuilder {
             user_mapping: None,
             group_mapping: None,
             batch_writer: None,
+            super_mode: None,
+            fake_super: false,
         }
     }
 
@@ -1187,6 +1193,29 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    // ==================== Super-User Mode ====================
+
+    /// Configures `--super` mode.
+    ///
+    /// When set to `Some(true)`, the receiving side attempts super-user
+    /// activities (ownership preservation, device/special creation) even
+    /// if the process is not running as root.
+    #[must_use]
+    pub fn super_mode(mut self, mode: Option<bool>) -> Self {
+        self.super_mode = mode;
+        self
+    }
+
+    /// Configures `--fake-super` mode.
+    ///
+    /// When enabled, privileged metadata is stored in extended attributes
+    /// instead of being applied directly.
+    #[must_use]
+    pub fn fake_super(mut self, enabled: bool) -> Self {
+        self.fake_super = enabled;
+        self
+    }
+
     // ==================== Batch Mode ====================
 
     /// Sets the batch writer.
@@ -1340,6 +1369,8 @@ impl LocalCopyOptionsBuilder {
             user_mapping: self.user_mapping,
             group_mapping: self.group_mapping,
             batch_writer: self.batch_writer,
+            super_mode: self.super_mode,
+            fake_super: self.fake_super,
         })
     }
 
@@ -1435,6 +1466,8 @@ impl LocalCopyOptionsBuilder {
             user_mapping: self.user_mapping,
             group_mapping: self.group_mapping,
             batch_writer: self.batch_writer,
+            super_mode: self.super_mode,
+            fake_super: self.fake_super,
         }
     }
 }

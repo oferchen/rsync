@@ -168,6 +168,14 @@ pub struct LocalCopyOptions {
     pub(super) user_mapping: Option<UserMapping>,
     pub(super) group_mapping: Option<GroupMapping>,
     pub(super) batch_writer: Option<Arc<Mutex<BatchWriter>>>,
+    /// When `Some(true)`, the receiving side attempts super-user activities
+    /// (preserving ownership, devices, specials) even when not running as root.
+    /// When `Some(false)`, explicitly disables super-user attempts.
+    /// When `None`, defers to the default (check effective UID).
+    pub(super) super_mode: Option<bool>,
+    /// When enabled, stores/restores privileged metadata via xattrs instead
+    /// of actually requiring root privileges.
+    pub(super) fake_super: bool,
 }
 
 impl LocalCopyOptions {
@@ -262,6 +270,8 @@ impl LocalCopyOptions {
             user_mapping: None,
             group_mapping: None,
             batch_writer: None,
+            super_mode: None,
+            fake_super: false,
         }
     }
 }
