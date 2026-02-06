@@ -99,6 +99,12 @@ impl<'a> CopyContext<'a> {
     }
 
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
+        if !self.deletions_allowed() {
+            // I/O errors occurred and --ignore-errors is not set;
+            // suppress deletions to prevent data loss.
+            self.deferred_deletions.clear();
+            return Ok(());
+        }
         let pending = std::mem::take(&mut self.deferred_deletions);
         for entry in pending {
             self.enforce_timeout()?;

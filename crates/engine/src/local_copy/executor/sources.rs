@@ -796,18 +796,37 @@ pub(crate) fn copy_sources(
             let destination_behaves_like_directory =
                 destination_state.is_dir || plan.destination_spec().force_directory();
 
+            let mut first_io_error: Option<LocalCopyError> = None;
             for source in plan.sources() {
-                process_single_source(
+                let result = process_single_source(
                     context,
                     plan,
                     source,
                     destination_path,
                     destination_behaves_like_directory,
                     multiple_sources,
-                )?;
+                );
+                if let Err(error) = result {
+                    if error.is_io_error() && context.options().delete_extraneous() {
+                        // Record that I/O errors occurred so deletions can be
+                        // suppressed unless --ignore-errors is set.
+                        context.record_io_error();
+                        if first_io_error.is_none() {
+                            first_io_error = Some(error);
+                        }
+                    } else {
+                        return Err(error);
+                    }
+                }
             }
 
             flush_deferred_operations(context)?;
+
+            // If there were I/O errors during transfer, report the first one
+            // after deferred operations complete.
+            if let Some(error) = first_io_error {
+                return Err(error);
+            }
             Ok(())
         })()
     };

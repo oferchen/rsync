@@ -106,6 +106,10 @@ pub(crate) struct CopyContext<'a> {
     /// Cache of prefetched file checksums for parallel checksum mode.
     #[cfg(feature = "parallel")]
     checksum_cache: Option<super::executor::ChecksumCache>,
+    /// Tracks whether any I/O errors occurred during the transfer.
+    /// When set to `true` and `--ignore-errors` is not enabled, deletions
+    /// are suppressed to prevent data loss.
+    io_errors_occurred: bool,
 }
 
 pub(crate) struct FinalizeMetadataParams<'a> {
