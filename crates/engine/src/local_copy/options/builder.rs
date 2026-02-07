@@ -163,6 +163,7 @@ pub struct LocalCopyOptionsBuilder {
     sparse: bool,
     checksum: bool,
     checksum_algorithm: SignatureAlgorithm,
+    checksum_seed: Option<u32>,
     size_only: bool,
     ignore_times: bool,
     ignore_existing: bool,
@@ -199,6 +200,7 @@ pub struct LocalCopyOptionsBuilder {
 
     // Timeout options
     timeout: Option<Duration>,
+    contimeout: Option<Duration>,
     stop_at: Option<SystemTime>,
 
     // Extended attributes
@@ -230,6 +232,10 @@ pub struct LocalCopyOptionsBuilder {
 
     // Error handling
     ignore_errors: bool,
+
+    // Logging options
+    log_file: Option<PathBuf>,
+    log_file_format: Option<String>,
 }
 
 impl Default for LocalCopyOptionsBuilder {
@@ -288,6 +294,7 @@ impl LocalCopyOptionsBuilder {
             checksum_algorithm: SignatureAlgorithm::Md5 {
                 seed_config: checksums::strong::Md5Seed::none(),
             },
+            checksum_seed: None,
             size_only: false,
             ignore_times: false,
             ignore_existing: false,
@@ -316,6 +323,7 @@ impl LocalCopyOptionsBuilder {
             mkpath: false,
             prune_empty_dirs: false,
             timeout: None,
+            contimeout: None,
             stop_at: None,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs: false,
@@ -333,6 +341,8 @@ impl LocalCopyOptionsBuilder {
             super_mode: None,
             fake_super: false,
             ignore_errors: false,
+            log_file: None,
+            log_file_format: None,
         }
     }
 
@@ -823,6 +833,17 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Sets a fixed checksum seed for reproducible transfers.
+    ///
+    /// When `None` (the default), the checksum seed is chosen automatically.
+    /// Setting a specific value allows reproducible checksums across runs.
+    #[must_use]
+    #[doc(alias = "--checksum-seed")]
+    pub fn with_checksum_seed(mut self, seed: Option<u32>) -> Self {
+        self.checksum_seed = seed;
+        self
+    }
+
     /// Enables size-only comparison.
     #[must_use]
     pub fn size_only(mut self, enabled: bool) -> Self {
@@ -1099,6 +1120,13 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Sets the connection timeout.
+    #[must_use]
+    pub fn contimeout(mut self, contimeout: Option<Duration>) -> Self {
+        self.contimeout = contimeout;
+        self
+    }
+
     /// Sets the stop-at deadline.
     #[must_use]
     pub fn stop_at(mut self, deadline: Option<SystemTime>) -> Self {
@@ -1227,6 +1255,22 @@ impl LocalCopyOptionsBuilder {
     #[must_use]
     pub fn ignore_errors(mut self, enabled: bool) -> Self {
         self.ignore_errors = enabled;
+        self
+    }
+
+    // ==================== Logging Options ====================
+
+    /// Sets the log file path for transfer activity logging.
+    #[must_use]
+    pub fn log_file<P: Into<PathBuf>>(mut self, path: Option<P>) -> Self {
+        self.log_file = path.map(Into::into);
+        self
+    }
+
+    /// Sets the per-item log format string.
+    #[must_use]
+    pub fn log_file_format<S: Into<String>>(mut self, format: Option<S>) -> Self {
+        self.log_file_format = format.map(Into::into);
         self
     }
 
@@ -1375,6 +1419,7 @@ impl LocalCopyOptionsBuilder {
             sparse: self.sparse,
             checksum: self.checksum,
             checksum_algorithm: self.checksum_algorithm,
+            checksum_seed: self.checksum_seed,
             size_only: self.size_only,
             ignore_times: self.ignore_times,
             ignore_existing: self.ignore_existing,
@@ -1403,6 +1448,7 @@ impl LocalCopyOptionsBuilder {
             mkpath: self.mkpath,
             prune_empty_dirs: self.prune_empty_dirs,
             timeout: self.timeout,
+            contimeout: self.contimeout,
             stop_at: self.stop_at,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs: self.preserve_xattrs,
@@ -1420,6 +1466,8 @@ impl LocalCopyOptionsBuilder {
             super_mode: self.super_mode,
             fake_super: self.fake_super,
             ignore_errors: self.ignore_errors,
+            log_file: self.log_file,
+            log_file_format: self.log_file_format,
         })
     }
 
@@ -1473,6 +1521,7 @@ impl LocalCopyOptionsBuilder {
             sparse: self.sparse,
             checksum: self.checksum,
             checksum_algorithm: self.checksum_algorithm,
+            checksum_seed: self.checksum_seed,
             size_only: self.size_only,
             ignore_times: self.ignore_times,
             ignore_existing: self.ignore_existing,
@@ -1501,6 +1550,7 @@ impl LocalCopyOptionsBuilder {
             mkpath: self.mkpath,
             prune_empty_dirs: self.prune_empty_dirs,
             timeout: self.timeout,
+            contimeout: self.contimeout,
             stop_at: self.stop_at,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs: self.preserve_xattrs,
@@ -1518,6 +1568,8 @@ impl LocalCopyOptionsBuilder {
             super_mode: self.super_mode,
             fake_super: self.fake_super,
             ignore_errors: self.ignore_errors,
+            log_file: self.log_file,
+            log_file_format: self.log_file_format,
         }
     }
 }

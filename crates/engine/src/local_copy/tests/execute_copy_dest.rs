@@ -591,3 +591,133 @@ fn copy_dest_empty_reference_directory() {
     assert_eq!(fs::read(&destination_file).expect("read dest"), b"content");
     assert_eq!(summary.files_copied(), 1);
 }
+
+// ==================== Copy-Dest with Inplace Mode Tests ====================
+
+#[test]
+fn copy_dest_with_inplace_mode_still_copies() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let copy_dest_dir = temp.path().join("copy_dest");
+    let destination_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source dir");
+    fs::create_dir_all(&copy_dest_dir).expect("create copy_dest dir");
+    fs::create_dir_all(&destination_dir).expect("create dest dir");
+
+    let source_file = source_dir.join("file.txt");
+    let copy_dest_file = copy_dest_dir.join("file.txt");
+
+    fs::write(&source_file, b"inplace content").expect("write source");
+    fs::write(&copy_dest_file, b"inplace content").expect("write copy_dest");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("source mtime");
+    set_file_mtime(&copy_dest_file, timestamp).expect("copy_dest mtime");
+
+    let destination_file = destination_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        destination_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .inplace(true)
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            &copy_dest_dir,
+        )]);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // With --inplace, copy-dest should still create the file
+    assert!(destination_file.exists());
+    assert_eq!(fs::read(&destination_file).expect("read dest"), b"inplace content");
+    assert_eq!(summary.files_copied(), 1);
+}
+
+// ==================== Copy-Dest with Nonexistent Directory Tests ====================
+
+#[test]
+fn copy_dest_nonexistent_directory_transfers_normally() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let copy_dest_dir = temp.path().join("nonexistent_copy_dest");
+    let destination_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source dir");
+    // Intentionally don't create copy_dest_dir
+    fs::create_dir_all(&destination_dir).expect("create dest dir");
+
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"orphan content").expect("write source");
+
+    let destination_file = destination_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        destination_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            &copy_dest_dir,
+        )]);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(destination_file.exists());
+    assert_eq!(fs::read(&destination_file).expect("read dest"), b"orphan content");
+    assert_eq!(summary.files_copied(), 1);
+}
+
+// ==================== Copy-Dest with Zero-Length File Tests ====================
+
+#[test]
+fn copy_dest_copies_zero_length_file() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let copy_dest_dir = temp.path().join("copy_dest");
+    let destination_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source dir");
+    fs::create_dir_all(&copy_dest_dir).expect("create copy_dest dir");
+    fs::create_dir_all(&destination_dir).expect("create dest dir");
+
+    let source_file = source_dir.join("empty.txt");
+    let copy_dest_file = copy_dest_dir.join("empty.txt");
+
+    fs::write(&source_file, b"").expect("write source");
+    fs::write(&copy_dest_file, b"").expect("write copy_dest");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("source mtime");
+    set_file_mtime(&copy_dest_file, timestamp).expect("copy_dest mtime");
+
+    let destination_file = destination_dir.join("empty.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        destination_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            &copy_dest_dir,
+        )]);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Copy-dest always creates the file (unlike compare-dest which skips)
+    assert!(destination_file.exists());
+    assert_eq!(destination_file.metadata().expect("metadata").len(), 0);
+    assert_eq!(summary.files_copied(), 1);
+}

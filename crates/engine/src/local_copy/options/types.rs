@@ -126,6 +126,7 @@ pub struct LocalCopyOptions {
     pub(super) sparse: bool,
     pub(super) checksum: bool,
     pub(super) checksum_algorithm: SignatureAlgorithm,
+    pub(super) checksum_seed: Option<u32>,
     pub(super) size_only: bool,
     pub(super) ignore_times: bool,
     pub(super) ignore_existing: bool,
@@ -154,6 +155,7 @@ pub struct LocalCopyOptions {
     pub(super) mkpath: bool,
     pub(super) prune_empty_dirs: bool,
     pub(super) timeout: Option<Duration>,
+    pub(super) contimeout: Option<Duration>,
     pub(super) stop_at: Option<SystemTime>,
     #[cfg(all(unix, feature = "xattr"))]
     pub(super) preserve_xattrs: bool,
@@ -181,6 +183,10 @@ pub struct LocalCopyOptions {
     /// errors are recorded, preventing data loss when the sender could not read
     /// all files.
     pub(super) ignore_errors: bool,
+    /// Optional file path for logging transfer activity.
+    pub(super) log_file: Option<PathBuf>,
+    /// Optional format string for per-item log entries.
+    pub(super) log_file_format: Option<String>,
 }
 
 impl LocalCopyOptions {
@@ -233,6 +239,7 @@ impl LocalCopyOptions {
             checksum_algorithm: SignatureAlgorithm::Md5 {
                 seed_config: checksums::strong::Md5Seed::none(),
             },
+            checksum_seed: None,
             size_only: false,
             ignore_times: false,
             ignore_existing: false,
@@ -261,6 +268,7 @@ impl LocalCopyOptions {
             mkpath: false,
             prune_empty_dirs: false,
             timeout: None,
+            contimeout: None,
             stop_at: None,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs: false,
@@ -278,6 +286,8 @@ impl LocalCopyOptions {
             super_mode: None,
             fake_super: false,
             ignore_errors: false,
+            log_file: None,
+            log_file_format: None,
         }
     }
 }
