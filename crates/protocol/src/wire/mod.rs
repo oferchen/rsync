@@ -21,6 +21,7 @@ pub mod delta;
 pub mod file_entry;
 pub mod file_entry_decode;
 pub mod signature;
+pub mod vectored;
 
 pub use self::compressed_token::{
     CompressedToken, CompressedTokenDecoder, CompressedTokenEncoder, DEFLATED_DATA, END_FLAG,
