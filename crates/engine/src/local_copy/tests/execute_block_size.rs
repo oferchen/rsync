@@ -500,14 +500,14 @@ fn block_size_override_recursive_directory_copy() {
     // Existing destination files (old versions)
     fs::write(dest_source.join("a.bin"), &old_a).expect("write dest a");
     fs::write(dest_source.join("b.bin"), &old_b).expect("write dest b");
-    set_file_mtime(&dest_source.join("a.bin"), FileTime::from_unix_time(1, 0)).expect("set mtime");
-    set_file_mtime(&dest_source.join("b.bin"), FileTime::from_unix_time(1, 0)).expect("set mtime");
+    set_file_mtime(dest_source.join("a.bin"), FileTime::from_unix_time(1, 0)).expect("set mtime");
+    set_file_mtime(dest_source.join("b.bin"), FileTime::from_unix_time(1, 0)).expect("set mtime");
 
     // New source files
     fs::write(source_root.join("a.bin"), &new_a).expect("write source a");
     fs::write(source_root.join("b.bin"), &new_b).expect("write source b");
-    set_file_mtime(&source_root.join("a.bin"), FileTime::from_unix_time(2, 0)).expect("set mtime");
-    set_file_mtime(&source_root.join("b.bin"), FileTime::from_unix_time(2, 0)).expect("set mtime");
+    set_file_mtime(source_root.join("a.bin"), FileTime::from_unix_time(2, 0)).expect("set mtime");
+    set_file_mtime(source_root.join("b.bin"), FileTime::from_unix_time(2, 0)).expect("set mtime");
 
     let operands = vec![
         source_root.into_os_string(),
@@ -573,7 +573,7 @@ fn block_size_override_different_sizes_all_produce_correct_output() {
 
         let summary = plan
             .execute_with_options(LocalCopyExecution::Apply, opts)
-            .expect(&format!("block_size={block_size_val} copy succeeds"));
+            .unwrap_or_else(|_| panic!("block_size={block_size_val} copy succeeds"));
 
         assert_eq!(
             fs::read(&dst).expect("read dest"),

@@ -295,7 +295,7 @@ fn process_work_item(work: &DeltaWork) -> DeltaResult {
 
     // Simple block-level comparison to simulate delta generation
     let block_size = work.block_size as usize;
-    let num_blocks = (basis_data.len() + block_size - 1) / block_size;
+    let num_blocks = basis_data.len().div_ceil(block_size);
     let mut matching_blocks = 0usize;
 
     for i in 0..num_blocks {
@@ -484,10 +484,10 @@ mod tests {
         let mut work = vec![];
 
         for i in 0..10 {
-            let basis = temp.path().join(format!("basis_{}.txt", i));
-            let target = temp.path().join(format!("target_{}.txt", i));
-            std::fs::write(&basis, format!("data {}", i)).unwrap();
-            std::fs::write(&target, format!("data {}", i)).unwrap();
+            let basis = temp.path().join(format!("basis_{i}.txt"));
+            let target = temp.path().join(format!("target_{i}.txt"));
+            std::fs::write(&basis, format!("data {i}")).unwrap();
+            std::fs::write(&target, format!("data {i}")).unwrap();
 
             work.push(DeltaWork {
                 index: i,
@@ -515,10 +515,10 @@ mod tests {
 
         // Create files in reverse order to test ordering
         for i in (0..8).rev() {
-            let basis = temp.path().join(format!("basis_{}.txt", i));
-            let target = temp.path().join(format!("target_{}.txt", i));
-            std::fs::write(&basis, format!("content {}", i)).unwrap();
-            std::fs::write(&target, format!("content {}", i)).unwrap();
+            let basis = temp.path().join(format!("basis_{i}.txt"));
+            let target = temp.path().join(format!("target_{i}.txt"));
+            std::fs::write(&basis, format!("content {i}")).unwrap();
+            std::fs::write(&target, format!("content {i}")).unwrap();
 
             work.push(DeltaWork {
                 index: i,
@@ -547,8 +547,8 @@ mod tests {
 
         // Create 3 identical files
         for i in 0..3 {
-            let basis = temp.path().join(format!("identical_{}.txt", i));
-            let target = temp.path().join(format!("identical_{}.txt", i));
+            let basis = temp.path().join(format!("identical_{i}.txt"));
+            let target = temp.path().join(format!("identical_{i}.txt"));
             std::fs::write(&basis, b"same").unwrap();
             std::fs::write(&target, b"same").unwrap();
 
@@ -562,8 +562,8 @@ mod tests {
 
         // Create 2 different files
         for i in 3..5 {
-            let basis = temp.path().join(format!("different_basis_{}.txt", i));
-            let target = temp.path().join(format!("different_target_{}.txt", i));
+            let basis = temp.path().join(format!("different_basis_{i}.txt"));
+            let target = temp.path().join(format!("different_target_{i}.txt"));
             std::fs::write(&basis, b"old").unwrap();
             std::fs::write(&target, b"new").unwrap();
 
@@ -634,10 +634,10 @@ mod tests {
         let mut work = vec![];
 
         for i in 0..6 {
-            let basis = temp.path().join(format!("file_{}.txt", i));
-            let target = temp.path().join(format!("file_{}.txt", i));
-            std::fs::write(&basis, format!("content for file {}", i)).unwrap();
-            std::fs::write(&target, format!("content for file {}", i)).unwrap();
+            let basis = temp.path().join(format!("file_{i}.txt"));
+            let target = temp.path().join(format!("file_{i}.txt"));
+            std::fs::write(&basis, format!("content for file {i}")).unwrap();
+            std::fs::write(&target, format!("content for file {i}")).unwrap();
 
             work.push(DeltaWork {
                 index: i,

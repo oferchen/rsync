@@ -33,11 +33,10 @@ impl fmt::Display for DeletionError {
             Self::LimitExceeded { attempted, limit } => {
                 write!(
                     f,
-                    "deletion limit exceeded: attempted to delete {} files, limit is {}",
-                    attempted, limit
+                    "deletion limit exceeded: attempted to delete {attempted} files, limit is {limit}"
                 )
             }
-            Self::Io(err) => write!(f, "I/O error during deletion: {}", err),
+            Self::Io(err) => write!(f, "I/O error during deletion: {err}"),
         }
     }
 }
@@ -213,10 +212,7 @@ impl DeletionStrategy for DeleteDelayStrategy {
 /// # Returns
 ///
 /// `true` if the entry should be considered for deletion.
-pub fn is_extraneous_entry<S: AsRef<OsStr>>(
-    entry_name: &OsStr,
-    source_entries: &[S],
-) -> bool {
+pub fn is_extraneous_entry<S: AsRef<OsStr>>(entry_name: &OsStr, source_entries: &[S]) -> bool {
     !source_entries.iter().any(|s| s.as_ref() == entry_name)
 }
 
@@ -595,7 +591,11 @@ mod tests {
 
     #[test]
     fn build_keep_set_creates_set_from_strings() {
-        let entries = vec![OsString::from("a"), OsString::from("b"), OsString::from("c")];
+        let entries = vec![
+            OsString::from("a"),
+            OsString::from("b"),
+            OsString::from("c"),
+        ];
         let set = build_keep_set(&entries);
         assert_eq!(set.len(), 3);
         assert!(set.contains(OsStr::new("a")));
@@ -616,7 +616,7 @@ mod tests {
             attempted: 150,
             limit: 100,
         };
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("150"));
         assert!(msg.contains("100"));
         assert!(msg.contains("limit exceeded"));

@@ -79,7 +79,8 @@ mod md5_simd_parity {
         for (i, input) in inputs.iter().enumerate() {
             let reference = Md5::digest(input);
             assert_eq!(
-                batch_results[i], reference,
+                batch_results[i],
+                reference,
                 "SIMD MD5 batch[{i}] does not match strong::Md5 for input {:?}",
                 String::from_utf8_lossy(input)
             );
@@ -112,7 +113,8 @@ mod md5_simd_parity {
     /// Test with data sizes at MD5 block boundaries (55, 56, 63, 64, 65, 119, 120, 128).
     #[test]
     fn simd_md5_block_boundary_sizes() {
-        let boundary_sizes: &[usize] = &[0, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129];
+        let boundary_sizes: &[usize] =
+            &[0, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129];
 
         for &size in boundary_sizes {
             let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
@@ -136,7 +138,11 @@ mod md5_simd_parity {
     #[test]
     fn simd_md5_batch_4_inputs_full_lane() {
         let inputs: Vec<Vec<u8>> = (0..4)
-            .map(|i| (0..100 + i * 50).map(|j| ((i * 37 + j) % 256) as u8).collect())
+            .map(|i| {
+                (0..100 + i * 50)
+                    .map(|j| ((i * 37 + j) % 256) as u8)
+                    .collect()
+            })
             .collect();
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
 
@@ -155,7 +161,11 @@ mod md5_simd_parity {
     #[test]
     fn simd_md5_batch_8_inputs_full_lane() {
         let inputs: Vec<Vec<u8>> = (0..8)
-            .map(|i| (0..200 + i * 30).map(|j| ((i * 53 + j) % 256) as u8).collect())
+            .map(|i| {
+                (0..200 + i * 30)
+                    .map(|j| ((i * 53 + j) % 256) as u8)
+                    .collect()
+            })
             .collect();
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
 
@@ -174,7 +184,11 @@ mod md5_simd_parity {
     #[test]
     fn simd_md5_batch_16_inputs_full_lane() {
         let inputs: Vec<Vec<u8>> = (0..16)
-            .map(|i| (0..150 + i * 20).map(|j| ((i * 71 + j) % 256) as u8).collect())
+            .map(|i| {
+                (0..150 + i * 20)
+                    .map(|j| ((i * 71 + j) % 256) as u8)
+                    .collect()
+            })
             .collect();
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
 
@@ -343,8 +357,10 @@ mod md5_simd_parity {
         use rand::Rng;
         let mut rng = rand::thread_rng();
 
-        let sizes = [0, 1, 15, 16, 17, 31, 32, 33, 55, 56, 63, 64, 65,
-                     127, 128, 129, 255, 256, 512, 1000, 4096, 10_000];
+        let sizes = [
+            0, 1, 15, 16, 17, 31, 32, 33, 55, 56, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1000,
+            4096, 10_000,
+        ];
 
         for &size in &sizes {
             let data: Vec<u8> = (0..size).map(|_| rng.r#gen()).collect();
@@ -380,7 +396,8 @@ mod md5_simd_parity {
         for (i, input) in inputs.iter().enumerate() {
             let reference = Md5::digest(input);
             assert_eq!(
-                batch_results[i], reference,
+                batch_results[i],
+                reference,
                 "SIMD MD5 random batch mismatch at index {i} (size={})",
                 input.len()
             );
@@ -395,7 +412,11 @@ mod md5_simd_parity {
     #[test]
     fn simd_md5_active_backend_produces_correct_results() {
         let backend = simd_batch::active_backend();
-        eprintln!("Active SIMD MD5 backend: {:?} ({} lanes)", backend, backend.lanes());
+        eprintln!(
+            "Active SIMD MD5 backend: {:?} ({} lanes)",
+            backend,
+            backend.lanes()
+        );
 
         // Regardless of backend, results must match scalar
         let data = b"backend correctness check";
@@ -489,7 +510,8 @@ mod md4_simd_parity {
         for (i, input) in inputs.iter().enumerate() {
             let reference = Md4::digest(input);
             assert_eq!(
-                batch_results[i], reference,
+                batch_results[i],
+                reference,
                 "SIMD MD4 batch[{i}] does not match strong::Md4 for input {:?}",
                 String::from_utf8_lossy(input)
             );
@@ -522,7 +544,8 @@ mod md4_simd_parity {
     /// Test with data sizes at MD4 block boundaries (55, 56, 63, 64, 65).
     #[test]
     fn simd_md4_block_boundary_sizes() {
-        let boundary_sizes: &[usize] = &[0, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129];
+        let boundary_sizes: &[usize] =
+            &[0, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129];
 
         for &size in boundary_sizes {
             let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
@@ -546,7 +569,11 @@ mod md4_simd_parity {
     #[test]
     fn simd_md4_batch_4_inputs_full_lane() {
         let inputs: Vec<Vec<u8>> = (0..4)
-            .map(|i| (0..100 + i * 50).map(|j| ((i * 37 + j) % 256) as u8).collect())
+            .map(|i| {
+                (0..100 + i * 50)
+                    .map(|j| ((i * 37 + j) % 256) as u8)
+                    .collect()
+            })
             .collect();
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
 
@@ -565,7 +592,11 @@ mod md4_simd_parity {
     #[test]
     fn simd_md4_batch_8_inputs_full_lane() {
         let inputs: Vec<Vec<u8>> = (0..8)
-            .map(|i| (0..200 + i * 30).map(|j| ((i * 53 + j) % 256) as u8).collect())
+            .map(|i| {
+                (0..200 + i * 30)
+                    .map(|j| ((i * 53 + j) % 256) as u8)
+                    .collect()
+            })
             .collect();
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
 
@@ -584,7 +615,11 @@ mod md4_simd_parity {
     #[test]
     fn simd_md4_batch_16_inputs_full_lane() {
         let inputs: Vec<Vec<u8>> = (0..16)
-            .map(|i| (0..150 + i * 20).map(|j| ((i * 71 + j) % 256) as u8).collect())
+            .map(|i| {
+                (0..150 + i * 20)
+                    .map(|j| ((i * 71 + j) % 256) as u8)
+                    .collect()
+            })
             .collect();
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
 
@@ -734,8 +769,10 @@ mod md4_simd_parity {
         use rand::Rng;
         let mut rng = rand::thread_rng();
 
-        let sizes = [0, 1, 15, 16, 17, 31, 32, 33, 55, 56, 63, 64, 65,
-                     127, 128, 129, 255, 256, 512, 1000, 4096, 10_000];
+        let sizes = [
+            0, 1, 15, 16, 17, 31, 32, 33, 55, 56, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1000,
+            4096, 10_000,
+        ];
 
         for &size in &sizes {
             let data: Vec<u8> = (0..size).map(|_| rng.r#gen()).collect();
@@ -770,7 +807,8 @@ mod md4_simd_parity {
         for (i, input) in inputs.iter().enumerate() {
             let reference = Md4::digest(input);
             assert_eq!(
-                batch_results[i], reference,
+                batch_results[i],
+                reference,
                 "SIMD MD4 random batch mismatch at index {i} (size={})",
                 input.len()
             );
@@ -798,7 +836,8 @@ mod md4_simd_parity {
             let simd_scalar = md4::digest(data);
             let reference = Md4::digest(data);
             assert_eq!(
-                simd_scalar, reference,
+                simd_scalar,
+                reference,
                 "MD4 single digest mismatch for size {}",
                 data.len()
             );
@@ -835,9 +874,8 @@ mod xxh3_simd_parity {
     #[test]
     fn simd_xxh3_64_parity_various_sizes() {
         let sizes: &[usize] = &[
-            0, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33,
-            63, 64, 65, 127, 128, 129, 240, 241, 255, 256,
-            512, 1024, 4096, 8192, 16384, 65536,
+            0, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 240, 241, 255,
+            256, 512, 1024, 4096, 8192, 16384, 65536,
         ];
 
         for &size in sizes {
@@ -861,9 +899,7 @@ mod xxh3_simd_parity {
     #[test]
     fn simd_xxh3_64_parity_lane_boundaries() {
         // XXH3 uses 256-byte stripes internally (4 x 64-byte lanes)
-        let lane_sizes: &[usize] = &[
-            16, 32, 64, 128, 240, 256, 512, 768, 1024, 1536, 2048, 4096,
-        ];
+        let lane_sizes: &[usize] = &[16, 32, 64, 128, 240, 256, 512, 768, 1024, 1536, 2048, 4096];
         let seed = 12345u64;
 
         for &size in lane_sizes {
@@ -926,9 +962,8 @@ mod xxh3_simd_parity {
     #[test]
     fn simd_xxh3_128_parity_various_sizes() {
         let sizes: &[usize] = &[
-            0, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33,
-            63, 64, 65, 127, 128, 129, 240, 241, 255, 256,
-            512, 1024, 4096, 8192, 16384, 65536,
+            0, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 240, 241, 255,
+            256, 512, 1024, 4096, 8192, 16384, 65536,
         ];
 
         for &size in sizes {
@@ -951,9 +986,7 @@ mod xxh3_simd_parity {
     /// Verify XXH3-128 at SIMD lane boundaries.
     #[test]
     fn simd_xxh3_128_parity_lane_boundaries() {
-        let lane_sizes: &[usize] = &[
-            16, 32, 64, 128, 240, 256, 512, 768, 1024, 1536, 2048, 4096,
-        ];
+        let lane_sizes: &[usize] = &[16, 32, 64, 128, 240, 256, 512, 768, 1024, 1536, 2048, 4096];
         let seed = 54321u64;
 
         for &size in lane_sizes {
@@ -1092,7 +1125,7 @@ mod xxh3_simd_parity {
 
 #[cfg(test)]
 mod digest_batch_parity {
-    use crate::strong::{md4_digest_batch, md5_digest_batch, Md4, Md5};
+    use crate::strong::{Md4, Md5, md4_digest_batch, md5_digest_batch};
 
     /// Verify md5_digest_batch matches sequential Md5::digest for many sizes.
     #[test]
@@ -1108,7 +1141,8 @@ mod digest_batch_parity {
         assert_eq!(batch.len(), sequential.len());
         for (i, (b, s)) in batch.iter().zip(sequential.iter()).enumerate() {
             assert_eq!(
-                b, s,
+                b,
+                s,
                 "MD5 digest_batch vs sequential mismatch at index {i} (size={})",
                 inputs[i].len()
             );
@@ -1129,7 +1163,8 @@ mod digest_batch_parity {
         assert_eq!(batch.len(), sequential.len());
         for (i, (b, s)) in batch.iter().zip(sequential.iter()).enumerate() {
             assert_eq!(
-                b, s,
+                b,
+                s,
                 "MD4 digest_batch vs sequential mismatch at index {i} (size={})",
                 inputs[i].len()
             );
@@ -1140,14 +1175,14 @@ mod digest_batch_parity {
     #[test]
     fn simd_parity_md5_batch_boundary_inputs() {
         let inputs: Vec<Vec<u8>> = vec![
-            vec![],                          // empty
-            vec![0x42],                      // 1 byte
-            (0..55).map(|i| i as u8).collect(), // max single-block padding
-            (0..56).map(|i| i as u8).collect(), // requires 2-block padding
-            (0..63).map(|i| i as u8).collect(), // 1 byte short of block
-            (0..64).map(|i| i as u8).collect(), // exact block
-            (0..65).map(|i| i as u8).collect(), // 1 byte over block
-            (0..128).map(|i| i as u8).collect(),// 2 exact blocks
+            vec![],                              // empty
+            vec![0x42],                          // 1 byte
+            (0..55).map(|i| i as u8).collect(),  // max single-block padding
+            (0..56).map(|i| i as u8).collect(),  // requires 2-block padding
+            (0..63).map(|i| i as u8).collect(),  // 1 byte short of block
+            (0..64).map(|i| i as u8).collect(),  // exact block
+            (0..65).map(|i| i as u8).collect(),  // 1 byte over block
+            (0..128).map(|i| i as u8).collect(), // 2 exact blocks
         ];
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
 
@@ -1156,7 +1191,8 @@ mod digest_batch_parity {
         for (i, input) in inputs.iter().enumerate() {
             let reference = Md5::digest(input);
             assert_eq!(
-                batch[i], reference,
+                batch[i],
+                reference,
                 "MD5 batch boundary mismatch at index {i} (size={})",
                 input.len()
             );
@@ -1183,7 +1219,8 @@ mod digest_batch_parity {
         for (i, input) in inputs.iter().enumerate() {
             let reference = Md4::digest(input);
             assert_eq!(
-                batch[i], reference,
+                batch[i],
+                reference,
                 "MD4 batch boundary mismatch at index {i} (size={})",
                 input.len()
             );
@@ -1198,7 +1235,7 @@ mod digest_batch_parity {
 #[cfg(test)]
 mod proptest_simd_parity {
     use crate::simd_batch;
-    use crate::strong::{md4_digest_batch, md5_digest_batch, Md4, Md5};
+    use crate::strong::{Md4, Md5, md4_digest_batch, md5_digest_batch};
     use proptest::prelude::*;
 
     proptest! {

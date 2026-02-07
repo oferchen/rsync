@@ -2072,7 +2072,7 @@ fn execute_omit_dir_times_with_trailing_separator() {
 
     let file_mtime = FileTime::from_unix_time(1_500_000_000, 0);
     let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
-    set_file_mtime(&nested.join("file.txt"), file_mtime).expect("set file mtime");
+    set_file_mtime(nested.join("file.txt"), file_mtime).expect("set file mtime");
     set_file_mtime(&nested, dir_mtime).expect("set sub dir mtime");
     set_file_mtime(&source_root, dir_mtime).expect("set root dir mtime");
 
@@ -2378,7 +2378,7 @@ fn execute_directory_with_many_siblings() {
         );
     }
     assert_eq!(summary.files_copied(), count);
-    assert!(summary.directories_created() >= count + 1); // source + N dirs
+    assert!(summary.directories_created() > count); // source + N dirs
 }
 
 // ============================================================================

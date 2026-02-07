@@ -14,9 +14,9 @@
 
 mod integration;
 
+use daemon::{DaemonConfig, run_daemon};
 #[allow(unused_imports)]
 use integration::helpers::*;
-use daemon::{DaemonConfig, run_daemon};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -164,7 +164,10 @@ fn server_lists_modules_on_request() {
     // Read greeting
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
-    assert!(line.starts_with("@RSYNCD:"), "expected @RSYNCD greeting, got: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected @RSYNCD greeting, got: {line}"
+    );
 
     // Send list request (no version handshake needed for #list)
     stream.write_all(b"#list\n").expect("send list request");
@@ -195,8 +198,14 @@ fn server_lists_modules_on_request() {
     }
 
     // Verify modules
-    assert!(modules.contains(&"docs".to_string()), "should list docs module");
-    assert!(modules.contains(&"logs".to_string()), "should list logs module");
+    assert!(
+        modules.contains(&"docs".to_string()),
+        "should list docs module"
+    );
+    assert!(
+        modules.contains(&"logs".to_string()),
+        "should list logs module"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
@@ -336,8 +345,14 @@ fn server_filters_unlisted_modules() {
     }
 
     // Only public should be listed
-    assert!(modules.contains(&"public".to_string()), "public should be listed");
-    assert!(!modules.contains(&"private".to_string()), "private should NOT be listed");
+    assert!(
+        modules.contains(&"public".to_string()),
+        "public should be listed"
+    );
+    assert!(
+        !modules.contains(&"private".to_string()),
+        "private should NOT be listed"
+    );
 
     drop(reader);
     let _ = handle.join();
@@ -373,7 +388,10 @@ fn server_sends_protocol_greeting_first() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
 
-    assert!(line.starts_with("@RSYNCD:"), "server should send greeting first: {line}");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "server should send greeting first: {line}"
+    );
 
     drop(reader);
     let _ = handle.join();
@@ -447,15 +465,23 @@ fn server_greeting_includes_digests_for_protocol_31_plus() {
     let parts: Vec<&str> = after_prefix.split_whitespace().collect();
 
     let version_str = parts[0];
-    let major: u32 = version_str.split('.').next().unwrap().parse().expect("major");
+    let major: u32 = version_str
+        .split('.')
+        .next()
+        .unwrap()
+        .parse()
+        .expect("major");
 
     if major >= 31 && parts.len() > 1 {
         // Should have at least one common digest
         let digests = &parts[1..];
-        let has_common_digest = digests.iter().any(|d| {
-            *d == "md4" || *d == "md5" || d.contains("sha") || d.contains("xxh")
-        });
-        assert!(has_common_digest, "protocol 31+ should advertise digests: {digests:?}");
+        let has_common_digest = digests
+            .iter()
+            .any(|d| *d == "md4" || *d == "md5" || d.contains("sha") || d.contains("xxh"));
+        assert!(
+            has_common_digest,
+            "protocol 31+ should advertise digests: {digests:?}"
+        );
     }
 
     drop(reader);
@@ -489,7 +515,9 @@ fn server_accepts_older_protocol_version() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send older protocol version
-    stream.write_all(b"@RSYNCD: 29.0\n").expect("send old version");
+    stream
+        .write_all(b"@RSYNCD: 29.0\n")
+        .expect("send old version");
     stream.flush().expect("flush");
 
     // Request list (should still work)
@@ -544,7 +572,9 @@ fn server_returns_error_for_unknown_module() {
     stream.flush().expect("flush");
 
     // Request non-existent module
-    stream.write_all(b"nonexistent_module_xyz\n").expect("send module");
+    stream
+        .write_all(b"nonexistent_module_xyz\n")
+        .expect("send module");
     stream.flush().expect("flush");
 
     // Should receive error
@@ -669,7 +699,11 @@ fn server_sends_exit_after_error() {
     // Read EXIT
     line.clear();
     reader.read_line(&mut line).expect("exit");
-    assert_eq!(line.trim(), "@RSYNCD: EXIT", "expected EXIT after error: {line}");
+    assert_eq!(
+        line.trim(),
+        "@RSYNCD: EXIT",
+        "expected EXIT after error: {line}"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
@@ -877,7 +911,9 @@ fn server_enforces_max_connections() {
     let mut line = String::new();
     reader1.read_line(&mut line).expect("greeting1");
 
-    stream1.write_all(b"@RSYNCD: 32.0\n").expect("send version1");
+    stream1
+        .write_all(b"@RSYNCD: 32.0\n")
+        .expect("send version1");
     stream1.flush().expect("flush1");
 
     stream1.write_all(b"limited\n").expect("send module1");
@@ -896,7 +932,9 @@ fn server_enforces_max_connections() {
         line.clear();
         reader2.read_line(&mut line).expect("greeting2");
 
-        stream2.write_all(b"@RSYNCD: 32.0\n").expect("send version2");
+        stream2
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send version2");
         stream2.flush().expect("flush2");
 
         stream2.write_all(b"limited\n").expect("send module2");
@@ -968,7 +1006,11 @@ fn server_lists_modules_with_comments() {
     if line.contains('\t') {
         let parts: Vec<&str> = line.trim().split('\t').collect();
         assert_eq!(parts[0], "docs", "module name should be 'docs'");
-        assert_eq!(parts.get(1).map(|s| *s), Some("Documentation files"), "comment should be included");
+        assert_eq!(
+            parts.get(1).copied(),
+            Some("Documentation files"),
+            "comment should be included"
+        );
     }
 
     drop(reader);
@@ -1007,7 +1049,9 @@ fn server_handles_invalid_greeting_response() {
     reader.read_line(&mut line).expect("greeting");
 
     // Send garbage instead of proper version response
-    stream.write_all(b"this is not valid\n").expect("send garbage");
+    stream
+        .write_all(b"this is not valid\n")
+        .expect("send garbage");
     stream.flush().expect("flush");
 
     // Daemon should handle gracefully
@@ -1057,7 +1101,9 @@ fn server_sanitizes_module_name_in_error() {
     stream.flush().expect("flush");
 
     // Send module with control characters
-    stream.write_all(b"module\x00with\x1bcontrol\n").expect("send bad module");
+    stream
+        .write_all(b"module\x00with\x1bcontrol\n")
+        .expect("send bad module");
     stream.flush().expect("flush");
 
     // Response should not contain raw control characters

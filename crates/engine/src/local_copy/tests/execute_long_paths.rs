@@ -70,7 +70,7 @@ fn execute_copies_file_in_deep_directory() {
     // Verify deep file was copied
     let mut dest_deep = dest_root.clone();
     for i in 0..50 {
-        dest_deep = dest_deep.join(format!("d{:014}", i));
+        dest_deep = dest_deep.join(format!("d{i:014}"));
     }
     assert_eq!(
         fs::read(dest_deep.join("deep.txt")).expect("read deep"),
@@ -207,7 +207,7 @@ fn execute_copies_combined_long_path_and_long_filename() {
     // Verify file was copied
     let mut dest_path = dest.clone();
     for i in 0..15 {
-        dest_path = dest_path.join(format!("d{:049}", i));
+        dest_path = dest_path.join(format!("d{i:049}"));
     }
     assert_eq!(
         fs::read(dest_path.join(&long_filename)).expect("read"),
@@ -245,7 +245,7 @@ fn execute_copies_multiple_files_in_deep_tree() {
     for &level in &levels {
         let mut path = dest.join(format!("branch{level}"));
         for i in 0..level {
-            path = path.join(format!("d{:019}", i));
+            path = path.join(format!("d{i:019}"));
         }
         assert!(
             path.join(format!("file_at_{level}.txt")).exists(),
@@ -432,7 +432,7 @@ fn execute_handles_very_deep_structure_gracefully() {
     let mut current = source.clone();
 
     for i in 0..200 {
-        let name = format!("d{:0100}", i);
+        let name = format!("d{i:0100}");
         let next = current.join(&name);
         match fs::create_dir_all(&next) {
             Ok(_) => {
@@ -496,7 +496,7 @@ fn execute_preserves_mtime_for_files_with_long_paths() {
     // Find and verify destination file mtime
     let mut dest_file = dest.clone();
     for i in 0..20 {
-        dest_file = dest_file.join(format!("d{:029}", i));
+        dest_file = dest_file.join(format!("d{i:029}"));
     }
     dest_file = dest_file.join("timed.txt");
 
@@ -535,7 +535,7 @@ fn execute_preserves_permissions_for_files_with_long_paths() {
     // Find and verify destination file permissions
     let mut dest_file = dest.clone();
     for i in 0..15 {
-        dest_file = dest_file.join(format!("d{:039}", i));
+        dest_file = dest_file.join(format!("d{i:039}"));
     }
     dest_file = dest_file.join("permed.txt");
 
@@ -652,7 +652,7 @@ fn execute_hardlinks_in_deep_structure() {
     // Verify destination hardlinks
     let mut dest_path = dest.clone();
     for i in 0..15 {
-        dest_path = dest_path.join(format!("d{:024}", i));
+        dest_path = dest_path.join(format!("d{i:024}"));
     }
 
     let dst_meta1 = fs::metadata(dest_path.join("file1.txt")).expect("dmeta1");
@@ -693,7 +693,7 @@ fn execute_checksum_mode_works_with_long_paths() {
     // Verify content
     let mut dest_path = dest.clone();
     for i in 0..20 {
-        dest_path = dest_path.join(format!("d{:019}", i));
+        dest_path = dest_path.join(format!("d{i:019}"));
     }
     assert_eq!(
         fs::read(dest_path.join("checksum.txt")).expect("read"),
@@ -729,7 +729,7 @@ fn execute_inplace_with_long_paths() {
     // Verify content
     let mut dest_file = dest.clone();
     for i in 0..15 {
-        dest_file = dest_file.join(format!("d{:034}", i));
+        dest_file = dest_file.join(format!("d{i:034}"));
     }
     assert_eq!(
         fs::read(dest_file.join("inplace.txt")).expect("read"),
@@ -767,7 +767,7 @@ fn execute_copies_empty_directories_in_deep_structure() {
     // Verify empty directories exist
     let mut dest_path = dest.clone();
     for i in 0..25 {
-        dest_path = dest_path.join(format!("d{:029}", i));
+        dest_path = dest_path.join(format!("d{i:029}"));
     }
     for name in ["empty1", "empty2", "empty3"] {
         assert!(

@@ -66,14 +66,14 @@ mod file_size_representation {
     fn file_size_boundary_values() {
         // Powers of 2 boundaries that might cause issues
         let boundaries = [
-            1u64 << 31,           // 2GB - i32 sign bit
-            (1u64 << 31) - 1,     // Just under 2GB
-            1u64 << 32,           // 4GB - u32 overflow
-            (1u64 << 32) - 1,     // Max u32
-            (1u64 << 32) + 1,     // Just over 4GB
-            1u64 << 40,           // 1TB
-            1u64 << 50,           // ~1PB
-            i64::MAX as u64 - 1,  // Near max allowed size
+            1u64 << 31,          // 2GB - i32 sign bit
+            (1u64 << 31) - 1,    // Just under 2GB
+            1u64 << 32,          // 4GB - u32 overflow
+            (1u64 << 32) - 1,    // Max u32
+            (1u64 << 32) + 1,    // Just over 4GB
+            1u64 << 40,          // 1TB
+            1u64 << 50,          // ~1PB
+            i64::MAX as u64 - 1, // Near max allowed size
         ];
 
         for size in boundaries {
@@ -81,8 +81,7 @@ mod file_size_representation {
             assert_eq!(
                 entry.size(),
                 size,
-                "File size {} was not stored correctly",
-                size
+                "File size {size} was not stored correctly"
             );
         }
     }
@@ -162,7 +161,7 @@ mod varint_large_files {
             let mut cursor = Cursor::new(&buffer);
             let decoded = read_varlong(&mut cursor, 3).expect("read_varlong should succeed");
 
-            assert_eq!(decoded, size, "Varlong round-trip failed for size {}", size);
+            assert_eq!(decoded, size, "Varlong round-trip failed for size {size}");
         }
     }
 
@@ -187,15 +186,18 @@ mod varint_large_files {
         // This is approximately 64 petabytes - far exceeding any practical file size
         // Integer division: 72,057,594,037,927,935 / 1,125,899,906,842,624 = 63
         let petabytes = max_practical / (1024 * 1024 * 1024 * 1024 * 1024);
-        assert!(petabytes >= 63, "Should support at least 63 PB, got {}", petabytes);
+        assert!(
+            petabytes >= 63,
+            "Should support at least 63 PB, got {petabytes}"
+        );
     }
 
     /// Tests that longint encoding (protocol < 30) handles large sizes.
     #[test]
     fn longint_encodes_large_sizes() {
         let large_sizes: &[i64] = &[
-            0x7FFF_FFFF,       // Max that fits in first format
-            0x7FFF_FFFF + 1,   // First size requiring extended format
+            0x7FFF_FFFF,     // Max that fits in first format
+            0x7FFF_FFFF + 1, // First size requiring extended format
             FOUR_GB as i64,
             ONE_TB as i64,
             i64::MAX - 1,
@@ -208,7 +210,7 @@ mod varint_large_files {
             let mut cursor = Cursor::new(&buffer);
             let decoded = read_longint(&mut cursor).expect("read_longint should succeed");
 
-            assert_eq!(decoded, size, "Longint round-trip failed for size {}", size);
+            assert_eq!(decoded, size, "Longint round-trip failed for size {size}");
         }
     }
 
@@ -229,8 +231,7 @@ mod varint_large_files {
 
             assert_eq!(
                 decoded, large_size,
-                "Varlong with min_bytes={} failed",
-                min_bytes
+                "Varlong with min_bytes={min_bytes} failed"
             );
         }
     }
@@ -258,7 +259,7 @@ mod varint_large_files {
             let mut cursor = Cursor::new(&buffer);
             let decoded = read_varlong(&mut cursor, 3).expect("read_varlong should succeed");
 
-            assert_eq!(decoded, size, "Varlong failed at bit boundary {}", size);
+            assert_eq!(decoded, size, "Varlong failed at bit boundary {size}");
         }
     }
 }
@@ -269,7 +270,7 @@ mod varint_large_files {
 
 mod delta_wire_format_large_files {
     use super::*;
-    use protocol::wire::{DeltaOp, CHUNK_SIZE, write_token_stream, write_token_literal};
+    use protocol::wire::{CHUNK_SIZE, DeltaOp, write_token_literal, write_token_stream};
 
     /// Tests that delta operations can reference positions beyond 4GB.
     #[test]
@@ -277,7 +278,7 @@ mod delta_wire_format_large_files {
         // Create delta operations that would reference positions > 4GB
         let large_block_index = (FOUR_GB / 65536) as u32; // Block at 4GB if 64KB blocks
 
-        let ops = vec![
+        let ops = [
             DeltaOp::Literal(vec![0; 1024]),
             DeltaOp::Copy {
                 block_index: large_block_index,
@@ -288,7 +289,10 @@ mod delta_wire_format_large_files {
 
         // Verify the operations are created correctly
         match &ops[1] {
-            DeltaOp::Copy { block_index, length } => {
+            DeltaOp::Copy {
+                block_index,
+                length,
+            } => {
                 assert_eq!(*block_index, large_block_index);
                 assert_eq!(*length, 65536);
             }
@@ -378,13 +382,11 @@ mod delta_wire_format_large_files {
         // Should be approximately 274TB
         assert!(
             max_delta_file_size > 200 * ONE_TB,
-            "Max delta file size {} should be > 200TB",
-            max_delta_file_size
+            "Max delta file size {max_delta_file_size} should be > 200TB"
         );
         assert!(
             max_delta_file_size < 300 * ONE_TB,
-            "Max delta file size {} should be < 300TB",
-            max_delta_file_size
+            "Max delta file size {max_delta_file_size} should be < 300TB"
         );
     }
 }
@@ -439,7 +441,7 @@ mod file_list_large_files {
 
         for size in test_sizes {
             let entry = FileEntry::new_file(PathBuf::from("test.bin"), size, 0o644);
-            assert_eq!(entry.size(), size, "Size {} not stored correctly", size);
+            assert_eq!(entry.size(), size, "Size {size} not stored correctly");
         }
     }
 }
@@ -495,7 +497,9 @@ mod statistics_large_files {
 
         // Simulate transferring 1000 TB (1 PB)
         for _ in 0..1000 {
-            total_bytes = total_bytes.checked_add(ONE_TB).expect("Should not overflow");
+            total_bytes = total_bytes
+                .checked_add(ONE_TB)
+                .expect("Should not overflow");
         }
 
         assert_eq!(total_bytes, 1000 * ONE_TB);
@@ -540,7 +544,7 @@ mod unsigned_file_sizes {
             let mut cursor = Cursor::new(&buffer);
             let decoded = read_varlong(&mut cursor, 3).expect("read_varlong should succeed");
 
-            assert_eq!(decoded, size, "File size {} not preserved", size);
+            assert_eq!(decoded, size, "File size {size} not preserved");
         }
     }
 

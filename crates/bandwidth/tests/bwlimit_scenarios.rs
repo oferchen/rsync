@@ -84,8 +84,7 @@ mod file_transfer_scenarios {
         let total = session.total_duration();
         assert!(
             within_tolerance(total, Duration::from_millis(200), 40.0),
-            "Expected ~200ms, got {:?}",
-            total
+            "Expected ~200ms, got {total:?}"
         );
     }
 
@@ -134,8 +133,7 @@ mod file_transfer_scenarios {
         let total = session.total_duration();
         assert!(
             within_tolerance(total, Duration::from_secs_f64(expected_secs), 30.0),
-            "Expected ~{expected_secs:.2}s, got {:?}",
-            total
+            "Expected ~{expected_secs:.2}s, got {total:?}"
         );
     }
 
@@ -172,10 +170,10 @@ mod file_transfer_scenarios {
         let mut limiter = BandwidthLimiter::new(nz(rate));
 
         // Simulate directory: many tiny files, some medium, few large
-        let tiny_files = vec![100usize; 50]; // 50 files of 100 bytes
-        let small_files = vec![1000usize; 20]; // 20 files of 1000 bytes
-        let medium_files = vec![10240usize; 10]; // 10 files of 10 KB
-        let large_files = vec![102400usize; 2]; // 2 files of 100 KB
+        let tiny_files = [100usize; 50]; // 50 files of 100 bytes
+        let small_files = [1000usize; 20]; // 20 files of 1000 bytes
+        let medium_files = [10240usize; 10]; // 10 files of 10 KB
+        let large_files = [102400usize; 2]; // 2 files of 100 KB
 
         let all_files: Vec<usize> = tiny_files
             .iter()
@@ -196,8 +194,7 @@ mod file_transfer_scenarios {
         let total = session.total_duration();
         assert!(
             within_tolerance(total, Duration::from_secs_f64(expected_secs), 50.0),
-            "Expected ~{expected_secs:.3}s, got {:?}",
-            total
+            "Expected ~{expected_secs:.3}s, got {total:?}"
         );
     }
 }
@@ -566,8 +563,7 @@ mod timing_accuracy {
         // Verify the single transfer took ~500ms
         assert!(
             within_tolerance(single_total, Duration::from_millis(500), 20.0),
-            "Single transfer: expected ~500ms, got {:?}",
-            single_total
+            "Single transfer: expected ~500ms, got {single_total:?}"
         );
 
         // Clear and test accumulated small transfers: 50 x 10,000 bytes = 500,000 bytes
@@ -581,8 +577,7 @@ mod timing_accuracy {
         // Should also be ~500ms
         assert!(
             within_tolerance(accumulated_total, Duration::from_millis(500), 25.0),
-            "Accumulated transfer: expected ~500ms, got {:?}",
-            accumulated_total
+            "Accumulated transfer: expected ~500ms, got {accumulated_total:?}"
         );
     }
 
@@ -927,7 +922,11 @@ mod stress_tests {
         let mut limiter = BandwidthLimiter::new(nz(100_000)); // 100 KB/s
 
         for i in 1..=30 {
-            let burst = if i % 2 == 0 { Some(nz(i as u64 * 1000)) } else { None };
+            let burst = if i % 2 == 0 {
+                Some(nz(i as u64 * 1000))
+            } else {
+                None
+            };
             limiter.update_configuration(nz(100_000), burst);
             let _ = limiter.register(1000); // Small writes
         }

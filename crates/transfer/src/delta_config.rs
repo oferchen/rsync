@@ -247,12 +247,7 @@ mod tests {
 
     #[test]
     fn delta_config_new_sets_required_fields() {
-        let config = DeltaGeneratorConfig::new(
-            2048,
-            vec![],
-            16,
-            ProtocolVersion::NEWEST,
-        );
+        let config = DeltaGeneratorConfig::new(2048, vec![], 16, ProtocolVersion::NEWEST);
 
         assert_eq!(config.block_length, 2048);
         assert_eq!(config.strong_sum_length, 16);
@@ -264,27 +259,17 @@ mod tests {
 
     #[test]
     fn delta_config_builder_pattern() {
-        let config = DeltaGeneratorConfig::new(
-            2048,
-            vec![],
-            16,
-            ProtocolVersion::NEWEST,
-        )
-        .with_checksum_seed(12345);
+        let config = DeltaGeneratorConfig::new(2048, vec![], 16, ProtocolVersion::NEWEST)
+            .with_checksum_seed(12345);
 
         assert_eq!(config.checksum_seed, 12345);
     }
 
     #[test]
     fn delta_config_debug_format() {
-        let config = DeltaGeneratorConfig::new(
-            2048,
-            vec![],
-            16,
-            ProtocolVersion::NEWEST,
-        );
+        let config = DeltaGeneratorConfig::new(2048, vec![], 16, ProtocolVersion::NEWEST);
 
-        let debug_output = format!("{:?}", config);
+        let debug_output = format!("{config:?}");
         assert!(debug_output.contains("DeltaGeneratorConfig"));
         assert!(debug_output.contains("block_length"));
     }

@@ -43,7 +43,10 @@ fn preallocate_flag_copies_file_correctly() {
 
     // Verify content matches
     let dest_content = fs::read(dest_dir.join("data.bin")).expect("read dest");
-    assert_eq!(dest_content, content, "destination content should match source");
+    assert_eq!(
+        dest_content, content,
+        "destination content should match source"
+    );
 }
 
 #[test]
@@ -52,7 +55,7 @@ fn preallocate_flag_copies_empty_file() {
     let src_dir = test_dir.mkdir("src").unwrap();
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
-    fs::write(src_dir.join("empty.bin"), &[]).expect("write empty");
+    fs::write(src_dir.join("empty.bin"), []).expect("write empty");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -161,8 +164,7 @@ fn preallocate_disables_sparse_writes() {
     cmd2.assert_success();
 
     let sparse_meta = fs::metadata(dest_sparse.join("zeros.bin")).expect("sparse metadata");
-    let prealloc_meta =
-        fs::metadata(dest_prealloc.join("zeros.bin")).expect("prealloc metadata");
+    let prealloc_meta = fs::metadata(dest_prealloc.join("zeros.bin")).expect("prealloc metadata");
 
     // Both should have the same logical size
     assert_eq!(sparse_meta.len(), prealloc_meta.len());
@@ -208,7 +210,10 @@ fn preallocate_with_inplace_copies_correctly() {
     cmd.assert_success();
 
     let dest_content = fs::read(dest_dir.join("inplace.bin")).expect("read dest");
-    assert_eq!(dest_content, content, "inplace transfer should match source");
+    assert_eq!(
+        dest_content, content,
+        "inplace transfer should match source"
+    );
 }
 
 #[test]
@@ -250,11 +255,7 @@ fn preallocate_recursive_directory_transfer() {
 
     // Create subdirectory with files
     fs::create_dir_all(src_dir.join("subdir")).expect("mkdir");
-    fs::write(
-        src_dir.join("subdir/nested.bin"),
-        vec![0xBBu8; 128 * 1024],
-    )
-    .expect("nested");
+    fs::write(src_dir.join("subdir/nested.bin"), vec![0xBBu8; 128 * 1024]).expect("nested");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -323,7 +324,10 @@ fn preallocate_updates_existing_file() {
     cmd2.assert_success();
 
     let dest_content = fs::read(dest_dir.join("data.bin")).unwrap();
-    assert_eq!(dest_content, updated, "second transfer should update the file");
+    assert_eq!(
+        dest_content, updated,
+        "second transfer should update the file"
+    );
 }
 
 // ============================================================================
@@ -349,7 +353,7 @@ fn preallocate_with_verbose_shows_transfer() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}{}", stdout, stderr);
+    let combined = format!("{stdout}{stderr}");
 
     // Verbose should mention the transferred file
     assert!(

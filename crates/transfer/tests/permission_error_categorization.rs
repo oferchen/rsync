@@ -8,7 +8,7 @@ use std::io;
 use std::path::Path;
 
 use transfer::error::{
-    categorize_io_error, DeltaFatalError, DeltaRecoverableError, DeltaTransferError,
+    DeltaFatalError, DeltaRecoverableError, DeltaTransferError, categorize_io_error,
 };
 
 // =============================================================================
@@ -180,9 +180,15 @@ fn permission_denied_error_displays_operation() {
     };
 
     let message = err.to_string();
-    assert!(message.contains("Permission denied"), "Should mention permission denied");
+    assert!(
+        message.contains("Permission denied"),
+        "Should mention permission denied"
+    );
     assert!(message.contains("open"), "Should mention the operation");
-    assert!(message.contains("/test/secret.txt"), "Should mention the path");
+    assert!(
+        message.contains("/test/secret.txt"),
+        "Should mention the path"
+    );
 }
 
 #[test]
@@ -233,7 +239,10 @@ fn fatal_error_is_distinct_from_recoverable() {
 
     // They should be different variants
     assert!(matches!(fatal_outer, DeltaTransferError::Fatal(_)));
-    assert!(matches!(recoverable_outer, DeltaTransferError::Recoverable(_)));
+    assert!(matches!(
+        recoverable_outer,
+        DeltaTransferError::Recoverable(_)
+    ));
 }
 
 // =============================================================================
@@ -315,7 +324,8 @@ fn compare_error_categorization_across_types() {
         let is_recoverable = matches!(categorized, DeltaTransferError::Recoverable(_));
 
         assert_eq!(
-            is_recoverable, should_be_recoverable,
+            is_recoverable,
+            should_be_recoverable,
             "Error type {} should be {}, got {}",
             description,
             if should_be_recoverable {
@@ -323,7 +333,11 @@ fn compare_error_categorization_across_types() {
             } else {
                 "fatal"
             },
-            if is_recoverable { "recoverable" } else { "fatal" }
+            if is_recoverable {
+                "recoverable"
+            } else {
+                "fatal"
+            }
         );
     }
 }
@@ -350,7 +364,7 @@ fn recoverable_io_error_has_source() {
 fn fatal_io_error_has_source() {
     use std::error::Error;
 
-    let inner = io::Error::new(io::ErrorKind::Other, "unknown error");
+    let inner = io::Error::other("unknown error");
     let err = DeltaFatalError::Io(inner);
 
     // The error should have a source

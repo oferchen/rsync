@@ -102,8 +102,8 @@ pub mod async_gen;
 pub use algorithm::SignatureAlgorithm;
 pub use block::SignatureBlock;
 pub use block_size::{
-    calculate_block_length, calculate_checksum_count, calculate_checksum_length,
     DEFAULT_BLOCK_SIZE, MAX_BLOCK_SIZE_OLD, MAX_BLOCK_SIZE_V30, MIN_BLOCK_SIZE,
+    calculate_block_length, calculate_checksum_count, calculate_checksum_length,
 };
 pub use file::FileSignature;
 pub use generation::{SignatureError, generate_file_signature};

@@ -263,9 +263,9 @@ impl FileReaderFactory for AdaptiveReaderFactory {
             // mmap can fail on certain filesystems (NFS, FUSE, procfs, etc.).
             match MmapReader::open(path) {
                 Ok(reader) => Ok(AdaptiveReader::Mmap(reader)),
-                Err(_) => Ok(AdaptiveReader::Std(
-                    crate::traits::StdFileReader::open(path)?,
-                )),
+                Err(_) => Ok(AdaptiveReader::Std(crate::traits::StdFileReader::open(
+                    path,
+                )?)),
             }
         } else {
             Ok(AdaptiveReader::Std(crate::traits::StdFileReader::open(

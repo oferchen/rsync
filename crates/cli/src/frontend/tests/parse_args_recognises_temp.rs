@@ -25,10 +25,7 @@ fn parse_args_recognises_temp_dir_short_flag() {
     ])
     .expect("parse");
 
-    assert_eq!(
-        parsed.temp_dir.as_deref(),
-        Some(Path::new("/tmp/staging"))
-    );
+    assert_eq!(parsed.temp_dir.as_deref(), Some(Path::new("/tmp/staging")));
 }
 
 #[test]

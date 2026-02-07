@@ -4,8 +4,8 @@
 //! protocol version handling and provides consistent, interoperable results.
 
 use checksums::{
-    ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
-    Md4Strategy, Md5SeedConfig, Md5Strategy, SeedConfig, Sha256Strategy, Xxh3Strategy,
+    ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector, Md4Strategy,
+    Md5SeedConfig, Md5Strategy, SeedConfig, Sha256Strategy, Xxh3Strategy,
 };
 
 // ============================================================================
@@ -52,7 +52,8 @@ fn md5_proper_seed_order_matches_manual() {
     let data = b"test data for seeded hashing";
 
     // Using the strategy
-    let strategy = ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed_value, true);
+    let strategy =
+        ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed_value, true);
     let strategy_digest = strategy.compute(data);
 
     // Manual construction
@@ -68,7 +69,8 @@ fn md5_legacy_seed_order_matches_manual() {
     let data = b"test data for seeded hashing";
 
     // Using the strategy
-    let strategy = ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed_value, false);
+    let strategy =
+        ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed_value, false);
     let strategy_digest = strategy.compute(data);
 
     // Manual construction
@@ -270,7 +272,11 @@ fn empty_input_produces_valid_digest() {
         let strategy = ChecksumStrategySelector::for_algorithm(*kind, 0);
         let digest = strategy.compute(empty);
 
-        assert_eq!(digest.len(), kind.digest_len(), "Empty input failed for {kind}");
+        assert_eq!(
+            digest.len(),
+            kind.digest_len(),
+            "Empty input failed for {kind}"
+        );
     }
 }
 
@@ -282,7 +288,11 @@ fn large_input_produces_valid_digest() {
         let strategy = ChecksumStrategySelector::for_algorithm(*kind, 0);
         let digest = strategy.compute(&large_data);
 
-        assert_eq!(digest.len(), kind.digest_len(), "Large input failed for {kind}");
+        assert_eq!(
+            digest.len(),
+            kind.digest_len(),
+            "Large input failed for {kind}"
+        );
     }
 }
 
@@ -292,12 +302,14 @@ fn negative_seed_handled_correctly() {
     let negative_seed: i32 = -1;
 
     // Should not panic and should produce valid output
-    let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh64, negative_seed);
+    let strategy =
+        ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh64, negative_seed);
     let digest = strategy.compute(data);
     assert_eq!(digest.len(), 8);
 
     // Verify it differs from seed 0
-    let zero_seed_strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh64, 0);
+    let zero_seed_strategy =
+        ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh64, 0);
     assert_ne!(digest, zero_seed_strategy.compute(data));
 }
 
@@ -307,11 +319,26 @@ fn negative_seed_handled_correctly() {
 
 #[test]
 fn algorithm_kind_from_name_case_insensitive() {
-    assert_eq!(ChecksumAlgorithmKind::from_name("MD5"), Some(ChecksumAlgorithmKind::Md5));
-    assert_eq!(ChecksumAlgorithmKind::from_name("md5"), Some(ChecksumAlgorithmKind::Md5));
-    assert_eq!(ChecksumAlgorithmKind::from_name("Md5"), Some(ChecksumAlgorithmKind::Md5));
-    assert_eq!(ChecksumAlgorithmKind::from_name("SHA-256"), Some(ChecksumAlgorithmKind::Sha256));
-    assert_eq!(ChecksumAlgorithmKind::from_name("sha256"), Some(ChecksumAlgorithmKind::Sha256));
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("MD5"),
+        Some(ChecksumAlgorithmKind::Md5)
+    );
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("md5"),
+        Some(ChecksumAlgorithmKind::Md5)
+    );
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("Md5"),
+        Some(ChecksumAlgorithmKind::Md5)
+    );
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("SHA-256"),
+        Some(ChecksumAlgorithmKind::Sha256)
+    );
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("sha256"),
+        Some(ChecksumAlgorithmKind::Sha256)
+    );
 }
 
 #[test]
@@ -380,8 +407,8 @@ fn md5_matches_rfc_test_vector() {
     let digest = strategy.compute(b"");
 
     let expected = [
-        0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04,
-        0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e,
+        0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42,
+        0x7e,
     ];
 
     assert_eq!(digest.as_bytes(), &expected);
@@ -394,8 +421,8 @@ fn md4_matches_rfc_test_vector() {
     let digest = strategy.compute(b"");
 
     let expected = [
-        0x31, 0xd6, 0xcf, 0xe0, 0xd1, 0x6a, 0xe9, 0x31,
-        0xb7, 0x3c, 0x59, 0xd7, 0xe0, 0xc0, 0x89, 0xc0,
+        0x31, 0xd6, 0xcf, 0xe0, 0xd1, 0x6a, 0xe9, 0x31, 0xb7, 0x3c, 0x59, 0xd7, 0xe0, 0xc0, 0x89,
+        0xc0,
     ];
 
     assert_eq!(digest.as_bytes(), &expected);
@@ -408,10 +435,9 @@ fn sha256_matches_nist_test_vector() {
     let digest = strategy.compute(b"abc");
 
     let expected = [
-        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
-        0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
-        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
-        0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22,
+        0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00,
+        0x15, 0xad,
     ];
 
     assert_eq!(digest.as_bytes(), &expected);

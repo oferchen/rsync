@@ -27,7 +27,7 @@
 
 use protocol::{
     CompatibilityFlags, NegotiationError, ProtocolVersion, ProtocolVersionAdvertisement,
-    select_highest_mutual, SUPPORTED_PROTOCOLS,
+    SUPPORTED_PROTOCOLS, select_highest_mutual,
 };
 
 // ============================================================================
@@ -114,17 +114,29 @@ fn version_28_capabilities() {
     let v = ProtocolVersion::V28;
 
     // Negotiation style
-    assert!(v.uses_legacy_ascii_negotiation(), "v28 uses ASCII negotiation");
-    assert!(!v.uses_binary_negotiation(), "v28 does not use binary negotiation");
+    assert!(
+        v.uses_legacy_ascii_negotiation(),
+        "v28 uses ASCII negotiation"
+    );
+    assert!(
+        !v.uses_binary_negotiation(),
+        "v28 does not use binary negotiation"
+    );
 
     // Encoding
     assert!(v.uses_fixed_encoding(), "v28 uses fixed encoding");
     assert!(!v.uses_varint_encoding(), "v28 does not use varint");
 
     // Features NOT available in v28
-    assert!(!v.supports_sender_receiver_modifiers(), "v28 lacks s/r modifiers");
+    assert!(
+        !v.supports_sender_receiver_modifiers(),
+        "v28 lacks s/r modifiers"
+    );
     assert!(!v.supports_flist_times(), "v28 lacks flist times");
-    assert!(!v.supports_perishable_modifier(), "v28 lacks perishable modifier");
+    assert!(
+        !v.supports_perishable_modifier(),
+        "v28 lacks perishable modifier"
+    );
 
     // Features available in v28
     assert!(v.uses_old_prefixes(), "v28 uses old prefixes");
@@ -132,7 +144,10 @@ fn version_28_capabilities() {
 
     // Safe file list NOT available in v28
     assert!(!v.uses_safe_file_list(), "v28 lacks safe file list");
-    assert!(!v.safe_file_list_always_enabled(), "v28 lacks always-on safe flist");
+    assert!(
+        !v.safe_file_list_always_enabled(),
+        "v28 lacks always-on safe flist"
+    );
 }
 
 // ============================================================================
@@ -152,19 +167,31 @@ fn version_29_capabilities() {
     let v = ProtocolVersion::V29;
 
     // Negotiation style (still ASCII)
-    assert!(v.uses_legacy_ascii_negotiation(), "v29 uses ASCII negotiation");
-    assert!(!v.uses_binary_negotiation(), "v29 does not use binary negotiation");
+    assert!(
+        v.uses_legacy_ascii_negotiation(),
+        "v29 uses ASCII negotiation"
+    );
+    assert!(
+        !v.uses_binary_negotiation(),
+        "v29 does not use binary negotiation"
+    );
 
     // Encoding (still fixed)
     assert!(v.uses_fixed_encoding(), "v29 uses fixed encoding");
     assert!(!v.uses_varint_encoding(), "v29 does not use varint");
 
     // Features added in v29
-    assert!(v.supports_sender_receiver_modifiers(), "v29 adds s/r modifiers");
+    assert!(
+        v.supports_sender_receiver_modifiers(),
+        "v29 adds s/r modifiers"
+    );
     assert!(v.supports_flist_times(), "v29 adds flist times");
 
     // Features NOT available in v29
-    assert!(!v.supports_perishable_modifier(), "v29 lacks perishable modifier");
+    assert!(
+        !v.supports_perishable_modifier(),
+        "v29 lacks perishable modifier"
+    );
     assert!(!v.uses_safe_file_list(), "v29 lacks safe file list");
 
     // Old prefixes deprecated in v29
@@ -204,7 +231,10 @@ fn version_30_capabilities() {
     let v = ProtocolVersion::V30;
 
     // Binary negotiation introduced in v30
-    assert!(!v.uses_legacy_ascii_negotiation(), "v30 uses binary negotiation");
+    assert!(
+        !v.uses_legacy_ascii_negotiation(),
+        "v30 uses binary negotiation"
+    );
     assert!(v.uses_binary_negotiation(), "v30 uses binary negotiation");
 
     // Varint encoding introduced in v30
@@ -212,16 +242,25 @@ fn version_30_capabilities() {
     assert!(v.uses_varint_encoding(), "v30 uses varint encoding");
 
     // Features added in v30
-    assert!(v.supports_perishable_modifier(), "v30 adds perishable modifier");
+    assert!(
+        v.supports_perishable_modifier(),
+        "v30 adds perishable modifier"
+    );
     assert!(v.uses_safe_file_list(), "v30 adds safe file list");
     assert!(v.uses_varint_flist_flags(), "v30 adds varint flist flags");
 
     // Features carried forward from v29
-    assert!(v.supports_sender_receiver_modifiers(), "v30 has s/r modifiers");
+    assert!(
+        v.supports_sender_receiver_modifiers(),
+        "v30 has s/r modifiers"
+    );
     assert!(v.supports_flist_times(), "v30 has flist times");
 
     // Safe file list not always-on in v30
-    assert!(!v.safe_file_list_always_enabled(), "v30 safe flist is optional");
+    assert!(
+        !v.safe_file_list_always_enabled(),
+        "v30 safe flist is optional"
+    );
 }
 
 /// Test that v30 is the first version with binary negotiation.
@@ -271,7 +310,10 @@ fn version_31_capabilities() {
     assert!(v.uses_safe_file_list(), "v31 has safe file list");
 
     // New in v31: safe file list always enabled
-    assert!(v.safe_file_list_always_enabled(), "v31 safe flist always on");
+    assert!(
+        v.safe_file_list_always_enabled(),
+        "v31 safe flist always on"
+    );
 }
 
 /// Test safe file list is always enabled in v31+.
@@ -310,12 +352,21 @@ fn version_32_capabilities() {
     assert!(v.uses_binary_negotiation(), "v32 uses binary negotiation");
     assert!(v.uses_varint_encoding(), "v32 uses varint encoding");
     assert!(v.uses_safe_file_list(), "v32 has safe file list");
-    assert!(v.safe_file_list_always_enabled(), "v32 safe flist always on");
+    assert!(
+        v.safe_file_list_always_enabled(),
+        "v32 safe flist always on"
+    );
     assert!(v.uses_varint_flist_flags(), "v32 has varint flist flags");
 
     // All modifiers supported
-    assert!(v.supports_sender_receiver_modifiers(), "v32 has s/r modifiers");
-    assert!(v.supports_perishable_modifier(), "v32 has perishable modifier");
+    assert!(
+        v.supports_sender_receiver_modifiers(),
+        "v32 has s/r modifiers"
+    );
+    assert!(
+        v.supports_perishable_modifier(),
+        "v32 has perishable modifier"
+    );
 
     // All features supported
     assert!(v.supports_extended_flags(), "v32 supports extended flags");
@@ -402,8 +453,7 @@ fn clamps_future_versions_to_newest() {
         assert_eq!(
             result,
             ProtocolVersion::NEWEST,
-            "Version {} should clamp to NEWEST",
-            future
+            "Version {future} should clamp to NEWEST"
         );
     }
 }
@@ -427,7 +477,7 @@ fn rejects_versions_above_maximum_advertisement() {
 
     for version in reject_versions {
         let result = select_highest_mutual([VersionAd(version)]);
-        assert!(result.is_err(), "Version {} should be rejected", version);
+        assert!(result.is_err(), "Version {version} should be rejected");
 
         match result.unwrap_err() {
             NegotiationError::UnsupportedVersion(v) => {
@@ -865,17 +915,15 @@ fn exhaustive_pairwise_negotiation() {
 
     for &v1 in &supported {
         for &v2 in &supported {
-            let result = select_highest_mutual([VersionAd(u32::from(v1)), VersionAd(u32::from(v2))])
-                .expect("pairwise negotiation should succeed");
+            let result =
+                select_highest_mutual([VersionAd(u32::from(v1)), VersionAd(u32::from(v2))])
+                    .expect("pairwise negotiation should succeed");
 
             let expected = std::cmp::max(v1, v2);
             assert_eq!(
                 result.as_u8(),
                 expected,
-                "Negotiating [{}, {}] should select {}",
-                v1,
-                v2,
-                expected
+                "Negotiating [{v1}, {v2}] should select {expected}"
             );
         }
     }
@@ -900,11 +948,7 @@ fn exhaustive_triple_negotiation() {
                 assert_eq!(
                     result.as_u8(),
                     expected,
-                    "Negotiating [{}, {}, {}] should select {}",
-                    v1,
-                    v2,
-                    v3,
-                    expected
+                    "Negotiating [{v1}, {v2}, {v3}] should select {expected}"
                 );
             }
         }
@@ -923,18 +967,18 @@ fn supported_protocol_bitmap() {
     // Verify supported versions have bits set
     for version in 28..=32 {
         let mask = 1u64 << version;
-        assert_ne!(bitmap & mask, 0, "Bit for v{} should be set", version);
+        assert_ne!(bitmap & mask, 0, "Bit for v{version} should be set");
     }
 
     // Verify unsupported versions don't have bits set
     for version in 0..28 {
         let mask = 1u64 << version;
-        assert_eq!(bitmap & mask, 0, "Bit for v{} should not be set", version);
+        assert_eq!(bitmap & mask, 0, "Bit for v{version} should not be set");
     }
 
     for version in 33..64 {
         let mask = 1u64 << version;
-        assert_eq!(bitmap & mask, 0, "Bit for v{} should not be set", version);
+        assert_eq!(bitmap & mask, 0, "Bit for v{version} should not be set");
     }
 }
 
@@ -946,9 +990,7 @@ fn is_supported_protocol_number_comprehensive() {
         assert_eq!(
             ProtocolVersion::is_supported_protocol_number(value),
             expected,
-            "is_supported_protocol_number({}) should be {}",
-            value,
-            expected
+            "is_supported_protocol_number({value}) should be {expected}"
         );
     }
 }

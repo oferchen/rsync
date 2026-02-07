@@ -2480,13 +2480,12 @@ fn execute_skip_new_file_always_transferred_regardless_of_skip_mode() {
 
         let summary = plan
             .execute_with_options(LocalCopyExecution::Apply, options)
-            .expect(&format!("{} copy succeeds", label));
+            .unwrap_or_else(|_| panic!("{label} copy succeeds"));
 
         assert_eq!(
             summary.files_copied(),
             1,
-            "{}: new file should always be transferred",
-            label
+            "{label}: new file should always be transferred"
         );
         assert_eq!(fs::read(&destination).expect("read"), b"content");
     }

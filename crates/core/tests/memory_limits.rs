@@ -110,9 +110,7 @@ fn max_alloc_config_maximum_value() {
 #[test]
 fn max_alloc_config_zero_value() {
     // Zero is a valid value (though not useful in practice)
-    let config = ClientConfigBuilder::default()
-        .max_alloc(Some(0))
-        .build();
+    let config = ClientConfigBuilder::default().max_alloc(Some(0)).build();
 
     assert_eq!(config.max_alloc(), Some(0));
 }

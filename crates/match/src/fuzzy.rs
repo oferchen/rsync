@@ -970,14 +970,15 @@ mod tests {
         #[test]
         fn scoring_constants_reasonable() {
             // Extension match should be worth several prefix chars
-            assert!(EXTENSION_MATCH_BONUS >= PREFIX_MATCH_POINTS * 3);
+            assert_eq!(EXTENSION_MATCH_BONUS, 50);
+            assert_eq!(PREFIX_MATCH_POINTS, 10);
 
             // Prefix should be worth more than suffix
-            assert!(PREFIX_MATCH_POINTS > SUFFIX_MATCH_POINTS);
+            assert_eq!(SUFFIX_MATCH_POINTS, 8);
 
             // Size bonus should be meaningful but not dominant
-            assert!(SIZE_SIMILARITY_BONUS > MIN_FUZZY_SCORE);
-            assert!(SIZE_SIMILARITY_BONUS < EXTENSION_MATCH_BONUS);
+            assert_eq!(SIZE_SIMILARITY_BONUS, 30);
+            assert_eq!(MIN_FUZZY_SCORE, 10);
         }
     }
 }

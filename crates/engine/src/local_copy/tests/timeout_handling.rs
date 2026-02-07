@@ -79,8 +79,7 @@ fn timeout_exit_code_consistent_across_durations() {
         assert_eq!(
             error.exit_code(),
             30,
-            "exit code should be 30 for duration {:?}",
-            duration
+            "exit code should be 30 for duration {duration:?}"
         );
     }
 }
@@ -322,7 +321,7 @@ fn connection_timeout_exit_code_documented() {
 #[test]
 fn timeout_error_debug_format() {
     let error = LocalCopyError::timeout(Duration::from_secs(30));
-    let debug = format!("{:?}", error);
+    let debug = format!("{error:?}");
 
     // Debug format should include relevant information
     assert!(debug.contains("Timeout"));
@@ -379,7 +378,7 @@ fn typical_user_timeout_values() {
         let error = LocalCopyError::timeout(Duration::from_secs(secs));
         assert_eq!(error.exit_code(), 30);
         let message = error.to_string();
-        assert!(message.contains(&secs.to_string()) || message.contains(&format!("{}.0", secs)));
+        assert!(message.contains(&secs.to_string()) || message.contains(&format!("{secs}.0")));
     }
 }
 

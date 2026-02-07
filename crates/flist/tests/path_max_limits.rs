@@ -719,7 +719,12 @@ fn lazy_evaluation_for_very_deep_structures() {
 // ============================================================================
 
 /// Calculates the exact path length needed to reach a target total length.
-fn calculate_levels_for_target_length(root: &Path, target_len: usize, dir_name_len: usize) -> usize {
+#[allow(dead_code)]
+fn calculate_levels_for_target_length(
+    root: &Path,
+    target_len: usize,
+    dir_name_len: usize,
+) -> usize {
     let root_len = root.as_os_str().len();
     let available = target_len.saturating_sub(root_len);
     // Each level adds dir_name_len + 1 (for separator)
@@ -792,9 +797,9 @@ fn path_at_exactly_path_max_minus_one() {
             let entries = collect_all_entries(walker);
 
             // Should find the file
-            let found = entries.iter().any(|e| {
-                e.relative_path().to_string_lossy().ends_with("f.txt")
-            });
+            let found = entries
+                .iter()
+                .any(|e| e.relative_path().to_string_lossy().ends_with("f.txt"));
             assert!(found, "should find file near PATH_MAX limit");
         }
     }
@@ -814,7 +819,7 @@ fn long_path_with_long_filename_combination() {
     let long_filename = format!("{}.txt", "long_name_".repeat(19));
     let file_path = deep_path.join(&long_filename);
 
-    if let Ok(_) = fs::write(&file_path, b"combo test") {
+    if fs::write(&file_path, b"combo test").is_ok() {
         let total_len = file_path.as_os_str().len();
         println!("Combined path length: {total_len}");
 
@@ -822,9 +827,9 @@ fn long_path_with_long_filename_combination() {
         let entries = collect_all_entries(walker);
 
         // Verify file was found
-        let found = entries.iter().any(|e| {
-            e.relative_path().to_string_lossy().contains("long_name_")
-        });
+        let found = entries
+            .iter()
+            .any(|e| e.relative_path().to_string_lossy().contains("long_name_"));
         assert!(found, "should find file with long name in deep directory");
     }
 }
@@ -913,11 +918,15 @@ fn walk_structure_approaching_limit_from_multiple_branches() {
         let walker = FileListBuilder::new(&root).build().expect("build walker");
         let entries = collect_all_entries(walker);
 
-        let found_files = entries.iter().filter(|e| {
-            e.relative_path().to_string_lossy().ends_with("leaf.txt")
-        }).count();
+        let found_files = entries
+            .iter()
+            .filter(|e| e.relative_path().to_string_lossy().ends_with("leaf.txt"))
+            .count();
 
-        assert_eq!(found_files, total_files, "should find all leaf files in long branches");
+        assert_eq!(
+            found_files, total_files,
+            "should find all leaf files in long branches"
+        );
     }
 }
 
@@ -949,8 +958,7 @@ fn relative_path_resolving_to_long_absolute() {
             let reconstructed = root.join(relative);
             assert_eq!(
                 full, reconstructed,
-                "relative path should resolve correctly for {:?}",
-                relative
+                "relative path should resolve correctly for {relative:?}"
             );
         }
 
@@ -958,8 +966,7 @@ fn relative_path_resolving_to_long_absolute() {
         let rel_str = relative.to_string_lossy();
         assert!(
             !rel_str.contains(".."),
-            "relative path should not contain '..' for {:?}",
-            relative
+            "relative path should not contain '..' for {relative:?}"
         );
     }
 }
@@ -1028,7 +1035,10 @@ mod symlink_long_path_tests {
                 .expect("build walker");
             let paths_follow = collect_relative_paths(walker_follow);
 
-            assert!(paths_follow.len() >= 2, "should follow symlink to deep target");
+            assert!(
+                paths_follow.len() >= 2,
+                "should follow symlink to deep target"
+            );
         }
     }
 
@@ -1056,9 +1066,9 @@ mod symlink_long_path_tests {
                     .expect("build walker");
                 let entries = collect_all_entries(walker);
 
-                let found = entries.iter().any(|e| {
-                    e.relative_path().to_string_lossy().ends_with("max.txt")
-                });
+                let found = entries
+                    .iter()
+                    .any(|e| e.relative_path().to_string_lossy().ends_with("max.txt"));
                 assert!(found, "should find file through symlink to long path");
             }
         }
@@ -1078,7 +1088,7 @@ mod symlink_long_path_tests {
 
         // Create relative symlink from branch_a to branch_b
         // This requires going up many levels and back down
-        let relative_target = "../".repeat(16) + "branch_b/" + &"d".repeat(20).repeat(15);
+        let _relative_target = "../".repeat(16) + "branch_b/" + &"d".repeat(20).repeat(15);
         // Simplified: just link to sibling
         let link_path = branch_a.join("sibling_link");
         if symlink(&branch_b, &link_path).is_ok() {
@@ -1089,9 +1099,10 @@ mod symlink_long_path_tests {
             let entries = collect_all_entries(walker);
 
             // Should find target.txt in branch_b and through sibling_link
-            let target_count = entries.iter().filter(|e| {
-                e.relative_path().to_string_lossy().contains("target.txt")
-            }).count();
+            let target_count = entries
+                .iter()
+                .filter(|e| e.relative_path().to_string_lossy().contains("target.txt"))
+                .count();
 
             // We expect to find the file at least once (directly in branch_b)
             // With cycle detection, we shouldn't infinitely recurse
@@ -1116,7 +1127,10 @@ mod symlink_long_path_tests {
         if symlink(&target_path, &link_path).is_ok() {
             // Verify we can read the link target
             let read_target = fs::read_link(&link_path).expect("read link");
-            assert_eq!(read_target, target_path, "symlink target should be preserved");
+            assert_eq!(
+                read_target, target_path,
+                "symlink target should be preserved"
+            );
 
             // Walker should handle this correctly
             let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -1153,7 +1167,8 @@ fn very_long_base_path_handling() {
                 let entry = entry.expect("entry should succeed");
                 if entry.is_root() {
                     assert_eq!(
-                        entry.full_path(), deep_start,
+                        entry.full_path(),
+                        deep_start,
                         "root full path should match starting path"
                     );
                 }
@@ -1193,7 +1208,10 @@ fn entry_creation_at_path_limits() {
     }
 
     println!("Success: {success_count}, Errors: {error_count}");
-    assert!(success_count > 0, "should successfully traverse some entries");
+    assert!(
+        success_count > 0,
+        "should successfully traverse some entries"
+    );
 }
 
 // ============================================================================
@@ -1218,12 +1236,10 @@ fn no_filename_truncation_at_max_length() {
         let file_entry = entries.iter().find(|e| !e.is_root()).expect("find file");
         let stored_name = file_entry.file_name().expect("get filename");
 
+        assert_eq!(stored_name.len(), 255, "filename should not be truncated");
         assert_eq!(
-            stored_name.len(), 255,
-            "filename should not be truncated"
-        );
-        assert_eq!(
-            stored_name.to_string_lossy(), exact_name,
+            stored_name.to_string_lossy(),
+            exact_name,
             "filename should match exactly"
         );
     }
@@ -1260,7 +1276,8 @@ fn no_relative_path_truncation_in_deep_structure() {
         // Verify relative path components match directory structure
         let component_count = relative.components().count();
         assert_eq!(
-            entry.depth(), component_count,
+            entry.depth(),
+            component_count,
             "depth should match component count (no truncation)"
         );
     }
@@ -1285,7 +1302,8 @@ fn no_directory_name_truncation() {
         let dir_name = dir_entry.file_name().expect("get dirname");
 
         assert_eq!(
-            dir_name.len(), 255,
+            dir_name.len(),
+            255,
             "directory name should not be truncated"
         );
     }
@@ -1323,12 +1341,16 @@ fn combined_deep_long_symlink_structure() {
         let entries = collect_all_entries(walker);
 
         // Should find the file both directly and through symlink
-        let file_count = entries.iter().filter(|e| {
-            e.relative_path().to_string_lossy().contains("file_file_")
-        }).count();
+        let file_count = entries
+            .iter()
+            .filter(|e| e.relative_path().to_string_lossy().contains("file_file_"))
+            .count();
 
         // Due to cycle detection, we might find it once or twice
-        assert!(file_count >= 1, "should find file with long name in deep structure");
+        assert!(
+            file_count >= 1,
+            "should find file with long name in deep structure"
+        );
     }
 }
 
@@ -1344,7 +1366,7 @@ fn empty_directories_at_path_limits() {
     let levels = (SAFE_PATH_LIMIT - root_len) / 51; // 50-char names + separator
     let levels = levels.min(60); // Cap for test performance
 
-    let deep_path = create_deep_structure(&root, levels, 50);
+    let _deep_path = create_deep_structure(&root, levels, 50);
     // Don't create any files - just empty directories
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -1352,7 +1374,8 @@ fn empty_directories_at_path_limits() {
 
     // Should have root + all directories
     assert_eq!(
-        entries.len() - 1, levels, // -1 for root
+        entries.len() - 1,
+        levels, // -1 for root
         "should traverse all empty directories"
     );
 
@@ -1380,7 +1403,7 @@ fn iterator_patterns_with_long_paths() {
     // Add some files at intermediate depths
     let mut current = root.clone();
     for i in 0..5 {
-        current = current.join(format!("d{:059}", i));
+        current = current.join(format!("d{i:059}"));
         if current.exists() {
             fs::write(current.join(format!("level{i}.txt")), b"data").expect("write file");
         }
@@ -1403,11 +1426,11 @@ fn iterator_patterns_with_long_paths() {
 
     // Test map() with long paths
     let walker3 = FileListBuilder::new(&root).build().expect("build walker");
-    let depths: Vec<usize> = walker3
-        .filter_map(|r| r.ok())
-        .map(|e| e.depth())
-        .collect();
+    let depths: Vec<usize> = walker3.filter_map(|r| r.ok()).map(|e| e.depth()).collect();
 
     assert!(depths.contains(&0), "should have depth 0");
-    assert!(*depths.iter().max().unwrap() > 20, "should have deep entries");
+    assert!(
+        *depths.iter().max().unwrap() > 20,
+        "should have deep entries"
+    );
 }

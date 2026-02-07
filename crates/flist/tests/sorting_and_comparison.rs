@@ -1050,9 +1050,7 @@ fn nearly_sorted_input_sorted_correctly() {
     fs::create_dir(&root).expect("create root");
 
     // Create files in mostly-sorted order with a few swaps
-    let mut names: Vec<String> = (0..300)
-        .map(|i| format!("file_{i:04}.txt"))
-        .collect();
+    let mut names: Vec<String> = (0..300).map(|i| format!("file_{i:04}.txt")).collect();
     // Swap a few elements to create "nearly sorted" input
     names.swap(10, 290);
     names.swap(50, 150);
@@ -1143,9 +1141,8 @@ fn sort_matches_reference_ordering() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "!bang", "#hash", "$dollar", "%percent", "+plus", "-dash",
-        ".dot", "0zero", "9nine", "ALLCAPS", "Capital", "Zebra",
-        "_under", "alpha", "beta", "gamma", "zeta", "~tilde",
+        "!bang", "#hash", "$dollar", "%percent", "+plus", "-dash", ".dot", "0zero", "9nine",
+        "ALLCAPS", "Capital", "Zebra", "_under", "alpha", "beta", "gamma", "zeta", "~tilde",
     ];
 
     for name in &names {

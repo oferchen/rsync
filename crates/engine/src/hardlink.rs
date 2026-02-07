@@ -195,7 +195,8 @@ impl HardlinkTracker {
             Some(group) => {
                 // Subsequent occurrence - add as link
                 group.add_link(file_index);
-                self.actions.insert(file_index, HardlinkAction::LinkTo(group.source_index));
+                self.actions
+                    .insert(file_index, HardlinkAction::LinkTo(group.source_index));
                 false
             }
             None => {
@@ -221,7 +222,10 @@ impl HardlinkTracker {
     /// - `HardlinkAction::Skip` if the file was never registered (shouldn't happen)
     #[must_use]
     pub fn resolve(&self, file_index: i32) -> HardlinkAction {
-        self.actions.get(&file_index).copied().unwrap_or(HardlinkAction::Skip)
+        self.actions
+            .get(&file_index)
+            .copied()
+            .unwrap_or(HardlinkAction::Skip)
     }
 
     /// Checks if a file is the source of a hardlink group.
@@ -236,7 +240,10 @@ impl HardlinkTracker {
     #[must_use]
     pub fn is_hardlink_source(&self, file_index: i32) -> bool {
         matches!(self.resolve(file_index), HardlinkAction::Transfer)
-            && self.groups.values().any(|g| g.source_index == file_index && !g.link_indices.is_empty())
+            && self
+                .groups
+                .values()
+                .any(|g| g.source_index == file_index && !g.link_indices.is_empty())
     }
 
     /// Gets the hardlink target index for a file.
@@ -267,7 +274,10 @@ impl HardlinkTracker {
     /// Returns the number of hardlink groups (with at least 2 files each).
     #[must_use]
     pub fn group_count(&self) -> usize {
-        self.groups.values().filter(|g| !g.link_indices.is_empty()).count()
+        self.groups
+            .values()
+            .filter(|g| !g.link_indices.is_empty())
+            .count()
     }
 
     /// Returns the total number of registered files.
@@ -511,8 +521,14 @@ mod tests {
         tracker.register(key, 0);
         tracker.register(key, 1);
 
-        assert_eq!(HardlinkResolver::resolve(&tracker, 0), HardlinkAction::Transfer);
-        assert_eq!(HardlinkResolver::resolve(&tracker, 1), HardlinkAction::LinkTo(0));
+        assert_eq!(
+            HardlinkResolver::resolve(&tracker, 0),
+            HardlinkAction::Transfer
+        );
+        assert_eq!(
+            HardlinkResolver::resolve(&tracker, 1),
+            HardlinkAction::LinkTo(0)
+        );
     }
 
     #[test]
@@ -543,12 +559,7 @@ mod tests {
     fn extreme_device_inode_values() {
         let mut tracker = HardlinkTracker::new();
 
-        let cases = [
-            (0, 0),
-            (u64::MAX, u64::MAX),
-            (0, u64::MAX),
-            (u64::MAX, 0),
-        ];
+        let cases = [(0, 0), (u64::MAX, u64::MAX), (0, u64::MAX), (u64::MAX, 0)];
 
         for (i, &(dev, ino)) in cases.iter().enumerate() {
             let key = HardlinkKey::new(dev, ino);

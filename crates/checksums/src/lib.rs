@@ -428,6 +428,6 @@ pub use strong::xxh3_simd_available;
 /// See the [`strong::strategy`] module documentation for usage details.
 pub use strong::strategy::{
     ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
-    Md4Strategy, Md5SeedConfig, Md5Strategy, SeedConfig, Sha1Strategy, Sha256Strategy,
-    Sha512Strategy, Xxh3Strategy, Xxh3_128Strategy, Xxh64Strategy, MAX_DIGEST_LEN,
+    MAX_DIGEST_LEN, Md4Strategy, Md5SeedConfig, Md5Strategy, SeedConfig, Sha1Strategy,
+    Sha256Strategy, Sha512Strategy, Xxh3_128Strategy, Xxh3Strategy, Xxh64Strategy,
 };

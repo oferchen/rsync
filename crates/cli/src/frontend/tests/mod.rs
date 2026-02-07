@@ -47,6 +47,8 @@ mod collect_tests;
 #[path = "combined.rs"]
 mod combined_tests;
 mod common;
+#[path = "compress_level_upstream.rs"]
+mod compress_level_upstream_tests;
 #[path = "compression.rs"]
 mod compression_tests;
 #[path = "connect.rs"]
@@ -60,6 +62,8 @@ mod delete_tests;
 mod dry_run_tests;
 #[path = "files_from.rs"]
 mod files_from_tests;
+#[path = "filter_behavior_comprehensive.rs"]
+mod filter_behavior_comprehensive_tests;
 #[path = "format.rs"]
 mod format_tests;
 #[path = "h.rs"]
@@ -100,8 +104,6 @@ mod parse_args_allows_tests;
 mod parse_args_captures_tests;
 #[path = "parse_args_collects.rs"]
 mod parse_args_collects_tests;
-#[path = "compress_level_upstream.rs"]
-mod compress_level_upstream_tests;
 #[path = "parse_args_compress.rs"]
 mod parse_args_compress_tests;
 #[path = "parse_args_no.rs"]
@@ -234,12 +236,10 @@ mod parse_checksum_tests;
 mod parse_compress_tests;
 #[path = "parse_filter.rs"]
 mod parse_filter_tests;
-#[path = "filter_behavior_comprehensive.rs"]
-mod filter_behavior_comprehensive_tests;
-#[path = "parse_max.rs"]
-mod parse_max_tests;
 #[path = "parse_max_alloc.rs"]
 mod parse_max_alloc_tests;
+#[path = "parse_max.rs"]
+mod parse_max_tests;
 #[path = "parse_modify.rs"]
 mod parse_modify_tests;
 #[path = "parse_size.rs"]
@@ -267,6 +267,8 @@ mod run_tests;
 // Disabled temporarily due to missing server module exports:
 // #[path = "server.rs"]
 // mod server_tests;
+#[path = "itemize_format_upstream.rs"]
+mod itemize_format_upstream_tests;
 #[path = "short.rs"]
 mod short_tests;
 #[path = "size.rs"]
@@ -309,8 +311,6 @@ mod transfer_request_with_ignore_times_tests;
 mod transfer_request_with_include_tests;
 #[path = "transfer_request_with_itemize.rs"]
 mod transfer_request_with_itemize_tests;
-#[path = "itemize_format_upstream.rs"]
-mod itemize_format_upstream_tests;
 #[path = "transfer_request_with_no.rs"]
 mod transfer_request_with_no_tests;
 #[path = "transfer_request_with_omit.rs"]

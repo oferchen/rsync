@@ -23,7 +23,7 @@ fn daemon_negotiation_version_sends_greeting_first() {
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let stream = connect_with_retries(port);
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set timeout");
@@ -63,7 +63,7 @@ fn daemon_negotiation_version_greeting_format() {
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let stream = connect_with_retries(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();

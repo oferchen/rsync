@@ -49,29 +49,55 @@ pub use self::signature::{SignatureBlock, read_signature, write_signature};
 
 // File entry wire format encoding
 pub use self::file_entry::{
-    // Flag encoding
-    encode_end_marker, encode_flags,
-    // Name encoding
-    calculate_name_prefix_len, encode_name,
-    // Metadata encoding
-    encode_atime, encode_checksum, encode_crtime, encode_gid, encode_mode, encode_mtime,
-    encode_mtime_nsec, encode_owner_name, encode_rdev, encode_size, encode_symlink_target,
-    encode_uid,
-    // Hardlink encoding
-    encode_hardlink_dev_ino, encode_hardlink_idx,
     // Flag calculation helpers
-    calculate_basic_flags, calculate_device_flags, calculate_hardlink_flags, calculate_time_flags,
+    calculate_basic_flags,
+    calculate_device_flags,
+    calculate_hardlink_flags,
+    // Name encoding
+    calculate_name_prefix_len,
+    calculate_time_flags,
+    // Metadata encoding
+    encode_atime,
+    encode_checksum,
+    encode_crtime,
+    // Flag encoding
+    encode_end_marker,
+    encode_flags,
+    encode_gid,
+    // Hardlink encoding
+    encode_hardlink_dev_ino,
+    encode_hardlink_idx,
+    encode_mode,
+    encode_mtime,
+    encode_mtime_nsec,
+    encode_name,
+    encode_owner_name,
+    encode_rdev,
+    encode_size,
+    encode_symlink_target,
+    encode_uid,
 };
 
 // File entry wire format decoding
 pub use self::file_entry_decode::{
+    // Metadata decoding
+    decode_atime,
+    decode_checksum,
+    decode_crtime,
     // Flag decoding
-    decode_end_marker, decode_flags,
+    decode_end_marker,
+    decode_flags,
+    decode_gid,
+    // Hardlink decoding
+    decode_hardlink_dev_ino,
+    decode_hardlink_idx,
+    decode_mode,
+    decode_mtime,
+    decode_mtime_nsec,
     // Name decoding
     decode_name,
-    // Metadata decoding
-    decode_atime, decode_checksum, decode_crtime, decode_gid, decode_mode, decode_mtime,
-    decode_mtime_nsec, decode_rdev, decode_size, decode_symlink_target, decode_uid,
-    // Hardlink decoding
-    decode_hardlink_dev_ino, decode_hardlink_idx,
+    decode_rdev,
+    decode_size,
+    decode_symlink_target,
+    decode_uid,
 };

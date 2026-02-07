@@ -57,14 +57,14 @@ fn create_standard_tree() -> (tempfile::TempDir, PathBuf) {
     let subdir = adir.join("subdir");
     fs::create_dir(&adir).expect("create adir");
     fs::create_dir(&subdir).expect("create subdir");
-    fs::write(adir.join("nested.txt"), &[0u8; 100]).expect("write nested.txt");
-    fs::write(subdir.join("deep.txt"), &[0u8; 200]).expect("write deep.txt");
+    fs::write(adir.join("nested.txt"), [0u8; 100]).expect("write nested.txt");
+    fs::write(subdir.join("deep.txt"), [0u8; 200]).expect("write deep.txt");
 
     let bdir = root.join("bdir");
     fs::create_dir(&bdir).expect("create bdir");
-    fs::write(bdir.join("file.txt"), &[0u8; 50]).expect("write file.txt");
+    fs::write(bdir.join("file.txt"), [0u8; 50]).expect("write file.txt");
 
-    fs::write(root.join("top_file.txt"), &[0u8; 10]).expect("write top_file.txt");
+    fs::write(root.join("top_file.txt"), [0u8; 10]).expect("write top_file.txt");
 
     (temp, root)
 }
@@ -78,10 +78,10 @@ fn create_standard_tree() -> (tempfile::TempDir, PathBuf) {
 #[test]
 fn streaming_one_entry_at_a_time() {
     let (_temp, root) = create_standard_tree();
-    let mut walker = FileListBuilder::new(&root).build().expect("build walker");
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
 
     let mut count = 0;
-    while let Some(result) = walker.next() {
+    for result in walker {
         let entry = result.expect("entry should succeed");
         // Simulate incremental processing: inspect each entry individually
         let _ = entry.relative_path();
@@ -100,10 +100,10 @@ fn streaming_one_entry_at_a_time() {
 #[test]
 fn streaming_depth_first_order() {
     let (_temp, root) = create_standard_tree();
-    let mut walker = FileListBuilder::new(&root).build().expect("build walker");
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
 
     let mut entries_seen = Vec::new();
-    while let Some(result) = walker.next() {
+    for result in walker {
         let entry = result.expect("entry should succeed");
         if !entry.is_root() {
             entries_seen.push(entry.relative_path().to_path_buf());
@@ -156,9 +156,7 @@ fn streaming_parent_before_children() {
         if let Some(parent) = rel.parent() {
             assert!(
                 seen_dirs.contains(parent),
-                "parent {:?} of {:?} should have been seen already",
-                parent,
-                rel
+                "parent {parent:?} of {rel:?} should have been seen already"
             );
         }
 
@@ -196,13 +194,17 @@ fn streaming_matches_batch_collection() {
     let (_temp, root) = create_standard_tree();
 
     // Batch collection
-    let batch_walker = FileListBuilder::new(&root).build().expect("build batch walker");
+    let batch_walker = FileListBuilder::new(&root)
+        .build()
+        .expect("build batch walker");
     let batch_paths = collect_relative_paths(batch_walker);
 
     // Incremental collection
-    let mut stream_walker = FileListBuilder::new(&root).build().expect("build stream walker");
+    let stream_walker = FileListBuilder::new(&root)
+        .build()
+        .expect("build stream walker");
     let mut stream_paths = Vec::new();
-    while let Some(result) = stream_walker.next() {
+    for result in stream_walker {
         let entry = result.expect("entry should succeed");
         if !entry.is_root() {
             stream_paths.push(entry.relative_path().to_path_buf());
@@ -336,9 +338,7 @@ fn metadata_file_name_consistency() {
         if entry.is_root() {
             assert!(entry.file_name().is_none(), "root should have no file_name");
         } else {
-            let file_name = entry
-                .file_name()
-                .expect("non-root should have file_name");
+            let file_name = entry.file_name().expect("non-root should have file_name");
             let expected = entry.relative_path().file_name().unwrap();
             assert_eq!(file_name, expected);
         }
@@ -398,7 +398,10 @@ fn file_root_entry_is_file() {
 
     assert!(entry.is_root());
     assert!(entry.metadata().is_file());
-    assert!(walker.next().is_none(), "single file should have no children");
+    assert!(
+        walker.next().is_none(),
+        "single file should have no children"
+    );
 }
 
 /// Verifies correct handling of directories containing only subdirectories
@@ -591,7 +594,7 @@ fn incremental_entries_sorted_within_directory() {
     let _ = walker.next();
 
     let mut names = Vec::new();
-    while let Some(result) = walker.next() {
+    for result in walker {
         let entry = result.expect("entry should succeed");
         names.push(entry.relative_path().to_path_buf());
     }
@@ -648,10 +651,7 @@ fn incremental_deterministic_across_runs() {
         .collect();
 
     for (i, result) in results.iter().enumerate().skip(1) {
-        assert_eq!(
-            &results[0], result,
-            "run {i} differs from first run"
-        );
+        assert_eq!(&results[0], result, "run {i} differs from first run");
     }
 }
 
@@ -673,7 +673,10 @@ fn edge_case_empty_directory() {
     assert!(root_entry.is_root());
     assert!(root_entry.metadata().is_dir());
 
-    assert!(walker.next().is_none(), "empty dir should yield no children");
+    assert!(
+        walker.next().is_none(),
+        "empty dir should yield no children"
+    );
 }
 
 /// Verifies incremental processing of an empty directory with include_root=false.
@@ -716,7 +719,10 @@ fn edge_case_single_file() {
 #[test]
 fn edge_case_nonexistent_path() {
     let result = FileListBuilder::new("/nonexistent/path/xyz").build();
-    assert!(result.is_err(), "nonexistent path should fail at build time");
+    assert!(
+        result.is_err(),
+        "nonexistent path should fail at build time"
+    );
 }
 
 /// Verifies behavior after the walker is fully exhausted -- repeated next()
@@ -804,7 +810,11 @@ fn large_list_incremental_processing() {
 
     let file_count = 500;
     for i in 0..file_count {
-        fs::write(root.join(format!("file_{i:04}.txt")), format!("content_{i}")).expect("write");
+        fs::write(
+            root.join(format!("file_{i:04}.txt")),
+            format!("content_{i}"),
+        )
+        .expect("write");
     }
 
     let walker = FileListBuilder::new(&root)
@@ -887,13 +897,7 @@ fn lazy_entry_deferred_metadata() {
     let file = temp.path().join("lazy.txt");
     fs::write(&file, b"lazy content").expect("write");
 
-    let entry = LazyFileListEntry::new(
-        file.clone(),
-        PathBuf::from("lazy.txt"),
-        1,
-        false,
-        false,
-    );
+    let entry = LazyFileListEntry::new(file.clone(), PathBuf::from("lazy.txt"), 1, false, false);
 
     assert!(!entry.is_resolved(), "metadata should not be resolved yet");
     assert_eq!(entry.full_path(), &file);
@@ -910,13 +914,7 @@ fn lazy_entry_filter_without_stat() {
     let file = temp.path().join("test.tmp");
     fs::write(&file, b"data").expect("write");
 
-    let entry = LazyFileListEntry::new(
-        file,
-        PathBuf::from("test.tmp"),
-        1,
-        false,
-        false,
-    );
+    let entry = LazyFileListEntry::new(file, PathBuf::from("test.tmp"), 1, false, false);
 
     // Filter by extension -- no stat needed
     let is_tmp = entry
@@ -936,13 +934,7 @@ fn lazy_entry_into_resolved() {
     let file = temp.path().join("resolve.txt");
     fs::write(&file, b"resolve me").expect("write");
 
-    let entry = LazyFileListEntry::new(
-        file.clone(),
-        PathBuf::from("resolve.txt"),
-        1,
-        false,
-        false,
-    );
+    let entry = LazyFileListEntry::new(file.clone(), PathBuf::from("resolve.txt"), 1, false, false);
 
     let resolved = entry.into_resolved().expect("should resolve successfully");
     assert_eq!(resolved.full_path(), &file);
@@ -984,13 +976,7 @@ fn lazy_entry_try_into_unresolved_returns_none() {
     let file = temp.path().join("unresolved.txt");
     fs::write(&file, b"data").expect("write");
 
-    let entry = LazyFileListEntry::new(
-        file,
-        PathBuf::from("unresolved.txt"),
-        1,
-        false,
-        false,
-    );
+    let entry = LazyFileListEntry::new(file, PathBuf::from("unresolved.txt"), 1, false, false);
 
     assert!(
         entry.try_into_resolved().is_none(),
@@ -1018,13 +1004,8 @@ fn lazy_entry_resolve_nonexistent_fails() {
 fn lazy_entry_root_identification() {
     let temp = tempfile::tempdir().expect("tempdir");
 
-    let root_entry = LazyFileListEntry::new(
-        temp.path().to_path_buf(),
-        PathBuf::new(),
-        0,
-        true,
-        false,
-    );
+    let root_entry =
+        LazyFileListEntry::new(temp.path().to_path_buf(), PathBuf::new(), 0, true, false);
 
     assert!(root_entry.is_root());
     assert!(root_entry.file_name().is_none());
@@ -1333,12 +1314,12 @@ fn deep_nesting_depth_progression() {
     fs::create_dir_all(&current).expect("create deep dirs");
     fs::write(current.join("bottom.txt"), b"deep").expect("write bottom file");
 
-    let mut walker = FileListBuilder::new(&root).build().expect("build walker");
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
 
     let mut max_depth = 0;
     let mut depths = Vec::new();
 
-    while let Some(result) = walker.next() {
+    for result in walker {
         let entry = result.expect("entry should succeed");
         let depth = entry.depth();
         depths.push(depth);
@@ -1352,7 +1333,7 @@ fn deep_nesting_depth_progression() {
     // Depths should monotonically increase (depth-first into single branch)
     for i in 1..depths.len() {
         assert!(
-            depths[i] >= depths[i - 1] || depths[i] == depths[i - 1] + 1 || true,
+            depths[i] >= depths[i - 1] || depths[i] == depths[i - 1] + 1,
             "depth should follow depth-first pattern"
         );
     }

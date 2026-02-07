@@ -911,11 +911,7 @@ mod tests {
             "Errors with program diagnostics"
         );
         assert_eq!(ExitCode::Ipc.as_i32(), 14, "Error in IPC code");
-        assert_eq!(
-            ExitCode::Signal.as_i32(),
-            20,
-            "Received SIGUSR1 or SIGINT"
-        );
+        assert_eq!(ExitCode::Signal.as_i32(), 20, "Received SIGUSR1 or SIGINT");
         assert_eq!(
             ExitCode::WaitChild.as_i32(),
             21,

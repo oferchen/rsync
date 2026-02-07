@@ -102,7 +102,10 @@ impl BlockHashTable {
 
         // Build hash table with chaining
         for (idx, block) in blocks.iter().enumerate() {
-            table.entry(block.checksum).or_insert_with(Vec::new).push(idx);
+            table
+                .entry(block.checksum)
+                .or_insert_with(Vec::new)
+                .push(idx);
         }
 
         Self {
@@ -123,7 +126,10 @@ impl BlockHashTable {
 
         // Build hash table with chaining
         for (idx, block) in blocks.iter().enumerate() {
-            table.entry(block.checksum).or_insert_with(Vec::new).push(idx);
+            table
+                .entry(block.checksum)
+                .or_insert_with(Vec::new)
+                .push(idx);
         }
 
         Self {
@@ -144,7 +150,10 @@ impl BlockHashTable {
         }
 
         // Look up in hash table
-        self.table.get(&checksum).map(|v| v.as_slice()).unwrap_or(&[])
+        self.table
+            .get(&checksum)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Verify a weak match against a strong checksum.
@@ -497,7 +506,7 @@ mod tests {
         let mut blocks = Vec::new();
         for i in 0..10000 {
             blocks.push(BlockEntry {
-                index: i as u32,
+                index: i,
                 checksum: i * 1000,
                 strong_checksum: vec![(i >> 8) as u8, (i & 0xFF) as u8],
                 block_len: 4096,
@@ -520,7 +529,7 @@ mod tests {
         let mut blocks2 = Vec::new();
         for i in 0..10000 {
             blocks2.push(BlockEntry {
-                index: i as u32,
+                index: i,
                 checksum: (10000 - i) * 1000, // Reverse order
                 strong_checksum: vec![(i >> 8) as u8, (i & 0xFF) as u8],
                 block_len: 4096,
@@ -532,7 +541,8 @@ mod tests {
         assert!(table_sorted.is_sorted());
 
         // Verify we can still find blocks after sorting
-        let matched = table_sorted.find_match(5000 * 1000, &[(5000 >> 8) as u8, (5000 & 0xFF) as u8]);
+        let matched =
+            table_sorted.find_match(5000 * 1000, &[(5000 >> 8) as u8, (5000 & 0xFF) as u8]);
         assert!(matched.is_some());
         assert_eq!(matched.unwrap().index, 5000);
     }

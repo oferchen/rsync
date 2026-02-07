@@ -180,9 +180,7 @@ pub(crate) fn plan_directory_entries<'a>(
         // --safe-links is active (without --copy-unsafe-links), we leave
         // the CopySymlink action in place so that copy_symlink() can
         // handle it and record the SkippedUnsafeSymlink event properly.
-        if matches!(action, EntryAction::CopySymlink)
-            && context.copy_unsafe_links_enabled()
-        {
+        if matches!(action, EntryAction::CopySymlink) && context.copy_unsafe_links_enabled() {
             match fs::read_link(entry.path.as_path()) {
                 Ok(target) => {
                     let safety_rel = context.strip_safety_prefix(relative_path.as_path());
@@ -402,28 +400,25 @@ fn plan_directory_entries_with_prefetch<'a>(
         // When only --safe-links is active (no --copy-unsafe-links), we
         // leave CopySymlink so that copy_symlink() records
         // SkippedUnsafeSymlink properly.
-        if matches!(action, EntryAction::CopySymlink)
-            && context.copy_unsafe_links_enabled()
-        {
+        if matches!(action, EntryAction::CopySymlink) && context.copy_unsafe_links_enabled() {
             if let Some(ref result) = prefetch.symlink_target {
                 match result {
                     Ok(target) => {
                         let safety_rel = context.strip_safety_prefix(relative_path.as_path());
                         if !symlink_target_is_safe(target, safety_rel) {
                             // Use prefetched metadata or re-fetch
-                            let target_metadata = if let Some(ref meta_result) =
-                                prefetch.symlink_target_metadata
-                            {
-                                meta_result.as_ref().map_err(|e| {
-                                    LocalCopyError::io(
-                                        "read symlink target metadata",
-                                        entry.path.clone(),
-                                        std::io::Error::other(e.to_string()),
-                                    )
-                                })?
-                            } else {
-                                &follow_symlink_metadata(entry.path.as_path())?
-                            };
+                            let target_metadata =
+                                if let Some(ref meta_result) = prefetch.symlink_target_metadata {
+                                    meta_result.as_ref().map_err(|e| {
+                                        LocalCopyError::io(
+                                            "read symlink target metadata",
+                                            entry.path.clone(),
+                                            std::io::Error::other(e.to_string()),
+                                        )
+                                    })?
+                                } else {
+                                    &follow_symlink_metadata(entry.path.as_path())?
+                                };
 
                             let target_type = target_metadata.file_type();
                             if target_type.is_dir() {

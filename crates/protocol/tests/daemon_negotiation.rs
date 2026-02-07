@@ -197,10 +197,7 @@ fn test_negotiation_without_compression() {
     assert_eq!(result.compression.as_str(), "none");
 
     // Daemon client does NOT send anything (unidirectional)
-    assert!(
-        stdout.is_empty(),
-        "daemon client should not send anything"
-    );
+    assert!(stdout.is_empty(), "daemon client should not send anything");
 }
 
 // ============================================================================
@@ -364,7 +361,10 @@ fn test_daemon_e2e_with_zstd_compression() {
     .expect("server negotiation should succeed");
 
     // Verify server sent data
-    assert!(!server_output.is_empty(), "server must send algorithm lists");
+    assert!(
+        !server_output.is_empty(),
+        "server must send algorithm lists"
+    );
 
     // Step 2: Client-side negotiation (reads from buffer)
     let mut client_output = Vec::new();
@@ -601,7 +601,10 @@ fn test_daemon_e2e_empty_buffer_error() {
 
     // Should fail with I/O error (UnexpectedEof)
     assert!(result.is_err(), "reading from empty buffer should fail");
-    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+    assert_eq!(
+        result.unwrap_err().kind(),
+        std::io::ErrorKind::UnexpectedEof
+    );
 }
 
 /// Tests error handling when client reads from a truncated buffer.
@@ -674,7 +677,7 @@ fn test_daemon_e2e_multiple_rounds() {
             true,
             true,
         )
-        .expect(&format!("server negotiation round {} should succeed", round));
+        .unwrap_or_else(|_| panic!("server negotiation round {round} should succeed"));
 
         // Client-side
         let mut client_output = Vec::new();
@@ -689,7 +692,7 @@ fn test_daemon_e2e_multiple_rounds() {
             true,
             false,
         )
-        .expect(&format!("client negotiation round {} should succeed", round));
+        .unwrap_or_else(|_| panic!("client negotiation round {round} should succeed"));
 
         // All rounds should produce identical results
         assert_eq!(server_result.checksum.as_str(), "xxh128");
@@ -784,16 +787,14 @@ fn test_daemon_e2e_server_client_algorithm_match() {
     assert_eq!(
         server_result.checksum, client_result.checksum,
         "checksum mismatch: server={:?}, client={:?}",
-        server_result.checksum,
-        client_result.checksum
+        server_result.checksum, client_result.checksum
     );
 
     // Compression algorithms must be identical
     assert_eq!(
         server_result.compression, client_result.compression,
         "compression mismatch: server={:?}, client={:?}",
-        server_result.compression,
-        client_result.compression
+        server_result.compression, client_result.compression
     );
 
     // Verify both are using valid algorithms (not defaults due to error)
@@ -953,8 +954,16 @@ fn test_daemon_e2e_buffer_reuse() {
     // First negotiation
     shared_buffer.clear();
     let mut server_input = &b""[..];
-    negotiate_capabilities(protocol, &mut server_input, &mut shared_buffer, true, true, true, true)
-        .unwrap();
+    negotiate_capabilities(
+        protocol,
+        &mut server_input,
+        &mut shared_buffer,
+        true,
+        true,
+        true,
+        true,
+    )
+    .unwrap();
 
     let first_size = shared_buffer.len();
     let first_data = shared_buffer.clone();
@@ -962,8 +971,16 @@ fn test_daemon_e2e_buffer_reuse() {
     // Second negotiation - should produce identical output
     shared_buffer.clear();
     let mut server_input = &b""[..];
-    negotiate_capabilities(protocol, &mut server_input, &mut shared_buffer, true, true, true, true)
-        .unwrap();
+    negotiate_capabilities(
+        protocol,
+        &mut server_input,
+        &mut shared_buffer,
+        true,
+        true,
+        true,
+        true,
+    )
+    .unwrap();
 
     assert_eq!(
         shared_buffer.len(),

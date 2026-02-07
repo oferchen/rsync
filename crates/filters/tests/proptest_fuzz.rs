@@ -7,9 +7,7 @@
 
 use std::path::Path;
 
-use filters::{
-    FilterAction, FilterRule, FilterSet, cvs_exclusion_rules, parse_rules,
-};
+use filters::{FilterAction, FilterRule, FilterSet, cvs_exclusion_rules, parse_rules};
 use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -27,39 +25,30 @@ fn arbitrary_string() -> impl Strategy<Value = String> {
 /// Generates strings with special characters commonly found in filter rules.
 fn filter_special_string() -> impl Strategy<Value = String> {
     let chars = prop::sample::select(vec![
-        '+', '-', 'P', 'R', 'H', 'S', '.', ':', '!', '#', ';', ' ', '\t',
-        '\n', '\r', '/', '\\', '*', '?', '[', ']', '{', '}', '_', '\0',
-        'a', 'z', 'A', 'Z', '0', '9', '.', ',', '~', '$',
+        '+', '-', 'P', 'R', 'H', 'S', '.', ':', '!', '#', ';', ' ', '\t', '\n', '\r', '/', '\\',
+        '*', '?', '[', ']', '{', '}', '_', '\0', 'a', 'z', 'A', 'Z', '0', '9', '.', ',', '~', '$',
     ]);
-    proptest::collection::vec(chars, 0..100)
-        .prop_map(|v| v.into_iter().collect::<String>())
+    proptest::collection::vec(chars, 0..100).prop_map(|v| v.into_iter().collect::<String>())
 }
 
 /// Generates valid short-form prefixes.
 fn short_form_prefix() -> impl Strategy<Value = &'static str> {
-    prop::sample::select(vec![
-        "+ ", "- ", "P ", "R ", "H ", "S ", ". ", ": ",
-    ])
+    prop::sample::select(vec!["+ ", "- ", "P ", "R ", "H ", "S ", ". ", ": "])
 }
 
 /// Generates modifier characters.
 fn modifier_chars() -> impl Strategy<Value = String> {
-    let chars = prop::sample::select(vec![
-        '!', 'p', 's', 'r', 'x', 'e', 'n', 'w', 'C',
-    ]);
-    proptest::collection::vec(chars, 0..5)
-        .prop_map(|v| v.into_iter().collect::<String>())
+    let chars = prop::sample::select(vec!['!', 'p', 's', 'r', 'x', 'e', 'n', 'w', 'C']);
+    proptest::collection::vec(chars, 0..5).prop_map(|v| v.into_iter().collect::<String>())
 }
 
 /// Generates a safe glob-like pattern (characters that won't cause panic
 /// but exercise interesting glob edge cases).
 fn glob_pattern() -> impl Strategy<Value = String> {
     let chars = prop::sample::select(vec![
-        'a', 'b', 'c', 'd', 'e', 'f', '0', '1', '2',
-        '*', '?', '.', '/', '_', '-', '~',
+        'a', 'b', 'c', 'd', 'e', 'f', '0', '1', '2', '*', '?', '.', '/', '_', '-', '~',
     ]);
-    proptest::collection::vec(chars, 0..30)
-        .prop_map(|v| v.into_iter().collect::<String>())
+    proptest::collection::vec(chars, 0..30).prop_map(|v| v.into_iter().collect::<String>())
 }
 
 /// Generates a valid rsync filter rule line (short form).
@@ -137,15 +126,13 @@ fn arb_filter_rule() -> impl Strategy<Value = FilterRule> {
 fn arb_relative_path() -> impl Strategy<Value = String> {
     let segment = proptest::collection::vec(
         prop::sample::select(vec![
-            'a', 'b', 'c', 'd', 'x', 'y', 'z',
-            '0', '1', '.',  '_', '-',
+            'a', 'b', 'c', 'd', 'x', 'y', 'z', '0', '1', '.', '_', '-',
         ]),
         1..10,
     )
     .prop_map(|v| v.into_iter().collect::<String>());
 
-    proptest::collection::vec(segment, 1..5)
-        .prop_map(|segments| segments.join("/"))
+    proptest::collection::vec(segment, 1..5).prop_map(|segments| segments.join("/"))
 }
 
 // ---------------------------------------------------------------------------
@@ -683,8 +670,15 @@ fn parse_only_modifiers_no_pattern() {
 #[test]
 fn parse_all_long_form_keywords_empty_pattern() {
     let keywords = [
-        "include", "exclude", "protect", "risk", "merge",
-        "dir-merge", "hide", "show", "clear",
+        "include",
+        "exclude",
+        "protect",
+        "risk",
+        "merge",
+        "dir-merge",
+        "hide",
+        "show",
+        "clear",
     ];
     for kw in &keywords {
         let input = format!("{kw} ");
@@ -780,8 +774,8 @@ fn parse_rules_trailing_whitespace() {
 #[test]
 fn parse_rules_unicode_patterns() {
     let inputs = [
-        "+ \u{00e9}toile",     // accent
-        "- \u{1f600}",         // emoji
+        "+ \u{00e9}toile",    // accent
+        "- \u{1f600}",        // emoji
         "+ \u{4e16}\u{754c}", // CJK characters
         "- \u{0000}",         // null
         "+ \u{fffd}",         // replacement character
@@ -794,16 +788,12 @@ fn parse_rules_unicode_patterns() {
 
 #[test]
 fn filter_set_allows_with_path_components() {
-    let set = FilterSet::from_rules([
-        FilterRule::exclude("*.tmp"),
-        FilterRule::include("keep/**"),
-    ])
-    .unwrap();
+    let set = FilterSet::from_rules([FilterRule::exclude("*.tmp"), FilterRule::include("keep/**")])
+        .unwrap();
 
     // Test with various interesting path components
     let paths = [
-        "", ".", "..", "...", "/", "//", "a//b", "a/./b", "a/../b",
-        " ", "\t", "\n",
+        "", ".", "..", "...", "/", "//", "a//b", "a/./b", "a/../b", " ", "\t", "\n",
     ];
     for p in &paths {
         let _ = set.allows(Path::new(p), false);
