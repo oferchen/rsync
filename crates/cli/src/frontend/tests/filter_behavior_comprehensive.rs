@@ -381,7 +381,6 @@ fn transfer_with_short_f_exclude_skips_matching_files() {
 }
 
 #[test]
-#[ignore = "requires complete --filter/-f engine wiring (issue #88)"]
 fn transfer_with_short_f_include_then_exclude_all() {
     use tempfile::tempdir;
 
@@ -393,13 +392,17 @@ fn transfer_with_short_f_include_then_exclude_all() {
     std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
     std::fs::write(source_root.join("skip.log"), b"skip").expect("write skip");
 
+    // Trailing slash so the source directory itself is not evaluated against filters.
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-f"),
         OsString::from("+ *.txt"),
         OsString::from("-f"),
         OsString::from("- *"),
-        source_root.into_os_string(),
+        source_operand,
         dest_root.clone().into_os_string(),
     ]);
 
@@ -407,9 +410,8 @@ fn transfer_with_short_f_include_then_exclude_all() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    let copied_root = dest_root.join("source");
-    assert!(copied_root.join("keep.txt").exists());
-    assert!(!copied_root.join("skip.log").exists());
+    assert!(dest_root.join("keep.txt").exists());
+    assert!(!dest_root.join("skip.log").exists());
 }
 
 #[test]
@@ -608,18 +610,14 @@ fn exclude_and_filter_exclude_produce_same_result() {
 // =============================================================================
 
 /// Note: --exclude and --include are processed by `apply_filters` in a fixed
-/// order: exclude-from, excludes, include-from, includes, then --filter rules.
-/// This means --include/--exclude CLI order does NOT directly control rule
-/// evaluation order. The --filter/-f mechanism gives direct control.
+/// order: include-from, includes, exclude-from, excludes, then --filter rules.
+/// This ensures first-match-wins semantics work correctly when --include and
+/// --exclude are used together. The --filter/-f mechanism gives direct control
+/// over rule ordering.
 ///
 /// This test verifies that -f with include then exclude-all correctly filters
 /// files using first-match-wins semantics where the order is under user control.
-///
-/// NOTE: Requires complete --filter/-f implementation; currently the filter
-/// rules parsed via -f are not yet wired into the local copy engine's filter
-/// evaluation. This test will be re-enabled when that wiring is complete.
 #[test]
-#[ignore = "requires complete --filter/-f engine wiring (issue #88)"]
 fn filter_include_then_exclude_all_via_short_f() {
     use tempfile::tempdir;
 
@@ -631,21 +629,24 @@ fn filter_include_then_exclude_all_via_short_f() {
     std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
     std::fs::write(source_root.join("skip.log"), b"skip").expect("write skip");
 
+    // Trailing slash so the source directory itself is not evaluated against filters.
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
     let (code, _, _) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-f"),
         OsString::from("+ *.txt"),
         OsString::from("-f"),
         OsString::from("- *"),
-        source_root.into_os_string(),
+        source_operand,
         dest_root.clone().into_os_string(),
     ]);
 
     assert_eq!(code, 0);
 
-    let copied = dest_root.join("source");
-    assert!(copied.join("keep.txt").exists());
-    assert!(!copied.join("skip.log").exists());
+    assert!(dest_root.join("keep.txt").exists());
+    assert!(!dest_root.join("skip.log").exists());
 }
 
 // =============================================================================
@@ -653,7 +654,6 @@ fn filter_include_then_exclude_all_via_short_f() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires complete --filter/-f engine wiring (issue #88)"]
 fn exclude_from_and_filter_merge_produce_same_result() {
     use tempfile::tempdir;
 
@@ -886,7 +886,6 @@ fn transfer_with_filter_keyword_exclude() {
 }
 
 #[test]
-#[ignore = "requires complete --filter/-f engine wiring (issue #88)"]
 fn transfer_with_filter_keyword_include_then_exclude_all() {
     use tempfile::tempdir;
 
@@ -898,13 +897,17 @@ fn transfer_with_filter_keyword_include_then_exclude_all() {
     std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
     std::fs::write(source_root.join("skip.log"), b"skip").expect("write skip");
 
+    // Trailing slash so the source directory itself is not evaluated against filters.
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-f"),
         OsString::from("include *.txt"),
         OsString::from("-f"),
         OsString::from("exclude *"),
-        source_root.into_os_string(),
+        source_operand,
         dest_root.clone().into_os_string(),
     ]);
 
@@ -912,9 +915,8 @@ fn transfer_with_filter_keyword_include_then_exclude_all() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    let copied_root = dest_root.join("source");
-    assert!(copied_root.join("keep.txt").exists());
-    assert!(!copied_root.join("skip.log").exists());
+    assert!(dest_root.join("keep.txt").exists());
+    assert!(!dest_root.join("skip.log").exists());
 }
 
 // =============================================================================
