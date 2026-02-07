@@ -58,6 +58,7 @@ mod compressor;
 /// See [`concurrent_delta::DeltaPipeline`] for the main entry point.
 pub mod concurrent_delta;
 mod context;
+pub(crate) mod debug_del;
 pub(crate) mod debug_flist;
 pub(crate) mod debug_recv;
 pub(crate) mod debug_send;
