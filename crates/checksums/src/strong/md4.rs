@@ -6,6 +6,35 @@ use super::StrongDigest;
 use super::openssl_support;
 
 /// Streaming MD4 hasher mirroring upstream rsync's default strong checksum.
+///
+/// MD4 produces a 128-bit (16-byte) digest. It is used by rsync protocol
+/// versions below 30 as the default strong checksum for block matching.
+/// When the `openssl` feature is enabled, an OpenSSL-backed implementation
+/// is used for improved throughput; otherwise a pure-Rust implementation
+/// is used.
+///
+/// # Examples
+///
+/// One-shot hashing:
+///
+/// ```
+/// use checksums::strong::Md4;
+///
+/// let digest = Md4::digest(b"legacy data");
+/// assert_eq!(digest.len(), 16);
+/// ```
+///
+/// Incremental hashing:
+///
+/// ```
+/// use checksums::strong::Md4;
+///
+/// let mut hasher = Md4::new();
+/// hasher.update(b"part 1");
+/// hasher.update(b"part 2");
+/// let digest = hasher.finalize();
+/// assert_eq!(digest, Md4::digest(b"part 1part 2"));
+/// ```
 #[derive(Clone)]
 pub struct Md4 {
     inner: Md4Backend,
@@ -120,12 +149,40 @@ impl StrongDigest for Md4 {
 /// Falls back to sequential computation when SIMD is unavailable.
 ///
 /// All implementations maintain RFC 1320 compatibility.
+///
+/// # Examples
+///
+/// ```
+/// use checksums::strong::md4_digest_batch;
+///
+/// let inputs = [b"block1".as_slice(), b"block2", b"block3"];
+/// let digests = md4_digest_batch(&inputs);
+///
+/// assert_eq!(digests.len(), 3);
+/// for digest in &digests {
+///     assert_eq!(digest.len(), 16);
+/// }
+/// ```
 #[cfg(feature = "simd-batch")]
 pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
     crate::simd_batch::md4::digest_batch(inputs)
 }
 
 /// Batch compute MD4 digests (sequential fallback when SIMD unavailable).
+///
+/// # Examples
+///
+/// ```
+/// use checksums::strong::md4_digest_batch;
+///
+/// let inputs = [b"block1".as_slice(), b"block2", b"block3"];
+/// let digests = md4_digest_batch(&inputs);
+///
+/// assert_eq!(digests.len(), 3);
+/// for digest in &digests {
+///     assert_eq!(digest.len(), 16);
+/// }
+/// ```
 #[cfg(not(feature = "simd-batch"))]
 pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
     inputs.iter().map(|i| Md4::digest(i.as_ref())).collect()

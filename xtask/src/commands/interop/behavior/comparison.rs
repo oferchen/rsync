@@ -229,25 +229,26 @@ fn compare_entries(
     }
 
     // Compare content for regular files
-    if oc_entry.file_type == FileType::Regular {
-        if oc_entry.content != up_entry.content {
-            differences.push(Difference::ContentDiffers {
-                path: path.to_path_buf(),
-                oc_rsync_size: oc_entry.size,
-                upstream_size: up_entry.size,
-            });
-        }
+    if oc_entry.file_type == FileType::Regular
+        && oc_entry.content != up_entry.content
+    {
+        differences.push(Difference::ContentDiffers {
+            path: path.to_path_buf(),
+            oc_rsync_size: oc_entry.size,
+            upstream_size: up_entry.size,
+        });
     }
 
     // Compare symlink targets
-    if scenario.compare_symlinks() && oc_entry.file_type == FileType::Symlink {
-        if oc_entry.symlink_target != up_entry.symlink_target {
-            differences.push(Difference::SymlinkTargetDiffers {
-                path: path.to_path_buf(),
-                oc_rsync: oc_entry.symlink_target.clone().unwrap_or_default(),
-                upstream: up_entry.symlink_target.clone().unwrap_or_default(),
-            });
-        }
+    if scenario.compare_symlinks()
+        && oc_entry.file_type == FileType::Symlink
+        && oc_entry.symlink_target != up_entry.symlink_target
+    {
+        differences.push(Difference::SymlinkTargetDiffers {
+            path: path.to_path_buf(),
+            oc_rsync: oc_entry.symlink_target.clone().unwrap_or_default(),
+            upstream: up_entry.symlink_target.clone().unwrap_or_default(),
+        });
     }
 
     // Compare permissions

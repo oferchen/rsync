@@ -1323,6 +1323,42 @@ mod option_values {
     }
 
     #[test]
+    fn max_alloc_with_space_separator() {
+        let parsed = parse_test_args(["--max-alloc", "256M", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.max_alloc, Some(OsString::from("256M")));
+    }
+
+    #[test]
+    fn max_alloc_with_bytes_value() {
+        let parsed = parse_test_args(["--max-alloc=1048576", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.max_alloc, Some(OsString::from("1048576")));
+    }
+
+    #[test]
+    fn max_alloc_with_kilobytes() {
+        let parsed = parse_test_args(["--max-alloc=512K", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.max_alloc, Some(OsString::from("512K")));
+    }
+
+    #[test]
+    fn max_alloc_with_megabytes() {
+        let parsed = parse_test_args(["--max-alloc=128M", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.max_alloc, Some(OsString::from("128M")));
+    }
+
+    #[test]
+    fn max_alloc_with_terabytes() {
+        let parsed = parse_test_args(["--max-alloc=1T", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.max_alloc, Some(OsString::from("1T")));
+    }
+
+    #[test]
+    fn max_alloc_default_is_none() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert!(parsed.max_alloc.is_none());
+    }
+
+    #[test]
     fn write_batch_with_equals() {
         let parsed = parse_test_args(["--write-batch=/tmp/batch", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.write_batch, Some(OsString::from("/tmp/batch")));

@@ -3,6 +3,8 @@
 //! Processes 4 independent MD4 computations simultaneously using 128-bit XMM registers.
 //! SSE2 is baseline for x86_64, so this is always available on 64-bit Intel/AMD processors.
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 

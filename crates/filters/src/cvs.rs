@@ -99,7 +99,8 @@ pub fn default_patterns() -> impl Iterator<Item = &'static str> {
         .filter(|s| !s.is_empty())
 }
 
-/// Returns the number of default CVS exclusion patterns.
+/// Returns the number of default CVS exclusion patterns in
+/// [`DEFAULT_CVSIGNORE`].
 pub fn pattern_count() -> usize {
     default_patterns().count()
 }

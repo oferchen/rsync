@@ -47,7 +47,10 @@ use crate::receiver::{SenderAttrs, SumHead, write_signature_blocks};
 use crate::temp_guard::TempFileGuard;
 use crate::token_buffer::TokenBuffer;
 
-/// Configuration for sending file transfer requests.
+/// Configuration for sending file transfer requests and processing responses.
+///
+/// Groups protocol version, checksum parameters, and write options into a
+/// single struct shared between [`send_file_request`] and [`process_file_response`].
 #[derive(Debug)]
 pub struct RequestConfig<'a> {
     /// Protocol version for encoding.
@@ -140,9 +143,13 @@ pub fn send_file_request<W: Write + ?Sized>(
     Ok(pending)
 }
 
-/// Context for processing a file transfer response.
+/// Context for processing a file transfer response from the sender.
+///
+/// Wraps a [`RequestConfig`] reference so that [`process_file_response`] can
+/// access protocol parameters, checksum settings, and sparse-write options
+/// without requiring them as individual function arguments.
 pub struct ResponseContext<'a> {
-    /// Configuration for the response.
+    /// Protocol and checksum configuration shared with the request phase.
     pub config: &'a RequestConfig<'a>,
 }
 
