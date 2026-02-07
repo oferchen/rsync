@@ -23,6 +23,7 @@
 mod fuzzy;
 mod generator;
 mod index;
+pub mod optimized_search;
 mod ring_buffer;
 mod script;
 
