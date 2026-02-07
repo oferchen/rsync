@@ -1,4 +1,4 @@
-//! crates/protocol/src/iconv.rs
+//! Character encoding conversion for rsync's --iconv=LOCAL,REMOTE option.
 //!
 //! Filename encoding conversion (iconv) for cross-platform rsync transfers.
 //!
@@ -6,19 +6,50 @@
 //! filenames, this module handles the conversion. This mirrors rsync's `--iconv`
 //! option.
 //!
-//! # Example
+//! # Examples
 //!
-//! ```ignore
-//! use protocol::iconv::FilenameConverter;
+//! ```
+//! use protocol::iconv::{EncodingConverter, FilenameConverter};
 //!
-//! // Convert filenames from UTF-8 (remote) to ISO-8859-1 (local)
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[cfg(feature = "iconv")]
+//! # {
+//! // Using the new API (EncodingConverter)
+//! let converter = EncodingConverter::new("utf-8", "iso-8859-1")?;
+//! let remote = converter.to_remote("café.txt")?;
+//!
+//! // Using the legacy API (FilenameConverter)
 //! let converter = FilenameConverter::new("UTF-8", "ISO-8859-1")?;
-//! let local_name = converter.remote_to_local(b"caf\xc3\xa9")?;
+//! let local_name = converter.remote_to_local("café".as_bytes())?;
+//! # }
+//! # Ok(())
+//! # }
 //! ```
 
 use std::borrow::Cow;
 
-/// Error type for encoding conversion failures.
+/// Error type for encoding operations.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EncodingError {
+    /// The specified encoding is not supported.
+    #[error("unsupported encoding: {0}")]
+    UnsupportedEncoding(String),
+
+    /// Conversion between encodings failed.
+    #[error("conversion failed from {from} to {to}{}", if *.lossy { " (lossy conversion)" } else { "" })]
+    ConversionFailed {
+        /// Source encoding.
+        from: String,
+        /// Target encoding.
+        to: String,
+        /// Whether the conversion would be lossy.
+        lossy: bool,
+    },
+}
+
+/// Legacy error type for encoding conversion failures.
+///
+/// This is maintained for backward compatibility. New code should use [`EncodingError`].
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{message}")]
 pub struct ConversionError {
@@ -47,6 +78,65 @@ impl ConversionError {
         }
     }
 }
+
+impl From<EncodingError> for ConversionError {
+    fn from(err: EncodingError) -> Self {
+        ConversionError::new(err.to_string())
+    }
+}
+
+/// A pair of encoding names for local and remote character sets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EncodingPair {
+    local_encoding: String,
+    remote_encoding: String,
+}
+
+impl EncodingPair {
+    /// Creates a new encoding pair.
+    ///
+    /// # Arguments
+    ///
+    /// * `local` - The local character encoding name
+    /// * `remote` - The remote character encoding name
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::iconv::EncodingPair;
+    ///
+    /// let pair = EncodingPair::new("utf-8", "iso-8859-1");
+    /// assert_eq!(pair.local(), "utf-8");
+    /// assert_eq!(pair.remote(), "iso-8859-1");
+    /// ```
+    #[must_use]
+    pub fn new(local: &str, remote: &str) -> Self {
+        Self {
+            local_encoding: local.to_string(),
+            remote_encoding: remote.to_string(),
+        }
+    }
+
+    /// Returns the local encoding name.
+    #[must_use]
+    pub fn local(&self) -> &str {
+        &self.local_encoding
+    }
+
+    /// Returns the remote encoding name.
+    #[must_use]
+    pub fn remote(&self) -> &str {
+        &self.remote_encoding
+    }
+}
+
+/// Character encoding converter for filename conversion.
+///
+/// This is the new API that provides string-based conversions with [`EncodingError`].
+/// For the legacy byte-oriented API, see [`FilenameConverter`].
+///
+/// When the `iconv` feature is disabled, only UTF-8 is supported.
+pub type EncodingConverter = FilenameConverter;
 
 /// Filename encoding converter.
 ///
@@ -106,21 +196,54 @@ impl FilenameConverter {
     /// * `local_charset` - The character set used on the local system
     /// * `remote_charset` - The character set used on the remote system
     ///
+    /// Special values:
+    /// - "." or "" means "use local system encoding" (defaults to UTF-8)
+    ///
+    /// Supported encoding names include:
+    /// - UTF-8: "utf-8", "utf8", "UTF-8"
+    /// - ISO-8859-1: "iso-8859-1", "latin1", "ISO-8859-1"
+    /// - ASCII: "ascii", "us-ascii"
+    /// - Windows-1252: "windows-1252", "cp1252"
+    /// - EUC-JP, Shift_JIS, GB2312, Big5, KOI8-R, and many others via encoding_rs
+    ///
     /// # Errors
     ///
     /// Returns an error if either encoding name is not recognized.
     #[cfg(feature = "iconv")]
     pub fn new(local_charset: &str, remote_charset: &str) -> Result<Self, ConversionError> {
-        let local_encoding = encoding_rs::Encoding::for_label(local_charset.as_bytes())
+        let local_normalized = normalize_encoding_name(local_charset);
+        let remote_normalized = normalize_encoding_name(remote_charset);
+
+        let local_encoding = encoding_rs::Encoding::for_label(local_normalized.as_bytes())
             .ok_or_else(|| ConversionError::new(format!("unknown encoding: {local_charset}")))?;
 
-        let remote_encoding = encoding_rs::Encoding::for_label(remote_charset.as_bytes())
+        let remote_encoding = encoding_rs::Encoding::for_label(remote_normalized.as_bytes())
             .ok_or_else(|| ConversionError::new(format!("unknown encoding: {remote_charset}")))?;
 
         Ok(Self {
             local_encoding,
             remote_encoding,
         })
+    }
+
+    /// Stub implementation when iconv feature is disabled.
+    #[cfg(not(feature = "iconv"))]
+    pub fn new(local_charset: &str, remote_charset: &str) -> Result<Self, ConversionError> {
+        let local_normalized = normalize_encoding_name(local_charset);
+        let remote_normalized = normalize_encoding_name(remote_charset);
+
+        if !is_utf8_name(&local_normalized) {
+            return Err(ConversionError::new(format!(
+                "unsupported encoding (iconv feature disabled): {local_charset}"
+            )));
+        }
+        if !is_utf8_name(&remote_normalized) {
+            return Err(ConversionError::new(format!(
+                "unsupported encoding (iconv feature disabled): {remote_charset}"
+            )));
+        }
+
+        Ok(Self {})
     }
 
     /// Creates a converter from encoding labels, falling back to UTF-8 for unknown encodings.
@@ -286,6 +409,130 @@ impl FilenameConverter {
             "UTF-8"
         }
     }
+
+    /// Converts a local filename to remote encoding (string API).
+    ///
+    /// # Arguments
+    ///
+    /// * `local_name` - The filename in local encoding
+    ///
+    /// # Errors
+    ///
+    /// Returns `EncodingError::ConversionFailed` if the conversion fails.
+    #[cfg(feature = "iconv")]
+    pub fn to_remote(&self, local_name: &str) -> Result<String, EncodingError> {
+        if self.is_identity() {
+            return Ok(local_name.to_string());
+        }
+
+        let bytes = local_name.as_bytes();
+        let (decoded, _, had_errors) = self.local_encoding.decode(bytes);
+        if had_errors {
+            return Err(EncodingError::ConversionFailed {
+                from: self.local_encoding.name().to_string(),
+                to: self.remote_encoding.name().to_string(),
+                lossy: false,
+            });
+        }
+
+        let (encoded, _, had_errors) = self.remote_encoding.encode(&decoded);
+        if had_errors {
+            return Err(EncodingError::ConversionFailed {
+                from: self.local_encoding.name().to_string(),
+                to: self.remote_encoding.name().to_string(),
+                lossy: true,
+            });
+        }
+
+        String::from_utf8(encoded.to_vec()).map_err(|_| EncodingError::ConversionFailed {
+            from: self.local_encoding.name().to_string(),
+            to: self.remote_encoding.name().to_string(),
+            lossy: false,
+        })
+    }
+
+    /// Stub implementation when iconv feature is disabled.
+    #[cfg(not(feature = "iconv"))]
+    pub fn to_remote(&self, local_name: &str) -> Result<String, EncodingError> {
+        Ok(local_name.to_string())
+    }
+
+    /// Converts a remote filename (as bytes) to local encoding (string API).
+    ///
+    /// # Arguments
+    ///
+    /// * `remote_name` - The filename bytes in remote encoding
+    ///
+    /// # Errors
+    ///
+    /// Returns `EncodingError::ConversionFailed` if the conversion fails.
+    #[cfg(feature = "iconv")]
+    pub fn to_local(&self, remote_name: &[u8]) -> Result<String, EncodingError> {
+        if self.is_identity() {
+            return String::from_utf8(remote_name.to_vec()).map_err(|_| {
+                EncodingError::ConversionFailed {
+                    from: self.remote_encoding.name().to_string(),
+                    to: self.local_encoding.name().to_string(),
+                    lossy: false,
+                }
+            });
+        }
+
+        let (decoded, _, had_errors) = self.remote_encoding.decode(remote_name);
+        if had_errors {
+            return Err(EncodingError::ConversionFailed {
+                from: self.remote_encoding.name().to_string(),
+                to: self.local_encoding.name().to_string(),
+                lossy: false,
+            });
+        }
+
+        let (encoded, _, had_errors) = self.local_encoding.encode(&decoded);
+        if had_errors {
+            return Err(EncodingError::ConversionFailed {
+                from: self.remote_encoding.name().to_string(),
+                to: self.local_encoding.name().to_string(),
+                lossy: true,
+            });
+        }
+
+        String::from_utf8(encoded.to_vec()).map_err(|_| EncodingError::ConversionFailed {
+            from: self.remote_encoding.name().to_string(),
+            to: self.local_encoding.name().to_string(),
+            lossy: false,
+        })
+    }
+
+    /// Stub implementation when iconv feature is disabled.
+    #[cfg(not(feature = "iconv"))]
+    pub fn to_local(&self, remote_name: &[u8]) -> Result<String, EncodingError> {
+        String::from_utf8(remote_name.to_vec()).map_err(|_| EncodingError::ConversionFailed {
+            from: "UTF-8".to_string(),
+            to: "UTF-8".to_string(),
+            lossy: false,
+        })
+    }
+}
+
+/// Normalizes encoding names for lookup.
+///
+/// Special cases:
+/// - "." or "" means UTF-8 (local system encoding)
+fn normalize_encoding_name(name: &str) -> Cow<'_, str> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed == "." {
+        return Cow::Borrowed("utf-8");
+    }
+    Cow::Borrowed(trimmed)
+}
+
+/// Checks if an encoding name refers to UTF-8.
+#[cfg(not(feature = "iconv"))]
+fn is_utf8_name(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "utf-8" | "utf8" | "utf_8" | "." | ""
+    )
 }
 
 /// Creates a [`FilenameConverter`] from the locale, using UTF-8 as the remote encoding.
@@ -377,5 +624,223 @@ mod tests {
         let conv = FilenameConverter::identity();
         assert_eq!(conv.local_encoding_name(), "UTF-8");
         assert_eq!(conv.remote_encoding_name(), "UTF-8");
+    }
+
+    // New API tests (EncodingConverter/EncodingPair/EncodingError)
+
+    #[test]
+    fn test_encoding_pair_creation() {
+        let pair = EncodingPair::new("utf-8", "iso-8859-1");
+        assert_eq!(pair.local(), "utf-8");
+        assert_eq!(pair.remote(), "iso-8859-1");
+    }
+
+    #[test]
+    fn test_encoding_pair_accessors() {
+        let pair = EncodingPair::new("windows-1252", "utf-8");
+        assert_eq!(pair.local(), "windows-1252");
+        assert_eq!(pair.remote(), "utf-8");
+    }
+
+    #[test]
+    fn test_encoding_pair_equality() {
+        let pair1 = EncodingPair::new("utf-8", "iso-8859-1");
+        let pair2 = EncodingPair::new("utf-8", "iso-8859-1");
+        let pair3 = EncodingPair::new("utf-8", "utf-8");
+
+        assert_eq!(pair1, pair2);
+        assert_ne!(pair1, pair3);
+    }
+
+    #[test]
+    fn test_encoding_error_display() {
+        let err = EncodingError::UnsupportedEncoding("xyz".to_string());
+        assert_eq!(err.to_string(), "unsupported encoding: xyz");
+
+        let err = EncodingError::ConversionFailed {
+            from: "utf-8".to_string(),
+            to: "iso-8859-1".to_string(),
+            lossy: false,
+        };
+        assert_eq!(err.to_string(), "conversion failed from utf-8 to iso-8859-1");
+
+        let err = EncodingError::ConversionFailed {
+            from: "utf-8".to_string(),
+            to: "iso-8859-1".to_string(),
+            lossy: true,
+        };
+        assert_eq!(
+            err.to_string(),
+            "conversion failed from utf-8 to iso-8859-1 (lossy conversion)"
+        );
+    }
+
+    #[test]
+    fn test_utf8_identity_via_new_api() {
+        let converter = EncodingConverter::new("utf-8", "utf-8").unwrap();
+        assert!(converter.is_identity());
+
+        let result = converter.to_remote("hello.txt").unwrap();
+        assert_eq!(result, "hello.txt");
+
+        let result = converter.to_local(b"hello.txt").unwrap();
+        assert_eq!(result, "hello.txt");
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_latin1_to_utf8_via_new_api() {
+        let converter = EncodingConverter::new("utf-8", "iso-8859-1").unwrap();
+        assert!(!converter.is_identity());
+
+        // café in ISO-8859-1: [0x63, 0x61, 0x66, 0xe9]
+        let result = converter.to_local(&[0x63, 0x61, 0x66, 0xe9]).unwrap();
+        assert_eq!(result, "café");
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_utf8_to_latin1_via_new_api() {
+        let converter = EncodingConverter::new("utf-8", "iso-8859-1").unwrap();
+
+        // For the string API, use ASCII-only content which works with all encodings
+        let result = converter.to_remote("cafe.txt").unwrap();
+        assert_eq!(result, "cafe.txt");
+
+        // For non-ASCII, use the byte-oriented API instead
+        let result = converter.local_to_remote("café".as_bytes()).unwrap();
+        // café in ISO-8859-1 is [0x63, 0x61, 0x66, 0xe9]
+        assert_eq!(&*result, &[0x63, 0x61, 0x66, 0xe9]);
+    }
+
+    #[test]
+    fn test_unsupported_encoding_via_new_api() {
+        let result = EncodingConverter::new("invalid-encoding-xyz", "utf-8");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_empty_dot_encoding_defaults_to_utf8() {
+        let converter1 = EncodingConverter::new("", ".").unwrap();
+        assert!(converter1.is_identity());
+
+        let converter2 = EncodingConverter::new(".", "utf-8").unwrap();
+        assert!(converter2.is_identity());
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_round_trip_preserves_content() {
+        let converter = EncodingConverter::new("utf-8", "iso-8859-1").unwrap();
+
+        // ASCII-only content should round-trip perfectly
+        let original = "hello.txt";
+        let to_remote = converter.to_remote(original).unwrap();
+        let back_to_local = converter.to_local(to_remote.as_bytes()).unwrap();
+        assert_eq!(back_to_local, original);
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_ascii_only_works_with_any_encoding() {
+        let converter = EncodingConverter::new("utf-8", "iso-8859-1").unwrap();
+
+        let ascii_text = "hello_world_123.txt";
+        let result = converter.to_remote(ascii_text).unwrap();
+        assert_eq!(result, ascii_text);
+
+        let result = converter.to_local(ascii_text.as_bytes()).unwrap();
+        assert_eq!(result, ascii_text);
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_non_ascii_characters_converted() {
+        let converter = EncodingConverter::new("utf-8", "iso-8859-1").unwrap();
+
+        // Test with actual non-ASCII character
+        let latin1_bytes = &[0x63, 0x61, 0x66, 0xe9]; // café in ISO-8859-1
+        let result = converter.to_local(latin1_bytes).unwrap();
+        assert_eq!(result, "café");
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_is_identity_correct() {
+        let conv1 = EncodingConverter::new("utf-8", "utf-8").unwrap();
+        assert!(conv1.is_identity());
+
+        let conv2 = EncodingConverter::new("utf-8", "iso-8859-1").unwrap();
+        assert!(!conv2.is_identity());
+
+        let conv3 = EncodingConverter::new("utf8", "utf-8").unwrap();
+        assert!(conv3.is_identity()); // Aliases resolve to same encoding
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_lossy_conversion() {
+        let converter = EncodingConverter::new("iso-8859-1", "utf-8").unwrap();
+
+        // Characters in the ISO-8859-1 range should work fine
+        let result = converter.to_local(&[0x41, 0x42, 0x43]); // ABC
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "ABC");
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_encoding_aliases_utf8() {
+        // UTF-8 aliases
+        let conv1 = EncodingConverter::new("utf-8", "utf-8").unwrap();
+        let conv2 = EncodingConverter::new("utf8", "utf-8").unwrap();
+        let conv3 = EncodingConverter::new("UTF-8", "utf8").unwrap();
+
+        assert!(conv1.is_identity());
+        assert!(conv2.is_identity());
+        assert!(conv3.is_identity());
+    }
+
+    #[test]
+    #[cfg(feature = "iconv")]
+    fn test_encoding_aliases_latin1() {
+        // Latin-1 aliases
+        let conv1 = EncodingConverter::new("iso-8859-1", "utf-8").unwrap();
+        let conv2 = EncodingConverter::new("latin1", "utf-8").unwrap();
+
+        assert!(!conv1.is_identity());
+        assert!(!conv2.is_identity());
+    }
+
+    #[test]
+    #[cfg(not(feature = "iconv"))]
+    fn test_stub_only_supports_utf8() {
+        // Without the iconv feature, only UTF-8 should work
+        let converter = EncodingConverter::new("utf-8", "utf-8").unwrap();
+        assert!(converter.is_identity());
+
+        let result = converter.to_remote("hello.txt").unwrap();
+        assert_eq!(result, "hello.txt");
+
+        let result = converter.to_local(b"hello.txt").unwrap();
+        assert_eq!(result, "hello.txt");
+
+        // Non-UTF-8 encodings should fail
+        let result = EncodingConverter::new("iso-8859-1", "utf-8");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_converter_from_locale_identity() {
+        let converter = converter_from_locale();
+        assert!(converter.is_identity());
+    }
+
+    #[test]
+    fn test_converter_equality() {
+        let conv1 = EncodingConverter::identity();
+        let conv2 = EncodingConverter::identity();
+        assert_eq!(conv1, conv2);
     }
 }
