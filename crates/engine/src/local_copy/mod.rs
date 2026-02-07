@@ -65,7 +65,12 @@ pub(crate) mod debug_recv;
 pub(crate) mod debug_send;
 mod deferred_sync;
 pub(crate) mod parallel_transfer;
-pub(crate) mod pipelined_state;
+/// State machine for 4-priority streaming file list processing pipeline.
+///
+/// Provides the [`PipelineController`](pipelined_state::PipelineController) for
+/// coordinating concurrent file list reception, pipeline filling, entry processing,
+/// and response handling with a priority-driven main loop.
+pub mod pipelined_state;
 pub(crate) mod prefetch;
 pub mod win_copy;
 /// Deletion strategy implementations for rsync `--delete` variants.

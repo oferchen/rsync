@@ -116,6 +116,7 @@ pub mod itemize;
 mod out_format;
 pub(crate) mod password;
 pub mod progress;
+pub mod progress_format;
 mod server;
 pub mod stats_format;
 
