@@ -58,6 +58,7 @@ mod compressor;
 /// See [`concurrent_delta::DeltaPipeline`] for the main entry point.
 pub mod concurrent_delta;
 mod context;
+pub(crate) mod debug_flist;
 mod deferred_sync;
 pub(crate) mod parallel_transfer;
 pub(crate) mod prefetch;
@@ -121,6 +122,8 @@ pub use executor::{
 };
 
 pub(crate) use hard_links::HardLinkTracker;
+
+pub(crate) use debug_flist::FlistTracer;
 
 pub(crate) use metadata_sync::map_metadata_error;
 
