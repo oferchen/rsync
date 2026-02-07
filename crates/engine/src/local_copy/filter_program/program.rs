@@ -26,6 +26,11 @@ pub(crate) const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
 /// Maps to upstream rsync's `RERR_TIMEOUT` (30) and `core::exit_code::ExitCode::Timeout`.
 pub(crate) const TIMEOUT_EXIT_CODE: i32 = 30;
 
+/// Exit code returned when the connection setup exceeds the configured timeout.
+///
+/// Maps to upstream rsync's `RERR_CONTIMEOUT` (35) and `core::exit_code::ExitCode::ConnectionTimeout`.
+pub(crate) const CONNECTION_TIMEOUT_EXIT_CODE: i32 = 35;
+
 /// Exit code returned when the `--max-delete` limit stops deletions.
 ///
 /// Maps to upstream rsync's `RERR_DEL_LIMIT` (25) and `core::exit_code::ExitCode::DeleteLimit`.
@@ -389,6 +394,7 @@ mod tests {
             INVALID_OPERAND_EXIT_CODE,
             MISSING_OPERANDS_EXIT_CODE,
             TIMEOUT_EXIT_CODE,
+            CONNECTION_TIMEOUT_EXIT_CODE,
             MAX_DELETE_EXIT_CODE,
         ];
         let unique: std::collections::HashSet<_> = codes.iter().collect();

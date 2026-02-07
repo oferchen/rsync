@@ -213,6 +213,109 @@ fn builder_rejects_mixed_reference_directory_kinds() {
 }
 
 #[test]
+fn builder_rejects_link_dest_and_copy_dest_mix() {
+    let result = LocalCopyOptions::builder()
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            "/link/backup",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            "/copy/backup",
+        ))
+        .build();
+
+    assert!(result.is_err(), "mixing --link-dest and --copy-dest should be rejected");
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("conflicting"));
+}
+
+#[test]
+fn builder_rejects_copy_dest_and_compare_dest_mix() {
+    let result = LocalCopyOptions::builder()
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            "/copy/backup",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            "/compare/backup",
+        ))
+        .build();
+
+    assert!(result.is_err(), "mixing --copy-dest and --compare-dest should be rejected");
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("conflicting"));
+}
+
+#[test]
+fn builder_allows_multiple_same_kind_reference_directories() {
+    // Upstream rsync allows up to 20 of the same kind
+    let result = LocalCopyOptions::builder()
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            "/backup/v1",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            "/backup/v2",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            "/backup/v3",
+        ))
+        .build();
+
+    assert!(result.is_ok(), "multiple --link-dest directories of the same kind should be allowed");
+    let options = result.unwrap();
+    assert_eq!(options.reference_directories().len(), 3);
+}
+
+#[test]
+fn builder_allows_multiple_copy_dest_directories() {
+    let result = LocalCopyOptions::builder()
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            "/copy1",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            "/copy2",
+        ))
+        .build();
+
+    assert!(result.is_ok(), "multiple --copy-dest directories should be allowed");
+    let options = result.unwrap();
+    assert_eq!(options.reference_directories().len(), 2);
+}
+
+#[test]
+fn builder_allows_multiple_compare_dest_directories() {
+    let result = LocalCopyOptions::builder()
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            "/compare1",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            "/compare2",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            "/compare3",
+        ))
+        .reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            "/compare4",
+        ))
+        .build();
+
+    assert!(result.is_ok(), "multiple --compare-dest directories should be allowed");
+    let options = result.unwrap();
+    assert_eq!(options.reference_directories().len(), 4);
+}
+
+#[test]
 fn builder_chaining_modifies_preset() {
     let options = LocalCopyOptions::builder()
         .archive()

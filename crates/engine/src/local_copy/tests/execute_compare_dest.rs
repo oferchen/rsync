@@ -580,3 +580,193 @@ fn compare_dest_mixed_with_copy_dest() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
 }
+
+// ============================================================================
+// Compare-dest with empty reference directory
+// ============================================================================
+
+#[test]
+fn compare_dest_empty_reference_directory_transfers_file() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let compare_dir = temp.path().join("compare");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&compare_dir).expect("create empty compare dir");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    let source_file = source_dir.join("file.txt");
+    let dest_file = dest_dir.join("file.txt");
+
+    fs::write(&source_file, b"empty ref content").expect("write source");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("set source mtime");
+
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .push_reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            &compare_dir,
+        ));
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("execution succeeds");
+
+    assert!(dest_file.exists(), "file should be created when compare-dest is empty");
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"empty ref content");
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.regular_files_matched(), 0);
+}
+
+// ============================================================================
+// Compare-dest with --inplace mode
+// ============================================================================
+
+#[test]
+fn compare_dest_with_inplace_mode() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let compare_dir = temp.path().join("compare");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&compare_dir).expect("create compare");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    let source_file = source_dir.join("file.txt");
+    let compare_file = compare_dir.join("file.txt");
+    let dest_file = dest_dir.join("file.txt");
+
+    fs::write(&source_file, b"identical content").expect("write source");
+    fs::write(&compare_file, b"identical content").expect("write compare");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("set source mtime");
+    set_file_mtime(&compare_file, timestamp).expect("set compare mtime");
+
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .inplace(true)
+        .push_reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            &compare_dir,
+        ));
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("execution succeeds");
+
+    // With --inplace and compare-dest matching, the file should still be skipped
+    assert!(!dest_file.exists(), "file should not be created when identical to compare-dest even with --inplace");
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+}
+
+// ============================================================================
+// Compare-dest with nonexistent directory
+// ============================================================================
+
+#[test]
+fn compare_dest_with_nonexistent_directory() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let compare_dir = temp.path().join("nonexistent_compare");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    // Intentionally don't create compare_dir
+
+    let source_file = source_dir.join("file.txt");
+    let dest_file = dest_dir.join("file.txt");
+
+    fs::write(&source_file, b"content").expect("write source");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("set source mtime");
+
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .push_reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            &compare_dir,
+        ));
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("execution succeeds");
+
+    assert!(dest_file.exists(), "file should be created when compare-dest doesn't exist");
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"content");
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.regular_files_matched(), 0);
+}
+
+// ============================================================================
+// Compare-dest with zero-length file
+// ============================================================================
+
+#[test]
+fn compare_dest_skips_identical_empty_file() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let compare_dir = temp.path().join("compare");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&compare_dir).expect("create compare");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    let source_file = source_dir.join("empty.txt");
+    let compare_file = compare_dir.join("empty.txt");
+    let dest_file = dest_dir.join("empty.txt");
+
+    fs::write(&source_file, b"").expect("write source");
+    fs::write(&compare_file, b"").expect("write compare");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("set source mtime");
+    set_file_mtime(&compare_file, timestamp).expect("set compare mtime");
+
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .push_reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            &compare_dir,
+        ));
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("execution succeeds");
+
+    assert!(!dest_file.exists(), "empty identical file should be skipped");
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+}
