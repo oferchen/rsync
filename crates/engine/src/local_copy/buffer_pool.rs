@@ -558,10 +558,7 @@ mod tests {
     #[test]
     fn adaptive_size_just_below_small_threshold() {
         // 1 MB - 1 byte: still in the small range.
-        assert_eq!(
-            adaptive_buffer_size(1024 * 1024 - 1),
-            ADAPTIVE_BUFFER_SMALL
-        );
+        assert_eq!(adaptive_buffer_size(1024 * 1024 - 1), ADAPTIVE_BUFFER_SMALL);
     }
 
     #[test]
@@ -591,7 +588,10 @@ mod tests {
     #[test]
     fn adaptive_size_at_medium_threshold() {
         // Exactly 64 MB: enters the large range.
-        assert_eq!(adaptive_buffer_size(64 * 1024 * 1024), ADAPTIVE_BUFFER_LARGE);
+        assert_eq!(
+            adaptive_buffer_size(64 * 1024 * 1024),
+            ADAPTIVE_BUFFER_LARGE
+        );
     }
 
     #[test]
@@ -649,10 +649,7 @@ mod tests {
             let buf_size = adaptive_buffer_size(file_size);
             assert!(
                 buf_size >= prev_size,
-                "buffer size decreased from {} to {} at file size {}",
-                prev_size,
-                buf_size,
-                file_size
+                "buffer size decreased from {prev_size} to {buf_size} at file size {file_size}"
             );
             prev_size = buf_size;
         }
@@ -668,6 +665,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn adaptive_size_constants_ordered() {
         assert!(ADAPTIVE_BUFFER_TINY < ADAPTIVE_BUFFER_SMALL);
         assert!(ADAPTIVE_BUFFER_SMALL < ADAPTIVE_BUFFER_MEDIUM);
@@ -745,8 +743,7 @@ mod tests {
         // Even a 512 KB buffer gets resized to the default on return.
         let pool = Arc::new(BufferPool::new(4));
         {
-            let buffer =
-                BufferPool::acquire_adaptive_from(Arc::clone(&pool), 100 * 1024 * 1024);
+            let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 100 * 1024 * 1024);
             assert_eq!(buffer.len(), ADAPTIVE_BUFFER_LARGE);
         }
         assert_eq!(pool.available(), 1);

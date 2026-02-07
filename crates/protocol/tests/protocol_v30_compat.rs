@@ -1252,10 +1252,7 @@ mod protocol_30_wire_format {
     fn version_30_codec_is_modern() {
         let codec = create_protocol_codec(30);
 
-        assert!(
-            !codec.is_legacy(),
-            "v30 codec should be modern, not legacy"
-        );
+        assert!(!codec.is_legacy(), "v30 codec should be modern, not legacy");
     }
 }
 
@@ -1290,8 +1287,8 @@ mod protocol_30_binary_advertisement {
 
         // Parse it back
         let parsed_value = u32::from_be_bytes(bytes);
-        let parsed_protocol = ProtocolVersion::from_peer_advertisement(parsed_value)
-            .expect("roundtrip must succeed");
+        let parsed_protocol =
+            ProtocolVersion::from_peer_advertisement(parsed_value).expect("roundtrip must succeed");
 
         assert_eq!(parsed_protocol, protocol);
     }
@@ -1356,9 +1353,16 @@ mod protocol_30_md5_default {
         let mut stdin_v28 = &b""[..];
         let mut stdout_v28 = Vec::new();
 
-        let result_v28 =
-            negotiate_capabilities(v28, &mut stdin_v28, &mut stdout_v28, true, false, false, true)
-                .unwrap();
+        let result_v28 = negotiate_capabilities(
+            v28,
+            &mut stdin_v28,
+            &mut stdout_v28,
+            true,
+            false,
+            false,
+            true,
+        )
+        .unwrap();
 
         assert_eq!(
             result_v28.checksum,
@@ -1872,10 +1876,7 @@ mod protocol_30_varint_encoding {
             encode_varint_to_vec(value, &mut encoded);
 
             // Small values should be 1 byte
-            assert!(
-                encoded.len() <= 2,
-                "Small varint {value} should be compact"
-            );
+            assert!(encoded.len() <= 2, "Small varint {value} should be compact");
 
             let (decoded, _) = decode_varint(&encoded).unwrap();
             assert_eq!(decoded, value, "Varint {value} must roundtrip");
@@ -1919,7 +1920,6 @@ mod protocol_30_varint_encoding {
     /// Varint encoding for compatibility flags values.
     #[test]
     fn version_30_varint_compatibility_flags_values() {
-
         // Typical flag combinations
         let flag_values = [
             CompatibilityFlags::INC_RECURSE.bits() as i32,

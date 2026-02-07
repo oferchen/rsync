@@ -16,7 +16,10 @@ fn parse_args_compress_level_0_records_value() {
     .expect("parse");
 
     assert_eq!(parsed.compress_level, Some(OsString::from("0")));
-    assert!(!parsed.compress, "--compress-level=0 should disable compression");
+    assert!(
+        !parsed.compress,
+        "--compress-level=0 should disable compression"
+    );
 }
 
 #[test]
@@ -30,7 +33,10 @@ fn parse_args_compress_level_1_enables_compression() {
     .expect("parse");
 
     assert_eq!(parsed.compress_level, Some(OsString::from("1")));
-    assert!(parsed.compress, "--compress-level=1 should enable compression");
+    assert!(
+        parsed.compress,
+        "--compress-level=1 should enable compression"
+    );
 }
 
 #[test]
@@ -406,10 +412,7 @@ fn parse_compress_level_argument_rejects_float() {
 fn parse_compress_level_argument_trims_whitespace() {
     // Whitespace around the value should be handled
     let result = parse_compress_level_argument(OsStr::new(" 6 "));
-    assert!(
-        result.is_ok(),
-        "whitespace-padded value should be accepted"
-    );
+    assert!(result.is_ok(), "whitespace-padded value should be accepted");
     let setting = result.unwrap();
     assert!(setting.is_enabled());
 }
@@ -462,12 +465,17 @@ fn local_copy_with_all_valid_compress_levels() {
         ]);
 
         assert_eq!(
-            code, 0,
+            code,
+            0,
             "compress-level={level} should succeed; stderr: {}",
             String::from_utf8_lossy(&stderr)
         );
         assert!(stdout.is_empty());
-        assert!(stderr.is_empty(), "compress-level={level} produced stderr: {}", String::from_utf8_lossy(&stderr));
+        assert!(
+            stderr.is_empty(),
+            "compress-level={level} produced stderr: {}",
+            String::from_utf8_lossy(&stderr)
+        );
         assert_eq!(
             std::fs::read(&destination).expect("read destination"),
             b"compressible test data content",

@@ -476,8 +476,7 @@ fn error_code_names_match_upstream_errcode_h() {
         assert_eq!(
             error.error_code_name(),
             expected_name,
-            "Exit code {:?} must map to {expected_name}",
-            exit_code
+            "Exit code {exit_code:?} must map to {expected_name}"
         );
     }
 }

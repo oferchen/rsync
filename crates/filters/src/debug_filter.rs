@@ -83,13 +83,7 @@ pub fn trace_filter_evaluate(path: &str, rule_pattern: &str, is_include: bool, m
 /// No-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
-pub fn trace_filter_evaluate(
-    _path: &str,
-    _rule_pattern: &str,
-    _is_include: bool,
-    _matched: bool,
-) {
-}
+pub fn trace_filter_evaluate(_path: &str, _rule_pattern: &str, _is_include: bool, _matched: bool) {}
 
 /// Traces the final decision for a path after all rules have been evaluated.
 ///
@@ -270,7 +264,11 @@ impl FilterTracer {
 
     /// Emits a summary trace event with all accumulated statistics.
     pub fn summary(&self) {
-        trace_filter_summary(self.total_evaluated, self.total_included, self.total_excluded);
+        trace_filter_summary(
+            self.total_evaluated,
+            self.total_included,
+            self.total_excluded,
+        );
     }
 
     /// Resets all counters to zero.
@@ -387,11 +385,11 @@ mod tests {
     #[test]
     fn test_record_evaluation_mixed() {
         let mut tracer = FilterTracer::new();
-        tracer.record_evaluation(true);   // include
-        tracer.record_evaluation(false);  // exclude
-        tracer.record_evaluation(true);   // include
-        tracer.record_evaluation(false);  // exclude
-        tracer.record_evaluation(true);   // include
+        tracer.record_evaluation(true); // include
+        tracer.record_evaluation(false); // exclude
+        tracer.record_evaluation(true); // include
+        tracer.record_evaluation(false); // exclude
+        tracer.record_evaluation(true); // include
 
         assert_eq!(tracer.total_evaluated(), 5);
         assert_eq!(tracer.total_included(), 3);

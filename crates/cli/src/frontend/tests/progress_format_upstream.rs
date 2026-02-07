@@ -355,7 +355,7 @@ fn progress_multiple_files_shows_correct_xfr_and_to_chk() {
     let last_xfr_line = normalized
         .lines()
         .filter(|l| l.contains("xfr#3"))
-        .last()
+        .next_back()
         .expect("should have xfr#3 line");
     assert!(
         last_xfr_line.contains("to-chk=0/"),
@@ -565,9 +565,15 @@ fn format_human_bytes_peta_range() {
 #[test]
 fn progress_bytes_field_is_right_aligned_15_chars() {
     // The bytes field in progress output should be right-aligned in a 15-char field
-    let small = format!("{:>15}", format_progress_bytes(11, HumanReadableMode::Disabled));
+    let small = format!(
+        "{:>15}",
+        format_progress_bytes(11, HumanReadableMode::Disabled)
+    );
     assert_eq!(small.len(), 15);
-    assert!(small.starts_with(' '), "small value should be right-padded: {small:?}");
+    assert!(
+        small.starts_with(' '),
+        "small value should be right-padded: {small:?}"
+    );
 
     let large = format!(
         "{:>15}",

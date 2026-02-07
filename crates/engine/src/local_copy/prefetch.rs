@@ -4,6 +4,8 @@
 //! that the file will be read sequentially, enabling aggressive read-ahead.
 //! On unsupported platforms, the hints are silently ignored (no-op).
 
+#![allow(dead_code)]
+
 use std::fs::File;
 use std::io;
 
@@ -38,7 +40,12 @@ fn advise_sequential_impl(file: &File, file_size: u64) -> io::Result<()> {
     use std::os::fd::AsRawFd;
     // SAFETY: valid fd, offset 0, length = file size, FADV_SEQUENTIAL is safe advice
     let ret = unsafe {
-        libc::posix_fadvise(file.as_raw_fd(), 0, file_size as i64, libc::POSIX_FADV_SEQUENTIAL)
+        libc::posix_fadvise(
+            file.as_raw_fd(),
+            0,
+            file_size as i64,
+            libc::POSIX_FADV_SEQUENTIAL,
+        )
     };
     if ret != 0 {
         // posix_fadvise returns error code directly (not via errno)
@@ -52,7 +59,12 @@ fn advise_sequential_impl(file: &File, file_size: u64) -> io::Result<()> {
 fn advise_dontneed_impl(file: &File, file_size: u64) -> io::Result<()> {
     use std::os::fd::AsRawFd;
     let ret = unsafe {
-        libc::posix_fadvise(file.as_raw_fd(), 0, file_size as i64, libc::POSIX_FADV_DONTNEED)
+        libc::posix_fadvise(
+            file.as_raw_fd(),
+            0,
+            file_size as i64,
+            libc::POSIX_FADV_DONTNEED,
+        )
     };
     if ret != 0 {
         Err(io::Error::from_raw_os_error(ret))
@@ -120,13 +132,20 @@ mod tests {
         let file = temp.reopen().expect("reopen");
 
         let result_seq = advise_sequential_read(&file, 0);
-        assert!(result_seq.is_ok(), "sequential advise on empty file should succeed (noop)");
+        assert!(
+            result_seq.is_ok(),
+            "sequential advise on empty file should succeed (noop)"
+        );
 
         let result_dontneed = advise_dontneed(&file, 0);
-        assert!(result_dontneed.is_ok(), "dontneed advise on empty file should succeed");
+        assert!(
+            result_dontneed.is_ok(),
+            "dontneed advise on empty file should succeed"
+        );
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn threshold_constant_is_reasonable() {
         assert!(FADVISE_THRESHOLD > 0, "threshold must be positive");
         assert_eq!(FADVISE_THRESHOLD, 256 * 1024, "threshold should be 256KB");

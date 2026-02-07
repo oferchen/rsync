@@ -252,7 +252,11 @@ mod tests {
 
         let metadata = fs::metadata(&path).expect("metadata");
         assert_eq!(metadata.len(), 0);
-        assert_eq!(metadata.blocks(), 0, "disabled preallocate should not reserve any blocks");
+        assert_eq!(
+            metadata.blocks(),
+            0,
+            "disabled preallocate should not reserve any blocks"
+        );
     }
 
     /// Verify that `maybe_preallocate_destination` handles the exact boundary

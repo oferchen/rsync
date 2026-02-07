@@ -19,21 +19,17 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
+use protocol::ProtocolVersion;
 use protocol::flist::{FileEntry, FileListReader, FileListWriter};
 use protocol::wire::file_entry::encode_symlink_target;
 use protocol::wire::file_entry_decode::decode_symlink_target;
-use protocol::ProtocolVersion;
 
 // ============================================================================
 // Test Helpers
 // ============================================================================
 
 /// Roundtrip a single symlink entry through FileListWriter/FileListReader.
-fn roundtrip_symlink(
-    name: &str,
-    target: PathBuf,
-    protocol: ProtocolVersion,
-) -> FileEntry {
+fn roundtrip_symlink(name: &str, target: PathBuf, protocol: ProtocolVersion) -> FileEntry {
     let mut entry = FileEntry::new_symlink(PathBuf::from(name), target);
     entry.set_mtime(1700000000, 0);
 
@@ -51,14 +47,11 @@ fn roundtrip_symlink(
 }
 
 /// Roundtrip multiple entries through FileListWriter/FileListReader.
-fn roundtrip_entries(
-    entries: &[FileEntry],
-    protocol: ProtocolVersion,
-) -> Vec<FileEntry> {
+fn roundtrip_entries(entries: &[FileEntry], protocol: ProtocolVersion) -> Vec<FileEntry> {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
     for entry in entries {
-        writer.write_entry(&mut buf, &entry).expect("write failed");
+        writer.write_entry(&mut buf, entry).expect("write failed");
     }
     writer.write_end(&mut buf, None).expect("write end failed");
 
@@ -116,8 +109,7 @@ fn wire_level_roundtrip_simple_absolute_target() {
         let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
         assert_eq!(
             decoded, target,
-            "wire-level roundtrip failed for protocol {}",
-            proto
+            "wire-level roundtrip failed for protocol {proto}"
         );
     }
 }
@@ -132,7 +124,7 @@ fn wire_level_roundtrip_relative_target() {
 
         let mut cursor = Cursor::new(&buf);
         let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
-        assert_eq!(decoded, target, "relative target failed for proto {}", proto);
+        assert_eq!(decoded, target, "relative target failed for proto {proto}");
     }
 }
 
@@ -146,7 +138,7 @@ fn wire_level_roundtrip_empty_target() {
 
         let mut cursor = Cursor::new(&buf);
         let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
-        assert_eq!(decoded, target, "empty target failed for proto {}", proto);
+        assert_eq!(decoded, target, "empty target failed for proto {proto}");
     }
 }
 
@@ -174,7 +166,7 @@ fn wire_level_roundtrip_long_target() {
 
         let mut cursor = Cursor::new(&buf);
         let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
-        assert_eq!(decoded, target, "long target failed for proto {}", proto);
+        assert_eq!(decoded, target, "long target failed for proto {proto}");
     }
 }
 
@@ -237,15 +229,20 @@ fn wire_level_length_encoding_correctness() {
 /// Tests high-level roundtrip of a simple absolute symlink target.
 #[test]
 fn flist_roundtrip_absolute_target() {
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let decoded = roundtrip_symlink("link", PathBuf::from("/usr/bin/python"), protocol);
         assert!(decoded.is_symlink());
         assert_eq!(decoded.name(), "link");
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some("/usr/bin/python".to_string()),
-            "absolute target mismatch for {:?}",
-            protocol,
+            "absolute target mismatch for {protocol:?}",
         );
     }
 }
@@ -253,15 +250,19 @@ fn flist_roundtrip_absolute_target() {
 /// Tests high-level roundtrip of a relative symlink target.
 #[test]
 fn flist_roundtrip_relative_target() {
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
-        let decoded =
-            roundtrip_symlink("link", PathBuf::from("../lib/libfoo.so"), protocol);
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
+        let decoded = roundtrip_symlink("link", PathBuf::from("../lib/libfoo.so"), protocol);
         assert!(decoded.is_symlink());
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some("../lib/libfoo.so".to_string()),
-            "relative target mismatch for {:?}",
-            protocol,
+            "relative target mismatch for {protocol:?}",
         );
     }
 }
@@ -269,9 +270,15 @@ fn flist_roundtrip_relative_target() {
 /// Tests that dot-relative symlink targets are preserved.
 #[test]
 fn flist_roundtrip_dot_relative_target() {
-    let decoded = roundtrip_symlink("link", PathBuf::from("./same_dir_file"), ProtocolVersion::NEWEST);
+    let decoded = roundtrip_symlink(
+        "link",
+        PathBuf::from("./same_dir_file"),
+        ProtocolVersion::NEWEST,
+    );
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("./same_dir_file".to_string()),
     );
 }
@@ -282,7 +289,9 @@ fn flist_roundtrip_parent_traversal_target() {
     let target = "../../other/dir/file.txt";
     let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target.to_string()),
     );
 }
@@ -293,7 +302,9 @@ fn flist_roundtrip_deeply_nested_target() {
     let target = "/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z";
     let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target.to_string()),
     );
 }
@@ -303,7 +314,9 @@ fn flist_roundtrip_deeply_nested_target() {
 fn flist_roundtrip_root_target() {
     let decoded = roundtrip_symlink("link", PathBuf::from("/"), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("/".to_string()),
     );
 }
@@ -328,7 +341,9 @@ fn flist_roundtrip_target_with_spaces() {
     let target = "/path/to/my file with spaces.txt";
     let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target.to_string()),
     );
 }
@@ -356,10 +371,11 @@ fn flist_roundtrip_target_with_shell_special_chars() {
     for target in &targets {
         let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some(target.to_string()),
-            "failed for target: {}",
-            target,
+            "failed for target: {target}",
         );
     }
 }
@@ -368,20 +384,21 @@ fn flist_roundtrip_target_with_shell_special_chars() {
 #[test]
 fn flist_roundtrip_target_with_unicode() {
     let targets = [
-        "/path/to/\u{00e9}t\u{00e9}",         // French accented chars
-        "/\u{65e5}\u{672c}\u{8a9e}",           // Japanese
-        "/\u{0410}\u{0411}\u{0412}",           // Cyrillic
+        "/path/to/\u{00e9}t\u{00e9}",           // French accented chars
+        "/\u{65e5}\u{672c}\u{8a9e}",            // Japanese
+        "/\u{0410}\u{0411}\u{0412}",            // Cyrillic
         "../\u{4e2d}\u{6587}/\u{6587}\u{4ef6}", // Chinese relative path
-        "/\u{1f4c1}/\u{1f4c4}",                // Emoji folder/file
+        "/\u{1f4c1}/\u{1f4c4}",                 // Emoji folder/file
     ];
 
     for target in &targets {
         let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some(target.to_string()),
-            "failed for target: {}",
-            target,
+            "failed for target: {target}",
         );
     }
 }
@@ -398,7 +415,9 @@ fn flist_roundtrip_target_with_control_chars() {
     for target in &targets {
         let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some(target.to_string()),
             "failed for control char target",
         );
@@ -428,7 +447,10 @@ fn flist_roundtrip_non_utf8_target() {
 
     assert!(decoded.is_symlink());
     let decoded_bytes = target_bytes(&decoded);
-    assert_eq!(decoded_bytes, raw_target, "non-UTF-8 target bytes must survive roundtrip");
+    assert_eq!(
+        decoded_bytes, raw_target,
+        "non-UTF-8 target bytes must survive roundtrip"
+    );
 }
 
 /// Tests symlink target containing Latin-1 encoded characters (not valid UTF-8).
@@ -499,7 +521,11 @@ fn flist_roundtrip_mixed_utf8_and_invalid_target() {
 fn flist_roundtrip_non_utf8_target_all_protocols() {
     let raw_target = b"../\xff\xfe\xfd/file";
 
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let entry = make_symlink_from_bytes("link", raw_target);
 
         let mut buf = Vec::new();
@@ -509,13 +535,15 @@ fn flist_roundtrip_non_utf8_target_all_protocols() {
 
         let mut cursor = Cursor::new(&buf);
         let mut reader = FileListReader::new(protocol).with_preserve_links(true);
-        let decoded = reader.read_entry(&mut cursor).expect("read failed").expect("no entry");
+        let decoded = reader
+            .read_entry(&mut cursor)
+            .expect("read failed")
+            .expect("no entry");
 
         let decoded_bytes = target_bytes(&decoded);
         assert_eq!(
             decoded_bytes, raw_target,
-            "non-UTF-8 roundtrip failed for {:?}",
-            protocol,
+            "non-UTF-8 roundtrip failed for {protocol:?}",
         );
     }
 }
@@ -537,7 +565,9 @@ fn flist_roundtrip_path_max_target() {
 
     let decoded = roundtrip_symlink("link", PathBuf::from(&target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target),
     );
 }
@@ -546,11 +576,13 @@ fn flist_roundtrip_path_max_target() {
 /// The wire protocol does not enforce PATH_MAX; it is length-prefixed.
 #[test]
 fn flist_roundtrip_exceeding_path_max_target() {
-    let target: String = std::iter::repeat('x').take(8192).collect();
+    let target: String = std::iter::repeat_n('x', 8192).collect();
 
     let decoded = roundtrip_symlink("link", PathBuf::from(&target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target),
     );
 }
@@ -558,15 +590,20 @@ fn flist_roundtrip_exceeding_path_max_target() {
 /// Tests symlink target of exactly 255 bytes (varint boundary in some protocols).
 #[test]
 fn flist_roundtrip_255_byte_target() {
-    let target: String = std::iter::repeat('a').take(255).collect();
+    let target: String = std::iter::repeat_n('a', 255).collect();
 
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let decoded = roundtrip_symlink("link", PathBuf::from(&target), protocol);
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some(target.clone()),
-            "255-byte target failed for {:?}",
-            protocol,
+            "255-byte target failed for {protocol:?}",
         );
     }
 }
@@ -574,15 +611,20 @@ fn flist_roundtrip_255_byte_target() {
 /// Tests symlink target of exactly 256 bytes (just past single-byte varint threshold).
 #[test]
 fn flist_roundtrip_256_byte_target() {
-    let target: String = std::iter::repeat('b').take(256).collect();
+    let target: String = std::iter::repeat_n('b', 256).collect();
 
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let decoded = roundtrip_symlink("link", PathBuf::from(&target), protocol);
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some(target.clone()),
-            "256-byte target failed for {:?}",
-            protocol,
+            "256-byte target failed for {protocol:?}",
         );
     }
 }
@@ -590,13 +632,11 @@ fn flist_roundtrip_256_byte_target() {
 /// Tests symlink target of exactly 65535 bytes (two-byte varint boundary).
 #[test]
 fn flist_roundtrip_65535_byte_target() {
-    let target: String = std::iter::repeat('c').take(65535).collect();
+    let target: String = std::iter::repeat_n('c', 65535).collect();
 
     let decoded = roundtrip_symlink("link", PathBuf::from(&target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded
-            .link_target()
-            .map(|p| p.to_string_lossy().len()),
+        decoded.link_target().map(|p| p.to_string_lossy().len()),
         Some(65535),
     );
 }
@@ -615,18 +655,20 @@ fn flist_roundtrip_multiple_symlinks_mixed_targets() {
         make_symlink("parent_link", "../../up/two/levels"),
     ];
 
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let decoded = roundtrip_entries(&entries, protocol);
 
         assert_eq!(decoded.len(), 4);
         for (i, (orig, dec)) in entries.iter().zip(decoded.iter()).enumerate() {
-            assert!(dec.is_symlink(), "entry {} not symlink for {:?}", i, protocol);
+            assert!(dec.is_symlink(), "entry {i} not symlink for {protocol:?}");
             assert_eq!(
                 dec.link_target().map(|p| p.to_string_lossy().into_owned()),
                 orig.link_target().map(|p| p.to_string_lossy().into_owned()),
-                "target mismatch at index {} for {:?}",
-                i,
-                protocol,
+                "target mismatch at index {i} for {protocol:?}",
             );
         }
     }
@@ -654,13 +696,17 @@ fn flist_roundtrip_symlinks_with_files_and_dirs() {
     assert!(decoded[0].is_file());
     assert!(decoded[1].is_symlink());
     assert_eq!(
-        decoded[1].link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded[1]
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("/target1".to_string()),
     );
     assert!(decoded[2].is_dir());
     assert!(decoded[3].is_symlink());
     assert_eq!(
-        decoded[3].link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded[3]
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("../target2".to_string()),
     );
 }
@@ -681,8 +727,7 @@ fn flist_roundtrip_same_target_multiple_symlinks() {
         assert_eq!(
             dec.link_target().map(|p| p.to_string_lossy().into_owned()),
             Some("/shared/target".to_string()),
-            "entry {} target mismatch",
-            i,
+            "entry {i} target mismatch",
         );
     }
 }
@@ -705,10 +750,11 @@ fn flist_roundtrip_all_protocol_versions() {
     ] {
         let decoded = roundtrip_symlink("link", PathBuf::from(target), protocol);
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some(target.to_string()),
-            "failed for {:?}",
-            protocol,
+            "failed for {protocol:?}",
         );
     }
 }
@@ -775,13 +821,7 @@ fn wire_format_protocol_30_uses_varint30_length() {
 /// Verifies that encode and decode agree on the wire bytes across protocol versions.
 #[test]
 fn wire_format_encode_decode_consistency() {
-    let targets: &[&[u8]] = &[
-        b"",
-        b"x",
-        b"/a/b/c",
-        b"../relative",
-        &[0xFF; 128],
-    ];
+    let targets: &[&[u8]] = &[b"", b"x", b"/a/b/c", b"../relative", &[0xFF; 128]];
 
     for proto in [28u8, 29, 30, 31, 32] {
         for target in targets {
@@ -839,10 +879,12 @@ fn flist_symlink_size_is_zero() {
 /// Tests symlink target with very long path components (no slashes).
 #[test]
 fn flist_roundtrip_long_single_component_target() {
-    let target: String = std::iter::repeat('a').take(1000).collect();
+    let target: String = std::iter::repeat_n('a', 1000).collect();
     let decoded = roundtrip_symlink("link", PathBuf::from(&target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target),
     );
 }
@@ -854,7 +896,9 @@ fn flist_roundtrip_many_short_components_target() {
     let target = components.join("/");
     let decoded = roundtrip_symlink("link", PathBuf::from(&target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target),
     );
 }
@@ -862,22 +906,16 @@ fn flist_roundtrip_many_short_components_target() {
 /// Tests symlink target consisting only of dots and slashes.
 #[test]
 fn flist_roundtrip_dots_and_slashes_target() {
-    let targets = [
-        ".",
-        "..",
-        "../..",
-        "../../..",
-        "./..",
-        "../.",
-    ];
+    let targets = [".", "..", "../..", "../../..", "./..", "../."];
 
     for target in &targets {
         let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
         assert_eq!(
-            decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some(target.to_string()),
-            "failed for target: {}",
-            target,
+            "failed for target: {target}",
         );
     }
 }
@@ -896,12 +934,11 @@ fn flist_symlink_name_prefix_compression() {
 
     assert_eq!(decoded.len(), 3);
     for (i, (orig, dec)) in entries.iter().zip(decoded.iter()).enumerate() {
-        assert_eq!(dec.name(), orig.name(), "name mismatch at index {}", i);
+        assert_eq!(dec.name(), orig.name(), "name mismatch at index {i}");
         assert_eq!(
             dec.link_target().map(|p| p.to_string_lossy().into_owned()),
             orig.link_target().map(|p| p.to_string_lossy().into_owned()),
-            "target mismatch at index {}",
-            i,
+            "target mismatch at index {i}",
         );
     }
 }
@@ -912,14 +949,18 @@ fn flist_roundtrip_target_with_nul_bytes() {
     let target = "\x00";
     let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target.to_string()),
     );
 
     let target = "\x00\x00\x00\x00";
     let decoded = roundtrip_symlink("link2", PathBuf::from(target), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some(target.to_string()),
     );
 }
@@ -938,7 +979,10 @@ fn flist_roundtrip_target_0xff_byte() {
 
     let mut cursor = Cursor::new(&buf);
     let mut reader = FileListReader::new(ProtocolVersion::NEWEST).with_preserve_links(true);
-    let decoded = reader.read_entry(&mut cursor).expect("read failed").expect("no entry");
+    let decoded = reader
+        .read_entry(&mut cursor)
+        .expect("read failed")
+        .expect("no entry");
 
     let decoded_bytes = target_bytes(&decoded);
     assert_eq!(decoded_bytes, raw_target);
@@ -950,8 +994,8 @@ fn flist_roundtrip_target_0xff_byte() {
 fn flist_roundtrip_varying_target_lengths() {
     let entries: Vec<FileEntry> = (1..=20)
         .map(|i| {
-            let target: String = std::iter::repeat('x').take(i * 50).collect();
-            make_symlink(&format!("link_{}", i), &target)
+            let target: String = std::iter::repeat_n('x', i * 50).collect();
+            make_symlink(&format!("link_{i}"), &target)
         })
         .collect();
 
@@ -964,10 +1008,12 @@ fn flist_roundtrip_varying_target_lengths() {
         assert_eq!(
             orig_target.len(),
             dec_target.len(),
-            "target length mismatch at index {}",
-            i,
+            "target length mismatch at index {i}",
         );
-        assert_eq!(orig_target, dec_target, "target content mismatch at index {}", i);
+        assert_eq!(
+            orig_target, dec_target,
+            "target content mismatch at index {i}"
+        );
     }
 }
 
@@ -1065,22 +1111,32 @@ fn flist_roundtrip_symlink_chain() {
         make_symlink("link_c", "link_b"),
     ];
 
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let decoded = roundtrip_entries(&entries, protocol);
 
         assert_eq!(decoded.len(), 3);
 
         // Each symlink should preserve its immediate target, not resolve the chain
         assert_eq!(
-            decoded[0].link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded[0]
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some("/final/target".to_string()),
         );
         assert_eq!(
-            decoded[1].link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded[1]
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some("link_a".to_string()),
         );
         assert_eq!(
-            decoded[2].link_target().map(|p| p.to_string_lossy().into_owned()),
+            decoded[2]
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
             Some("link_b".to_string()),
         );
     }
@@ -1100,19 +1156,27 @@ fn flist_roundtrip_symlink_chain_mixed_paths() {
 
     assert_eq!(decoded.len(), 4);
     assert_eq!(
-        decoded[0].link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded[0]
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("/usr/bin/python3".to_string()),
     );
     assert_eq!(
-        decoded[1].link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded[1]
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("../bin/python3".to_string()),
     );
     assert_eq!(
-        decoded[2].link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded[2]
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("relative_link".to_string()),
     );
     assert_eq!(
-        decoded[3].link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded[3]
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("chain_link".to_string()),
     );
 }
@@ -1123,7 +1187,9 @@ fn flist_roundtrip_symlink_chain_mixed_paths() {
 fn flist_roundtrip_self_referencing_symlink() {
     let decoded = roundtrip_symlink("loop", PathBuf::from("loop"), ProtocolVersion::NEWEST);
     assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("loop".to_string()),
     );
 }
@@ -1140,11 +1206,15 @@ fn flist_roundtrip_circular_symlink_pair() {
 
     assert_eq!(decoded.len(), 2);
     assert_eq!(
-        decoded[0].link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded[0]
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("link_b".to_string()),
     );
     assert_eq!(
-        decoded[1].link_target().map(|p| p.to_string_lossy().into_owned()),
+        decoded[1]
+            .link_target()
+            .map(|p| p.to_string_lossy().into_owned()),
         Some("link_a".to_string()),
     );
 }
@@ -1186,7 +1256,11 @@ fn wire_level_varint_boundary_127_bytes() {
         encode_symlink_target(&mut buf, &target, proto).unwrap();
 
         // varint for 127 should be 1 byte (0x7F), so total = 1 + 127 = 128
-        assert_eq!(buf.len(), 1 + 127, "proto {} should use 1-byte varint for 127", proto);
+        assert_eq!(
+            buf.len(),
+            1 + 127,
+            "proto {proto} should use 1-byte varint for 127"
+        );
 
         let mut cursor = Cursor::new(&buf);
         let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
@@ -1203,7 +1277,11 @@ fn wire_level_varint_boundary_128_bytes() {
         encode_symlink_target(&mut buf, &target, proto).unwrap();
 
         // varint for 128 needs 2 bytes, so total = 2 + 128 = 130
-        assert_eq!(buf.len(), 2 + 128, "proto {} should use 2-byte varint for 128", proto);
+        assert_eq!(
+            buf.len(),
+            2 + 128,
+            "proto {proto} should use 2-byte varint for 128"
+        );
 
         let mut cursor = Cursor::new(&buf);
         let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
@@ -1222,8 +1300,7 @@ fn wire_level_protocol_29_always_4_byte_length() {
         assert_eq!(
             buf.len(),
             4 + size,
-            "protocol 29 should always use 4-byte length for size {}",
-            size,
+            "protocol 29 should always use 4-byte length for size {size}",
         );
     }
 }
@@ -1252,17 +1329,14 @@ fn wire_level_consecutive_entries_byte_exact() {
             assert_eq!(
                 decoded.as_slice(),
                 *expected,
-                "entry {} mismatch for proto {}",
-                i,
-                proto,
+                "entry {i} mismatch for proto {proto}",
             );
         }
         // All bytes consumed
         assert_eq!(
             cursor.position() as usize,
             buf.len(),
-            "not all bytes consumed for proto {}",
-            proto,
+            "not all bytes consumed for proto {proto}",
         );
     }
 }

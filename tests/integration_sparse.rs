@@ -381,7 +381,7 @@ fn sparse_handles_empty_file() {
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
     // Create empty file
-    fs::write(src_dir.join("empty.bin"), &[]).expect("write empty");
+    fs::write(src_dir.join("empty.bin"), []).expect("write empty");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -589,7 +589,7 @@ fn sparse_with_verbose_shows_transfer() {
     // Verbose should show something about the transfer
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}{}", stdout, stderr);
+    let combined = format!("{stdout}{stderr}");
 
     // Should mention the file being transferred
     assert!(

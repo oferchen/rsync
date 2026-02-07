@@ -13,13 +13,13 @@
 //! that parse rsync output.
 
 use cli::{
-    format_number_with_commas, DryRunAction, DryRunFormatter, DryRunSummary,
-    info_output::{parse_info_flags, InfoFlags},
+    DryRunAction, DryRunFormatter, DryRunSummary, FileType, ItemizeChange, UpdateType,
+    format_number_with_commas,
+    info_output::{InfoFlags, parse_info_flags},
     progress_format::{
-        calculate_rate, format_eta, format_number, format_rate, OverallProgress, PerFileProgress,
+        OverallProgress, PerFileProgress, calculate_rate, format_eta, format_number, format_rate,
     },
-    stats_format::{format_speed, format_speedup, StatsData, StatsFormatter},
-    FileType, ItemizeChange, UpdateType,
+    stats_format::{StatsData, StatsFormatter, format_speed, format_speedup},
 };
 use std::time::Duration;
 
@@ -662,7 +662,10 @@ fn progress_per_file_format() {
     progress.update(500_000, Duration::from_secs(5));
     let line = progress.format_line();
 
-    assert!(line.contains("500,000"), "should show comma-separated bytes");
+    assert!(
+        line.contains("500,000"),
+        "should show comma-separated bytes"
+    );
     assert!(line.contains("50%"), "should show percentage");
     assert!(line.contains("kB/s"), "should show transfer rate");
 }
@@ -834,7 +837,10 @@ fn info_flags_verbosity_zero_silent() {
     let flags = InfoFlags::from_verbosity(0);
     assert!(!flags.should_show_name(), "verbosity 0 should hide names");
     assert!(!flags.should_show_stats(), "verbosity 0 should hide stats");
-    assert!(!flags.should_show_del(), "verbosity 0 should hide deletions");
+    assert!(
+        !flags.should_show_del(),
+        "verbosity 0 should hide deletions"
+    );
 }
 
 #[test]
@@ -990,8 +996,9 @@ fn decimal_formatting_consistency() {
 fn document_intentional_differences() {
     // No intentional differences at this time.
     // This test serves as a reminder to document any future deviations.
+    let differences: &[&str] = &[];
     assert!(
-        true,
+        differences.is_empty(),
         "All output formats match upstream rsync exactly"
     );
 }

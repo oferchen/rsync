@@ -328,11 +328,7 @@ pub fn format_speed(bytes_per_sec: f64) -> String {
     let integer_part = rounded.floor() as u64;
     let fractional_part = ((rounded - integer_part as f64) * 100.0).round() as u64;
 
-    format!(
-        "{}.{:02}",
-        format_number(integer_part),
-        fractional_part
-    )
+    format!("{}.{:02}", format_number(integer_part), fractional_part)
 }
 
 /// Formats a speedup ratio with 2 decimal places.
@@ -356,11 +352,7 @@ pub fn format_speedup(speedup: f64) -> String {
     let integer_part = rounded.floor() as u64;
     let fractional_part = ((rounded - integer_part as f64) * 100.0).round() as u64;
 
-    format!(
-        "{}.{:02}",
-        format_number(integer_part),
-        fractional_part
-    )
+    format!("{}.{:02}", format_number(integer_part), fractional_part)
 }
 
 /// Calculates the speedup ratio.

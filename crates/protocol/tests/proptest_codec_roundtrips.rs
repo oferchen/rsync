@@ -22,8 +22,8 @@
 
 use proptest::prelude::*;
 use protocol::codec::{
-    create_ndx_codec, create_protocol_codec, NdxCodec, ProtocolCodec, NDX_DEL_STATS, NDX_DONE,
-    NDX_FLIST_EOF, NDX_FLIST_OFFSET,
+    NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, ProtocolCodec,
+    create_ndx_codec, create_protocol_codec,
 };
 use protocol::{
     MessageCode, MessageFrame, MessageHeader, decode_varint, encode_varint_to_vec, read_int,
@@ -650,7 +650,7 @@ proptest! {
 
         // Varint uses at most 5 bytes for i32
         prop_assert!(encoded.len() <= 5, "Varint encoding too large: {} bytes", encoded.len());
-        prop_assert!(encoded.len() >= 1, "Varint encoding too small");
+        prop_assert!(!encoded.is_empty(), "Varint encoding too small");
     }
 
     /// Legacy file size encoding should use 4 or 12 bytes.

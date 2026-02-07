@@ -339,11 +339,8 @@ fn files_from_reads_from_multiple_files() {
     std::fs::write(&list1, "file1.txt\nfile2.txt\n").expect("write list1");
     std::fs::write(&list2, "file3.txt\nfile4.txt\n").expect("write list2");
 
-    let entries = load_file_list_operands(
-        &[list1.into_os_string(), list2.into_os_string()],
-        false,
-    )
-    .expect("load entries");
+    let entries = load_file_list_operands(&[list1.into_os_string(), list2.into_os_string()], false)
+        .expect("load entries");
 
     assert_eq!(entries.len(), 4);
     assert_eq!(entries[0], "file1.txt");
@@ -442,8 +439,11 @@ fn files_from_preserves_absolute_paths() {
     let tmp = tempdir().expect("tempdir");
     let list_path = tmp.path().join("absolute.list");
 
-    std::fs::write(&list_path, "/absolute/path/file.txt\n/another/absolute/path.txt\n")
-        .expect("write absolute paths list");
+    std::fs::write(
+        &list_path,
+        "/absolute/path/file.txt\n/another/absolute/path.txt\n",
+    )
+    .expect("write absolute paths list");
 
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
@@ -640,7 +640,7 @@ fn reader_handles_very_long_lines() {
 
     // Create a very long filename (4000 chars)
     let long_name: String = "x".repeat(4000);
-    let input = format!("{}\nshort.txt\n", long_name);
+    let input = format!("{long_name}\nshort.txt\n");
 
     let mut reader = BufReader::new(Cursor::new(input.as_bytes()));
     let mut entries = Vec::new();
@@ -814,8 +814,8 @@ fn files_from_integration_with_comments_only_list_succeeds() {
 fn parse_args_recognizes_files_from_with_equals() {
     use crate::frontend::arguments::parse_args;
 
-    let parsed = parse_args(["rsync", "--files-from=/path/to/list.txt", "src/", "dst/"])
-        .expect("parse");
+    let parsed =
+        parse_args(["rsync", "--files-from=/path/to/list.txt", "src/", "dst/"]).expect("parse");
 
     assert_eq!(parsed.files_from.len(), 1);
     assert_eq!(parsed.files_from[0], "/path/to/list.txt");
@@ -825,8 +825,8 @@ fn parse_args_recognizes_files_from_with_equals() {
 fn parse_args_recognizes_files_from_with_space() {
     use crate::frontend::arguments::parse_args;
 
-    let parsed = parse_args(["rsync", "--files-from", "/path/to/list.txt", "src/", "dst/"])
-        .expect("parse");
+    let parsed =
+        parse_args(["rsync", "--files-from", "/path/to/list.txt", "src/", "dst/"]).expect("parse");
 
     assert_eq!(parsed.files_from.len(), 1);
     assert_eq!(parsed.files_from[0], "/path/to/list.txt");
@@ -864,14 +864,8 @@ fn parse_args_recognizes_files_from_with_dash_for_stdin() {
 fn parse_args_recognizes_from0_flag() {
     use crate::frontend::arguments::parse_args;
 
-    let parsed = parse_args([
-        "rsync",
-        "--from0",
-        "--files-from=/list.txt",
-        "src/",
-        "dst/",
-    ])
-    .expect("parse");
+    let parsed =
+        parse_args(["rsync", "--from0", "--files-from=/list.txt", "src/", "dst/"]).expect("parse");
 
     assert!(parsed.from0);
 }
@@ -1019,8 +1013,11 @@ fn files_from_handles_rtl_and_bidi_characters() {
     let list_path = tmp.path().join("bidi.list");
 
     // Right-to-left text (Arabic, Hebrew)
-    std::fs::write(&list_path, "\u{05E9}\u{05DC}\u{05D5}\u{05DD}.txt\n\u{0645}\u{0644}\u{0641}.txt\n")
-        .expect("write bidi list");
+    std::fs::write(
+        &list_path,
+        "\u{05E9}\u{05DC}\u{05D5}\u{05DD}.txt\n\u{0645}\u{0644}\u{0641}.txt\n",
+    )
+    .expect("write bidi list");
 
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
@@ -1061,11 +1058,8 @@ fn files_from_handles_zero_width_characters() {
     let list_path = tmp.path().join("zerowidth.list");
 
     // Zero-width joiner and non-joiner
-    std::fs::write(
-        &list_path,
-        "file\u{200D}name.txt\ntest\u{200C}file.txt\n",
-    )
-    .expect("write zero-width list");
+    std::fs::write(&list_path, "file\u{200D}name.txt\ntest\u{200C}file.txt\n")
+        .expect("write zero-width list");
 
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
@@ -1184,8 +1178,11 @@ fn files_from_handles_tab_characters() {
     let list_path = tmp.path().join("tabs.list");
 
     // Tab characters in filenames
-    std::fs::write(&list_path, "file\twith\ttabs.txt\n\ttab_prefix.txt\ntab_suffix\t.txt\n")
-        .expect("write tabs list");
+    std::fs::write(
+        &list_path,
+        "file\twith\ttabs.txt\n\ttab_prefix.txt\ntab_suffix\t.txt\n",
+    )
+    .expect("write tabs list");
 
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
@@ -1220,8 +1217,11 @@ fn files_from_preserves_multiple_consecutive_spaces() {
     let tmp = tempdir().expect("tempdir");
     let list_path = tmp.path().join("multispaces.list");
 
-    std::fs::write(&list_path, "file   three   spaces.txt\nfile    four    spaces.txt\n")
-        .expect("write multispaces list");
+    std::fs::write(
+        &list_path,
+        "file   three   spaces.txt\nfile    four    spaces.txt\n",
+    )
+    .expect("write multispaces list");
 
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
@@ -1433,8 +1433,11 @@ fn files_from_handles_whitespace_before_comment() {
     let list_path = tmp.path().join("whitespace_comment.list");
 
     // Lines with leading whitespace before # or ; are NOT comments
-    std::fs::write(&list_path, " #not_a_comment.txt\n\t;also_not_comment.txt\nfile.txt\n")
-        .expect("write whitespace comment list");
+    std::fs::write(
+        &list_path,
+        " #not_a_comment.txt\n\t;also_not_comment.txt\nfile.txt\n",
+    )
+    .expect("write whitespace comment list");
 
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
@@ -1494,7 +1497,7 @@ fn files_from_handles_large_number_of_entries() {
     let list_path = tmp.path().join("large.list");
 
     // Create a file with 10000 entries
-    let content: String = (0..10000).map(|i| format!("file{}.txt\n", i)).collect();
+    let content: String = (0..10000).map(|i| format!("file{i}.txt\n")).collect();
     std::fs::write(&list_path, content).expect("write large list");
 
     let entries =
@@ -1514,7 +1517,7 @@ fn files_from_handles_large_file_with_comments() {
 
     // Alternate between files and comments
     let content: String = (0..5000)
-        .map(|i| format!("# Comment {}\nfile{}.txt\n", i, i))
+        .map(|i| format!("# Comment {i}\nfile{i}.txt\n"))
         .collect();
     std::fs::write(&list_path, content).expect("write large list");
 
@@ -1629,11 +1632,8 @@ fn files_from_handles_duplicate_entries_across_files() {
     std::fs::write(&list1, "file.txt\nunique1.txt\n").expect("write list1");
     std::fs::write(&list2, "file.txt\nunique2.txt\n").expect("write list2");
 
-    let entries = load_file_list_operands(
-        &[list1.into_os_string(), list2.into_os_string()],
-        false,
-    )
-    .expect("load entries");
+    let entries = load_file_list_operands(&[list1.into_os_string(), list2.into_os_string()], false)
+        .expect("load entries");
 
     // Duplicates are preserved (not deduplicated at this level)
     assert_eq!(entries.len(), 4);

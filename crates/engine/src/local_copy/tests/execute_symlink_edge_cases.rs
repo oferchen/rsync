@@ -331,8 +331,7 @@ fn symlink_chain_three_levels_deep() {
         let dest_link = dest_root.join(link_name);
         assert!(
             fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink(),
-            "{} should be a symlink",
-            link_name
+            "{link_name} should be a symlink"
         );
     }
 
@@ -625,8 +624,7 @@ fn three_way_symlink_cycle() {
         let dest_link = dest_root.join(name);
         assert!(
             fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink(),
-            "link {} should be preserved",
-            name
+            "link {name} should be preserved"
         );
     }
     assert_eq!(summary.symlinks_copied(), 3);

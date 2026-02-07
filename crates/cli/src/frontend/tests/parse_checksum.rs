@@ -40,8 +40,8 @@ fn parse_checksum_seed_argument_rejects_non_numeric() {
 #[test]
 fn parse_checksum_seed_argument_rejects_overflow_u32() {
     // u32::MAX + 1 = 4294967296 should fail
-    let error = parse_checksum_seed_argument(OsStr::new("4294967296"))
-        .expect_err("overflow should fail");
+    let error =
+        parse_checksum_seed_argument(OsStr::new("4294967296")).expect_err("overflow should fail");
     let rendered = error.to_string();
     assert!(
         rendered.contains("invalid --checksum-seed value"),
@@ -82,8 +82,7 @@ fn parse_checksum_seed_argument_handles_whitespace() {
 
 #[test]
 fn parse_checksum_seed_argument_rejects_empty() {
-    let error =
-        parse_checksum_seed_argument(OsStr::new("")).expect_err("empty should fail");
+    let error = parse_checksum_seed_argument(OsStr::new("")).expect_err("empty should fail");
     let rendered = error.to_string();
     assert!(
         rendered.contains("must not be empty"),
@@ -100,8 +99,7 @@ fn parse_checksum_seed_argument_accepts_with_plus_prefix() {
 
 #[test]
 fn parse_checksum_seed_argument_rejects_float() {
-    let error = parse_checksum_seed_argument(OsStr::new("3.14"))
-        .expect_err("float should fail");
+    let error = parse_checksum_seed_argument(OsStr::new("3.14")).expect_err("float should fail");
     let rendered = error.to_string();
     assert!(
         rendered.contains("invalid --checksum-seed value"),
@@ -111,8 +109,7 @@ fn parse_checksum_seed_argument_rejects_float() {
 
 #[test]
 fn parse_checksum_seed_argument_rejects_hex() {
-    let error = parse_checksum_seed_argument(OsStr::new("0xFF"))
-        .expect_err("hex should fail");
+    let error = parse_checksum_seed_argument(OsStr::new("0xFF")).expect_err("hex should fail");
     let rendered = error.to_string();
     assert!(
         rendered.contains("invalid --checksum-seed value"),

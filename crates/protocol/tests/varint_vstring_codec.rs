@@ -37,8 +37,11 @@ fn varint_1byte_boundary_values() {
         );
 
         let (decoded, remainder) = decode_varint(&encoded).expect("decode should succeed");
-        assert_eq!(decoded, value, "round-trip failed for value {}", value);
-        assert!(remainder.is_empty(), "no bytes should remain after decoding");
+        assert_eq!(decoded, value, "round-trip failed for value {value}");
+        assert!(
+            remainder.is_empty(),
+            "no bytes should remain after decoding"
+        );
     }
 }
 
@@ -59,7 +62,7 @@ fn varint_2byte_boundary_values() {
         );
 
         let (decoded, _) = decode_varint(&encoded).expect("decode should succeed");
-        assert_eq!(decoded, value, "round-trip failed for value {}", value);
+        assert_eq!(decoded, value, "round-trip failed for value {value}");
     }
 }
 
@@ -80,7 +83,7 @@ fn varint_3byte_boundary_values() {
         );
 
         let (decoded, _) = decode_varint(&encoded).expect("decode should succeed");
-        assert_eq!(decoded, value, "round-trip failed for value {}", value);
+        assert_eq!(decoded, value, "round-trip failed for value {value}");
     }
 }
 
@@ -101,7 +104,7 @@ fn varint_4byte_boundary_values() {
         );
 
         let (decoded, _) = decode_varint(&encoded).expect("decode should succeed");
-        assert_eq!(decoded, value, "round-trip failed for value {}", value);
+        assert_eq!(decoded, value, "round-trip failed for value {value}");
     }
 }
 
@@ -122,7 +125,7 @@ fn varint_5byte_boundary_values() {
         );
 
         let (decoded, _) = decode_varint(&encoded).expect("decode should succeed");
-        assert_eq!(decoded, value, "round-trip failed for value {}", value);
+        assert_eq!(decoded, value, "round-trip failed for value {value}");
     }
 }
 
@@ -159,27 +162,24 @@ fn varint_complete_api_roundtrip() {
         encode_varint_to_vec(value, &mut vec_encoded);
         let (decoded_from_vec, remainder) =
             decode_varint(&vec_encoded).expect("decode_varint should succeed");
-        assert_eq!(decoded_from_vec, value, "vec roundtrip failed for {}", value);
+        assert_eq!(decoded_from_vec, value, "vec roundtrip failed for {value}");
         assert!(remainder.is_empty());
 
         // Test write_varint + read_varint
         let mut write_encoded = Vec::new();
         write_varint(&mut write_encoded, value).expect("write_varint should succeed");
         let mut cursor = Cursor::new(&write_encoded);
-        let decoded_from_stream =
-            read_varint(&mut cursor).expect("read_varint should succeed");
+        let decoded_from_stream = read_varint(&mut cursor).expect("read_varint should succeed");
         assert_eq!(
             decoded_from_stream, value,
-            "stream roundtrip failed for {}",
-            value
+            "stream roundtrip failed for {value}"
         );
         assert_eq!(cursor.position() as usize, write_encoded.len());
 
         // Verify both methods produce identical encoding
         assert_eq!(
             vec_encoded, write_encoded,
-            "encode methods should produce identical output for {}",
-            value
+            "encode methods should produce identical output for {value}"
         );
     }
 }
@@ -281,7 +281,19 @@ fn varint_overflow_tag_error() {
 /// Tests fixed 4-byte integer encoding roundtrip.
 #[test]
 fn fixed_int_roundtrip() {
-    let values = [0, 1, 127, 128, 255, 256, 65535, 65536, i32::MAX, i32::MIN, -1];
+    let values = [
+        0,
+        1,
+        127,
+        128,
+        255,
+        256,
+        65535,
+        65536,
+        i32::MAX,
+        i32::MIN,
+        -1,
+    ];
 
     for value in values {
         let mut encoded = Vec::new();
@@ -290,7 +302,7 @@ fn fixed_int_roundtrip() {
 
         let mut cursor = Cursor::new(&encoded);
         let decoded = read_int(&mut cursor).expect("read_int should succeed");
-        assert_eq!(decoded, value, "roundtrip failed for {}", value);
+        assert_eq!(decoded, value, "roundtrip failed for {value}");
     }
 }
 
@@ -316,11 +328,15 @@ fn longint_inline_values() {
     for value in values {
         let mut encoded = Vec::new();
         write_longint(&mut encoded, value).expect("write should succeed");
-        assert_eq!(encoded.len(), 4, "inline longint should be 4 bytes for {}", value);
+        assert_eq!(
+            encoded.len(),
+            4,
+            "inline longint should be 4 bytes for {value}"
+        );
 
         let mut cursor = Cursor::new(&encoded);
         let decoded = read_longint(&mut cursor).expect("read should succeed");
-        assert_eq!(decoded, value, "roundtrip failed for {}", value);
+        assert_eq!(decoded, value, "roundtrip failed for {value}");
     }
 }
 
@@ -336,8 +352,7 @@ fn longint_extended_values() {
         assert_eq!(
             encoded.len(),
             12,
-            "extended longint should be 12 bytes for {}",
-            value
+            "extended longint should be 12 bytes for {value}"
         );
 
         // First 4 bytes should be the marker 0xFFFFFFFF
@@ -346,7 +361,7 @@ fn longint_extended_values() {
 
         let mut cursor = Cursor::new(&encoded);
         let decoded = read_longint(&mut cursor).expect("read should succeed");
-        assert_eq!(decoded, value, "roundtrip failed for {}", value);
+        assert_eq!(decoded, value, "roundtrip failed for {value}");
     }
 }
 
@@ -391,7 +406,7 @@ fn varlong_roundtrip_various_min_bytes() {
 
         let mut cursor = Cursor::new(&encoded);
         let decoded = read_varlong(&mut cursor, min_bytes).expect("read should succeed");
-        assert_eq!(decoded, value, "roundtrip failed for min_bytes={}", min_bytes);
+        assert_eq!(decoded, value, "roundtrip failed for min_bytes={min_bytes}");
     }
 }
 
@@ -400,12 +415,12 @@ fn varlong_roundtrip_various_min_bytes() {
 fn varlong_file_sizes() {
     // File sizes typically use min_bytes=3
     let sizes = [
-        0i64,                          // Empty file
-        1024,                          // 1 KB
-        1_048_576,                     // 1 MB
-        1_073_741_824,                 // 1 GB
-        1_099_511_627_776,             // 1 TB
-        100_000_000_000_000,           // 100 TB
+        0i64,                // Empty file
+        1024,                // 1 KB
+        1_048_576,           // 1 MB
+        1_073_741_824,       // 1 GB
+        1_099_511_627_776,   // 1 TB
+        100_000_000_000_000, // 100 TB
     ];
 
     for size in sizes {
@@ -414,7 +429,7 @@ fn varlong_file_sizes() {
 
         let mut cursor = Cursor::new(&encoded);
         let decoded = read_varlong(&mut cursor, 3).expect("read should succeed");
-        assert_eq!(decoded, size, "roundtrip failed for size {}", size);
+        assert_eq!(decoded, size, "roundtrip failed for size {size}");
     }
 }
 
@@ -423,12 +438,12 @@ fn varlong_file_sizes() {
 fn varlong_timestamps() {
     // Timestamps typically use min_bytes=4
     let timestamps = [
-        0i64,             // Unix epoch
-        1_000_000_000,    // Sep 2001
-        1_700_000_000,    // Nov 2023
-        2_147_483_647,    // Jan 2038 (32-bit limit)
-        2_147_483_648,    // After Y2038
-        4_000_000_000,    // Dec 2096
+        0i64,          // Unix epoch
+        1_000_000_000, // Sep 2001
+        1_700_000_000, // Nov 2023
+        2_147_483_647, // Jan 2038 (32-bit limit)
+        2_147_483_648, // After Y2038
+        4_000_000_000, // Dec 2096
     ];
 
     for ts in timestamps {
@@ -437,7 +452,7 @@ fn varlong_timestamps() {
 
         let mut cursor = Cursor::new(&encoded);
         let decoded = read_varlong(&mut cursor, 4).expect("read should succeed");
-        assert_eq!(decoded, ts, "roundtrip failed for timestamp {}", ts);
+        assert_eq!(decoded, ts, "roundtrip failed for timestamp {ts}");
     }
 }
 
@@ -450,7 +465,7 @@ fn varlong_zero_all_min_bytes() {
 
         let mut cursor = Cursor::new(&encoded);
         let decoded = read_varlong(&mut cursor, min_bytes).expect("read should succeed");
-        assert_eq!(decoded, 0, "zero failed for min_bytes={}", min_bytes);
+        assert_eq!(decoded, 0, "zero failed for min_bytes={min_bytes}");
     }
 }
 
@@ -505,7 +520,7 @@ fn varint30_int_legacy_protocol() {
     for proto in [28u8, 29] {
         let mut encoded = Vec::new();
         write_varint30_int(&mut encoded, value, proto).expect("write should succeed");
-        assert_eq!(encoded.len(), 4, "proto {} should use 4-byte encoding", proto);
+        assert_eq!(encoded.len(), 4, "proto {proto} should use 4-byte encoding");
 
         let mut cursor = Cursor::new(&encoded);
         let decoded = read_varint30_int(&mut cursor, proto).expect("read should succeed");
@@ -523,8 +538,7 @@ fn varint30_int_modern_protocol() {
         write_varint30_int(&mut encoded, value, proto).expect("write should succeed");
         assert!(
             encoded.len() < 4,
-            "proto {} should use varint encoding (< 4 bytes)",
-            proto
+            "proto {proto} should use varint encoding (< 4 bytes)"
         );
 
         let mut cursor = Cursor::new(&encoded);
@@ -547,8 +561,7 @@ fn varint30_int_roundtrip() {
             let decoded = read_varint30_int(&mut cursor, proto).expect("read should succeed");
             assert_eq!(
                 decoded, value,
-                "roundtrip failed for value={} proto={}",
-                value, proto
+                "roundtrip failed for value={value} proto={proto}"
             );
         }
     }
@@ -581,9 +594,7 @@ fn varint_compatibility_flags() {
         assert_eq!(
             encoded.len(),
             *expected_len,
-            "flags {} should be {} byte(s)",
-            flags,
-            expected_len
+            "flags {flags} should be {expected_len} byte(s)"
         );
 
         let (decoded, _) = decode_varint(&encoded).expect("decode should succeed");
@@ -694,8 +705,7 @@ fn varint_known_wire_format() {
         let actual_hex: String = encoded.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             actual_hex, expected_hex,
-            "value {} should encode as {}, got {}",
-            value, expected_hex, actual_hex
+            "value {value} should encode as {expected_hex}, got {actual_hex}"
         );
 
         // Verify roundtrip
@@ -754,7 +764,7 @@ fn varint_powers_of_two() {
         encode_varint_to_vec(value, &mut encoded);
 
         let (decoded, _) = decode_varint(&encoded).expect("decode should succeed");
-        assert_eq!(decoded, value, "failed for 2^{}", shift);
+        assert_eq!(decoded, value, "failed for 2^{shift}");
 
         // Also test value - 1 and value + 1 (if not overflow)
         if value > 1 {
@@ -782,7 +792,7 @@ fn varint_negative_powers_of_two() {
         encode_varint_to_vec(value, &mut encoded);
 
         let (decoded, _) = decode_varint(&encoded).expect("decode should succeed");
-        assert_eq!(decoded, value, "failed for -(2^{})", shift);
+        assert_eq!(decoded, value, "failed for -(2^{shift})");
     }
 }
 

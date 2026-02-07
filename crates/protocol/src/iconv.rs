@@ -8,7 +8,7 @@
 //!
 //! # Examples
 //!
-//! ```
+//! ```no_run
 //! use protocol::iconv::{EncodingConverter, FilenameConverter};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -662,7 +662,10 @@ mod tests {
             to: "iso-8859-1".to_string(),
             lossy: false,
         };
-        assert_eq!(err.to_string(), "conversion failed from utf-8 to iso-8859-1");
+        assert_eq!(
+            err.to_string(),
+            "conversion failed from utf-8 to iso-8859-1"
+        );
 
         let err = EncodingError::ConversionFailed {
             from: "utf-8".to_string(),

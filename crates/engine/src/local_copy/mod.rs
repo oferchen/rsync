@@ -64,15 +64,6 @@ pub(crate) mod debug_flist;
 pub(crate) mod debug_recv;
 pub(crate) mod debug_send;
 mod deferred_sync;
-pub(crate) mod parallel_transfer;
-/// State machine for 4-priority streaming file list processing pipeline.
-///
-/// Provides the [`PipelineController`](pipelined_state::PipelineController) for
-/// coordinating concurrent file list reception, pipeline filling, entry processing,
-/// and response handling with a priority-driven main loop.
-pub mod pipelined_state;
-pub(crate) mod prefetch;
-pub mod win_copy;
 /// Deletion strategy implementations for rsync `--delete` variants.
 ///
 /// Provides [`DeletionStrategy`](deletion::DeletionStrategy) implementations
@@ -89,8 +80,17 @@ mod metadata_sync;
 mod operands;
 mod options;
 mod overrides;
+pub(crate) mod parallel_transfer;
+/// State machine for 4-priority streaming file list processing pipeline.
+///
+/// Provides the [`PipelineController`](pipelined_state::PipelineController) for
+/// coordinating concurrent file list reception, pipeline filling, entry processing,
+/// and response handling with a priority-driven main loop.
+pub mod pipelined_state;
 mod plan;
+pub(crate) mod prefetch;
 mod skip_compress;
+pub mod win_copy;
 
 pub use buffer_pool::{BufferGuard, BufferPool};
 pub use deferred_sync::{DeferredSync, SyncStrategy};
@@ -132,8 +132,6 @@ pub use executor::{
 };
 
 pub(crate) use hard_links::HardLinkTracker;
-
-pub(crate) use debug_flist::FlistTracer;
 
 pub(crate) use metadata_sync::map_metadata_error;
 

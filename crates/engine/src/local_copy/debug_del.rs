@@ -20,6 +20,8 @@
 //! tracer.summary();
 //! ```
 
+#![allow(dead_code)]
+
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -391,7 +393,8 @@ impl DeleteTracer {
     /// Returns `Duration::ZERO` if no phase is currently being tracked.
     #[must_use]
     pub fn phase_elapsed(&self) -> Duration {
-        self.phase_start_time.map_or(Duration::ZERO, |t| t.elapsed())
+        self.phase_start_time
+            .map_or(Duration::ZERO, |t| t.elapsed())
     }
 
     /// Returns the total elapsed time since the session started.

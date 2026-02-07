@@ -98,8 +98,8 @@ mod deletion_context_tests {
 mod strategy_tests {
     use super::*;
     use crate::local_copy::deletion::strategy::{
-        apply_deletion_strategy, DeleteAfterStrategy, DeleteBeforeStrategy,
-        DeleteDelayStrategy, DeleteDuringStrategy, DeletionStrategy,
+        DeleteAfterStrategy, DeleteBeforeStrategy, DeleteDelayStrategy, DeleteDuringStrategy,
+        DeletionStrategy, apply_deletion_strategy,
     };
 
     #[test]
@@ -232,8 +232,8 @@ mod is_extraneous_entry_tests {
     #[test]
     fn handles_unicode_filenames() {
         let source = vec![
-            OsString::from("файл.txt"), // Russian
-            OsString::from("文件.txt"),   // Chinese
+            OsString::from("файл.txt"),     // Russian
+            OsString::from("文件.txt"),     // Chinese
             OsString::from("ファイル.txt"), // Japanese
         ];
         assert!(!is_extraneous_entry(OsStr::new("файл.txt"), &source));
@@ -383,10 +383,7 @@ mod build_keep_set_tests {
 
     #[test]
     fn works_with_string_references() {
-        let entries = vec![
-            OsString::from("a.txt"),
-            OsString::from("b.txt"),
-        ];
+        let entries = [OsString::from("a.txt"), OsString::from("b.txt")];
         let refs: Vec<&OsString> = entries.iter().collect();
         let set = build_keep_set(refs);
         assert_eq!(set.len(), 2);
@@ -403,7 +400,7 @@ mod deletion_error_tests {
             attempted: 150,
             limit: 100,
         };
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("150"));
         assert!(msg.contains("100"));
         assert!(msg.contains("exceeded"));
@@ -422,8 +419,11 @@ mod deletion_error_tests {
     fn io_error_has_source() {
         use crate::local_copy::LocalCopyError;
 
-        let io_err = LocalCopyError::io("test", PathBuf::from("/test"),
-            std::io::Error::from(std::io::ErrorKind::NotFound));
+        let io_err = LocalCopyError::io(
+            "test",
+            PathBuf::from("/test"),
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        );
         let err = DeletionError::Io(io_err);
         assert!(err.source().is_some());
     }
@@ -432,8 +432,11 @@ mod deletion_error_tests {
     fn from_local_copy_error_creates_io_variant() {
         use crate::local_copy::LocalCopyError;
 
-        let local_err = LocalCopyError::io("test", PathBuf::from("/test"),
-            std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let local_err = LocalCopyError::io(
+            "test",
+            PathBuf::from("/test"),
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
         let deletion_err = DeletionError::from(local_err);
         assert!(matches!(deletion_err, DeletionError::Io(_)));
     }
@@ -441,9 +444,7 @@ mod deletion_error_tests {
 
 mod integration_tests {
     use super::*;
-    use crate::local_copy::deletion::{
-        apply_deletion_strategy, should_delete_entry,
-    };
+    use crate::local_copy::deletion::{apply_deletion_strategy, should_delete_entry};
 
     /// Simulates a complete deletion workflow for delete-before timing.
     #[test]

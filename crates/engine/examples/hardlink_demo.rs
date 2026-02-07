@@ -18,31 +18,52 @@ fn main() {
 
     // Group 1: /usr/bin/vim -> /usr/bin/vi (common hardlink)
     let vim_ino = HardlinkKey::new(0xFD00, 100);
-    println!("File 0: /usr/bin/vim  (dev={:#x}, ino={})", vim_ino.dev, vim_ino.ino);
+    println!(
+        "File 0: /usr/bin/vim  (dev={:#x}, ino={})",
+        vim_ino.dev, vim_ino.ino
+    );
     tracker.register(vim_ino, 0);
 
-    println!("File 1: /usr/bin/vi   (dev={:#x}, ino={})", vim_ino.dev, vim_ino.ino);
+    println!(
+        "File 1: /usr/bin/vi   (dev={:#x}, ino={})",
+        vim_ino.dev, vim_ino.ino
+    );
     tracker.register(vim_ino, 1);
 
     // Single file (no hardlinks)
     let readme_ino = HardlinkKey::new(0xFD00, 200);
-    println!("File 2: /home/README  (dev={:#x}, ino={})", readme_ino.dev, readme_ino.ino);
+    println!(
+        "File 2: /home/README  (dev={:#x}, ino={})",
+        readme_ino.dev, readme_ino.ino
+    );
     tracker.register(readme_ino, 2);
 
     // Group 2: Multiple hardlinks to one inode
     let lib_ino = HardlinkKey::new(0xFD00, 300);
-    println!("File 3: /lib/libc.so.6     (dev={:#x}, ino={})", lib_ino.dev, lib_ino.ino);
+    println!(
+        "File 3: /lib/libc.so.6     (dev={:#x}, ino={})",
+        lib_ino.dev, lib_ino.ino
+    );
     tracker.register(lib_ino, 3);
 
-    println!("File 4: /lib/libc-2.31.so  (dev={:#x}, ino={})", lib_ino.dev, lib_ino.ino);
+    println!(
+        "File 4: /lib/libc-2.31.so  (dev={:#x}, ino={})",
+        lib_ino.dev, lib_ino.ino
+    );
     tracker.register(lib_ino, 4);
 
-    println!("File 5: /lib/libc.so       (dev={:#x}, ino={})", lib_ino.dev, lib_ino.ino);
+    println!(
+        "File 5: /lib/libc.so       (dev={:#x}, ino={})",
+        lib_ino.dev, lib_ino.ino
+    );
     tracker.register(lib_ino, 5);
 
     // Cross-device: same inode, different device (should NOT be linked)
     let other_dev_ino = HardlinkKey::new(0xFD01, 100);
-    println!("File 6: /mnt/data/file (dev={:#x}, ino={})", other_dev_ino.dev, other_dev_ino.ino);
+    println!(
+        "File 6: /mnt/data/file (dev={:#x}, ino={})",
+        other_dev_ino.dev, other_dev_ino.ino
+    );
     tracker.register(other_dev_ino, 6);
 
     println!("\n=== Transfer Actions ===\n");
@@ -63,7 +84,7 @@ fn main() {
 
         match action {
             HardlinkAction::Transfer => {
-                println!("File {}: {} - TRANSFER (full file)", i, file_name);
+                println!("File {i}: {file_name} - TRANSFER (full file)");
             }
             HardlinkAction::LinkTo(source) => {
                 let source_name = match source {
@@ -71,10 +92,10 @@ fn main() {
                     3 => "/lib/libc.so.6",
                     _ => unreachable!(),
                 };
-                println!("File {}: {} - LINK to file {} ({})", i, file_name, source, source_name);
+                println!("File {i}: {file_name} - LINK to file {source} ({source_name})");
             }
             HardlinkAction::Skip => {
-                println!("File {}: {} - SKIP", i, file_name);
+                println!("File {i}: {file_name} - SKIP");
             }
         }
     }
@@ -85,7 +106,12 @@ fn main() {
 
     println!("\n=== Hardlink Groups ===\n");
     for (i, group) in tracker.groups().enumerate() {
-        println!("Group {}: (dev={:#x}, ino={})", i + 1, group.key.dev, group.key.ino);
+        println!(
+            "Group {}: (dev={:#x}, ino={})",
+            i + 1,
+            group.key.dev,
+            group.key.ino
+        );
         println!("  Source: file {}", group.source_index);
         println!("  Links:  {:?}", group.link_indices);
         println!("  Total files in group: {}", group.total_count());
@@ -96,20 +122,33 @@ fn main() {
     // Simulate protocol 30+ encoding
     println!("Protocol 30+ (uses indices):");
     for group in tracker.groups() {
-        println!("  Source file {} gets XMIT_HLINKED | XMIT_HLINK_FIRST", group.source_index);
+        println!(
+            "  Source file {} gets XMIT_HLINKED | XMIT_HLINK_FIRST",
+            group.source_index
+        );
         for &link_idx in &group.link_indices {
-            println!("  Link file {} gets XMIT_HLINKED, write index {}", link_idx, group.source_index);
+            println!(
+                "  Link file {} gets XMIT_HLINKED, write index {}",
+                link_idx, group.source_index
+            );
         }
     }
 
     println!("\nProtocol 28-29 (uses dev/ino):");
     for group in tracker.groups() {
-        println!("  Files with (dev={:#x}, ino={}):", group.key.dev, group.key.ino);
-        println!("    First file {}: write dev={:#x}, ino={}",
-                 group.source_index, group.key.dev, group.key.ino);
+        println!(
+            "  Files with (dev={:#x}, ino={}):",
+            group.key.dev, group.key.ino
+        );
+        println!(
+            "    First file {}: write dev={:#x}, ino={}",
+            group.source_index, group.key.dev, group.key.ino
+        );
         for &link_idx in &group.link_indices {
-            println!("    Link file {}: write same dev flag, ino={}",
-                     link_idx, group.key.ino);
+            println!(
+                "    Link file {}: write same dev flag, ino={}",
+                link_idx, group.key.ino
+            );
         }
     }
 }

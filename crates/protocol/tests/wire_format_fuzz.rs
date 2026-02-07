@@ -9,11 +9,11 @@
 //! within standard test infrastructure.
 
 use protocol::codec::{
-    LegacyNdxCodec, ModernNdxCodec, NdxCodec, NdxState, ProtocolCodec,
-    create_ndx_codec, create_protocol_codec,
+    LegacyNdxCodec, ModernNdxCodec, NdxCodec, NdxState, ProtocolCodec, create_ndx_codec,
+    create_protocol_codec,
 };
 use protocol::wire::{read_delta_op, read_token};
-use protocol::{decode_varint, read_int, read_varint, read_varlong, MessageHeader};
+use protocol::{MessageHeader, decode_varint, read_int, read_varint, read_varlong};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
@@ -113,7 +113,7 @@ mod varint_fuzz {
             match result {
                 Ok(value) => {
                     // Valid decode - value should be reasonable
-                    assert!(value >= i32::MIN && value <= i32::MAX);
+                    assert!((i32::MIN..=i32::MAX).contains(&value));
                 }
                 Err(e) => {
                     // Expected errors for truncated/invalid input
@@ -131,7 +131,10 @@ mod varint_fuzz {
     fn decode_varint_empty_input() {
         let result = decode_varint(&[]);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 
     /// Verify varint decoder handles high-bit patterns that indicate overflow.
@@ -369,12 +372,11 @@ mod ndx_fuzz {
             let mut codec = LegacyNdxCodec::new(29);
             let mut cursor = Cursor::new(&bytes[..]);
             let result = codec.read_ndx(&mut cursor);
-            assert!(
-                result.is_err(),
-                "Expected error for {} bytes",
-                bytes.len()
+            assert!(result.is_err(), "Expected error for {} bytes", bytes.len());
+            assert_eq!(
+                result.unwrap_err().kind(),
+                std::io::ErrorKind::UnexpectedEof
             );
-            assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
         }
     }
 }
@@ -541,13 +543,10 @@ mod delta_fuzz {
         // Valid opcodes are 0x00 (Literal) and 0x01 (Copy)
         // All others should return error
         for opcode in 2u8..=255 {
-            let bytes = vec![opcode, 0, 0, 0, 0];
+            let bytes = [opcode, 0, 0, 0, 0];
             let mut cursor = Cursor::new(&bytes[..]);
             let result = read_delta_op(&mut cursor);
-            assert!(
-                result.is_err(),
-                "Opcode {opcode:#x} should be invalid"
-            );
+            assert!(result.is_err(), "Opcode {opcode:#x} should be invalid");
             let err = result.unwrap_err();
             assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         }
@@ -557,13 +556,13 @@ mod delta_fuzz {
     #[test]
     fn read_delta_op_truncated_data() {
         // Literal opcode with no length
-        let bytes = vec![0x00];
+        let bytes = [0x00];
         let mut cursor = Cursor::new(&bytes[..]);
         let result = read_delta_op(&mut cursor);
         assert!(result.is_err());
 
         // Copy opcode with no index
-        let bytes = vec![0x01];
+        let bytes = [0x01];
         let mut cursor = Cursor::new(&bytes[..]);
         let result = read_delta_op(&mut cursor);
         assert!(result.is_err());
@@ -573,10 +572,10 @@ mod delta_fuzz {
     #[test]
     fn read_token_edge_values() {
         let test_cases = [
-            (vec![0x00, 0x00, 0x00, 0x00], None),       // End marker (0)
-            (vec![0x01, 0x00, 0x00, 0x00], Some(1)),    // Positive
-            (vec![0xFF, 0xFF, 0xFF, 0xFF], Some(-1)),   // Block match 0
-            (vec![0xFE, 0xFF, 0xFF, 0xFF], Some(-2)),   // Block match 1
+            (vec![0x00, 0x00, 0x00, 0x00], None),           // End marker (0)
+            (vec![0x01, 0x00, 0x00, 0x00], Some(1)),        // Positive
+            (vec![0xFF, 0xFF, 0xFF, 0xFF], Some(-1)),       // Block match 0
+            (vec![0xFE, 0xFF, 0xFF, 0xFF], Some(-2)),       // Block match 1
             (vec![0xFF, 0xFF, 0xFF, 0x7F], Some(i32::MAX)), // Max positive
         ];
 
@@ -704,7 +703,7 @@ mod protocol_codec_fuzz {
     fn protocol_codec_truncated_errors() {
         // Legacy codec needs 4 bytes for most operations
         let legacy = create_protocol_codec(29);
-        let truncated = vec![0x00, 0x00, 0x00]; // 3 bytes
+        let truncated = [0x00, 0x00, 0x00]; // 3 bytes
 
         let mut cursor = Cursor::new(&truncated[..]);
         assert!(legacy.read_file_size(&mut cursor).is_err());
@@ -755,7 +754,7 @@ mod file_entry_fuzz {
     fn flag_byte_parsing_no_panic() {
         // Flags are typically single bytes or varints
         for flag_byte in 0u8..=255 {
-            let bytes = vec![flag_byte];
+            let bytes = [flag_byte];
             let mut cursor = Cursor::new(&bytes[..]);
             // This would be used in flags parsing
             let _ = read_varint(&mut cursor);
@@ -844,15 +843,17 @@ mod stress_tests {
             // All ones
             vec![0xFF; 100],
             // Alternating
-            (0..100).map(|i| if i % 2 == 0 { 0x00 } else { 0xFF }).collect(),
+            (0..100)
+                .map(|i| if i % 2 == 0 { 0x00 } else { 0xFF })
+                .collect(),
             // Ramp up
             (0u8..100).collect(),
             // Ramp down
             (0u8..100).rev().collect(),
             // Pattern that looks like many extended NDX markers
-            vec![0xFE, 0x80, 0x00, 0x00, 0x00].repeat(20),
+            [0xFE, 0x80, 0x00, 0x00, 0x00].repeat(20),
             // Pattern that looks like many negative NDX markers
-            vec![0xFF, 0x01].repeat(50),
+            [0xFF, 0x01].repeat(50),
             // Pattern with many zeros then 0xFF markers
             [vec![0x00; 50], vec![0xFF; 50]].concat(),
         ];
@@ -912,37 +913,46 @@ mod error_verification {
     fn varint_empty_is_unexpected_eof() {
         let result = decode_varint(&[]);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 
     /// Verify that legacy NDX returns UnexpectedEof for short input.
     #[test]
     fn legacy_ndx_short_is_unexpected_eof() {
         let mut codec = LegacyNdxCodec::new(29);
-        let bytes = vec![0x00, 0x00, 0x00]; // Only 3 bytes
+        let bytes = [0x00, 0x00, 0x00]; // Only 3 bytes
 
         let mut cursor = Cursor::new(&bytes[..]);
         let result = codec.read_ndx(&mut cursor);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 
     /// Verify that modern NDX returns UnexpectedEof for truncated extended.
     #[test]
     fn modern_ndx_truncated_extended_is_unexpected_eof() {
         let mut codec = ModernNdxCodec::new(30);
-        let bytes = vec![0xFE, 0x00]; // Extended marker + only 1 byte
+        let bytes = [0xFE, 0x00]; // Extended marker + only 1 byte
 
         let mut cursor = Cursor::new(&bytes[..]);
         let result = codec.read_ndx(&mut cursor);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 
     /// Verify that delta op returns InvalidData for bad opcode.
     #[test]
     fn delta_op_bad_opcode_is_invalid_data() {
-        let bytes = vec![0x02, 0x00, 0x00, 0x00]; // Opcode 2 is invalid
+        let bytes = [0x02, 0x00, 0x00, 0x00]; // Opcode 2 is invalid
 
         let mut cursor = Cursor::new(&bytes[..]);
         let result = read_delta_op(&mut cursor);

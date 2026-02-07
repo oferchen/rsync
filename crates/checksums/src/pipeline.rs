@@ -382,7 +382,7 @@ where
     // Wait for I/O thread to finish
     io_thread
         .join()
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "I/O thread panicked"))?;
+        .map_err(|_| io::Error::other("I/O thread panicked"))?;
 
     Ok(results)
 }
@@ -506,7 +506,7 @@ where
             opt.ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    format!("Input {} was not completed", i),
+                    format!("Input {i} was not completed"),
                 )
             })
         })
@@ -764,7 +764,10 @@ mod tests {
         let seq_results = sequential_checksum::<Sha256, _>(inputs_seq, config).unwrap();
         let pipe_results = pipelined_checksum::<Sha256, _>(inputs_pipe, config).unwrap();
 
-        assert_eq!(seq_results[0].digest.as_ref(), pipe_results[0].digest.as_ref());
+        assert_eq!(
+            seq_results[0].digest.as_ref(),
+            pipe_results[0].digest.as_ref()
+        );
         assert_eq!(seq_results[0].bytes_processed, large_data.len() as u64);
         assert_eq!(pipe_results[0].bytes_processed, large_data.len() as u64);
     }

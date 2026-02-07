@@ -889,7 +889,7 @@ fn v32_compression_algorithm_parsing() {
 /// Verifies v32 can be used with the protocol codec.
 #[test]
 fn v32_protocol_codec_creation() {
-    use crate::codec::{create_protocol_codec, ProtocolCodec};
+    use crate::codec::{ProtocolCodec, create_protocol_codec};
 
     let codec = create_protocol_codec(32);
     assert_eq!(codec.protocol_version(), 32);
@@ -899,7 +899,7 @@ fn v32_protocol_codec_creation() {
 /// Verifies v32 can be used with the NDX codec.
 #[test]
 fn v32_ndx_codec_creation() {
-    use crate::codec::{create_ndx_codec, NdxCodec};
+    use crate::codec::{NdxCodec, create_ndx_codec};
 
     let mut codec = create_ndx_codec(32);
 
@@ -975,8 +975,7 @@ fn v32_all_versions_negotiate() {
         let result = select_highest_mutual([version]);
         assert!(
             result.is_ok(),
-            "version {} should negotiate successfully",
-            version
+            "version {version} should negotiate successfully"
         );
     }
 }

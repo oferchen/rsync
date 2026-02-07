@@ -355,7 +355,11 @@ impl std::fmt::Display for TransferStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Number of files line with breakdown
         if self.num_files > 0 {
-            write!(f, "Number of files: {}", Self::format_number(self.num_files))?;
+            write!(
+                f,
+                "Number of files: {}",
+                Self::format_number(self.num_files)
+            )?;
 
             let mut parts = Vec::new();
             if self.num_reg_files > 0 {
@@ -371,7 +375,10 @@ impl std::fmt::Display for TransferStats {
                 parts.push(format!("dev: {}", Self::format_number(self.num_devices)));
             }
             if self.num_specials > 0 {
-                parts.push(format!("special: {}", Self::format_number(self.num_specials)));
+                parts.push(format!(
+                    "special: {}",
+                    Self::format_number(self.num_specials)
+                ));
             }
 
             if !parts.is_empty() {
@@ -382,70 +389,114 @@ impl std::fmt::Display for TransferStats {
 
         // Number of created files
         if self.num_created_files > 0 {
-            writeln!(f, "Number of created files: {}", Self::format_number(self.num_created_files))?;
+            writeln!(
+                f,
+                "Number of created files: {}",
+                Self::format_number(self.num_created_files)
+            )?;
         }
 
         // Number of deleted files
         if self.num_deleted_files > 0 {
-            writeln!(f, "Number of deleted files: {}", Self::format_number(self.num_deleted_files))?;
+            writeln!(
+                f,
+                "Number of deleted files: {}",
+                Self::format_number(self.num_deleted_files)
+            )?;
         }
 
         // Number of regular files transferred
         if self.num_transferred_files > 0 {
-            writeln!(f, "Number of regular files transferred: {}",
-                    Self::format_number(self.num_transferred_files))?;
+            writeln!(
+                f,
+                "Number of regular files transferred: {}",
+                Self::format_number(self.num_transferred_files)
+            )?;
         }
 
         // Total file size
         if self.total_size > 0 {
-            writeln!(f, "Total file size: {} bytes", Self::format_number(self.total_size))?;
+            writeln!(
+                f,
+                "Total file size: {} bytes",
+                Self::format_number(self.total_size)
+            )?;
         }
 
         // Total transferred file size
         if self.total_transferred_size > 0 {
-            writeln!(f, "Total transferred file size: {} bytes",
-                    Self::format_number(self.total_transferred_size))?;
+            writeln!(
+                f,
+                "Total transferred file size: {} bytes",
+                Self::format_number(self.total_transferred_size)
+            )?;
         }
 
         // Literal data and matched data - show if we're showing transfer details
         if self.total_transferred_size > 0 || self.literal_data > 0 || self.matched_data > 0 {
-            writeln!(f, "Literal data: {} bytes", Self::format_number(self.literal_data))?;
-            writeln!(f, "Matched data: {} bytes", Self::format_number(self.matched_data))?;
+            writeln!(
+                f,
+                "Literal data: {} bytes",
+                Self::format_number(self.literal_data)
+            )?;
+            writeln!(
+                f,
+                "Matched data: {} bytes",
+                Self::format_number(self.matched_data)
+            )?;
         }
 
         // File list size
         if self.flist_size > 0 {
-            writeln!(f, "File list size: {}", Self::format_number(self.flist_size))?;
+            writeln!(
+                f,
+                "File list size: {}",
+                Self::format_number(self.flist_size)
+            )?;
         }
 
         // File list generation time
         if self.flist_buildtime > 0 {
             let secs = self.flist_buildtime as f64 / 1_000_000.0;
-            writeln!(f, "File list generation time: {:.3} seconds", secs)?;
+            writeln!(f, "File list generation time: {secs:.3} seconds")?;
         }
 
         // File list transfer time
         if self.flist_xfertime > 0 {
             let secs = self.flist_xfertime as f64 / 1_000_000.0;
-            writeln!(f, "File list transfer time: {:.3} seconds", secs)?;
+            writeln!(f, "File list transfer time: {secs:.3} seconds")?;
         }
 
         // Total bytes sent and received
-        writeln!(f, "Total bytes sent: {}", Self::format_number(self.total_written))?;
-        writeln!(f, "Total bytes received: {}", Self::format_number(self.total_read))?;
+        writeln!(
+            f,
+            "Total bytes sent: {}",
+            Self::format_number(self.total_written)
+        )?;
+        writeln!(
+            f,
+            "Total bytes received: {}",
+            Self::format_number(self.total_read)
+        )?;
 
         // Summary line: "sent X bytes  received Y bytes  Z bytes/sec"
         let bytes_per_sec = self.bytes_per_sec();
-        writeln!(f, "sent {} bytes  received {} bytes  {:.2} bytes/sec",
-                Self::format_number(self.total_written),
-                Self::format_number(self.total_read),
-                bytes_per_sec)?;
+        writeln!(
+            f,
+            "sent {} bytes  received {} bytes  {:.2} bytes/sec",
+            Self::format_number(self.total_written),
+            Self::format_number(self.total_read),
+            bytes_per_sec
+        )?;
 
         // Final speedup line
         let speedup = self.speedup();
-        write!(f, "total size is {}  speedup is {:.2}",
-              Self::format_number(self.total_size),
-              speedup)?;
+        write!(
+            f,
+            "total size is {}  speedup is {:.2}",
+            Self::format_number(self.total_size),
+            speedup
+        )?;
 
         Ok(())
     }
@@ -689,12 +740,12 @@ mod tests {
             literal_data: 4567,
             matched_data: 0,
             flist_size: 123,
-            flist_buildtime: 1000,    // 0.001 seconds
+            flist_buildtime: 1000, // 0.001 seconds
             flist_xfertime: 0,
             ..Default::default()
         };
 
-        let output = format!("{}", stats);
+        let output = format!("{stats}");
 
         // Check that output matches upstream format
         assert!(output.contains("Number of files: 5 (reg: 3, dir: 2)"));
@@ -721,12 +772,12 @@ mod tests {
             num_files: 1000,
             num_reg_files: 950,
             num_dirs: 50,
-            flist_buildtime: 500000,  // 0.5 seconds
-            flist_xfertime: 100000,   // 0.1 seconds
+            flist_buildtime: 500000, // 0.5 seconds
+            flist_xfertime: 100000,  // 0.1 seconds
             ..Default::default()
         };
 
-        let output = format!("{}", stats);
+        let output = format!("{stats}");
 
         // Verify comma-separated formatting
         assert!(output.contains("Number of files: 1,000 (reg: 950, dir: 50)"));
@@ -754,10 +805,12 @@ mod tests {
             ..Default::default()
         };
 
-        let output = format!("{}", stats);
+        let output = format!("{stats}");
 
         // Verify all file types are shown
-        assert!(output.contains("Number of files: 25 (reg: 10, dir: 5, link: 7, dev: 2, special: 1)"));
+        assert!(
+            output.contains("Number of files: 25 (reg: 10, dir: 5, link: 7, dev: 2, special: 1)")
+        );
     }
 
     #[test]
@@ -766,12 +819,12 @@ mod tests {
             total_read: 500,
             total_written: 500,
             total_size: 10000,
-            flist_buildtime: 1000000,  // 1 second
-            flist_xfertime: 1000000,   // 1 second
+            flist_buildtime: 1000000, // 1 second
+            flist_xfertime: 1000000,  // 1 second
             ..Default::default()
         };
 
-        let output = format!("{}", stats);
+        let output = format!("{stats}");
 
         // Total bytes = 1000, total size = 10000, speedup should be 10.00
         assert!(output.contains("speedup is 10.00"));
@@ -789,7 +842,7 @@ mod tests {
             ..Default::default()
         };
 
-        let output = format!("{}", stats);
+        let output = format!("{stats}");
 
         // Even with minimal data, should have the summary lines
         assert!(output.contains("Total bytes sent: 200"));
@@ -853,12 +906,12 @@ mod tests {
             literal_data: 4567,
             matched_data: 0,
             flist_size: 123,
-            flist_buildtime: 1000,    // 0.001 seconds
-            flist_xfertime: 0,        // 0.000 seconds
+            flist_buildtime: 1000, // 0.001 seconds
+            flist_xfertime: 0,     // 0.000 seconds
             ..Default::default()
         };
 
-        let output = format!("{}", stats);
+        let output = format!("{stats}");
         let lines: Vec<&str> = output.lines().collect();
 
         // Verify each line matches expected format

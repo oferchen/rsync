@@ -1229,15 +1229,13 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let config = ProtocolSetupConfig::new(protocol, true)
-            .with_checksum_seed(Some(12345));
+        let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(12345));
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
             .expect("setup with fixed seed should succeed");
 
         assert_eq!(
-            result.checksum_seed,
-            12345_i32,
+            result.checksum_seed, 12345_i32,
             "Fixed seed value should be used as-is"
         );
 
@@ -1252,13 +1250,12 @@ mod tests {
         // Same fixed seed should produce same result every time
         let protocol = ProtocolVersion::try_from(29).unwrap();
 
-        let config = ProtocolSetupConfig::new(protocol, true)
-            .with_checksum_seed(Some(42));
+        let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(42));
 
         let mut stdout1 = Vec::new();
         let mut stdin1 = &b""[..];
-        let result1 = setup_protocol(&mut stdout1, &mut stdin1, &config)
-            .expect("first setup should succeed");
+        let result1 =
+            setup_protocol(&mut stdout1, &mut stdin1, &config).expect("first setup should succeed");
 
         let mut stdout2 = Vec::new();
         let mut stdin2 = &b""[..];
@@ -1269,7 +1266,10 @@ mod tests {
             result1.checksum_seed, result2.checksum_seed,
             "Fixed seed should be deterministic across calls"
         );
-        assert_eq!(stdout1, stdout2, "Wire bytes should be identical for same fixed seed");
+        assert_eq!(
+            stdout1, stdout2,
+            "Wire bytes should be identical for same fixed seed"
+        );
     }
 
     #[test]
@@ -1280,8 +1280,7 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let config = ProtocolSetupConfig::new(protocol, true)
-            .with_checksum_seed(Some(0));
+        let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(0));
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
             .expect("setup with seed=0 should succeed");
@@ -1301,8 +1300,7 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let config = ProtocolSetupConfig::new(protocol, true)
-            .with_checksum_seed(Some(u32::MAX));
+        let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(u32::MAX));
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
             .expect("setup with max seed should succeed");
@@ -1315,7 +1313,10 @@ mod tests {
         );
 
         let written_seed = i32::from_le_bytes(stdout[..4].try_into().unwrap());
-        assert_eq!(written_seed, -1_i32, "Wire representation of u32::MAX is -1 as i32");
+        assert_eq!(
+            written_seed, -1_i32,
+            "Wire representation of u32::MAX is -1 as i32"
+        );
     }
 
     #[test]
@@ -1330,8 +1331,8 @@ mod tests {
 
         let config = ProtocolSetupConfig::new(protocol, false); // CLIENT mode
 
-        let result = setup_protocol(&mut stdout, &mut stdin, &config)
-            .expect("client setup should succeed");
+        let result =
+            setup_protocol(&mut stdout, &mut stdin, &config).expect("client setup should succeed");
 
         assert_eq!(
             result.checksum_seed, test_seed,

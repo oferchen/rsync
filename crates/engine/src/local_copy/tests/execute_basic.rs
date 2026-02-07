@@ -1242,8 +1242,7 @@ fn execute_handles_various_file_sizes() {
         assert_eq!(
             fs::metadata(&dest_file).expect("metadata").len(),
             *size as u64,
-            "file {} has wrong size",
-            name
+            "file {name} has wrong size"
         );
     }
 }
@@ -1439,7 +1438,7 @@ fn execute_handles_deep_directory_nesting() {
     // Create a deeply nested directory (10 levels)
     let mut deep_path = source_root.clone();
     for i in 0..10 {
-        deep_path = deep_path.join(format!("level{}", i));
+        deep_path = deep_path.join(format!("level{i}"));
     }
     fs::create_dir_all(&deep_path).expect("create deep path");
     fs::write(deep_path.join("deep.txt"), b"very deep").expect("write deep file");
@@ -1460,7 +1459,7 @@ fn execute_handles_deep_directory_nesting() {
     // Verify the deeply nested file was copied
     let mut expected_path = dest_root.clone();
     for i in 0..10 {
-        expected_path = expected_path.join(format!("level{}", i));
+        expected_path = expected_path.join(format!("level{i}"));
     }
     expected_path = expected_path.join("deep.txt");
     assert!(expected_path.exists());

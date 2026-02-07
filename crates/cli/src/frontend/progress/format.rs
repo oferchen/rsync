@@ -706,17 +706,35 @@ mod tests {
         let result = format_list_timestamp(Some(time));
 
         // Year: chars 0-3
-        assert!(result[0..4].chars().all(|c| c.is_ascii_digit()), "year should be digits");
+        assert!(
+            result[0..4].chars().all(|c| c.is_ascii_digit()),
+            "year should be digits"
+        );
         // Month: chars 5-6
-        assert!(result[5..7].chars().all(|c| c.is_ascii_digit()), "month should be digits");
+        assert!(
+            result[5..7].chars().all(|c| c.is_ascii_digit()),
+            "month should be digits"
+        );
         // Day: chars 8-9
-        assert!(result[8..10].chars().all(|c| c.is_ascii_digit()), "day should be digits");
+        assert!(
+            result[8..10].chars().all(|c| c.is_ascii_digit()),
+            "day should be digits"
+        );
         // Hours: chars 11-12
-        assert!(result[11..13].chars().all(|c| c.is_ascii_digit()), "hours should be digits");
+        assert!(
+            result[11..13].chars().all(|c| c.is_ascii_digit()),
+            "hours should be digits"
+        );
         // Minutes: chars 14-15
-        assert!(result[14..16].chars().all(|c| c.is_ascii_digit()), "minutes should be digits");
+        assert!(
+            result[14..16].chars().all(|c| c.is_ascii_digit()),
+            "minutes should be digits"
+        );
         // Seconds: chars 17-18
-        assert!(result[17..19].chars().all(|c| c.is_ascii_digit()), "seconds should be digits");
+        assert!(
+            result[17..19].chars().all(|c| c.is_ascii_digit()),
+            "seconds should be digits"
+        );
     }
 
     #[test]
@@ -762,7 +780,9 @@ mod tests {
         assert!(!list_only_event(&ClientEventKind::SkippedUnsafeSymlink));
         assert!(!list_only_event(&ClientEventKind::SkippedMountPoint));
         assert!(!list_only_event(&ClientEventKind::SkippedNewerDestination));
-        assert!(!list_only_event(&ClientEventKind::SkippedMissingDestination));
+        assert!(!list_only_event(
+            &ClientEventKind::SkippedMissingDestination
+        ));
     }
 
     #[test]

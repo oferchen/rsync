@@ -1343,8 +1343,8 @@ mod fuzzy_matching {
         fs::write(temp2.path().join("config_v1.json"), "old config").expect("write file");
 
         // Use level 2 fuzzy matching to search additional directories
-        let matcher = FuzzyMatcher::with_level(2)
-            .with_fuzzy_basis_dirs(vec![temp2.path().to_path_buf()]);
+        let matcher =
+            FuzzyMatcher::with_level(2).with_fuzzy_basis_dirs(vec![temp2.path().to_path_buf()]);
 
         let result = matcher.find_fuzzy_basis(
             OsStr::new("config_v2.json"),

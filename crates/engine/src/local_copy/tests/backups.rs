@@ -1003,15 +1003,15 @@ fn backup_multiple_files_same_directory() {
 
     // All files should be backed up
     for i in 1..=3 {
-        let backup = dest_root.join(format!("file{}.txt.bak", i));
+        let backup = dest_root.join(format!("file{i}.txt.bak"));
         assert!(backup.exists(), "backup{} missing at {}", i, backup.display());
         assert_eq!(
             fs::read(&backup).expect("read backup"),
-            format!("content{}-old", i).as_bytes()
+            format!("content{i}-old").as_bytes()
         );
         assert_eq!(
-            fs::read(dest_root.join(format!("file{}.txt", i))).expect("read dest"),
-            format!("content{}-new", i).as_bytes()
+            fs::read(dest_root.join(format!("file{i}.txt"))).expect("read dest"),
+            format!("content{i}-new").as_bytes()
         );
     }
 }

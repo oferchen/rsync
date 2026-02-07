@@ -107,7 +107,7 @@ impl fmt::Display for ConfigError {
             write!(f, "{}: ", path.display())?;
         }
         if let Some(line) = self.line {
-            write!(f, "line {}: ", line)?;
+            write!(f, "line {line}: ")?;
         }
         write!(f, "{}", self.message)
     }
@@ -132,11 +132,7 @@ pub struct GlobalConfig {
 impl GlobalConfig {
     /// Returns the daemon port (default: 873).
     pub fn port(&self) -> u16 {
-        if self.port == 0 {
-            873
-        } else {
-            self.port
-        }
+        if self.port == 0 { 873 } else { self.port }
     }
 
     /// Returns the bind address, if specified.
@@ -349,8 +345,7 @@ impl RsyncdConfig {
     ///
     /// Returns an error if the file cannot be read or contains invalid syntax.
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
-        let contents = fs::read_to_string(path)
-            .map_err(|e| ConfigError::io_error(path, e))?;
+        let contents = fs::read_to_string(path).map_err(|e| ConfigError::io_error(path, e))?;
         Self::parse(&contents, path)
     }
 
@@ -418,12 +413,13 @@ impl<'a> Parser<'a> {
                     modules.push(module);
                 }
 
-                let end = trimmed.find(']')
-                    .ok_or_else(|| ConfigError::parse_error(
+                let end = trimmed.find(']').ok_or_else(|| {
+                    ConfigError::parse_error(
                         self.path,
                         self.line_number,
                         "unterminated module header",
-                    ))?;
+                    )
+                })?;
 
                 let name = trimmed[1..end].trim();
                 if name.is_empty() {
@@ -439,14 +435,17 @@ impl<'a> Parser<'a> {
                     return Err(ConfigError::parse_error(
                         self.path,
                         self.line_number,
-                        format!("duplicate module '{}' (previously defined at line {})", name, prev_line),
+                        format!(
+                            "duplicate module '{name}' (previously defined at line {prev_line})"
+                        ),
                     ));
                 }
                 module_names.insert(name.to_string(), self.line_number);
 
                 // Check for trailing content after ]
                 let trailing = trimmed[end + 1..].trim();
-                if !trailing.is_empty() && !trailing.starts_with('#') && !trailing.starts_with(';') {
+                if !trailing.is_empty() && !trailing.starts_with('#') && !trailing.starts_with(';')
+                {
                     return Err(ConfigError::parse_error(
                         self.path,
                         self.line_number,
@@ -459,12 +458,13 @@ impl<'a> Parser<'a> {
             }
 
             // Parse key = value
-            let (key, value) = line.split_once('=')
-                .ok_or_else(|| ConfigError::parse_error(
+            let (key, value) = line.split_once('=').ok_or_else(|| {
+                ConfigError::parse_error(
                     self.path,
                     self.line_number,
                     "expected 'key = value' format",
-                ))?;
+                )
+            })?;
 
             let key = key.trim().to_ascii_lowercase();
             let value = value.trim();
@@ -641,14 +641,14 @@ impl<'a> Parser<'a> {
             _ => Err(ConfigError::parse_error(
                 self.path,
                 self.line_number,
-                format!("invalid boolean value '{}'", value),
+                format!("invalid boolean value '{value}'"),
             )),
         }
     }
 
     fn parse_list(&self, value: &str) -> Vec<String> {
         value
-            .split(|c| c == ',' || c == ' ')
+            .split([',', ' '])
             .filter_map(|s| {
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
@@ -706,7 +706,10 @@ impl ModuleBuilder {
             ConfigError::validation_error(
                 path,
                 self.line,
-                format!("module '{}' is missing required 'path' directive", self.name),
+                format!(
+                    "module '{}' is missing required 'path' directive",
+                    self.name
+                ),
             )
         })?;
 
@@ -774,10 +777,7 @@ mod tests {
         let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
         assert_eq!(config.global().port(), 8873);
         assert_eq!(config.global().address(), Some("127.0.0.1"));
-        assert_eq!(
-            config.global().motd_file(),
-            Some(Path::new("/etc/motd"))
-        );
+        assert_eq!(config.global().motd_file(), Some(Path::new("/etc/motd")));
         assert_eq!(
             config.global().log_file(),
             Some(Path::new("/var/log/rsyncd.log"))
@@ -901,13 +901,13 @@ mod tests {
     #[test]
     fn parse_boolean_values() {
         for value in ["yes", "true", "1", "YES", "True"] {
-            let file = write_config(&format!("[mod]\npath = /data\nread only = {}\n", value));
+            let file = write_config(&format!("[mod]\npath = /data\nread only = {value}\n"));
             let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
             assert!(config.modules()[0].read_only());
         }
 
         for value in ["no", "false", "0", "NO", "False"] {
-            let file = write_config(&format!("[mod]\npath = /data\nread only = {}\n", value));
+            let file = write_config(&format!("[mod]\npath = /data\nread only = {value}\n"));
             let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
             assert!(!config.modules()[0].read_only());
         }

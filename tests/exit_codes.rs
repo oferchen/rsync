@@ -1359,7 +1359,7 @@ mod exit_code_coverage {
 
         for (code, description) in implemented {
             assert!(
-                code.description().len() > 0,
+                !code.description().is_empty(),
                 "{code:?}: {description} - should have description"
             );
         }
@@ -1396,7 +1396,7 @@ mod exit_code_coverage {
 
         for (code, description) in conditional {
             assert!(
-                code.description().len() > 0,
+                !code.description().is_empty(),
                 "{code:?}: {description} - should have description"
             );
         }

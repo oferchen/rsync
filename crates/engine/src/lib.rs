@@ -104,7 +104,7 @@ pub mod batch {
 pub mod fuzzy {
     //! Re-exports from the [`matching`] crate for backward compatibility.
     pub use matching::{
-        FuzzyMatch, FuzzyMatcher, FUZZY_LEVEL_1, FUZZY_LEVEL_2, compute_similarity_score,
+        FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_similarity_score,
     };
 }
 
@@ -132,12 +132,10 @@ pub use delta::{
 pub use error::{EngineError, EngineResult};
 
 // Fuzzy matching for finding similar basis files
-pub use fuzzy::{FuzzyMatch, FuzzyMatcher, FUZZY_LEVEL_1, FUZZY_LEVEL_2, compute_similarity_score};
+pub use fuzzy::{FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_similarity_score};
 
 // Hardlink detection and resolution
-pub use hardlink::{
-    HardlinkAction, HardlinkGroup, HardlinkKey, HardlinkResolver, HardlinkTracker,
-};
+pub use hardlink::{HardlinkAction, HardlinkGroup, HardlinkKey, HardlinkResolver, HardlinkTracker};
 
 // Local filesystem copy operations
 pub use local_copy::{

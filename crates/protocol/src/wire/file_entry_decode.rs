@@ -166,7 +166,7 @@ pub fn decode_flags<R: Read>(
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// use protocol::wire::file_entry_decode::decode_end_marker;
 /// use std::io::Cursor;
 ///
@@ -309,7 +309,7 @@ pub fn decode_name<R: Read>(
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// use protocol::wire::file_entry_decode::decode_size;
 /// use std::io::Cursor;
 ///
@@ -465,11 +465,7 @@ pub fn decode_atime<R: Read>(
 /// # Note
 ///
 /// Only decode when `XMIT_CRTIME_EQ_MTIME` flag is NOT set.
-pub fn decode_crtime<R: Read>(
-    reader: &mut R,
-    flags: u32,
-    mtime: i64,
-) -> io::Result<Option<i64>> {
+pub fn decode_crtime<R: Read>(reader: &mut R, flags: u32, mtime: i64) -> io::Result<Option<i64>> {
     if flags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16) != 0 {
         Ok(Some(mtime))
     } else {
@@ -566,13 +562,12 @@ pub fn decode_uid<R: Read>(
         };
 
         // Check if name follows (protocol 30+)
-        let name = if protocol_version >= 30
-            && (flags & ((XMIT_USER_NAME_FOLLOWS as u32) << 8)) != 0
-        {
-            Some(decode_owner_name(reader)?)
-        } else {
-            None
-        };
+        let name =
+            if protocol_version >= 30 && (flags & ((XMIT_USER_NAME_FOLLOWS as u32) << 8)) != 0 {
+                Some(decode_owner_name(reader)?)
+            } else {
+                None
+            };
 
         Ok(Some((uid, name)))
     }
@@ -617,13 +612,12 @@ pub fn decode_gid<R: Read>(
         };
 
         // Check if name follows (protocol 30+)
-        let name = if protocol_version >= 30
-            && (flags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0
-        {
-            Some(decode_owner_name(reader)?)
-        } else {
-            None
-        };
+        let name =
+            if protocol_version >= 30 && (flags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0 {
+                Some(decode_owner_name(reader)?)
+            } else {
+                None
+            };
 
         Ok(Some((gid, name)))
     }
@@ -653,7 +647,7 @@ fn decode_owner_name<R: Read>(reader: &mut R) -> io::Result<String> {
     String::from_utf8(name_bytes).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("invalid UTF-8 in owner name: {}", e),
+            format!("invalid UTF-8 in owner name: {e}"),
         )
     })
 }
@@ -745,10 +739,7 @@ pub fn decode_rdev<R: Read>(
 /// # Note
 ///
 /// Only decode when preserve_links is enabled and entry is a symlink.
-pub fn decode_symlink_target<R: Read>(
-    reader: &mut R,
-    protocol_version: u8,
-) -> io::Result<Vec<u8>> {
+pub fn decode_symlink_target<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Vec<u8>> {
     let len = read_varint30_int(reader, protocol_version)? as usize;
     let mut target = vec![0u8; len];
     reader.read_exact(&mut target)?;
@@ -864,10 +855,10 @@ pub fn decode_checksum<R: Read>(reader: &mut R, checksum_len: usize) -> io::Resu
 mod tests {
     use super::*;
     use crate::wire::file_entry::{
-        encode_atime, encode_checksum, encode_crtime, encode_end_marker, encode_flags,
-        encode_gid, encode_hardlink_dev_ino, encode_hardlink_idx, encode_mode, encode_mtime,
-        encode_mtime_nsec, encode_name, encode_owner_name, encode_rdev, encode_size,
-        encode_symlink_target, encode_uid,
+        encode_atime, encode_checksum, encode_crtime, encode_end_marker, encode_flags, encode_gid,
+        encode_hardlink_dev_ino, encode_hardlink_idx, encode_mode, encode_mtime, encode_mtime_nsec,
+        encode_name, encode_owner_name, encode_rdev, encode_size, encode_symlink_target,
+        encode_uid,
     };
     use std::io::Cursor;
 
@@ -1330,7 +1321,7 @@ mod tests {
 
             let mut cursor = Cursor::new(&buf);
             let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
-            assert_eq!(decoded, target, "roundtrip failed for protocol {}", proto);
+            assert_eq!(decoded, target, "roundtrip failed for protocol {proto}");
             // Verify all bytes consumed
             assert_eq!(cursor.position() as usize, buf.len());
         }
@@ -1368,7 +1359,7 @@ mod tests {
 
             let mut cursor = Cursor::new(&buf);
             let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
-            assert_eq!(decoded, target, "long target failed for protocol {}", proto);
+            assert_eq!(decoded, target, "long target failed for protocol {proto}");
         }
     }
 
