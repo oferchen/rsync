@@ -9,13 +9,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
-#[cfg(feature = "optimized-buffers")]
 use std::sync::Arc;
 
 use super::ActiveCompressor;
-#[cfg(feature = "optimized-buffers")]
 use super::buffer_pool::BufferPool;
-#[cfg(feature = "batch-sync")]
 use super::deferred_sync::{DeferredSync, SyncStrategy};
 use super::filter_program::{
     ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
@@ -97,14 +94,15 @@ pub(crate) struct CopyContext<'a> {
     /// computing the safety-relative path for `--safe-links` /
     /// `--copy-unsafe-links`.
     safety_depth_offset: usize,
+    /// Whether to use the buffer pool for I/O operations (runtime toggle).
+    /// When `true`, buffers are acquired from the shared pool for reuse.
+    /// When `false`, a fresh `Vec` is allocated for each transfer.
+    use_buffer_pool: bool,
     /// Shared buffer pool for file I/O operations.
-    #[cfg(feature = "optimized-buffers")]
     buffer_pool: Arc<BufferPool>,
     /// Deferred filesystem sync manager.
-    #[cfg(feature = "batch-sync")]
     deferred_sync: DeferredSync,
     /// Cache of prefetched file checksums for parallel checksum mode.
-    #[cfg(feature = "parallel")]
     checksum_cache: Option<super::executor::ChecksumCache>,
     /// Tracks whether any I/O errors occurred during the transfer.
     /// When set to `true` and `--ignore-errors` is not enabled, deletions

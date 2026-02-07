@@ -33,7 +33,7 @@ acl = ["core/acl"]
 
 # Parallel file operations - enables rayon-based parallelism for checksum mode
 # Also enables engine optimization features for maximum performance
-parallel = ["engine/parallel", "engine/optimized-buffers", "engine/lazy-metadata", "engine/batch-sync", "checksums/parallel"]
+parallel = ["engine/lazy-metadata", "checksums/parallel"]
 
 [dependencies]
 clap = { version = "4.5.17", features = ["std"] }

@@ -25,7 +25,7 @@ signature = { path = "../signature" }
 matching = { path = "../match" }
 batch = { path = "../batch" }
 thiserror = "2.0"
-rayon = { workspace = true, optional = true }
+rayon = { workspace = true }
 tracing = { workspace = true, optional = true }
 globset = "0.4"
 jwalk = { workspace = true }
@@ -47,7 +47,7 @@ checksums = { path = "../checksums", default-features = false }
 libc = "0.2"
 
 [features]
-default = ["zstd", "lz4", "acl", "xattr", "optimized-buffers", "lazy-metadata", "batch-sync"]
+default = ["zstd", "lz4", "acl", "xattr", "lazy-metadata"]
 
 # ============================================================================
 # Compression Features
@@ -65,25 +65,18 @@ acl = ["metadata/acl"]
 # Performance Optimization Features
 # ============================================================================
 
-# Buffer pool - reuses I/O buffers to reduce allocation overhead
-# Benefits: 10-15% faster I/O by eliminating repeated allocations
-# Trade-offs: None (pure Rust, no external dependencies)
-optimized-buffers = []
+# Buffer pool is always compiled (runtime-selectable via use_buffer_pool flag).
+# No feature gate needed -- both pool and direct-alloc paths are always available.
 
 # Lazy metadata - defers stat() calls until metadata is needed
 # Benefits: Reduces syscall overhead for file list operations
 # Trade-offs: None (transparent optimization)
 lazy-metadata = []
 
-# Batch sync - batches fsync() calls for better throughput
-# Benefits: 10-30% faster writes by deferring metadata updates
-# Trade-offs: Slightly higher risk of data loss on crash (still crash-safe)
-batch-sync = []
-
 # Parallel file operations - enables rayon-based parallelism for large transfers
 # Benefits: Multi-threaded file processing on multi-core systems
 # Trade-offs: Minimal overhead on single-core systems
-parallel = ["dep:rayon"]
+parallel = []
 
 # ============================================================================
 # Runtime Features
@@ -114,9 +107,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "optimizations_benchmark"
 harness = false
-required-features = ["optimized-buffers"]
 
 [[bench]]
 name = "parallel_checksum"
 harness = false
-required-features = ["parallel"]

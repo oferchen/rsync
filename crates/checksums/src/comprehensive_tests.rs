@@ -738,12 +738,8 @@ mod strong_checksum_tests {
 
     #[test]
     fn xxh3_simd_availability_returns_expected_value() {
-        let available = crate::xxh3_simd_available();
-        // Should match compile-time feature
-        #[cfg(feature = "xxh3-simd")]
-        assert!(available);
-        #[cfg(not(feature = "xxh3-simd"))]
-        assert!(!available);
+        // xxh3 crate is always compiled in, so this always returns true
+        assert!(crate::xxh3_simd_available());
     }
 
     #[test]
@@ -1281,7 +1277,6 @@ mod pipelined_tests {
     }
 }
 
-#[cfg(feature = "parallel")]
 #[cfg(test)]
 mod parallel_tests {
     use crate::parallel::{

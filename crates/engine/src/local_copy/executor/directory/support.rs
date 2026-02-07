@@ -3,7 +3,6 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::local_copy::LocalCopyError;
@@ -18,26 +17,19 @@ pub(crate) struct DirectoryEntry {
 /// Minimum number of entries to justify parallel metadata fetching.
 /// Below this threshold, the overhead of thread synchronization exceeds
 /// the benefit of parallelism.
-#[cfg(feature = "parallel")]
 const PARALLEL_THRESHOLD: usize = 32;
 
 /// Reads directory entries and fetches metadata, using parallel stat calls
-/// when the `parallel` feature is enabled and entry count exceeds threshold.
+/// when entry count exceeds the threshold, falling back to sequential for
+/// small directories.
 pub(crate) fn read_directory_entries_sorted(
     path: &Path,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
-    #[cfg(feature = "parallel")]
-    {
-        read_directory_entries_sorted_parallel(path)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        read_directory_entries_sorted_sequential(path)
-    }
+    read_directory_entries_sorted_parallel(path)
 }
 
 /// Sequential implementation: reads entries and fetches metadata one at a time.
-#[cfg(any(not(feature = "parallel"), test))]
+#[cfg(test)]
 fn read_directory_entries_sorted_sequential(
     path: &Path,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
@@ -71,7 +63,6 @@ fn read_directory_entries_sorted_sequential(
 ///
 /// For directories with many entries, this significantly reduces wall-clock time
 /// by overlapping multiple stat() syscalls across CPU cores.
-#[cfg(feature = "parallel")]
 fn read_directory_entries_sorted_parallel(
     path: &Path,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
@@ -432,7 +423,6 @@ mod tests {
 
     // ==================== Parallel implementation tests ====================
 
-    #[cfg(feature = "parallel")]
     #[test]
     fn parallel_and_sequential_produce_identical_results() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -461,7 +451,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "parallel")]
     #[test]
     fn parallel_small_directory_uses_sequential_path() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -478,7 +467,6 @@ mod tests {
         assert_eq!(entries.len(), 5);
     }
 
-    #[cfg(feature = "parallel")]
     #[test]
     fn parallel_maintains_sort_order() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -510,7 +498,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "parallel")]
     #[test]
     fn parallel_handles_symlinks() {
         let temp = tempfile::tempdir().expect("tempdir");

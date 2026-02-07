@@ -34,8 +34,6 @@ default = [
     "simd",
     "parallel",
     "copy_file_range",
-    "mmap",
-    "batch_sync",
 ]
 
 # ============================================================================
@@ -60,12 +58,9 @@ iconv = ["core/iconv"]
 # Performance Optimization Features
 # ============================================================================
 
-# SIMD-accelerated checksums - 2-4x faster MD5/XXH3 using AVX2/NEON
-# Requirements: x86_64 with AVX2, or ARM with NEON (runtime detection)
-# Benefits: Dramatically faster checksum computation for large files
-# Trade-offs: Slightly larger binary size (~50KB)
-# All implementations maintain RFC compatibility (RFC 1320 for MD4, RFC 1321 for MD5)
-simd = ["checksums/simd-batch", "checksums/xxh3-simd"]
+# SIMD-accelerated checksums - reserved for future use
+# XXH3 SIMD is now always compiled in (the xxh3 crate has its own runtime detection)
+simd = []
 
 # Parallel processing with rayon - enables multi-core file operations
 # Requirements: None (pure Rust)
@@ -84,18 +79,6 @@ io_uring = ["transfer/io_uring", "fast_io/io_uring"]
 # Benefits: 30-50% faster local copies by avoiding userspace buffer
 # Trade-offs: Linux-only optimization
 copy_file_range = ["fast_io/copy_file_range"]
-
-# Memory-mapped I/O - zero-copy reading for large files
-# Requirements: None (cross-platform via memmap2)
-# Benefits: Reduces memory copies, better cache utilization
-# Trade-offs: Can cause issues with very large files on 32-bit systems
-mmap = ["fast_io/mmap", "transfer/mmap"]
-
-# Batched fsync operations - defers fsync calls for better throughput
-# Requirements: None
-# Benefits: 10-30% faster writes by batching metadata updates
-# Trade-offs: Slightly higher risk of data loss on crash (still crash-safe)
-batch_sync = ["engine/batch-sync"]
 
 # ============================================================================
 # Runtime and Debugging Features

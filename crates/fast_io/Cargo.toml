@@ -20,8 +20,8 @@ thiserror = "2.0"
 # Cached sorting with Schwartzian transform
 permutation = "0.4"
 
-# Optional: memory-mapped I/O
-memmap2 = { version = "0.9", optional = true }
+# Memory-mapped I/O (always compiled; runtime fallback to buffered I/O)
+memmap2 = "0.9"
 
 # Optional: io_uring support (Linux 5.6+)
 io-uring = { version = "0.7", optional = true }
@@ -31,16 +31,11 @@ io-uring = { version = "0.7", optional = true }
 libc = { version = "0.2", optional = true }
 
 [features]
-default = ["mmap"]
+default = []
 
 # ============================================================================
 # I/O Optimization Features
 # ============================================================================
-
-# Memory-mapped I/O for large files - zero-copy reading
-# Benefits: Reduces memory copies, better CPU cache utilization
-# Trade-offs: May cause issues on 32-bit systems with very large files
-mmap = ["dep:memmap2"]
 
 # io_uring support for Linux 5.6+ with automatic fallback to standard I/O
 # Requirements: Linux 5.6+ kernel (runtime detection and fallback)

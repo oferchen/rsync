@@ -50,11 +50,9 @@
 //! ```
 
 /// Buffer pool for I/O buffer reuse during large file transfers.
-#[cfg(feature = "optimized-buffers")]
 pub mod buffer_pool;
 mod compressor;
 mod context;
-#[cfg(feature = "batch-sync")]
 mod deferred_sync;
 /// Deletion strategy implementations for rsync `--delete` variants.
 ///
@@ -75,9 +73,7 @@ mod overrides;
 mod plan;
 mod skip_compress;
 
-#[cfg(feature = "optimized-buffers")]
 pub use buffer_pool::{BufferGuard, BufferPool};
-#[cfg(feature = "batch-sync")]
 pub use deferred_sync::{DeferredSync, SyncStrategy};
 
 pub use plan::{

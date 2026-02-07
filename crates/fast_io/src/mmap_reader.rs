@@ -27,7 +27,10 @@ use std::io::{self, Read};
 use std::path::Path;
 
 /// Threshold above which memory mapping is preferred over buffered I/O.
-pub const MMAP_THRESHOLD: u64 = 1024 * 1024; // 1 MB
+///
+/// Files at or above this size will attempt mmap first, falling back to
+/// buffered I/O if the mapping fails (e.g., on NFS, FUSE, procfs).
+pub const MMAP_THRESHOLD: u64 = 64 * 1024; // 64 KB
 
 /// A memory-mapped file reader.
 ///
@@ -256,7 +259,14 @@ impl FileReaderFactory for AdaptiveReaderFactory {
         let size = metadata.len();
 
         if size >= self.threshold {
-            Ok(AdaptiveReader::Mmap(MmapReader::open(path)?))
+            // Attempt mmap; fall back to buffered I/O on failure.
+            // mmap can fail on certain filesystems (NFS, FUSE, procfs, etc.).
+            match MmapReader::open(path) {
+                Ok(reader) => Ok(AdaptiveReader::Mmap(reader)),
+                Err(_) => Ok(AdaptiveReader::Std(
+                    crate::traits::StdFileReader::open(path)?,
+                )),
+            }
         } else {
             Ok(AdaptiveReader::Std(crate::traits::StdFileReader::open(
                 path,

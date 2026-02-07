@@ -2,12 +2,12 @@
 //!
 //! XXHash implementations with optional runtime SIMD detection.
 //!
-//! When the `xxh3-simd` feature is enabled (default), one-shot digest operations
-//! use the `xxh3` crate which provides runtime detection of AVX2 (x86_64) and
-//! NEON (aarch64) instructions. This allows portable binaries to automatically
-//! use SIMD acceleration when available.
+//! One-shot digest operations use the `xxh3` crate which provides runtime
+//! detection of AVX2 (x86_64) and NEON (aarch64) instructions with an
+//! automatic scalar fallback. This allows portable binaries to use SIMD
+//! acceleration when available without any compile-time feature flags.
 //!
-//! Streaming operations always use `xxhash-rust` as the `xxh3` crate does not
+//! Streaming operations use `xxhash-rust` as the `xxh3` crate does not
 //! provide streaming hashers. For most rsync block checksum operations, the
 //! one-shot path is used, so SIMD acceleration applies where it matters most.
 
@@ -175,8 +175,8 @@ impl StrongDigest for Xxh64 {
 
 /// Streaming XXH3 hasher that produces 64-bit digests.
 ///
-/// When the `xxh3-simd` feature is enabled (default), the one-shot [`digest`](Self::digest)
-/// method uses the `xxh3` crate with runtime SIMD detection (AVX2/NEON).
+/// The one-shot [`digest`](Self::digest) method uses the `xxh3` crate with
+/// runtime SIMD detection (AVX2/NEON) and automatic scalar fallback.
 /// Streaming operations use `xxhash-rust` as the `xxh3` crate lacks streaming support.
 ///
 /// # Examples
@@ -212,11 +212,7 @@ impl StrongDigest for Xxh64 {
 /// ```
 /// use checksums::strong::xxh3_simd_available;
 ///
-/// if xxh3_simd_available() {
-///     println!("XXH3 one-shot operations use runtime SIMD");
-/// } else {
-///     println!("XXH3 uses scalar implementation");
-/// }
+/// assert!(xxh3_simd_available()); // always true -- xxh3 is always compiled in
 /// ```
 pub struct Xxh3 {
     inner: xxhash_rust::xxh3::Xxh3,
@@ -279,8 +275,8 @@ impl Xxh3 {
 
     /// Convenience helper that computes the XXH3/64 digest for `data` in one shot.
     ///
-    /// When the `xxh3-simd` feature is enabled, this uses runtime SIMD detection
-    /// to automatically use AVX2 (x86_64) or NEON (aarch64) when available.
+    /// Uses the `xxh3` crate with runtime SIMD detection to automatically use
+    /// AVX2 (x86_64) or NEON (aarch64) when available, with a scalar fallback.
     ///
     /// # Examples
     ///
@@ -291,28 +287,8 @@ impl Xxh3 {
     /// assert_eq!(digest.len(), 8);
     /// ```
     #[must_use]
-    #[cfg(feature = "xxh3-simd")]
     pub fn digest(seed: u64, data: &[u8]) -> [u8; 8] {
         xxh3::hash64_with_seed(data, seed).to_le_bytes()
-    }
-
-    /// Convenience helper that computes the XXH3/64 digest for `data` in one shot.
-    ///
-    /// Uses `xxhash-rust` with compile-time SIMD detection only.
-    /// Enable the `xxh3-simd` feature for runtime SIMD detection.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use checksums::strong::Xxh3;
-    ///
-    /// let digest = Xxh3::digest(0, b"fast one-shot hash");
-    /// assert_eq!(digest.len(), 8);
-    /// ```
-    #[must_use]
-    #[cfg(not(feature = "xxh3-simd"))]
-    pub fn digest(seed: u64, data: &[u8]) -> [u8; 8] {
-        xxhash_rust::xxh3::xxh3_64_with_seed(data, seed).to_le_bytes()
     }
 }
 
@@ -340,8 +316,8 @@ impl StrongDigest for Xxh3 {
 
 /// Streaming XXH3 hasher that produces 128-bit digests.
 ///
-/// When the `xxh3-simd` feature is enabled (default), the one-shot [`digest`](Self::digest)
-/// method uses the `xxh3` crate with runtime SIMD detection (AVX2/NEON).
+/// The one-shot [`digest`](Self::digest) method uses the `xxh3` crate with
+/// runtime SIMD detection (AVX2/NEON) and automatic scalar fallback.
 /// Streaming operations use `xxhash-rust` as the `xxh3` crate lacks streaming support.
 ///
 /// # Examples
@@ -446,8 +422,8 @@ impl Xxh3_128 {
 
     /// Convenience helper that computes the XXH3/128 digest for `data` in one shot.
     ///
-    /// When the `xxh3-simd` feature is enabled, this uses runtime SIMD detection
-    /// to automatically use AVX2 (x86_64) or NEON (aarch64) when available.
+    /// Uses the `xxh3` crate with runtime SIMD detection to automatically use
+    /// AVX2 (x86_64) or NEON (aarch64) when available, with a scalar fallback.
     ///
     /// # Examples
     ///
@@ -458,28 +434,8 @@ impl Xxh3_128 {
     /// assert_eq!(digest.len(), 16);
     /// ```
     #[must_use]
-    #[cfg(feature = "xxh3-simd")]
     pub fn digest(seed: u64, data: &[u8]) -> [u8; 16] {
         xxh3::hash128_with_seed(data, seed).to_le_bytes()
-    }
-
-    /// Convenience helper that computes the XXH3/128 digest for `data` in one shot.
-    ///
-    /// Uses `xxhash-rust` with compile-time SIMD detection only.
-    /// Enable the `xxh3-simd` feature for runtime SIMD detection.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use checksums::strong::Xxh3_128;
-    ///
-    /// let digest = Xxh3_128::digest(0, b"128-bit hash");
-    /// assert_eq!(digest.len(), 16);
-    /// ```
-    #[must_use]
-    #[cfg(not(feature = "xxh3-simd"))]
-    pub fn digest(seed: u64, data: &[u8]) -> [u8; 16] {
-        xxhash_rust::xxh3::xxh3_128_with_seed(data, seed).to_le_bytes()
     }
 }
 
@@ -507,10 +463,10 @@ impl StrongDigest for Xxh3_128 {
 
 /// Returns whether the XXH3 one-shot operations use runtime SIMD detection.
 ///
-/// When `true`, the `xxh3` crate automatically detects and uses AVX2 (x86_64)
-/// or NEON (aarch64) instructions at runtime for [`Xxh3::digest`] and
-/// [`Xxh3_128::digest`], providing optimal performance on any CPU without
-/// requiring compile-time flags.
+/// Always returns `true` because the `xxh3` crate (which provides runtime
+/// AVX2/NEON detection with a scalar fallback) is always compiled in. One-shot
+/// [`Xxh3::digest`] and [`Xxh3_128::digest`] calls automatically use the
+/// fastest available instruction set at runtime.
 ///
 /// Streaming operations (using `update`/`finalize`) always use `xxhash-rust`
 /// which relies on compile-time SIMD detection.
@@ -520,38 +476,11 @@ impl StrongDigest for Xxh3_128 {
 /// ```
 /// use checksums::strong::xxh3_simd_available;
 ///
-/// if xxh3_simd_available() {
-///     println!("Runtime SIMD acceleration enabled for XXH3");
-/// } else {
-///     println!("SIMD detection disabled; using scalar XXH3");
-/// }
+/// assert!(xxh3_simd_available()); // always true
 /// ```
 #[must_use]
-#[cfg(feature = "xxh3-simd")]
 pub const fn xxh3_simd_available() -> bool {
     true
-}
-
-/// Returns whether the XXH3 one-shot operations use runtime SIMD detection.
-///
-/// When `false`, all operations use `xxhash-rust` which relies on compile-time
-/// SIMD detection. Enable the `xxh3-simd` feature for runtime detection.
-///
-/// # Examples
-///
-/// ```
-/// use checksums::strong::xxh3_simd_available;
-///
-/// if xxh3_simd_available() {
-///     println!("Runtime SIMD acceleration enabled for XXH3");
-/// } else {
-///     println!("SIMD detection disabled; using scalar XXH3");
-/// }
-/// ```
-#[must_use]
-#[cfg(not(feature = "xxh3-simd"))]
-pub const fn xxh3_simd_available() -> bool {
-    false
 }
 
 #[cfg(test)]
@@ -672,13 +601,9 @@ mod tests {
 
     #[test]
     fn xxh3_simd_availability_is_consistent() {
-        let available = xxh3_simd_available();
-        #[cfg(feature = "xxh3-simd")]
-        assert!(available, "xxh3-simd feature enabled, should report true");
-        #[cfg(not(feature = "xxh3-simd"))]
         assert!(
-            !available,
-            "xxh3-simd feature disabled, should report false"
+            xxh3_simd_available(),
+            "xxh3 crate is always compiled in, should report true"
         );
     }
 

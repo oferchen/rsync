@@ -1,19 +1,17 @@
 //! Benchmarks for performance optimizations.
 //!
-//! Run with: `cargo bench -p engine --features optimized-buffers,batch-sync`
+//! Run with: `cargo bench -p engine --bench optimizations_benchmark`
 
 use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-#[cfg(feature = "optimized-buffers")]
 use engine::local_copy::buffer_pool::BufferPool;
 
 /// Size used by default for copy operations.
 const COPY_BUFFER_SIZE: usize = 256 * 1024;
 
 /// Benchmark direct allocation vs buffer pool.
-#[cfg(feature = "optimized-buffers")]
 fn bench_buffer_allocation(c: &mut Criterion) {
     let mut group = c.benchmark_group("buffer_allocation");
     group.throughput(Throughput::Elements(1));
@@ -54,7 +52,6 @@ fn bench_buffer_allocation(c: &mut Criterion) {
 }
 
 /// Benchmark sequential buffer allocations vs pool reuse.
-#[cfg(feature = "optimized-buffers")]
 fn bench_sequential_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("sequential_buffer_ops");
 
@@ -93,7 +90,6 @@ fn bench_sequential_operations(c: &mut Criterion) {
 }
 
 /// Benchmark concurrent buffer access patterns.
-#[cfg(feature = "optimized-buffers")]
 fn bench_concurrent_access(c: &mut Criterion) {
     use std::thread;
 
@@ -123,15 +119,11 @@ fn bench_concurrent_access(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "optimized-buffers")]
 criterion_group!(
     buffer_benchmarks,
     bench_buffer_allocation,
     bench_sequential_operations,
     bench_concurrent_access
 );
-
-#[cfg(not(feature = "optimized-buffers"))]
-criterion_group!(buffer_benchmarks,);
 
 criterion_main!(buffer_benchmarks);
