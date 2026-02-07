@@ -49,13 +49,19 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
-/// Buffer pool for I/O buffer reuse.
+/// Buffer pool for I/O buffer reuse during large file transfers.
 #[cfg(feature = "optimized-buffers")]
 pub mod buffer_pool;
 mod compressor;
 mod context;
 #[cfg(feature = "batch-sync")]
 mod deferred_sync;
+/// Deletion strategy implementations for rsync `--delete` variants.
+///
+/// Provides [`DeletionStrategy`](deletion::DeletionStrategy) implementations
+/// for `--delete-before`, `--delete-during`, `--delete-after`, and
+/// `--delete-delay` timing modes. Use [`apply_deletion_strategy`](deletion::apply_deletion_strategy)
+/// to obtain the appropriate strategy for a given [`DeleteTiming`].
 pub mod deletion;
 mod dir_merge;
 mod error;
@@ -136,6 +142,50 @@ pub(crate) use filter_program::{FilterContext, FilterSegment};
 use std::sync::atomic::AtomicUsize;
 
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
+
+// ---------------------------------------------------------------------------
+// Adaptive buffer sizing
+// ---------------------------------------------------------------------------
+
+/// Buffer size for files smaller than 64 KB (8 KB).
+const ADAPTIVE_BUFFER_TINY: usize = 8 * 1024;
+/// Buffer size for files in the 64 KB .. 1 MB range (32 KB).
+const ADAPTIVE_BUFFER_SMALL: usize = 32 * 1024;
+/// Buffer size for files in the 1 MB .. 64 MB range (128 KB).
+const ADAPTIVE_BUFFER_MEDIUM: usize = 128 * 1024;
+/// Buffer size for files 64 MB and larger (512 KB).
+const ADAPTIVE_BUFFER_LARGE: usize = 512 * 1024;
+
+/// File-size threshold below which [`ADAPTIVE_BUFFER_TINY`] is used (64 KB).
+const ADAPTIVE_THRESHOLD_TINY: u64 = 64 * 1024;
+/// File-size threshold below which [`ADAPTIVE_BUFFER_SMALL`] is used (1 MB).
+const ADAPTIVE_THRESHOLD_SMALL: u64 = 1024 * 1024;
+/// File-size threshold below which [`ADAPTIVE_BUFFER_MEDIUM`] is used (64 MB).
+const ADAPTIVE_THRESHOLD_MEDIUM: u64 = 64 * 1024 * 1024;
+
+/// Selects an I/O buffer size appropriate for the given file size.
+///
+/// The returned size balances memory consumption against throughput:
+///
+/// | File size          | Buffer size |
+/// |--------------------|-------------|
+/// | < 64 KB            | 8 KB        |
+/// | 64 KB .. < 1 MB    | 32 KB       |
+/// | 1 MB .. < 64 MB    | 128 KB      |
+/// | >= 64 MB           | 512 KB      |
+#[must_use]
+pub(crate) const fn adaptive_buffer_size(file_size: u64) -> usize {
+    if file_size < ADAPTIVE_THRESHOLD_TINY {
+        ADAPTIVE_BUFFER_TINY
+    } else if file_size < ADAPTIVE_THRESHOLD_SMALL {
+        ADAPTIVE_BUFFER_SMALL
+    } else if file_size < ADAPTIVE_THRESHOLD_MEDIUM {
+        ADAPTIVE_BUFFER_MEDIUM
+    } else {
+        ADAPTIVE_BUFFER_LARGE
+    }
+}
+
 static NEXT_TEMP_FILE_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(unix)]

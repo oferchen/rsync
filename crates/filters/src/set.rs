@@ -9,7 +9,38 @@ use crate::{
     merge::read_rules_recursive,
 };
 
-/// Ordered collection of filter rules.
+/// Compiled, immutable collection of filter rules for fast path matching.
+///
+/// A `FilterSet` is built from a sequence of [`FilterRule`]s via
+/// [`from_rules`](Self::from_rules) (or one of its variants). During
+/// construction each rule is compiled into optimised glob matchers and
+/// partitioned into two independent lists:
+///
+/// - **Include/Exclude** -- governs whether a path is transferred.
+/// - **Protect/Risk** -- governs whether a path may be deleted on the
+///   receiver when `--delete` is active.
+///
+/// Both lists use first-match-wins evaluation. If no include/exclude rule
+/// matches, the path is included by default.
+///
+/// `FilterSet` is cheaply cloneable (the inner state is behind an [`Arc`]).
+///
+/// # Examples
+///
+/// ```
+/// use filters::{FilterRule, FilterSet};
+/// use std::path::Path;
+///
+/// let set = FilterSet::from_rules([
+///     FilterRule::exclude("*.o"),
+///     FilterRule::include("important.o"),
+/// ]).unwrap();
+///
+/// // first-match-wins: "*.o" matches first
+/// assert!(!set.allows(Path::new("main.o"), false));
+/// // non-matching paths are included by default
+/// assert!(set.allows(Path::new("README.md"), false));
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct FilterSet {
     inner: Arc<FilterSetInner>,
@@ -18,11 +49,22 @@ pub struct FilterSet {
 impl FilterSet {
     /// Builds a [`FilterSet`] from the supplied rules.
     ///
+    /// Rules are compiled in iteration order. Include/Exclude rules are placed
+    /// in the transfer list while Protect/Risk rules go into the deletion list.
+    /// A [`Clear`](FilterAction::Clear) rule removes all prior rules that
+    /// match its side flags.
+    ///
     /// # Merge and DirMerge Rules
     ///
-    /// Merge rules (`. FILE`) and dir-merge rules (`, FILE`) are skipped when
+    /// Merge rules (`. FILE`) and dir-merge rules (`: FILE`) are skipped when
     /// building the filter set. To automatically expand merge files, use
-    /// [`FilterSet::from_rules_with_merge_expansion`] instead.
+    /// [`from_rules_with_merge_expansion`](Self::from_rules_with_merge_expansion)
+    /// instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FilterError`] if any rule's pattern cannot be compiled into a
+    /// valid glob matcher.
     pub fn from_rules<I>(rules: I) -> Result<Self, FilterError>
     where
         I: IntoIterator<Item = FilterRule>,
@@ -70,13 +112,22 @@ impl FilterSet {
         })
     }
 
-    /// Reports whether the set contains any rules.
+    /// Returns `true` if the set contains no compiled rules of any kind.
+    ///
+    /// An empty filter set allows all paths and all deletions.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.inner.include_exclude.is_empty() && self.inner.protect_risk.is_empty()
     }
 
-    /// Determines whether the provided path is allowed.
+    /// Returns `true` if the path should be included in the transfer.
+    ///
+    /// Evaluates sender-side include/exclude rules in definition order using
+    /// first-match-wins semantics. Paths that match no rule are included by
+    /// default. Perishable rules are considered during transfer checks.
+    ///
+    /// `is_dir` should be `true` when the path refers to a directory, which
+    /// affects directory-only rules (patterns with a trailing `/`).
     #[must_use]
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
         self.inner
@@ -84,10 +135,15 @@ impl FilterSet {
             .allows_transfer()
     }
 
-    /// Determines whether deleting the provided path is permitted.
+    /// Returns `true` if deleting the path on the receiver is permitted.
     ///
-    /// Protect directives prevent deletion regardless of the include/exclude
-    /// decision, matching upstream `--filter 'protect …'` semantics.
+    /// A path may be deleted when:
+    /// 1. It is *included* by receiver-side include/exclude rules (perishable
+    ///    rules are ignored for deletion), **and**
+    /// 2. No protect rule matches the path.
+    ///
+    /// This matches upstream rsync's `--delete` semantics combined with
+    /// `--filter 'protect ...'`.
     #[must_use]
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
         self.inner
@@ -95,7 +151,14 @@ impl FilterSet {
             .allows_deletion()
     }
 
-    /// Determines whether the path may be removed when excluded entries are purged.
+    /// Returns `true` if the path may be removed during `--delete-excluded`
+    /// processing.
+    ///
+    /// Unlike [`allows_deletion`](Self::allows_deletion), this method checks
+    /// whether the path is *excluded* (rather than included) by receiver-side
+    /// rules while still honouring protect directives.  It is used to implement
+    /// rsync's `--delete-excluded` flag, which removes destination files that
+    /// the filter list would have excluded from transfer.
     #[must_use]
     pub fn allows_deletion_when_excluded_removed(&self, path: &Path, is_dir: bool) -> bool {
         self.inner
@@ -184,12 +247,15 @@ impl FilterSet {
     }
 }
 
-/// Error when building a FilterSet with merge expansion.
+/// Error returned by [`FilterSet::from_rules_with_merge_expansion`].
+///
+/// Wraps either a merge-file I/O or parse error, or a glob compilation error
+/// from one of the expanded rules.
 #[derive(Debug)]
 pub enum FilterSetError {
-    /// Error reading or parsing a merge file.
+    /// A merge file could not be read, parsed, or exceeded the depth limit.
     Merge(MergeFileError),
-    /// Error compiling a filter rule.
+    /// A filter rule's pattern could not be compiled into a glob matcher.
     Filter(FilterError),
 }
 

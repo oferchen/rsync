@@ -236,6 +236,8 @@ mod parse_filter_tests;
 mod filter_behavior_comprehensive_tests;
 #[path = "parse_max.rs"]
 mod parse_max_tests;
+#[path = "parse_max_alloc.rs"]
+mod parse_max_alloc_tests;
 #[path = "parse_modify.rs"]
 mod parse_modify_tests;
 #[path = "parse_size.rs"]
@@ -303,6 +305,8 @@ mod transfer_request_with_ignore_times_tests;
 mod transfer_request_with_include_tests;
 #[path = "transfer_request_with_itemize.rs"]
 mod transfer_request_with_itemize_tests;
+#[path = "itemize_format_upstream.rs"]
+mod itemize_format_upstream_tests;
 #[path = "transfer_request_with_no.rs"]
 mod transfer_request_with_no_tests;
 #[path = "transfer_request_with_omit.rs"]

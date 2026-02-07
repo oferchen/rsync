@@ -3,6 +3,34 @@ use digest::Digest;
 use super::StrongDigest;
 
 /// Streaming SHA-256 hasher used by rsync when peers negotiate stronger daemon authentication digests.
+///
+/// SHA-256 produces a 256-bit (32-byte) digest and is cryptographically
+/// secure. It is used for daemon authentication and high-security transfers.
+/// Hardware acceleration via SHA-NI (x86_64) or crypto extensions (aarch64)
+/// is used automatically when compiled with appropriate target features.
+///
+/// # Examples
+///
+/// One-shot hashing:
+///
+/// ```
+/// use checksums::strong::Sha256;
+///
+/// let digest = Sha256::digest(b"secure data");
+/// assert_eq!(digest.len(), 32);
+/// ```
+///
+/// Incremental hashing:
+///
+/// ```
+/// use checksums::strong::Sha256;
+///
+/// let mut hasher = Sha256::new();
+/// hasher.update(b"part one");
+/// hasher.update(b"part two");
+/// let digest = hasher.finalize();
+/// assert_eq!(digest, Sha256::digest(b"part onepart two"));
+/// ```
 #[derive(Clone, Debug)]
 pub struct Sha256 {
     inner: sha2::Sha256,

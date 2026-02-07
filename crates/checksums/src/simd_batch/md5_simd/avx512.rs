@@ -13,6 +13,8 @@
 //! This implementation uses **inline assembly** rather than intrinsics because AVX-512
 //! intrinsics require nightly Rust. Inline assembly is stable as of Rust 1.59 and provides
 //! full access to AVX-512 instructions.
+
+#![allow(unsafe_op_in_unsafe_fn)]
 //!
 //! The assembly implementation:
 //! - Uses ZMM registers (zmm0-zmm30) for 512-bit operations

@@ -672,4 +672,924 @@ mod tests {
     fn format_out_format_mtime_none() {
         assert_eq!(format_out_format_mtime(None), "1970/01/01-00:00:00");
     }
+
+    // ==================== format_itemized_changes tests ====================
+    //
+    // Upstream rsync --itemize-changes format reference:
+    //   YXcstpoguax  filename
+    //   ^^ ^^^^^^^^^ (11 characters total)
+    //   ||
+    //   |+-- X = file type: f (file), d (directory), L (symlink), D (device), S (special)
+    //   +--- Y = update type: > (received), c (created), h (hardlink), . (not updated), * (message)
+    //
+    //   Positions 2-10 (c s t p o g u a x):
+    //     '.' = attribute is unchanged
+    //     '+' = file is new (all attributes are new)
+    //     letter = attribute changed (c/s/t/T/p/o/g/u/n/b/a/x)
+
+    use core::client::{ClientEntryKind, ClientEventKind};
+    use engine::local_copy::{LocalCopyChangeSet, TimeChange};
+    use std::path::PathBuf;
+
+    fn make_event(
+        kind: ClientEventKind,
+        created: bool,
+        metadata_kind: Option<ClientEntryKind>,
+        change_set: LocalCopyChangeSet,
+    ) -> ClientEvent {
+        let metadata = metadata_kind.map(ClientEvent::test_metadata);
+        ClientEvent::for_test(
+            PathBuf::from("test.txt"),
+            kind,
+            created,
+            metadata,
+            change_set,
+        )
+    }
+
+    // ---- Format length ----
+
+    #[test]
+    fn itemize_format_length_is_eleven_for_new_file() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            true,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.len(), 11, "format string should be 11 characters: {result:?}");
+    }
+
+    #[test]
+    fn itemize_format_length_is_eleven_for_unchanged_file() {
+        let event = make_event(
+            ClientEventKind::MetadataReused,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.len(), 11, "format string should be 11 characters: {result:?}");
+    }
+
+    #[test]
+    fn itemize_format_length_is_eleven_for_modified_file() {
+        let cs = LocalCopyChangeSet::new()
+            .with_checksum_changed(true)
+            .with_size_changed(true)
+            .with_time_change(Some(TimeChange::Modified));
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.len(), 11, "format string should be 11 characters: {result:?}");
+    }
+
+    // ---- Y (position 0): update type character ----
+
+    #[test]
+    fn itemize_y_position_data_copied_shows_greater_than() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('>'), "Y should be '>' for DataCopied: {result:?}");
+    }
+
+    #[test]
+    fn itemize_y_position_hardlink_shows_h() {
+        let event = make_event(
+            ClientEventKind::HardLink,
+            true,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('h'), "Y should be 'h' for HardLink: {result:?}");
+    }
+
+    #[test]
+    fn itemize_y_position_directory_created_shows_c() {
+        let event = make_event(
+            ClientEventKind::DirectoryCreated,
+            true,
+            Some(ClientEntryKind::Directory),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('c'), "Y should be 'c' for DirectoryCreated: {result:?}");
+    }
+
+    #[test]
+    fn itemize_y_position_symlink_copied_shows_c() {
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            true,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('c'), "Y should be 'c' for SymlinkCopied: {result:?}");
+    }
+
+    #[test]
+    fn itemize_y_position_fifo_copied_shows_c() {
+        let event = make_event(
+            ClientEventKind::FifoCopied,
+            true,
+            Some(ClientEntryKind::Fifo),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('c'), "Y should be 'c' for FifoCopied: {result:?}");
+    }
+
+    #[test]
+    fn itemize_y_position_device_copied_shows_c() {
+        let event = make_event(
+            ClientEventKind::DeviceCopied,
+            true,
+            Some(ClientEntryKind::CharDevice),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('c'), "Y should be 'c' for DeviceCopied: {result:?}");
+    }
+
+    #[test]
+    fn itemize_y_position_metadata_reused_shows_dot() {
+        let event = make_event(
+            ClientEventKind::MetadataReused,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('.'), "Y should be '.' for MetadataReused: {result:?}");
+    }
+
+    #[test]
+    fn itemize_y_position_skipped_existing_shows_dot() {
+        let event = make_event(
+            ClientEventKind::SkippedExisting,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('.'), "Y should be '.' for SkippedExisting: {result:?}");
+    }
+
+    #[test]
+    fn itemize_y_position_source_removed_shows_c() {
+        let event = make_event(
+            ClientEventKind::SourceRemoved,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('c'), "Y should be 'c' for SourceRemoved: {result:?}");
+    }
+
+    // ---- X (position 1): file type character ----
+
+    #[test]
+    fn itemize_x_position_file_shows_f() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('f'), "X should be 'f' for File: {result:?}");
+    }
+
+    #[test]
+    fn itemize_x_position_directory_shows_d() {
+        let event = make_event(
+            ClientEventKind::DirectoryCreated,
+            true,
+            Some(ClientEntryKind::Directory),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('d'), "X should be 'd' for Directory: {result:?}");
+    }
+
+    #[test]
+    fn itemize_x_position_symlink_shows_l() {
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            true,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('L'), "X should be 'L' for Symlink: {result:?}");
+    }
+
+    #[test]
+    fn itemize_x_position_char_device_shows_d_upper() {
+        let event = make_event(
+            ClientEventKind::DeviceCopied,
+            true,
+            Some(ClientEntryKind::CharDevice),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('D'), "X should be 'D' for CharDevice: {result:?}");
+    }
+
+    #[test]
+    fn itemize_x_position_block_device_shows_d_upper() {
+        let event = make_event(
+            ClientEventKind::DeviceCopied,
+            true,
+            Some(ClientEntryKind::BlockDevice),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('D'), "X should be 'D' for BlockDevice: {result:?}");
+    }
+
+    #[test]
+    fn itemize_x_position_fifo_shows_s_upper() {
+        let event = make_event(
+            ClientEventKind::FifoCopied,
+            true,
+            Some(ClientEntryKind::Fifo),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('S'), "X should be 'S' for Fifo: {result:?}");
+    }
+
+    #[test]
+    fn itemize_x_position_socket_shows_s_upper() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::Socket),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('S'), "X should be 'S' for Socket: {result:?}");
+    }
+
+    // ---- New file: all attributes show '+' (positions 2-10) ----
+
+    #[test]
+    fn itemize_new_file_shows_all_plus_in_attribute_positions() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            true,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, ">f+++++++++", "new file should be >f+++++++++: {result:?}");
+    }
+
+    #[test]
+    fn itemize_new_directory_shows_all_plus_in_attribute_positions() {
+        let event = make_event(
+            ClientEventKind::DirectoryCreated,
+            true,
+            Some(ClientEntryKind::Directory),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, "cd+++++++++", "new directory should be cd+++++++++: {result:?}");
+    }
+
+    #[test]
+    fn itemize_new_symlink_shows_all_plus_in_attribute_positions() {
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            true,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, "cL+++++++++", "new symlink should be cL+++++++++: {result:?}");
+    }
+
+    #[test]
+    fn itemize_new_device_shows_all_plus_in_attribute_positions() {
+        let event = make_event(
+            ClientEventKind::DeviceCopied,
+            true,
+            Some(ClientEntryKind::CharDevice),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, "cD+++++++++", "new device should be cD+++++++++: {result:?}");
+    }
+
+    #[test]
+    fn itemize_new_fifo_shows_all_plus_in_attribute_positions() {
+        let event = make_event(
+            ClientEventKind::FifoCopied,
+            true,
+            Some(ClientEntryKind::Fifo),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, "cS+++++++++", "new fifo should be cS+++++++++: {result:?}");
+    }
+
+    #[test]
+    fn itemize_hardlink_shows_all_plus_in_attribute_positions() {
+        let event = make_event(
+            ClientEventKind::HardLink,
+            true,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, "hf+++++++++", "new hardlink should be hf+++++++++: {result:?}");
+    }
+
+    // ---- Delete format ----
+
+    #[test]
+    fn itemize_deleted_entry_shows_star_deleting() {
+        let event = make_event(
+            ClientEventKind::EntryDeleted,
+            false,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, "*deleting", "deleted entry should be '*deleting': {result:?}");
+    }
+
+    // ---- Individual attribute positions for changed files ----
+
+    #[test]
+    fn itemize_checksum_changed_shows_c_at_position_2() {
+        let cs = LocalCopyChangeSet::new().with_checksum_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(2), Some('c'), "position 2 should be 'c' for checksum: {result:?}");
+    }
+
+    #[test]
+    fn itemize_size_changed_shows_s_at_position_3() {
+        let cs = LocalCopyChangeSet::new().with_size_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(3), Some('s'), "position 3 should be 's' for size: {result:?}");
+    }
+
+    #[test]
+    fn itemize_time_modified_shows_lowercase_t_at_position_4() {
+        let cs = LocalCopyChangeSet::new().with_time_change(Some(TimeChange::Modified));
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(4), Some('t'), "position 4 should be 't' for Modified time: {result:?}");
+    }
+
+    #[test]
+    fn itemize_time_transfer_shows_uppercase_t_at_position_4() {
+        let cs = LocalCopyChangeSet::new().with_time_change(Some(TimeChange::TransferTime));
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(4), Some('T'), "position 4 should be 'T' for TransferTime: {result:?}");
+    }
+
+    #[test]
+    fn itemize_permissions_changed_shows_p_at_position_5() {
+        let cs = LocalCopyChangeSet::new().with_permissions_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(5), Some('p'), "position 5 should be 'p' for permissions: {result:?}");
+    }
+
+    #[test]
+    fn itemize_owner_changed_shows_o_at_position_6() {
+        let cs = LocalCopyChangeSet::new().with_owner_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(6), Some('o'), "position 6 should be 'o' for owner: {result:?}");
+    }
+
+    #[test]
+    fn itemize_group_changed_shows_g_at_position_7() {
+        let cs = LocalCopyChangeSet::new().with_group_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(7), Some('g'), "position 7 should be 'g' for group: {result:?}");
+    }
+
+    #[test]
+    fn itemize_access_time_changed_shows_u_at_position_8() {
+        let cs = LocalCopyChangeSet::new().with_access_time_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(8), Some('u'), "position 8 should be 'u' for access time: {result:?}");
+    }
+
+    #[test]
+    fn itemize_create_time_changed_shows_n_at_position_8() {
+        let cs = LocalCopyChangeSet::new().with_create_time_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(8), Some('n'), "position 8 should be 'n' for create time: {result:?}");
+    }
+
+    #[test]
+    fn itemize_both_access_and_create_time_changed_shows_b_at_position_8() {
+        let cs = LocalCopyChangeSet::new()
+            .with_access_time_changed(true)
+            .with_create_time_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(8), Some('b'), "position 8 should be 'b' for both times: {result:?}");
+    }
+
+    #[test]
+    fn itemize_acl_changed_shows_a_at_position_9() {
+        let cs = LocalCopyChangeSet::new().with_acl_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(9), Some('a'), "position 9 should be 'a' for ACL: {result:?}");
+    }
+
+    #[test]
+    fn itemize_xattr_changed_shows_x_at_position_10() {
+        let cs = LocalCopyChangeSet::new().with_xattr_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(10), Some('x'), "position 10 should be 'x' for xattr: {result:?}");
+    }
+
+    // ---- No change shows dots for all attributes ----
+
+    #[test]
+    fn itemize_no_changes_shows_all_dots_in_attribute_positions() {
+        let event = make_event(
+            ClientEventKind::MetadataReused,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, ".f.........", "no change should show all dots: {result:?}");
+    }
+
+    // ---- Combined changes ----
+
+    #[test]
+    fn itemize_checksum_and_size_change_shows_cs_at_positions_2_3() {
+        let cs = LocalCopyChangeSet::new()
+            .with_checksum_changed(true)
+            .with_size_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(&result[..4], ">fcs", "should show '>fcs' for checksum+size: {result:?}");
+    }
+
+    #[test]
+    fn itemize_full_change_shows_all_indicators() {
+        let cs = LocalCopyChangeSet::new()
+            .with_checksum_changed(true)
+            .with_size_changed(true)
+            .with_time_change(Some(TimeChange::Modified))
+            .with_permissions_changed(true)
+            .with_owner_changed(true)
+            .with_group_changed(true)
+            .with_access_time_changed(true)
+            .with_create_time_changed(true)
+            .with_acl_changed(true)
+            .with_xattr_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, ">fcstpogbax", "full changes should show all indicators: {result:?}");
+    }
+
+    #[test]
+    fn itemize_typical_content_update_shows_cst_pattern() {
+        let cs = LocalCopyChangeSet::new()
+            .with_checksum_changed(true)
+            .with_size_changed(true)
+            .with_time_change(Some(TimeChange::Modified));
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, ">fcst......", "typical update should show '>fcst......': {result:?}");
+    }
+
+    #[test]
+    fn itemize_directory_timestamp_update_shows_dot_d_dot_t_pattern() {
+        let cs = LocalCopyChangeSet::new()
+            .with_time_change(Some(TimeChange::Modified));
+        let event = make_event(
+            ClientEventKind::DirectoryCreated,
+            false,
+            Some(ClientEntryKind::Directory),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, "cd..t......", "directory time update should show 'cd..t......': {result:?}");
+    }
+
+    #[test]
+    fn itemize_permission_only_change() {
+        let cs = LocalCopyChangeSet::new().with_permissions_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, ">f...p.....", "permission-only change: {result:?}");
+    }
+
+    #[test]
+    fn itemize_owner_and_group_change() {
+        let cs = LocalCopyChangeSet::new()
+            .with_owner_changed(true)
+            .with_group_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, ">f....og...", "owner+group change: {result:?}");
+    }
+
+    // ---- File type inference when metadata is None ----
+
+    #[test]
+    fn itemize_infers_file_type_from_data_copied_when_no_metadata() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('f'), "should infer 'f' for DataCopied: {result:?}");
+    }
+
+    #[test]
+    fn itemize_infers_directory_type_from_directory_created_when_no_metadata() {
+        let event = make_event(
+            ClientEventKind::DirectoryCreated,
+            true,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('d'), "should infer 'd' for DirectoryCreated: {result:?}");
+    }
+
+    #[test]
+    fn itemize_infers_symlink_type_from_symlink_copied_when_no_metadata() {
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            true,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('L'), "should infer 'L' for SymlinkCopied: {result:?}");
+    }
+
+    #[test]
+    fn itemize_infers_fifo_type_from_fifo_copied_when_no_metadata() {
+        let event = make_event(
+            ClientEventKind::FifoCopied,
+            true,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('S'), "should infer 'S' for FifoCopied: {result:?}");
+    }
+
+    #[test]
+    fn itemize_infers_device_type_from_device_copied_when_no_metadata() {
+        let event = make_event(
+            ClientEventKind::DeviceCopied,
+            true,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(1), Some('D'), "should infer 'D' for DeviceCopied: {result:?}");
+    }
+
+    // ---- Skipped variations show dot as Y ----
+
+    #[test]
+    fn itemize_skipped_missing_destination_shows_dot() {
+        let event = make_event(
+            ClientEventKind::SkippedMissingDestination,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('.'), "SkippedMissingDestination should be '.': {result:?}");
+    }
+
+    #[test]
+    fn itemize_skipped_newer_destination_shows_dot() {
+        let event = make_event(
+            ClientEventKind::SkippedNewerDestination,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('.'), "SkippedNewerDestination should be '.': {result:?}");
+    }
+
+    #[test]
+    fn itemize_skipped_non_regular_shows_dot() {
+        let event = make_event(
+            ClientEventKind::SkippedNonRegular,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('.'), "SkippedNonRegular should be '.': {result:?}");
+    }
+
+    #[test]
+    fn itemize_skipped_directory_shows_dot() {
+        let event = make_event(
+            ClientEventKind::SkippedDirectory,
+            false,
+            Some(ClientEntryKind::Directory),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('.'), "SkippedDirectory should be '.': {result:?}");
+    }
+
+    #[test]
+    fn itemize_skipped_unsafe_symlink_shows_dot() {
+        let event = make_event(
+            ClientEventKind::SkippedUnsafeSymlink,
+            false,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('.'), "SkippedUnsafeSymlink should be '.': {result:?}");
+    }
+
+    #[test]
+    fn itemize_skipped_mount_point_shows_dot() {
+        let event = make_event(
+            ClientEventKind::SkippedMountPoint,
+            false,
+            Some(ClientEntryKind::Directory),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(0), Some('.'), "SkippedMountPoint should be '.': {result:?}");
+    }
+
+    // ---- Upstream format strings: complete patterns ----
+
+    #[test]
+    fn itemize_upstream_new_regular_file_pattern() {
+        // Upstream rsync: >f+++++++++ for a brand new regular file
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            true,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        assert_eq!(format_itemized_changes(&event), ">f+++++++++");
+    }
+
+    #[test]
+    fn itemize_upstream_new_directory_pattern() {
+        // Upstream rsync: cd+++++++++ for a new directory
+        let event = make_event(
+            ClientEventKind::DirectoryCreated,
+            true,
+            Some(ClientEntryKind::Directory),
+            LocalCopyChangeSet::new(),
+        );
+        assert_eq!(format_itemized_changes(&event), "cd+++++++++");
+    }
+
+    #[test]
+    fn itemize_upstream_new_symlink_pattern() {
+        // Upstream rsync: cL+++++++++ for a new symlink
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            true,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new(),
+        );
+        assert_eq!(format_itemized_changes(&event), "cL+++++++++");
+    }
+
+    #[test]
+    fn itemize_upstream_delete_pattern() {
+        // Upstream rsync: *deleting for deleted entries
+        let event = make_event(
+            ClientEventKind::EntryDeleted,
+            false,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        assert_eq!(format_itemized_changes(&event), "*deleting");
+    }
+
+    #[test]
+    fn itemize_upstream_unchanged_file_pattern() {
+        // Upstream rsync: .f......... for an unchanged file
+        let event = make_event(
+            ClientEventKind::MetadataReused,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        assert_eq!(format_itemized_changes(&event), ".f.........");
+    }
+
+    #[test]
+    fn itemize_upstream_content_and_time_update_pattern() {
+        // Upstream rsync: >fcst...... for a file with content+size+time changes
+        let cs = LocalCopyChangeSet::new()
+            .with_checksum_changed(true)
+            .with_size_changed(true)
+            .with_time_change(Some(TimeChange::Modified));
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        assert_eq!(format_itemized_changes(&event), ">fcst......");
+    }
+
+    #[test]
+    fn itemize_upstream_time_only_update_pattern() {
+        // Upstream rsync: >f..t...... for a file with only time change
+        let cs = LocalCopyChangeSet::new()
+            .with_time_change(Some(TimeChange::Modified));
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        assert_eq!(format_itemized_changes(&event), ">f..t......");
+    }
+
+    #[test]
+    fn itemize_upstream_transfer_time_pattern() {
+        // Upstream rsync: >f..T...... when times not preserved (capital T)
+        let cs = LocalCopyChangeSet::new()
+            .with_time_change(Some(TimeChange::TransferTime));
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        assert_eq!(format_itemized_changes(&event), ">f..T......");
+    }
+
+    // ---- Edge cases ----
+
+    #[test]
+    fn itemize_new_file_ignores_change_set_values() {
+        // When created=true, all positions 2-10 should be '+' regardless of change_set
+        let cs = LocalCopyChangeSet::new()
+            .with_checksum_changed(true)
+            .with_size_changed(true)
+            .with_permissions_changed(true);
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            true,
+            Some(ClientEntryKind::File),
+            cs,
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, ">f+++++++++", "created=true should override change_set with '+': {result:?}");
+    }
+
+    #[test]
+    fn itemize_position_8_no_time_change_shows_dot() {
+        // When neither access_time nor create_time changed, position 8 should be '.'
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.chars().nth(8), Some('.'), "position 8 should be '.' with no time changes: {result:?}");
+    }
+
+    #[test]
+    fn itemize_delete_does_not_have_eleven_char_length() {
+        // *deleting is a special case -- it is 9 characters, not 11
+        let event = make_event(
+            ClientEventKind::EntryDeleted,
+            false,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result, "*deleting");
+        assert_eq!(result.len(), 9, "delete format should be 9 characters");
+    }
 }

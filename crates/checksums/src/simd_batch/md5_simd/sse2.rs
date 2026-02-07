@@ -12,6 +12,8 @@
 //! This implementation uses a transposed data layout where each XMM register holds
 //! the same state variable (A, B, C, or D) for all 4 parallel computations. The MD5
 //! algorithm's 64 rounds are executed in parallel across all lanes.
+
+#![allow(unsafe_op_in_unsafe_fn)]
 //!
 //! Message words are loaded in transposed order: for each of the 16 message words,
 //! we load word N from all 4 inputs into a single XMM register. This allows efficient

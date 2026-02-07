@@ -3,6 +3,24 @@ use std::io;
 use thiserror::Error;
 
 /// Errors that can occur while attempting to negotiate a protocol version.
+///
+/// Each variant carries enough context to reproduce the diagnostic messages
+/// that upstream rsync emits during failed negotiations. The error converts
+/// into [`io::Error`] with kind [`InvalidData`](io::ErrorKind::InvalidData) so
+/// it integrates naturally with transport code.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::{NegotiationError, ProtocolVersion};
+///
+/// let err = NegotiationError::UnsupportedVersion(27);
+/// assert_eq!(err.unsupported_version(), Some(27));
+///
+/// // Convert to io::Error for propagation
+/// let io_err: std::io::Error = err.into();
+/// assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum NegotiationError {
     /// None of the peer protocol versions overlap with our supported set.

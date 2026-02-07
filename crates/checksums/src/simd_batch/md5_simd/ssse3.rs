@@ -12,6 +12,8 @@
 //! SSSE3 adds the `pshufb` (packed shuffle bytes) instruction which enables
 //! efficient byte reordering within XMM registers. While this implementation
 //! currently uses the same structure as SSE2, SSSE3 could be leveraged for:
+
+#![allow(unsafe_op_in_unsafe_fn)]
 //!
 //! - More efficient byte swapping for endianness conversion
 //! - Optimized message word extraction from packed buffers

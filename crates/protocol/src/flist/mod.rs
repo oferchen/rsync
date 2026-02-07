@@ -46,7 +46,9 @@ pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_SAME_RDEV_PRE28};
 pub use hardlink::{DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable};
 pub use incremental::{
-    IncrementalFileList, IncrementalFileListBuilder, IncrementalFileListIter, StreamingFileList,
+    FinalizationResult, FinalizationStats, IncrementalFileList, IncrementalFileListBuilder,
+    IncrementalFileListIter, OrphanEntry, ReadyEntryAction, StreamingFileList,
+    process_ready_entries, process_ready_entry,
 };
 pub use read::{FileListReader, read_file_entry};
 pub use sort::{

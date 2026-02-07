@@ -55,6 +55,7 @@ use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken
 use metadata::id_lookup::{lookup_group_name, lookup_user_name};
 
 use super::config::ServerConfig;
+use super::delta_config::DeltaGeneratorConfig;
 use super::handshake::HandshakeResult;
 use super::receiver::SumHead;
 use super::shared::ChecksumFactory;
@@ -74,6 +75,13 @@ pub mod io_error_flags {
 }
 
 /// Context for the generator role during a transfer.
+///
+/// Holds protocol state, configuration, file list, and filter rules needed
+/// to drive the send loop. Created via [`GeneratorContext::new`] from a
+/// completed [`HandshakeResult`] and [`ServerConfig`], then executed with
+/// [`GeneratorContext::run`].
+///
+/// See the [module-level documentation](crate::generator) for the full send workflow.
 #[derive(Debug)]
 pub struct GeneratorContext {
     /// Negotiated protocol version.
@@ -1154,7 +1162,10 @@ struct TransferLoopResult {
     bytes_sent: u64,
 }
 
-/// Statistics from a generator transfer operation.
+/// Statistics from a generator (sender) transfer operation.
+///
+/// Returned inside [`crate::ServerStats::Generator`] after a successful send.
+/// Contains file counts, byte totals, and file-list timing metrics.
 #[derive(Debug, Clone, Default)]
 pub struct GeneratorStats {
     /// Number of files in the sent file list.
@@ -1372,71 +1383,44 @@ pub fn calculate_duration_ms(start: Option<Instant>, end: Option<Instant>) -> u6
 
 // Helper functions for delta generation
 
-/// Configuration for delta generation from a received signature.
-///
-/// Groups all parameters needed for delta generation into a single struct,
-/// following the Parameter Object pattern to reduce function argument count.
-///
-/// # Usage
-///
-/// ```ignore
-/// let config = DeltaGeneratorConfig {
-///     block_length: sum_head.block_length,
-///     sig_blocks,
-///     strong_sum_length: sum_head.s2length,
-///     protocol: self.protocol,
-///     negotiated_algorithms: self.negotiated_algorithms.as_ref(),
-///     compat_flags: self.compat_flags.as_ref(),
-///     checksum_seed: self.checksum_seed,
-/// };
-/// let delta = generate_delta_from_signature(source_file, config)?;
-/// ```
-struct DeltaGeneratorConfig<'a> {
-    /// Block length used for signature computation.
-    ///
-    /// This determines the granularity of the delta algorithm.
-    /// Smaller blocks allow finer-grained matching but increase overhead.
-    block_length: u32,
-
-    /// Signature blocks received from the wire format.
-    ///
-    /// Each block contains rolling and strong checksums for matching.
-    /// Takes ownership to avoid cloning strong_sum data.
-    sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
-
-    /// Length of the strong checksum in bytes.
-    ///
-    /// Determines how many bytes of the strong checksum are used for verification.
-    strong_sum_length: u8,
-
-    /// Protocol version for algorithm selection.
-    ///
-    /// Different protocol versions may use different checksum algorithms.
-    protocol: ProtocolVersion,
-
-    /// Negotiated algorithms from capability exchange.
-    ///
-    /// When present, overrides the default algorithm selection based on protocol version.
-    negotiated_algorithms: Option<&'a NegotiationResult>,
-
-    /// Compatibility flags affecting checksum behavior.
-    ///
-    /// Controls checksum computation details for upstream compatibility.
-    compat_flags: Option<&'a CompatibilityFlags>,
-
-    /// Checksum seed for rolling checksum computation.
-    ///
-    /// Used to initialize the rolling checksum state.
-    checksum_seed: i32,
-}
-
 /// Generates a delta script from a received signature.
 ///
 /// Reconstructs the signature from wire format blocks, creates an index,
 /// and uses DeltaGenerator to produce the delta.
 ///
-/// Takes ownership of sig_blocks via the config to avoid cloning strong_sum data.
-fn generate_delta_from_signature<R: Read>(
+/// # Arguments
+///
+/// * `source` - Reader for the source file to generate delta from
+/// * `config` - Delta generator configuration (takes ownership of sig_blocks)
+///
+/// # Returns
+///
+/// Returns a `DeltaScript` containing copy and literal operations.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - `block_length` or `strong_sum_length` is zero
+/// - Signature index creation fails
+/// - Delta generation fails
+/// - I/O errors occur while reading the source
+///
+/// # Examples
+///
+/// ```ignore
+/// use std::fs::File;
+/// use transfer::{DeltaGeneratorConfig, generate_delta_from_signature};
+///
+/// let source_file = File::open("source.txt")?;
+/// let config = DeltaGeneratorConfig::new(2048, sig_blocks, 16, protocol);
+/// let delta = generate_delta_from_signature(source_file, config)?;
+/// ```
+///
+/// # Performance
+///
+/// Takes ownership of `sig_blocks` via the config to avoid cloning strong_sum data,
+/// which can be expensive for files with many signature blocks.
+pub fn generate_delta_from_signature<R: Read>(
     source: R,
     config: DeltaGeneratorConfig<'_>,
 ) -> io::Result<DeltaScript> {

@@ -1,4 +1,9 @@
 //! Server-side writer that can switch between plain and multiplexed modes.
+//!
+//! Provides [`ServerWriter`] (internal) and [`CountingWriter`] (public).
+//! [`ServerWriter`] starts in plain mode and can be upgraded to multiplex
+//! or compressed-multiplex mode at runtime, matching upstream rsync's
+//! `io_start_multiplex_out()` / `io_start_buffering_out()` transitions.
 
 use std::io::{self, IoSlice, Write};
 

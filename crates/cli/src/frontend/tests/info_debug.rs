@@ -375,3 +375,285 @@ fn info_name2_reports_unchanged_entries() {
     let rendered = String::from_utf8(stdout).expect("stdout utf8");
     assert!(rendered.contains("unchanged.txt"));
 }
+
+// ============================================================================
+// End-to-end tests: --info flag via CLI argument parsing
+// ============================================================================
+
+#[test]
+fn info_flag_captured_in_parsed_args() {
+    let parsed = crate::frontend::arguments::parse_args(
+        ["rsync", "--info=name", "src/", "dst/"]
+            .iter()
+            .map(|s| s.to_string()),
+    )
+    .expect("parse");
+    assert!(!parsed.info.is_empty());
+}
+
+#[test]
+fn info_flag_multiple_values_captured() {
+    let parsed = crate::frontend::arguments::parse_args(
+        ["rsync", "--info=name", "--info=stats2", "src/", "dst/"]
+            .iter()
+            .map(|s| s.to_string()),
+    )
+    .expect("parse");
+    // With value_delimiter(','), clap splits tokens individually
+    assert!(parsed.info.len() >= 2);
+}
+
+#[test]
+fn info_flag_comma_separated_captured() {
+    let parsed = crate::frontend::arguments::parse_args(
+        ["rsync", "--info=name,stats2,copy", "src/", "dst/"]
+            .iter()
+            .map(|s| s.to_string()),
+    )
+    .expect("parse");
+    // clap with value_delimiter splits "name,stats2,copy" into 3 values
+    assert!(parsed.info.len() >= 3);
+}
+
+#[test]
+fn debug_flag_captured_in_parsed_args() {
+    let parsed = crate::frontend::arguments::parse_args(
+        ["rsync", "--debug=io", "src/", "dst/"]
+            .iter()
+            .map(|s| s.to_string()),
+    )
+    .expect("parse");
+    assert!(!parsed.debug.is_empty());
+}
+
+// ============================================================================
+// End-to-end tests: error handling via full CLI pipeline
+// ============================================================================
+
+#[test]
+fn info_unknown_flag_exit_code_1() {
+    let (code, _stdout, stderr) =
+        run_with_args([OsStr::new(RSYNC), OsStr::new("--info=notaflag")]);
+    assert_eq!(code, 1);
+    let rendered = String::from_utf8(stderr).expect("stderr utf8");
+    assert!(rendered.contains("invalid --info flag"));
+    assert!(rendered.contains("notaflag"));
+}
+
+#[test]
+fn debug_rejects_unknown_flag() {
+    let (code, _stdout, stderr) =
+        run_with_args([OsStr::new(RSYNC), OsStr::new("--debug=notaflag")]);
+    assert_eq!(code, 1);
+    let rendered = String::from_utf8(stderr).expect("stderr utf8");
+    assert!(rendered.contains("invalid --debug flag"));
+}
+
+// ============================================================================
+// End-to-end tests: info flag interaction with verbose levels
+// ============================================================================
+
+#[test]
+fn info_stats0_suppresses_verbose_stats() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("nostats.txt");
+    let destination = tmp.path().join("nostats.out");
+    std::fs::write(&source, b"nostats").expect("write source");
+
+    // -v normally enables stats, but --info=stats0 should suppress it
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-v"),
+        OsString::from("--info=stats0"),
+        source.into_os_string(),
+        destination.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("stdout utf8");
+    // Stats block should not appear
+    assert!(!rendered.contains("Number of files:"));
+}
+
+#[test]
+fn info_all_enables_comprehensive_output() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("all.txt");
+    let destination = tmp.path().join("all.out");
+    std::fs::write(&source, b"all-info").expect("write source");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--info=all"),
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("stdout utf8");
+    // all should enable name output and stats
+    assert!(rendered.contains("all.txt"));
+    assert!(rendered.contains("sent"));
+}
+
+#[test]
+fn info_none_suppresses_verbose_name_output() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("none.txt");
+    let destination = tmp.path().join("none.out");
+    std::fs::write(&source, b"none-test").expect("write source");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-v"),
+        OsString::from("--info=none"),
+        source.into_os_string(),
+        destination.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("stdout utf8");
+    // --info=none should suppress filename output that -v normally enables
+    assert!(!rendered.contains("none.txt"));
+}
+
+// ============================================================================
+// Comprehensive unit tests for all --info flag keywords
+// ============================================================================
+
+#[test]
+fn info_all_upstream_keywords_are_accepted() {
+    let keywords = [
+        "backup", "copy", "del", "flist", "misc", "mount", "name",
+        "nonreg", "progress", "remove", "skip", "stats", "symsafe",
+    ];
+    for keyword in &keywords {
+        let flags = vec![OsString::from(*keyword)];
+        let result = parse_info_flags(&flags);
+        assert!(
+            result.is_ok(),
+            "info keyword '{keyword}' should be accepted"
+        );
+    }
+}
+
+#[test]
+fn info_all_upstream_keywords_with_level_0() {
+    let keywords = [
+        "backup0", "copy0", "del0", "flist0", "misc0", "mount0", "name0",
+        "nonreg0", "progress0", "remove0", "skip0", "stats0", "symsafe0",
+    ];
+    for keyword in &keywords {
+        let flags = vec![OsString::from(*keyword)];
+        let result = parse_info_flags(&flags);
+        assert!(
+            result.is_ok(),
+            "info keyword '{keyword}' with level 0 should be accepted"
+        );
+    }
+}
+
+#[test]
+fn info_all_upstream_keywords_with_negation() {
+    let keywords = [
+        "nobackup", "nocopy", "nodel", "noflist", "nomisc", "nomount",
+        "noname", "nononreg", "noprogress", "noremove", "noskip", "nostats",
+        "nosymsafe",
+    ];
+    for keyword in &keywords {
+        let flags = vec![OsString::from(*keyword)];
+        let result = parse_info_flags(&flags);
+        assert!(
+            result.is_ok(),
+            "info keyword '{keyword}' with no-prefix should be accepted"
+        );
+    }
+}
+
+#[test]
+fn info_all_upstream_keywords_with_dash_negation() {
+    let keywords = [
+        "-backup", "-copy", "-del", "-flist", "-misc", "-mount", "-name",
+        "-nonreg", "-progress", "-remove", "-skip", "-stats", "-symsafe",
+    ];
+    for keyword in &keywords {
+        let flags = vec![OsString::from(*keyword)];
+        let result = parse_info_flags(&flags);
+        assert!(
+            result.is_ok(),
+            "info keyword '{keyword}' with dash-prefix should be accepted"
+        );
+    }
+}
+
+// ============================================================================
+// Upstream rsync specific patterns
+// ============================================================================
+
+#[test]
+fn info_typical_rsync_quiet_pattern() {
+    // rsync --info=none -- suppress everything
+    let flags = vec![OsString::from("none")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.progress, ProgressSetting::Disabled);
+    assert_eq!(settings.stats, Some(0));
+    assert_eq!(settings.name, Some(NameOutputLevel::Disabled));
+}
+
+#[test]
+fn info_typical_rsync_verbose_pattern() {
+    // rsync --info=flist2,name2,del,copy,misc2 -- like -vv
+    let flags = vec![OsString::from("flist2,name2,del,copy,misc2")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.flist, Some(2));
+    assert_eq!(settings.name, Some(NameOutputLevel::UpdatedAndUnchanged));
+    assert_eq!(settings.del, Some(1));
+    assert_eq!(settings.copy, Some(1));
+    assert_eq!(settings.misc, Some(2));
+}
+
+#[test]
+fn info_typical_rsync_progress_only() {
+    // rsync --info=progress2 -- overall progress only
+    let flags = vec![OsString::from("progress2")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.progress, ProgressSetting::Overall);
+    // Other flags not set
+    assert_eq!(settings.name, None);
+    assert_eq!(settings.stats, None);
+}
+
+#[test]
+fn info_typical_rsync_stats_only() {
+    // rsync --info=stats2 -- detailed stats only
+    let flags = vec![OsString::from("stats2")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.stats, Some(2));
+    assert_eq!(settings.name, None);
+    assert_eq!(settings.progress, ProgressSetting::default());
+}
+
+#[test]
+fn info_case_sensitive_flag_names() {
+    // Flag names should be case-insensitive in the CLI flags parser
+    // (the apply function lowercases before matching)
+    let flags = vec![OsString::from("STATS")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.stats, Some(1));
+}
+
+#[test]
+fn info_mixed_case_keyword_accepted() {
+    let flags = vec![OsString::from("Stats")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.stats, Some(1));
+}

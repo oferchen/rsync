@@ -59,7 +59,7 @@ fn read_directory_entries_sorted_sequential(
         });
     }
 
-    entries.sort_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
+    entries.sort_unstable_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
     Ok(entries)
 }
 
@@ -99,7 +99,7 @@ fn read_directory_entries_sorted_parallel(
                 metadata,
             });
         }
-        entries.sort_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
+        entries.sort_unstable_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
         return Ok(entries);
     }
 
@@ -134,7 +134,7 @@ fn read_directory_entries_sorted_parallel(
     }
 
     // Sort to maintain deterministic ordering (parallel fetch order is non-deterministic)
-    entries.sort_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
+    entries.sort_unstable_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
     Ok(entries)
 }
 

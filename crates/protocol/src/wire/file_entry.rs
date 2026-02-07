@@ -963,7 +963,7 @@ pub fn calculate_time_flags(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
 
     // ------------------------------------------------------------------------
     // Flag Encoding Tests
@@ -1261,6 +1261,85 @@ mod tests {
         let mut cursor = Cursor::new(&buf);
         let len = crate::varint::read_varint30_int(&mut cursor, 32).unwrap();
         assert_eq!(len, 12);
+    }
+
+    #[test]
+    fn encode_symlink_target_relative() {
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, b"../lib/libfoo.so", 32).unwrap();
+        let mut cursor = Cursor::new(&buf);
+        let len = crate::varint::read_varint30_int(&mut cursor, 32).unwrap();
+        assert_eq!(len, 16);
+        let mut target = vec![0u8; len as usize];
+        cursor.read_exact(&mut target).unwrap();
+        assert_eq!(&target, b"../lib/libfoo.so");
+    }
+
+    #[test]
+    fn encode_symlink_target_empty() {
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, b"", 32).unwrap();
+        let mut cursor = Cursor::new(&buf);
+        let len = crate::varint::read_varint30_int(&mut cursor, 32).unwrap();
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn encode_symlink_target_with_spaces_and_unicode() {
+        let target = "path/to/my file/\u{00e9}t\u{00e9}".as_bytes();
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, target, 32).unwrap();
+        let mut cursor = Cursor::new(&buf);
+        let len = crate::varint::read_varint30_int(&mut cursor, 32).unwrap();
+        assert_eq!(len as usize, target.len());
+        let mut decoded = vec![0u8; len as usize];
+        cursor.read_exact(&mut decoded).unwrap();
+        assert_eq!(&decoded, target);
+    }
+
+    #[test]
+    fn encode_symlink_target_protocol_29_uses_fixed_int() {
+        let target = b"/target";
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, target, 29).unwrap();
+        // Protocol < 30: 4 bytes for length + target bytes
+        assert_eq!(buf.len(), 4 + target.len());
+        let len = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        assert_eq!(len, 7);
+        assert_eq!(&buf[4..], target);
+    }
+
+    #[test]
+    fn encode_symlink_target_protocol_30_uses_varint() {
+        let target = b"/target";
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, target, 30).unwrap();
+        // Protocol 30+: varint (1 byte for small values) + target bytes
+        assert!(buf.len() < 4 + target.len()); // More compact than fixed int
+        assert!(buf.ends_with(target));
+    }
+
+    #[test]
+    fn encode_symlink_target_long_path() {
+        let target = vec![b'a'; 4096];
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, &target, 32).unwrap();
+        let mut cursor = Cursor::new(&buf);
+        let len = crate::varint::read_varint30_int(&mut cursor, 32).unwrap();
+        assert_eq!(len, 4096);
+    }
+
+    #[test]
+    fn encode_symlink_target_path_separators_preserved() {
+        // Verify both forward and backslash are preserved as-is (no conversion)
+        let target = b"dir/subdir\\file";
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, target, 32).unwrap();
+        let mut cursor = Cursor::new(&buf);
+        let len = crate::varint::read_varint30_int(&mut cursor, 32).unwrap();
+        let mut decoded = vec![0u8; len as usize];
+        cursor.read_exact(&mut decoded).unwrap();
+        assert_eq!(&decoded, target);
     }
 
     // ------------------------------------------------------------------------

@@ -1047,3 +1047,236 @@ fn wire_format_protocol_30_more_compact_than_29() {
         buf29.len(),
     );
 }
+
+// ============================================================================
+// 13. Symlink Chain Encoding
+// ============================================================================
+
+/// Tests that symlink-to-symlink chains are encoded correctly.
+/// Each symlink in the chain has its own target, and the wire protocol encodes
+/// only the immediate target (it does not resolve chains).
+#[test]
+fn flist_roundtrip_symlink_chain() {
+    // Simulate a chain: link_c -> link_b -> link_a -> /final/target
+    // The wire protocol only encodes the direct target for each entry.
+    let entries = vec![
+        make_symlink("link_a", "/final/target"),
+        make_symlink("link_b", "link_a"),
+        make_symlink("link_c", "link_b"),
+    ];
+
+    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+        let decoded = roundtrip_entries(&entries, protocol);
+
+        assert_eq!(decoded.len(), 3);
+
+        // Each symlink should preserve its immediate target, not resolve the chain
+        assert_eq!(
+            decoded[0].link_target().map(|p| p.to_string_lossy().into_owned()),
+            Some("/final/target".to_string()),
+        );
+        assert_eq!(
+            decoded[1].link_target().map(|p| p.to_string_lossy().into_owned()),
+            Some("link_a".to_string()),
+        );
+        assert_eq!(
+            decoded[2].link_target().map(|p| p.to_string_lossy().into_owned()),
+            Some("link_b".to_string()),
+        );
+    }
+}
+
+/// Tests symlink chains with mixed relative and absolute targets.
+#[test]
+fn flist_roundtrip_symlink_chain_mixed_paths() {
+    let entries = vec![
+        make_symlink("absolute_link", "/usr/bin/python3"),
+        make_symlink("relative_link", "../bin/python3"),
+        make_symlink("chain_link", "relative_link"),
+        make_symlink("deep_chain", "chain_link"),
+    ];
+
+    let decoded = roundtrip_entries(&entries, ProtocolVersion::NEWEST);
+
+    assert_eq!(decoded.len(), 4);
+    assert_eq!(
+        decoded[0].link_target().map(|p| p.to_string_lossy().into_owned()),
+        Some("/usr/bin/python3".to_string()),
+    );
+    assert_eq!(
+        decoded[1].link_target().map(|p| p.to_string_lossy().into_owned()),
+        Some("../bin/python3".to_string()),
+    );
+    assert_eq!(
+        decoded[2].link_target().map(|p| p.to_string_lossy().into_owned()),
+        Some("relative_link".to_string()),
+    );
+    assert_eq!(
+        decoded[3].link_target().map(|p| p.to_string_lossy().into_owned()),
+        Some("chain_link".to_string()),
+    );
+}
+
+/// Tests that a symlink pointing to itself roundtrips correctly.
+/// This is a valid (if broken) symlink; the wire protocol does not validate targets.
+#[test]
+fn flist_roundtrip_self_referencing_symlink() {
+    let decoded = roundtrip_symlink("loop", PathBuf::from("loop"), ProtocolVersion::NEWEST);
+    assert_eq!(
+        decoded.link_target().map(|p| p.to_string_lossy().into_owned()),
+        Some("loop".to_string()),
+    );
+}
+
+/// Tests that two symlinks pointing at each other roundtrip correctly.
+#[test]
+fn flist_roundtrip_circular_symlink_pair() {
+    let entries = vec![
+        make_symlink("link_a", "link_b"),
+        make_symlink("link_b", "link_a"),
+    ];
+
+    let decoded = roundtrip_entries(&entries, ProtocolVersion::NEWEST);
+
+    assert_eq!(decoded.len(), 2);
+    assert_eq!(
+        decoded[0].link_target().map(|p| p.to_string_lossy().into_owned()),
+        Some("link_b".to_string()),
+    );
+    assert_eq!(
+        decoded[1].link_target().map(|p| p.to_string_lossy().into_owned()),
+        Some("link_a".to_string()),
+    );
+}
+
+// ============================================================================
+// 14. Additional Wire Format Edge Cases
+// ============================================================================
+
+/// Tests that backslash in symlink targets is preserved (no path separator conversion).
+#[test]
+fn wire_level_backslash_preserved() {
+    let target = b"dir\\subdir\\file";
+    let mut buf = Vec::new();
+    encode_symlink_target(&mut buf, target, 32).unwrap();
+
+    let mut cursor = Cursor::new(&buf);
+    let decoded = decode_symlink_target(&mut cursor, 32).unwrap();
+    assert_eq!(decoded, target, "backslash must be preserved verbatim");
+}
+
+/// Tests that forward slashes in targets are not modified.
+#[test]
+fn wire_level_forward_slash_preserved() {
+    let target = b"a/b/c/d/e";
+    let mut buf = Vec::new();
+    encode_symlink_target(&mut buf, target, 32).unwrap();
+
+    let mut cursor = Cursor::new(&buf);
+    let decoded = decode_symlink_target(&mut cursor, 32).unwrap();
+    assert_eq!(decoded, target);
+}
+
+/// Tests encoding of a target that is exactly the maximum single-byte varint value (127).
+#[test]
+fn wire_level_varint_boundary_127_bytes() {
+    let target = vec![b'z'; 127];
+    for proto in [30u8, 31, 32] {
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, &target, proto).unwrap();
+
+        // varint for 127 should be 1 byte (0x7F), so total = 1 + 127 = 128
+        assert_eq!(buf.len(), 1 + 127, "proto {} should use 1-byte varint for 127", proto);
+
+        let mut cursor = Cursor::new(&buf);
+        let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
+        assert_eq!(decoded, target);
+    }
+}
+
+/// Tests encoding of a target that is 128 bytes (two-byte varint).
+#[test]
+fn wire_level_varint_boundary_128_bytes() {
+    let target = vec![b'z'; 128];
+    for proto in [30u8, 31, 32] {
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, &target, proto).unwrap();
+
+        // varint for 128 needs 2 bytes, so total = 2 + 128 = 130
+        assert_eq!(buf.len(), 2 + 128, "proto {} should use 2-byte varint for 128", proto);
+
+        let mut cursor = Cursor::new(&buf);
+        let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
+        assert_eq!(decoded, target);
+    }
+}
+
+/// Tests that the wire encoding for protocol 29 always uses exactly 4 bytes for length,
+/// regardless of the target size.
+#[test]
+fn wire_level_protocol_29_always_4_byte_length() {
+    for size in [0, 1, 127, 128, 255, 256, 1000, 4096] {
+        let target = vec![b'a'; size];
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, &target, 29).unwrap();
+        assert_eq!(
+            buf.len(),
+            4 + size,
+            "protocol 29 should always use 4-byte length for size {}",
+            size,
+        );
+    }
+}
+
+/// Tests that multiple consecutive symlink wire entries decode independently.
+/// This verifies the decoder consumes exactly the right number of bytes.
+#[test]
+fn wire_level_consecutive_entries_byte_exact() {
+    let targets: &[&[u8]] = &[
+        b"/short",
+        b"../relative/longer/path",
+        b"x",
+        b"",
+        b"/a/very/very/very/long/absolute/path/to/some/file",
+    ];
+
+    for proto in [29u8, 30, 32] {
+        let mut buf = Vec::new();
+        for target in targets {
+            encode_symlink_target(&mut buf, target, proto).unwrap();
+        }
+
+        let mut cursor = Cursor::new(&buf);
+        for (i, expected) in targets.iter().enumerate() {
+            let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
+            assert_eq!(
+                decoded.as_slice(),
+                *expected,
+                "entry {} mismatch for proto {}",
+                i,
+                proto,
+            );
+        }
+        // All bytes consumed
+        assert_eq!(
+            cursor.position() as usize,
+            buf.len(),
+            "not all bytes consumed for proto {}",
+            proto,
+        );
+    }
+}
+
+/// Tests that symlink target encoding does not add a null terminator.
+/// Upstream rsync uses length-prefixed data, not null-terminated strings.
+#[test]
+fn wire_level_no_null_terminator() {
+    let target = b"target_path";
+    let mut buf = Vec::new();
+    encode_symlink_target(&mut buf, target, 32).unwrap();
+
+    // The last byte should be 'h' (from "target_path"), not 0x00
+    assert_eq!(*buf.last().unwrap(), b'h');
+    // And the total encoded length should be varint(11) + 11 bytes = 12
+    assert_eq!(buf.len(), 1 + 11);
+}

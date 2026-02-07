@@ -1,3 +1,11 @@
+//! Plan construction and execution types for local filesystem copies.
+//!
+//! The central type is [`LocalCopyPlan`], which is constructed from CLI-style
+//! operands and executed to produce a [`LocalCopySummary`] or a detailed
+//! [`LocalCopyReport`]. Execution emits [`LocalCopyRecord`] values describing
+//! each filesystem action, and callers can observe them in real time through
+//! the [`LocalCopyRecordHandler`] trait.
+
 mod action;
 mod change_set;
 mod execution;

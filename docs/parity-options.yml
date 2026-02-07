@@ -654,10 +654,10 @@ options:
     status: implemented
     notes: ""
   - option: --max-alloc
-    short: 
+    short:
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --sparse
     short: S
