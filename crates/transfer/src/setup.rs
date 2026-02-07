@@ -85,6 +85,104 @@ pub struct ProtocolSetupConfig<'a> {
     pub checksum_seed: Option<u32>,
 }
 
+impl<'a> ProtocolSetupConfig<'a> {
+    /// Creates a new builder for `ProtocolSetupConfig` with required fields.
+    ///
+    /// # Arguments
+    ///
+    /// * `protocol` - The negotiated protocol version
+    /// * `is_server` - Whether we are the server (true) or client (false)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::ProtocolVersion;
+    /// use transfer::setup::ProtocolSetupConfig;
+    ///
+    /// let protocol = ProtocolVersion::try_from(31).unwrap();
+    /// let config = ProtocolSetupConfig::new(protocol, true)
+    ///     .with_daemon_mode(true)
+    ///     .with_compression(false);
+    /// ```
+    #[must_use]
+    pub const fn new(protocol: ProtocolVersion, is_server: bool) -> Self {
+        Self {
+            protocol,
+            skip_compat_exchange: false,
+            client_args: None,
+            is_server,
+            is_daemon_mode: false,
+            do_compression: false,
+            checksum_seed: None,
+        }
+    }
+
+    /// Sets whether to skip compatibility flags exchange.
+    ///
+    /// When true, compatibility flags have already been exchanged (e.g., during
+    /// daemon handshake) and should not be exchanged again.
+    ///
+    /// Default: `false`
+    #[must_use]
+    pub const fn with_skip_compat_exchange(mut self, skip: bool) -> Self {
+        self.skip_compat_exchange = skip;
+        self
+    }
+
+    /// Sets the client arguments for daemon mode.
+    ///
+    /// Used to parse client capabilities from the `-e` option.
+    /// None for SSH mode or when acting as client.
+    ///
+    /// Default: `None`
+    #[must_use]
+    pub const fn with_client_args(mut self, args: Option<&'a [String]>) -> Self {
+        self.client_args = args;
+        self
+    }
+
+    /// Sets whether this is a daemon mode connection.
+    ///
+    /// Controls capability negotiation direction:
+    /// - `true`: Daemon mode - unidirectional (server sends lists, client reads silently)
+    /// - `false`: SSH mode - bidirectional exchange
+    ///
+    /// Default: `false`
+    #[must_use]
+    pub const fn with_daemon_mode(mut self, is_daemon: bool) -> Self {
+        self.is_daemon_mode = is_daemon;
+        self
+    }
+
+    /// Sets whether compression algorithm negotiation should happen.
+    ///
+    /// Must match on both sides based on whether `-z` flag was passed.
+    /// - `true`: Exchange compression algorithm lists
+    /// - `false`: Skip compression negotiation, use defaults
+    ///
+    /// Default: `false`
+    #[must_use]
+    pub const fn with_compression(mut self, compress: bool) -> Self {
+        self.do_compression = compress;
+        self
+    }
+
+    /// Sets the checksum seed for reproducible transfers.
+    ///
+    /// When `Some(seed)`, the server uses this fixed seed instead of generating
+    /// a random one. This makes transfers reproducible (useful for testing/debugging).
+    ///
+    /// When `None`, the server generates a seed from current time XOR PID
+    /// (matching upstream rsync's default behavior).
+    ///
+    /// Default: `None`
+    #[must_use]
+    pub const fn with_checksum_seed(mut self, seed: Option<u32>) -> Self {
+        self.checksum_seed = seed;
+        self
+    }
+}
+
 /// Parses client capabilities from the `-e` option argument.
 ///
 /// The `-e` option contains a string like "efxCIvu" where each letter indicates
@@ -1035,6 +1133,90 @@ mod tests {
         assert!(
             result.negotiated_algorithms.is_some(),
             "Protocol 30 should negotiate algorithms"
+        );
+    }
+
+    // ===== ProtocolSetupConfig builder tests =====
+
+    #[test]
+    fn protocol_setup_config_builder_new_sets_defaults() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let config = ProtocolSetupConfig::new(protocol, true);
+
+        assert_eq!(config.protocol.as_u8(), 31);
+        assert!(config.is_server);
+        assert!(!config.skip_compat_exchange);
+        assert!(config.client_args.is_none());
+        assert!(!config.is_daemon_mode);
+        assert!(!config.do_compression);
+        assert!(config.checksum_seed.is_none());
+    }
+
+    #[test]
+    fn protocol_setup_config_builder_chain_methods() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let client_args = vec!["-efxCIvu".to_owned()];
+
+        let config = ProtocolSetupConfig::new(protocol, true)
+            .with_skip_compat_exchange(true)
+            .with_client_args(Some(&client_args))
+            .with_daemon_mode(true)
+            .with_compression(true)
+            .with_checksum_seed(Some(12345));
+
+        assert!(config.skip_compat_exchange);
+        assert!(config.client_args.is_some());
+        assert!(config.is_daemon_mode);
+        assert!(config.do_compression);
+        assert_eq!(config.checksum_seed, Some(12345));
+    }
+
+    #[test]
+    fn protocol_setup_config_builder_partial_configuration() {
+        let protocol = ProtocolVersion::try_from(30).unwrap();
+
+        // Only set some optional fields
+        let config = ProtocolSetupConfig::new(protocol, false)
+            .with_daemon_mode(true)
+            .with_compression(false);
+
+        assert!(!config.is_server);
+        assert!(config.is_daemon_mode);
+        assert!(!config.do_compression);
+        // Other fields should still be at defaults
+        assert!(!config.skip_compat_exchange);
+        assert!(config.client_args.is_none());
+        assert!(config.checksum_seed.is_none());
+    }
+
+    #[test]
+    fn protocol_setup_config_builder_can_override_values() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        let config = ProtocolSetupConfig::new(protocol, true)
+            .with_compression(true)
+            .with_compression(false); // Override previous value
+
+        assert!(!config.do_compression, "Last value should win");
+    }
+
+    #[test]
+    fn protocol_setup_config_builder_works_in_real_setup() {
+        // Verify builder works in actual setup_protocol call
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let config = ProtocolSetupConfig::new(protocol, true)
+            .with_compression(false)
+            .with_daemon_mode(false);
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("setup should succeed with builder config");
+
+        assert!(
+            result.negotiated_algorithms.is_none(),
+            "Protocol 29 should not negotiate"
         );
     }
 }

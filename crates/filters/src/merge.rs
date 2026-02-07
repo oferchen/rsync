@@ -38,14 +38,19 @@ use std::path::Path;
 
 use crate::{FilterAction, FilterRule};
 
-/// Error when reading or parsing a merge file.
+/// Error produced when a merge file cannot be read or contains invalid syntax.
+///
+/// The error carries the source file path and, when available, the 1-indexed
+/// line number where the problem was detected.  The [`Display`](std::fmt::Display)
+/// implementation formats this as `path:line: message` (or `path: message` when
+/// no line number applies).
 #[derive(Debug)]
 pub struct MergeFileError {
     /// The file path that caused the error.
     pub path: String,
     /// The line number (1-indexed) if applicable.
     pub line: Option<usize>,
-    /// Description of the error.
+    /// Human-readable description of the error.
     pub message: String,
 }
 
@@ -156,7 +161,31 @@ fn read_rules_recursive_impl(
     Ok(expanded)
 }
 
-/// Parses filter rules from a string in merge file format.
+/// Parses filter rules from a string in rsync's merge-file format.
+///
+/// Accepts the same syntax as merge files on disk: short-form prefixes
+/// (`+`, `-`, `P`, `R`, `.`, `:`, `H`, `S`, `!`) and long-form keywords
+/// (`include`, `exclude`, etc.). Lines starting with `#` or `;` are
+/// comments, and blank lines are skipped.
+///
+/// `source_path` is used only for error messages; no I/O is performed.
+///
+/// # Examples
+///
+/// ```
+/// use filters::parse_rules;
+/// use std::path::Path;
+///
+/// let rules = parse_rules(
+///     "# Ignore backups\n- *.bak\n+ important/\n",
+///     Path::new("<inline>"),
+/// ).unwrap();
+/// assert_eq!(rules.len(), 2);
+/// ```
+///
+/// # Errors
+///
+/// Returns [`MergeFileError`] if any line contains unrecognised syntax.
 pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
 

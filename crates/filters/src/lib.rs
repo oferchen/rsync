@@ -76,9 +76,11 @@
 
 mod action;
 mod compiled;
+/// CVS exclusion patterns for rsync's `--cvs-exclude` (`-C`) option.
 pub mod cvs;
 mod decision;
 mod error;
+/// Merge-file reader and parser for filter rules.
 pub mod merge;
 mod rule;
 mod set;

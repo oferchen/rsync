@@ -1000,3 +1000,164 @@ fn prefix_length_sorting() {
         assert_eq!(paths[i], PathBuf::from(expected));
     }
 }
+
+// ============================================================================
+// Sort Algorithm Stress Tests
+// ============================================================================
+
+/// Verifies sorting when files are created in reverse alphabetical order.
+///
+/// Some filesystems may return entries in creation order, which would
+/// be reverse-sorted here. This exercises the sort algorithm on
+/// adversarial input.
+#[test]
+fn reverse_order_input_sorted_correctly() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("reverse");
+    fs::create_dir(&root).expect("create root");
+
+    // Create 200 files in reverse order
+    for i in (0..200).rev() {
+        let name = format!("entry_{i:04}.txt");
+        fs::write(root.join(&name), b"data").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 200);
+
+    for i in 0..paths.len() - 1 {
+        assert!(
+            paths[i] < paths[i + 1],
+            "paths[{i}] = {:?} should come before paths[{}] = {:?}",
+            paths[i],
+            i + 1,
+            paths[i + 1]
+        );
+    }
+}
+
+/// Verifies sorting when most entries are already sorted with a few
+/// out-of-place elements (nearly-sorted input).
+///
+/// This is the common case during directory traversal: the filesystem
+/// often returns entries in near-sorted order.
+#[test]
+fn nearly_sorted_input_sorted_correctly() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("nearly");
+    fs::create_dir(&root).expect("create root");
+
+    // Create files in mostly-sorted order with a few swaps
+    let mut names: Vec<String> = (0..300)
+        .map(|i| format!("file_{i:04}.txt"))
+        .collect();
+    // Swap a few elements to create "nearly sorted" input
+    names.swap(10, 290);
+    names.swap(50, 150);
+    names.swap(100, 200);
+
+    for name in &names {
+        fs::write(root.join(name), b"data").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 300);
+
+    for (i, path) in paths.iter().enumerate() {
+        let expected = PathBuf::from(format!("file_{i:04}.txt"));
+        assert_eq!(path, &expected, "wrong order at index {i}");
+    }
+}
+
+/// Verifies sorting with a mix of directories and files at scale,
+/// ensuring depth-first ordering is maintained after sort_unstable.
+#[test]
+fn large_mixed_tree_sort_order() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("mixed_large");
+    fs::create_dir(&root).expect("create root");
+
+    // Create 20 directories each with 20 files
+    for d in (0..20).rev() {
+        let dir_name = format!("dir_{d:03}");
+        let dir_path = root.join(&dir_name);
+        fs::create_dir(&dir_path).expect("create dir");
+
+        for f in (0..20).rev() {
+            let file_name = format!("file_{f:03}.txt");
+            fs::write(dir_path.join(&file_name), b"data").expect("write file");
+        }
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    // 20 dirs + 20*20 files = 420
+    assert_eq!(paths.len(), 420);
+
+    // Verify depth-first sorted order: each directory appears before its children,
+    // and all children appear before the next sibling directory
+    let mut prev_dir_idx = 0;
+    for d in 0..20 {
+        let dir_name = format!("dir_{d:03}");
+        let dir_idx = paths
+            .iter()
+            .position(|p| *p == PathBuf::from(&dir_name))
+            .unwrap_or_else(|| panic!("missing {dir_name}"));
+
+        // Directories should be in ascending order
+        if d > 0 {
+            assert!(
+                dir_idx > prev_dir_idx,
+                "dir_{d:03} at {dir_idx} should be after previous dir at {prev_dir_idx}"
+            );
+        }
+
+        // All files within this directory should immediately follow it
+        for f in 0..20 {
+            let file_name = format!("dir_{d:03}/file_{f:03}.txt");
+            let file_idx = paths
+                .iter()
+                .position(|p| *p == PathBuf::from(&file_name))
+                .unwrap_or_else(|| panic!("missing {file_name}"));
+            assert!(
+                file_idx > dir_idx,
+                "{file_name} at {file_idx} should follow {dir_name} at {dir_idx}"
+            );
+        }
+
+        prev_dir_idx = dir_idx;
+    }
+}
+
+/// Verifies that sorting produces identical ordering to a manually
+/// sorted reference, confirming sort_unstable correctness for unique names.
+#[test]
+fn sort_matches_reference_ordering() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("reference");
+    fs::create_dir(&root).expect("create root");
+
+    let names = [
+        "!bang", "#hash", "$dollar", "%percent", "+plus", "-dash",
+        ".dot", "0zero", "9nine", "ALLCAPS", "Capital", "Zebra",
+        "_under", "alpha", "beta", "gamma", "zeta", "~tilde",
+    ];
+
+    for name in &names {
+        fs::write(root.join(name), b"").expect("write file");
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    // Build reference sorted order
+    let mut reference: Vec<PathBuf> = names.iter().map(PathBuf::from).collect();
+    reference.sort();
+
+    assert_eq!(paths, reference, "walker order must match reference sort");
+}

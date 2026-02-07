@@ -12,6 +12,8 @@
 //! SSE4.1 provides a significant improvement over SSE2/SSSE3 with the `blendv`
 //! instruction family. This implementation uses `_mm_blendv_epi8` for efficient
 //! lane masking when inputs have different lengths.
+
+#![allow(unsafe_op_in_unsafe_fn)]
 //!
 //! **Key advantage over SSE2**: The SSE2 implementation requires three instructions
 //! (AND, ANDNOT, OR) to implement conditional blending, while SSE4.1 does it in

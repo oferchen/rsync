@@ -193,7 +193,9 @@ impl DirectoryState {
                 entry.map_err(|error| FileListError::read_dir_entry(fs_path.clone(), error))?;
             entries.push(entry.file_name());
         }
-        entries.sort();
+        // sort_unstable avoids auxiliary memory allocation and is faster.
+        // Stability is irrelevant: file names within a directory are unique.
+        entries.sort_unstable();
 
         debug_log!(Flist, 3, "found {} entries in {:?}", entries.len(), fs_path);
 
@@ -422,5 +424,83 @@ mod tests {
         let entry = entries[0].as_ref().expect("entry");
         assert!(entry.is_root);
         assert_eq!(entry.full_path, file_path);
+    }
+
+    // ==================== DirectoryState sorting tests ====================
+
+    /// Verifies that DirectoryState sorts entries correctly when the
+    /// filesystem returns them in reverse order.
+    #[test]
+    fn directory_state_sorts_reverse_ordered_entries() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("reverse");
+        std::fs::create_dir(&dir).expect("create dir");
+
+        // Create files named z, y, x, ... a to encourage reverse-order readdir
+        for ch in ('a'..='z').rev() {
+            std::fs::write(dir.join(format!("{ch}.txt")), b"").expect("write");
+        }
+
+        let state = DirectoryState::new(dir, PathBuf::new(), 0).expect("new state");
+
+        // Verify entries are sorted ascending
+        for i in 0..state.entries.len() - 1 {
+            assert!(
+                state.entries[i] < state.entries[i + 1],
+                "entries[{}] = {:?} should be < entries[{}] = {:?}",
+                i,
+                state.entries[i],
+                i + 1,
+                state.entries[i + 1]
+            );
+        }
+    }
+
+    /// Verifies that DirectoryState sorts a large number of entries correctly.
+    #[test]
+    fn directory_state_sorts_large_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("large");
+        std::fs::create_dir(&dir).expect("create dir");
+
+        for i in 0..500 {
+            std::fs::write(dir.join(format!("file_{i:04}.txt")), b"").expect("write");
+        }
+
+        let state = DirectoryState::new(dir, PathBuf::new(), 0).expect("new state");
+        assert_eq!(state.entries.len(), 500);
+
+        for i in 0..state.entries.len() - 1 {
+            assert!(
+                state.entries[i] < state.entries[i + 1],
+                "entries not sorted at index {i}"
+            );
+        }
+    }
+
+    /// Verifies sorting when all entries share a long common prefix,
+    /// stressing the string comparison path.
+    #[test]
+    fn directory_state_sorts_entries_with_long_common_prefix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("prefix");
+        std::fs::create_dir(&dir).expect("create dir");
+
+        let prefix = "a_very_long_common_prefix_shared_by_all_entries_in_this_dir_";
+        for i in (0..100).rev() {
+            std::fs::write(dir.join(format!("{prefix}{i:03}")), b"").expect("write");
+        }
+
+        let state = DirectoryState::new(dir, PathBuf::new(), 0).expect("new state");
+        assert_eq!(state.entries.len(), 100);
+
+        for i in 0..state.entries.len() - 1 {
+            assert!(
+                state.entries[i] < state.entries[i + 1],
+                "entries not sorted at index {i}: {:?} vs {:?}",
+                state.entries[i],
+                state.entries[i + 1]
+            );
+        }
     }
 }

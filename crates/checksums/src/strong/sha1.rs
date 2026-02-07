@@ -3,6 +3,33 @@ use digest::Digest;
 use super::StrongDigest;
 
 /// Streaming SHA-1 hasher used by upstream rsync when negotiated with peers.
+///
+/// SHA-1 produces a 160-bit (20-byte) digest. While collision attacks are
+/// known, it remains useful for interoperability with peers that negotiate
+/// SHA-1 as a stronger alternative to MD4/MD5.
+///
+/// # Examples
+///
+/// One-shot hashing:
+///
+/// ```
+/// use checksums::strong::Sha1;
+///
+/// let digest = Sha1::digest(b"hello world");
+/// assert_eq!(digest.len(), 20);
+/// ```
+///
+/// Incremental hashing:
+///
+/// ```
+/// use checksums::strong::Sha1;
+///
+/// let mut hasher = Sha1::new();
+/// hasher.update(b"hello ");
+/// hasher.update(b"world");
+/// let digest = hasher.finalize();
+/// assert_eq!(digest, Sha1::digest(b"hello world"));
+/// ```
 #[derive(Clone, Debug)]
 pub struct Sha1 {
     inner: sha1::Sha1,

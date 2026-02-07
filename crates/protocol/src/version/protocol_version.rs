@@ -20,6 +20,47 @@ use super::iter::{SupportedProtocolNumbersIter, SupportedVersionsIter};
 use super::parse::{ParseProtocolVersionError, ParseProtocolVersionErrorKind};
 
 /// A single negotiated rsync protocol version.
+///
+/// This type wraps a non-zero byte that identifies which revision of the rsync
+/// wire protocol a session has agreed to use. The supported range is
+/// [`V28`](Self::V28) through [`V32`](Self::V32), matching upstream rsync
+/// 3.4.1. Protocol version 30 marks the boundary between the legacy ASCII
+/// negotiation (`@RSYNCD:`) and the modern binary handshake.
+///
+/// # Constructing a Version
+///
+/// Use the named constants for well-known versions, [`from_supported`](Self::from_supported)
+/// for runtime validation, or parse from a string via [`FromStr`](core::str::FromStr):
+///
+/// ```
+/// use protocol::ProtocolVersion;
+///
+/// // Named constant
+/// let v32 = ProtocolVersion::V32;
+/// assert_eq!(v32.as_u8(), 32);
+///
+/// // Runtime validation
+/// let v30 = ProtocolVersion::from_supported(30).expect("30 is supported");
+/// assert!(v30.uses_binary_negotiation());
+///
+/// // String parsing (e.g. from CLI --protocol flag)
+/// let parsed: ProtocolVersion = "31".parse().expect("valid version");
+/// assert_eq!(parsed, ProtocolVersion::V31);
+/// ```
+///
+/// # Feature Queries
+///
+/// The type exposes semantic predicates so callers can check protocol
+/// capabilities without scattering magic-number comparisons:
+///
+/// ```
+/// use protocol::ProtocolVersion;
+///
+/// let v = ProtocolVersion::V29;
+/// assert!(v.uses_legacy_ascii_negotiation());
+/// assert!(!v.uses_varint_encoding());
+/// assert!(v.supports_flist_times());
+/// ```
 #[doc(alias = "--protocol")]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

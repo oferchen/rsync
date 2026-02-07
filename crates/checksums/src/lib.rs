@@ -367,6 +367,9 @@
 mod rolling;
 pub mod strong;
 
+#[cfg(test)]
+mod simd_parity_tests;
+
 /// SIMD-accelerated batch hashing for MD4/MD5.
 ///
 /// This module provides parallel MD4/MD5 computation using SIMD instructions
@@ -422,7 +425,11 @@ pub use strong::openssl_acceleration_available;
 /// available at runtime.
 pub use strong::xxh3_simd_available;
 
-// Re-export strategy pattern types for convenient access
+/// Re-exports from the [`strong::strategy`] module for runtime checksum algorithm selection.
+///
+/// These types implement the Strategy pattern, allowing callers to select
+/// checksum algorithms at runtime based on protocol version or explicit choice.
+/// See the [`strong::strategy`] module documentation for usage details.
 pub use strong::strategy::{
     ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
     Md4Strategy, Md5SeedConfig, Md5Strategy, SeedConfig, Sha1Strategy, Sha256Strategy,

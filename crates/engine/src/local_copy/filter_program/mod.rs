@@ -1,3 +1,10 @@
+//! Filter program and per-directory merge rules.
+//!
+//! A [`FilterProgram`] is an ordered list of filter instructions, per-directory
+//! merge directives ([`DirMergeRule`]), and exclude-if-present markers
+//! ([`ExcludeIfPresentRule`]) that together determine which source entries
+//! participate in a transfer.
+
 mod options;
 mod program;
 mod rules;

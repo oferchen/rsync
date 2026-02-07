@@ -1,10 +1,44 @@
 use crate::FilterAction;
 
-/// User-visible filter rule consisting of an action and pattern.
+/// User-visible filter rule consisting of an action and a glob pattern.
 ///
-/// Filter rules control which files are included or excluded during rsync transfers.
-/// Each rule specifies an action (include, exclude, protect, risk, clear) and a
-/// glob pattern to match against file paths.
+/// Filter rules control which files are included or excluded during rsync
+/// transfers. Each rule pairs a [`FilterAction`] with a pattern string and
+/// optional modifier flags.
+///
+/// # Construction
+///
+/// Use the named constructors to create rules for each action:
+///
+/// ```
+/// use filters::FilterRule;
+///
+/// let inc  = FilterRule::include("*.rs");
+/// let exc  = FilterRule::exclude("target/");
+/// let prot = FilterRule::protect("/data");
+/// ```
+///
+/// Modifier methods use a builder pattern and can be chained:
+///
+/// ```
+/// use filters::FilterRule;
+///
+/// let rule = FilterRule::exclude("*.tmp")
+///     .with_perishable(true)
+///     .with_sender(false);
+/// ```
+///
+/// # Pattern syntax
+///
+/// Patterns follow rsync's glob rules:
+///
+/// - `*` matches any characters except `/`.
+/// - `**` matches any characters including `/` (recursive wildcard).
+/// - `?` matches a single character except `/`.
+/// - A leading `/` anchors the pattern to the transfer root.
+/// - A trailing `/` restricts the rule to directories only.
+/// - Without a leading `/` and without internal `/` separators, the pattern
+///   matches at any depth (an implicit `**/` prefix is added).
 ///
 /// # Negation
 ///
@@ -28,6 +62,20 @@ pub struct FilterRule {
 
 impl FilterRule {
     /// Creates an include rule for `pattern`.
+    ///
+    /// The returned rule applies to both the sender and receiver sides by
+    /// default. Use [`with_sender`](Self::with_sender) /
+    /// [`with_receiver`](Self::with_receiver) to restrict it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use filters::{FilterRule, FilterAction};
+    ///
+    /// let rule = FilterRule::include("*.rs");
+    /// assert_eq!(rule.action(), FilterAction::Include);
+    /// assert_eq!(rule.pattern(), "*.rs");
+    /// ```
     #[must_use]
     pub fn include(pattern: impl Into<String>) -> Self {
         Self {
@@ -44,6 +92,20 @@ impl FilterRule {
     }
 
     /// Creates an exclude rule for `pattern`.
+    ///
+    /// The returned rule applies to both the sender and receiver sides by
+    /// default. Excluded directories also exclude their descendants
+    /// automatically.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use filters::{FilterRule, FilterAction};
+    ///
+    /// let rule = FilterRule::exclude("*.bak");
+    /// assert_eq!(rule.action(), FilterAction::Exclude);
+    /// assert_eq!(rule.pattern(), "*.bak");
+    /// ```
     #[must_use]
     pub fn exclude(pattern: impl Into<String>) -> Self {
         Self {
@@ -60,6 +122,20 @@ impl FilterRule {
     }
 
     /// Creates a protect rule for `pattern`.
+    ///
+    /// Protect rules only apply on the receiver side and prevent `--delete`
+    /// from removing matching destination paths.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use filters::{FilterRule, FilterAction};
+    ///
+    /// let rule = FilterRule::protect("/data");
+    /// assert_eq!(rule.action(), FilterAction::Protect);
+    /// assert!(!rule.applies_to_sender());
+    /// assert!(rule.applies_to_receiver());
+    /// ```
     #[must_use]
     pub fn protect(pattern: impl Into<String>) -> Self {
         Self {
@@ -76,6 +152,10 @@ impl FilterRule {
     }
 
     /// Creates a risk rule for `pattern`.
+    ///
+    /// Risk rules cancel an earlier [`Protect`](FilterAction::Protect) for the
+    /// same path, re-allowing deletion. Like protect, risk only applies on the
+    /// receiver side.
     #[must_use]
     pub fn risk(pattern: impl Into<String>) -> Self {
         Self {
@@ -92,6 +172,10 @@ impl FilterRule {
     }
 
     /// Clears all previously configured rules for the applicable transfer sides.
+    ///
+    /// Equivalent to rsync's `!` token. When compiled into a [`FilterSet`](crate::FilterSet),
+    /// a clear rule removes every prior include/exclude and protect/risk rule
+    /// that applies to the same side(s).
     #[must_use]
     #[doc(alias = "!")]
     pub const fn clear() -> Self {
@@ -339,6 +423,13 @@ impl FilterRule {
     }
 
     /// Anchors the pattern to the root of the transfer if it is not already.
+    ///
+    /// Prepends `/` to the pattern when it does not already start with one.
+    /// An anchored pattern only matches at the top level of the transfer tree
+    /// rather than at any depth.
+    ///
+    /// This method is idempotent: calling it on an already-anchored rule is a
+    /// no-op.
     #[must_use]
     pub fn anchor_to_root(mut self) -> Self {
         if !self.pattern.starts_with('/') {

@@ -1,3 +1,14 @@
+//! Efficient decimal number encoding for message formatting.
+//!
+//! This module provides zero-allocation decimal encoding into fixed-size buffers.
+//! It's used internally by the message formatting system to encode exit codes
+//! and line numbers without heap allocation.
+//!
+//! All functions encode numbers directly into caller-provided buffers, returning
+//! string slices that reference the encoded digits. This approach enables the
+//! message formatting layer to produce vectored output without intermediate
+//! allocations.
+
 use std::str;
 
 pub(super) fn encode_unsigned_decimal(value: u64, buf: &mut [u8]) -> &str {
