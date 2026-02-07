@@ -95,8 +95,6 @@ pub mod block_size;
 /// Pipelined signature generation with double-buffered I/O.
 pub mod pipelined_gen;
 
-#[cfg(feature = "parallel")]
-#[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;
 
 pub mod async_gen;

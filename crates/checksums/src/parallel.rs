@@ -38,6 +38,85 @@ use std::path::{Path, PathBuf};
 use crate::rolling::RollingChecksum;
 use crate::strong::StrongDigest;
 
+/// Minimum number of blocks at which parallel computation becomes beneficial.
+///
+/// Below this threshold, the overhead of rayon's work-stealing scheduler
+/// outweighs the benefits of parallelism. The runtime-selecting `compute_*_auto`
+/// functions use this value to choose between sequential and parallel paths.
+pub const PARALLEL_BLOCK_THRESHOLD: usize = 8;
+
+/// Computes strong digests for multiple data blocks, automatically choosing
+/// parallel or sequential execution based on the block count.
+///
+/// When `blocks.len() >= PARALLEL_BLOCK_THRESHOLD`, computation is performed
+/// in parallel using rayon. Otherwise, sequential iteration is used to avoid
+/// thread-pool overhead.
+///
+/// # Example
+///
+/// ```rust
+/// use checksums::parallel::compute_digests_auto;
+/// use checksums::strong::Md5;
+///
+/// let blocks: Vec<&[u8]> = vec![b"block1", b"block2", b"block3"];
+/// let digests = compute_digests_auto::<Md5, _>(&blocks);
+/// assert_eq!(digests.len(), 3);
+/// ```
+pub fn compute_digests_auto<D, T>(blocks: &[T]) -> Vec<D::Digest>
+where
+    D: StrongDigest + Send,
+    D::Seed: Default + Clone + Send + Sync,
+    D::Digest: Send,
+    T: AsRef<[u8]> + Sync,
+{
+    if blocks.len() >= PARALLEL_BLOCK_THRESHOLD {
+        compute_digests_parallel::<D, T>(blocks)
+    } else {
+        blocks.iter().map(|block| D::digest(block.as_ref())).collect()
+    }
+}
+
+/// Computes block signatures (rolling + strong checksums) for multiple blocks,
+/// automatically choosing parallel or sequential execution based on block count.
+///
+/// When `blocks.len() >= PARALLEL_BLOCK_THRESHOLD`, computation is performed
+/// in parallel using rayon. Otherwise, sequential iteration is used.
+///
+/// # Example
+///
+/// ```rust
+/// use checksums::parallel::{compute_block_signatures_auto, BlockSignature};
+/// use checksums::strong::Sha256;
+///
+/// let blocks: Vec<&[u8]> = vec![b"block1", b"block2", b"block3"];
+/// let signatures = compute_block_signatures_auto::<Sha256, _>(&blocks);
+/// assert_eq!(signatures.len(), 3);
+/// ```
+pub fn compute_block_signatures_auto<D, T>(blocks: &[T]) -> Vec<BlockSignature<D::Digest>>
+where
+    D: StrongDigest + Send,
+    D::Seed: Default + Clone + Send + Sync,
+    D::Digest: Send,
+    T: AsRef<[u8]> + Sync,
+{
+    if blocks.len() >= PARALLEL_BLOCK_THRESHOLD {
+        compute_block_signatures_parallel::<D, T>(blocks)
+    } else {
+        blocks
+            .iter()
+            .map(|block| {
+                let data = block.as_ref();
+                let mut rolling = RollingChecksum::new();
+                rolling.update(data);
+                BlockSignature {
+                    rolling: rolling.value(),
+                    strong: D::digest(data),
+                }
+            })
+            .collect()
+    }
+}
+
 /// Computes strong digests for multiple data blocks in parallel.
 ///
 /// Each block is hashed independently using the specified digest algorithm.
