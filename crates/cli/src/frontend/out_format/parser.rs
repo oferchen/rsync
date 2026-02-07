@@ -10,8 +10,8 @@ use core::message::{Message, Role};
 use core::rsync_error;
 
 use super::tokens::{
-    HumanizeMode, OutFormat, OutFormatPlaceholder, OutFormatToken, PlaceholderAlignment,
-    PlaceholderFormat, PlaceholderToken, MAX_PLACEHOLDER_WIDTH,
+    HumanizeMode, MAX_PLACEHOLDER_WIDTH, OutFormat, OutFormatPlaceholder, OutFormatToken,
+    PlaceholderAlignment, PlaceholderFormat, PlaceholderToken,
 };
 
 fn parse_placeholder_format(chars: &mut Peekable<Chars<'_>>) -> PlaceholderFormat {

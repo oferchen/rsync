@@ -630,8 +630,7 @@ mod very_high_rates {
         let total = session.total_duration();
         assert!(
             total >= Duration::from_millis(500),
-            "Expected >= 500ms, got {:?}",
-            total
+            "Expected >= 500ms, got {total:?}"
         );
     }
 
@@ -1030,10 +1029,10 @@ mod small_vs_large_files {
         let mut limiter = BandwidthLimiter::new(nz(1024 * 1024)); // 1 MB/s
 
         // Mix of small and large files
-        let _ = limiter.register(100);     // Small: 100 bytes
-        let _ = limiter.register(1024);    // Medium: 1 KB
-        let _ = limiter.register(10240);   // Larger: 10 KB
-        let _ = limiter.register(102400);  // Big: 100 KB
+        let _ = limiter.register(100); // Small: 100 bytes
+        let _ = limiter.register(1024); // Medium: 1 KB
+        let _ = limiter.register(10240); // Larger: 10 KB
+        let _ = limiter.register(102400); // Big: 100 KB
         let _ = limiter.register(1024 * 1024); // Large: 1 MB
 
         // Total: ~1.11 MB at 1 MB/s = ~1.11 seconds
@@ -1091,11 +1090,7 @@ mod rate_limiting_accuracy {
             let mut limiter = BandwidthLimiter::new(nz(rate));
             let sleep = limiter.register(bytes);
 
-            assert_eq!(
-                sleep.requested(),
-                expected,
-                "Rate {rate}, bytes {bytes}"
-            );
+            assert_eq!(sleep.requested(), expected, "Rate {rate}, bytes {bytes}");
         }
     }
 
@@ -1296,6 +1291,10 @@ mod additional_edge_cases {
 
         // Should take ~10.24 seconds
         let total = session.total_duration();
-        assert!(within_tolerance(total, Duration::from_secs_f64(10.24), 15.0));
+        assert!(within_tolerance(
+            total,
+            Duration::from_secs_f64(10.24),
+            15.0
+        ));
     }
 }

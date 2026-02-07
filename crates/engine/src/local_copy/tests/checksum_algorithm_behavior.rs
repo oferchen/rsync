@@ -875,8 +875,7 @@ fn checksum_all_algorithms_agree_on_empty_files() {
         assert_eq!(
             summary.files_copied(),
             0,
-            "Algorithm {:?} should skip empty identical files",
-            algorithm
+            "Algorithm {algorithm:?} should skip empty identical files"
         );
     }
 }
@@ -1071,14 +1070,12 @@ fn all_algorithms_consistent_for_identical_content() {
         assert_eq!(
             summary.files_copied(),
             0,
-            "Algorithm {:?} should skip identical content",
-            algorithm
+            "Algorithm {algorithm:?} should skip identical content"
         );
         assert_eq!(
             summary.regular_files_matched(),
             1,
-            "Algorithm {:?} should mark file as matched",
-            algorithm
+            "Algorithm {algorithm:?} should mark file as matched"
         );
     }
 }
@@ -1127,14 +1124,12 @@ fn all_algorithms_transfer_different_content() {
         assert_eq!(
             summary.files_copied(),
             1,
-            "Algorithm {:?} should transfer different content",
-            algorithm
+            "Algorithm {algorithm:?} should transfer different content"
         );
         assert_eq!(
             fs::read(&destination).expect("read dest"),
             b"source content!",
-            "Algorithm {:?} should produce correct content",
-            algorithm
+            "Algorithm {algorithm:?} should produce correct content"
         );
     }
 }

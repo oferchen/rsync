@@ -257,9 +257,9 @@ mod sparse_file_state {
         let file = MockSparseFile {
             size: 10 * ONE_TB,
             data_regions: vec![
-                (0, 1024 * 1024),                          // First 1MB is data
-                (FOUR_GB, FOUR_GB + 1024 * 1024),          // 1MB at 4GB mark
-                (5 * ONE_TB, 5 * ONE_TB + 1024 * 1024),    // 1MB at 5TB
+                (0, 1024 * 1024),                       // First 1MB is data
+                (FOUR_GB, FOUR_GB + 1024 * 1024),       // 1MB at 4GB mark
+                (5 * ONE_TB, 5 * ONE_TB + 1024 * 1024), // 1MB at 5TB
             ],
         };
 
@@ -334,8 +334,7 @@ mod progress_reporting {
 
         assert!(
             (percent - 25.0).abs() < 0.01,
-            "Expected ~25%, got {}",
-            percent
+            "Expected ~25%, got {percent}"
         );
 
         // Test at 100%
@@ -360,9 +359,7 @@ mod progress_reporting {
 
         assert!(
             (rate_mbs - expected_rate_mbs).abs() < 1.0,
-            "Expected ~{:.1} MB/s, got {:.1} MB/s",
-            expected_rate_mbs,
-            rate_mbs
+            "Expected ~{expected_rate_mbs:.1} MB/s, got {rate_mbs:.1} MB/s"
         );
     }
 
@@ -399,8 +396,7 @@ mod progress_reporting {
         // Should be approximately 9 hours (9 * 3600 = 32400 seconds)
         assert!(
             (eta_seconds - 32400.0).abs() < 100.0,
-            "ETA should be ~9 hours, got {} seconds",
-            eta_seconds
+            "ETA should be ~9 hours, got {eta_seconds} seconds"
         );
     }
 
@@ -417,10 +413,7 @@ mod progress_reporting {
             let percent = (done as f64 / total as f64) * 100.0;
             assert!(
                 (percent - 50.0).abs() < 0.1,
-                "Expected 50%, got {} for total={}, done={}",
-                percent,
-                total,
-                done
+                "Expected 50%, got {percent} for total={total}, done={done}"
             );
         }
     }
@@ -467,9 +460,9 @@ mod buffer_sizing {
 
         // Test various scenarios
         let cases = [
-            (FOUR_GB, 100 * 1024 * 1024),    // 4GB file at 100 MB/s
-            (ONE_TB, 1024 * 1024 * 1024),    // 1TB file at 1 GB/s
-            (HUNDRED_TB, 10 * 1024 * 1024),  // 100TB file at 10 MB/s
+            (FOUR_GB, 100 * 1024 * 1024),   // 4GB file at 100 MB/s
+            (ONE_TB, 1024 * 1024 * 1024),   // 1TB file at 1 GB/s
+            (HUNDRED_TB, 10 * 1024 * 1024), // 100TB file at 10 MB/s
         ];
 
         for (file_size, rate) in cases {
@@ -518,9 +511,9 @@ mod checksum_positions {
 
         // Block indices that represent positions > 4GB
         let test_indices = [
-            (FOUR_GB / block_size) as u32,     // First block at 4GB
-            (ONE_TB / block_size) as u32,      // First block at 1TB
-            u32::MAX / 2,                      // Large block index
+            (FOUR_GB / block_size) as u32, // First block at 4GB
+            (ONE_TB / block_size) as u32,  // First block at 1TB
+            u32::MAX / 2,                  // Large block index
         ];
 
         for block_idx in test_indices {

@@ -72,7 +72,10 @@ where
     if blocks.len() >= PARALLEL_BLOCK_THRESHOLD {
         compute_digests_parallel::<D, T>(blocks)
     } else {
-        blocks.iter().map(|block| D::digest(block.as_ref())).collect()
+        blocks
+            .iter()
+            .map(|block| D::digest(block.as_ref()))
+            .collect()
     }
 }
 
@@ -341,9 +344,11 @@ impl<D: Clone> Clone for FileHashResult<D> {
     fn clone(&self) -> Self {
         Self {
             path: self.path.clone(),
-            digest: self.digest.as_ref().map(|d| d.clone()).map_err(|e| {
-                io::Error::new(e.kind(), e.to_string())
-            }),
+            digest: self
+                .digest
+                .as_ref()
+                .map(|d| d.clone())
+                .map_err(|e| io::Error::new(e.kind(), e.to_string())),
             size: self.size,
         }
     }
@@ -371,7 +376,7 @@ pub struct FileHashConfig {
 impl Default for FileHashConfig {
     fn default() -> Self {
         Self {
-            buffer_size: 64 * 1024,           // 64 KiB
+            buffer_size: 64 * 1024, // 64 KiB
             min_file_size: 0,
             max_memory_file_size: 1024 * 1024, // 1 MiB
         }
@@ -498,7 +503,10 @@ where
 ///     }
 /// }
 /// ```
-pub fn hash_files_parallel<D>(paths: &[PathBuf], buffer_size: usize) -> Vec<FileHashResult<D::Digest>>
+pub fn hash_files_parallel<D>(
+    paths: &[PathBuf],
+    buffer_size: usize,
+) -> Vec<FileHashResult<D::Digest>>
 where
     D: StrongDigest + Send,
     D::Seed: Default + Clone + Send + Sync,
@@ -828,7 +836,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strong::{Md5, Sha256, Xxh64, Xxh3};
+    use crate::strong::{Md5, Sha256, Xxh3, Xxh64};
     use std::io::Write;
     use tempfile::TempDir;
 
@@ -1078,7 +1086,10 @@ mod tests {
         assert_eq!(results[0].size, content.len() as u64);
 
         let expected = Sha256::digest(content);
-        assert_eq!(results[0].digest.as_ref().unwrap().as_ref(), expected.as_ref());
+        assert_eq!(
+            results[0].digest.as_ref().unwrap().as_ref(),
+            expected.as_ref()
+        );
     }
 
     #[test]
@@ -1156,7 +1167,10 @@ mod tests {
         assert_eq!(results[0].size, size as u64);
 
         let expected = Sha256::digest(&data);
-        assert_eq!(results[0].digest.as_ref().unwrap().as_ref(), expected.as_ref());
+        assert_eq!(
+            results[0].digest.as_ref().unwrap().as_ref(),
+            expected.as_ref()
+        );
     }
 
     #[test]
@@ -1169,14 +1183,15 @@ mod tests {
         std::fs::write(&path, &data).unwrap();
 
         let block_size = 1024;
-        let results = compute_file_signatures_parallel::<Md5>(&[path.clone()], block_size, 64 * 1024);
+        let results =
+            compute_file_signatures_parallel::<Md5>(&[path.clone()], block_size, 64 * 1024);
 
         assert_eq!(results.len(), 1);
         let result = &results[0];
         assert!(result.signatures.is_ok());
 
         let signatures = result.signatures.as_ref().unwrap();
-        let expected_blocks = (data.len() + block_size - 1) / block_size;
+        let expected_blocks = data.len().div_ceil(block_size);
         assert_eq!(signatures.len(), expected_blocks);
         assert_eq!(result.block_count, expected_blocks);
         assert_eq!(result.size, data.len() as u64);

@@ -187,16 +187,14 @@ fn permission_read_denied_on_directory_blocks_contents() {
     // The key behavior is that we don't crash and handle gracefully
     if let Err(error) = result {
         // Error case: should be permission-related
-        match error.kind() {
-            LocalCopyErrorKind::Io { source, .. } => {
-                assert!(
-                    source.kind() == io::ErrorKind::PermissionDenied
-                        || source.kind() == io::ErrorKind::Other,
-                    "expected permission-related error"
-                );
-            }
-            _ => {} // Other error kinds may be acceptable
+        if let LocalCopyErrorKind::Io { source, .. } = error.kind() {
+            assert!(
+                source.kind() == io::ErrorKind::PermissionDenied
+                    || source.kind() == io::ErrorKind::Other,
+                "expected permission-related error"
+            );
         }
+        // Other error kinds may be acceptable
     }
     // Success case: directory was skipped, which is also valid behavior
 }
@@ -314,12 +312,9 @@ fn permission_write_denied_overwriting_readonly_file() {
     // - May succeed if using temp file + rename strategy
     // Both are valid rsync behaviors
     if let Err(error) = &result {
-        match error.kind() {
-            LocalCopyErrorKind::Io { source, .. } => {
-                // Accept any error - the key is we don't crash
-                let _ = source;
-            }
-            _ => {}
+        if let LocalCopyErrorKind::Io { source, .. } = error.kind() {
+            // Accept any error - the key is we don't crash
+            let _ = source;
         }
     }
 
@@ -689,14 +684,11 @@ fn permission_denied_error_includes_action() {
 
     if let Err(error) = result {
         // Error should describe what action failed
-        match error.kind() {
-            LocalCopyErrorKind::Io { action, .. } => {
-                assert!(
-                    !action.is_empty(),
-                    "action should describe the failed operation"
-                );
-            }
-            _ => {}
+        if let LocalCopyErrorKind::Io { action, .. } = error.kind() {
+            assert!(
+                !action.is_empty(),
+                "action should describe the failed operation"
+            );
         }
     }
 }

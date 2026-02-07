@@ -2194,8 +2194,7 @@ mod checksum_choice_tests {
     #[test]
     fn checksum_seed_with_checksum_flag() {
         // --checksum and --checksum-seed can be combined
-        let parsed =
-            parse_test_args(["-c", "--checksum-seed=42", "src/", "dst/"]).expect("parse");
+        let parsed = parse_test_args(["-c", "--checksum-seed=42", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.checksum, Some(true));
         assert_eq!(parsed.checksum_seed, Some(42));
     }

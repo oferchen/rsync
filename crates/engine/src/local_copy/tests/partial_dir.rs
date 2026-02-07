@@ -1061,7 +1061,7 @@ fn partial_dir_full_resume_workflow() {
     let basis = manager.find_basis(&dest).expect("find_basis");
     assert_eq!(basis, Some(partial.clone()));
     assert_eq!(
-        fs::read(&basis.unwrap()).expect("read basis"),
+        fs::read(basis.unwrap()).expect("read basis"),
         b"partial from interrupted transfer"
     );
 

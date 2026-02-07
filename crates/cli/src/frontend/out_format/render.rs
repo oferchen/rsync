@@ -7,14 +7,14 @@ use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
 use std::time::SystemTime;
 
-use crate::{describe_event_kind, format_list_permissions, platform, LIST_TIMESTAMP_FORMAT};
+use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions, platform};
 use checksums::strong::Md5;
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 use time::OffsetDateTime;
 
 use super::tokens::{
-    HumanizeMode, OutFormat, OutFormatContext, OutFormatPlaceholder, OutFormatToken,
-    PlaceholderAlignment, PlaceholderFormat, PlaceholderToken, MAX_PLACEHOLDER_WIDTH,
+    HumanizeMode, MAX_PLACEHOLDER_WIDTH, OutFormat, OutFormatContext, OutFormatPlaceholder,
+    OutFormatToken, PlaceholderAlignment, PlaceholderFormat, PlaceholderToken,
 };
 
 impl OutFormat {
@@ -773,7 +773,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('>'),
             "Y should be '>' for DataCopied: {result:?}"
         );
@@ -789,7 +789,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('h'),
             "Y should be 'h' for HardLink: {result:?}"
         );
@@ -805,7 +805,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('c'),
             "Y should be 'c' for DirectoryCreated: {result:?}"
         );
@@ -821,7 +821,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('c'),
             "Y should be 'c' for SymlinkCopied: {result:?}"
         );
@@ -837,7 +837,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('c'),
             "Y should be 'c' for FifoCopied: {result:?}"
         );
@@ -853,7 +853,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('c'),
             "Y should be 'c' for DeviceCopied: {result:?}"
         );
@@ -869,7 +869,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('.'),
             "Y should be '.' for MetadataReused: {result:?}"
         );
@@ -885,7 +885,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('.'),
             "Y should be '.' for SkippedExisting: {result:?}"
         );
@@ -901,7 +901,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('c'),
             "Y should be 'c' for SourceRemoved: {result:?}"
         );
@@ -1559,7 +1559,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('.'),
             "SkippedMissingDestination should be '.': {result:?}"
         );
@@ -1575,7 +1575,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('.'),
             "SkippedNewerDestination should be '.': {result:?}"
         );
@@ -1591,7 +1591,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('.'),
             "SkippedNonRegular should be '.': {result:?}"
         );
@@ -1607,7 +1607,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('.'),
             "SkippedDirectory should be '.': {result:?}"
         );
@@ -1623,7 +1623,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('.'),
             "SkippedUnsafeSymlink should be '.': {result:?}"
         );
@@ -1639,7 +1639,7 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result.chars().nth(0),
+            result.chars().next(),
             Some('.'),
             "SkippedMountPoint should be '.': {result:?}"
         );

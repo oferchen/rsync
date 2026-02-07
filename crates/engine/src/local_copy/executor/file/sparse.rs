@@ -82,7 +82,7 @@ const ZERO_WRITE_BUFFER_SIZE: usize = 4096;
 /// # Examples
 ///
 /// ```
-/// use engine::local_copy::executor::file::sparse::{SparseDetector, SparseRegion};
+/// use engine::{SparseDetector, SparseRegion};
 ///
 /// let detector = SparseDetector::new(4096);
 /// let data = vec![0xAA; 100];
@@ -233,17 +233,17 @@ impl SparseDetector {
 ///
 /// ```no_run
 /// use std::fs::File;
-/// use engine::local_copy::executor::file::sparse::SparseReader;
+/// use engine::{SparseReader, SparseRegion};
 ///
 /// let file = File::open("sparse_file.bin").unwrap();
 /// let regions = SparseReader::detect_holes(&file).unwrap();
 ///
 /// for region in regions {
 ///     match region {
-///         engine::local_copy::executor::file::sparse::SparseRegion::Data { offset, length } => {
+///         SparseRegion::Data { offset, length } => {
 ///             println!("Data at {}: {} bytes", offset, length);
 ///         }
-///         engine::local_copy::executor::file::sparse::SparseRegion::Hole { offset, length } => {
+///         SparseRegion::Hole { offset, length } => {
 ///             println!("Hole at {}: {} bytes", offset, length);
 ///         }
 ///     }
@@ -302,8 +302,6 @@ impl SparseReader {
             // Seek to next data region
             match rustix::fs::seek(fd, RustixSeekFrom::Data(pos as i64)) {
                 Ok(data_start) => {
-                    let data_start = data_start as u64;
-
                     // If there was a hole before this data, record it
                     if data_start > pos {
                         regions.push(SparseRegion::Hole {
@@ -315,8 +313,6 @@ impl SparseReader {
                     // Seek to next hole after this data
                     match rustix::fs::seek(fd, RustixSeekFrom::Hole(data_start as i64)) {
                         Ok(hole_start) => {
-                            let hole_start = hole_start as u64;
-
                             // Record the data region
                             if hole_start > data_start {
                                 regions.push(SparseRegion::Data {
@@ -479,7 +475,7 @@ impl SparseReader {
 ///
 /// ```no_run
 /// use std::fs::File;
-/// use engine::local_copy::executor::file::sparse::SparseWriter;
+/// use engine::SparseWriter;
 ///
 /// let file = File::create("output.bin").unwrap();
 /// let mut writer = SparseWriter::new(file, true);
@@ -541,7 +537,7 @@ impl SparseWriter {
 
             let path = std::path::Path::new(""); // Path only used for error messages
             write_sparse_chunk(&mut self.file, &mut self.state, data, path)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
         } else {
             // Dense write - seek to offset and write
             self.file
@@ -570,7 +566,7 @@ impl SparseWriter {
             let path = std::path::Path::new("");
             self.state
                 .finish(&mut self.file, path)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
         }
 
         self.file.set_len(total_size)?;
@@ -2939,8 +2935,8 @@ mod tests {
     fn sparse_detector_mixed_regions() {
         let detector = super::SparseDetector::new(100);
         let mut data = vec![0xBBu8; 50]; // Data
-        data.extend_from_slice(&vec![0u8; 200]); // Hole
-        data.extend_from_slice(&vec![0xCCu8; 75]); // Data
+        data.extend_from_slice(&[0u8; 200]); // Hole
+        data.extend_from_slice(&[0xCCu8; 75]); // Data
 
         let regions = detector.scan(&data, 1000);
 
@@ -2972,8 +2968,8 @@ mod tests {
     fn sparse_detector_small_zero_runs_treated_as_data() {
         let detector = super::SparseDetector::new(100);
         let mut data = vec![0xAAu8; 50];
-        data.extend_from_slice(&vec![0u8; 10]); // Small run - should be part of data
-        data.extend_from_slice(&vec![0xBBu8; 50]);
+        data.extend_from_slice(&[0u8; 10]); // Small run - should be part of data
+        data.extend_from_slice(&[0xBBu8; 50]);
 
         let regions = detector.scan(&data, 0);
 
@@ -3000,7 +2996,7 @@ mod tests {
         let data = vec![0u8; 99];
         let regions = detector.scan(&data, 0);
         assert_eq!(regions.len(), 1);
-        assert!(regions[0].is_hole() == false); // 99 bytes is below threshold
+        assert!(!regions[0].is_hole()); // 99 bytes is below threshold
 
         // One byte above threshold - should be a hole
         let data = vec![0u8; 101];
@@ -3052,10 +3048,10 @@ mod tests {
         let detector = super::SparseDetector::new(50);
 
         let mut data = vec![0xAAu8; 100]; // Data
-        data.extend_from_slice(&vec![0u8; 100]); // Hole
-        data.extend_from_slice(&vec![0xBBu8; 100]); // Data
-        data.extend_from_slice(&vec![0u8; 100]); // Hole
-        data.extend_from_slice(&vec![0xCCu8; 100]); // Data
+        data.extend_from_slice(&[0u8; 100]); // Hole
+        data.extend_from_slice(&[0xBBu8; 100]); // Data
+        data.extend_from_slice(&[0u8; 100]); // Hole
+        data.extend_from_slice(&[0xCCu8; 100]); // Data
 
         let regions = detector.scan(&data, 0);
 
@@ -3153,8 +3149,7 @@ mod tests {
     #[test]
     fn sparse_writer_empty_data() {
         let file = NamedTempFile::new().expect("temp file");
-        let mut writer =
-            super::SparseWriter::new(file.as_file().try_clone().expect("clone"), true);
+        let mut writer = super::SparseWriter::new(file.as_file().try_clone().expect("clone"), true);
 
         writer.write_region(0, &[]).expect("write empty");
         writer.finish(0).expect("finish");
@@ -3220,13 +3215,13 @@ mod tests {
 
         // Write: data, zeros, data
         file.as_file_mut()
-            .write_all(&vec![0xBBu8; 100])
+            .write_all(&[0xBBu8; 100])
             .expect("write data");
         file.as_file_mut()
             .write_all(&vec![0u8; super::SPARSE_WRITE_SIZE * 2])
             .expect("write zeros");
         file.as_file_mut()
-            .write_all(&vec![0xCCu8; 100])
+            .write_all(&[0xCCu8; 100])
             .expect("write data");
 
         let regions = super::SparseReader::detect_holes(file.as_file()).expect("detect holes");

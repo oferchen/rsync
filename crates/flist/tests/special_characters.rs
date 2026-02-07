@@ -1311,28 +1311,8 @@ fn windows_reserved_names() {
 
     // These are reserved on Windows but valid on Unix
     let reserved_names = [
-        "CON",
-        "PRN",
-        "AUX",
-        "NUL",
-        "COM1",
-        "COM2",
-        "COM3",
-        "COM4",
-        "COM5",
-        "COM6",
-        "COM7",
-        "COM8",
-        "COM9",
-        "LPT1",
-        "LPT2",
-        "LPT3",
-        "LPT4",
-        "LPT5",
-        "LPT6",
-        "LPT7",
-        "LPT8",
-        "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
 
     for name in &reserved_names {
@@ -1361,12 +1341,7 @@ fn windows_reserved_names_with_extensions() {
 
     // Windows also reserves names like CON.txt, NUL.dat, etc.
     let reserved_with_ext = [
-        "CON.txt",
-        "PRN.dat",
-        "AUX.log",
-        "NUL.bin",
-        "COM1.cfg",
-        "LPT1.doc",
+        "CON.txt", "PRN.dat", "AUX.log", "NUL.bin", "COM1.cfg", "LPT1.doc",
     ];
 
     for name in &reserved_with_ext {
@@ -1698,9 +1673,7 @@ fn non_utf8_bytes_in_filename() {
     let paths = collect_relative_paths(walker);
 
     assert_eq!(paths.len(), 2);
-    assert!(paths.contains(&PathBuf::from(OsStr::from_bytes(
-        b"file\x80invalid.txt"
-    ))));
+    assert!(paths.contains(&PathBuf::from(OsStr::from_bytes(b"file\x80invalid.txt"))));
     assert!(paths.contains(&PathBuf::from(OsStr::from_bytes(b"file\xff\xfe.txt"))));
 }
 

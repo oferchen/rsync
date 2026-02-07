@@ -6,7 +6,7 @@
 //! The tests use simulated/mock approaches to avoid actually creating
 //! multi-gigabyte files during testing.
 
-use std::num::{NonZeroU32, NonZeroU8};
+use std::num::{NonZeroU8, NonZeroU32};
 
 use protocol::ProtocolVersion;
 use signature::{SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout};
@@ -52,23 +52,20 @@ mod signature_layout {
             let layout = calculate_signature_layout(params);
             assert!(
                 layout.is_ok(),
-                "Signature layout calculation should succeed for {} byte file",
-                size
+                "Signature layout calculation should succeed for {size} byte file"
             );
 
             let layout = layout.unwrap();
             assert!(
                 layout.block_count() > 0,
-                "Block count should be positive for {} byte file",
-                size
+                "Block count should be positive for {size} byte file"
             );
 
             // Verify file size can be reconstructed
             assert_eq!(
                 layout.file_size(),
                 size,
-                "File size reconstruction failed for {} byte file",
-                size
+                "File size reconstruction failed for {size} byte file"
             );
         }
     }
@@ -88,16 +85,14 @@ mod signature_layout {
             let layout = calculate_signature_layout(params);
             assert!(
                 layout.is_ok(),
-                "Signature layout should work for {} byte file",
-                size
+                "Signature layout should work for {size} byte file"
             );
 
             let layout = layout.unwrap();
             // Block count should be reasonable (not overflowed)
             assert!(
                 layout.block_count() < i32::MAX as u64,
-                "Block count should not overflow i32 for {} byte file",
-                size
+                "Block count should not overflow i32 for {size} byte file"
             );
         }
     }
@@ -122,7 +117,7 @@ mod signature_layout {
             SignatureLayoutError::FileTooLarge { length } => {
                 assert_eq!(length, too_large);
             }
-            err => panic!("Expected FileTooLarge error, got: {:?}", err),
+            err => panic!("Expected FileTooLarge error, got: {err:?}"),
         }
     }
 
@@ -232,7 +227,7 @@ mod block_size_heuristics {
         let params = SignatureLayoutParams::new(large_valid, None, protocol, checksum_length);
 
         let layout = calculate_signature_layout(params);
-        assert!(layout.is_ok(), "Should handle {} byte file", large_valid);
+        assert!(layout.is_ok(), "Should handle {large_valid} byte file");
 
         if let Ok(layout) = layout {
             assert!(
@@ -298,9 +293,7 @@ mod memory_bounds {
         // Should be < 1GB for reasonable memory usage
         assert!(
             total_signature_bytes < 1024 * 1024 * 1024,
-            "Signature memory {} bytes too high for {} byte file",
-            total_signature_bytes,
-            file_size
+            "Signature memory {total_signature_bytes} bytes too high for {file_size} byte file"
         );
     }
 
@@ -311,8 +304,8 @@ mod memory_bounds {
         let checksum_length = NonZeroU8::new(16).unwrap();
 
         let test_sizes = [
-            (FOUR_GB, 200 * 1024 * 1024),    // 4GB file -> < 200MB signatures
-            (ONE_TB, 512 * 1024 * 1024),     // 1TB file -> < 512MB signatures
+            (FOUR_GB, 200 * 1024 * 1024),          // 4GB file -> < 200MB signatures
+            (ONE_TB, 512 * 1024 * 1024),           // 1TB file -> < 512MB signatures
             (HUNDRED_TB, 50 * 1024 * 1024 * 1024), // 100TB -> < 50GB signatures
         ];
 
@@ -326,10 +319,7 @@ mod memory_bounds {
 
             assert!(
                 total_signature_bytes < max_sig_bytes,
-                "Signature size {} for {} byte file exceeds limit {}",
-                total_signature_bytes,
-                file_size,
-                max_sig_bytes
+                "Signature size {total_signature_bytes} for {file_size} byte file exceeds limit {max_sig_bytes}"
             );
         }
     }
@@ -350,15 +340,15 @@ mod file_size_reconstruction {
 
         // Test various file sizes including edge cases
         let test_sizes = [
-            1u64,              // Minimum
-            1024,              // 1KB
-            1024 * 1024,       // 1MB
-            FOUR_GB - 1,       // Just under 4GB
-            FOUR_GB,           // Exactly 4GB
-            FOUR_GB + 1,       // Just over 4GB
-            ONE_TB,            // 1TB
-            ONE_TB + 12345,    // Non-aligned size
-            HUNDRED_TB - 999,  // Large non-aligned
+            1u64,             // Minimum
+            1024,             // 1KB
+            1024 * 1024,      // 1MB
+            FOUR_GB - 1,      // Just under 4GB
+            FOUR_GB,          // Exactly 4GB
+            FOUR_GB + 1,      // Just over 4GB
+            ONE_TB,           // 1TB
+            ONE_TB + 12345,   // Non-aligned size
+            HUNDRED_TB - 999, // Large non-aligned
         ];
 
         for size in test_sizes {
@@ -368,8 +358,7 @@ mod file_size_reconstruction {
             assert_eq!(
                 layout.file_size(),
                 size,
-                "File size reconstruction failed for {}",
-                size
+                "File size reconstruction failed for {size}"
             );
         }
     }
@@ -395,8 +384,7 @@ mod file_size_reconstruction {
             // Should have a non-zero remainder
             assert!(
                 layout.remainder() > 0 || size % layout.block_length().get() as u64 == 0,
-                "Expected remainder for size {}",
-                size
+                "Expected remainder for size {size}"
             );
 
             // File size should still reconstruct correctly

@@ -3,7 +3,7 @@
 //! These tests verify that the fuzzy matcher correctly implements level 1
 //! (--fuzzy) and level 2 (-yy) behavior, matching upstream rsync's semantics.
 
-use matching::{FuzzyMatcher, FUZZY_LEVEL_1, FUZZY_LEVEL_2};
+use matching::{FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatcher};
 use std::ffi::OsStr;
 use std::fs;
 use tempfile::TempDir;
@@ -19,8 +19,8 @@ fn level_1_searches_only_dest_directory() {
     fs::write(ref_dir.path().join("file_v0.txt"), "ref version").expect("write ref");
 
     // Level 1 matcher with reference directory configured
-    let matcher = FuzzyMatcher::with_level(1)
-        .with_fuzzy_basis_dirs(vec![ref_dir.path().to_path_buf()]);
+    let matcher =
+        FuzzyMatcher::with_level(1).with_fuzzy_basis_dirs(vec![ref_dir.path().to_path_buf()]);
 
     let result = matcher.find_fuzzy_basis(OsStr::new("file_v2.txt"), dest_dir.path(), 100);
 
@@ -41,10 +41,8 @@ fn level_2_searches_dest_and_reference_dirs() {
     let ref_dir2 = TempDir::new().expect("create ref dir 2");
 
     // Put candidates in reference directories only
-    fs::write(ref_dir1.path().join("app_v1.0.tar.gz"), "version 1.0")
-        .expect("write ref1");
-    fs::write(ref_dir2.path().join("app_v1.1.tar.gz"), "version 1.1")
-        .expect("write ref2");
+    fs::write(ref_dir1.path().join("app_v1.0.tar.gz"), "version 1.0").expect("write ref1");
+    fs::write(ref_dir2.path().join("app_v1.1.tar.gz"), "version 1.1").expect("write ref2");
 
     // Level 2 matcher
     let matcher = FuzzyMatcher::with_level(2).with_fuzzy_basis_dirs(vec![
@@ -130,18 +128,11 @@ fn real_world_versioned_file_rename() {
     let dest_dir = TempDir::new().expect("create dest dir");
 
     // Old version exists
-    fs::write(
-        dest_dir.path().join("myapp-1.2.3.tar.gz"),
-        "x".repeat(5000),
-    )
-    .expect("write old version");
+    fs::write(dest_dir.path().join("myapp-1.2.3.tar.gz"), "x".repeat(5000))
+        .expect("write old version");
 
     let matcher = FuzzyMatcher::new();
-    let result = matcher.find_fuzzy_basis(
-        OsStr::new("myapp-1.2.4.tar.gz"),
-        dest_dir.path(),
-        5100,
-    );
+    let result = matcher.find_fuzzy_basis(OsStr::new("myapp-1.2.4.tar.gz"), dest_dir.path(), 5100);
 
     assert!(result.is_some(), "Should find old version as basis");
     let matched = result.unwrap();
@@ -170,15 +161,15 @@ fn real_world_dated_backup_files() {
     .expect("write backup");
 
     let matcher = FuzzyMatcher::new();
-    let result = matcher.find_fuzzy_basis(
-        OsStr::new("backup_2024-01-22.tar"),
-        dest_dir.path(),
-        10500,
-    );
+    let result =
+        matcher.find_fuzzy_basis(OsStr::new("backup_2024-01-22.tar"), dest_dir.path(), 10500);
 
     assert!(result.is_some(), "Should find previous backup as basis");
     let matched = result.unwrap();
-    assert!(matched.score > 150, "Date-stamped backups should score high");
+    assert!(
+        matched.score > 150,
+        "Date-stamped backups should score high"
+    );
 }
 
 /// Verifies that fuzzy matching respects minimum score at each level.

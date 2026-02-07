@@ -36,6 +36,7 @@ impl<'a> CopyContext<'a> {
     /// Returns the number of leading relative-path components that represent
     /// the transfer root name and should be excluded when computing safe-links
     /// depth.
+    #[allow(dead_code)]
     pub(super) const fn safety_depth_offset(&self) -> usize {
         self.safety_depth_offset
     }

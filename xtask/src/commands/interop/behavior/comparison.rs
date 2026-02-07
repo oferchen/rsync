@@ -229,9 +229,7 @@ fn compare_entries(
     }
 
     // Compare content for regular files
-    if oc_entry.file_type == FileType::Regular
-        && oc_entry.content != up_entry.content
-    {
+    if oc_entry.file_type == FileType::Regular && oc_entry.content != up_entry.content {
         differences.push(Difference::ContentDiffers {
             path: path.to_path_buf(),
             oc_rsync_size: oc_entry.size,

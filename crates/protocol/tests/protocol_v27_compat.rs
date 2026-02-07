@@ -1078,11 +1078,7 @@ mod error_edge_cases {
     /// Multiple v27 entries produce same error.
     #[test]
     fn multiple_v27_same_error() {
-        let result = select_highest_mutual([
-            TestVersion(27),
-            TestVersion(27),
-            TestVersion(27),
-        ]);
+        let result = select_highest_mutual([TestVersion(27), TestVersion(27), TestVersion(27)]);
 
         match result {
             Err(NegotiationError::UnsupportedVersion(27)) => {}

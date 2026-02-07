@@ -157,7 +157,10 @@ fn parse_args_rejects_mixed_compare_dest_and_copy_dest() {
         OsString::from("source"),
         OsString::from("dest"),
     ]);
-    assert!(result.is_err(), "mixing --compare-dest and --copy-dest should be rejected");
+    assert!(
+        result.is_err(),
+        "mixing --compare-dest and --copy-dest should be rejected"
+    );
 }
 
 #[test]
@@ -171,7 +174,10 @@ fn parse_args_rejects_mixed_compare_dest_and_link_dest() {
         OsString::from("source"),
         OsString::from("dest"),
     ]);
-    assert!(result.is_err(), "mixing --compare-dest and --link-dest should be rejected");
+    assert!(
+        result.is_err(),
+        "mixing --compare-dest and --link-dest should be rejected"
+    );
 }
 
 #[test]
@@ -185,7 +191,10 @@ fn parse_args_rejects_mixed_copy_dest_and_link_dest() {
         OsString::from("source"),
         OsString::from("dest"),
     ]);
-    assert!(result.is_err(), "mixing --copy-dest and --link-dest should be rejected");
+    assert!(
+        result.is_err(),
+        "mixing --copy-dest and --link-dest should be rejected"
+    );
 }
 
 #[test]

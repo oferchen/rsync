@@ -12,7 +12,9 @@
 #![cfg(feature = "zstd")]
 
 use compress::zlib::CompressionLevel;
-use compress::zstd::{compress_to_vec, decompress_to_vec, CountingZstdEncoder, CountingZstdDecoder};
+use compress::zstd::{
+    CountingZstdDecoder, CountingZstdEncoder, compress_to_vec, decompress_to_vec,
+};
 use std::io::Read;
 use std::num::NonZeroU8;
 
@@ -169,13 +171,12 @@ fn all_levels_1_to_22_roundtrip() {
     for level_value in 1..=22 {
         let level = CompressionLevel::Precise(NonZeroU8::new(level_value).unwrap());
         let compressed = compress_to_vec(data, level)
-            .unwrap_or_else(|e| panic!("Compression failed at level {}: {}", level_value, e));
+            .unwrap_or_else(|e| panic!("Compression failed at level {level_value}: {e}"));
         let decompressed = decompress_to_vec(&compressed)
-            .unwrap_or_else(|e| panic!("Decompression failed at level {}: {}", level_value, e));
+            .unwrap_or_else(|e| panic!("Decompression failed at level {level_value}: {e}"));
         assert_eq!(
             decompressed, data,
-            "Roundtrip failed at level {}",
-            level_value
+            "Roundtrip failed at level {level_value}"
         );
     }
 }
@@ -193,10 +194,10 @@ fn preset_levels_roundtrip() {
 
     for (level, name) in levels {
         let compressed = compress_to_vec(data, level)
-            .unwrap_or_else(|e| panic!("Compression failed at level {}: {}", name, e));
+            .unwrap_or_else(|e| panic!("Compression failed at level {name}: {e}"));
         let decompressed = decompress_to_vec(&compressed)
-            .unwrap_or_else(|e| panic!("Decompression failed at level {}: {}", name, e));
-        assert_eq!(decompressed, data, "Roundtrip failed at level {}", name);
+            .unwrap_or_else(|e| panic!("Decompression failed at level {name}: {e}"));
+        assert_eq!(decompressed, data, "Roundtrip failed at level {name}");
     }
 }
 
@@ -252,7 +253,10 @@ fn compression_ratio_at_different_levels() {
 
     // All should achieve significant compression
     assert!(fast.len() < data.len() / 5, "Fast should compress to < 20%");
-    assert!(default.len() < data.len() / 5, "Default should compress to < 20%");
+    assert!(
+        default.len() < data.len() / 5,
+        "Default should compress to < 20%"
+    );
     assert!(best.len() < data.len() / 5, "Best should compress to < 20%");
 
     // Best should be smallest or equal
@@ -292,7 +296,8 @@ fn streaming_encoder_with_sink_roundtrip() {
     let data = MEDIUM_DATA;
     let mut output = Vec::new();
 
-    let mut encoder = CountingZstdEncoder::with_sink(&mut output, CompressionLevel::Default).unwrap();
+    let mut encoder =
+        CountingZstdEncoder::with_sink(&mut output, CompressionLevel::Default).unwrap();
     encoder.write(data).unwrap();
     let (returned_output, bytes_written) = encoder.finish_into_inner().unwrap();
 
@@ -308,14 +313,15 @@ fn streaming_encoder_chunk_by_chunk() {
     let chunk_size = 4096;
     let mut output = Vec::new();
 
-    let mut encoder = CountingZstdEncoder::with_sink(&mut output, CompressionLevel::Default).unwrap();
+    let mut encoder =
+        CountingZstdEncoder::with_sink(&mut output, CompressionLevel::Default).unwrap();
 
     for chunk in data.chunks(chunk_size) {
         encoder.write(chunk).unwrap();
     }
 
     let (compressed, _) = encoder.finish_into_inner().unwrap();
-    let decompressed = decompress_to_vec(&compressed).unwrap();
+    let decompressed = decompress_to_vec(compressed).unwrap();
     assert_eq!(decompressed, data);
 }
 
@@ -357,7 +363,8 @@ fn streaming_decoder_chunked_read() {
 fn streaming_encoder_bytes_written_tracking() {
     let data = MEDIUM_DATA;
     let mut output = Vec::new();
-    let mut encoder = CountingZstdEncoder::with_sink(&mut output, CompressionLevel::Default).unwrap();
+    let mut encoder =
+        CountingZstdEncoder::with_sink(&mut output, CompressionLevel::Default).unwrap();
 
     assert_eq!(encoder.bytes_written(), 0);
     encoder.write(&data[..10]).unwrap();
@@ -421,10 +428,13 @@ fn empty_data_multiple_levels() {
         };
 
         let compressed = compress_to_vec(EMPTY_DATA, level)
-            .unwrap_or_else(|e| panic!("Compression failed at level {}: {}", level_value, e));
+            .unwrap_or_else(|e| panic!("Compression failed at level {level_value}: {e}"));
         let decompressed = decompress_to_vec(&compressed)
-            .unwrap_or_else(|e| panic!("Decompression failed at level {}: {}", level_value, e));
-        assert_eq!(decompressed, EMPTY_DATA, "Empty data roundtrip failed at level {}", level_value);
+            .unwrap_or_else(|e| panic!("Decompression failed at level {level_value}: {e}"));
+        assert_eq!(
+            decompressed, EMPTY_DATA,
+            "Empty data roundtrip failed at level {level_value}"
+        );
     }
 }
 
@@ -435,7 +445,7 @@ fn single_byte_all_values() {
         let data = [byte_value];
         let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
         let decompressed = decompress_to_vec(&compressed).unwrap();
-        assert_eq!(decompressed, data, "Failed for byte value {}", byte_value);
+        assert_eq!(decompressed, data, "Failed for byte value {byte_value}");
     }
 }
 
@@ -459,12 +469,17 @@ fn repeated_single_byte() {
 
     assert_eq!(decompressed, data);
     // Should achieve excellent compression ratio
-    assert!(compressed.len() < 1000, "Repeated byte should compress extremely well");
+    assert!(
+        compressed.len() < 1000,
+        "Repeated byte should compress extremely well"
+    );
 }
 
 #[test]
 fn alternating_pattern() {
-    let data: Vec<u8> = (0..10_000).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
+    let data: Vec<u8> = (0..10_000)
+        .map(|i| if i % 2 == 0 { 0xAA } else { 0x55 })
+        .collect();
     let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
     let decompressed = decompress_to_vec(&compressed).unwrap();
     assert_eq!(decompressed, data);
@@ -478,12 +493,17 @@ fn null_bytes() {
 
     assert_eq!(decompressed, data);
     // Null bytes should compress extremely well
-    assert!(compressed.len() < 100, "Null bytes should compress to < 100 bytes");
+    assert!(
+        compressed.len() < 100,
+        "Null bytes should compress to < 100 bytes"
+    );
 }
 
 #[test]
 fn unicode_text() {
-    let data = "Hello, 世界! Привет мир! مرحبا بالعالم! 🌍🌎🌏".repeat(100).into_bytes();
+    let data = "Hello, 世界! Привет мир! مرحبا بالعالم! 🌍🌎🌏"
+        .repeat(100)
+        .into_bytes();
     let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
     let decompressed = decompress_to_vec(&compressed).unwrap();
     assert_eq!(decompressed, data);
@@ -595,7 +615,10 @@ fn compression_overhead_for_small_data() {
 
     // Small data will expand due to compression overhead
     // Zstd header and frame overhead is relatively small
-    assert!(compressed.len() < 50, "Compression overhead should be reasonable");
+    assert!(
+        compressed.len() < 50,
+        "Compression overhead should be reasonable"
+    );
 }
 
 // ============================================================================
@@ -635,6 +658,6 @@ fn rsync_multiple_chunks_independent_compression() {
 
         let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
         let decompressed = decompress_to_vec(&compressed).unwrap();
-        assert_eq!(decompressed, data, "Failed for chunk {}", chunk_num);
+        assert_eq!(decompressed, data, "Failed for chunk {chunk_num}");
     }
 }

@@ -1302,7 +1302,7 @@ fn execute_sparse_small_all_zeros_file() {
     let source = temp.path().join("small-zeros.bin");
 
     // 256 bytes of zeros - well below the 32KB threshold
-    fs::write(&source, &vec![0u8; 256]).expect("write source");
+    fs::write(&source, vec![0u8; 256]).expect("write source");
 
     let sparse_dest = temp.path().join("sparse-small-zeros.bin");
     let plan = LocalCopyPlan::from_operands(&[
@@ -1628,7 +1628,7 @@ fn execute_append_disables_sparse_writes() {
     let dest = temp.path().join("append-dest.bin");
 
     // Create a partial destination for append mode
-    fs::write(&dest, &[0xFF]).expect("write partial dest");
+    fs::write(&dest, [0xFF]).expect("write partial dest");
     filetime::set_file_mtime(
         &dest,
         filetime::FileTime::from_unix_time(1, 0),

@@ -282,7 +282,7 @@ mod tests {
             CWD,
             &path,
             FileType::Fifo,
-            Mode::from_bits_truncate(0o600u32.into()),
+            Mode::from_bits_truncate(0o600u32),
             makedev(0, 0),
         )
         .expect("mknodat fifo");

@@ -30,7 +30,11 @@ fn keepalive_wire_format_is_4_byte_header_only() {
     send_keepalive(&mut buf).expect("send_keepalive must succeed");
 
     // MSG_NOOP with empty payload = header only
-    assert_eq!(buf.len(), 4, "keepalive must be exactly 4 bytes (header only)");
+    assert_eq!(
+        buf.len(),
+        4,
+        "keepalive must be exactly 4 bytes (header only)"
+    );
 }
 
 /// The keepalive header encodes MSG_NOOP (tag = MPLEX_BASE + 42 = 49) with length 0.
@@ -45,7 +49,7 @@ fn keepalive_header_encodes_noop_tag_49() {
 
     assert_eq!(
         tag,
-        u8::try_from(MPLEX_BASE).unwrap() + MessageCode::NoOp.as_u8(),
+        MPLEX_BASE + MessageCode::NoOp.as_u8(),
         "tag must be MPLEX_BASE + MSG_NOOP"
     );
     assert_eq!(tag, 49, "tag must be 49 (7 + 42)");
@@ -158,7 +162,10 @@ fn mplex_reader_skips_keepalives_between_data() {
         }
     }
 
-    assert_eq!(result, b"hello world", "data must be reconstructed correctly");
+    assert_eq!(
+        result, b"hello world",
+        "data must be reconstructed correctly"
+    );
 }
 
 /// Keepalive before any data does not cause errors in MplexReader.
@@ -222,10 +229,7 @@ fn keepalive_interleaved_with_oob_and_data() {
 
     let mut reader = MplexReader::new(Cursor::new(stream));
     reader.set_message_handler(move |code, payload| {
-        oob_clone
-            .lock()
-            .unwrap()
-            .push((code, payload.to_vec()));
+        oob_clone.lock().unwrap().push((code, payload.to_vec()));
     });
 
     let mut data = Vec::new();
@@ -268,7 +272,7 @@ fn multiple_keepalives_in_sequence() {
     // All must decode as NoOp with empty payload
     let mut cursor = Cursor::new(&buf);
     for i in 0..count {
-        let frame = recv_msg(&mut cursor).expect(&format!("keepalive {i} must decode"));
+        let frame = recv_msg(&mut cursor).unwrap_or_else(|_| panic!("keepalive {i} must decode"));
         assert_eq!(frame.code(), MessageCode::NoOp);
         assert!(frame.payload().is_empty());
     }
@@ -498,8 +502,7 @@ fn end_to_end_keepalive_during_transfer() {
 
     // Verify data integrity
     assert_eq!(
-        data,
-        b"file header datafile body datafile trailer",
+        data, b"file header datafile body datafile trailer",
         "data must be reconstructed without keepalive interference"
     );
 

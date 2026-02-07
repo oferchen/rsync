@@ -495,10 +495,10 @@ mod tests {
 
         // Protocol >= 27 applies heuristic
         let len = calculate_checksum_length(1024 * 1024, 1024, 27, 2);
-        assert!(len >= 2 && len <= MAX_SUM_LENGTH);
+        assert!((2..=MAX_SUM_LENGTH).contains(&len));
 
         let len = calculate_checksum_length(1024 * 1024, 1024, 31, 2);
-        assert!(len >= 2 && len <= MAX_SUM_LENGTH);
+        assert!((2..=MAX_SUM_LENGTH).contains(&len));
     }
 
     #[test]

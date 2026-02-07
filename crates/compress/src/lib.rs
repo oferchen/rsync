@@ -87,11 +87,11 @@ pub use skip_compress::{
     AdaptiveCompressor, CompressionDecider, CompressionDecision, DEFAULT_COMPRESSION_THRESHOLD,
     DEFAULT_SAMPLE_SIZE, FileCategory,
 };
+#[cfg(feature = "lz4")]
+pub use strategy::Lz4Strategy;
+#[cfg(feature = "zstd")]
+pub use strategy::ZstdStrategy;
 pub use strategy::{
     CompressionAlgorithmKind, CompressionStrategy, CompressionStrategySelector,
     NoCompressionStrategy, ZlibStrategy,
 };
-#[cfg(feature = "zstd")]
-pub use strategy::ZstdStrategy;
-#[cfg(feature = "lz4")]
-pub use strategy::Lz4Strategy;

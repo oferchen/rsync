@@ -19,15 +19,19 @@ pub enum Backend {
     /// SSE2 with 4 parallel lanes (baseline x86_64).
     Sse2,
     /// ARM NEON with 4 parallel lanes.
+    #[allow(dead_code)]
     Neon,
     /// WebAssembly SIMD with 4 parallel lanes.
+    #[allow(dead_code)]
     Wasm,
     /// Scalar fallback (1 lane).
+    #[allow(dead_code)]
     Scalar,
 }
 
 impl Backend {
     /// Number of parallel lanes for this backend.
+    #[allow(dead_code)]
     pub const fn lanes(self) -> usize {
         match self {
             Backend::Avx512 => 16,
@@ -42,6 +46,7 @@ impl Backend {
     }
 
     /// Human-readable name of the backend.
+    #[allow(dead_code)]
     pub const fn name(self) -> &'static str {
         match self {
             Backend::Avx512 => "AVX-512",
@@ -107,6 +112,7 @@ impl Dispatcher {
     }
 
     /// Get the selected backend.
+    #[allow(dead_code)]
     pub const fn backend(&self) -> Backend {
         self.backend
     }
@@ -386,6 +392,7 @@ impl Dispatcher {
     }
 
     /// Compute MD5 digest for a single input.
+    #[allow(dead_code)]
     pub fn digest(&self, input: &[u8]) -> Digest {
         scalar::digest(input)
     }

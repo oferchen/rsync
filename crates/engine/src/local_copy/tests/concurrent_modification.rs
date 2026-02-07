@@ -374,11 +374,8 @@ fn file_replaced_with_different_content_during_transfer() {
     let result = plan.execute();
 
     // Should succeed with the new content
-    match result {
-        Ok(_) => {
-            assert!(dest_root.join("replaced.txt").exists());
-        }
-        Err(_) => {}
+    if result.is_ok() {
+        assert!(dest_root.join("replaced.txt").exists());
     }
 }
 
@@ -536,7 +533,7 @@ fn checksum_mismatch_with_same_size_and_mtime() {
     // Align timestamps
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&source_file, timestamp).expect("set source mtime");
-    set_file_mtime(&dest_root.join("sneaky.txt"), timestamp).expect("set dest mtime");
+    set_file_mtime(dest_root.join("sneaky.txt"), timestamp).expect("set dest mtime");
 
     // Build plan
     let operands = vec![
@@ -561,7 +558,7 @@ fn checksum_mismatch_with_same_size_and_mtime() {
 
     // Reset destination
     fs::write(dest_root.join("sneaky.txt"), b"BBBBBBBBBB").expect("reset dest");
-    set_file_mtime(&dest_root.join("sneaky.txt"), timestamp).expect("reset mtime");
+    set_file_mtime(dest_root.join("sneaky.txt"), timestamp).expect("reset mtime");
 
     // With checksum - should detect mismatch and copy
     let plan2 = LocalCopyPlan::from_operands(&[
@@ -918,11 +915,8 @@ fn binary_file_modified_during_transfer() {
     let result = plan.execute();
 
     // Should succeed
-    match result {
-        Ok(_) => {
-            assert!(dest_root.join("binary.bin").exists());
-        }
-        Err(_) => {}
+    if result.is_ok() {
+        assert!(dest_root.join("binary.bin").exists());
     }
 }
 

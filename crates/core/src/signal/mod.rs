@@ -64,12 +64,12 @@
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub use unix::{install_signal_handlers, wait_for_signal, ShutdownReason, SignalHandler};
+pub use unix::{ShutdownReason, SignalHandler, install_signal_handlers, wait_for_signal};
 
 #[cfg(not(unix))]
 mod stub;
 #[cfg(not(unix))]
-pub use stub::{install_signal_handlers, wait_for_signal, ShutdownReason, SignalHandler};
+pub use stub::{ShutdownReason, SignalHandler, install_signal_handlers, wait_for_signal};
 
 mod cleanup;
 pub use cleanup::CleanupManager;

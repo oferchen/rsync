@@ -131,8 +131,7 @@ fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(version),
             CompressionAlgorithmKind::Zlib,
-            "Protocol version {} should default to Zlib",
-            version
+            "Protocol version {version} should default to Zlib"
         );
     }
 
@@ -143,8 +142,7 @@ fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
             assert_eq!(
                 CompressionAlgorithmKind::for_protocol_version(version),
                 CompressionAlgorithmKind::Zstd,
-                "Protocol version {} should default to Zstd",
-                version
+                "Protocol version {version} should default to Zstd"
             );
         }
     }
@@ -183,9 +181,7 @@ fn no_compression_roundtrip() {
     let mut decompressed = Vec::new();
 
     strategy.compress(MEDIUM_DATA, &mut compressed).unwrap();
-    strategy
-        .decompress(&compressed, &mut decompressed)
-        .unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
 
     assert_eq!(&decompressed, MEDIUM_DATA);
 }
@@ -340,8 +336,11 @@ fn zstd_strategy_different_levels() {
     // Just verify all produce valid compressed output that decompresses correctly.
 
     // All should decompress correctly
-    for (strategy, compressed) in [(&fast, &fast_out), (&default, &default_out), (&best, &best_out)]
-    {
+    for (strategy, compressed) in [
+        (&fast, &fast_out),
+        (&default, &default_out),
+        (&best, &best_out),
+    ] {
         let mut decompressed = Vec::new();
         strategy.decompress(compressed, &mut decompressed).unwrap();
         assert_eq!(&decompressed, data);
@@ -418,9 +417,11 @@ fn selector_for_protocol_version_creates_correct_strategy() {
 #[test]
 fn selector_for_algorithm_creates_correct_strategy() {
     // None
-    let strategy =
-        CompressionStrategySelector::for_algorithm(CompressionAlgorithmKind::None, CompressionLevel::None)
-            .unwrap();
+    let strategy = CompressionStrategySelector::for_algorithm(
+        CompressionAlgorithmKind::None,
+        CompressionLevel::None,
+    )
+    .unwrap();
     assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::None);
 
     // Zlib
@@ -489,7 +490,8 @@ fn selector_negotiate_finds_first_common_algorithm() {
         CompressionAlgorithmKind::Zlib,
     ];
 
-    let strategy = CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
 
     // Should select Zlib (first common algorithm in local preference order)
     assert_eq!(strategy.algorithm_name(), "zlib");
@@ -506,7 +508,8 @@ fn selector_negotiate_respects_local_preference_order() {
         CompressionAlgorithmKind::Zlib,
     ];
 
-    let strategy = CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
 
     // Should select Zlib (first in local list that remote supports)
     assert_eq!(strategy.algorithm_name(), "zlib");
@@ -517,7 +520,8 @@ fn selector_negotiate_no_common_algorithm_returns_none() {
     let local = vec![CompressionAlgorithmKind::Zstd];
     let remote = vec![CompressionAlgorithmKind::Lz4];
 
-    let strategy = CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
 
     // Should fall back to no compression
     assert_eq!(strategy.algorithm_name(), "none");
@@ -528,7 +532,8 @@ fn selector_negotiate_empty_lists() {
     let local: Vec<CompressionAlgorithmKind> = vec![];
     let remote: Vec<CompressionAlgorithmKind> = vec![];
 
-    let strategy = CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
 
     // Should fall back to no compression
     assert_eq!(strategy.algorithm_name(), "none");
@@ -645,7 +650,8 @@ fn all_strategies_produce_deterministic_output() {
         strategy.compress(MEDIUM_DATA, &mut output2).unwrap();
 
         assert_eq!(
-            output1, output2,
+            output1,
+            output2,
             "Non-deterministic output for {}",
             strategy.algorithm_name()
         );
@@ -720,10 +726,8 @@ fn protocol_version_roundtrip_simulation() {
         strategy.decompress(&compressed, &mut decompressed).unwrap();
 
         assert_eq!(
-            &decompressed,
-            MEDIUM_DATA,
-            "Failed roundtrip for protocol version {}",
-            version
+            &decompressed, MEDIUM_DATA,
+            "Failed roundtrip for protocol version {version}"
         );
     }
 }
@@ -735,12 +739,20 @@ fn negotiation_simulation() {
     // Scenario 1: Both support all algorithms
     let client_algos = CompressionAlgorithmKind::all();
     let server_algos = CompressionAlgorithmKind::all();
-    let strategy = CompressionStrategySelector::negotiate(&client_algos, &server_algos, CompressionLevel::Default);
+    let strategy = CompressionStrategySelector::negotiate(
+        &client_algos,
+        &server_algos,
+        CompressionLevel::Default,
+    );
     assert!(strategy.algorithm_kind().is_available());
 
     // Scenario 2: Server only supports Zlib
     let server_algos = vec![CompressionAlgorithmKind::Zlib];
-    let strategy = CompressionStrategySelector::negotiate(&client_algos, &server_algos, CompressionLevel::Default);
+    let strategy = CompressionStrategySelector::negotiate(
+        &client_algos,
+        &server_algos,
+        CompressionLevel::Default,
+    );
     assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Zlib);
 
     // Scenario 3: Client prefers Zstd
@@ -751,8 +763,11 @@ fn negotiation_simulation() {
             CompressionAlgorithmKind::Zlib,
         ];
         let server_algos = CompressionAlgorithmKind::all();
-        let strategy =
-            CompressionStrategySelector::negotiate(&client_algos, &server_algos, CompressionLevel::Default);
+        let strategy = CompressionStrategySelector::negotiate(
+            &client_algos,
+            &server_algos,
+            CompressionLevel::Default,
+        );
         assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Zstd);
     }
 }
@@ -778,7 +793,8 @@ fn large_data_roundtrip() {
         strategy.decompress(&compressed, &mut decompressed).unwrap();
 
         assert_eq!(
-            decompressed, large_data,
+            decompressed,
+            large_data,
             "Large data roundtrip failed for {}",
             strategy.algorithm_name()
         );

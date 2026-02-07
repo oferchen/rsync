@@ -720,7 +720,11 @@ impl ReadyEntryAction {
 ///
 /// - `generator.c:recv_generator()` - Entry dispatch by type
 /// - `flist.c:recv_file_list()` - File list processing with filtering
-pub fn process_ready_entry<F, G>(entry: FileEntry, is_excluded: F, failed_ancestor: G) -> ReadyEntryAction
+pub fn process_ready_entry<F, G>(
+    entry: FileEntry,
+    is_excluded: F,
+    failed_ancestor: G,
+) -> ReadyEntryAction
 where
     F: FnOnce(&str, bool) -> bool,
     G: FnOnce(&str) -> Option<String>,
@@ -748,12 +752,7 @@ where
     // Check filter rules.
     // The callback returns true if the entry is excluded.
     if is_excluded(name, is_dir) {
-        debug_log!(
-            Flist,
-            2,
-            "process_ready_entry: filtering out \"{}\"",
-            name
-        );
+        debug_log!(Flist, 2, "process_ready_entry: filtering out \"{}\"", name);
         return ReadyEntryAction::SkipFiltered(entry);
     }
 
@@ -808,7 +807,11 @@ where
     let ready = incremental.drain_ready();
     let mut actions = Vec::with_capacity(ready.len());
     for entry in ready {
-        actions.push(process_ready_entry(entry, &mut is_excluded, &mut failed_ancestor));
+        actions.push(process_ready_entry(
+            entry,
+            &mut is_excluded,
+            &mut failed_ancestor,
+        ));
     }
     actions
 }
@@ -1735,11 +1738,7 @@ mod tests {
     fn test_process_ready_entry_filtered_directory() {
         let entry = make_dir(".git");
         // Filter excludes directories named .git
-        let action = process_ready_entry(
-            entry,
-            |name, _is_dir| name == ".git",
-            no_failures,
-        );
+        let action = process_ready_entry(entry, |name, _is_dir| name == ".git", no_failures);
         assert!(matches!(action, ReadyEntryAction::SkipFiltered(_)));
         assert!(action.is_skipped());
     }
@@ -1747,17 +1746,13 @@ mod tests {
     #[test]
     fn test_process_ready_entry_failed_parent() {
         let entry = make_file("broken_dir/file.txt");
-        let action = process_ready_entry(
-            entry,
-            no_filter,
-            |name| {
-                if name.starts_with("broken_dir") {
-                    Some("broken_dir".to_string())
-                } else {
-                    None
-                }
-            },
-        );
+        let action = process_ready_entry(entry, no_filter, |name| {
+            if name.starts_with("broken_dir") {
+                Some("broken_dir".to_string())
+            } else {
+                None
+            }
+        });
         match &action {
             ReadyEntryAction::SkipFailedParent {
                 entry,
@@ -1778,7 +1773,7 @@ mod tests {
         let entry = make_file("bad/excluded.o");
         let action = process_ready_entry(
             entry,
-            |_name, _is_dir| true, // would be filtered
+            |_name, _is_dir| true,           // would be filtered
             |_name| Some("bad".to_string()), // also has failed parent
         );
         // Failed parent check runs first
@@ -1832,11 +1827,7 @@ mod tests {
     #[test]
     fn test_process_ready_entry_into_entry_from_failed_parent() {
         let entry = make_file("bad/file.txt");
-        let action = process_ready_entry(
-            entry,
-            no_filter,
-            |_| Some("bad".to_string()),
-        );
+        let action = process_ready_entry(entry, no_filter, |_| Some("bad".to_string()));
         let recovered = action.into_entry();
         assert_eq!(recovered.name(), "bad/file.txt");
     }
@@ -1849,11 +1840,7 @@ mod tests {
         incremental.push(make_file("README.md"));
         incremental.push(make_symlink("latest", "v1.0"));
 
-        let actions = process_ready_entries(
-            &mut incremental,
-            no_filter,
-            no_failures,
-        );
+        let actions = process_ready_entries(&mut incremental, no_filter, no_failures);
         assert_eq!(actions.len(), 4);
         assert!(matches!(actions[0], ReadyEntryAction::CreateDirectory(_)));
         assert!(matches!(actions[1], ReadyEntryAction::TransferFile(_)));
@@ -1892,25 +1879,21 @@ mod tests {
         let mut failed_set: HashSet<String> = HashSet::new();
         failed_set.insert("bad".to_string());
 
-        let actions = process_ready_entries(
-            &mut incremental,
-            no_filter,
-            |name| {
-                // Check exact match first, then walk up path ancestors.
-                // This mirrors FailedDirectories::failed_ancestor() behavior.
-                if failed_set.contains(name) {
-                    return Some(name.to_string());
+        let actions = process_ready_entries(&mut incremental, no_filter, |name| {
+            // Check exact match first, then walk up path ancestors.
+            // This mirrors FailedDirectories::failed_ancestor() behavior.
+            if failed_set.contains(name) {
+                return Some(name.to_string());
+            }
+            let mut check = name;
+            while let Some(pos) = check.rfind('/') {
+                check = &check[..pos];
+                if failed_set.contains(check) {
+                    return Some(check.to_string());
                 }
-                let mut check = name;
-                while let Some(pos) = check.rfind('/') {
-                    check = &check[..pos];
-                    if failed_set.contains(check) {
-                        return Some(check.to_string());
-                    }
-                }
-                None
-            },
-        );
+            }
+            None
+        });
 
         assert_eq!(actions.len(), 5);
 
@@ -1925,36 +1908,52 @@ mod tests {
         assert!(matches!(good_action, ReadyEntryAction::CreateDirectory(_)));
 
         // good/file.txt - should be actionable (TransferFile)
-        let good_file = actions.iter().find(|a| a.entry().name() == "good/file.txt").unwrap();
+        let good_file = actions
+            .iter()
+            .find(|a| a.entry().name() == "good/file.txt")
+            .unwrap();
         assert!(matches!(good_file, ReadyEntryAction::TransferFile(_)));
 
         // bad dir - has failed ancestor "bad" (exact match)
         let bad_dir = actions.iter().find(|a| a.entry().name() == "bad").unwrap();
         match bad_dir {
-            ReadyEntryAction::SkipFailedParent { failed_ancestor, .. } => {
+            ReadyEntryAction::SkipFailedParent {
+                failed_ancestor, ..
+            } => {
                 assert_eq!(failed_ancestor, "bad");
             }
             other => panic!("expected SkipFailedParent for 'bad', got {other:?}"),
         }
 
         // bad/orphan.txt - has failed ancestor "bad"
-        let bad_orphan = actions.iter().find(|a| a.entry().name() == "bad/orphan.txt").unwrap();
+        let bad_orphan = actions
+            .iter()
+            .find(|a| a.entry().name() == "bad/orphan.txt")
+            .unwrap();
         match bad_orphan {
-            ReadyEntryAction::SkipFailedParent { failed_ancestor, .. } => {
+            ReadyEntryAction::SkipFailedParent {
+                failed_ancestor, ..
+            } => {
                 assert_eq!(failed_ancestor, "bad");
             }
             other => panic!("expected SkipFailedParent for 'bad/orphan.txt', got {other:?}"),
         }
 
         // ok.txt - should be actionable (TransferFile)
-        let ok_file = actions.iter().find(|a| a.entry().name() == "ok.txt").unwrap();
+        let ok_file = actions
+            .iter()
+            .find(|a| a.entry().name() == "ok.txt")
+            .unwrap();
         assert!(matches!(ok_file, ReadyEntryAction::TransferFile(_)));
 
         // Verify skip counts
         let skipped = action_names.iter().filter(|(_, s)| *s).count();
         let actionable = action_names.iter().filter(|(_, s)| !*s).count();
         assert_eq!(skipped, 2, "bad dir and bad/orphan.txt should be skipped");
-        assert_eq!(actionable, 3, "good, good/file.txt, ok.txt should be actionable");
+        assert_eq!(
+            actionable, 3,
+            "good, good/file.txt, ok.txt should be actionable"
+        );
     }
 
     #[test]
@@ -2034,9 +2033,8 @@ mod tests {
     #[test]
     fn test_process_ready_entry_selective_filter() {
         // Filter that only excludes .o files
-        let filter = |name: &str, _is_dir: bool| -> bool {
-            name.ends_with(".o") || name.ends_with(".tmp")
-        };
+        let filter =
+            |name: &str, _is_dir: bool| -> bool { name.ends_with(".o") || name.ends_with(".tmp") };
 
         let cases = vec![
             (make_file("main.o"), true),
@@ -2050,15 +2048,9 @@ mod tests {
             let name = entry.name().to_string();
             let action = process_ready_entry(entry, filter, no_failures);
             if should_filter {
-                assert!(
-                    action.is_skipped(),
-                    "expected {name} to be filtered"
-                );
+                assert!(action.is_skipped(), "expected {name} to be filtered");
             } else {
-                assert!(
-                    action.is_actionable(),
-                    "expected {name} to be actionable"
-                );
+                assert!(action.is_actionable(), "expected {name} to be actionable");
             }
         }
     }
@@ -2084,11 +2076,8 @@ mod tests {
         let filtered_action = process_ready_entry(make_file("x"), |_, _| true, no_failures);
         assert_eq!(filtered_action.entry().name(), "x");
 
-        let failed_action = process_ready_entry(
-            make_file("bad/y"),
-            no_filter,
-            |_| Some("bad".to_string()),
-        );
+        let failed_action =
+            process_ready_entry(make_file("bad/y"), no_filter, |_| Some("bad".to_string()));
         assert_eq!(failed_action.entry().name(), "bad/y");
     }
 

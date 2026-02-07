@@ -2335,7 +2335,8 @@ fn generate_basis_signature(
     basis_path: PathBuf,
     config: SignatureGenerationConfig,
 ) -> BasisFileResult {
-    let params = SignatureLayoutParams::new(basis_size, None, config.protocol, config.checksum_length);
+    let params =
+        SignatureLayoutParams::new(basis_size, None, config.protocol, config.checksum_length);
 
     let layout = match calculate_signature_layout(params) {
         Ok(layout) => layout,
@@ -3856,7 +3857,9 @@ mod tests {
         }
 
         /// Helper: create an `IncrementalFileListReceiver` from raw wire data.
-        fn make_receiver(data: Vec<u8>) -> super::super::IncrementalFileListReceiver<Cursor<Vec<u8>>> {
+        fn make_receiver(
+            data: Vec<u8>,
+        ) -> super::super::IncrementalFileListReceiver<Cursor<Vec<u8>>> {
             let handshake = test_handshake();
             let config = test_config();
             let ctx = ReceiverContext::new(&handshake, config);
@@ -4287,9 +4290,7 @@ mod tests {
 
         #[test]
         fn try_read_one_stats_are_accessible() {
-            let entries = vec![
-                FileEntry::new_file("stat_test.txt".into(), 999, 0o644),
-            ];
+            let entries = vec![FileEntry::new_file("stat_test.txt".into(), 999, 0o644)];
             let data = encode_entries(&entries);
             let mut receiver = make_receiver(data);
 
