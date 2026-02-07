@@ -46,6 +46,9 @@ impl FilterSegment {
         context: FilterContext,
     ) {
         for rule in &self.include_exclude {
+            if outcome.transfer_decided() {
+                break;
+            }
             if rule.matches(path, is_dir) {
                 if matches!(context, FilterContext::Deletion) && rule.applies_to_receiver {
                     outcome.set_delete_excluded(matches!(rule.action, FilterAction::Exclude));
@@ -58,12 +61,14 @@ impl FilterSegment {
                         if rule.applies_to_sender {
                             outcome
                                 .set_transfer_allowed(matches!(rule.action, FilterAction::Include));
+                            outcome.decide_transfer();
                         }
                     }
                     FilterContext::Deletion => {
                         if rule.applies_to_receiver {
                             outcome
                                 .set_transfer_allowed(matches!(rule.action, FilterAction::Include));
+                            outcome.decide_transfer();
                         }
                     }
                 }
@@ -120,6 +125,7 @@ pub(crate) enum FilterContext {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FilterOutcome {
     transfer_allowed: bool,
+    transfer_decided: bool,
     protected: bool,
     excluded_for_delete_excluded: bool,
 }
@@ -128,6 +134,7 @@ impl FilterOutcome {
     const fn new() -> Self {
         Self {
             transfer_allowed: true,
+            transfer_decided: false,
             protected: false,
             excluded_for_delete_excluded: false,
         }
@@ -143,6 +150,14 @@ impl FilterOutcome {
 
     pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
         self.excluded_for_delete_excluded && !self.protected
+    }
+
+    pub(crate) const fn transfer_decided(self) -> bool {
+        self.transfer_decided
+    }
+
+    const fn decide_transfer(&mut self) {
+        self.transfer_decided = true;
     }
 
     const fn set_transfer_allowed(&mut self, allowed: bool) {
