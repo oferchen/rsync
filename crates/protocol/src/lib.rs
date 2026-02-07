@@ -49,7 +49,10 @@ pub use envelope::{
     ParseMessageCodeError,
 };
 pub use error::NegotiationError;
-pub use iconv::{ConversionError, FilenameConverter, converter_from_locale};
+pub use iconv::{
+    ConversionError, EncodingConverter, EncodingError, EncodingPair, FilenameConverter,
+    converter_from_locale,
+};
 pub use legacy::{
     DigestListTokens, LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonGreeting, LegacyDaemonGreetingOwned, LegacyDaemonMessage,
