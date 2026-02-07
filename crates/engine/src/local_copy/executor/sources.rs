@@ -752,7 +752,6 @@ fn flush_deferred_operations(context: &mut CopyContext) -> Result<(), LocalCopyE
     context.flush_deferred_deletions()?;
 
     // Flush any remaining deferred sync operations
-    #[cfg(feature = "batch-sync")]
     context.flush_deferred_syncs()?;
 
     context.enforce_timeout()?;

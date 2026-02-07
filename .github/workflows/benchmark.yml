@@ -75,7 +75,7 @@ jobs:
         run: |
           # Run internal optimization benchmarks
           cargo bench -p checksums --bench checksums_benchmark -- --noplot > /dev/null 2>&1 || true
-          cargo bench -p engine --features optimized-buffers --bench optimizations_benchmark -- --noplot 2>&1 | tee criterion_output.txt || true
+          cargo bench -p engine --bench optimizations_benchmark -- --noplot 2>&1 | tee criterion_output.txt || true
 
           # Extract key metrics for buffer pool
           echo "## Internal Optimization Benchmarks" > criterion_report.md

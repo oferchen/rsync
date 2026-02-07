@@ -525,7 +525,6 @@ parallel
 ├── cli/parallel
 └── checksums/parallel
     └── engine/parallel
-        └── engine/optimized-buffers
         └── engine/lazy-metadata
         └── engine/batch-sync
 

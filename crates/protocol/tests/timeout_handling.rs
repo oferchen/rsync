@@ -529,3 +529,326 @@ fn io_timeout_varying_payload_lengths() {
         assert_eq!(header.payload_len(), len);
     }
 }
+
+// =============================================================================
+// Multiplexed Stream send_msg / recv_msg Roundtrip Tests
+// =============================================================================
+
+use std::io::Cursor;
+use protocol::{recv_msg, send_msg, MplexReader, MplexWriter, MessageFrame};
+use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
+
+/// MSG_IO_TIMEOUT with a 4-byte timeout payload roundtrips through send_msg/recv_msg.
+#[test]
+fn io_timeout_send_recv_roundtrip_with_timeout_payload() {
+    let timeout_secs: u32 = 300;
+    let payload = timeout_secs.to_le_bytes();
+
+    let mut buf = Vec::new();
+    send_msg(&mut buf, MessageCode::IoTimeout, &payload).expect("send io_timeout");
+
+    let mut cursor = Cursor::new(&buf);
+    let frame = recv_msg(&mut cursor).expect("recv io_timeout");
+
+    assert_eq!(frame.code(), MessageCode::IoTimeout);
+    assert_eq!(frame.payload().len(), 4);
+    let decoded = u32::from_le_bytes(frame.payload().try_into().unwrap());
+    assert_eq!(decoded, 300);
+}
+
+/// MSG_IO_TIMEOUT with zero timeout (disabled) roundtrips correctly.
+#[test]
+fn io_timeout_send_recv_zero_timeout_roundtrip() {
+    let timeout_secs: u32 = 0;
+    let payload = timeout_secs.to_le_bytes();
+
+    let mut buf = Vec::new();
+    send_msg(&mut buf, MessageCode::IoTimeout, &payload).expect("send");
+
+    let mut cursor = Cursor::new(&buf);
+    let frame = recv_msg(&mut cursor).expect("recv");
+
+    assert_eq!(frame.code(), MessageCode::IoTimeout);
+    let decoded = u32::from_le_bytes(frame.payload().try_into().unwrap());
+    assert_eq!(decoded, 0);
+}
+
+/// MSG_IO_TIMEOUT with empty payload (no timeout value) roundtrips.
+#[test]
+fn io_timeout_send_recv_empty_payload_roundtrip() {
+    let mut buf = Vec::new();
+    send_msg(&mut buf, MessageCode::IoTimeout, &[]).expect("send");
+
+    let mut cursor = Cursor::new(&buf);
+    let frame = recv_msg(&mut cursor).expect("recv");
+
+    assert_eq!(frame.code(), MessageCode::IoTimeout);
+    assert!(frame.payload().is_empty());
+}
+
+/// MSG_IO_TIMEOUT encodes to the correct wire bytes.
+#[test]
+fn io_timeout_wire_bytes_correct() {
+    let timeout_secs: u32 = 30;
+    let payload = timeout_secs.to_le_bytes();
+
+    let mut buf = Vec::new();
+    send_msg(&mut buf, MessageCode::IoTimeout, &payload).expect("send");
+
+    // Total: 4 byte header + 4 byte payload = 8 bytes
+    assert_eq!(buf.len(), 8);
+
+    // Verify header
+    let raw_header = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    let tag = (raw_header >> 24) as u8;
+    let payload_len = raw_header & 0x00FF_FFFF;
+
+    // IoTimeout code = 33, tag = MPLEX_BASE(7) + 33 = 40
+    assert_eq!(tag, MPLEX_BASE + 33);
+    assert_eq!(payload_len, 4);
+
+    // Verify payload is the LE-encoded 30
+    assert_eq!(&buf[4..], &30u32.to_le_bytes());
+}
+
+// =============================================================================
+// MplexReader Timeout Message Handling Tests
+// =============================================================================
+
+/// MplexReader dispatches MSG_IO_TIMEOUT to the message handler as an OOB message.
+#[test]
+fn mplex_reader_dispatches_io_timeout_to_handler() {
+    let mut stream = Vec::new();
+    // Send a timeout message followed by data
+    send_msg(&mut stream, MessageCode::IoTimeout, &30u32.to_le_bytes()).unwrap();
+    send_msg(&mut stream, MessageCode::Data, b"after timeout").unwrap();
+
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let messages_clone = messages.clone();
+
+    let mut reader = MplexReader::new(Cursor::new(stream));
+    reader.set_message_handler(move |code, payload| {
+        messages_clone
+            .lock()
+            .unwrap()
+            .push((code, payload.to_vec()));
+    });
+
+    let mut buf = [0u8; 64];
+    let n = reader.read(&mut buf).unwrap();
+    assert_eq!(&buf[..n], b"after timeout");
+
+    // Verify the timeout message was dispatched
+    let captured = messages.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].0, MessageCode::IoTimeout);
+    let timeout_val = u32::from_le_bytes(captured[0].1[..4].try_into().unwrap());
+    assert_eq!(timeout_val, 30);
+}
+
+/// MplexReader skips IoTimeout messages (non-DATA) transparently when no handler is set.
+#[test]
+fn mplex_reader_skips_io_timeout_without_handler() {
+    let mut stream = Vec::new();
+    send_msg(&mut stream, MessageCode::IoTimeout, &60u32.to_le_bytes()).unwrap();
+    send_msg(&mut stream, MessageCode::Data, b"data after silent timeout").unwrap();
+
+    let mut reader = MplexReader::new(Cursor::new(stream));
+    // No handler set -- timeout is silently discarded
+
+    let mut buf = [0u8; 64];
+    let n = reader.read(&mut buf).unwrap();
+    assert_eq!(&buf[..n], b"data after silent timeout");
+}
+
+/// MplexReader handles multiple IoTimeout messages interleaved with data.
+#[test]
+fn mplex_reader_handles_multiple_io_timeouts_interleaved() {
+    let mut stream = Vec::new();
+    send_msg(&mut stream, MessageCode::Data, b"chunk1").unwrap();
+    send_msg(&mut stream, MessageCode::IoTimeout, &30u32.to_le_bytes()).unwrap();
+    send_msg(&mut stream, MessageCode::Data, b"chunk2").unwrap();
+    send_msg(&mut stream, MessageCode::IoTimeout, &60u32.to_le_bytes()).unwrap();
+    send_msg(&mut stream, MessageCode::IoTimeout, &90u32.to_le_bytes()).unwrap();
+    send_msg(&mut stream, MessageCode::Data, b"chunk3").unwrap();
+
+    let timeout_values = Arc::new(Mutex::new(Vec::new()));
+    let timeout_values_clone = timeout_values.clone();
+
+    let mut reader = MplexReader::new(Cursor::new(stream));
+    reader.set_message_handler(move |code, payload| {
+        if code == MessageCode::IoTimeout && payload.len() == 4 {
+            let val = u32::from_le_bytes(payload.try_into().unwrap());
+            timeout_values_clone.lock().unwrap().push(val);
+        }
+    });
+
+    let mut data = Vec::new();
+    let mut buf = [0u8; 64];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => data.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    assert_eq!(data, b"chunk1chunk2chunk3");
+
+    let captured = timeout_values.lock().unwrap();
+    assert_eq!(*captured, vec![30, 60, 90]);
+}
+
+// =============================================================================
+// MplexWriter Timeout Message Tests
+// =============================================================================
+
+/// MplexWriter can send an IoTimeout message via write_message.
+#[test]
+fn mplex_writer_sends_io_timeout_message() {
+    let mut output = Vec::new();
+    let mut writer = MplexWriter::new(&mut output);
+
+    let timeout_payload = 120u32.to_le_bytes();
+    writer
+        .write_message(MessageCode::IoTimeout, &timeout_payload)
+        .unwrap();
+
+    // Verify by decoding
+    let mut cursor = Cursor::new(&output);
+    let frame = recv_msg(&mut cursor).unwrap();
+    assert_eq!(frame.code(), MessageCode::IoTimeout);
+    assert_eq!(frame.payload().len(), 4);
+    let decoded = u32::from_le_bytes(frame.payload().try_into().unwrap());
+    assert_eq!(decoded, 120);
+}
+
+/// MplexWriter flushes buffered data before sending IoTimeout message.
+#[test]
+fn mplex_writer_flushes_before_io_timeout() {
+    let mut output = Vec::new();
+    let mut writer = MplexWriter::new(&mut output);
+
+    writer.write_all(b"buffered data").unwrap();
+    assert_eq!(writer.buffered(), 13);
+
+    writer
+        .write_message(MessageCode::IoTimeout, &45u32.to_le_bytes())
+        .unwrap();
+    assert_eq!(writer.buffered(), 0);
+
+    // Verify order: DATA then IoTimeout
+    let mut cursor = Cursor::new(&output);
+    let frame1 = recv_msg(&mut cursor).unwrap();
+    assert_eq!(frame1.code(), MessageCode::Data);
+    assert_eq!(frame1.payload(), b"buffered data");
+
+    let frame2 = recv_msg(&mut cursor).unwrap();
+    assert_eq!(frame2.code(), MessageCode::IoTimeout);
+    let decoded = u32::from_le_bytes(frame2.payload().try_into().unwrap());
+    assert_eq!(decoded, 45);
+}
+
+// =============================================================================
+// MessageFrame IoTimeout Tests
+// =============================================================================
+
+/// MessageFrame can carry an IoTimeout with timeout payload.
+#[test]
+fn message_frame_io_timeout_roundtrip() {
+    let payload = 600u32.to_le_bytes().to_vec();
+    let frame = MessageFrame::new(MessageCode::IoTimeout, payload).unwrap();
+
+    assert_eq!(frame.code(), MessageCode::IoTimeout);
+    assert_eq!(frame.payload().len(), 4);
+
+    let mut encoded = Vec::new();
+    frame.encode_into_vec(&mut encoded).unwrap();
+
+    let (decoded, remainder) = MessageFrame::decode_from_slice(&encoded).unwrap();
+    assert!(remainder.is_empty());
+    assert_eq!(decoded.code(), MessageCode::IoTimeout);
+    let timeout_val = u32::from_le_bytes(decoded.payload().try_into().unwrap());
+    assert_eq!(timeout_val, 600);
+}
+
+// =============================================================================
+// End-to-End Writer-to-Reader IoTimeout Pipeline
+// =============================================================================
+
+/// Simulates a daemon sending its timeout configuration via MSG_IO_TIMEOUT
+/// and the client receiving it through the MplexReader pipeline.
+#[test]
+fn end_to_end_io_timeout_writer_to_reader_pipeline() {
+    let mut wire = Vec::new();
+
+    // Simulate daemon sending timeout announcement followed by data
+    {
+        let mut writer = MplexWriter::new(&mut wire);
+
+        // Daemon announces its 300-second timeout
+        writer
+            .write_message(MessageCode::IoTimeout, &300u32.to_le_bytes())
+            .unwrap();
+
+        // Then sends file data
+        writer.write_data(b"file contents here").unwrap();
+
+        // Sends a keepalive heartbeat
+        writer.write_keepalive().unwrap();
+
+        // Sends more data
+        writer.write_data(b" and more data").unwrap();
+        writer.flush().unwrap();
+    }
+
+    // Simulate client receiving the stream
+    let received_timeout = Arc::new(Mutex::new(None));
+    let keepalive_count = Arc::new(Mutex::new(0u32));
+    let received_timeout_clone = received_timeout.clone();
+    let keepalive_count_clone = keepalive_count.clone();
+
+    let mut reader = MplexReader::new(Cursor::new(wire));
+    reader.set_message_handler(move |code, payload| {
+        match code {
+            MessageCode::IoTimeout if payload.len() == 4 => {
+                let val = u32::from_le_bytes(payload.try_into().unwrap());
+                *received_timeout_clone.lock().unwrap() = Some(val);
+            }
+            MessageCode::NoOp => {
+                *keepalive_count_clone.lock().unwrap() += 1;
+            }
+            _ => {}
+        }
+    });
+
+    // Read all data
+    let mut data = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => data.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    // Verify data integrity
+    assert_eq!(data, b"file contents here and more data");
+
+    // Verify timeout was received
+    assert_eq!(*received_timeout.lock().unwrap(), Some(300));
+
+    // Verify keepalive was counted
+    assert_eq!(*keepalive_count.lock().unwrap(), 1);
+}
+
+/// MSG_IO_TIMEOUT is not a keepalive -- is_keepalive() returns false.
+#[test]
+fn io_timeout_is_not_keepalive() {
+    assert!(!MessageCode::IoTimeout.is_keepalive());
+    assert!(MessageCode::NoOp.is_keepalive());
+}

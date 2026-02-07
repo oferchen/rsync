@@ -503,3 +503,93 @@ fn log_file_builder_defaults_match_options_defaults() {
         from_default.effective_log_file_format()
     );
 }
+
+// ==================== Config Propagation Tests ====================
+
+#[test]
+fn log_file_config_propagation_setter_and_builder_agree() {
+    let via_setter = LocalCopyOptions::new()
+        .with_log_file(Some("/tmp/rsync.log"))
+        .with_log_file_format(Some("%f %l"));
+
+    let via_builder = LocalCopyOptions::builder()
+        .log_file(Some("/tmp/rsync.log"))
+        .log_file_format(Some("%f %l"))
+        .build()
+        .expect("valid options");
+
+    assert_eq!(via_setter.log_file_path(), via_builder.log_file_path());
+    assert_eq!(via_setter.log_file_format(), via_builder.log_file_format());
+    assert_eq!(
+        via_setter.effective_log_file_format(),
+        via_builder.effective_log_file_format()
+    );
+}
+
+#[test]
+fn log_file_format_without_log_file_is_stored() {
+    // Setting format without log file is allowed; format is stored for later use.
+    let opts = LocalCopyOptions::new().with_log_file_format(Some("%n %l"));
+    assert!(opts.log_file_path().is_none());
+    assert_eq!(opts.log_file_format(), Some("%n %l"));
+    assert_eq!(opts.effective_log_file_format(), "%n %l");
+}
+
+#[test]
+fn log_file_effective_format_uses_default_percent_i_n_l() {
+    // Upstream rsync default: "%i %n%L"
+    let opts = LocalCopyOptions::new().with_log_file(Some("/tmp/test.log"));
+    assert_eq!(opts.effective_log_file_format(), "%i %n%L");
+}
+
+// ==================== Edge Case Tests ====================
+
+#[test]
+fn log_file_empty_format_string_is_stored() {
+    let opts = LocalCopyOptions::new().with_log_file_format(Some(""));
+    assert_eq!(opts.log_file_format(), Some(""));
+    assert_eq!(opts.effective_log_file_format(), "");
+}
+
+#[test]
+fn log_file_path_with_special_characters() {
+    let opts = LocalCopyOptions::new().with_log_file(Some("/tmp/my logs/rsync (1).log"));
+    assert_eq!(
+        opts.log_file_path(),
+        Some(Path::new("/tmp/my logs/rsync (1).log"))
+    );
+}
+
+#[test]
+fn log_file_builder_chaining_preserves_other_options() {
+    let opts = LocalCopyOptions::builder()
+        .recursive(true)
+        .times(true)
+        .log_file(Some("/tmp/rsync.log"))
+        .log_file_format(Some("%o %n"))
+        .checksum(true)
+        .build()
+        .expect("valid options");
+
+    assert_eq!(opts.log_file_path(), Some(Path::new("/tmp/rsync.log")));
+    assert_eq!(opts.log_file_format(), Some("%o %n"));
+    assert!(opts.recursive_enabled());
+    assert!(opts.preserve_times());
+    assert!(opts.checksum_enabled());
+}
+
+#[test]
+fn log_file_overwrite_replaces_previous_value() {
+    let opts = LocalCopyOptions::new()
+        .with_log_file(Some("/first.log"))
+        .with_log_file(Some("/second.log"));
+    assert_eq!(opts.log_file_path(), Some(Path::new("/second.log")));
+}
+
+#[test]
+fn log_file_format_overwrite_replaces_previous_value() {
+    let opts = LocalCopyOptions::new()
+        .with_log_file_format(Some("%n"))
+        .with_log_file_format(Some("%f %l"));
+    assert_eq!(opts.log_file_format(), Some("%f %l"));
+}

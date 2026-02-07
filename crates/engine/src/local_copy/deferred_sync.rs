@@ -129,7 +129,6 @@ impl DeferredSync {
     /// # Errors
     ///
     /// Returns an error if immediate sync fails.
-    #[cfg_attr(not(feature = "batch-sync"), allow(dead_code))]
     pub fn register(&mut self, path: PathBuf) -> io::Result<()> {
         match self.strategy {
             SyncStrategy::Immediate => {
@@ -158,7 +157,6 @@ impl DeferredSync {
     /// # Errors
     ///
     /// Returns an error if any sync operation fails.
-    #[cfg_attr(not(feature = "batch-sync"), allow(dead_code))]
     pub fn flush_if_threshold(&mut self) -> io::Result<()> {
         if matches!(self.strategy, SyncStrategy::Batched(_))
             && self.pending_files.len() >= self.threshold
@@ -283,7 +281,7 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 
 /// Syncs an entire filesystem using syncfs() on Linux.
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // Used by flush methods which are tested
+#[allow(dead_code, unsafe_code)] // Used by flush methods which are tested
 fn sync_filesystem(path: &Path) -> io::Result<()> {
     let file = File::open(path)?;
     let fd = file.as_raw_fd();
