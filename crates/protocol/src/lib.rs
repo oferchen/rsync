@@ -14,6 +14,8 @@ pub mod codec;
 mod compatibility;
 /// Debug tracing system for protocol analysis
 pub mod debug_trace;
+/// Debug I/O tracing for I/O operations
+pub mod debug_io;
 mod envelope;
 mod error;
 /// Error recovery and partial transfer handling for rsync protocol operations.
