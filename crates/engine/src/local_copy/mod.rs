@@ -65,6 +65,7 @@ pub(crate) mod debug_recv;
 pub(crate) mod debug_send;
 mod deferred_sync;
 pub(crate) mod parallel_transfer;
+pub(crate) mod pipelined_state;
 pub(crate) mod prefetch;
 pub mod win_copy;
 /// Deletion strategy implementations for rsync `--delete` variants.
