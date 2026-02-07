@@ -100,6 +100,9 @@ mod options;
 #[cfg(unix)]
 mod ownership;
 
+/// Optimized metadata caching with statx support on Linux.
+pub mod stat_cache;
+
 mod special;
 
 #[cfg(all(unix, feature = "xattr"))]

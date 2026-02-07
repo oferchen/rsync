@@ -372,13 +372,14 @@ where
         None
     };
     let whole_file = tri_state_flag_positive_first(&matches, "whole-file", "no-whole-file");
-    let progress_setting = if matches.get_flag("progress") {
-        ProgressSetting::PerFile
-    } else if matches.get_flag("no-progress") {
-        ProgressSetting::Disabled
-    } else {
-        ProgressSetting::Unspecified
-    };
+    let progress_setting =
+        if matches.get_flag("progress") || matches.get_count("partial-progress") > 0 {
+            ProgressSetting::PerFile
+        } else if matches.get_flag("no-progress") {
+            ProgressSetting::Disabled
+        } else {
+            ProgressSetting::Unspecified
+        };
     let itemize_changes_flag = matches.get_flag("itemize-changes");
     let no_itemize_changes_flag = matches.get_flag("no-itemize-changes");
     let name_level = if itemize_changes_flag && !no_itemize_changes_flag {

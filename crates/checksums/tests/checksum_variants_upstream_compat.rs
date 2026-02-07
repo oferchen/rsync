@@ -1081,3 +1081,226 @@ fn empty_input_known_values() {
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     );
 }
+
+// ============================================================================
+// Section 14: Checksum Seed Determinism (task #99)
+// ============================================================================
+// Verify that the same seed always produces the same checksum for the same data.
+// This is critical for --checksum-seed reproducibility across rsync runs.
+
+#[test]
+fn same_seed_produces_same_md5_digest_across_invocations() {
+    let data = b"determinism test for md5 seed";
+    let seed = 0x1234_5678_i32;
+
+    let digest1 = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+    let digest2 = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+    let digest3 = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+
+    assert_eq!(digest1, digest2, "Same seed must produce same MD5 digest (invocation 1 vs 2)");
+    assert_eq!(digest2, digest3, "Same seed must produce same MD5 digest (invocation 2 vs 3)");
+
+    // Also verify legacy ordering is deterministic
+    let legacy1 = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+    let legacy2 = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+    assert_eq!(legacy1, legacy2, "Same seed must produce same legacy MD5 digest");
+}
+
+#[test]
+fn same_seed_produces_same_xxhash_digest_across_invocations() {
+    let data = b"determinism test for xxhash seed";
+
+    for seed in [0u64, 1, 42, 0xDEAD_BEEF, u64::MAX] {
+        let xxh64_d1 = Xxh64::digest(seed, data);
+        let xxh64_d2 = Xxh64::digest(seed, data);
+        assert_eq!(xxh64_d1, xxh64_d2, "Same seed must produce same XXH64 digest (seed={seed})");
+
+        let xxh3_d1 = Xxh3::digest(seed, data);
+        let xxh3_d2 = Xxh3::digest(seed, data);
+        assert_eq!(xxh3_d1, xxh3_d2, "Same seed must produce same XXH3 digest (seed={seed})");
+
+        let xxh128_d1 = Xxh3_128::digest(seed, data);
+        let xxh128_d2 = Xxh3_128::digest(seed, data);
+        assert_eq!(xxh128_d1, xxh128_d2, "Same seed must produce same XXH3-128 digest (seed={seed})");
+    }
+}
+
+#[test]
+fn different_seeds_produce_different_md5_digests() {
+    let data = b"different seeds must diverge";
+
+    let seeds: &[i32] = &[0, 1, -1, 42, 0x7FFF_FFFF, -0x7FFF_FFFF, 0x1234_5678];
+    for (i, &seed_a) in seeds.iter().enumerate() {
+        for &seed_b in &seeds[i + 1..] {
+            let digest_a = Md5::digest_with_seed(Md5Seed::proper(seed_a), data);
+            let digest_b = Md5::digest_with_seed(Md5Seed::proper(seed_b), data);
+            assert_ne!(
+                digest_a, digest_b,
+                "Different seeds ({seed_a} vs {seed_b}) must produce different MD5 digests"
+            );
+        }
+    }
+}
+
+#[test]
+fn different_seeds_produce_different_xxhash_digests() {
+    let data = b"xxhash seed divergence test";
+
+    let seeds: &[u64] = &[0, 1, 42, 0xDEAD_BEEF, u64::MAX];
+    for (i, &seed_a) in seeds.iter().enumerate() {
+        for &seed_b in &seeds[i + 1..] {
+            let d_a = Xxh64::digest(seed_a, data);
+            let d_b = Xxh64::digest(seed_b, data);
+            assert_ne!(
+                d_a, d_b,
+                "Different XXH64 seeds ({seed_a} vs {seed_b}) must produce different digests"
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Section 15: Seed Zero vs No Seed for All Seeded Algorithms (task #99)
+// ============================================================================
+// Upstream rsync: seed=0 is a valid seed value that differs from "no seed".
+// For MD5, seed=0 hashes 4 zero bytes before/after data, producing a different
+// result than hashing data alone.
+
+#[test]
+fn xxhash_seed_zero_differs_from_nonzero_seeds() {
+    let data = b"xxhash seed zero boundary";
+
+    // XXH64 with seed 0 vs seed 1
+    let xxh64_zero = Xxh64::digest(0, data);
+    let xxh64_one = Xxh64::digest(1, data);
+    assert_ne!(
+        xxh64_zero, xxh64_one,
+        "XXH64 seed 0 should differ from seed 1"
+    );
+
+    // XXH3 with seed 0 vs seed 1
+    let xxh3_zero = Xxh3::digest(0, data);
+    let xxh3_one = Xxh3::digest(1, data);
+    assert_ne!(
+        xxh3_zero, xxh3_one,
+        "XXH3 seed 0 should differ from seed 1"
+    );
+
+    // XXH3-128 with seed 0 vs seed 1
+    let xxh128_zero = Xxh3_128::digest(0, data);
+    let xxh128_one = Xxh3_128::digest(1, data);
+    assert_ne!(
+        xxh128_zero, xxh128_one,
+        "XXH3-128 seed 0 should differ from seed 1"
+    );
+}
+
+#[test]
+fn md5_seed_boundary_values_produce_valid_and_distinct_digests() {
+    let data = b"md5 seed boundary values";
+
+    let boundary_seeds = [0_i32, 1, -1, i32::MAX, i32::MIN];
+    let mut digests = Vec::new();
+
+    for &seed in &boundary_seeds {
+        let digest = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+        assert_eq!(digest.len(), 16, "MD5 digest must be 16 bytes for seed {seed}");
+        digests.push((seed, digest));
+    }
+
+    // All boundary values should produce distinct digests
+    for (i, (seed_a, digest_a)) in digests.iter().enumerate() {
+        for (seed_b, digest_b) in &digests[i + 1..] {
+            assert_ne!(
+                digest_a, digest_b,
+                "MD5 seeds {seed_a} and {seed_b} must produce different digests"
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Section 16: Strategy Selector Determinism with Fixed Seeds (task #99)
+// ============================================================================
+// Verify that ChecksumStrategySelector produces deterministic results
+// with the same seed, matching the --checksum-seed=NUM use case.
+
+#[test]
+fn strategy_selector_deterministic_with_fixed_seed() {
+    let data = b"strategy determinism with fixed seed";
+
+    for kind in ChecksumAlgorithmKind::all() {
+        for seed in [0_i32, 1, 42, i32::MAX, i32::MIN] {
+            let s1 = ChecksumStrategySelector::for_algorithm(*kind, seed);
+            let s2 = ChecksumStrategySelector::for_algorithm(*kind, seed);
+
+            let d1 = s1.compute(data);
+            let d2 = s2.compute(data);
+
+            assert_eq!(
+                d1, d2,
+                "Strategy selector must be deterministic for {kind} seed={seed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn strategy_selector_different_seeds_different_results_for_seeded_algorithms() {
+    let data = b"strategy seed variation";
+
+    // MD5 is seeded (proper order), XXHash variants are seeded
+    let seeded_algorithms = [
+        ChecksumAlgorithmKind::Md5,
+        ChecksumAlgorithmKind::Xxh64,
+        ChecksumAlgorithmKind::Xxh3,
+        ChecksumAlgorithmKind::Xxh3_128,
+    ];
+
+    for kind in seeded_algorithms {
+        let s1 = ChecksumStrategySelector::for_algorithm(kind, 1);
+        let s2 = ChecksumStrategySelector::for_algorithm(kind, 2);
+
+        let d1 = s1.compute(data);
+        let d2 = s2.compute(data);
+
+        assert_ne!(
+            d1, d2,
+            "Different seeds should produce different results for {kind}"
+        );
+    }
+}
+
+// ============================================================================
+// Section 17: MD5 Seed with Empty Data (task #99)
+// ============================================================================
+// rsync may compute seeded checksums on empty files. Verify this edge case.
+
+#[test]
+fn md5_seeded_empty_data_produces_valid_digest() {
+    let empty = b"";
+
+    for seed in [0_i32, 1, -1, i32::MAX, i32::MIN, 0x1234_5678] {
+        let proper = Md5::digest_with_seed(Md5Seed::proper(seed), empty);
+        let legacy = Md5::digest_with_seed(Md5Seed::legacy(seed), empty);
+
+        assert_eq!(proper.len(), 16, "Proper seed with empty data must produce 16-byte digest");
+        assert_eq!(legacy.len(), 16, "Legacy seed with empty data must produce 16-byte digest");
+
+        // For empty data: proper hashes seed only, legacy hashes seed only
+        // Both should hash just the seed bytes, but in the same position (since data is empty)
+        // So proper(seed, "") = hash(seed_bytes) and legacy(seed, "") = hash(seed_bytes)
+        // They should be EQUAL for empty data because data is empty
+        assert_eq!(
+            proper, legacy,
+            "With empty data, proper and legacy seed ordering should produce same digest (seed={seed})"
+        );
+
+        // But seeded should differ from unseeded
+        let unseeded = Md5::digest(empty);
+        assert_ne!(
+            proper, unseeded,
+            "Seeded MD5 of empty data should differ from unseeded (seed={seed})"
+        );
+    }
+}
