@@ -29,6 +29,8 @@ mod multiplex;
 mod negotiation;
 /// Transfer statistics wire format encoding and decoding.
 pub mod stats;
+/// Type-safe state machine for rsync protocol phases.
+pub mod state;
 mod varint;
 mod version;
 pub mod wire;

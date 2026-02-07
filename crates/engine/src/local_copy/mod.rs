@@ -51,9 +51,17 @@
 
 /// Buffer pool for I/O buffer reuse during large file transfers.
 pub mod buffer_pool;
+pub mod clonefile;
 mod compressor;
+/// Concurrent delta generation infrastructure using rayon.
+///
+/// See [`concurrent_delta::DeltaPipeline`] for the main entry point.
+pub mod concurrent_delta;
 mod context;
 mod deferred_sync;
+pub(crate) mod parallel_transfer;
+pub(crate) mod prefetch;
+pub mod win_copy;
 /// Deletion strategy implementations for rsync `--delete` variants.
 ///
 /// Provides [`DeletionStrategy`](deletion::DeletionStrategy) implementations
