@@ -26,9 +26,11 @@ memmap2 = "0.9"
 # Optional: io_uring support (Linux 5.6+)
 io-uring = { version = "0.7", optional = true }
 
-# For kernel version detection on Linux
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = { version = "0.2", optional = true }
+# libc is used for copy_file_range syscall on Linux (always compiled, runtime detection)
+libc = "0.2"
+
+# rustix is used for statx syscall on Linux (always compiled, runtime detection)
+rustix = { version = "0.38", features = ["fs"] }
 
 [features]
 default = []
@@ -41,13 +43,19 @@ default = []
 # Requirements: Linux 5.6+ kernel (runtime detection and fallback)
 # Benefits: 20-40% faster I/O via batched syscalls
 # Trade-offs: Linux-only, adds dependency on io-uring crate
-io_uring = ["dep:io-uring", "dep:libc"]
+io_uring = ["dep:io-uring"]
 
-# copy_file_range syscall for zero-copy file transfers (Linux 4.5+)
-# Requirements: Linux 4.5+ (automatic fallback to read/write on older kernels)
-# Benefits: 30-50% faster local copies by eliminating userspace buffer
-# Trade-offs: Linux-only optimization
-copy_file_range = ["dep:libc"]
+# copy_file_range: Always compiled with runtime detection (no longer a feature gate)
+# The copy_file_range module is always available; it uses runtime detection on Linux
+# and automatic fallback to read/write on other platforms or when syscall fails.
+# This feature is kept as an empty alias for compatibility.
+copy_file_range = []
+
+# syscall_batch: Always compiled with runtime detection (no longer a feature gate)
+# The syscall_batch module is always available; it uses runtime detection for
+# batching threshold and platform-specific syscalls (statx on Linux).
+# This feature is kept as an empty alias for compatibility.
+syscall_batch = []
 
 [dev-dependencies]
 tempfile = "3.15"
