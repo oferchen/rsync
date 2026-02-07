@@ -21,6 +21,19 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Sets a fixed checksum seed for reproducible transfers.
+    ///
+    /// When `None` (the default), the checksum seed is chosen automatically
+    /// (typically a random value negotiated between sender and receiver).
+    /// Setting a specific value produces deterministic checksums across runs,
+    /// which is useful for debugging, testing, and batch mode.
+    #[must_use]
+    #[doc(alias = "--checksum-seed")]
+    pub const fn with_checksum_seed(mut self, seed: Option<u32>) -> Self {
+        self.checksum_seed = seed;
+        self
+    }
+
     /// Enables size-only change detection.
     #[must_use]
     #[doc(alias = "--size-only")]
@@ -103,6 +116,15 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn checksum_algorithm(&self) -> SignatureAlgorithm {
         self.checksum_algorithm
+    }
+
+    /// Returns the configured checksum seed, if any.
+    ///
+    /// When `Some(seed)`, the given seed is used for all checksum computations.
+    /// When `None`, the seed is determined automatically.
+    #[must_use]
+    pub const fn checksum_seed(&self) -> Option<u32> {
+        self.checksum_seed
     }
 
     /// Reports whether size-only change detection has been requested.
