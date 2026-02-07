@@ -59,6 +59,7 @@ mod compressor;
 pub mod concurrent_delta;
 mod context;
 pub(crate) mod debug_flist;
+pub(crate) mod debug_send;
 mod deferred_sync;
 pub(crate) mod parallel_transfer;
 pub(crate) mod prefetch;

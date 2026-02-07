@@ -16,6 +16,8 @@ mod compatibility;
 pub mod debug_trace;
 mod envelope;
 mod error;
+/// Error recovery and partial transfer handling for rsync protocol operations.
+pub mod error_recovery;
 /// Filter list wire protocol encoding and decoding.
 pub mod filters;
 /// File list encoding and decoding.
