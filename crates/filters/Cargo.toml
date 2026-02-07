@@ -17,6 +17,10 @@ targets = ["x86_64-unknown-linux-gnu"]
 globset = "0.4"
 logging = { path = "../logging" }
 thiserror = "2.0"
+tracing = { workspace = true, optional = true }
+
+[features]
+tracing = ["dep:tracing"]
 
 [dev-dependencies]
 proptest = "1.4"
