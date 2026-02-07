@@ -36,21 +36,6 @@ where
     let mut filter_rules = Vec::new();
     if let Err(message) = append_filter_rules_from_files(
         &mut filter_rules,
-        &inputs.exclude_from,
-        FilterRuleKind::Exclude,
-    ) {
-        return Err(fail_with_message(message, stderr));
-    }
-
-    filter_rules.extend(
-        inputs
-            .excludes
-            .into_iter()
-            .map(|pattern| FilterRuleSpec::exclude(os_string_to_pattern(pattern))),
-    );
-
-    if let Err(message) = append_filter_rules_from_files(
-        &mut filter_rules,
         &inputs.include_from,
         FilterRuleKind::Include,
     ) {
@@ -62,6 +47,21 @@ where
             .includes
             .into_iter()
             .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
+    );
+
+    if let Err(message) = append_filter_rules_from_files(
+        &mut filter_rules,
+        &inputs.exclude_from,
+        FilterRuleKind::Exclude,
+    ) {
+        return Err(fail_with_message(message, stderr));
+    }
+
+    filter_rules.extend(
+        inputs
+            .excludes
+            .into_iter()
+            .map(|pattern| FilterRuleSpec::exclude(os_string_to_pattern(pattern))),
     );
 
     if inputs.cvs_exclude
