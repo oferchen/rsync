@@ -110,6 +110,7 @@ use std::path::{Path, PathBuf};
 mod defaults;
 mod filter_rules;
 mod help;
+pub mod itemize;
 mod out_format;
 pub(crate) mod password;
 pub mod progress;
