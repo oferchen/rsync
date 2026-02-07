@@ -61,6 +61,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Configures an optional connection timeout.
+    #[must_use]
+    #[doc(alias = "--contimeout")]
+    pub const fn with_contimeout(mut self, contimeout: Option<Duration>) -> Self {
+        self.contimeout = contimeout;
+        self
+    }
+
     /// Configures an absolute stop-at deadline.
     #[must_use]
     #[doc(alias = "--stop-after")]
@@ -110,6 +118,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn timeout(&self) -> Option<Duration> {
         self.timeout
+    }
+
+    /// Returns the configured connection timeout, if any.
+    #[must_use]
+    pub const fn contimeout(&self) -> Option<Duration> {
+        self.contimeout
     }
 
     /// Returns the configured stop-at deadline, if any.

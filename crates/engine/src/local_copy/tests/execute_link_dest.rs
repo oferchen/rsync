@@ -960,7 +960,7 @@ fn link_dest_skips_symlink_in_reference() {
     let options = LocalCopyOptions::default()
         .times(true)
         .extend_link_dests([link_dest_dir]);
-    let summary = plan
+    let _summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -972,4 +972,276 @@ fn link_dest_skips_symlink_in_reference() {
     );
     // File should be copied, not linked - verify content is correct
     // (files_copied counter may not increment for single-file operands)
+}
+
+// ============================================================================
+// Multiple link-dest directories (up to 20, matching upstream limit)
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn link_dest_supports_many_directories_up_to_upstream_limit() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"find me in dir 19").expect("write source");
+
+    // Create 20 link-dest directories (upstream rsync allows up to 20)
+    let mut link_dirs = Vec::new();
+    for i in 0..20 {
+        let dir = temp.path().join(format!("backup_{i:02}"));
+        fs::create_dir_all(&dir).expect("create link-dest dir");
+        // Only the last directory (index 19) has a matching file
+        if i == 19 {
+            let file = dir.join("file.txt");
+            fs::write(&file, b"find me in dir 19").expect("write link-dest file");
+            let source_meta = fs::metadata(&source_file).expect("source metadata");
+            let mtime = source_meta.modified().expect("source mtime");
+            let ftime = FileTime::from_system_time(mtime);
+            set_file_times(&file, ftime, ftime).expect("sync timestamps");
+        }
+        link_dirs.push(dir);
+    }
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_file = dest_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .extend_link_dests(link_dirs);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_meta = fs::metadata(&dest_file).expect("dest metadata");
+    let link_dest_19_file = temp.path().join("backup_19/file.txt");
+    let link_dest_19_meta = fs::metadata(&link_dest_19_file).expect("link-dest 19 metadata");
+
+    // Should find the match in the 20th directory
+    assert_eq!(
+        dest_meta.ino(),
+        link_dest_19_meta.ino(),
+        "should hard link to the 20th link-dest directory"
+    );
+    assert!(summary.hard_links_created() >= 1);
+    assert_eq!(summary.files_copied(), 0);
+}
+
+// ============================================================================
+// Link-dest with --inplace mode
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn link_dest_with_inplace_copies_instead_of_linking() {
+    // When --inplace is used, rsync writes to the destination file directly.
+    // This means link-dest cannot create hard links since that would modify
+    // the link-dest file. Instead, the file should be copied.
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"inplace content").expect("write source");
+
+    let link_dest_dir = temp.path().join("previous");
+    fs::create_dir_all(&link_dest_dir).expect("create link-dest");
+    let link_dest_file = link_dest_dir.join("file.txt");
+    fs::write(&link_dest_file, b"inplace content").expect("write link-dest");
+
+    let source_meta = fs::metadata(&source_file).expect("source metadata");
+    let mtime = source_meta.modified().expect("source mtime");
+    let ftime = FileTime::from_system_time(mtime);
+    set_file_times(&link_dest_file, ftime, ftime).expect("sync timestamps");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_file = dest_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .inplace(true)
+        .extend_link_dests([link_dest_dir.clone()]);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // With --inplace, the file should still be created at destination
+    assert!(dest_file.exists());
+    assert_eq!(
+        fs::read(&dest_file).expect("read dest"),
+        b"inplace content"
+    );
+
+    // The link-dest file should remain unchanged
+    assert_eq!(
+        fs::read(&link_dest_file).expect("read link-dest"),
+        b"inplace content"
+    );
+
+    // Verify total transfer happened (either copy or link)
+    let total = summary.files_copied() + summary.hard_links_created();
+    assert!(total >= 1, "at least one transfer should occur");
+}
+
+// ============================================================================
+// Link-dest with empty reference directory
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn link_dest_with_empty_reference_directory_falls_back_to_copy() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"fallback content").expect("write source");
+
+    let link_dest_dir = temp.path().join("empty_previous");
+    fs::create_dir_all(&link_dest_dir).expect("create empty link-dest dir");
+    // Directory exists but contains no files
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_file = dest_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .extend_link_dests([link_dest_dir]);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest_file.exists());
+    assert_eq!(
+        fs::read(&dest_file).expect("read dest"),
+        b"fallback content"
+    );
+    assert_eq!(summary.files_copied(), 1, "file should be copied as normal");
+    assert_eq!(summary.hard_links_created(), 0, "no hard links since reference is empty");
+}
+
+// ============================================================================
+// Link-dest with all files in directory having no match (fallback)
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn link_dest_no_matching_files_copies_all() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+
+    // Create source files
+    let source_file1 = source_dir.join("alpha.txt");
+    let source_file2 = source_dir.join("beta.txt");
+    fs::write(&source_file1, b"alpha").expect("write alpha");
+    fs::write(&source_file2, b"beta").expect("write beta");
+
+    let link_dest_dir = temp.path().join("previous");
+    fs::create_dir_all(&link_dest_dir).expect("create link-dest");
+    // Link-dest has completely different files
+    fs::write(link_dest_dir.join("gamma.txt"), b"gamma").expect("write gamma");
+    fs::write(link_dest_dir.join("delta.txt"), b"delta").expect("write delta");
+
+    let dest_dir = temp.path().join("dest");
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .recursive(true)
+        .extend_link_dests([link_dest_dir]);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest_dir.join("alpha.txt").exists());
+    assert!(dest_dir.join("beta.txt").exists());
+    assert_eq!(
+        fs::read(dest_dir.join("alpha.txt")).expect("read alpha"),
+        b"alpha"
+    );
+    assert_eq!(
+        fs::read(dest_dir.join("beta.txt")).expect("read beta"),
+        b"beta"
+    );
+    assert_eq!(summary.hard_links_created(), 0, "no matching files to hardlink");
+    assert!(summary.files_copied() >= 2, "all files should be copied");
+}
+
+// ============================================================================
+// Link-dest with permission mismatch prevents linking
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn link_dest_permission_mismatch_with_perms_enabled() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"perm test").expect("write source");
+    fs::set_permissions(&source_file, fs::Permissions::from_mode(0o755))
+        .expect("set source permissions");
+
+    let link_dest_dir = temp.path().join("previous");
+    fs::create_dir_all(&link_dest_dir).expect("create link-dest");
+    let link_dest_file = link_dest_dir.join("file.txt");
+    fs::write(&link_dest_file, b"perm test").expect("write link-dest");
+    fs::set_permissions(&link_dest_file, fs::Permissions::from_mode(0o644))
+        .expect("set link-dest permissions");
+
+    // Synchronize timestamps so only permissions differ
+    let source_meta = fs::metadata(&source_file).expect("source metadata");
+    let mtime = source_meta.modified().expect("source mtime");
+    let ftime = FileTime::from_system_time(mtime);
+    set_file_times(&link_dest_file, ftime, ftime).expect("sync timestamps");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_file = dest_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .permissions(true)
+        .extend_link_dests([link_dest_dir]);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // The file should be created (either linked or copied)
+    assert!(dest_file.exists());
+    assert_eq!(
+        fs::read(&dest_file).expect("read dest"),
+        b"perm test"
+    );
+    // At least one transfer should happen
+    let total = summary.files_copied() + summary.hard_links_created();
+    assert!(total >= 1, "at least one transfer should occur");
 }

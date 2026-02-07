@@ -8,7 +8,8 @@ pub use options::{DirMergeEnforcedKind, DirMergeOptions};
 
 pub use program::{FilterProgram, FilterProgramEntry, FilterProgramError};
 pub(crate) use program::{
-    INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE, TIMEOUT_EXIT_CODE,
+    CONNECTION_TIMEOUT_EXIT_CODE, INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE,
+    MISSING_OPERANDS_EXIT_CODE, TIMEOUT_EXIT_CODE,
 };
 
 pub(crate) use rules::directory_has_marker;
