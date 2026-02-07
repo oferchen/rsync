@@ -115,6 +115,7 @@ mod out_format;
 pub(crate) mod password;
 pub mod progress;
 mod server;
+pub mod stats_format;
 
 #[cfg(test)]
 mod tests;
