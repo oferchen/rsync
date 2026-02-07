@@ -9,6 +9,7 @@ mod filters;
 mod integrity;
 mod limits;
 mod link_dest;
+mod logging;
 mod metadata;
 mod path_behavior;
 mod staging;
