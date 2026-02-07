@@ -126,15 +126,14 @@ fn filter_segment_include_glob_pattern() {
 fn filter_segment_include_restores_after_exclude() {
     let mut segment = FilterSegment::default();
     segment
-        .push_rule(FilterRule::exclude("*"))
-        .expect("exclude all");
-    segment
         .push_rule(FilterRule::include("*.txt"))
         .expect("include txt");
+    segment
+        .push_rule(FilterRule::exclude("*"))
+        .expect("exclude all");
 
-    // A .txt file is first excluded by *, then re-included by *.txt.
-    // The FilterSegment iterates rules sequentially and the LAST match wins
-    // within a single apply() call on the same segment.
+    // First-match-wins: a .txt file matches the include *.txt rule first,
+    // so the later exclude * is never reached.
     let mut outcome = FilterOutcome::default();
     segment.apply(
         Path::new("notes.txt"),
@@ -144,10 +143,10 @@ fn filter_segment_include_restores_after_exclude() {
     );
     assert!(
         outcome.allows_transfer(),
-        "*.txt include after * exclude must re-allow .txt files"
+        "*.txt include before * exclude must allow .txt files (first match wins)"
     );
 
-    // A .log file is excluded by * and NOT matched by *.txt.
+    // A .log file does NOT match *.txt, so it falls through to * exclude.
     let mut outcome2 = FilterOutcome::default();
     segment.apply(
         Path::new("debug.log"),
@@ -157,7 +156,7 @@ fn filter_segment_include_restores_after_exclude() {
     );
     assert!(
         !outcome2.allows_transfer(),
-        "*.log must remain excluded when only *.txt is re-included"
+        "*.log must be excluded when only *.txt is included before * exclude"
     );
 }
 
@@ -217,20 +216,20 @@ fn filter_segment_exclude_with_subdirectory_path() {
 }
 
 // ---------------------------------------------------------------------------
-// First-match-wins semantics (last matching rule in segment wins)
+// First-match-wins semantics
 // ---------------------------------------------------------------------------
 
 #[test]
-fn filter_segment_last_match_wins_include_then_exclude() {
-    // Rules are evaluated sequentially in a segment. The last matching rule
-    // determines the outcome because each match overwrites set_transfer_allowed.
+fn filter_segment_first_match_wins_exclude_then_include() {
+    // Rules are evaluated sequentially in a segment. The first matching rule
+    // determines the outcome (first-match-wins).
     let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::include("*.txt"))
-        .expect("include txt");
     segment
         .push_rule(FilterRule::exclude("secret.txt"))
         .expect("exclude secret.txt");
+    segment
+        .push_rule(FilterRule::include("*.txt"))
+        .expect("include txt");
 
     let mut outcome = FilterOutcome::default();
     segment.apply(
@@ -239,23 +238,23 @@ fn filter_segment_last_match_wins_include_then_exclude() {
         &mut outcome,
         FilterContext::Transfer,
     );
-    // secret.txt matches *.txt (include -> allowed), then matches secret.txt
-    // (exclude -> blocked). Last match wins: blocked.
+    // secret.txt matches the exclude secret.txt rule first.
+    // First match wins: blocked.
     assert!(
         !outcome.allows_transfer(),
-        "secret.txt must be blocked because the later exclude rule wins"
+        "secret.txt must be blocked because the first matching exclude rule wins"
     );
 }
 
 #[test]
-fn filter_segment_last_match_wins_exclude_then_include() {
+fn filter_segment_first_match_wins_include_then_exclude() {
     let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::exclude("*.txt"))
-        .expect("exclude txt");
     segment
         .push_rule(FilterRule::include("important.txt"))
         .expect("include important.txt");
+    segment
+        .push_rule(FilterRule::exclude("*.txt"))
+        .expect("exclude txt");
 
     let mut outcome = FilterOutcome::default();
     segment.apply(
@@ -264,29 +263,29 @@ fn filter_segment_last_match_wins_exclude_then_include() {
         &mut outcome,
         FilterContext::Transfer,
     );
-    // important.txt matches *.txt (exclude -> blocked), then matches
-    // important.txt (include -> allowed). Last match wins: allowed.
+    // important.txt matches the include important.txt rule first.
+    // First match wins: allowed.
     assert!(
         outcome.allows_transfer(),
-        "important.txt must be allowed because the later include rule wins"
+        "important.txt must be allowed because the first matching include rule wins"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Exclude-all then include specific (the failing pattern from issue #88)
+// Include specific then exclude-all (first-match-wins, issue #88)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn filter_segment_exclude_all_then_include_specific() {
+fn filter_segment_include_specific_then_exclude_all() {
     let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::exclude("*"))
-        .expect("exclude all");
     segment
         .push_rule(FilterRule::include("keep.txt"))
         .expect("include keep.txt");
+    segment
+        .push_rule(FilterRule::exclude("*"))
+        .expect("exclude all");
 
-    // keep.txt: excluded by *, then re-included by keep.txt. Last match wins.
+    // keep.txt: matches include keep.txt first. First match wins: allowed.
     let mut outcome = FilterOutcome::default();
     segment.apply(
         Path::new("keep.txt"),
@@ -296,10 +295,10 @@ fn filter_segment_exclude_all_then_include_specific() {
     );
     assert!(
         outcome.allows_transfer(),
-        "keep.txt must be allowed after exclude-all + include-specific"
+        "keep.txt must be allowed with include-specific before exclude-all"
     );
 
-    // other.txt: excluded by *, not matched by keep.txt. Stays excluded.
+    // other.txt: does not match keep.txt, falls through to exclude *. Excluded.
     let mut outcome2 = FilterOutcome::default();
     segment.apply(
         Path::new("other.txt"),
@@ -314,17 +313,17 @@ fn filter_segment_exclude_all_then_include_specific() {
 }
 
 #[test]
-fn filter_segment_exclude_all_then_include_glob() {
+fn filter_segment_include_glob_then_exclude_all() {
     let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::exclude("*"))
-        .expect("exclude all");
     segment
         .push_rule(FilterRule::include("*.rs"))
         .expect("include rs files");
     segment
         .push_rule(FilterRule::include("*.toml"))
         .expect("include toml files");
+    segment
+        .push_rule(FilterRule::exclude("*"))
+        .expect("exclude all");
 
     for (path, expected_allowed) in &[
         ("lib.rs", true),
@@ -354,13 +353,14 @@ fn filter_segment_exclude_all_then_include_glob() {
 #[test]
 fn filter_program_multiple_segments_compose() {
     // FilterProgram with two rules that end up in the same segment.
+    // First-match-wins: include important.tmp must come before exclude *.tmp.
     let program = FilterProgram::new([
-        FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
         FilterProgramEntry::Rule(FilterRule::include("important.tmp")),
+        FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
     ])
     .expect("compile program");
 
-    // important.tmp is first excluded, then re-included.
+    // important.tmp matches the include rule first.
     let outcome = program.evaluate(
         Path::new("important.tmp"),
         false,
@@ -1041,9 +1041,12 @@ fn filter_program_evaluate_with_empty_dir_merge_layers() {
 }
 
 #[test]
-fn filter_program_evaluate_dir_merge_overrides_static() {
+fn filter_program_evaluate_dir_merge_adds_exclusion() {
+    // With first-match-wins, rules are processed in order across all segments.
+    // A dir-merge segment can add exclusion rules that apply to paths not
+    // matched by earlier static rules.
     let program = FilterProgram::new([
-        FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
+        FilterProgramEntry::Rule(FilterRule::include("important.tmp")),
         FilterProgramEntry::DirMerge(DirMergeRule::new(
             ".rsync-filter",
             DirMergeOptions::default(),
@@ -1051,13 +1054,14 @@ fn filter_program_evaluate_dir_merge_overrides_static() {
     ])
     .expect("compile program");
 
-    // The dir-merge segment contains an include rule that overrides the exclude.
+    // The dir-merge segment contains an exclude rule for *.tmp.
     let mut merge_segment = FilterSegment::default();
     merge_segment
-        .push_rule(FilterRule::include("important.tmp"))
-        .expect("include in merge");
+        .push_rule(FilterRule::exclude("*.tmp"))
+        .expect("exclude in merge");
     let dir_layers = vec![vec![merge_segment]];
 
+    // important.tmp matches the static include rule first → allowed.
     let outcome = program.evaluate(
         Path::new("important.tmp"),
         false,
@@ -1065,12 +1069,22 @@ fn filter_program_evaluate_dir_merge_overrides_static() {
         None,
         FilterContext::Transfer,
     );
-    // The static segment excludes *.tmp first, then the dir-merge segment
-    // re-includes important.tmp. Since segments are processed in order,
-    // the dir-merge segment's include rule fires last and wins.
     assert!(
         outcome.allows_transfer(),
-        "dir-merge include must override static exclude"
+        "static include must take precedence over dir-merge exclude (first match wins)"
+    );
+
+    // random.tmp does not match the static include, falls through to dir-merge exclude.
+    let outcome2 = program.evaluate(
+        Path::new("random.tmp"),
+        false,
+        &dir_layers,
+        None,
+        FilterContext::Transfer,
+    );
+    assert!(
+        !outcome2.allows_transfer(),
+        "dir-merge exclude must block paths not matched by earlier static rules"
     );
 }
 
@@ -1211,20 +1225,16 @@ fn filter_program_upstream_typical_pattern() {
 
 #[test]
 fn filter_program_include_only_specific_extensions() {
-    // Pattern: exclude everything, then include specific extensions.
+    // Pattern: include specific extensions, then exclude everything else.
     // This mirrors: rsync --filter='+ *.rs' --filter='+ *.toml' --filter='- *'
     //
-    // Note: in upstream rsync, the FIRST matching rule wins. In our engine,
-    // rules are processed sequentially within a segment and the LAST match
-    // wins. So to achieve "include *.rs, exclude everything else" we need:
-    //   - exclude *
-    //   - include *.rs
-    //   - include *.toml
-    // (exclude * fires first for .rs files, then include *.rs overrides it)
+    // First-match-wins: the include rules must come before the exclude-all.
+    // A .rs file matches + *.rs first → allowed. A .md file falls through
+    // to - * → excluded.
     let program = FilterProgram::new([
-        FilterProgramEntry::Rule(FilterRule::exclude("*")),
         FilterProgramEntry::Rule(FilterRule::include("*.rs")),
         FilterProgramEntry::Rule(FilterRule::include("*.toml")),
+        FilterProgramEntry::Rule(FilterRule::exclude("*")),
     ])
     .expect("compile program");
 
