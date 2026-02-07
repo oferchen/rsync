@@ -1281,6 +1281,127 @@ mod tests {
         assert_eq!(target, b"/target/path");
     }
 
+    #[test]
+    fn roundtrip_symlink_target_relative() {
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, b"../lib/libfoo.so", 32).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let target = decode_symlink_target(&mut cursor, 32).unwrap();
+        assert_eq!(target, b"../lib/libfoo.so");
+    }
+
+    #[test]
+    fn roundtrip_symlink_target_empty() {
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, b"", 32).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let target = decode_symlink_target(&mut cursor, 32).unwrap();
+        assert_eq!(target, b"");
+    }
+
+    #[test]
+    fn roundtrip_symlink_target_protocol_29() {
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, b"/usr/bin/python3", 29).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let target = decode_symlink_target(&mut cursor, 29).unwrap();
+        assert_eq!(target, b"/usr/bin/python3");
+    }
+
+    #[test]
+    fn roundtrip_symlink_target_protocol_30() {
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, b"/usr/bin/python3", 30).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let target = decode_symlink_target(&mut cursor, 30).unwrap();
+        assert_eq!(target, b"/usr/bin/python3");
+    }
+
+    #[test]
+    fn roundtrip_symlink_target_all_protocols() {
+        let target = b"../relative/link/target";
+        for proto in [28u8, 29, 30, 31, 32] {
+            let mut buf = Vec::new();
+            encode_symlink_target(&mut buf, target, proto).unwrap();
+
+            let mut cursor = Cursor::new(&buf);
+            let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
+            assert_eq!(decoded, target, "roundtrip failed for protocol {}", proto);
+            // Verify all bytes consumed
+            assert_eq!(cursor.position() as usize, buf.len());
+        }
+    }
+
+    #[test]
+    fn roundtrip_symlink_target_with_unicode() {
+        let target = "\u{65e5}\u{672c}\u{8a9e}/\u{30d5}\u{30a1}\u{30a4}\u{30eb}".as_bytes();
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, target, 32).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let decoded = decode_symlink_target(&mut cursor, 32).unwrap();
+        assert_eq!(decoded, target);
+    }
+
+    #[test]
+    fn roundtrip_symlink_target_binary_data() {
+        // All byte values 0x01..=0xFF
+        let target: Vec<u8> = (1u8..=255).collect();
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, &target, 32).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let decoded = decode_symlink_target(&mut cursor, 32).unwrap();
+        assert_eq!(decoded, target);
+    }
+
+    #[test]
+    fn roundtrip_symlink_target_long() {
+        let target = vec![b'x'; 4096];
+        for proto in [29u8, 30, 32] {
+            let mut buf = Vec::new();
+            encode_symlink_target(&mut buf, &target, proto).unwrap();
+
+            let mut cursor = Cursor::new(&buf);
+            let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
+            assert_eq!(decoded, target, "long target failed for protocol {}", proto);
+        }
+    }
+
+    #[test]
+    fn roundtrip_symlink_target_path_separators_preserved() {
+        // Backslash and forward slash should both be preserved
+        let target = b"dir/subdir\\file";
+        let mut buf = Vec::new();
+        encode_symlink_target(&mut buf, target, 32).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let decoded = decode_symlink_target(&mut cursor, 32).unwrap();
+        assert_eq!(decoded, target);
+    }
+
+    #[test]
+    fn decode_symlink_target_known_bytes_proto29() {
+        // Protocol 29: fixed 4-byte LE int (3) + "tgt"
+        let data = vec![0x03, 0x00, 0x00, 0x00, b't', b'g', b't'];
+        let mut cursor = Cursor::new(&data);
+        let target = decode_symlink_target(&mut cursor, 29).unwrap();
+        assert_eq!(target, b"tgt");
+    }
+
+    #[test]
+    fn decode_symlink_target_known_bytes_proto30() {
+        // Protocol 30: varint (0x03) + "tgt"
+        let data = vec![0x03, b't', b'g', b't'];
+        let mut cursor = Cursor::new(&data);
+        let target = decode_symlink_target(&mut cursor, 30).unwrap();
+        assert_eq!(target, b"tgt");
+    }
+
     // ------------------------------------------------------------------------
     // Hardlink Decoding Tests
     // ------------------------------------------------------------------------

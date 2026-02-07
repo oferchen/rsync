@@ -151,8 +151,9 @@ pub fn collect_paths_then_metadata_parallel(
     }
 
     if errors.is_empty() {
-        // Sort entries to maintain deterministic order
-        entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        // sort_unstable_by avoids auxiliary allocation; paths are unique so
+        // stability is irrelevant.
+        entries.sort_unstable_by(|a, b| a.relative_path.cmp(&b.relative_path));
         Ok(entries)
     } else {
         Err(errors)
@@ -277,8 +278,9 @@ pub fn collect_with_batched_stats(
     }
 
     if errors.is_empty() {
-        // Sort entries to maintain deterministic order
-        entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        // sort_unstable_by avoids auxiliary allocation; paths are unique so
+        // stability is irrelevant.
+        entries.sort_unstable_by(|a, b| a.relative_path.cmp(&b.relative_path));
         Ok(entries)
     } else {
         Err(errors)
@@ -335,8 +337,9 @@ pub fn resolve_metadata_parallel(
     }
 
     if errors.is_empty() {
-        // Sort to maintain deterministic order
-        resolved.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        // sort_unstable_by avoids auxiliary allocation; paths are unique so
+        // stability is irrelevant.
+        resolved.sort_unstable_by(|a, b| a.relative_path.cmp(&b.relative_path));
         Ok(resolved)
     } else {
         Err(errors)
@@ -372,8 +375,9 @@ fn collect_paths_recursive(
     if should_recurse {
         if let Ok(entries) = fs::read_dir(current) {
             let mut child_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-            // Sort for deterministic order
-            child_entries.sort_by_key(|e| e.file_name());
+            // sort_unstable_by_key avoids auxiliary allocation; file names within
+            // a directory are unique so stability is irrelevant.
+            child_entries.sort_unstable_by_key(|e| e.file_name());
 
             for entry in child_entries {
                 let child_path = entry.path();

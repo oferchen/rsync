@@ -63,7 +63,13 @@ fn supported_compressions() -> Vec<&'static str> {
     list
 }
 
-/// Checksum algorithm choices.
+/// Checksum algorithm negotiated between rsync peers.
+///
+/// Protocol 30+ peers exchange space-separated lists of supported algorithms
+/// and each side selects the first mutually supported entry. For protocol
+/// versions below 30, [`MD4`](Self::MD4) is always used. The variants are
+/// ordered from strongest/newest to weakest/oldest, matching upstream rsync
+/// 3.4.1's preference order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChecksumAlgorithm {
@@ -115,7 +121,13 @@ impl ChecksumAlgorithm {
     }
 }
 
-/// Compression algorithm choices.
+/// Compression algorithm negotiated between rsync peers.
+///
+/// Protocol 30+ peers exchange space-separated lists of supported algorithms
+/// and each side selects the first mutually supported entry. For protocol
+/// versions below 30, [`Zlib`](Self::Zlib) is the default. Availability of
+/// [`LZ4`](Self::LZ4) and [`Zstd`](Self::Zstd) depends on compile-time
+/// feature flags (`lz4`, `zstd`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CompressionAlgorithm {
@@ -191,13 +203,23 @@ impl CompressionAlgorithm {
     }
 }
 
-/// Result of capability negotiation.
+/// Outcome of the protocol 30+ capability negotiation.
+///
+/// After both peers exchange their supported algorithm lists via the
+/// `negotiate_the_strings()` exchange (upstream `compat.c:534-585`), each side
+/// independently selects the first mutually supported checksum and compression
+/// algorithm. This struct captures those selections so higher layers can
+/// configure their I/O pipelines accordingly.
+///
+/// For protocol versions below 30, [`negotiate_capabilities`] returns
+/// hard-coded defaults (`MD4` / `Zlib`) without performing any wire exchange,
+/// matching upstream behaviour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NegotiationResult {
-    /// Selected checksum algorithm.
+    /// The checksum algorithm both peers agreed to use for block and file checksums.
     pub checksum: ChecksumAlgorithm,
-    /// Selected compression algorithm.
+    /// The compression algorithm both peers agreed to use for data transfer.
     pub compression: CompressionAlgorithm,
 }
 

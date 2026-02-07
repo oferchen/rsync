@@ -4,6 +4,14 @@
 //! file copy operations by reusing fixed-size buffers. Buffers are automatically
 //! returned to the pool when the [`BufferGuard`] is dropped.
 //!
+//! # Adaptive Buffer Sizing
+//!
+//! The [`adaptive_buffer_size`] function selects an appropriate I/O buffer size
+//! based on the file being transferred. Small files use smaller buffers to reduce
+//! memory overhead, while large files use larger buffers for better throughput.
+//! Use [`BufferPool::acquire_adaptive_from`] to acquire a buffer sized to match
+//! the file being transferred.
+//!
 //! # Design
 //!
 //! The pool uses a simple stack-based approach: buffers are pushed when released
@@ -37,6 +45,41 @@ use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 
 use super::COPY_BUFFER_SIZE;
+
+/// Buffer size for files smaller than 64 KB (8 KB).
+pub const ADAPTIVE_BUFFER_TINY: usize = super::ADAPTIVE_BUFFER_TINY;
+/// Buffer size for files in the 64 KB .. 1 MB range (32 KB).
+pub const ADAPTIVE_BUFFER_SMALL: usize = super::ADAPTIVE_BUFFER_SMALL;
+/// Buffer size for files in the 1 MB .. 64 MB range (128 KB).
+pub const ADAPTIVE_BUFFER_MEDIUM: usize = super::ADAPTIVE_BUFFER_MEDIUM;
+/// Buffer size for files 64 MB and larger (512 KB).
+pub const ADAPTIVE_BUFFER_LARGE: usize = super::ADAPTIVE_BUFFER_LARGE;
+
+/// Selects an I/O buffer size appropriate for the given file size.
+///
+/// The returned size balances memory consumption against throughput:
+///
+/// | File size          | Buffer size |
+/// |--------------------|-------------|
+/// | < 64 KB            | 8 KB        |
+/// | 64 KB .. < 1 MB    | 32 KB       |
+/// | 1 MB .. < 64 MB    | 128 KB      |
+/// | >= 64 MB           | 512 KB      |
+///
+/// # Examples
+///
+/// ```
+/// use engine::local_copy::buffer_pool::adaptive_buffer_size;
+///
+/// assert_eq!(adaptive_buffer_size(1_000), 8 * 1024);
+/// assert_eq!(adaptive_buffer_size(500_000), 32 * 1024);
+/// assert_eq!(adaptive_buffer_size(10_000_000), 128 * 1024);
+/// assert_eq!(adaptive_buffer_size(100_000_000), 512 * 1024);
+/// ```
+#[must_use]
+pub const fn adaptive_buffer_size(file_size: u64) -> usize {
+    super::adaptive_buffer_size(file_size)
+}
 
 /// A thread-safe pool of reusable I/O buffers.
 ///
@@ -118,6 +161,35 @@ impl BufferPool {
 
         BufferGuard {
             buffer: Some(buffer),
+            pool,
+        }
+    }
+
+    /// Acquires a buffer sized adaptively for the given file size.
+    ///
+    /// Uses [`adaptive_buffer_size`] to choose the buffer length. If the
+    /// adaptive size matches the pool's default buffer size, a pooled buffer
+    /// is returned when available. Otherwise a fresh buffer of the adaptive
+    /// size is allocated (it will still be returned to the pool on drop,
+    /// where it is resized back to the pool's default).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned.
+    #[must_use]
+    pub fn acquire_adaptive_from(pool: Arc<Self>, file_size: u64) -> BufferGuard {
+        let desired = adaptive_buffer_size(file_size);
+
+        if desired == pool.buffer_size {
+            // Fast path: adaptive size matches pool default -- reuse pooled buffers.
+            return Self::acquire_from(pool);
+        }
+
+        // Slow path: non-standard size -- allocate a fresh buffer.
+        // On drop the guard will pass it through `return_buffer` which
+        // resizes it to the pool default before returning it.
+        BufferGuard {
+            buffer: Some(vec![0u8; desired]),
             pool,
         }
     }
@@ -443,5 +515,244 @@ mod tests {
         let buffer = pool.acquire();
         // Should be zeroed
         assert!(buffer.iter().all(|&b| b == 0));
+    }
+
+    // -----------------------------------------------------------------------
+    // Adaptive buffer sizing tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn adaptive_size_zero_byte_file() {
+        assert_eq!(adaptive_buffer_size(0), ADAPTIVE_BUFFER_TINY);
+    }
+
+    #[test]
+    fn adaptive_size_one_byte_file() {
+        assert_eq!(adaptive_buffer_size(1), ADAPTIVE_BUFFER_TINY);
+    }
+
+    #[test]
+    fn adaptive_size_tiny_file() {
+        // A 1 KB file should get an 8 KB buffer.
+        assert_eq!(adaptive_buffer_size(1024), ADAPTIVE_BUFFER_TINY);
+    }
+
+    #[test]
+    fn adaptive_size_just_below_tiny_threshold() {
+        // 64 KB - 1 byte: still in the tiny range.
+        assert_eq!(adaptive_buffer_size(64 * 1024 - 1), ADAPTIVE_BUFFER_TINY);
+    }
+
+    #[test]
+    fn adaptive_size_at_tiny_threshold() {
+        // Exactly 64 KB: enters the small range.
+        assert_eq!(adaptive_buffer_size(64 * 1024), ADAPTIVE_BUFFER_SMALL);
+    }
+
+    #[test]
+    fn adaptive_size_small_file() {
+        // 500 KB file should get a 32 KB buffer.
+        assert_eq!(adaptive_buffer_size(500 * 1024), ADAPTIVE_BUFFER_SMALL);
+    }
+
+    #[test]
+    fn adaptive_size_just_below_small_threshold() {
+        // 1 MB - 1 byte: still in the small range.
+        assert_eq!(
+            adaptive_buffer_size(1024 * 1024 - 1),
+            ADAPTIVE_BUFFER_SMALL
+        );
+    }
+
+    #[test]
+    fn adaptive_size_at_small_threshold() {
+        // Exactly 1 MB: enters the medium range.
+        assert_eq!(adaptive_buffer_size(1024 * 1024), ADAPTIVE_BUFFER_MEDIUM);
+    }
+
+    #[test]
+    fn adaptive_size_medium_file() {
+        // 10 MB file should get a 128 KB buffer.
+        assert_eq!(
+            adaptive_buffer_size(10 * 1024 * 1024),
+            ADAPTIVE_BUFFER_MEDIUM
+        );
+    }
+
+    #[test]
+    fn adaptive_size_just_below_medium_threshold() {
+        // 64 MB - 1 byte: still in the medium range.
+        assert_eq!(
+            adaptive_buffer_size(64 * 1024 * 1024 - 1),
+            ADAPTIVE_BUFFER_MEDIUM
+        );
+    }
+
+    #[test]
+    fn adaptive_size_at_medium_threshold() {
+        // Exactly 64 MB: enters the large range.
+        assert_eq!(adaptive_buffer_size(64 * 1024 * 1024), ADAPTIVE_BUFFER_LARGE);
+    }
+
+    #[test]
+    fn adaptive_size_large_file() {
+        // 100 MB file should get a 512 KB buffer.
+        assert_eq!(
+            adaptive_buffer_size(100 * 1024 * 1024),
+            ADAPTIVE_BUFFER_LARGE
+        );
+    }
+
+    #[test]
+    fn adaptive_size_very_large_file() {
+        // 1 GB file should get a 512 KB buffer.
+        assert_eq!(
+            adaptive_buffer_size(1024 * 1024 * 1024),
+            ADAPTIVE_BUFFER_LARGE
+        );
+    }
+
+    #[test]
+    fn adaptive_size_huge_file() {
+        // 100 GB file should get a 512 KB buffer.
+        assert_eq!(
+            adaptive_buffer_size(100 * 1024 * 1024 * 1024),
+            ADAPTIVE_BUFFER_LARGE
+        );
+    }
+
+    #[test]
+    fn adaptive_size_max_u64() {
+        // Maximum possible file size should still return the large buffer.
+        assert_eq!(adaptive_buffer_size(u64::MAX), ADAPTIVE_BUFFER_LARGE);
+    }
+
+    #[test]
+    fn adaptive_size_monotonically_non_decreasing() {
+        // Buffer sizes should never decrease as file size increases.
+        let file_sizes: Vec<u64> = vec![
+            0,
+            1,
+            1024,
+            64 * 1024 - 1,
+            64 * 1024,
+            512 * 1024,
+            1024 * 1024 - 1,
+            1024 * 1024,
+            32 * 1024 * 1024,
+            64 * 1024 * 1024 - 1,
+            64 * 1024 * 1024,
+            1024 * 1024 * 1024,
+        ];
+        let mut prev_size = 0;
+        for &file_size in &file_sizes {
+            let buf_size = adaptive_buffer_size(file_size);
+            assert!(
+                buf_size >= prev_size,
+                "buffer size decreased from {} to {} at file size {}",
+                prev_size,
+                buf_size,
+                file_size
+            );
+            prev_size = buf_size;
+        }
+    }
+
+    #[test]
+    fn adaptive_size_constants_are_powers_of_two() {
+        // I/O buffers should be powers of two for optimal alignment.
+        assert!(ADAPTIVE_BUFFER_TINY.is_power_of_two());
+        assert!(ADAPTIVE_BUFFER_SMALL.is_power_of_two());
+        assert!(ADAPTIVE_BUFFER_MEDIUM.is_power_of_two());
+        assert!(ADAPTIVE_BUFFER_LARGE.is_power_of_two());
+    }
+
+    #[test]
+    fn adaptive_size_constants_ordered() {
+        assert!(ADAPTIVE_BUFFER_TINY < ADAPTIVE_BUFFER_SMALL);
+        assert!(ADAPTIVE_BUFFER_SMALL < ADAPTIVE_BUFFER_MEDIUM);
+        assert!(ADAPTIVE_BUFFER_MEDIUM < ADAPTIVE_BUFFER_LARGE);
+    }
+
+    #[test]
+    fn adaptive_size_medium_equals_default_buffer() {
+        // The medium adaptive size should match the default COPY_BUFFER_SIZE
+        // so the pool can reuse buffers for medium-sized files.
+        assert_eq!(ADAPTIVE_BUFFER_MEDIUM, COPY_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn acquire_adaptive_from_uses_pool_for_medium_files() {
+        // For files in the medium range, the adaptive size matches the pool's
+        // default buffer size, so the buffer should come from the pool.
+        let pool = Arc::new(BufferPool::new(4));
+
+        // Pre-populate the pool with a buffer
+        {
+            let _buffer = BufferPool::acquire_from(Arc::clone(&pool));
+            // buffer is returned on drop
+        }
+        assert_eq!(pool.available(), 1);
+
+        // Acquire adaptively for a medium file -- should reuse the pooled buffer
+        let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 10 * 1024 * 1024);
+        assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
+        assert_eq!(pool.available(), 0); // was taken from pool
+    }
+
+    #[test]
+    fn acquire_adaptive_from_allocates_small_buffer_for_tiny_file() {
+        let pool = Arc::new(BufferPool::new(4));
+        let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 1024);
+        assert_eq!(buffer.len(), ADAPTIVE_BUFFER_TINY);
+    }
+
+    #[test]
+    fn acquire_adaptive_from_allocates_small_buffer_for_small_file() {
+        let pool = Arc::new(BufferPool::new(4));
+        let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 500 * 1024);
+        assert_eq!(buffer.len(), ADAPTIVE_BUFFER_SMALL);
+    }
+
+    #[test]
+    fn acquire_adaptive_from_allocates_large_buffer_for_large_file() {
+        let pool = Arc::new(BufferPool::new(4));
+        let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 100 * 1024 * 1024);
+        assert_eq!(buffer.len(), ADAPTIVE_BUFFER_LARGE);
+    }
+
+    #[test]
+    fn acquire_adaptive_from_returns_buffer_to_pool() {
+        // Verify that adaptively-sized buffers are still returned to the pool
+        // (resized to pool default) when dropped.
+        let pool = Arc::new(BufferPool::new(4));
+        assert_eq!(pool.available(), 0);
+
+        {
+            let _buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 1024);
+            // tiny buffer is active
+        }
+        // After drop, buffer should be returned and resized to pool default
+        assert_eq!(pool.available(), 1);
+
+        // Next acquire from pool should get a buffer of the default size
+        let buffer = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn acquire_adaptive_from_large_buffer_returns_resized() {
+        // Even a 512 KB buffer gets resized to the default on return.
+        let pool = Arc::new(BufferPool::new(4));
+        {
+            let buffer =
+                BufferPool::acquire_adaptive_from(Arc::clone(&pool), 100 * 1024 * 1024);
+            assert_eq!(buffer.len(), ADAPTIVE_BUFFER_LARGE);
+        }
+        assert_eq!(pool.available(), 1);
+
+        // The returned buffer should be at the pool's default size
+        let buffer = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
     }
 }

@@ -908,6 +908,94 @@ mod tests {
         assert!(parse_size_limit_argument(&os("abc"), "--max-size").is_err());
     }
 
+    // --- parse_size_limit_argument for --max-alloc specifically ---
+
+    #[test]
+    fn parse_max_alloc_bytes() {
+        assert_eq!(
+            parse_size_limit_argument(&os("1048576"), "--max-alloc").unwrap(),
+            1_048_576
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_kilobytes() {
+        assert_eq!(
+            parse_size_limit_argument(&os("512K"), "--max-alloc").unwrap(),
+            512 * 1024
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_megabytes() {
+        assert_eq!(
+            parse_size_limit_argument(&os("256M"), "--max-alloc").unwrap(),
+            256 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_gigabytes() {
+        assert_eq!(
+            parse_size_limit_argument(&os("2G"), "--max-alloc").unwrap(),
+            2 * 1024 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_terabytes() {
+        assert_eq!(
+            parse_size_limit_argument(&os("1T"), "--max-alloc").unwrap(),
+            1024u64.pow(4)
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_zero() {
+        assert_eq!(
+            parse_size_limit_argument(&os("0"), "--max-alloc").unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_fractional() {
+        assert_eq!(
+            parse_size_limit_argument(&os("1.5G"), "--max-alloc").unwrap(),
+            1_610_612_736
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_empty() {
+        assert!(parse_size_limit_argument(&os(""), "--max-alloc").is_err());
+    }
+
+    #[test]
+    fn parse_max_alloc_negative() {
+        assert!(parse_size_limit_argument(&os("-1M"), "--max-alloc").is_err());
+    }
+
+    #[test]
+    fn parse_max_alloc_invalid_suffix() {
+        assert!(parse_size_limit_argument(&os("100X"), "--max-alloc").is_err());
+    }
+
+    #[test]
+    fn parse_max_alloc_non_numeric() {
+        assert!(parse_size_limit_argument(&os("abc"), "--max-alloc").is_err());
+    }
+
+    #[test]
+    fn parse_max_alloc_error_mentions_flag_name() {
+        let err = parse_size_limit_argument(&os("garbage"), "--max-alloc").unwrap_err();
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("--max-alloc"),
+            "error should mention --max-alloc, got: {rendered}"
+        );
+    }
+
     // --- parse_block_size_argument tests ---
 
     #[test]

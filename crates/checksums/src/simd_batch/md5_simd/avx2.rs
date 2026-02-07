@@ -12,6 +12,8 @@
 //! Similar to SSE2 but with twice the parallelism using 256-bit YMM registers.
 //! Each YMM register holds 8 lanes of 32-bit values, allowing 8 parallel MD5
 //! computations to proceed in lockstep.
+
+#![allow(unsafe_op_in_unsafe_fn)]
 //!
 //! AVX2 provides significant advantages over SSE2:
 //! - Variable-shift instructions (`vpsllvd`/`vpsrlvd`) for efficient rotation

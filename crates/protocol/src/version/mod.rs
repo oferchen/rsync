@@ -1,4 +1,13 @@
-//! Protocol version helpers mirroring upstream rsync 3.4.1 semantics.
+//! Protocol version representation, negotiation, and feature queries.
+//!
+//! This module provides [`ProtocolVersion`] -- the strongly typed wrapper for
+//! rsync protocol version numbers -- together with helpers for selecting the
+//! highest mutually supported version ([`select_highest_mutual`]) and iterating
+//! over the supported set.
+//!
+//! The supported versions (28 through 32) match upstream rsync 3.4.1. Version
+//! 30 is the boundary between the legacy ASCII negotiation and the modern
+//! binary handshake.
 
 mod advertisement;
 mod constants;

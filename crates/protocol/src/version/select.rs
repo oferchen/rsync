@@ -7,6 +7,33 @@ use super::{ProtocolVersion, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_COUNT
 use crate::error::NegotiationError;
 
 /// Selects the highest mutual protocol version between the Rust implementation and a peer.
+///
+/// The function accepts any iterator of version identifiers advertised by the
+/// remote peer, filters them through [`ProtocolVersion::from_peer_advertisement`],
+/// and returns the highest version that both sides support. If the peer
+/// advertises a version newer than [`ProtocolVersion::NEWEST`] but within the
+/// upstream tolerance window, the value is clamped to `NEWEST`.
+///
+/// # Errors
+///
+/// - [`NegotiationError::NoMutualProtocol`] when no advertised version
+///   overlaps with [`ProtocolVersion::SUPPORTED_VERSIONS`].
+/// - [`NegotiationError::UnsupportedVersion`] when all advertised versions
+///   fall below the minimum or exceed the maximum advertisement threshold.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::{select_highest_mutual, ProtocolVersion};
+///
+/// // Peer offers versions 30 and 31 -- pick 31
+/// let v = select_highest_mutual([30_u8, 31]).unwrap();
+/// assert_eq!(v, ProtocolVersion::V31);
+///
+/// // Peer offers only a version that is too old
+/// let err = select_highest_mutual([27_u8]);
+/// assert!(err.is_err());
+/// ```
 #[must_use = "the negotiation outcome must be checked"]
 pub fn select_highest_mutual<I, T>(peer_versions: I) -> Result<ProtocolVersion, NegotiationError>
 where

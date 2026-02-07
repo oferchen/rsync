@@ -473,6 +473,49 @@ impl ClientEvent {
         self.destination_path.clone()
     }
 
+    /// Constructs a [`ClientEvent`] for testing purposes.
+    ///
+    /// Exposed so downstream crates can build events for format-rendering tests
+    /// without needing to run a full transfer pipeline.
+    #[doc(hidden)]
+    pub fn for_test(
+        relative_path: PathBuf,
+        kind: ClientEventKind,
+        created: bool,
+        metadata: Option<ClientEntryMetadata>,
+        change_set: LocalCopyChangeSet,
+    ) -> Self {
+        let destination_root: Arc<Path> = Arc::from(Path::new("/tmp"));
+        let destination_path = destination_root.join(&relative_path);
+        Self {
+            relative_path,
+            kind,
+            bytes_transferred: 0,
+            total_bytes: None,
+            elapsed: Duration::ZERO,
+            metadata,
+            created,
+            destination_root,
+            destination_path,
+            change_set,
+        }
+    }
+
+    /// Constructs a [`ClientEntryMetadata`] for testing purposes.
+    #[doc(hidden)]
+    pub fn test_metadata(kind: ClientEntryKind) -> ClientEntryMetadata {
+        ClientEntryMetadata {
+            kind,
+            length: 0,
+            modified: None,
+            mode: None,
+            uid: None,
+            gid: None,
+            nlink: None,
+            symlink_target: None,
+        }
+    }
+
     /// Resolves a destination path for the provided relative component under the supplied root.
     ///
     /// Exposed for testing so unit suites can assert how the summary logic expands candidate
