@@ -12,3 +12,4 @@ mod identity;
 mod itemized;
 #[cfg(unix)]
 mod symlink;
+mod upstream_compat;

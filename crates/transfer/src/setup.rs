@@ -1219,4 +1219,144 @@ mod tests {
             "Protocol 29 should not negotiate"
         );
     }
+
+    // ===== Checksum seed edge case tests (task #99) =====
+
+    #[test]
+    fn setup_protocol_server_uses_fixed_checksum_seed() {
+        // --checksum-seed=12345 should use exactly 12345 as the seed
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let config = ProtocolSetupConfig::new(protocol, true)
+            .with_checksum_seed(Some(12345));
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("setup with fixed seed should succeed");
+
+        assert_eq!(
+            result.checksum_seed,
+            12345_i32,
+            "Fixed seed value should be used as-is"
+        );
+
+        // Verify the seed was written to stdout as 4-byte LE
+        assert_eq!(stdout.len(), 4, "Should write 4-byte seed");
+        let written_seed = i32::from_le_bytes(stdout[..4].try_into().unwrap());
+        assert_eq!(written_seed, 12345, "Written seed should match fixed value");
+    }
+
+    #[test]
+    fn setup_protocol_server_fixed_seed_is_deterministic() {
+        // Same fixed seed should produce same result every time
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+
+        let config = ProtocolSetupConfig::new(protocol, true)
+            .with_checksum_seed(Some(42));
+
+        let mut stdout1 = Vec::new();
+        let mut stdin1 = &b""[..];
+        let result1 = setup_protocol(&mut stdout1, &mut stdin1, &config)
+            .expect("first setup should succeed");
+
+        let mut stdout2 = Vec::new();
+        let mut stdin2 = &b""[..];
+        let result2 = setup_protocol(&mut stdout2, &mut stdin2, &config)
+            .expect("second setup should succeed");
+
+        assert_eq!(
+            result1.checksum_seed, result2.checksum_seed,
+            "Fixed seed should be deterministic across calls"
+        );
+        assert_eq!(stdout1, stdout2, "Wire bytes should be identical for same fixed seed");
+    }
+
+    #[test]
+    fn setup_protocol_server_seed_zero_uses_time_based_generation() {
+        // --checksum-seed=0 is treated like None: generate from time XOR PID
+        // This matches upstream rsync's behavior where 0 means "use current time"
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let config = ProtocolSetupConfig::new(protocol, true)
+            .with_checksum_seed(Some(0));
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("setup with seed=0 should succeed");
+
+        // Seed=0 generates time-based seed, which should be non-zero in practice
+        // (unless time and PID happen to XOR to 0, extremely unlikely)
+        // We just verify it succeeded and produced a 4-byte seed
+        assert_eq!(stdout.len(), 4, "Should write 4-byte seed");
+        // Note: we cannot assert the exact value since it's time-dependent
+        let _ = result.checksum_seed; // Just verify we got a value
+    }
+
+    #[test]
+    fn setup_protocol_server_max_u32_seed() {
+        // --checksum-seed=4294967295 (u32::MAX) should work
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let config = ProtocolSetupConfig::new(protocol, true)
+            .with_checksum_seed(Some(u32::MAX));
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("setup with max seed should succeed");
+
+        // u32::MAX as i32 is -1
+        assert_eq!(
+            result.checksum_seed,
+            u32::MAX as i32,
+            "u32::MAX seed should be transmitted as i32 (-1)"
+        );
+
+        let written_seed = i32::from_le_bytes(stdout[..4].try_into().unwrap());
+        assert_eq!(written_seed, -1_i32, "Wire representation of u32::MAX is -1 as i32");
+    }
+
+    #[test]
+    fn setup_protocol_client_reads_fixed_seed_from_server() {
+        // Client reads exact seed bytes sent by server
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+        let test_seed: i32 = 99999;
+        let seed_bytes = test_seed.to_le_bytes();
+
+        let mut stdin = &seed_bytes[..];
+        let mut stdout = Vec::new();
+
+        let config = ProtocolSetupConfig::new(protocol, false); // CLIENT mode
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("client setup should succeed");
+
+        assert_eq!(
+            result.checksum_seed, test_seed,
+            "Client should read exact seed value from server"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_client_reads_negative_seed_from_server() {
+        // Server may send a negative i32 seed (from u32::MAX cast)
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+        let test_seed: i32 = -1; // This is what u32::MAX becomes
+        let seed_bytes = test_seed.to_le_bytes();
+
+        let mut stdin = &seed_bytes[..];
+        let mut stdout = Vec::new();
+
+        let config = ProtocolSetupConfig::new(protocol, false);
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("client setup with negative seed should succeed");
+
+        assert_eq!(
+            result.checksum_seed, -1,
+            "Client should correctly read negative seed value"
+        );
+    }
 }

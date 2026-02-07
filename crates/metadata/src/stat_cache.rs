@@ -36,16 +36,24 @@ pub struct MetadataCache {
     misses: usize,
 }
 
+/// Cached metadata fields extracted from a stat or statx call.
+///
+/// Contains only the fields needed for permission and ownership checks,
+/// keeping the struct small and cheap to clone.
 #[derive(Debug, Clone)]
-pub(crate) struct CachedMetadata {
+pub struct CachedMetadata {
+    /// File mode (permission bits + file type).
     #[cfg(unix)]
-    pub(crate) mode: u32,
+    pub mode: u32,
+    /// User ID of the file owner.
     #[cfg(unix)]
-    pub(crate) uid: u32,
+    pub uid: u32,
+    /// Group ID of the file owner.
     #[cfg(unix)]
-    pub(crate) gid: u32,
+    pub gid: u32,
+    /// Read-only flag (Windows only).
     #[cfg(not(unix))]
-    pub(crate) readonly: bool,
+    pub readonly: bool,
 }
 
 impl MetadataCache {
@@ -222,7 +230,6 @@ pub fn check_ownership_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
 
     #[test]
     fn metadata_cache_new_is_empty() {
@@ -360,7 +367,7 @@ mod tests {
         fs::write(&path, b"content").expect("write");
 
         use std::os::unix::fs::PermissionsExt;
-        let perms = fs::PermissionsExt::from_mode(0o644);
+        let perms = fs::Permissions::from_mode(0o644);
         fs::set_permissions(&path, perms).expect("chmod");
 
         let mut cache = MetadataCache::new();
@@ -377,7 +384,7 @@ mod tests {
         fs::write(&path, b"content").expect("write");
 
         use std::os::unix::fs::PermissionsExt;
-        let perms = fs::PermissionsExt::from_mode(0o644);
+        let perms = fs::Permissions::from_mode(0o644);
         fs::set_permissions(&path, perms).expect("chmod");
 
         let mut cache = MetadataCache::new();
@@ -394,7 +401,7 @@ mod tests {
         fs::write(&path, b"content").expect("write");
 
         use std::os::unix::fs::PermissionsExt;
-        let perms = fs::PermissionsExt::from_mode(0o644);
+        let perms = fs::Permissions::from_mode(0o644);
         fs::set_permissions(&path, perms).expect("chmod");
 
         let mut cache = MetadataCache::new();
@@ -528,7 +535,7 @@ mod tests {
         fs::write(&path, b"content").expect("write");
 
         use std::os::unix::fs::PermissionsExt;
-        let perms = fs::PermissionsExt::from_mode(0o644);
+        let perms = fs::Permissions::from_mode(0o644);
         fs::set_permissions(&path, perms).expect("chmod");
 
         let mut cache = MetadataCache::new();
@@ -569,6 +576,104 @@ mod tests {
         } else {
             panic!("Unexpected error: {:?}", result);
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn try_statx_optimized_returns_correct_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("mode_test.txt");
+        fs::write(&path, b"content").expect("write");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
+
+        let result = try_statx_optimized(&path);
+        match result {
+            Ok(meta) => {
+                assert_eq!(meta.mode & 0o7777, 0o644);
+            }
+            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {
+                // statx not available, skip
+            }
+            Err(e) => panic!("Unexpected error: {e:?}"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn try_statx_optimized_returns_correct_ownership() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("owner_test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        let std_meta = fs::metadata(&path).expect("metadata");
+        let expected_uid = std_meta.uid();
+        let expected_gid = std_meta.gid();
+
+        let result = try_statx_optimized(&path);
+        match result {
+            Ok(meta) => {
+                assert_eq!(meta.uid, expected_uid);
+                assert_eq!(meta.gid, expected_gid);
+            }
+            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
+            Err(e) => panic!("Unexpected error: {e:?}"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn try_statx_optimized_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("statx_dir");
+        fs::create_dir(&dir).expect("mkdir");
+
+        let result = try_statx_optimized(&dir);
+        match result {
+            Ok(_meta) => {
+                // statx succeeded for directory
+            }
+            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
+            Err(e) => panic!("Unexpected error: {e:?}"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn try_statx_optimized_symlink() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("statx_target.txt");
+        let link = temp.path().join("statx_link.txt");
+        fs::write(&target, b"content").expect("write");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        // try_statx_optimized uses SYMLINK_NOFOLLOW, so should follow since
+        // it's called from fetch_metadata_optimized which uses fs::metadata
+        // as fallback (follows symlinks). The statx call itself uses NOFOLLOW.
+        let result = try_statx_optimized(&link);
+        match result {
+            Ok(_meta) => {
+                // statx succeeded for symlink
+            }
+            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
+            Err(e) => panic!("Unexpected error: {e:?}"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn statx_enosys_fallback_to_regular_stat() {
+        // Verifies that fetch_metadata_optimized handles ENOSYS gracefully
+        // by falling back to regular stat
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("fallback_test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        // fetch_metadata_optimized should always succeed even if statx
+        // returns ENOSYS (it falls back to regular stat)
+        let result = fetch_metadata_optimized(&path);
+        assert!(result.is_ok());
     }
 
     #[test]

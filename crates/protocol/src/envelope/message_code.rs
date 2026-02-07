@@ -173,6 +173,28 @@ impl MessageCode {
         &Self::ALL
     }
 
+    /// Reports whether this message is a keepalive (no-op) used to prevent
+    /// connection timeouts during long operations.
+    ///
+    /// Upstream rsync sends `MSG_NOOP` messages as heartbeats when the sender
+    /// may be silent for extended periods (e.g., during large file checksumming).
+    /// Receivers should silently consume these messages without side effects.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::MessageCode;
+    ///
+    /// assert!(MessageCode::NoOp.is_keepalive());
+    /// assert!(!MessageCode::Data.is_keepalive());
+    /// assert!(!MessageCode::Info.is_keepalive());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn is_keepalive(self) -> bool {
+        matches!(self, MessageCode::NoOp)
+    }
+
     /// Reports whether this message carries human-readable logging output.
     #[inline]
     #[must_use]

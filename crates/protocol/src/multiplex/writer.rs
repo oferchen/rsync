@@ -305,6 +305,34 @@ impl<W: Write> MplexWriter<W> {
         self.inner.flush()
     }
 
+    /// Sends a keepalive (MSG_NOOP) message to prevent connection timeouts.
+    ///
+    /// Upstream rsync periodically sends `MSG_NOOP` with an empty payload as a
+    /// heartbeat when the sender may be silent for extended periods, such as
+    /// during large file checksumming. The receiver silently discards these
+    /// messages. Any buffered DATA is flushed first to maintain proper message
+    /// ordering.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Write;
+    /// use protocol::MplexWriter;
+    ///
+    /// # fn example() -> std::io::Result<()> {
+    /// let mut output = Vec::new();
+    /// let mut writer = MplexWriter::new(&mut output);
+    ///
+    /// writer.write_keepalive()?;
+    /// # Ok(())
+    /// # }
+    /// # example().unwrap();
+    /// ```
+    #[inline]
+    pub fn write_keepalive(&mut self) -> io::Result<()> {
+        self.write_message(MessageCode::NoOp, &[])
+    }
+
     /// Convenience method for writing an error message.
     ///
     /// Equivalent to `write_message(MessageCode::Error, msg.as_bytes())`.

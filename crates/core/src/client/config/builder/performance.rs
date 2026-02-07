@@ -312,4 +312,96 @@ mod tests {
         let config = builder().build();
         assert!(!config.qsort());
     }
+
+    // =========================================================================
+    // Compression level propagation: all zlib levels 1-9 match upstream
+    // =========================================================================
+
+    #[test]
+    fn precise_levels_1_through_9_propagate_correctly() {
+        use std::num::NonZeroU8;
+        for n in 1u8..=9 {
+            let level = NonZeroU8::new(n).unwrap();
+            let config = builder()
+                .compress(true)
+                .compression_level(Some(CompressionLevel::precise(level)))
+                .build();
+
+            assert!(config.compress(), "level {n} should have compress=true");
+            assert_eq!(
+                config.compression_level(),
+                Some(CompressionLevel::precise(level)),
+                "level {n} should propagate to config"
+            );
+            assert!(
+                config.compression_setting().is_enabled(),
+                "level {n} should have compression setting enabled"
+            );
+        }
+    }
+
+    #[test]
+    fn compression_level_implies_compress_true() {
+        use std::num::NonZeroU8;
+        // Setting a compression level should auto-enable compress
+        let level = NonZeroU8::new(3).unwrap();
+        let config = builder()
+            .compression_level(Some(CompressionLevel::precise(level)))
+            .build();
+
+        assert!(
+            config.compress(),
+            "setting compression_level should auto-enable compress"
+        );
+    }
+
+    #[test]
+    fn compression_setting_disabled_disables_compress() {
+        let config = builder()
+            .compress(true)
+            .compression_setting(CompressionSetting::disabled())
+            .build();
+
+        assert!(
+            !config.compress(),
+            "CompressionSetting::disabled() should disable compress"
+        );
+        assert!(config.compression_setting().is_disabled());
+    }
+
+    #[test]
+    fn compression_setting_level_enables_compress() {
+        let config = builder()
+            .compression_setting(CompressionSetting::level(CompressionLevel::Default))
+            .build();
+
+        assert!(
+            config.compress(),
+            "CompressionSetting::level() should enable compress"
+        );
+        assert!(config.compression_setting().is_enabled());
+    }
+
+    #[test]
+    fn compress_false_after_level_clears_everything() {
+        use std::num::NonZeroU8;
+        // Upstream behavior: --no-compress after --compress-level clears the level
+        for n in 1u8..=9 {
+            let level = NonZeroU8::new(n).unwrap();
+            let config = builder()
+                .compression_level(Some(CompressionLevel::precise(level)))
+                .compress(false)
+                .build();
+
+            assert!(
+                !config.compress(),
+                "level {n}: compress(false) should disable"
+            );
+            assert_eq!(
+                config.compression_level(),
+                None,
+                "level {n}: compress(false) should clear compression_level"
+            );
+        }
+    }
 }
