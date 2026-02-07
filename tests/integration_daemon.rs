@@ -17,8 +17,8 @@ use integration::helpers::*;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -183,10 +183,7 @@ fn daemon_list_modules_via_cli() {
 
     // Use CLI to list modules
     let mut cmd = RsyncCommand::new();
-    cmd.args([
-        "--list-only",
-        &format!("rsync://127.0.0.1:{}/", port),
-    ]);
+    cmd.args(["--list-only", &format!("rsync://127.0.0.1:{port}/")]);
 
     // This will fail since we're not running a daemon, but the test structure is here
     // In a full implementation, you would start the daemon in a thread using daemon::run_daemon
@@ -433,9 +430,7 @@ fn interop_with_system_rsync() {
     use std::process::Command;
 
     // Check if system rsync is available
-    let rsync_check = Command::new("rsync")
-        .arg("--version")
-        .output();
+    let rsync_check = Command::new("rsync").arg("--version").output();
 
     if rsync_check.is_err() {
         eprintln!("System rsync not available, skipping interop test");
@@ -625,10 +620,7 @@ timeout = 300
 #[test]
 fn module_path_formats() {
     // Document valid module path formats
-    let paths = [
-        "/absolute/path",
-        "/srv/rsync/module",
-    ];
+    let paths = ["/absolute/path", "/srv/rsync/module"];
 
     for path in paths {
         assert!(path.starts_with('/'), "module paths should be absolute");
@@ -645,6 +637,6 @@ fn motd_format() {
     // MOTD is displayed before module listing
     let motd_content = "Welcome to the rsync server\nMaintenance window: Sundays 2-4 AM";
 
-    assert!(!motd_content.is_empty());
+    assert_eq!(motd_content.lines().count(), 2);
     // MOTD lines should be displayed as-is to clients
 }

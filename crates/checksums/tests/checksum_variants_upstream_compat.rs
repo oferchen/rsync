@@ -15,7 +15,7 @@ use checksums::strong::{
 };
 use checksums::{
     ChecksumAlgorithmKind, ChecksumStrategy, ChecksumStrategySelector, Md4Strategy, Md5Strategy,
-    Sha1Strategy, Sha256Strategy, Sha512Strategy, Xxh3Strategy, Xxh3_128Strategy, Xxh64Strategy,
+    Sha1Strategy, Sha256Strategy, Sha512Strategy, Xxh3_128Strategy, Xxh3Strategy, Xxh64Strategy,
 };
 
 /// Convert bytes to hex string for readable assertions.
@@ -101,14 +101,8 @@ fn strategy_md5_rfc1321_vectors() {
 fn strategy_sha1_rfc3174_vectors() {
     let strategy = Sha1Strategy::new();
     let vectors = [
-        (
-            b"".as_slice(),
-            "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-        ),
-        (
-            b"a".as_slice(),
-            "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8",
-        ),
+        (b"".as_slice(), "da39a3ee5e6b4b0d3255bfef95601890afd80709"),
+        (b"a".as_slice(), "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8"),
         (
             b"abc".as_slice(),
             "a9993e364706816aba3e25717850c26c9cd0d89d",
@@ -291,7 +285,10 @@ fn protocol_version_boundary_produces_different_digests() {
     let d30 = v30.compute(data);
 
     // MD4 and MD5 produce different digests for the same input
-    assert_ne!(d29, d30, "v29 (MD4) and v30 (MD5) should produce different digests");
+    assert_ne!(
+        d29, d30,
+        "v29 (MD4) and v30 (MD5) should produce different digests"
+    );
 
     // Both produce 16-byte digests
     assert_eq!(d29.len(), 16);
@@ -386,14 +383,8 @@ fn algorithm_kind_from_name_case_insensitive() {
 #[test]
 fn algorithm_kind_from_name_rejects_invalid() {
     let invalid = [
-        "none",     // valid in protocol but not a checksum algorithm kind
-        "invalid",
-        "",
-        "md6",
-        "sha384",
-        "sha3-256",
-        "blake2b",
-        "crc32",
+        "none", // valid in protocol but not a checksum algorithm kind
+        "invalid", "", "md6", "sha384", "sha3-256", "blake2b", "crc32",
     ];
     for name in invalid {
         assert_eq!(
@@ -506,10 +497,7 @@ fn md5_seed_none_equals_unseeded() {
     let default_seed = Md5::digest_with_seed(Default::default(), data);
 
     assert_eq!(unseeded, none_seed, "Md5Seed::none() should equal unseeded");
-    assert_eq!(
-        unseeded, default_seed,
-        "Default seed should equal unseeded"
-    );
+    assert_eq!(unseeded, default_seed, "Default seed should equal unseeded");
 }
 
 #[test]
@@ -574,7 +562,10 @@ fn xxhash_seed_applied_through_strategy() {
     let d1 = s1.compute(data);
     let d2 = s2.compute(data);
 
-    assert_ne!(d1, d2, "Different seeds should produce different XXH3 digests");
+    assert_ne!(
+        d1, d2,
+        "Different seeds should produce different XXH3 digests"
+    );
 
     // Verify the seed is correctly converted from i32 to u64
     let direct = Xxh3::digest(42u64, data);
@@ -674,9 +665,7 @@ fn for_algorithm_factory_matches_concrete_factories() {
             ChecksumAlgorithmKind::Sha1 => Box::new(ChecksumStrategySelector::sha1()),
             ChecksumAlgorithmKind::Sha256 => Box::new(ChecksumStrategySelector::sha256()),
             ChecksumAlgorithmKind::Sha512 => Box::new(ChecksumStrategySelector::sha512()),
-            ChecksumAlgorithmKind::Xxh64 => {
-                Box::new(ChecksumStrategySelector::xxh64(seed as u64))
-            }
+            ChecksumAlgorithmKind::Xxh64 => Box::new(ChecksumStrategySelector::xxh64(seed as u64)),
             ChecksumAlgorithmKind::Xxh3 => Box::new(ChecksumStrategySelector::xxh3(seed as u64)),
             ChecksumAlgorithmKind::Xxh3_128 => {
                 Box::new(ChecksumStrategySelector::xxh3_128(seed as u64))
@@ -846,11 +835,7 @@ fn streaming_matches_oneshot_all_algorithms() {
         let mut streaming = Xxh3_128::new(seed);
         streaming.update(&data[..10]);
         streaming.update(&data[10..]);
-        assert_eq!(
-            oneshot,
-            streaming.finalize(),
-            "XXH3-128 streaming mismatch"
-        );
+        assert_eq!(oneshot, streaming.finalize(), "XXH3-128 streaming mismatch");
     }
 }
 
@@ -865,11 +850,7 @@ fn streaming_byte_by_byte_matches_oneshot_all_algorithms() {
         for &byte in data.iter() {
             streaming.update(&[byte]);
         }
-        assert_eq!(
-            oneshot,
-            streaming.finalize(),
-            "MD5 byte-by-byte mismatch"
-        );
+        assert_eq!(oneshot, streaming.finalize(), "MD5 byte-by-byte mismatch");
     }
 
     // SHA256
@@ -1097,13 +1078,22 @@ fn same_seed_produces_same_md5_digest_across_invocations() {
     let digest2 = Md5::digest_with_seed(Md5Seed::proper(seed), data);
     let digest3 = Md5::digest_with_seed(Md5Seed::proper(seed), data);
 
-    assert_eq!(digest1, digest2, "Same seed must produce same MD5 digest (invocation 1 vs 2)");
-    assert_eq!(digest2, digest3, "Same seed must produce same MD5 digest (invocation 2 vs 3)");
+    assert_eq!(
+        digest1, digest2,
+        "Same seed must produce same MD5 digest (invocation 1 vs 2)"
+    );
+    assert_eq!(
+        digest2, digest3,
+        "Same seed must produce same MD5 digest (invocation 2 vs 3)"
+    );
 
     // Also verify legacy ordering is deterministic
     let legacy1 = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
     let legacy2 = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
-    assert_eq!(legacy1, legacy2, "Same seed must produce same legacy MD5 digest");
+    assert_eq!(
+        legacy1, legacy2,
+        "Same seed must produce same legacy MD5 digest"
+    );
 }
 
 #[test]
@@ -1113,15 +1103,24 @@ fn same_seed_produces_same_xxhash_digest_across_invocations() {
     for seed in [0u64, 1, 42, 0xDEAD_BEEF, u64::MAX] {
         let xxh64_d1 = Xxh64::digest(seed, data);
         let xxh64_d2 = Xxh64::digest(seed, data);
-        assert_eq!(xxh64_d1, xxh64_d2, "Same seed must produce same XXH64 digest (seed={seed})");
+        assert_eq!(
+            xxh64_d1, xxh64_d2,
+            "Same seed must produce same XXH64 digest (seed={seed})"
+        );
 
         let xxh3_d1 = Xxh3::digest(seed, data);
         let xxh3_d2 = Xxh3::digest(seed, data);
-        assert_eq!(xxh3_d1, xxh3_d2, "Same seed must produce same XXH3 digest (seed={seed})");
+        assert_eq!(
+            xxh3_d1, xxh3_d2,
+            "Same seed must produce same XXH3 digest (seed={seed})"
+        );
 
         let xxh128_d1 = Xxh3_128::digest(seed, data);
         let xxh128_d2 = Xxh3_128::digest(seed, data);
-        assert_eq!(xxh128_d1, xxh128_d2, "Same seed must produce same XXH3-128 digest (seed={seed})");
+        assert_eq!(
+            xxh128_d1, xxh128_d2,
+            "Same seed must produce same XXH3-128 digest (seed={seed})"
+        );
     }
 }
 
@@ -1181,10 +1180,7 @@ fn xxhash_seed_zero_differs_from_nonzero_seeds() {
     // XXH3 with seed 0 vs seed 1
     let xxh3_zero = Xxh3::digest(0, data);
     let xxh3_one = Xxh3::digest(1, data);
-    assert_ne!(
-        xxh3_zero, xxh3_one,
-        "XXH3 seed 0 should differ from seed 1"
-    );
+    assert_ne!(xxh3_zero, xxh3_one, "XXH3 seed 0 should differ from seed 1");
 
     // XXH3-128 with seed 0 vs seed 1
     let xxh128_zero = Xxh3_128::digest(0, data);
@@ -1204,7 +1200,11 @@ fn md5_seed_boundary_values_produce_valid_and_distinct_digests() {
 
     for &seed in &boundary_seeds {
         let digest = Md5::digest_with_seed(Md5Seed::proper(seed), data);
-        assert_eq!(digest.len(), 16, "MD5 digest must be 16 bytes for seed {seed}");
+        assert_eq!(
+            digest.len(),
+            16,
+            "MD5 digest must be 16 bytes for seed {seed}"
+        );
         digests.push((seed, digest));
     }
 
@@ -1284,8 +1284,16 @@ fn md5_seeded_empty_data_produces_valid_digest() {
         let proper = Md5::digest_with_seed(Md5Seed::proper(seed), empty);
         let legacy = Md5::digest_with_seed(Md5Seed::legacy(seed), empty);
 
-        assert_eq!(proper.len(), 16, "Proper seed with empty data must produce 16-byte digest");
-        assert_eq!(legacy.len(), 16, "Legacy seed with empty data must produce 16-byte digest");
+        assert_eq!(
+            proper.len(),
+            16,
+            "Proper seed with empty data must produce 16-byte digest"
+        );
+        assert_eq!(
+            legacy.len(),
+            16,
+            "Legacy seed with empty data must produce 16-byte digest"
+        );
 
         // For empty data: proper hashes seed only, legacy hashes seed only
         // Both should hash just the seed bytes, but in the same position (since data is empty)

@@ -1622,10 +1622,7 @@ mod tests {
             let options2 = builder2.build().expect("valid options");
 
             assert_eq!(options1.recursive_enabled(), options2.recursive_enabled());
-            assert_eq!(
-                options1.delete_extraneous(),
-                options2.delete_extraneous()
-            );
+            assert_eq!(options1.delete_extraneous(), options2.delete_extraneous());
         }
 
         #[test]
@@ -2171,7 +2168,10 @@ mod tests {
                 .max_file_size(Some(500))
                 .build();
 
-            assert!(matches!(result, Err(BuilderError::InvalidCombination { .. })));
+            assert!(matches!(
+                result,
+                Err(BuilderError::InvalidCombination { .. })
+            ));
         }
 
         #[test]
@@ -2235,7 +2235,10 @@ mod tests {
                 option: "test",
                 range: "0-100".to_string(),
             };
-            assert_eq!(err.to_string(), "value out of range for test: expected 0-100");
+            assert_eq!(
+                err.to_string(),
+                "value out of range for test: expected 0-100"
+            );
         }
 
         #[test]

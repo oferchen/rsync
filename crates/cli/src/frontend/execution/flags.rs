@@ -164,8 +164,8 @@ impl InfoFlagSettings {
     /// Known info flag names for disambiguating `no-` prefix vs flag names
     /// that start with "no" (e.g., "nonreg").
     const KNOWN_FLAGS: &'static [&'static str] = &[
-        "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg",
-        "progress", "remove", "skip", "stats", "symsafe",
+        "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress", "remove",
+        "skip", "stats", "symsafe",
     ];
 
     fn parse_flag_and_level<'a>(&self, input: &'a str) -> (&'a str, u8) {
@@ -184,9 +184,7 @@ impl InfoFlagSettings {
         }
 
         // Try negation prefixes: "no" or "-"
-        let stripped = input
-            .strip_prefix("no")
-            .or_else(|| input.strip_prefix('-'));
+        let stripped = input.strip_prefix("no").or_else(|| input.strip_prefix('-'));
 
         if let Some(stripped) = stripped {
             return (stripped, 0);
@@ -508,10 +506,9 @@ impl DebugFlagSettings {
     /// Known debug flag names for disambiguating `no-` prefix vs flag names
     /// that might start with "no".
     const KNOWN_FLAGS: &'static [&'static str] = &[
-        "acl", "backup", "bind", "chdir", "connect", "cmd", "del",
-        "deltasum", "dup", "exit", "filter", "flist", "fuzzy", "genr",
-        "hash", "hlink", "iconv", "io", "nstr", "own", "proto", "recv",
-        "send", "time",
+        "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
+        "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own", "proto",
+        "recv", "send", "time",
     ];
 
     fn parse_flag_and_level<'a>(&self, input: &'a str) -> (&'a str, u8) {
@@ -530,9 +527,7 @@ impl DebugFlagSettings {
         }
 
         // Try negation prefixes: "no" or "-"
-        let stripped = input
-            .strip_prefix("no")
-            .or_else(|| input.strip_prefix('-'));
+        let stripped = input.strip_prefix("no").or_else(|| input.strip_prefix('-'));
 
         if let Some(stripped) = stripped {
             return (stripped, 0);
@@ -1209,10 +1204,7 @@ mod tests {
 
     #[test]
     fn parse_info_flags_multiple_with_comma_separated() {
-        let values = vec![
-            OsString::from("name,copy"),
-            OsString::from("stats2,del"),
-        ];
+        let values = vec![OsString::from("name,copy"), OsString::from("stats2,del")];
         let result = parse_info_flags(&values).unwrap();
         assert_eq!(result.name, Some(NameOutputLevel::UpdatedOnly));
         assert_eq!(result.copy, Some(1));
@@ -1310,8 +1302,8 @@ mod tests {
     #[test]
     fn info_flag_all_keywords_accepted() {
         let keywords = [
-            "backup", "copy", "del", "flist", "misc", "mount", "name",
-            "nonreg", "progress", "remove", "skip", "stats", "symsafe",
+            "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress",
+            "remove", "skip", "stats", "symsafe",
         ];
         for keyword in &keywords {
             let mut settings = InfoFlagSettings::default();
@@ -1364,10 +1356,9 @@ mod tests {
     #[test]
     fn debug_flag_all_keywords_accepted() {
         let keywords = [
-            "acl", "backup", "bind", "chdir", "connect", "cmd", "del",
-            "deltasum", "dup", "exit", "filter", "flist", "fuzzy", "genr",
-            "hash", "hlink", "iconv", "io", "nstr", "own", "proto", "recv",
-            "send", "time",
+            "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
+            "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own",
+            "proto", "recv", "send", "time",
         ];
         for keyword in &keywords {
             let mut settings = DebugFlagSettings::default();
@@ -1456,10 +1447,9 @@ mod tests {
     #[test]
     fn debug_flag_no_prefix_all_flags() {
         let keywords = [
-            "acl", "backup", "bind", "chdir", "connect", "cmd", "del",
-            "deltasum", "dup", "exit", "filter", "flist", "fuzzy", "genr",
-            "hash", "hlink", "iconv", "io", "nstr", "own", "proto", "recv",
-            "send", "time",
+            "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
+            "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own",
+            "proto", "recv", "send", "time",
         ];
         for keyword in &keywords {
             let mut settings = DebugFlagSettings::default();
@@ -1540,8 +1530,8 @@ mod tests {
     #[test]
     fn info_help_text_lists_all_keywords() {
         let keywords = [
-            "BACKUP", "COPY", "DEL", "FLIST", "MISC", "MOUNT", "NAME",
-            "NONREG", "PROGRESS", "REMOVE", "SKIP", "STATS", "SYMSAFE",
+            "BACKUP", "COPY", "DEL", "FLIST", "MISC", "MOUNT", "NAME", "NONREG", "PROGRESS",
+            "REMOVE", "SKIP", "STATS", "SYMSAFE",
         ];
         for keyword in &keywords {
             assert!(
@@ -1560,10 +1550,9 @@ mod tests {
     #[test]
     fn debug_help_text_lists_all_keywords() {
         let keywords = [
-            "ACL", "BACKUP", "BIND", "CHDIR", "CONNECT", "CMD", "DEL",
-            "DELTASUM", "DUP", "EXIT", "FILTER", "FLIST", "FUZZY", "GENR",
-            "HASH", "HLINK", "ICONV", "IO", "NSTR", "OWN", "PROTO", "RECV",
-            "SEND", "TIME",
+            "ACL", "BACKUP", "BIND", "CHDIR", "CONNECT", "CMD", "DEL", "DELTASUM", "DUP", "EXIT",
+            "FILTER", "FLIST", "FUZZY", "GENR", "HASH", "HLINK", "ICONV", "IO", "NSTR", "OWN",
+            "PROTO", "RECV", "SEND", "TIME",
         ];
         for keyword in &keywords {
             assert!(

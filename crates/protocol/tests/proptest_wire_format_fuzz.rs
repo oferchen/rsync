@@ -19,9 +19,9 @@ use protocol::codec::{
 };
 use protocol::wire::file_entry::{XMIT_EXTENDED_FLAGS, XMIT_LONG_NAME, XMIT_SAME_MODE};
 use protocol::wire::file_entry_decode::{
-    decode_atime, decode_checksum, decode_crtime, decode_flags, decode_gid, decode_hardlink_dev_ino,
-    decode_hardlink_idx, decode_mode, decode_mtime, decode_mtime_nsec, decode_name, decode_rdev,
-    decode_size, decode_symlink_target, decode_uid,
+    decode_atime, decode_checksum, decode_crtime, decode_flags, decode_gid,
+    decode_hardlink_dev_ino, decode_hardlink_idx, decode_mode, decode_mtime, decode_mtime_nsec,
+    decode_name, decode_rdev, decode_size, decode_symlink_target, decode_uid,
 };
 use protocol::wire::{
     DeltaOp, SignatureBlock, read_delta, read_delta_op, read_signature, read_token, write_delta,
@@ -778,7 +778,7 @@ mod delta_arbitrary_input {
         /// Invalid delta opcodes (not 0x00 or 0x01) return InvalidData error.
         #[test]
         fn delta_op_invalid_opcode_is_error(opcode in 2u8..=255u8) {
-            let data = vec![opcode, 0, 0, 0, 0, 0];
+            let data = [opcode, 0, 0, 0, 0, 0];
             let mut cursor = Cursor::new(&data[..]);
             let result = read_delta_op(&mut cursor);
             prop_assert!(result.is_err());

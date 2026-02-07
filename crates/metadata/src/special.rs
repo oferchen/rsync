@@ -48,11 +48,7 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
         "create fifo"
     };
 
-    let mode_bits = permissions_mode(
-        context,
-        destination,
-        metadata.permissions().mode() & 0o777,
-    )?;
+    let mode_bits = permissions_mode(context, destination, metadata.permissions().mode() & 0o777)?;
     let mode = Mode::from_bits_truncate(mode_bits.into());
 
     mknodat(CWD, destination, node_type, mode, makedev(0, 0))
@@ -123,13 +119,13 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
     let is_socket = metadata.file_type().is_socket();
-    let context = if is_socket { "create socket" } else { "create fifo" };
+    let context = if is_socket {
+        "create socket"
+    } else {
+        "create fifo"
+    };
 
-    let mode_bits = permissions_mode(
-        context,
-        destination,
-        metadata.permissions().mode() & 0o777,
-    )?;
+    let mode_bits = permissions_mode(context, destination, metadata.permissions().mode() & 0o777)?;
     // On Apple platforms, `libc::mode_t` is currently a type alias for `u16`,
     // so this cast is infallible and does not require a checked conversion.
     let mode: libc::mode_t = mode_bits as libc::mode_t;

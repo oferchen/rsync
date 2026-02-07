@@ -432,8 +432,7 @@ fn debug_flag_captured_in_parsed_args() {
 
 #[test]
 fn info_unknown_flag_exit_code_1() {
-    let (code, _stdout, stderr) =
-        run_with_args([OsStr::new(RSYNC), OsStr::new("--info=notaflag")]);
+    let (code, _stdout, stderr) = run_with_args([OsStr::new(RSYNC), OsStr::new("--info=notaflag")]);
     assert_eq!(code, 1);
     let rendered = String::from_utf8(stderr).expect("stderr utf8");
     assert!(rendered.contains("invalid --info flag"));
@@ -533,8 +532,8 @@ fn info_none_suppresses_verbose_name_output() {
 #[test]
 fn info_all_upstream_keywords_are_accepted() {
     let keywords = [
-        "backup", "copy", "del", "flist", "misc", "mount", "name",
-        "nonreg", "progress", "remove", "skip", "stats", "symsafe",
+        "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress", "remove",
+        "skip", "stats", "symsafe",
     ];
     for keyword in &keywords {
         let flags = vec![OsString::from(*keyword)];
@@ -549,8 +548,19 @@ fn info_all_upstream_keywords_are_accepted() {
 #[test]
 fn info_all_upstream_keywords_with_level_0() {
     let keywords = [
-        "backup0", "copy0", "del0", "flist0", "misc0", "mount0", "name0",
-        "nonreg0", "progress0", "remove0", "skip0", "stats0", "symsafe0",
+        "backup0",
+        "copy0",
+        "del0",
+        "flist0",
+        "misc0",
+        "mount0",
+        "name0",
+        "nonreg0",
+        "progress0",
+        "remove0",
+        "skip0",
+        "stats0",
+        "symsafe0",
     ];
     for keyword in &keywords {
         let flags = vec![OsString::from(*keyword)];
@@ -565,8 +575,18 @@ fn info_all_upstream_keywords_with_level_0() {
 #[test]
 fn info_all_upstream_keywords_with_negation() {
     let keywords = [
-        "nobackup", "nocopy", "nodel", "noflist", "nomisc", "nomount",
-        "noname", "nononreg", "noprogress", "noremove", "noskip", "nostats",
+        "nobackup",
+        "nocopy",
+        "nodel",
+        "noflist",
+        "nomisc",
+        "nomount",
+        "noname",
+        "nononreg",
+        "noprogress",
+        "noremove",
+        "noskip",
+        "nostats",
         "nosymsafe",
     ];
     for keyword in &keywords {
@@ -582,8 +602,19 @@ fn info_all_upstream_keywords_with_negation() {
 #[test]
 fn info_all_upstream_keywords_with_dash_negation() {
     let keywords = [
-        "-backup", "-copy", "-del", "-flist", "-misc", "-mount", "-name",
-        "-nonreg", "-progress", "-remove", "-skip", "-stats", "-symsafe",
+        "-backup",
+        "-copy",
+        "-del",
+        "-flist",
+        "-misc",
+        "-mount",
+        "-name",
+        "-nonreg",
+        "-progress",
+        "-remove",
+        "-skip",
+        "-stats",
+        "-symsafe",
     ];
     for keyword in &keywords {
         let flags = vec![OsString::from(*keyword)];

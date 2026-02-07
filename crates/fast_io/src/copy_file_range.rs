@@ -251,8 +251,8 @@ mod tests {
         let source = create_temp_file(content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
 
-        let copied = copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64)
-            .unwrap();
+        let copied =
+            copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64).unwrap();
 
         assert_eq!(copied, content.len() as u64);
         dest.seek(SeekFrom::Start(0)).unwrap();
@@ -268,8 +268,8 @@ mod tests {
         let source = create_temp_file(&content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
 
-        let copied = copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64)
-            .unwrap();
+        let copied =
+            copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64).unwrap();
 
         assert_eq!(copied, content.len() as u64);
         dest.seek(SeekFrom::Start(0)).unwrap();
@@ -314,8 +314,8 @@ mod tests {
         let source = create_temp_file(&content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
 
-        let copied = copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64)
-            .unwrap();
+        let copied =
+            copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64).unwrap();
 
         assert_eq!(copied, content.len() as u64);
         dest.seek(SeekFrom::Start(0)).unwrap();

@@ -288,7 +288,7 @@ fn disk_full_error_has_source() {
 
     // LocalCopyError wraps LocalCopyErrorKind which has the source
     // The error chain should be accessible
-    let message = format!("{}", error);
+    let message = format!("{error}");
     assert!(message.contains("disk full"));
 }
 
@@ -297,7 +297,7 @@ fn disk_full_error_debug_format_includes_details() {
     let disk_full = io::Error::new(io::ErrorKind::StorageFull, "No space left on device");
     let error = LocalCopyError::io("write file", PathBuf::from("/destination/file.txt"), disk_full);
 
-    let debug = format!("{:?}", error);
+    let debug = format!("{error:?}");
 
     // Debug format should include relevant details
     assert!(debug.contains("Io"));
@@ -461,17 +461,17 @@ fn multiple_disk_full_errors_are_independent() {
         .map(|i| {
             let disk_full = io::Error::new(
                 io::ErrorKind::StorageFull,
-                format!("disk full error {}", i),
+                format!("disk full error {i}"),
             );
-            LocalCopyError::io("write file", PathBuf::from(format!("/test{}.txt", i)), disk_full)
+            LocalCopyError::io("write file", PathBuf::from(format!("/test{i}.txt")), disk_full)
         })
         .collect();
 
     // Each error should be independent with its own path and message
     for (i, error) in errors.iter().enumerate() {
         let message = error.to_string();
-        assert!(message.contains(&format!("test{}.txt", i)));
-        assert!(message.contains(&format!("disk full error {}", i)));
+        assert!(message.contains(&format!("test{i}.txt")));
+        assert!(message.contains(&format!("disk full error {i}")));
     }
 }
 

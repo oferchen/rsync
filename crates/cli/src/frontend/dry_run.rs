@@ -10,7 +10,7 @@
 //! # Examples
 //!
 //! ```
-//! use cli::dry_run::{DryRunAction, DryRunSummary};
+//! use cli::{DryRunAction, DryRunSummary};
 //!
 //! let mut summary = DryRunSummary::new();
 //! summary.add_action(DryRunAction::SendFile {
@@ -129,7 +129,7 @@ impl DryRunAction {
 /// # Examples
 ///
 /// ```
-/// use cli::dry_run::{DryRunAction, DryRunSummary};
+/// use cli::{DryRunAction, DryRunSummary};
 ///
 /// let mut summary = DryRunSummary::new();
 /// summary.add_action(DryRunAction::SendFile {
@@ -194,7 +194,7 @@ impl DryRunSummary {
     /// # Examples
     ///
     /// ```
-    /// use cli::dry_run::{DryRunAction, DryRunSummary};
+    /// use cli::{DryRunAction, DryRunSummary};
     ///
     /// let mut summary = DryRunSummary::new();
     /// summary.add_action(DryRunAction::SendFile {
@@ -280,7 +280,7 @@ impl DryRunSummary {
     /// # Examples
     ///
     /// ```
-    /// use cli::dry_run::DryRunSummary;
+    /// use cli::DryRunSummary;
     ///
     /// let summary = DryRunSummary::new();
     /// let output = summary.format_summary();
@@ -311,7 +311,7 @@ impl Default for DryRunSummary {
 /// # Examples
 ///
 /// ```
-/// use cli::dry_run::{DryRunAction, DryRunFormatter};
+/// use cli::{DryRunAction, DryRunFormatter};
 ///
 /// let formatter = DryRunFormatter::new(1);
 /// let action = DryRunAction::SendFile {
@@ -342,7 +342,7 @@ impl DryRunFormatter {
     /// # Examples
     ///
     /// ```
-    /// use cli::dry_run::{DryRunAction, DryRunFormatter};
+    /// use cli::{DryRunAction, DryRunFormatter};
     ///
     /// let formatter = DryRunFormatter::new(1);
     /// let action = DryRunAction::DeleteFile {
@@ -397,7 +397,7 @@ impl DryRunFormatter {
     /// # Examples
     ///
     /// ```
-    /// use cli::dry_run::{DryRunAction, DryRunFormatter};
+    /// use cli::{DryRunAction, DryRunFormatter};
     ///
     /// let formatter = DryRunFormatter::new(1);
     /// let actions = vec![
@@ -432,7 +432,7 @@ impl DryRunFormatter {
 /// # Examples
 ///
 /// ```
-/// use cli::dry_run::format_number_with_commas;
+/// use cli::format_number_with_commas;
 ///
 /// assert_eq!(format_number_with_commas(0), "0");
 /// assert_eq!(format_number_with_commas(123), "123");

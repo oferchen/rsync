@@ -260,7 +260,7 @@ pub fn parse_info_flags(flags_str: &str) -> Result<InfoFlags, InfoFlagError> {
             } else {
                 let level = rest
                     .parse::<u8>()
-                    .map_err(|_| InfoFlagError::new(format!("invalid level in flag: {}", token)))?;
+                    .map_err(|_| InfoFlagError::new(format!("invalid level in flag: {token}")))?;
                 levels.set_all(level);
             }
             continue;
@@ -273,7 +273,7 @@ pub fn parse_info_flags(flags_str: &str) -> Result<InfoFlags, InfoFlagError> {
             } else {
                 let level = rest
                     .parse::<u8>()
-                    .map_err(|_| InfoFlagError::new(format!("invalid level in flag: {}", token)))?;
+                    .map_err(|_| InfoFlagError::new(format!("invalid level in flag: {token}")))?;
                 levels.set_all(level);
             }
             continue;
@@ -309,7 +309,7 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), InfoFlagError> {
             let level_str = &token[pos..];
             let level = level_str
                 .parse::<u8>()
-                .map_err(|_| InfoFlagError::new(format!("invalid level in flag: {}", token)))?;
+                .map_err(|_| InfoFlagError::new(format!("invalid level in flag: {token}")))?;
             Ok((name, level))
         }
         None => {
@@ -335,7 +335,7 @@ fn parse_flag_name(name: &str) -> Result<InfoFlag, InfoFlagError> {
         "skip" => Ok(InfoFlag::Skip),
         "stats" => Ok(InfoFlag::Stats),
         "symsafe" => Ok(InfoFlag::Symsafe),
-        _ => Err(InfoFlagError::new(format!("unknown info flag: {}", name))),
+        _ => Err(InfoFlagError::new(format!("unknown info flag: {name}"))),
     }
 }
 
@@ -458,10 +458,12 @@ mod tests {
     fn test_invalid_flag_name() {
         let result = parse_info_flags("invalid");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("unknown info flag"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unknown info flag")
+        );
     }
 
     #[test]

@@ -257,7 +257,7 @@ impl ProgressFormatter {
         name: &str,
         transferred: u64,
         total: u64,
-        rate: f64,
+        _rate: f64,
         eta: Duration,
     ) -> String {
         let mut progress = PerFileProgress::new(name, total);

@@ -130,8 +130,12 @@ fn try_clonefile_impl(src: &Path, dst: &Path) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
 
     // Convert paths to C strings
-    let src_c = CString::new(src.as_os_str().as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains null byte"))?;
+    let src_c = CString::new(src.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source path contains null byte",
+        )
+    })?;
     let dst_c = CString::new(dst.as_os_str().as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "dest path contains null byte"))?;
 
@@ -139,9 +143,7 @@ fn try_clonefile_impl(src: &Path, dst: &Path) -> io::Result<()> {
     // Flag 0 means no special options (CLONE_NOFOLLOW = 1 could be used for symlinks)
     // SAFETY: We're passing valid C strings to clonefile. The syscall is safe to call
     // with valid paths. Any errors are returned via errno and converted to io::Error.
-    let ret = unsafe {
-        libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0)
-    };
+    let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
 
     if ret == 0 {
         Ok(())
@@ -167,9 +169,13 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn setup_test_files(dir: &Path, name: &str, content: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
-        let src = dir.join(format!("{}_src.txt", name));
-        let dst = dir.join(format!("{}_dst.txt", name));
+    fn setup_test_files(
+        dir: &Path,
+        name: &str,
+        content: &[u8],
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let src = dir.join(format!("{name}_src.txt"));
+        let dst = dir.join(format!("{name}_dst.txt"));
         std::fs::write(&src, content).expect("write source file");
         (src, dst)
     }
@@ -196,7 +202,10 @@ mod tests {
         clone_or_copy(&src, &dst).expect("operation should succeed");
 
         let dst_content = std::fs::read(&dst).expect("read destination");
-        assert_eq!(dst_content, content, "copied file should have identical content");
+        assert_eq!(
+            dst_content, content,
+            "copied file should have identical content"
+        );
     }
 
     #[test]
@@ -218,7 +227,10 @@ mod tests {
         // Create only the source file
         std::fs::write(&src, b"data").expect("write source file");
 
-        assert!(!dst.exists(), "destination should not exist before operation");
+        assert!(
+            !dst.exists(),
+            "destination should not exist before operation"
+        );
 
         clone_or_copy(&src, &dst).expect("operation should succeed");
 
@@ -284,7 +296,11 @@ mod tests {
             assert!(result.is_err(), "clonefile should fail on non-macOS");
 
             let err = result.unwrap_err();
-            assert_eq!(err.kind(), io::ErrorKind::Unsupported, "should return Unsupported error");
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::Unsupported,
+                "should return Unsupported error"
+            );
         }
     }
 
@@ -363,7 +379,10 @@ mod tests {
         let content1 = std::fs::read(&dst1).expect("read dst1");
         let content2 = std::fs::read(&dst2).expect("read dst2");
 
-        assert_eq!(content1, content2, "both copy methods should produce identical output");
+        assert_eq!(
+            content1, content2,
+            "both copy methods should produce identical output"
+        );
         assert_eq!(content1, test_content, "both should match source");
     }
 

@@ -1446,19 +1446,16 @@ fn execute_copy_links_follows_nested_symlink_chain_to_regular_file() {
         let meta = fs::symlink_metadata(&dest_file).expect("metadata");
         assert!(
             meta.file_type().is_file(),
-            "{} should be a regular file",
-            name
+            "{name} should be a regular file"
         );
         assert!(
             !meta.file_type().is_symlink(),
-            "{} should not be a symlink",
-            name
+            "{name} should not be a symlink"
         );
         assert_eq!(
             fs::read(&dest_file).expect("read"),
             b"chain content",
-            "{} should have the chain content",
-            name
+            "{name} should have the chain content"
         );
     }
 

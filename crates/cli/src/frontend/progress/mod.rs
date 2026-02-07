@@ -15,8 +15,8 @@ pub(crate) use self::format::{
     format_list_size, format_list_timestamp, format_progress_bytes, format_progress_elapsed,
     format_progress_percent, format_progress_rate, format_progress_rate_decimal,
     format_progress_rate_human, format_size, format_stat_categories, format_summary_rate,
-    format_verbose_rate, format_verbose_rate_decimal, format_verbose_rate_human,
-    is_progress_event, list_only_event,
+    format_verbose_rate, format_verbose_rate_decimal, format_verbose_rate_human, is_progress_event,
+    list_only_event,
 };
 pub(crate) use self::live::LiveProgress;
 pub(crate) use self::mode::ProgressMode;

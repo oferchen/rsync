@@ -38,6 +38,7 @@ fn process_all_pending(controller: &mut PipelineController) {
 }
 
 /// Enqueues entries in batch mode (all at once).
+#[allow(dead_code)]
 fn enqueue_batch(controller: &mut PipelineController, count: usize) {
     for i in 0..count {
         if controller.can_fill() {
@@ -587,8 +588,14 @@ fn error_state_preserves_stats() {
     controller.transition_to(PipelineState::Error("failure".to_string()));
 
     // Stats should be preserved
-    assert_eq!(controller.stats().entries_enqueued, stats_before.entries_enqueued);
-    assert_eq!(controller.stats().entries_processed, stats_before.entries_processed);
+    assert_eq!(
+        controller.stats().entries_enqueued,
+        stats_before.entries_enqueued
+    );
+    assert_eq!(
+        controller.stats().entries_processed,
+        stats_before.entries_processed
+    );
 }
 
 #[test]

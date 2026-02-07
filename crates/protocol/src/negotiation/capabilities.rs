@@ -378,12 +378,22 @@ pub fn negotiate_capabilities(
 
             // Step 1: SEND our supported algorithm lists
             let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
-            debug_log!(Proto, 2, "SSH mode: sending checksum list: {}", checksum_list);
+            debug_log!(
+                Proto,
+                2,
+                "SSH mode: sending checksum list: {}",
+                checksum_list
+            );
             write_vstring(stdout, &checksum_list)?;
 
             if send_compression {
                 let compression_list = supported_compressions().join(" ");
-                debug_log!(Proto, 2, "SSH mode: sending compression list: {}", compression_list);
+                debug_log!(
+                    Proto,
+                    2,
+                    "SSH mode: sending compression list: {}",
+                    compression_list
+                );
                 write_vstring(stdout, &compression_list)?;
             }
 
@@ -391,7 +401,12 @@ pub fn negotiate_capabilities(
 
             // Step 2: READ the remote side's algorithm lists
             let remote_checksum_list = read_vstring(stdin)?;
-            debug_log!(Proto, 2, "SSH mode: received checksum list: {}", remote_checksum_list);
+            debug_log!(
+                Proto,
+                2,
+                "SSH mode: received checksum list: {}",
+                remote_checksum_list
+            );
 
             let remote_compression_list = if send_compression {
                 let list = read_vstring(stdin)?;
@@ -426,12 +441,22 @@ pub fn negotiate_capabilities(
             // The client will read these but won't send a response
 
             let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
-            debug_log!(Proto, 2, "Daemon server: sending checksum list: {}", checksum_list);
+            debug_log!(
+                Proto,
+                2,
+                "Daemon server: sending checksum list: {}",
+                checksum_list
+            );
             write_vstring(stdout, &checksum_list)?;
 
             if send_compression {
                 let compression_list = supported_compressions().join(" ");
-                debug_log!(Proto, 2, "Daemon server: sending compression list: {}", compression_list);
+                debug_log!(
+                    Proto,
+                    2,
+                    "Daemon server: sending compression list: {}",
+                    compression_list
+                );
                 write_vstring(stdout, &compression_list)?;
             }
 
@@ -463,11 +488,21 @@ pub fn negotiate_capabilities(
             // Select first algorithm from server's list that we support
 
             let remote_checksum_list = read_vstring(stdin)?;
-            debug_log!(Proto, 2, "Daemon client: received checksum list: {}", remote_checksum_list);
+            debug_log!(
+                Proto,
+                2,
+                "Daemon client: received checksum list: {}",
+                remote_checksum_list
+            );
 
             let remote_compression_list = if send_compression {
                 let list = read_vstring(stdin)?;
-                debug_log!(Proto, 2, "Daemon client: received compression list: {}", list);
+                debug_log!(
+                    Proto,
+                    2,
+                    "Daemon client: received compression list: {}",
+                    list
+                );
                 Some(list)
             } else {
                 None
@@ -900,9 +935,15 @@ mod tests {
         assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
 
         // Verify server sent data
-        assert!(!stdout.is_empty(), "daemon server should send capability lists");
+        assert!(
+            !stdout.is_empty(),
+            "daemon server should send capability lists"
+        );
         let output = String::from_utf8_lossy(&stdout);
-        assert!(output.contains("xxh128"), "should send checksum list with xxh128");
+        assert!(
+            output.contains("xxh128"),
+            "should send checksum list with xxh128"
+        );
     }
 
     #[test]
@@ -935,7 +976,10 @@ mod tests {
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
 
         // Client should NOT have sent anything
-        assert!(stdout.is_empty(), "daemon client should not send capability lists");
+        assert!(
+            stdout.is_empty(),
+            "daemon client should not send capability lists"
+        );
     }
 
     #[test]

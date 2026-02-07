@@ -29,6 +29,7 @@ pub(crate) const TIMEOUT_EXIT_CODE: i32 = 30;
 /// Exit code returned when the connection setup exceeds the configured timeout.
 ///
 /// Maps to upstream rsync's `RERR_CONTIMEOUT` (35) and `core::exit_code::ExitCode::ConnectionTimeout`.
+#[allow(dead_code)]
 pub(crate) const CONNECTION_TIMEOUT_EXIT_CODE: i32 = 35;
 
 /// Exit code returned when the `--max-delete` limit stops deletions.

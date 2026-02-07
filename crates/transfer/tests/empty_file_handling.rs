@@ -12,8 +12,10 @@
 
 use std::fs::{self, File};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use tempfile::{tempdir, NamedTempFile};
-use transfer::delta_apply::{ChecksumVerifier, DeltaApplyConfig, DeltaApplyResult, SparseWriteState};
+use tempfile::{NamedTempFile, tempdir};
+use transfer::delta_apply::{
+    ChecksumVerifier, DeltaApplyConfig, DeltaApplyResult, SparseWriteState,
+};
 
 // ============================================================================
 // Empty File Delta Generation Tests
@@ -187,9 +189,7 @@ fn empty_file_checksum_matches_known_value() {
         assert_eq!(
             digest.len(),
             expected_len,
-            "algorithm {:?} should produce {} byte digest",
-            algorithm,
-            expected_len
+            "algorithm {algorithm:?} should produce {expected_len} byte digest"
         );
     }
 }
@@ -373,7 +373,13 @@ fn multiple_empty_files_sequential_creation() {
     let temp = tempdir().expect("tempdir");
 
     // Create multiple empty files
-    let file_names = ["empty1.txt", "empty2.txt", "empty3.txt", "empty4.txt", "empty5.txt"];
+    let file_names = [
+        "empty1.txt",
+        "empty2.txt",
+        "empty3.txt",
+        "empty4.txt",
+        "empty5.txt",
+    ];
 
     for name in &file_names {
         let path = temp.path().join(name);
@@ -387,12 +393,12 @@ fn multiple_empty_files_sequential_creation() {
 
         // Verify each file is empty
         let metadata = fs::metadata(&path).expect("metadata");
-        assert_eq!(metadata.len(), 0, "file {} should be empty", name);
+        assert_eq!(metadata.len(), 0, "file {name} should be empty");
     }
 
     // Verify all files exist
     for name in &file_names {
-        assert!(temp.path().join(name).exists(), "file {} should exist", name);
+        assert!(temp.path().join(name).exists(), "file {name} should exist");
     }
 }
 
@@ -415,7 +421,7 @@ fn mixed_empty_and_nonempty_files() {
         let mut state = SparseWriteState::new();
         let mut writer = std::io::BufWriter::new(file);
 
-        state.write(&mut writer, *content).expect("write");
+        state.write(&mut writer, content).expect("write");
         state.finish(&mut writer).expect("finish");
         writer.flush().expect("flush");
 
@@ -424,8 +430,7 @@ fn mixed_empty_and_nonempty_files() {
         assert_eq!(
             metadata.len(),
             content.len() as u64,
-            "file {} should have correct size",
-            name
+            "file {name} should have correct size"
         );
     }
 }
@@ -533,7 +538,10 @@ fn sparse_state_empty_write_returns_zero_bytes() {
     let mut cursor = Cursor::new(vec![0u8; 100]);
 
     let bytes_written = state.write(&mut cursor, &[]).expect("write empty");
-    assert_eq!(bytes_written, 0, "empty write should return 0 bytes written");
+    assert_eq!(
+        bytes_written, 0,
+        "empty write should return 0 bytes written"
+    );
 }
 
 #[test]
@@ -576,9 +584,15 @@ fn empty_file_read_back_verification() {
     }
 
     // Seek back and read
-    temp_file.as_file_mut().seek(SeekFrom::Start(0)).expect("seek");
+    temp_file
+        .as_file_mut()
+        .seek(SeekFrom::Start(0))
+        .expect("seek");
     let mut contents = Vec::new();
-    temp_file.as_file_mut().read_to_end(&mut contents).expect("read");
+    temp_file
+        .as_file_mut()
+        .read_to_end(&mut contents)
+        .expect("read");
 
     assert!(contents.is_empty(), "read back should be empty");
 }

@@ -20,6 +20,8 @@
 //! tracer.end_file("file.txt", 1024);
 //! ```
 
+#![allow(dead_code)]
+
 use std::time::{Duration, Instant};
 
 /// Target name for tracing events, matching rsync's debug category.
@@ -490,7 +492,8 @@ impl RecvTracer {
     /// Returns `Duration::ZERO` if no file is currently being tracked.
     #[must_use]
     pub fn current_file_elapsed(&self) -> Duration {
-        self.current_file_start.map_or(Duration::ZERO, |t| t.elapsed())
+        self.current_file_start
+            .map_or(Duration::ZERO, |t| t.elapsed())
     }
 
     /// Returns the total elapsed time since the session started.

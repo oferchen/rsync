@@ -183,8 +183,7 @@ fn max_alloc_size_resolution_fractional() {
 
 #[test]
 fn max_alloc_size_resolution_zero() {
-    let result =
-        parse_size_limit_argument(OsStr::new("0"), "--max-alloc").expect("parse succeeds");
+    let result = parse_size_limit_argument(OsStr::new("0"), "--max-alloc").expect("parse succeeds");
     assert_eq!(result, 0);
 }
 
@@ -231,8 +230,8 @@ fn max_alloc_rejects_invalid_suffix() {
 
 #[test]
 fn max_alloc_rejects_empty() {
-    let error = parse_size_limit_argument(OsStr::new(""), "--max-alloc")
-        .expect_err("empty should fail");
+    let error =
+        parse_size_limit_argument(OsStr::new(""), "--max-alloc").expect_err("empty should fail");
     let rendered = error.to_string();
     assert!(
         rendered.contains("must not be empty"),

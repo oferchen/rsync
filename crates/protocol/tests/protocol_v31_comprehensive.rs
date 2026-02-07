@@ -23,11 +23,11 @@
 //! 5. Feature Boundary Tests
 //! 6. Interoperability Tests
 
+use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{
     CompatibilityFlags, KnownCompatibilityFlag, NegotiationError, ProtocolVersion,
     select_highest_mutual,
 };
-use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use std::io::Cursor;
 
 // ============================================================================
@@ -155,7 +155,10 @@ mod wire_format {
         codec30.write_file_size(&mut buf30, 12345).unwrap();
         codec31.write_file_size(&mut buf31, 12345).unwrap();
 
-        assert_eq!(buf30, buf31, "v30 and v31 should use same file size encoding");
+        assert_eq!(
+            buf30, buf31,
+            "v30 and v31 should use same file size encoding"
+        );
     }
 }
 
@@ -579,7 +582,10 @@ mod feature_boundaries {
     #[test]
     fn v31_is_second_newest() {
         assert_eq!(ProtocolVersion::V31.offset_from_newest(), 1);
-        assert_eq!(ProtocolVersion::V31.next_newer(), Some(ProtocolVersion::V32));
+        assert_eq!(
+            ProtocolVersion::V31.next_newer(),
+            Some(ProtocolVersion::V32)
+        );
     }
 
     #[test]

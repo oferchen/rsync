@@ -12,10 +12,10 @@ pub mod acl;
 /// [`codec::NdxCodec`] for file-list index encoding. See [`codec`] for details.
 pub mod codec;
 mod compatibility;
-/// Debug tracing system for protocol analysis
-pub mod debug_trace;
 /// Debug I/O tracing for I/O operations
 pub mod debug_io;
+/// Debug tracing system for protocol analysis
+pub mod debug_trace;
 mod envelope;
 mod error;
 /// Error recovery and partial transfer handling for rsync protocol operations.
@@ -31,10 +31,10 @@ pub mod idlist;
 mod legacy;
 mod multiplex;
 mod negotiation;
-/// Transfer statistics wire format encoding and decoding.
-pub mod stats;
 /// Type-safe state machine for rsync protocol phases.
 pub mod state;
+/// Transfer statistics wire format encoding and decoding.
+pub mod stats;
 mod varint;
 mod version;
 pub mod wire;

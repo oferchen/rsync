@@ -7,7 +7,7 @@
 use std::io::{self, Write};
 
 use super::io::send_msg;
-use crate::envelope::{MessageCode, MAX_PAYLOAD_LENGTH};
+use crate::envelope::{MAX_PAYLOAD_LENGTH, MessageCode};
 
 /// A writer that transparently multiplexes data into rsync protocol frames.
 ///
@@ -116,9 +116,7 @@ impl<W> MplexWriter<W> {
     pub fn with_sizes(inner: W, buffer_size: usize, max_frame_size: usize) -> Self {
         assert!(
             max_frame_size <= MAX_PAYLOAD_LENGTH as usize,
-            "max_frame_size ({}) exceeds MAX_PAYLOAD_LENGTH ({})",
-            max_frame_size,
-            MAX_PAYLOAD_LENGTH
+            "max_frame_size ({max_frame_size}) exceeds MAX_PAYLOAD_LENGTH ({MAX_PAYLOAD_LENGTH})"
         );
 
         Self {
@@ -389,15 +387,21 @@ impl<W: Write> Write for MplexWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{recv_msg, MessageCode};
+    use crate::{MessageCode, recv_msg};
 
     #[test]
     fn mplex_writer_new() {
         let output: Vec<u8> = Vec::new();
         let writer = MplexWriter::new(output);
         assert_eq!(writer.buffered(), 0);
-        assert_eq!(writer.buffer_size(), MplexWriter::<Vec<u8>>::DEFAULT_BUFFER_SIZE);
-        assert_eq!(writer.max_frame_size(), MplexWriter::<Vec<u8>>::DEFAULT_MAX_FRAME_SIZE);
+        assert_eq!(
+            writer.buffer_size(),
+            MplexWriter::<Vec<u8>>::DEFAULT_BUFFER_SIZE
+        );
+        assert_eq!(
+            writer.max_frame_size(),
+            MplexWriter::<Vec<u8>>::DEFAULT_MAX_FRAME_SIZE
+        );
     }
 
     #[test]
@@ -484,7 +488,9 @@ mod tests {
         let mut output = Vec::new();
         let mut writer = MplexWriter::new(&mut output);
 
-        writer.write_message(MessageCode::Info, b"test message").unwrap();
+        writer
+            .write_message(MessageCode::Info, b"test message")
+            .unwrap();
 
         let mut cursor = std::io::Cursor::new(&output);
         let frame = recv_msg(&mut cursor).unwrap();
@@ -502,7 +508,9 @@ mod tests {
         assert_eq!(writer.buffered(), 13);
 
         // Write a control message - should flush buffer first
-        writer.write_message(MessageCode::Warning, b"warning").unwrap();
+        writer
+            .write_message(MessageCode::Warning, b"warning")
+            .unwrap();
         assert_eq!(writer.buffered(), 0);
 
         // Verify: DATA frame, then WARNING frame
@@ -641,8 +649,6 @@ mod tests {
 
     #[test]
     fn mplex_writer_roundtrip_large_data() {
-        use std::io::Read;
-
         let large_data = vec![0xAAu8; 100_000];
         let mut output = Vec::new();
         let mut writer = MplexWriter::new(&mut output);
@@ -661,7 +667,7 @@ mod tests {
                     reconstructed.extend_from_slice(frame.payload());
                 }
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => panic!("unexpected error: {}", e),
+                Err(e) => panic!("unexpected error: {e}"),
             }
         }
 

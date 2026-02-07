@@ -1718,7 +1718,7 @@ mod exit_code_formatting {
         ];
 
         for code in all_codes {
-            let display = format!("{}", code);
+            let display = format!("{code}");
             let description = code.description();
             assert_eq!(
                 display, description,
@@ -1730,7 +1730,7 @@ mod exit_code_formatting {
     #[test]
     fn debug_format_contains_variant_name() {
         let code = ExitCode::PartialTransfer;
-        let debug = format!("{:?}", code);
+        let debug = format!("{code:?}");
         assert!(
             debug.contains("PartialTransfer"),
             "Debug should contain variant name"
@@ -1779,8 +1779,7 @@ mod exit_code_formatting {
                 let first_char = desc.chars().next().unwrap();
                 assert!(
                     first_char.is_lowercase(),
-                    "{code:?}: description '{}' should start lowercase",
-                    desc
+                    "{code:?}: description '{desc}' should start lowercase"
                 );
             }
         }

@@ -3,8 +3,8 @@
 //! These tests demonstrate the high-level multiplex I/O API and verify
 //! that it correctly handles the rsync multiplex protocol.
 
+use protocol::{MessageCode, MplexReader, MplexWriter};
 use std::io::{self, Cursor, Read, Write};
-use protocol::{MplexReader, MplexWriter, MessageCode};
 
 #[test]
 fn roundtrip_simple_data() {
@@ -48,7 +48,7 @@ fn roundtrip_large_data() {
                 Ok(0) => break,
                 Ok(n) => output.extend_from_slice(&chunk[..n]),
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => panic!("unexpected error: {}", e),
+                Err(e) => panic!("unexpected error: {e}"),
             }
         }
         assert_eq!(output, large_data);
@@ -88,7 +88,7 @@ fn control_messages_with_data() {
                 Ok(0) => break,
                 Ok(n) => data.extend_from_slice(&chunk[..n]),
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => panic!("unexpected error: {}", e),
+                Err(e) => panic!("unexpected error: {e}"),
             }
         }
 
@@ -127,7 +127,7 @@ fn buffering_optimization() {
     {
         let mut writer = MplexWriter::new(&mut buffer);
         for i in 0..100 {
-            writer.write_all(format!("chunk{} ", i).as_bytes()).unwrap();
+            writer.write_all(format!("chunk{i} ").as_bytes()).unwrap();
         }
         writer.flush().unwrap();
     }
@@ -142,13 +142,13 @@ fn buffering_optimization() {
                 Ok(0) => break,
                 Ok(n) => output.push_str(&String::from_utf8_lossy(&chunk[..n])),
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => panic!("unexpected error: {}", e),
+                Err(e) => panic!("unexpected error: {e}"),
             }
         }
 
         // Verify all chunks are present
         for i in 0..100 {
-            assert!(output.contains(&format!("chunk{} ", i)));
+            assert!(output.contains(&format!("chunk{i} ")));
         }
     }
 }
@@ -181,7 +181,7 @@ fn empty_data_frames() {
                     break; // Got our data
                 }
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => panic!("unexpected error: {}", e),
+                Err(e) => panic!("unexpected error: {e}"),
             }
         }
 
@@ -199,7 +199,7 @@ fn custom_buffer_sizes() {
         assert_eq!(writer.buffer_size(), 100);
         assert_eq!(writer.max_frame_size(), 50);
 
-        writer.write_all(&vec![0xAAu8; 200]).unwrap();
+        writer.write_all(&[0xAAu8; 200]).unwrap();
         writer.flush().unwrap();
     }
 
@@ -214,7 +214,7 @@ fn custom_buffer_sizes() {
                 Ok(0) => break,
                 Ok(n) => output.extend_from_slice(&chunk[..n]),
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => panic!("unexpected error: {}", e),
+                Err(e) => panic!("unexpected error: {e}"),
             }
         }
 
@@ -230,7 +230,9 @@ fn message_types() {
     {
         let mut writer = MplexWriter::new(&mut buffer);
         writer.write_message(MessageCode::Info, b"info").unwrap();
-        writer.write_message(MessageCode::Warning, b"warning").unwrap();
+        writer
+            .write_message(MessageCode::Warning, b"warning")
+            .unwrap();
         writer.write_message(MessageCode::Error, b"error").unwrap();
         writer.write_data(b"data").unwrap();
     }
@@ -241,7 +243,10 @@ fn message_types() {
 
         let mut reader = MplexReader::new(Cursor::new(&buffer));
         reader.set_message_handler(move |code, payload| {
-            messages_clone.lock().unwrap().push((code, payload.to_vec()));
+            messages_clone
+                .lock()
+                .unwrap()
+                .push((code, payload.to_vec()));
         });
 
         let mut data = Vec::new();
@@ -251,7 +256,7 @@ fn message_types() {
                 Ok(0) => break,
                 Ok(n) => data.extend_from_slice(&chunk[..n]),
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => panic!("unexpected error: {}", e),
+                Err(e) => panic!("unexpected error: {e}"),
             }
         }
 

@@ -222,9 +222,7 @@ fn test_end_to_end_mapping_flow() {
     let file_uids = vec![0, 1000, 1001]; // root + two regular users
 
     for &uid in &file_uids {
-        let name = metadata::id_lookup::lookup_user_name(uid)
-            .ok()
-            .flatten();
+        let name = metadata::id_lookup::lookup_user_name(uid).ok().flatten();
         sender_uid_list.add_id(uid, name);
     }
 
@@ -235,16 +233,17 @@ fn test_end_to_end_mapping_flow() {
         .expect("write uid list");
 
     // Verify wire data is not empty
-    assert!(!wire_data.is_empty(), "Wire data should contain encoded IDs");
+    assert!(
+        !wire_data.is_empty(),
+        "Wire data should contain encoded IDs"
+    );
 
     // Step 3: Receiver reads ID list and resolves names to local IDs
     let mut receiver_uid_list = IdList::new();
     let mut reader = Cursor::new(&wire_data);
 
     receiver_uid_list
-        .read(&mut reader, |name| {
-            lookup_user_by_name(name).ok().flatten()
-        })
+        .read(&mut reader, |name| lookup_user_by_name(name).ok().flatten())
         .expect("read uid list");
 
     // Step 4: Receiver maps remote UIDs to local UIDs
@@ -351,7 +350,11 @@ fn test_id_mapping_cache() {
     let second = map_uid(0, false).expect("second lookup");
 
     // Results should be consistent
-    assert_eq!(first.as_raw(), second.as_raw(), "Cache should return consistent results");
+    assert_eq!(
+        first.as_raw(),
+        second.as_raw(),
+        "Cache should return consistent results"
+    );
 
     // Test with different UID
     let _ = map_uid(1, false);
@@ -376,11 +379,7 @@ fn test_protocol_version_differences() {
     let mut read_list = IdList::new();
     read_list
         .read(&mut wire_data.as_slice(), |name| {
-            if name == b"root" {
-                Some(0)
-            } else {
-                None
-            }
+            if name == b"root" { Some(0) } else { None }
         })
         .expect("read");
 
@@ -498,6 +497,5 @@ fn test_architecture_documentation() {
     //   - Avoids expensive NSS lookups (15x speedup)
     //   - Duplicate IDs skipped (first occurrence wins)
 
-    // This test just validates the architecture exists
-    assert!(true, "Architecture documented");
+    // Architecture validated by the documentation above.
 }

@@ -113,7 +113,8 @@ mod tests {
         let mut writer = Vec::new();
         let data = b"hello";
         let buffers = &[&data[..]];
-        let written = write_vectored_all(&mut writer, buffers).expect("single buffer write succeeds");
+        let written =
+            write_vectored_all(&mut writer, buffers).expect("single buffer write succeeds");
         assert_eq!(written, 5);
         assert_eq!(&writer, b"hello");
     }
@@ -125,7 +126,8 @@ mod tests {
         let buf2 = b" ";
         let buf3 = b"world";
         let buffers = &[&buf1[..], &buf2[..], &buf3[..]];
-        let written = write_vectored_all(&mut writer, buffers).expect("multiple buffer write succeeds");
+        let written =
+            write_vectored_all(&mut writer, buffers).expect("multiple buffer write succeeds");
         assert_eq!(written, 11);
         assert_eq!(&writer, b"hello world");
     }
@@ -151,7 +153,7 @@ mod tests {
 
         // Create 100 small buffers
         let data: Vec<Vec<u8>> = (0..100)
-            .map(|i| format!("buffer-{:03}", i).into_bytes())
+            .map(|i| format!("buffer-{i:03}").into_bytes())
             .collect();
 
         let buffer_refs: Vec<&[u8]> = data.iter().map(|v| v.as_slice()).collect();
@@ -185,7 +187,7 @@ mod tests {
     #[test]
     fn threshold_is_reasonable() {
         // Threshold should be at least 2 to make vectored I/O worthwhile
-        assert!(VECTORED_THRESHOLD >= 2, "VECTORED_THRESHOLD must be >= 2");
+        assert_eq!(VECTORED_THRESHOLD, 2, "VECTORED_THRESHOLD must be >= 2");
     }
 
     #[test]
@@ -285,7 +287,8 @@ mod tests {
         let buf2 = b"world";
         let buffers = &[&buf1[..], &buf2[..]];
 
-        let written = write_vectored_all(&mut writer, buffers).expect("interrupted write retries and succeeds");
+        let written = write_vectored_all(&mut writer, buffers)
+            .expect("interrupted write retries and succeeds");
 
         assert!(writer.interrupted, "should have been interrupted once");
         assert_eq!(written, 10);
@@ -331,7 +334,8 @@ mod tests {
 
         let buffer_refs: Vec<&[u8]> = data.iter().map(|v| v.as_slice()).collect();
 
-        let written = write_vectored_all(&mut writer, &buffer_refs).expect("large IOV write succeeds");
+        let written =
+            write_vectored_all(&mut writer, &buffer_refs).expect("large IOV write succeeds");
 
         // Verify all data was written
         let mut expected = Vec::new();

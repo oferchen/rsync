@@ -208,7 +208,10 @@ pub fn execute_metadata_ops_batched(ops: &[MetadataOp]) -> Vec<MetadataResult> {
     indexed_results.sort_by_key(|(idx, _)| *idx);
 
     // Extract results
-    indexed_results.into_iter().map(|(_, result)| result).collect()
+    indexed_results
+        .into_iter()
+        .map(|(_, result)| result)
+        .collect()
 }
 
 /// Returns a sort key for grouping operations by type.
@@ -228,12 +231,8 @@ fn operation_type_key(op: &MetadataOp) -> u8 {
 /// This is the core implementation used by both individual and batched paths.
 fn execute_single_op(op: &MetadataOp) -> MetadataResult {
     match op {
-        MetadataOp::Stat(path) => {
-            MetadataResult::Stat(stat_file(path, true))
-        }
-        MetadataOp::Lstat(path) => {
-            MetadataResult::Stat(stat_file(path, false))
-        }
+        MetadataOp::Stat(path) => MetadataResult::Stat(stat_file(path, true)),
+        MetadataOp::Lstat(path) => MetadataResult::Stat(stat_file(path, false)),
         MetadataOp::SetTimes { path, atime, mtime } => {
             MetadataResult::SetTimes(set_file_times(path, *atime, *mtime))
         }
@@ -326,20 +325,10 @@ fn set_file_times(
         let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
 
-        let times = [
-            timespec_from_option(atime),
-            timespec_from_option(mtime),
-        ];
+        let times = [timespec_from_option(atime), timespec_from_option(mtime)];
 
         // SAFETY: c_path is a valid C string, times is a valid array
-        let result = unsafe {
-            libc::utimensat(
-                libc::AT_FDCWD,
-                c_path.as_ptr(),
-                times.as_ptr(),
-                0,
-            )
-        };
+        let result = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) };
 
         if result == 0 {
             Ok(())
@@ -364,7 +353,8 @@ fn set_file_times(
 fn timespec_from_option(time: Option<SystemTime>) -> libc::timespec {
     match time {
         Some(t) => {
-            let duration = t.duration_since(std::time::UNIX_EPOCH)
+            let duration = t
+                .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or(std::time::Duration::from_secs(0));
             libc::timespec {
                 tv_sec: duration.as_secs() as libc::time_t,
@@ -540,12 +530,13 @@ mod tests {
         // Create BATCH_THRESHOLD files
         let mut paths = Vec::new();
         for i in 0..BATCH_THRESHOLD {
-            let path = create_test_file(&temp_dir, &format!("file{}.txt", i), b"test").unwrap();
+            let path = create_test_file(&temp_dir, &format!("file{i}.txt"), b"test").unwrap();
             paths.push(path);
         }
 
         // Below threshold - should use individual path
-        let ops_below: Vec<_> = paths.iter()
+        let ops_below: Vec<_> = paths
+            .iter()
             .take(BATCH_THRESHOLD - 1)
             .map(|p| MetadataOp::Stat(p.clone()))
             .collect();
@@ -553,7 +544,8 @@ mod tests {
         assert_eq!(results_below.len(), BATCH_THRESHOLD - 1);
 
         // At threshold - should use batched path
-        let ops_at: Vec<_> = paths.iter()
+        let ops_at: Vec<_> = paths
+            .iter()
             .take(BATCH_THRESHOLD)
             .map(|p| MetadataOp::Stat(p.clone()))
             .collect();
@@ -718,16 +710,20 @@ mod tests {
         assert_eq!(results_individual.len(), results_batched.len());
 
         // Compare results
-        for (i, (ind, bat)) in results_individual.iter().zip(results_batched.iter()).enumerate() {
+        for (i, (ind, bat)) in results_individual
+            .iter()
+            .zip(results_batched.iter())
+            .enumerate()
+        {
             match (ind, bat) {
                 (MetadataResult::Stat(Ok(m1)), MetadataResult::Stat(Ok(m2))) => {
-                    assert_eq!(m1.len(), m2.len(), "Mismatch at index {}", i);
-                    assert_eq!(m1.is_dir(), m2.is_dir(), "Mismatch at index {}", i);
+                    assert_eq!(m1.len(), m2.len(), "Mismatch at index {i}");
+                    assert_eq!(m1.is_dir(), m2.is_dir(), "Mismatch at index {i}");
                 }
                 (MetadataResult::Stat(Err(_)), MetadataResult::Stat(Err(_))) => {
                     // Both failed - this is expected for nonexistent file
                 }
-                _ => panic!("Result type mismatch at index {}: {:?} vs {:?}", i, ind, bat),
+                _ => panic!("Result type mismatch at index {i}: {ind:?} vs {bat:?}"),
             }
         }
     }
