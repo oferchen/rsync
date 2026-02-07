@@ -2177,6 +2177,46 @@ mod checksum_choice_tests {
         let parsed = parse_test_args(["--checksum-seed=0", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.checksum_seed, Some(0));
     }
+
+    #[test]
+    fn checksum_seed_max_u32() {
+        let parsed =
+            parse_test_args(["--checksum-seed=4294967295", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.checksum_seed, Some(u32::MAX));
+    }
+
+    #[test]
+    fn checksum_seed_one() {
+        let parsed = parse_test_args(["--checksum-seed=1", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.checksum_seed, Some(1));
+    }
+
+    #[test]
+    fn checksum_seed_with_checksum_flag() {
+        // --checksum and --checksum-seed can be combined
+        let parsed =
+            parse_test_args(["-c", "--checksum-seed=42", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.checksum, Some(true));
+        assert_eq!(parsed.checksum_seed, Some(42));
+    }
+
+    #[test]
+    fn checksum_seed_overflow_rejected() {
+        let result = parse_test_args(["--checksum-seed=4294967296", "src/", "dst/"]);
+        assert!(result.is_err(), "u32::MAX + 1 should be rejected");
+    }
+
+    #[test]
+    fn checksum_seed_negative_rejected() {
+        let result = parse_test_args(["--checksum-seed=-1", "src/", "dst/"]);
+        assert!(result.is_err(), "negative seed should be rejected");
+    }
+
+    #[test]
+    fn checksum_seed_defaults_to_none() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.checksum_seed, None, "default should be None");
+    }
 }
 
 // ============================================================================

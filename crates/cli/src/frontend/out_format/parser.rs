@@ -10,8 +10,8 @@ use core::message::{Message, Role};
 use core::rsync_error;
 
 use super::tokens::{
-    HumanizeMode, MAX_PLACEHOLDER_WIDTH, OutFormat, OutFormatPlaceholder, OutFormatToken,
-    PlaceholderAlignment, PlaceholderFormat, PlaceholderToken,
+    HumanizeMode, OutFormat, OutFormatPlaceholder, OutFormatToken, PlaceholderAlignment,
+    PlaceholderFormat, PlaceholderToken, MAX_PLACEHOLDER_WIDTH,
 };
 
 fn parse_placeholder_format(chars: &mut Peekable<Chars<'_>>) -> PlaceholderFormat {
@@ -437,5 +437,263 @@ mod tests {
     fn parse_out_format_multiple_escaped_percent() {
         let result = parse_out_format(&os("%% %% %%"));
         assert!(result.is_ok());
+    }
+
+    // ---- Token content verification tests ----
+    //
+    // These tests verify that each placeholder letter maps to the correct
+    // OutFormatPlaceholder variant, not just that parsing succeeds.
+
+    fn assert_single_placeholder(input: &str, expected: OutFormatPlaceholder) {
+        let format = parse_out_format(&os(input)).unwrap_or_else(|_| panic!("parse {input}"));
+        let tokens: Vec<_> = format.tokens().collect();
+        assert_eq!(tokens.len(), 1, "expected 1 token for {input}");
+        match &tokens[0] {
+            OutFormatToken::Placeholder(p) => assert!(
+                std::mem::discriminant(&p.kind) == std::mem::discriminant(&expected),
+                "for {input}, expected {expected:?}, got {:?}",
+                p.kind,
+            ),
+            other => panic!("expected placeholder for {input}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_token_content_filename() {
+        assert_single_placeholder("%n", OutFormatPlaceholder::FileName);
+    }
+
+    #[test]
+    fn parse_token_content_filename_with_symlink_target() {
+        assert_single_placeholder("%N", OutFormatPlaceholder::FileNameWithSymlinkTarget);
+    }
+
+    #[test]
+    fn parse_token_content_full_path() {
+        assert_single_placeholder("%f", OutFormatPlaceholder::FullPath);
+    }
+
+    #[test]
+    fn parse_token_content_itemized_changes() {
+        assert_single_placeholder("%i", OutFormatPlaceholder::ItemizedChanges);
+    }
+
+    #[test]
+    fn parse_token_content_file_length() {
+        assert_single_placeholder("%l", OutFormatPlaceholder::FileLength);
+    }
+
+    #[test]
+    fn parse_token_content_bytes_transferred() {
+        assert_single_placeholder("%b", OutFormatPlaceholder::BytesTransferred);
+    }
+
+    #[test]
+    fn parse_token_content_checksum_bytes() {
+        assert_single_placeholder("%c", OutFormatPlaceholder::ChecksumBytes);
+    }
+
+    #[test]
+    fn parse_token_content_operation() {
+        assert_single_placeholder("%o", OutFormatPlaceholder::Operation);
+    }
+
+    #[test]
+    fn parse_token_content_modify_time() {
+        assert_single_placeholder("%M", OutFormatPlaceholder::ModifyTime);
+    }
+
+    #[test]
+    fn parse_token_content_permission_string() {
+        assert_single_placeholder("%B", OutFormatPlaceholder::PermissionString);
+    }
+
+    #[test]
+    fn parse_token_content_symlink_target() {
+        assert_single_placeholder("%L", OutFormatPlaceholder::SymlinkTarget);
+    }
+
+    #[test]
+    fn parse_token_content_current_time() {
+        assert_single_placeholder("%t", OutFormatPlaceholder::CurrentTime);
+    }
+
+    #[test]
+    fn parse_token_content_owner_name() {
+        assert_single_placeholder("%u", OutFormatPlaceholder::OwnerName);
+    }
+
+    #[test]
+    fn parse_token_content_group_name() {
+        assert_single_placeholder("%g", OutFormatPlaceholder::GroupName);
+    }
+
+    #[test]
+    fn parse_token_content_owner_uid() {
+        assert_single_placeholder("%U", OutFormatPlaceholder::OwnerUid);
+    }
+
+    #[test]
+    fn parse_token_content_owner_gid() {
+        assert_single_placeholder("%G", OutFormatPlaceholder::OwnerGid);
+    }
+
+    #[test]
+    fn parse_token_content_process_id() {
+        assert_single_placeholder("%p", OutFormatPlaceholder::ProcessId);
+    }
+
+    #[test]
+    fn parse_token_content_remote_host() {
+        assert_single_placeholder("%h", OutFormatPlaceholder::RemoteHost);
+    }
+
+    #[test]
+    fn parse_token_content_remote_address() {
+        assert_single_placeholder("%a", OutFormatPlaceholder::RemoteAddress);
+    }
+
+    #[test]
+    fn parse_token_content_module_name() {
+        assert_single_placeholder("%m", OutFormatPlaceholder::ModuleName);
+    }
+
+    #[test]
+    fn parse_token_content_module_path() {
+        assert_single_placeholder("%P", OutFormatPlaceholder::ModulePath);
+    }
+
+    #[test]
+    fn parse_token_content_full_checksum() {
+        assert_single_placeholder("%C", OutFormatPlaceholder::FullChecksum);
+    }
+
+    // ---- Escaped percent produces a literal token ----
+
+    #[test]
+    fn parse_escaped_percent_produces_literal_percent_token() {
+        let format = parse_out_format(&os("%%")).unwrap();
+        let tokens: Vec<_> = format.tokens().collect();
+        assert_eq!(tokens.len(), 1);
+        match &tokens[0] {
+            OutFormatToken::Literal(s) => assert_eq!(s, "%"),
+            other => panic!("expected literal '%', got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_double_escaped_percent_produces_two_percent_literals() {
+        let format = parse_out_format(&os("%%%%")).unwrap();
+        let tokens: Vec<_> = format.tokens().collect();
+        // Both %% sequences are adjacent so they get merged into one literal "%%"
+        assert_eq!(tokens.len(), 1);
+        match &tokens[0] {
+            OutFormatToken::Literal(s) => assert_eq!(s, "%%"),
+            other => panic!("expected literal '%%', got {other:?}"),
+        }
+    }
+
+    // ---- Token ordering with mixed literals and placeholders ----
+
+    #[test]
+    fn parse_mixed_format_preserves_token_order() {
+        let format = parse_out_format(&os("[%i] %n (%l bytes)")).unwrap();
+        let tokens: Vec<_> = format.tokens().collect();
+        // Expected: Literal("["), Placeholder(%i), Literal("] "), Placeholder(%n),
+        //           Literal(" ("), Placeholder(%l), Literal(" bytes)")
+        assert_eq!(tokens.len(), 7, "expected 7 tokens, got {tokens:?}");
+
+        assert!(matches!(&tokens[0], OutFormatToken::Literal(s) if s == "["));
+        assert!(
+            matches!(&tokens[1], OutFormatToken::Placeholder(p) if matches!(p.kind, OutFormatPlaceholder::ItemizedChanges))
+        );
+        assert!(matches!(&tokens[2], OutFormatToken::Literal(s) if s == "] "));
+        assert!(
+            matches!(&tokens[3], OutFormatToken::Placeholder(p) if matches!(p.kind, OutFormatPlaceholder::FileName))
+        );
+        assert!(matches!(&tokens[4], OutFormatToken::Literal(s) if s == " ("));
+        assert!(
+            matches!(&tokens[5], OutFormatToken::Placeholder(p) if matches!(p.kind, OutFormatPlaceholder::FileLength))
+        );
+        assert!(matches!(&tokens[6], OutFormatToken::Literal(s) if s == " bytes)"));
+    }
+
+    #[test]
+    fn parse_adjacent_placeholders_without_separator() {
+        let format = parse_out_format(&os("%i%n")).unwrap();
+        let tokens: Vec<_> = format.tokens().collect();
+        assert_eq!(tokens.len(), 2, "expected 2 tokens for %%i%%n");
+        assert!(
+            matches!(&tokens[0], OutFormatToken::Placeholder(p) if matches!(p.kind, OutFormatPlaceholder::ItemizedChanges))
+        );
+        assert!(
+            matches!(&tokens[1], OutFormatToken::Placeholder(p) if matches!(p.kind, OutFormatPlaceholder::FileName))
+        );
+    }
+
+    // ---- Apostrophe before and after width combined ----
+
+    #[test]
+    fn parse_placeholder_format_apostrophe_before_and_after_width() {
+        let mut chars = "'10'n".chars().peekable();
+        let format = parse_placeholder_format(&mut chars);
+        assert_eq!(format.width(), Some(10));
+        // 1 apostrophe before + 1 after = 2 total = DecimalUnits
+        assert_eq!(format.humanize(), HumanizeMode::DecimalUnits);
+    }
+
+    #[test]
+    fn parse_placeholder_format_two_before_one_after_width() {
+        let mut chars = "''10'n".chars().peekable();
+        let format = parse_placeholder_format(&mut chars);
+        assert_eq!(format.width(), Some(10));
+        // 2 apostrophes before + 1 after = 3 total = BinaryUnits
+        assert_eq!(format.humanize(), HumanizeMode::BinaryUnits);
+    }
+
+    // ---- Unsupported placeholder error messages ----
+
+    #[test]
+    fn parse_out_format_unsupported_placeholder_includes_letter_in_error() {
+        let err = parse_out_format(&os("%z")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("%z"), "error should mention '%z', got: {msg}",);
+    }
+
+    #[test]
+    fn parse_out_format_unsupported_uppercase_placeholder_includes_letter() {
+        let err = parse_out_format(&os("%Q")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("%Q"), "error should mention '%Q', got: {msg}",);
+    }
+
+    // ---- Literal-only input produces single literal token ----
+
+    #[test]
+    fn parse_literal_only_input_produces_single_literal_token() {
+        let format = parse_out_format(&os("hello world")).unwrap();
+        let tokens: Vec<_> = format.tokens().collect();
+        assert_eq!(tokens.len(), 1);
+        match &tokens[0] {
+            OutFormatToken::Literal(s) => assert_eq!(s, "hello world"),
+            other => panic!("expected literal, got {other:?}"),
+        }
+    }
+
+    // ---- Placeholder with format metadata ----
+
+    #[test]
+    fn parse_width_format_attached_to_correct_placeholder() {
+        let format = parse_out_format(&os("%-20n")).unwrap();
+        let tokens: Vec<_> = format.tokens().collect();
+        assert_eq!(tokens.len(), 1);
+        match &tokens[0] {
+            OutFormatToken::Placeholder(p) => {
+                assert!(matches!(p.kind, OutFormatPlaceholder::FileName));
+                assert_eq!(p.format.width(), Some(20));
+                assert_eq!(p.format.align(), PlaceholderAlignment::Left);
+            }
+            other => panic!("expected placeholder, got {other:?}"),
+        }
     }
 }
