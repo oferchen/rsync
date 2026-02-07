@@ -59,6 +59,7 @@ mod compressor;
 pub mod concurrent_delta;
 mod context;
 pub(crate) mod debug_del;
+pub(crate) mod debug_deltasum;
 pub(crate) mod debug_flist;
 pub(crate) mod debug_recv;
 pub(crate) mod debug_send;

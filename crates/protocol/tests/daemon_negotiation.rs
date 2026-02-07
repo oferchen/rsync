@@ -1,16 +1,17 @@
 //! Integration tests for capability negotiation in various modes.
 //!
-//! When `do_negotiation=true` (client has CF_VARINT_FLIST_FLAGS capability),
-//! the exchange is BIDIRECTIONAL regardless of daemon/SSH mode:
+//! # Daemon Mode (Unidirectional)
+//! - Server: SENDS algorithm lists, uses defaults locally
+//! - Client: READS algorithm lists, selects from them (no send)
+//!
+//! # SSH Mode (Bidirectional)
 //! - Both sides SEND their algorithm lists first
 //! - Then both sides READ each other's lists
 //! - Both independently select the first match from the remote's list
 //!
-//! Upstream rsync comment: "We send all the negotiation strings before we
-//! start to read them to help avoid a slow startup."
-//!
-//! When `do_negotiation=false`, neither side sends or reads anything and
-//! protocol defaults are used.
+//! # Legacy Protocol (< 30) or do_negotiation=false
+//! - Neither side sends or reads anything
+//! - Protocol defaults are used
 
 use protocol::{ProtocolVersion, negotiate_capabilities};
 use std::io::{Read, Write};
@@ -62,20 +63,15 @@ fn read_vstring(reader: &mut impl Read) -> std::io::Result<String> {
 
 #[test]
 fn test_bidirectional_negotiation_exchange() {
-    // When do_negotiation=true, the exchange is bidirectional:
-    // 1. Both sides send their algorithm lists
-    // 2. Both sides read the other's lists
-    // 3. Both select the first match from the remote's list
+    // In DAEMON mode, the exchange is UNIDIRECTIONAL:
+    // 1. Server sends its algorithm lists and uses defaults
+    // 2. Client reads server's lists and selects from them
+    // 3. Client does NOT send anything back
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // Prepare "client" data that server will read
-    let mut client_lists = Vec::new();
-    write_vstring(&mut client_lists, "xxh128 md5 md4").unwrap();
-    write_vstring(&mut client_lists, "zstd zlibx zlib none").unwrap();
-
-    // Server side - sends its lists, reads client lists
+    // Server side - sends its lists, uses defaults (no read)
     let mut server_output = Vec::new();
-    let mut server_input = &client_lists[..];
+    let mut server_input = &b""[..]; // Empty - server doesn't read in daemon mode
 
     let server_result = negotiate_capabilities(
         protocol,
@@ -91,10 +87,13 @@ fn test_bidirectional_negotiation_exchange() {
     // Verify server sent data
     assert!(
         !server_output.is_empty(),
-        "server must send algorithm lists"
+        "daemon server must send algorithm lists"
     );
 
-    // Client side - sends its lists, reads server's lists
+    // Server uses defaults (first in preference list)
+    assert_eq!(server_result.checksum.as_str(), "xxh128");
+
+    // Client side - reads server's lists, does NOT send
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -109,18 +108,18 @@ fn test_bidirectional_negotiation_exchange() {
     )
     .expect("client negotiation should succeed");
 
-    // Client also sends in bidirectional exchange
+    // Daemon client does NOT send in unidirectional exchange
     assert!(
-        !client_output.is_empty(),
-        "client must also send algorithm lists in bidirectional exchange"
+        client_output.is_empty(),
+        "daemon client should NOT send algorithm lists (unidirectional)"
     );
 
     // Both should have valid results
     assert!(!server_result.checksum.as_str().is_empty());
     assert!(!client_result.checksum.as_str().is_empty());
 
-    // Server selected from client's list (xxh128)
-    assert_eq!(server_result.checksum.as_str(), "xxh128");
+    // Client selected from server's list (xxh128)
+    assert_eq!(client_result.checksum.as_str(), "xxh128");
 }
 
 #[test]
@@ -175,11 +174,12 @@ fn test_daemon_client_falls_back_when_first_unsupported() {
 fn test_negotiation_without_compression() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // Remote sends only checksum list (no -z flag)
-    let mut remote_data = Vec::new();
-    write_vstring(&mut remote_data, "md5 md4").unwrap();
+    // Server sends only checksum list (no -z flag) in daemon mode
+    let mut server_data = Vec::new();
+    write_vstring(&mut server_data, "md5 md4").unwrap();
+    // No compression list since send_compression=false
 
-    let mut stdin = &remote_data[..];
+    let mut stdin = &server_data[..];
     let mut stdout = Vec::new();
 
     let result = negotiate_capabilities(
@@ -188,28 +188,18 @@ fn test_negotiation_without_compression() {
         &mut stdout,
         true,
         false, // send_compression = false
-        true,
-        false,
+        true,  // daemon mode
+        false, // client
     )
     .unwrap();
 
     assert_eq!(result.checksum.as_str(), "md5");
     assert_eq!(result.compression.as_str(), "none");
 
-    // Even without compression, we still send checksum list in bidirectional exchange
-    assert!(!stdout.is_empty(), "checksum list should still be sent");
-
-    // Verify only checksum list was sent (no compression list)
-    let mut output_reader = &stdout[..];
-    let checksum_list = read_vstring(&mut output_reader).unwrap();
+    // Daemon client does NOT send anything (unidirectional)
     assert!(
-        checksum_list.contains("md5"),
-        "should include md5 in checksum list"
-    );
-    // Should have consumed all output (no compression list)
-    assert!(
-        output_reader.is_empty(),
-        "no compression list should be sent"
+        stdout.is_empty(),
+        "daemon client should not send anything"
     );
 }
 
