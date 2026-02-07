@@ -10,7 +10,6 @@
 // =============================================================================
 
 #[cfg(test)]
-#[cfg(feature = "simd-batch")]
 mod md5_simd_parity {
     use crate::simd_batch;
     use crate::strong::Md5;
@@ -421,7 +420,6 @@ mod md5_simd_parity {
 // =============================================================================
 
 #[cfg(test)]
-#[cfg(feature = "simd-batch")]
 mod md4_simd_parity {
     use crate::simd_batch::md4;
     use crate::strong::Md4;
@@ -1078,14 +1076,13 @@ mod xxh3_simd_parity {
     // XXH3 SIMD Availability Check
     // ========================================================================
 
-    /// Verify SIMD availability query is consistent with feature flags.
+    /// Verify SIMD availability query reports true (xxh3 crate always compiled in).
     #[test]
     fn simd_xxh3_availability_consistent() {
-        let available = crate::xxh3_simd_available();
-        #[cfg(feature = "xxh3-simd")]
-        assert!(available, "xxh3-simd feature enabled but reports unavailable");
-        #[cfg(not(feature = "xxh3-simd"))]
-        assert!(!available, "xxh3-simd feature disabled but reports available");
+        assert!(
+            crate::xxh3_simd_available(),
+            "xxh3 crate is always compiled in, should report true"
+        );
     }
 }
 
@@ -1199,7 +1196,6 @@ mod digest_batch_parity {
 // =============================================================================
 
 #[cfg(test)]
-#[cfg(feature = "simd-batch")]
 mod proptest_simd_parity {
     use crate::simd_batch;
     use crate::strong::{md4_digest_batch, md5_digest_batch, Md4, Md5};

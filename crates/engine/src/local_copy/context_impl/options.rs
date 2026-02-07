@@ -91,7 +91,7 @@ impl<'a> CopyContext<'a> {
         self.options.preallocate_enabled()
     }
 
-    #[allow(dead_code)] // Only used when batch-sync feature is disabled
+    #[allow(dead_code)] // Accessor retained for future use; DeferredSync handles runtime selection
     pub(super) const fn fsync_enabled(&self) -> bool {
         self.options.fsync_enabled()
     }
