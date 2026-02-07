@@ -2,12 +2,14 @@ use crate::local_copy::{
     test_support::take_fsync_call_count, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
 };
 
-/// Tests immediate fsync behavior when batch-sync is disabled.
-/// When batch-sync is enabled (default), fsync calls are deferred and batched,
-/// so the immediate fsync count will be 0 - this is expected behavior.
+/// Tests that fsync-enabled transfers complete successfully.
+///
+/// With deferred sync always compiled in, fsync operations are batched via
+/// DeferredSync and flushed at the end of the transfer. The immediate fsync
+/// call count will be 0 because DeferredSync handles syncing, not the
+/// per-file immediate path.
 #[test]
-#[cfg_attr(feature = "batch-sync", ignore = "batch-sync defers fsync calls")]
-fn execute_performs_fsync_when_requested() {
+fn execute_succeeds_with_fsync_enabled() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
@@ -27,8 +29,10 @@ fn execute_performs_fsync_when_requested() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert_eq!(take_fsync_call_count(), 1);
+    // Immediate fsync count is 0 because DeferredSync handles batched syncing.
+    assert_eq!(take_fsync_call_count(), 0);
     assert!(destination.exists());
+    assert_eq!(fs::read(&destination).unwrap(), b"payload");
 }
 
 #[test]

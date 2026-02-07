@@ -62,13 +62,13 @@ mod xxhash;
 /// MD4 streaming hasher and batch digest function.
 ///
 /// `md4_digest_batch` computes MD4 digests for multiple inputs, using SIMD
-/// acceleration when the `simd-batch` feature is enabled.
+/// acceleration when available via runtime CPUID detection.
 pub use md4::{Md4, digest_batch as md4_digest_batch};
 
 /// MD5 streaming hasher, seed configuration, and batch digest function.
 ///
 /// `md5_digest_batch` computes MD5 digests for multiple inputs, using SIMD
-/// acceleration when the `simd-batch` feature is enabled.
+/// acceleration when available via runtime CPUID detection.
 pub use md5::{Md5, Md5Seed, digest_batch as md5_digest_batch};
 
 #[cfg(feature = "openssl")]
@@ -96,7 +96,7 @@ pub use sha512::Sha512;
 /// - [`Xxh3`] -- 64-bit XXH3 with optional SIMD acceleration on one-shot calls
 /// - [`Xxh3_128`] -- 128-bit XXH3 with optional SIMD acceleration on one-shot calls
 /// - [`Xxh64`] -- 64-bit XXH64
-/// - [`xxh3_simd_available`] -- returns `true` when the `xxh3-simd` feature is enabled
+/// - [`xxh3_simd_available`] -- always returns `true` (xxh3 crate is always compiled in)
 pub use xxhash::{Xxh3, Xxh3_128, Xxh64, xxh3_simd_available};
 
 /// Trait implemented by strong checksum algorithms used by rsync.

@@ -26,7 +26,7 @@
 //!
 //! - [`strong`] - Strong checksum algorithms (MD4, MD5, SHA-1, SHA-256, SHA-512, XXH64, XXH3)
 //! - [`strong::strategy`] - Strategy pattern for runtime algorithm selection
-//! - `parallel` - Parallel checksum computation using rayon (requires `parallel` feature)
+//! - [`parallel`] - Parallel checksum computation using rayon (always compiled)
 //!
 //! # Checksum Algorithms
 //!
@@ -156,16 +156,14 @@
 //! | Security | Non-cryptographic | Non-cryptographic |
 //! | Performance | ~15 GB/s (SIMD) | ~15 GB/s (SIMD) |
 //!
-//! When the `xxh3-simd` feature is enabled (default), one-shot operations use
-//! runtime SIMD detection for AVX2 (x86_64) and NEON (aarch64):
+//! One-shot operations always use runtime SIMD detection for AVX2 (x86_64)
+//! and NEON (aarch64) via the `xxh3` crate (always compiled in):
 //!
 //! ```rust
 //! use checksums::strong::{Xxh3, Xxh3_128};
 //!
-//! // Check if runtime SIMD is available
-//! if checksums::xxh3_simd_available() {
-//!     println!("Using SIMD-accelerated XXH3");
-//! }
+//! // Runtime SIMD detection is always available
+//! assert!(checksums::xxh3_simd_available());
 //!
 //! let xxh3_64 = Xxh3::digest(0, b"data");
 //! let xxh3_128 = Xxh3_128::digest(0, b"data");
@@ -175,20 +173,18 @@
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `xxh3-simd` | Yes | Runtime SIMD detection for XXH3 (AVX2/NEON) |
 //! | `openssl` | No | OpenSSL-backed MD4/MD5 for ~2x throughput |
 //! | `openssl-vendored` | No | Statically link OpenSSL (includes `openssl`) |
-//! | `parallel` | No | Parallel checksum computation via rayon |
 //!
 //! ## Feature Details
 //!
-//! ### `xxh3-simd` (default)
+//! ### XXH3 SIMD (always enabled)
 //!
-//! Enables the [`xxh3`](https://crates.io/crates/xxh3) crate for runtime SIMD
-//! detection. This allows portable binaries to automatically use AVX2 or NEON
-//! instructions when available, providing ~3x speedup over scalar code.
+//! The [`xxh3`](https://crates.io/crates/xxh3) crate is always compiled in,
+//! providing runtime SIMD detection. Portable binaries automatically use AVX2
+//! or NEON instructions when available, providing ~3x speedup over scalar code.
 //!
-//! Use [`xxh3_simd_available()`] to query if runtime SIMD detection is enabled.
+//! Use [`xxh3_simd_available()`] to query runtime SIMD detection status (always `true`).
 //!
 //! ### `openssl` / `openssl-vendored`
 //!
@@ -199,14 +195,13 @@
 //!
 //! Use [`openssl_acceleration_available()`] to query OpenSSL availability at runtime.
 //!
-//! ### `parallel`
+//! ### Parallel Computation (always compiled)
 //!
-//! Enables the `parallel` module for concurrent checksum computation using
-//! [rayon](https://crates.io/crates/rayon). This is useful when computing
-//! checksums for many blocks simultaneously:
+//! The [`parallel`] module provides concurrent checksum computation using
+//! [rayon](https://crates.io/crates/rayon). Both parallel and sequential code
+//! paths are always compiled; use runtime selection based on workload size.
 //!
-#![cfg_attr(feature = "parallel", doc = "```rust")]
-#![cfg_attr(not(feature = "parallel"), doc = "```ignore")]
+//! ```rust
 //! use checksums::parallel::{compute_block_signatures_parallel, BlockSignature};
 //! use checksums::strong::Sha256;
 //!
@@ -308,7 +303,7 @@
 //! The crate automatically uses SIMD instructions when available:
 //!
 //! - **Rolling checksum**: AVX2/SSE2 on x86_64, NEON on aarch64
-//! - **XXH3**: Runtime detection with `xxh3-simd` feature (default)
+//! - **XXH3**: Runtime detection via the `xxh3` crate (always compiled in)
 //! - **SHA-1/SHA-256**: Hardware acceleration via SHA-NI (x86_64) or
 //!   crypto extensions (aarch64) when compiled with appropriate target features
 //!
@@ -327,8 +322,8 @@
 //! 1. **Prefer one-shot methods** when hashing complete buffers - they enable
 //!    better optimization and SIMD utilization.
 //!
-//! 2. **Use parallel computation** for multiple blocks when the `parallel`
-//!    feature is enabled.
+//! 2. **Use parallel computation** for multiple blocks - the [`parallel`] module
+//!    is always available and uses rayon for concurrent processing.
 //!
 //! 3. **Choose appropriate algorithms**:
 //!    - XXH3 for maximum speed (non-cryptographic)
@@ -357,7 +352,7 @@
 //! # See Also
 //!
 //! - [`strong`] module for detailed algorithm documentation
-//! - `parallel` module for concurrent computation (with `parallel` feature)
+//! - [`parallel`] module for concurrent computation (always compiled)
 //! - [`RollingChecksum`] for sliding window checksum details
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // Allow unsafe code for SIMD intrinsics in simd_batch module
@@ -373,15 +368,13 @@ mod simd_parity_tests;
 /// SIMD-accelerated batch hashing for MD4/MD5.
 ///
 /// This module provides parallel MD4/MD5 computation using SIMD instructions
-/// when available. All implementations maintain RFC compatibility:
+/// when available, with automatic runtime CPUID detection to select the best
+/// backend (AVX-512, AVX2, SSE4.1, SSSE3, SSE2, NEON, or scalar fallback).
+/// All implementations maintain RFC compatibility:
 /// - MD5: RFC 1321 test vectors pass
 /// - MD4: RFC 1320 test vectors pass
-#[cfg(feature = "simd-batch")]
-#[cfg_attr(docsrs, doc(cfg(feature = "simd-batch")))]
 pub(crate) mod simd_batch;
 
-#[cfg(feature = "parallel")]
-#[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;
 
 /// Pipelined checksum computation with double-buffering.
@@ -420,9 +413,9 @@ pub use strong::openssl_acceleration_available;
 
 /// Query whether runtime SIMD detection is available for XXH3.
 ///
-/// Returns `true` if the `xxh3-simd` feature is enabled (default), allowing
-/// automatic use of AVX2 (x86_64) or NEON (aarch64) instructions when
-/// available at runtime.
+/// Always returns `true` because the `xxh3` crate is always compiled in,
+/// providing automatic use of AVX2 (x86_64) or NEON (aarch64) instructions
+/// when available at runtime.
 pub use strong::xxh3_simd_available;
 
 /// Re-exports from the [`strong::strategy`] module for runtime checksum algorithm selection.

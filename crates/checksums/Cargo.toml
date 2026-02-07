@@ -16,29 +16,14 @@ targets = ["x86_64-unknown-linux-gnu"]
 # Default: pure-Rust implementations with automatic hardware acceleration
 # (SHA-NI on x86_64, crypto extensions on aarch64 via cpufeatures)
 # SIMD features enabled by default for best performance
-default = ["xxh3-simd", "simd-batch"]
+default = []
 
 # ============================================================================
-# SIMD Optimization Features
+# Parallel Computation (always compiled)
 # ============================================================================
-# Runtime SIMD detection for XXH3 (AVX2/NEON) - recommended for portable binaries
-# Benefits: 2-3x faster XXH3 hashing on x86_64 with AVX2, ARM with NEON
-xxh3-simd = ["dep:xxh3"]
-
-# SIMD-accelerated MD4/MD5 batch hashing (AVX2/AVX-512/NEON)
-# Benefits: 3-4x faster MD5 checksums with parallel batch processing
-# All implementations maintain RFC compatibility (RFC 1320 for MD4, RFC 1321 for MD5)
-simd-batch = []
-
-# Backward compatibility alias for the old feature name
-md5-simd = ["simd-batch"]
-
-# ============================================================================
-# Parallel Computation Features
-# ============================================================================
-# Parallel checksum computation using rayon
-# Benefits: Multi-threaded checksum calculation for large files
-parallel = ["rayon"]
+# Parallel checksum computation using rayon is always available.
+# This feature alias is kept for backward compatibility with dependents.
+parallel = []
 
 # ============================================================================
 # Legacy OpenSSL Features (optional)
@@ -55,10 +40,10 @@ sha1 = { version = "0.10", default-features = false, features = ["std"] }
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
 # xxh3 crate provides runtime SIMD detection (AVX2 on x86_64, NEON on aarch64)
-xxh3 = { version = "0.1", optional = true }
+xxh3 = { version = "0.1" }
 thiserror = "2.0"
 openssl = { version = "0.10", optional = true }
-rayon = { version = "1.10", optional = true }
+rayon = { version = "1.10" }
 logging = { path = "../logging" }
 
 [dev-dependencies]
@@ -74,7 +59,6 @@ harness = false
 [[bench]]
 name = "parallel_benchmark"
 harness = false
-required-features = ["parallel"]
 
 [[bench]]
 name = "pipelined_benchmark"

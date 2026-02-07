@@ -111,15 +111,12 @@ pub(super) fn execute_transfer(
 
     // fast-path: see if destination is already in-sync
     if let Some(existing) = existing_metadata {
-        // Look up prefetched checksum result when parallel feature is enabled
-        #[cfg(feature = "parallel")]
+        // Look up prefetched checksum result from parallel checksum cache
         let prefetched_match = if checksum_enabled {
             context.lookup_checksum(source)
         } else {
             None
         };
-        #[cfg(not(feature = "parallel"))]
-        let prefetched_match = None;
 
         let mut skip = should_skip_copy(CopyComparison {
             source_path: source,
@@ -361,21 +358,27 @@ pub(super) fn execute_transfer(
         context.preallocate_enabled(),
     )?;
 
-    #[cfg(feature = "optimized-buffers")]
-    let mut buffer_guard =
-        super::super::super::super::BufferPool::acquire_adaptive_from(
+    // Runtime selection: buffer pool path vs direct Vec allocation.
+    // Both paths are always compiled; the context flag controls which is used.
+    let mut pool_guard = if context.use_buffer_pool() {
+        Some(super::super::super::super::BufferPool::acquire_adaptive_from(
             context.buffer_pool(),
             file_size,
-        );
-    #[cfg(feature = "optimized-buffers")]
-    let buffer: &mut [u8] = &mut buffer_guard;
-
-    #[cfg(not(feature = "optimized-buffers"))]
+        ))
+    } else {
+        None
+    };
     let adaptive_size = super::super::super::super::adaptive_buffer_size(file_size);
-    #[cfg(not(feature = "optimized-buffers"))]
-    let mut buffer = vec![0u8; adaptive_size];
-    #[cfg(not(feature = "optimized-buffers"))]
-    let buffer: &mut [u8] = &mut buffer;
+    let mut direct_buffer = if pool_guard.is_none() {
+        vec![0u8; adaptive_size]
+    } else {
+        Vec::new()
+    };
+    let buffer: &mut [u8] = if let Some(ref mut guard) = pool_guard {
+        guard.as_mut_slice()
+    } else {
+        &mut direct_buffer
+    };
 
     let start = Instant::now();
 
@@ -394,11 +397,8 @@ pub(super) fn execute_transfer(
         start,
     );
 
-    // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
-    #[cfg(not(feature = "batch-sync"))]
-    if copy_result.is_ok() && context.fsync_enabled() {
-        sync_destination_file(&mut writer, preallocate_target)?;
-    }
+    // DeferredSync handles fsync batching at runtime (registered in apply_metadata_and_finalize).
+    // No immediate sync needed here.
 
     drop(writer);
 
@@ -599,32 +599,21 @@ fn copy_special_as_regular_file(
     let mut guard: Option<DestinationWriteGuard> = None;
 
     if inplace_enabled {
-        #[cfg_attr(feature = "batch-sync", allow(unused_mut, unused_variables))]
-        let mut file = fs::OpenOptions::new()
+        let _file = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
-        // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
-        #[cfg(not(feature = "batch-sync"))]
-        if context.fsync_enabled() {
-            sync_destination_file(&mut file, destination)?;
-        }
+        // DeferredSync handles fsync batching at runtime (registered in apply_metadata_and_finalize).
     } else {
-        #[cfg_attr(feature = "batch-sync", allow(unused_mut, unused_variables))]
-        let (new_guard, mut file) = DestinationWriteGuard::new(
+        let (new_guard, _file) = DestinationWriteGuard::new(
             destination,
             partial_enabled,
             context.partial_directory_path(),
             context.temp_directory_path(),
         )?;
-        // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
-        #[cfg(not(feature = "batch-sync"))]
-        if context.fsync_enabled() {
-            let target = new_guard.staging_path();
-            sync_destination_file(&mut file, target)?;
-        }
+        // DeferredSync handles fsync batching at runtime (registered in apply_metadata_and_finalize).
         guard = Some(new_guard);
     }
 
@@ -764,7 +753,7 @@ fn copy_special_as_regular_file(
     Ok(())
 }
 
-#[cfg(any(not(feature = "batch-sync"), test))]
+#[cfg(test)]
 #[allow(dead_code)]
 fn sync_destination_file(writer: &mut fs::File, path: &Path) -> Result<(), LocalCopyError> {
     writer
@@ -779,9 +768,6 @@ fn sync_destination_file(writer: &mut fs::File, path: &Path) -> Result<(), Local
 fn record_fsync_call() {
     FSYNC_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
 }
-
-#[cfg(all(not(test), not(feature = "batch-sync")))]
-const fn record_fsync_call() {}
 
 #[cfg(test)]
 #[allow(dead_code)]

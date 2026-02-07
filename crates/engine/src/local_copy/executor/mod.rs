@@ -9,7 +9,6 @@ mod special;
 mod util;
 
 pub(crate) use cleanup::{delete_extraneous_entries, remove_source_entry_if_requested};
-#[cfg(feature = "parallel")]
 pub(crate) use directory::ChecksumCache;
 pub(crate) use directory::{copy_directory_recursive, is_device, is_fifo};
 #[cfg(test)]

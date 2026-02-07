@@ -19,14 +19,12 @@ use crate::local_copy::{
 use ::metadata::apply_directory_metadata_with_options;
 
 use super::super::non_empty_path;
-#[cfg(feature = "parallel")]
 use super::planner::DirectoryPlan;
 use super::planner::{
     EntryAction, PlannedEntry, apply_pre_transfer_deletions, plan_directory_entries,
 };
 use super::support::read_directory_entries_sorted;
 
-#[cfg(feature = "parallel")]
 use super::parallel_checksum::{ChecksumCache, FilePair};
 
 /// Result of checking destination directory state.
@@ -428,7 +426,6 @@ fn capture_batch_file_entry(
 /// # Returns
 ///
 /// A vector of file pairs suitable for parallel checksum computation.
-#[cfg(feature = "parallel")]
 pub(crate) fn collect_file_pairs_for_checksum(
     plan: &DirectoryPlan<'_>,
     destination: &Path,
@@ -481,7 +478,6 @@ pub(crate) fn collect_file_pairs_for_checksum(
 ///
 /// A populated [`ChecksumCache`] if checksum mode is enabled and there are
 /// eligible file pairs, or an empty cache otherwise.
-#[cfg(feature = "parallel")]
 pub(crate) fn prefetch_directory_checksums(
     context: &CopyContext,
     plan: &DirectoryPlan<'_>,
@@ -654,7 +650,6 @@ pub(crate) fn copy_directory_recursive(
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
 
     // Prefetch checksums in parallel when checksum mode is enabled
-    #[cfg(feature = "parallel")]
     {
         let cache = prefetch_directory_checksums(context, &plan, destination);
         if !cache.is_empty() {
@@ -692,7 +687,6 @@ pub(crate) fn copy_directory_recursive(
     }
 
     // Clear checksum cache to free memory
-    #[cfg(feature = "parallel")]
     context.clear_checksum_cache();
 
     // Handle post-transfer deletions
@@ -741,7 +735,7 @@ pub(crate) fn copy_directory_recursive(
     Ok(true)
 }
 
-#[cfg(all(test, feature = "parallel"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsString;
