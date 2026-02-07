@@ -380,6 +380,9 @@ pub mod parallel;
 /// Pipelined checksum computation with double-buffering.
 pub mod pipelined;
 
+/// Checksum pipeline with dual-path execution for runtime selection.
+pub mod pipeline;
+
 /// Adler-32 style rolling checksum for efficient sliding window updates.
 ///
 /// Enables O(1) window advancement during delta-transfer block matching.
