@@ -17,6 +17,7 @@
 mod frontend;
 mod platform;
 
+pub use frontend::itemize::{FileType, ItemizeChange, UpdateType, format_itemize};
 pub use frontend::{exit_code_from, run};
 
 /// Test utilities exposed for integration tests.
