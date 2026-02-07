@@ -59,11 +59,8 @@ fn delete_during_removes_files_incrementally() {
     fs::write(dest.join("keep.txt"), b"old").expect("write old keep");
     fs::write(dest.join("delete_root.txt"), b"delete").expect("write delete_root");
     fs::write(dest.join("subdir").join("nested.txt"), b"old").expect("write old nested");
-    fs::write(
-        dest.join("subdir").join("delete_nested.txt"),
-        b"delete",
-    )
-    .expect("write delete_nested");
+    fs::write(dest.join("subdir").join("delete_nested.txt"), b"delete")
+        .expect("write delete_nested");
 
     let mut source_operand = source.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -285,7 +282,7 @@ fn max_delete_enforces_limit() {
     // Create many files to delete
     fs::write(dest.join("keep.txt"), b"old").expect("write old");
     for i in 1..=10 {
-        fs::write(dest.join(format!("delete{}.txt", i)), b"delete").expect("write delete file");
+        fs::write(dest.join(format!("delete{i}.txt")), b"delete").expect("write delete file");
     }
 
     let mut source_operand = source.into_os_string();
@@ -300,14 +297,20 @@ fn max_delete_enforces_limit() {
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
     // Should fail because limit was exceeded
-    assert!(result.is_err(), "Expected error when deletion limit exceeded");
+    assert!(
+        result.is_err(),
+        "Expected error when deletion limit exceeded"
+    );
     let err = result.unwrap_err();
-    let err_str = format!("{:?}", err);
+    let err_str = format!("{err:?}");
     // Check for deletion/limit related error message
     let has_delete_error = err_str.to_lowercase().contains("delet")
         || err_str.to_lowercase().contains("limit")
         || err_str.to_lowercase().contains("exceed");
-    assert!(has_delete_error, "Error should mention deletion limit: {}", err_str);
+    assert!(
+        has_delete_error,
+        "Error should mention deletion limit: {err_str}"
+    );
 }
 
 /// Tests that --max-delete=0 prevents all deletions.
@@ -382,8 +385,11 @@ fn deletion_removes_directories_recursively() {
     // Create a directory with nested content to delete
     fs::create_dir_all(dest.join("delete_dir").join("nested")).expect("create nested");
     fs::write(dest.join("delete_dir").join("file.txt"), b"file").expect("write file");
-    fs::write(dest.join("delete_dir").join("nested").join("deep.txt"), b"deep")
-        .expect("write deep");
+    fs::write(
+        dest.join("delete_dir").join("nested").join("deep.txt"),
+        b"deep",
+    )
+    .expect("write deep");
     fs::write(dest.join("keep.txt"), b"old").expect("write old");
 
     let mut source_operand = source.into_os_string();

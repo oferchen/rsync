@@ -698,7 +698,7 @@ mod tests {
 
     #[test]
     fn check_io_timeout_exceeded_returns_error() {
-        let config = TimeoutConfig::new().with_io_timeout(0);
+        let _config = TimeoutConfig::new().with_io_timeout(0);
         let config = TimeoutConfig {
             io_timeout: Some(Duration::from_millis(1)),
             connect_timeout: None,

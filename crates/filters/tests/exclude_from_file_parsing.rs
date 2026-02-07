@@ -15,7 +15,7 @@
 //!
 //! Reference: rsync 3.4.1 exclude.c and rsync(1) man page FILTER RULES section
 
-use filters::{read_rules, read_rules_recursive, FilterAction, FilterSet};
+use filters::{FilterAction, FilterSet, read_rules, read_rules_recursive};
 use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
@@ -358,11 +358,7 @@ mod blank_line_handling {
     fn mixed_blank_lines_and_comments() {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("excludes.txt");
-        fs::write(
-            &path,
-            "\n# Comment\n\n; Another comment\n   \n- *.tmp\n\n",
-        )
-        .expect("write");
+        fs::write(&path, "\n# Comment\n\n; Another comment\n   \n- *.tmp\n\n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
@@ -877,7 +873,7 @@ mod large_file_handling {
         for i in 0..100 {
             content.push_str(&format!("# Comment {i}\n"));
             content.push_str(&format!("- pattern_{i}.txt\n"));
-            content.push_str("\n"); // blank line
+            content.push('\n'); // blank line
         }
         fs::write(&path, &content).expect("write");
 

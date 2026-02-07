@@ -13,7 +13,6 @@ use transfer::{
     SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD, adaptive_buffer_size, adaptive_token_capacity,
 };
 
-
 // ============================================================================
 // File List Memory Tests
 // ============================================================================
@@ -46,10 +45,8 @@ fn file_list_memory_scales_linearly() {
     let entry_count_large = 10000;
     let avg_name_len = 50;
 
-    let mem_small =
-        entry_count_small * estimate_file_entry_size(avg_name_len);
-    let mem_large =
-        entry_count_large * estimate_file_entry_size(avg_name_len);
+    let mem_small = entry_count_small * estimate_file_entry_size(avg_name_len);
+    let mem_large = entry_count_large * estimate_file_entry_size(avg_name_len);
 
     // Memory should scale roughly linearly (within 10% of perfect linear)
     let ratio = mem_large as f64 / mem_small as f64;
@@ -92,8 +89,7 @@ fn file_list_memory_10k_entries() {
     // (256 base + 100 name) * 10K = 3.56 MB
     assert!(
         estimated_bytes < 5 * 1024 * 1024, // Less than 5 MB
-        "10K file entries should use less than 5 MB, estimated: {} bytes",
-        estimated_bytes
+        "10K file entries should use less than 5 MB, estimated: {estimated_bytes} bytes"
     );
 }
 
@@ -108,11 +104,9 @@ fn file_list_memory_100k_entries() {
     // For 100K files, expect ~35 MB
     assert!(
         estimated_bytes < 50 * 1024 * 1024, // Less than 50 MB
-        "100K file entries should use less than 50 MB, estimated: {} bytes",
-        estimated_bytes
+        "100K file entries should use less than 50 MB, estimated: {estimated_bytes} bytes"
     );
 }
-
 
 // ============================================================================
 // Adaptive Buffer Memory Tests
@@ -128,8 +122,7 @@ fn adaptive_buffer_small_file_minimal_allocation() {
     // Small file buffer should use SMALL_BUFFER_SIZE capacity
     assert!(
         buffer.capacity() >= SMALL_BUFFER_SIZE,
-        "Small file buffer should have at least {} capacity",
-        SMALL_BUFFER_SIZE
+        "Small file buffer should have at least {SMALL_BUFFER_SIZE} capacity"
     );
     assert!(
         buffer.capacity() < MEDIUM_BUFFER_SIZE,
@@ -299,9 +292,7 @@ fn streaming_pattern_monotonic_growth() {
         let current_capacity = buffer.capacity();
         assert!(
             current_capacity >= last_capacity,
-            "Buffer capacity should never decrease: was {}, now {}",
-            last_capacity,
-            current_capacity
+            "Buffer capacity should never decrease: was {last_capacity}, now {current_capacity}"
         );
         last_capacity = current_capacity;
         buffer.clear();
@@ -373,8 +364,7 @@ fn peak_memory_concurrent_buffers() {
     // Should be bounded
     assert!(
         peak < 1024 * 1024,
-        "4 medium buffers should use less than 1 MB: {} bytes",
-        peak
+        "4 medium buffers should use less than 1 MB: {peak} bytes"
     );
 }
 
@@ -395,10 +385,7 @@ fn memory_efficiency_sized_buffer_preallocates() {
     let file_size = 100 * 1024u64; // 100 KB
     let buffer = AdaptiveTokenBuffer::for_file_size(file_size);
 
-    assert!(
-        buffer.capacity() > 0,
-        "Sized buffer should preallocate"
-    );
+    assert!(buffer.capacity() > 0, "Sized buffer should preallocate");
 }
 
 #[test]
@@ -566,8 +553,7 @@ fn integration_file_processing_bounded_memory() {
     // Verify this is reasonable (< 1 MB for 1000 files)
     assert!(
         total_expected < 1024 * 1024,
-        "1000 file processing should use < 1 MB, estimated: {} bytes",
-        total_expected
+        "1000 file processing should use < 1 MB, estimated: {total_expected} bytes"
     );
 }
 
@@ -585,8 +571,6 @@ fn integration_streaming_transfer_bounded() {
 
     assert!(
         memory_bound < total_data,
-        "Streaming should use bounded memory ({} bytes) regardless of total data ({} bytes)",
-        memory_bound,
-        total_data
+        "Streaming should use bounded memory ({memory_bound} bytes) regardless of total data ({total_data} bytes)"
     );
 }

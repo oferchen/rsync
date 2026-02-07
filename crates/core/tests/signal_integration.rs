@@ -2,10 +2,10 @@
 //!
 //! These tests verify that signal handling works correctly in realistic scenarios.
 
-use core::signal::{install_signal_handlers, CleanupManager, ShutdownReason};
+use core::signal::{CleanupManager, ShutdownReason, install_signal_handlers};
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tempfile::tempdir;
 
 #[test]
@@ -183,10 +183,7 @@ fn programmatic_shutdown_request() {
     );
 
     // Exit code should be Ok (0) for user-requested shutdown
-    assert_eq!(
-        ShutdownReason::UserRequested.exit_code().as_i32(),
-        0
-    );
+    assert_eq!(ShutdownReason::UserRequested.exit_code().as_i32(), 0);
 }
 
 #[test]

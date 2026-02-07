@@ -675,11 +675,7 @@ fn process_single_source(
                             let record_relative = relative_root
                                 .as_deref()
                                 .and_then(|p| non_empty_path(p))
-                                .or_else(|| {
-                                    source_path
-                                        .file_name()
-                                        .map(|n| Path::new(n))
-                                });
+                                .or_else(|| source_path.file_name().map(Path::new));
                             context.record_skipped_mount_point(record_relative);
                             return Ok(());
                         }

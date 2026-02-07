@@ -110,7 +110,7 @@
 //! The authentication logic is split across multiple modules:
 //!
 //! - [`core::auth`]: Shared hash computation and verification (used by both client and server)
-//! - [`daemon::sections::module_access`]: Server-side authentication flow during module requests
+//! - `daemon::sections::module_access`: Server-side authentication flow during module requests
 //! - This module: High-level documentation and helper utilities
 //!
 //! Challenge generation and response verification are implemented directly in
@@ -118,9 +118,9 @@
 //! flow co-located with the module request handling code.
 
 pub use core::auth::{
+    DaemonAuthDigest, SUPPORTED_DAEMON_DIGESTS,
     compute_daemon_auth_response as compute_auth_response,
     verify_daemon_auth_response as verify_client_response,
-    DaemonAuthDigest, SUPPORTED_DAEMON_DIGESTS,
 };
 
 use std::collections::HashMap;
@@ -130,8 +130,8 @@ use std::net::IpAddr;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::engine::general_purpose::STANDARD_NO_PAD;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD;
 use checksums::strong::Md5;
 
 /// Generates authentication challenges for daemon mode.
@@ -270,7 +270,7 @@ impl SecretsFile {
             } else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("invalid secrets file line (missing ':'): {}", line),
+                    format!("invalid secrets file line (missing ':'): {line}"),
                 ));
             }
         }
@@ -411,9 +411,11 @@ mod tests {
         assert_eq!(challenge.len(), 22);
 
         // Should be valid base64
-        assert!(challenge
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '+' || c == '/'));
+        assert!(
+            challenge
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '+' || c == '/')
+        );
     }
 
     #[test]
@@ -473,10 +475,7 @@ mod tests {
         let result = SecretsFile::parse(content);
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("missing ':'"));
+        assert!(result.unwrap_err().to_string().contains("missing ':'"));
     }
 
     #[test]
@@ -512,7 +511,11 @@ mod tests {
         let response = compute_auth_response(password, challenge, DaemonAuthDigest::Md5);
 
         // Verification with wrong password should fail
-        assert!(!verify_client_response(wrong_password, challenge, &response));
+        assert!(!verify_client_response(
+            wrong_password,
+            challenge,
+            &response
+        ));
     }
 
     #[test]
@@ -537,8 +540,7 @@ mod tests {
             let response = compute_auth_response(password, challenge, digest);
             assert!(
                 verify_client_response(password, challenge, &response),
-                "Failed for digest: {:?}",
-                digest
+                "Failed for digest: {digest:?}"
             );
         }
     }

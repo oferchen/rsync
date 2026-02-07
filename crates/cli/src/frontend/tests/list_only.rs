@@ -281,7 +281,8 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
 
         // After permissions, a single space
         assert_eq!(
-            line.as_bytes()[10], b' ',
+            line.as_bytes()[10],
+            b' ',
             "space after permissions in {line:?}"
         );
 
@@ -300,15 +301,14 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
         // The size field should contain digits and optionally commas (or ? for unknown)
         assert!(
             size_trimmed == "?"
-                || size_trimmed.chars().all(|c| c.is_ascii_digit() || c == ',' || c == '.'),
+                || size_trimmed
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == ',' || c == '.'),
             "size field should be numeric with commas: {size_trimmed:?} in {line:?}"
         );
 
         // After size, a single space
-        assert_eq!(
-            line.as_bytes()[26], b' ',
-            "space after size in {line:?}"
-        );
+        assert_eq!(line.as_bytes()[26], b' ', "space after size in {line:?}");
 
         // Timestamp field: exactly 19 characters in YYYY/MM/DD HH:MM:SS format
         let timestamp_field = &line[27..46];
@@ -319,29 +319,35 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
         );
         // Verify the format pattern
         assert_eq!(
-            timestamp_field.as_bytes()[4], b'/',
+            timestamp_field.as_bytes()[4],
+            b'/',
             "first separator should be / in {line:?}"
         );
         assert_eq!(
-            timestamp_field.as_bytes()[7], b'/',
+            timestamp_field.as_bytes()[7],
+            b'/',
             "second separator should be / in {line:?}"
         );
         assert_eq!(
-            timestamp_field.as_bytes()[10], b' ',
+            timestamp_field.as_bytes()[10],
+            b' ',
             "date/time separator should be space in {line:?}"
         );
         assert_eq!(
-            timestamp_field.as_bytes()[13], b':',
+            timestamp_field.as_bytes()[13],
+            b':',
             "hour/minute separator should be : in {line:?}"
         );
         assert_eq!(
-            timestamp_field.as_bytes()[16], b':',
+            timestamp_field.as_bytes()[16],
+            b':',
             "minute/second separator should be : in {line:?}"
         );
 
         // After timestamp, a single space then the filename
         assert_eq!(
-            line.as_bytes()[46], b' ',
+            line.as_bytes()[46],
+            b' ',
             "space after timestamp in {line:?}"
         );
         let name_field = &line[47..];
@@ -431,8 +437,7 @@ fn list_only_zero_byte_file_shows_zero_size() {
 
     let file_path = source_dir.join("empty.txt");
     fs::write(&file_path, b"").expect("write empty file");
-    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644))
-        .expect("set permissions");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&file_path, timestamp, timestamp).expect("set file times");
@@ -459,12 +464,9 @@ fn list_only_zero_byte_file_shows_zero_size() {
     let expected_permissions = "-rw-r--r--";
     let expected_size = format_list_size(0, HumanReadableMode::Disabled);
     let system_time = SystemTime::UNIX_EPOCH
-        + Duration::from_secs(
-            u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"),
-        );
+        + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
     let expected_timestamp = format_list_timestamp(Some(system_time));
-    let expected =
-        format!("{expected_permissions} {expected_size} {expected_timestamp} empty.txt");
+    let expected = format!("{expected_permissions} {expected_size} {expected_timestamp} empty.txt");
 
     assert_eq!(file_line, expected);
 }
@@ -487,8 +489,7 @@ fn list_only_directory_permissions_start_with_d() {
 
     let subdir = source_dir.join("testdir");
     fs::create_dir(&subdir).expect("create subdir");
-    fs::set_permissions(&subdir, fs::Permissions::from_mode(0o755))
-        .expect("set dir permissions");
+    fs::set_permissions(&subdir, fs::Permissions::from_mode(0o755)).expect("set dir permissions");
 
     let timestamp = FileTime::from_unix_time(1_600_000_000, 0);
     set_file_times(&subdir, timestamp, timestamp).expect("set dir times");
@@ -521,9 +522,7 @@ fn list_only_directory_permissions_start_with_d() {
 
     // Verify the timestamp portion
     let system_time = SystemTime::UNIX_EPOCH
-        + Duration::from_secs(
-            u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"),
-        );
+        + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
     let expected_timestamp = format_list_timestamp(Some(system_time));
     assert!(
         dir_line.contains(&expected_timestamp),
@@ -592,7 +591,9 @@ fn list_only_size_field_right_aligned_in_15_chars() {
         let trimmed = size_field.trim_start();
         if trimmed != "?" {
             assert!(
-                trimmed.chars().all(|c| c.is_ascii_digit() || c == ',' || c == '.'),
+                trimmed
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == ',' || c == '.'),
                 "size field should have right-aligned numeric content: {size_field:?}"
             );
         }
@@ -684,8 +685,7 @@ fn list_only_large_file_size_has_thousands_separators() {
     let file_path = source_dir.join("big.bin");
     // 1,234,567 bytes
     fs::write(&file_path, vec![0u8; 1_234_567]).expect("write large file");
-    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644))
-        .expect("set permissions");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&file_path, timestamp, timestamp).expect("set file times");
@@ -740,8 +740,7 @@ fn list_only_with_verbose_still_shows_listing_format() {
 
     let file_path = source_dir.join("verbose_test.txt");
     fs::write(&file_path, b"verbose test content").expect("write file");
-    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644))
-        .expect("set permissions");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&file_path, timestamp, timestamp).expect("set file times");
@@ -892,8 +891,7 @@ fn list_only_human_readable_size_format() {
 
     let file_path = source_dir.join("hr.bin");
     fs::write(&file_path, vec![0u8; 2_500_000]).expect("write large file");
-    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644))
-        .expect("set permissions");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&file_path, timestamp, timestamp).expect("set file times");
@@ -1000,7 +998,11 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
             "permission field should contain valid permission chars: {line:?}"
         );
         // Space separator after permissions
-        assert_eq!(line.as_bytes()[10], b' ', "separator after perms in {line:?}");
+        assert_eq!(
+            line.as_bytes()[10],
+            b' ',
+            "separator after perms in {line:?}"
+        );
         // Size field is 15 chars
         assert_eq!(
             &line[11..26].len(),
@@ -1008,7 +1010,11 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
             "size field should be 15 chars: {line:?}"
         );
         // Space separator after size
-        assert_eq!(line.as_bytes()[26], b' ', "separator after size in {line:?}");
+        assert_eq!(
+            line.as_bytes()[26],
+            b' ',
+            "separator after size in {line:?}"
+        );
         // Timestamp is 19 chars
         assert_eq!(
             &line[27..46].len(),
@@ -1016,7 +1022,11 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
             "timestamp should be 19 chars: {line:?}"
         );
         // Space before name
-        assert_eq!(line.as_bytes()[46], b' ', "separator before name in {line:?}");
+        assert_eq!(
+            line.as_bytes()[46],
+            b' ',
+            "separator before name in {line:?}"
+        );
     }
 }
 
@@ -1055,9 +1065,7 @@ fn list_only_implies_dry_run_no_files_transferred() {
     assert!(rendered.contains("c.txt"), "c.txt should be listed");
 
     // Destination should remain empty
-    let dest_entries: Vec<_> = fs::read_dir(&dest_dir)
-        .expect("read dest")
-        .collect();
+    let dest_entries: Vec<_> = fs::read_dir(&dest_dir).expect("read dest").collect();
     assert_eq!(
         dest_entries.len(),
         0,
@@ -1132,8 +1140,7 @@ fn list_only_with_stats_appends_summary() {
 
     let file_path = source_dir.join("statsfile.txt");
     fs::write(&file_path, b"stats content").expect("write file");
-    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644))
-        .expect("set permissions");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
 
     let mut source_arg = source_dir.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
@@ -1185,8 +1192,7 @@ fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
 
     let file_path = source_dir.join("ts.txt");
     fs::write(&file_path, b"timestamp test").expect("write file");
-    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644))
-        .expect("set permissions");
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
 
     // Use a known timestamp: 2023-11-14 22:13:20 UTC
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
@@ -1247,9 +1253,7 @@ fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
 
     // Cross-check with our format function
     let system_time = SystemTime::UNIX_EPOCH
-        + Duration::from_secs(
-            u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"),
-        );
+        + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
     let expected = format_list_timestamp(Some(system_time));
     assert_eq!(
         timestamp_field, expected,
@@ -1298,13 +1302,11 @@ fn list_only_verbose_appends_totals() {
     // Verbose adds totals
     assert!(
         rendered.contains("sent") && rendered.contains("bytes"),
-        "verbose mode should include totals line with 'sent ... bytes': {}",
-        rendered
+        "verbose mode should include totals line with 'sent ... bytes': {rendered}"
     );
     assert!(
         rendered.contains("total size is"),
-        "verbose mode should include 'total size is' line: {}",
-        rendered
+        "verbose mode should include 'total size is' line: {rendered}"
     );
 }
 

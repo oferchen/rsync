@@ -420,12 +420,7 @@ mod test_helpers {
 
     /// Creates a file with both access and modification times set.
     #[allow(dead_code)]
-    pub fn create_file_with_times(
-        path: &Path,
-        content: &[u8],
-        atime_unix: i64,
-        mtime_unix: i64,
-    ) {
+    pub fn create_file_with_times(path: &Path, content: &[u8], atime_unix: i64, mtime_unix: i64) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create parent directories");
         }
@@ -560,34 +555,56 @@ mod test_helpers {
     #[allow(dead_code)]
     pub fn assert_file_exists(path: &Path) {
         assert!(path.exists(), "expected file to exist: {}", path.display());
-        assert!(path.is_file(), "expected path to be a file: {}", path.display());
+        assert!(
+            path.is_file(),
+            "expected path to be a file: {}",
+            path.display()
+        );
     }
 
     /// Asserts that a file does not exist at the given path.
     #[allow(dead_code)]
     pub fn assert_file_not_exists(path: &Path) {
-        assert!(!path.exists(), "expected file to not exist: {}", path.display());
+        assert!(
+            !path.exists(),
+            "expected file to not exist: {}",
+            path.display()
+        );
     }
 
     /// Asserts that a directory exists at the given path.
     #[allow(dead_code)]
     pub fn assert_dir_exists(path: &Path) {
-        assert!(path.exists(), "expected directory to exist: {}", path.display());
-        assert!(path.is_dir(), "expected path to be a directory: {}", path.display());
+        assert!(
+            path.exists(),
+            "expected directory to exist: {}",
+            path.display()
+        );
+        assert!(
+            path.is_dir(),
+            "expected path to be a directory: {}",
+            path.display()
+        );
     }
 
     /// Asserts that a directory does not exist at the given path.
     #[allow(dead_code)]
     pub fn assert_dir_not_exists(path: &Path) {
-        assert!(!path.exists(), "expected directory to not exist: {}", path.display());
+        assert!(
+            !path.exists(),
+            "expected directory to not exist: {}",
+            path.display()
+        );
     }
 
     /// Asserts that a file has the expected content.
     #[allow(dead_code)]
     pub fn assert_file_content(path: &Path, expected: &[u8]) {
-        let actual = std::fs::read(path).expect(&format!("read file: {}", path.display()));
+        let actual =
+            std::fs::read(path).unwrap_or_else(|_| panic!("read file: {}", path.display()));
         assert_eq!(
-            actual, expected,
+            actual,
+            expected,
             "file content mismatch for {}",
             path.display()
         );
@@ -597,10 +614,11 @@ mod test_helpers {
     #[allow(dead_code)]
     pub fn assert_file_size(path: &Path, expected_size: u64) {
         let actual = std::fs::metadata(path)
-            .expect(&format!("metadata: {}", path.display()))
+            .unwrap_or_else(|_| panic!("metadata: {}", path.display()))
             .len();
         assert_eq!(
-            actual, expected_size,
+            actual,
+            expected_size,
             "file size mismatch for {}: expected {}, got {}",
             path.display(),
             expected_size,
@@ -611,10 +629,11 @@ mod test_helpers {
     /// Asserts that two files have identical content.
     #[allow(dead_code)]
     pub fn assert_files_equal(path1: &Path, path2: &Path) {
-        let content1 = std::fs::read(path1).expect(&format!("read: {}", path1.display()));
-        let content2 = std::fs::read(path2).expect(&format!("read: {}", path2.display()));
+        let content1 = std::fs::read(path1).unwrap_or_else(|_| panic!("read: {}", path1.display()));
+        let content2 = std::fs::read(path2).unwrap_or_else(|_| panic!("read: {}", path2.display()));
         assert_eq!(
-            content1, content2,
+            content1,
+            content2,
             "file content mismatch between {} and {}",
             path1.display(),
             path2.display()
@@ -626,7 +645,7 @@ mod test_helpers {
     #[allow(dead_code)]
     pub fn assert_is_symlink(path: &Path) {
         let meta = std::fs::symlink_metadata(path)
-            .expect(&format!("symlink_metadata: {}", path.display()));
+            .unwrap_or_else(|_| panic!("symlink_metadata: {}", path.display()));
         assert!(
             meta.file_type().is_symlink(),
             "expected {} to be a symlink",
@@ -639,9 +658,10 @@ mod test_helpers {
     #[allow(dead_code)]
     pub fn assert_symlink_target(link_path: &Path, expected_target: &Path) {
         let actual_target = std::fs::read_link(link_path)
-            .expect(&format!("read_link: {}", link_path.display()));
+            .unwrap_or_else(|_| panic!("read_link: {}", link_path.display()));
         assert_eq!(
-            actual_target, expected_target,
+            actual_target,
+            expected_target,
             "symlink target mismatch for {}",
             link_path.display()
         );
@@ -691,7 +711,8 @@ mod test_helpers {
     pub fn assert_mtime(path: &Path, expected: FileTime) {
         let actual = get_mtime(path);
         assert_eq!(
-            actual, expected,
+            actual,
+            expected,
             "mtime mismatch for {}: expected {:?}, got {:?}",
             path.display(),
             expected,
@@ -862,7 +883,7 @@ mod test_helpers {
 
     /// Common option presets for tests.
     pub mod presets {
-        use super::super::{LocalCopyOptions, FilterSet};
+        use super::super::{FilterSet, LocalCopyOptions};
         use filters::FilterRule;
 
         /// Options for archive-like copy (-a equivalent).
@@ -896,9 +917,7 @@ mod test_helpers {
         /// Options for incremental backup (delete + backup).
         #[allow(dead_code)]
         pub fn incremental_backup() -> LocalCopyOptions {
-            LocalCopyOptions::default()
-                .delete(true)
-                .backup(true)
+            LocalCopyOptions::default().delete(true).backup(true)
         }
 
         /// Options for mirror copy (delete + times + permissions).
@@ -937,9 +956,7 @@ mod test_helpers {
         /// Options for safe symbolic link handling.
         #[allow(dead_code)]
         pub fn safe_symlinks() -> LocalCopyOptions {
-            LocalCopyOptions::default()
-                .links(true)
-                .safe_links(true)
+            LocalCopyOptions::default().links(true).safe_links(true)
         }
     }
 }

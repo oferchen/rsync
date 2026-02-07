@@ -369,8 +369,8 @@ mod tests {
         let mut list = XattrList::new();
         for i in 0..100 {
             list.push(XattrEntry::new(
-                format!("user.attr{}", i),
-                format!("value{}", i).into_bytes(),
+                format!("user.attr{i}"),
+                format!("value{i}").into_bytes(),
             ));
         }
 

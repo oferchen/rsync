@@ -34,7 +34,7 @@ use protocol::codec::{
     NdxCodec, NdxCodecEnum, NdxState, ProtocolCodecs, create_ndx_codec, write_ndx_done,
     write_ndx_flist_eof,
 };
-use std::io::{self, Cursor, ErrorKind, Read, Write};
+use std::io::{self, Cursor, ErrorKind, Write};
 
 // ============================================================================
 // Module: NDX Constants Verification
@@ -50,10 +50,16 @@ mod ndx_constants {
         assert_eq!(NDX_DONE, -1, "NDX_DONE must be -1 per rsync.h:285");
 
         // rsync.h:286 - #define NDX_FLIST_EOF -2
-        assert_eq!(NDX_FLIST_EOF, -2, "NDX_FLIST_EOF must be -2 per rsync.h:286");
+        assert_eq!(
+            NDX_FLIST_EOF, -2,
+            "NDX_FLIST_EOF must be -2 per rsync.h:286"
+        );
 
         // rsync.h:287 - #define NDX_DEL_STATS -3
-        assert_eq!(NDX_DEL_STATS, -3, "NDX_DEL_STATS must be -3 per rsync.h:287");
+        assert_eq!(
+            NDX_DEL_STATS, -3,
+            "NDX_DEL_STATS must be -3 per rsync.h:287"
+        );
 
         // rsync.h:288 - #define NDX_FLIST_OFFSET -101
         assert_eq!(
@@ -66,15 +72,13 @@ mod ndx_constants {
     #[test]
     fn constants_are_properly_ordered() {
         // All special constants are negative
-        assert!(NDX_DONE < 0);
-        assert!(NDX_FLIST_EOF < 0);
-        assert!(NDX_DEL_STATS < 0);
-        assert!(NDX_FLIST_OFFSET < 0);
+        assert_eq!(NDX_DONE, -1);
+        assert_eq!(NDX_FLIST_EOF, -2);
+        assert_eq!(NDX_DEL_STATS, -3);
+        assert_eq!(NDX_FLIST_OFFSET, -101);
 
-        // NDX_DONE (-1) > NDX_FLIST_EOF (-2) > NDX_DEL_STATS (-3) > NDX_FLIST_OFFSET (-101)
-        assert!(NDX_DONE > NDX_FLIST_EOF);
-        assert!(NDX_FLIST_EOF > NDX_DEL_STATS);
-        assert!(NDX_DEL_STATS > NDX_FLIST_OFFSET);
+        // Ordering: NDX_DONE (-1) > NDX_FLIST_EOF (-2) > NDX_DEL_STATS (-3) > NDX_FLIST_OFFSET (-101)
+        // Already verified by the exact value assertions above.
     }
 
     /// Verify NDX constants can be distinguished from valid file indices.
@@ -230,12 +234,28 @@ mod legacy_codec {
     #[test]
     fn always_uses_4_bytes() {
         let mut codec = LegacyNdxCodec::new(29);
-        let test_values = [0, 1, 255, 256, 65535, 1_000_000, i32::MAX, -1, -100, i32::MIN];
+        let test_values = [
+            0,
+            1,
+            255,
+            256,
+            65535,
+            1_000_000,
+            i32::MAX,
+            -1,
+            -100,
+            i32::MIN,
+        ];
 
         for &val in &test_values {
             let mut buf = Vec::new();
             codec.write_ndx(&mut buf, val).unwrap();
-            assert_eq!(buf.len(), 4, "value {val} should be 4 bytes, got {}", buf.len());
+            assert_eq!(
+                buf.len(),
+                4,
+                "value {val} should be 4 bytes, got {}",
+                buf.len()
+            );
         }
     }
 }
@@ -314,7 +334,10 @@ mod modern_codec {
 
         // NDX_FLIST_EOF (-2)
         codec.write_ndx(&mut buf, NDX_FLIST_EOF).unwrap();
-        assert_eq!(buf[0], 0xFF, "negative values should start with 0xFF prefix");
+        assert_eq!(
+            buf[0], 0xFF,
+            "negative values should start with 0xFF prefix"
+        );
 
         buf.clear();
         let mut codec2 = ModernNdxCodec::new(30);
@@ -422,7 +445,10 @@ mod modern_codec {
         assert_eq!(legacy_buf.len(), 400);
 
         // Modern uses ~100 bytes (mostly delta=1, single byte each)
-        assert!(modern_buf.len() <= 150, "modern should use <=150 bytes for 100 sequential indices");
+        assert!(
+            modern_buf.len() <= 150,
+            "modern should use <=150 bytes for 100 sequential indices"
+        );
     }
 }
 
@@ -741,11 +767,11 @@ mod state_tracking {
 
         // Interleave positive and negative values
         let sequence = [
-            0,               // positive
-            NDX_FLIST_EOF,   // negative (-2)
-            5,               // positive
-            NDX_DEL_STATS,   // negative (-3)
-            10,              // positive
+            0,             // positive
+            NDX_FLIST_EOF, // negative (-2)
+            5,             // positive
+            NDX_DEL_STATS, // negative (-3)
+            10,            // positive
         ];
 
         for &val in &sequence {
@@ -768,8 +794,8 @@ mod state_tracking {
         let mut buf = Vec::new();
 
         // Write multiple negative values in sequence
-        write_codec.write_ndx(&mut buf, NDX_FLIST_EOF).unwrap();    // -2
-        write_codec.write_ndx(&mut buf, NDX_DEL_STATS).unwrap();    // -3
+        write_codec.write_ndx(&mut buf, NDX_FLIST_EOF).unwrap(); // -2
+        write_codec.write_ndx(&mut buf, NDX_DEL_STATS).unwrap(); // -3
         write_codec.write_ndx(&mut buf, NDX_FLIST_OFFSET).unwrap(); // -101
 
         let mut read_codec = ModernNdxCodec::new(30);
@@ -962,11 +988,7 @@ mod extreme_values {
     fn roundtrips_large_values() {
         // NDX codec uses variable-length encoding with special markers
         // Values up to ~16 million are typically supported
-        let large_values = [
-            1_000_000,
-            10_000_000,
-            16_000_000,
-        ];
+        let large_values = [1_000_000, 10_000_000, 16_000_000];
         for version in [28, 29, 30, 31, 32] {
             for &value in &large_values {
                 let mut write_codec = create_ndx_codec(version);
@@ -1037,7 +1059,10 @@ mod extreme_values {
 
             for &expected in &sparse_values {
                 let read = read_codec.read_ndx(&mut cursor).unwrap();
-                assert_eq!(read, expected, "v{version}: sparse {expected} roundtrip failed");
+                assert_eq!(
+                    read, expected,
+                    "v{version}: sparse {expected} roundtrip failed"
+                );
             }
         }
     }
@@ -1076,7 +1101,8 @@ mod usage_patterns {
     /// Simulate incremental file list sequence.
     #[test]
     fn incremental_file_list_sequence() {
-        for version in [30, 31, 32] { // Incremental is protocol 30+
+        for version in [30, 31, 32] {
+            // Incremental is protocol 30+
             let mut write_codec = create_ndx_codec(version);
             let mut buf = Vec::new();
 
@@ -1122,15 +1148,7 @@ mod usage_patterns {
             let mut write_codec = create_ndx_codec(version);
             let mut buf = Vec::new();
 
-            let sequence = [
-                0,
-                1,
-                NDX_DONE,
-                5,
-                10,
-                NDX_DONE,
-                NDX_FLIST_EOF,
-            ];
+            let sequence = [0, 1, NDX_DONE, 5, 10, NDX_DONE, NDX_FLIST_EOF];
 
             for &val in &sequence {
                 write_codec.write_ndx(&mut buf, val).unwrap();
@@ -1141,7 +1159,10 @@ mod usage_patterns {
 
             for &expected in &sequence {
                 let read = read_codec.read_ndx(&mut cursor).unwrap();
-                assert_eq!(read, expected, "v{version}: mixed sequence failed at {expected}");
+                assert_eq!(
+                    read, expected,
+                    "v{version}: mixed sequence failed at {expected}"
+                );
             }
         }
     }
@@ -1213,9 +1234,7 @@ mod property_tests {
     /// Non-monotonic sequence with varying gaps.
     #[test]
     fn non_monotonic_sequence() {
-        let sequence: Vec<i32> = vec![
-            0, 5, 3, 10, 7, 100, 50, 200, 150, 1000, 500, 999, 998, 997
-        ];
+        let sequence: Vec<i32> = vec![0, 5, 3, 10, 7, 100, 50, 200, 150, 1000, 500, 999, 998, 997];
 
         for version in [28, 29, 30, 31, 32] {
             let mut write_codec = create_ndx_codec(version);
@@ -1230,7 +1249,10 @@ mod property_tests {
 
             for &expected in &sequence {
                 let read = read_codec.read_ndx(&mut cursor).unwrap();
-                assert_eq!(read, expected, "v{version}: non-monotonic failed at {expected}");
+                assert_eq!(
+                    read, expected,
+                    "v{version}: non-monotonic failed at {expected}"
+                );
             }
         }
     }

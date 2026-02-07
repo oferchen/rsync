@@ -136,16 +136,14 @@ fn message_code_is_logging_correctly_categorizes_all_variants() {
     for code in logging_codes {
         assert!(
             code.is_logging(),
-            "MessageCode::{:?} should be classified as logging",
-            code
+            "MessageCode::{code:?} should be classified as logging"
         );
     }
 
     for code in non_logging_codes {
         assert!(
             !code.is_logging(),
-            "MessageCode::{:?} should NOT be classified as logging",
-            code
+            "MessageCode::{code:?} should NOT be classified as logging"
         );
     }
 
@@ -244,15 +242,13 @@ fn message_code_without_log_equivalent_fails_conversion() {
     for code in codes_without_log {
         assert!(
             code.log_code().is_none(),
-            "MessageCode::{:?} should have no log code equivalent",
-            code
+            "MessageCode::{code:?} should have no log code equivalent"
         );
 
         let result = LogCode::try_from(code);
         assert!(
             result.is_err(),
-            "LogCode::try_from(MessageCode::{:?}) should fail",
-            code
+            "LogCode::try_from(MessageCode::{code:?}) should fail"
         );
     }
 }
@@ -568,12 +564,10 @@ fn log_code_conversion_error_accessors() {
 #[test]
 fn message_code_display_uses_msg_prefix() {
     for &code in MessageCode::all() {
-        let display = format!("{}", code);
+        let display = format!("{code}");
         assert!(
             display.starts_with("MSG_"),
-            "MessageCode::{:?} display should start with MSG_: {}",
-            code,
-            display
+            "MessageCode::{code:?} display should start with MSG_: {display}"
         );
     }
 }
@@ -582,12 +576,10 @@ fn message_code_display_uses_msg_prefix() {
 #[test]
 fn log_code_display_uses_f_prefix() {
     for &code in LogCode::all() {
-        let display = format!("{}", code);
+        let display = format!("{code}");
         assert!(
             display.starts_with("F"),
-            "LogCode::{:?} display should start with F: {}",
-            code,
-            display
+            "LogCode::{code:?} display should start with F: {display}"
         );
     }
 }
@@ -596,12 +588,11 @@ fn log_code_display_uses_f_prefix() {
 #[test]
 fn message_code_debug_differs_from_display() {
     for &code in MessageCode::all() {
-        let debug = format!("{:?}", code);
-        let display = format!("{}", code);
+        let debug = format!("{code:?}");
+        let display = format!("{code}");
         assert_ne!(
             debug, display,
-            "Debug and Display should differ for MessageCode::{:?}",
-            code
+            "Debug and Display should differ for MessageCode::{code:?}"
         );
     }
 }
@@ -716,7 +707,7 @@ fn header_round_trip_preserves_all_message_codes() {
         let encoded = header.encode();
         let decoded = MessageHeader::decode(&encoded).expect("decode should succeed");
 
-        assert_eq!(decoded.code(), code, "Code mismatch for {:?}", code);
+        assert_eq!(decoded.code(), code, "Code mismatch for {code:?}");
     }
 }
 
@@ -737,7 +728,8 @@ fn message_code_methods_are_const() {
     assert_eq!(DATA_VALUE, 0);
     assert_eq!(INFO_NAME, "MSG_INFO");
     assert_eq!(PARSED, Some(MessageCode::Info));
-    assert!(IS_LOGGING);
+    let is_logging = IS_LOGGING;
+    assert!(is_logging);
     assert_eq!(LOG_CODE, Some(LogCode::Info));
     assert_eq!(FROM_LOG, Some(MessageCode::Info));
 }

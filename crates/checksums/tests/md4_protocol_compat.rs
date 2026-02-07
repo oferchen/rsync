@@ -147,8 +147,7 @@ fn rfc1320_lowercase_alphabet() {
 #[test]
 fn rfc1320_alphanumeric() {
     // MD4("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
-    let digest =
-        Md4::digest(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+    let digest = Md4::digest(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
     assert_eq!(
         to_hex(&digest),
         "043f8582f241db351ce627e153e7f0e4",
@@ -380,7 +379,7 @@ fn simulate_block_checksum_large_file() {
 
     let strategy = ChecksumStrategySelector::for_protocol_version(29, 0);
 
-    let block_count = (file_data.len() + block_size - 1) / block_size;
+    let block_count = file_data.len().div_ceil(block_size);
     let mut block_checksums = Vec::with_capacity(block_count);
 
     for block in file_data.chunks(block_size) {

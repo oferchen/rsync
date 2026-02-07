@@ -254,7 +254,8 @@ mod nfsv4_acl_tests {
             let parsed = Nfs4Acl::from_bytes(&bytes).unwrap();
 
             assert_eq!(
-                parsed.aces[0].who, who,
+                parsed.aces[0].who,
+                who,
                 "Failed for who string length {}",
                 who.len()
             );
@@ -385,7 +386,8 @@ mod nfsv4_acl_tests {
         // Most files won't have NFSv4 ACLs
         let result = has_nfsv4_acl(&file, true);
         // Function suppresses errors and returns false
-        assert!(!result || result); // Either value is acceptable
+        // Either true or false is acceptable depending on platform
+        let _ = result;
     }
 
     #[test]
@@ -569,9 +571,11 @@ mod nfsv4_acl_tests {
 
         assert!(parsed.aces[0].flags.contains(AceFlags::FILE_INHERIT));
         assert!(parsed.aces[0].flags.contains(AceFlags::DIRECTORY_INHERIT));
-        assert!(parsed.aces[0]
-            .flags
-            .contains(AceFlags::NO_PROPAGATE_INHERIT));
+        assert!(
+            parsed.aces[0]
+                .flags
+                .contains(AceFlags::NO_PROPAGATE_INHERIT)
+        );
         assert!(!parsed.aces[0].flags.contains(AceFlags::INHERIT_ONLY));
     }
 }
@@ -816,10 +820,7 @@ mod posix_acl_tests {
 // Default ACL Tests (Linux/FreeBSD only)
 // ============================================================================
 
-#[cfg(all(
-    feature = "acl",
-    any(target_os = "linux", target_os = "freebsd")
-))]
+#[cfg(all(feature = "acl", any(target_os = "linux", target_os = "freebsd")))]
 mod default_acl_tests {
     use super::*;
     use metadata::sync_acls;

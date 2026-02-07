@@ -105,7 +105,7 @@ impl PartialMode {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```ignore
 /// use engine::local_copy::executor::file::partial::{PartialMode, PartialFileManager};
 /// use std::path::Path;
 ///

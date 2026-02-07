@@ -135,16 +135,12 @@ pub fn send_file_to_writer<W: Write>(
 /// # }
 /// ```
 #[cfg(target_os = "linux")]
-pub fn send_file_to_fd(
-    source: &File,
-    dest_fd: std::os::fd::RawFd,
-    length: u64,
-) -> io::Result<u64> {
+pub fn send_file_to_fd(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::Result<u64> {
     if length >= SENDFILE_THRESHOLD {
-        match try_sendfile(source, dest_fd, length) {
-            Ok(n) => return Ok(n),
-            Err(_) => {} // Fall through to read/write fallback
+        if let Ok(n) = try_sendfile(source, dest_fd, length) {
+            return Ok(n);
         }
+        // Fall through to read/write fallback
     }
     // Fallback: read from source, write to fd
     copy_via_fd_write(source, dest_fd, length)
@@ -152,11 +148,7 @@ pub fn send_file_to_fd(
 
 /// Stub for non-Linux platforms - always uses read/write fallback.
 #[cfg(not(target_os = "linux"))]
-pub fn send_file_to_fd(
-    source: &File,
-    dest_fd: std::os::fd::RawFd,
-    length: u64,
-) -> io::Result<u64> {
+pub fn send_file_to_fd(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::Result<u64> {
     copy_via_fd_write(source, dest_fd, length)
 }
 
@@ -202,9 +194,7 @@ fn try_sendfile(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::
         // SAFETY: File descriptors are valid (derived from &File references).
         // Null offset pointer instructs the syscall to use and update the current
         // file position, which is the behavior we want.
-        let result = unsafe {
-            libc::sendfile(dest_fd, src_fd, std::ptr::null_mut(), chunk)
-        };
+        let result = unsafe { libc::sendfile(dest_fd, src_fd, std::ptr::null_mut(), chunk) };
 
         if result < 0 {
             let err = io::Error::last_os_error();
@@ -384,7 +374,6 @@ mod tests {
         Ok(file)
     }
 
-
     #[test]
     fn test_send_to_writer_small_file() {
         // Small file (< 64KB) should use read/write path directly
@@ -392,8 +381,8 @@ mod tests {
         let source = create_temp_file(content).unwrap();
         let mut output = Vec::new();
 
-        let sent = send_file_to_writer(source.as_file(), &mut output, content.len() as u64)
-            .unwrap();
+        let sent =
+            send_file_to_writer(source.as_file(), &mut output, content.len() as u64).unwrap();
 
         assert_eq!(sent, content.len() as u64);
         assert_eq!(output, content);
@@ -407,8 +396,8 @@ mod tests {
         let source = create_temp_file(&content).unwrap();
         let mut output = Vec::new();
 
-        let sent = send_file_to_writer(source.as_file(), &mut output, content.len() as u64)
-            .unwrap();
+        let sent =
+            send_file_to_writer(source.as_file(), &mut output, content.len() as u64).unwrap();
 
         assert_eq!(sent, content.len() as u64);
         assert_eq!(output, content);
@@ -430,14 +419,12 @@ mod tests {
     #[test]
     fn test_send_to_writer_exact_content() {
         // Verify data integrity with specific pattern
-        let content: Vec<u8> = (0..1000)
-            .map(|i| ((i * 7 + 13) % 256) as u8)
-            .collect();
+        let content: Vec<u8> = (0..1000).map(|i| ((i * 7 + 13) % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
         let mut output = Vec::new();
 
-        let sent = send_file_to_writer(source.as_file(), &mut output, content.len() as u64)
-            .unwrap();
+        let sent =
+            send_file_to_writer(source.as_file(), &mut output, content.len() as u64).unwrap();
 
         assert_eq!(sent, content.len() as u64);
         assert_eq!(output, content);
@@ -537,12 +524,7 @@ mod tests {
         // Create a socket pair for testing
         let mut socket_fds = [0i32; 2];
         let result = unsafe {
-            libc::socketpair(
-                libc::AF_UNIX,
-                libc::SOCK_STREAM,
-                0,
-                socket_fds.as_mut_ptr(),
-            )
+            libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
         };
         assert_eq!(result, 0, "Failed to create socketpair");
 
@@ -550,8 +532,7 @@ mod tests {
         let send_fd = socket_fds[1];
 
         // Send data through sendfile to socket
-        let sent = send_file_to_fd(source.as_file(), send_fd, content.len() as u64)
-            .unwrap();
+        let sent = send_file_to_fd(source.as_file(), send_fd, content.len() as u64).unwrap();
 
         assert_eq!(sent, content.len() as u64);
 
@@ -634,8 +615,8 @@ mod tests {
         let source = create_temp_file(content).unwrap();
         let mut output = Vec::new();
 
-        let copied = copy_via_readwrite(source.as_file(), &mut output, content.len() as u64)
-            .unwrap();
+        let copied =
+            copy_via_readwrite(source.as_file(), &mut output, content.len() as u64).unwrap();
 
         assert_eq!(copied, content.len() as u64);
         assert_eq!(output, content);
@@ -666,12 +647,14 @@ mod tests {
         let mut output = Vec::new();
 
         // First write
-        let sent1 = send_file_to_writer(source1.as_file(), &mut output, content1.len() as u64).unwrap();
+        let sent1 =
+            send_file_to_writer(source1.as_file(), &mut output, content1.len() as u64).unwrap();
         assert_eq!(sent1, content1.len() as u64);
         assert_eq!(&output[..sent1 as usize], content1);
 
         // Second write appends to output
-        let sent2 = send_file_to_writer(source2.as_file(), &mut output, content2.len() as u64).unwrap();
+        let sent2 =
+            send_file_to_writer(source2.as_file(), &mut output, content2.len() as u64).unwrap();
         assert_eq!(sent2, content2.len() as u64);
         assert_eq!(output, b"First writeSecond");
     }

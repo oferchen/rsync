@@ -1437,8 +1437,8 @@ mod tests {
         let flags = calculate_basic_flags(
             0o100644, 0o100644, // same mode
             1000, 1000, // same mtime
-            500, 500,   // same uid
-            600, 600,   // same gid
+            500, 500, // same uid
+            600, 600, // same gid
             5, 3, // some prefix compression
             true, true, false,
         );
@@ -1454,8 +1454,8 @@ mod tests {
         let flags = calculate_basic_flags(
             0o100644, 0o100755, // different mode
             1000, 2000, // different mtime
-            500, 600,   // different uid
-            700, 800,   // different gid
+            500, 600, // different uid
+            700, 800, // different gid
             0, 8, // no prefix compression
             true, true, false,
         );
@@ -1477,9 +1477,7 @@ mod tests {
 
     #[test]
     fn calculate_basic_flags_top_dir() {
-        let flags = calculate_basic_flags(
-            0o040755, 0, 0, 0, 0, 0, 0, 0, 0, 3, false, false, true,
-        );
+        let flags = calculate_basic_flags(0o040755, 0, 0, 0, 0, 0, 0, 0, 0, 3, false, false, true);
         assert!(flags & XMIT_TOP_DIR != 0);
     }
 

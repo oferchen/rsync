@@ -1091,7 +1091,7 @@ fn omit_dir_times_with_archive_style_options() {
     let file_mtime = FileTime::from_unix_time(1_500_000_000, 0);
     let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
 
-    set_file_mtime(&nested.join("file.txt"), file_mtime).expect("set file mtime");
+    set_file_mtime(nested.join("file.txt"), file_mtime).expect("set file mtime");
     set_file_mtime(&nested, dir_mtime).expect("set nested dir mtime");
     set_file_mtime(&source_root, dir_mtime).expect("set root dir mtime");
 

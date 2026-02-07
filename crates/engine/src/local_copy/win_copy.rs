@@ -280,8 +280,8 @@ mod tests {
         name: &str,
         content: &[u8],
     ) -> (std::path::PathBuf, std::path::PathBuf) {
-        let src = dir.join(format!("{}_src.txt", name));
-        let dst = dir.join(format!("{}_dst.txt", name));
+        let src = dir.join(format!("{name}_src.txt"));
+        let dst = dir.join(format!("{name}_dst.txt"));
         std::fs::write(&src, content).expect("write source file");
         (src, dst)
     }
@@ -408,7 +408,11 @@ mod tests {
         assert_eq!(content, b"", "empty file should remain empty");
 
         // Verify result reports correct bytes
-        assert_eq!(result.bytes_copied(), 0, "should copy 0 bytes for empty file");
+        assert_eq!(
+            result.bytes_copied(),
+            0,
+            "should copy 0 bytes for empty file"
+        );
     }
 
     #[test]
@@ -496,6 +500,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_no_buffering_threshold() {
         // Verify the threshold constant has expected value
         assert_eq!(

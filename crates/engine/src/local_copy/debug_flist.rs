@@ -19,6 +19,8 @@
 //! tracer.finish_send();
 //! ```
 
+#![allow(dead_code)]
+
 use std::time::{Duration, Instant};
 
 /// Target name for tracing events, matching rsync's debug category.
@@ -461,7 +463,7 @@ mod tests {
         tracer.start_send();
 
         for i in 0..10_000 {
-            let name = format!("file_{}.txt", i);
+            let name = format!("file_{i}.txt");
             tracer.record_entry(&name, 1024);
         }
 

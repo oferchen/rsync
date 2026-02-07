@@ -34,6 +34,8 @@
 //! assert_eq!(stats.success_count, 1);
 //! ```
 
+#![allow(dead_code)]
+
 use rayon::prelude::*;
 use std::io;
 use std::path::PathBuf;
@@ -149,16 +151,19 @@ pub fn execute_batch(jobs: &[TransferJob]) -> (Vec<TransferResult>, BatchStats) 
     // Process small files in parallel if there are enough
     if small_jobs.len() >= PARALLEL_THRESHOLD {
         parallel_used = true;
-        let (small_results, _) = execute_parallel(&small_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
+        let (small_results, _) =
+            execute_parallel(&small_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
         all_results.extend(small_results);
     } else {
         // Process small files sequentially
-        let (small_results, _) = execute_sequential(&small_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
+        let (small_results, _) =
+            execute_sequential(&small_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
         all_results.extend(small_results);
     }
 
     // Process large files sequentially
-    let (large_results, _) = execute_sequential(&large_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
+    let (large_results, _) =
+        execute_sequential(&large_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
     all_results.extend(large_results);
 
     // Sort results by original index to maintain ordering
@@ -402,8 +407,8 @@ mod tests {
         // Create fewer files than PARALLEL_THRESHOLD (8)
         let mut jobs = vec![];
         for i in 0..5 {
-            let src = create_test_file(&temp, &format!("src{}.txt", i), 100);
-            let dst = temp.path().join(format!("dst{}.txt", i));
+            let src = create_test_file(&temp, &format!("src{i}.txt"), 100);
+            let dst = temp.path().join(format!("dst{i}.txt"));
             jobs.push(TransferJob {
                 src,
                 dst,
@@ -424,8 +429,8 @@ mod tests {
         // Create more files than PARALLEL_THRESHOLD (8), all small
         let mut jobs = vec![];
         for i in 0..10 {
-            let src = create_test_file(&temp, &format!("src{}.txt", i), 1024);
-            let dst = temp.path().join(format!("dst{}.txt", i));
+            let src = create_test_file(&temp, &format!("src{i}.txt"), 1024);
+            let dst = temp.path().join(format!("dst{i}.txt"));
             jobs.push(TransferJob {
                 src,
                 dst,
@@ -447,8 +452,8 @@ mod tests {
 
         // Create 10 small files
         for i in 0..10 {
-            let src = create_test_file(&temp, &format!("small{}.txt", i), 1024);
-            let dst = temp.path().join(format!("dst_small{}.txt", i));
+            let src = create_test_file(&temp, &format!("small{i}.txt"), 1024);
+            let dst = temp.path().join(format!("dst_small{i}.txt"));
             jobs.push(TransferJob {
                 src,
                 dst,
@@ -458,8 +463,8 @@ mod tests {
 
         // Create 2 large files
         for i in 0..2 {
-            let src = create_test_file(&temp, &format!("large{}.txt", i), 128 * 1024);
-            let dst = temp.path().join(format!("dst_large{}.txt", i));
+            let src = create_test_file(&temp, &format!("large{i}.txt"), 128 * 1024);
+            let dst = temp.path().join(format!("dst_large{i}.txt"));
             jobs.push(TransferJob {
                 src,
                 dst,
@@ -482,13 +487,9 @@ mod tests {
         // Create files with different sizes to ensure parallel execution might reorder
         for i in 0..10 {
             let size = (i + 1) * 100;
-            let src = create_test_file(&temp, &format!("src{}.txt", i), size);
-            let dst = temp.path().join(format!("dst{}.txt", i));
-            jobs.push(TransferJob {
-                src,
-                dst,
-                size,
-            });
+            let src = create_test_file(&temp, &format!("src{i}.txt"), size);
+            let dst = temp.path().join(format!("dst{i}.txt"));
+            jobs.push(TransferJob { src, dst, size });
         }
 
         let (results, _stats) = execute_parallel(&jobs);
@@ -575,30 +576,30 @@ mod tests {
 
         // Create test files
         for i in 0..5 {
-            let src = create_test_file(&temp, &format!("src{}.txt", i), (i + 1) * 100);
+            let src = create_test_file(&temp, &format!("src{i}.txt"), (i + 1) * 100);
             jobs.push(TransferJob {
                 src,
-                dst: temp.path().join(format!("seq{}.txt", i)),
+                dst: temp.path().join(format!("seq{i}.txt")),
                 size: (i + 1) * 100,
             });
         }
 
         // Execute sequentially
-        let (seq_results, seq_stats) = execute_sequential(&jobs);
+        let (_seq_results, seq_stats) = execute_sequential(&jobs);
 
         // Reset jobs for parallel execution
         let mut jobs_parallel = vec![];
         for i in 0..5 {
-            let src = temp.path().join(format!("seq{}.txt", i)); // Use sequential outputs as inputs
+            let src = temp.path().join(format!("seq{i}.txt")); // Use sequential outputs as inputs
             jobs_parallel.push(TransferJob {
                 src,
-                dst: temp.path().join(format!("par{}.txt", i)),
+                dst: temp.path().join(format!("par{i}.txt")),
                 size: (i + 1) * 100,
             });
         }
 
         // Execute in parallel
-        let (par_results, par_stats) = execute_parallel(&jobs_parallel);
+        let (_par_results, par_stats) = execute_parallel(&jobs_parallel);
 
         // Verify both produced same stats
         assert_eq!(seq_stats.total_files, par_stats.total_files);
@@ -607,8 +608,8 @@ mod tests {
 
         // Verify all output files exist and have correct content
         for i in 0..5 {
-            let seq_path = temp.path().join(format!("seq{}.txt", i));
-            let par_path = temp.path().join(format!("par{}.txt", i));
+            let seq_path = temp.path().join(format!("seq{i}.txt"));
+            let par_path = temp.path().join(format!("par{i}.txt"));
             assert!(seq_path.exists());
             assert!(par_path.exists());
 

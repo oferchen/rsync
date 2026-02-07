@@ -3,8 +3,8 @@
 //! This example shows how to use MplexWriter and MplexReader to transparently
 //! multiplex data and control messages over a single stream.
 
-use std::io::{self, Cursor, Read, Write};
 use protocol::{MplexReader, MplexWriter};
+use std::io::{self, Cursor, Read, Write};
 
 fn main() -> io::Result<()> {
     println!("=== Rsync Multiplex I/O Example ===\n");
@@ -48,10 +48,7 @@ fn main() -> io::Result<()> {
         // Set up message handler for control messages
         reader.set_message_handler(move |code, payload| {
             if let Ok(msg) = std::str::from_utf8(payload) {
-                messages_clone
-                    .lock()
-                    .unwrap()
-                    .push((code, msg.to_string()));
+                messages_clone.lock().unwrap().push((code, msg.to_string()));
             }
         });
 
@@ -70,7 +67,7 @@ fn main() -> io::Result<()> {
             }
         }
 
-        println!("Data received: {:?}", data);
+        println!("Data received: {data:?}");
         println!("\nControl messages:");
         for (code, msg) in messages.lock().unwrap().iter() {
             println!("  [{:?}] {}", code, msg.trim());
@@ -91,7 +88,10 @@ fn main() -> io::Result<()> {
         }
 
         println!("Wrote {} bytes of data", large_data.len());
-        println!("Stream size: {} bytes (includes frame overhead)", stream.len());
+        println!(
+            "Stream size: {} bytes (includes frame overhead)",
+            stream.len()
+        );
 
         // Read it back
         {

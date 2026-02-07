@@ -104,8 +104,7 @@ fn timeout_argument_empty_reports_error() {
     let error = parse_timeout_argument(OsStr::new("")).unwrap_err();
     assert!(
         error.to_string().contains("must not be empty"),
-        "error message: {}",
-        error
+        "error message: {error}"
     );
 }
 
@@ -114,8 +113,7 @@ fn timeout_argument_whitespace_only_reports_error() {
     let error = parse_timeout_argument(OsStr::new("   ")).unwrap_err();
     assert!(
         error.to_string().contains("must not be empty"),
-        "error message: {}",
-        error
+        "error message: {error}"
     );
 }
 
@@ -124,8 +122,7 @@ fn timeout_argument_non_numeric_reports_error() {
     let error = parse_timeout_argument(OsStr::new("abc")).unwrap_err();
     assert!(
         error.to_string().contains("must be an unsigned integer"),
-        "error message: {}",
-        error
+        "error message: {error}"
     );
 }
 
@@ -134,8 +131,7 @@ fn timeout_argument_mixed_alphanumeric_reports_error() {
     let error = parse_timeout_argument(OsStr::new("30s")).unwrap_err();
     assert!(
         error.to_string().contains("must be an unsigned integer"),
-        "error message: {}",
-        error
+        "error message: {error}"
     );
 }
 
@@ -144,8 +140,7 @@ fn timeout_argument_decimal_reports_error() {
     let error = parse_timeout_argument(OsStr::new("30.5")).unwrap_err();
     assert!(
         error.to_string().contains("must be an unsigned integer"),
-        "error message: {}",
-        error
+        "error message: {error}"
     );
 }
 
@@ -154,8 +149,7 @@ fn timeout_argument_negative_large_reports_error() {
     let error = parse_timeout_argument(OsStr::new("-999")).unwrap_err();
     assert!(
         error.to_string().contains("timeout must be non-negative"),
-        "error message: {}",
-        error
+        "error message: {error}"
     );
 }
 
@@ -165,8 +159,7 @@ fn timeout_argument_overflow_reports_error() {
     let error = parse_timeout_argument(OsStr::new("18446744073709551616")).unwrap_err();
     assert!(
         error.to_string().contains("exceeds the supported range"),
-        "error message: {}",
-        error
+        "error message: {error}"
     );
 }
 
@@ -174,7 +167,10 @@ fn timeout_argument_overflow_reports_error() {
 fn timeout_argument_special_characters_report_error() {
     for special in ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")"] {
         let error = parse_timeout_argument(OsStr::new(special)).unwrap_err();
-        assert!(error.is_error(), "special char '{}' should cause error", special);
+        assert!(
+            error.is_error(),
+            "special char '{special}' should cause error"
+        );
     }
 }
 
@@ -239,13 +235,13 @@ fn transfer_timeout_equality() {
 #[test]
 fn transfer_timeout_debug_format() {
     let timeout = TransferTimeout::Default;
-    assert_eq!(format!("{:?}", timeout), "Default");
+    assert_eq!(format!("{timeout:?}"), "Default");
 
     let timeout = TransferTimeout::Disabled;
-    assert_eq!(format!("{:?}", timeout), "Disabled");
+    assert_eq!(format!("{timeout:?}"), "Disabled");
 
     let timeout = TransferTimeout::Seconds(NonZeroU64::new(30).unwrap());
-    let debug = format!("{:?}", timeout);
+    let debug = format!("{timeout:?}");
     assert!(debug.contains("Seconds"));
     assert!(debug.contains("30"));
 }
@@ -289,14 +285,16 @@ fn cli_timeout_large_value() {
 
 #[test]
 fn cli_no_timeout_overrides_timeout() {
-    let parsed = parse_args(["rsync", "--timeout=30", "--no-timeout", "src/", "dst/"]).expect("parse");
+    let parsed =
+        parse_args(["rsync", "--timeout=30", "--no-timeout", "src/", "dst/"]).expect("parse");
     // --no-timeout should clear the timeout setting
     assert_eq!(parsed.timeout, None);
 }
 
 #[test]
 fn cli_timeout_after_no_timeout() {
-    let parsed = parse_args(["rsync", "--no-timeout", "--timeout=60", "src/", "dst/"]).expect("parse");
+    let parsed =
+        parse_args(["rsync", "--no-timeout", "--timeout=60", "src/", "dst/"]).expect("parse");
     // Later --timeout should override --no-timeout
     assert_eq!(parsed.timeout, Some(OsString::from("60")));
 }
@@ -331,13 +329,27 @@ fn cli_contimeout_zero_value() {
 
 #[test]
 fn cli_no_contimeout_overrides_contimeout() {
-    let parsed = parse_args(["rsync", "--contimeout=10", "--no-contimeout", "src/", "dst/"]).expect("parse");
+    let parsed = parse_args([
+        "rsync",
+        "--contimeout=10",
+        "--no-contimeout",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
     assert_eq!(parsed.contimeout, None);
 }
 
 #[test]
 fn cli_contimeout_after_no_contimeout() {
-    let parsed = parse_args(["rsync", "--no-contimeout", "--contimeout=20", "src/", "dst/"]).expect("parse");
+    let parsed = parse_args([
+        "rsync",
+        "--no-contimeout",
+        "--contimeout=20",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
     assert_eq!(parsed.contimeout, Some(OsString::from("20")));
 }
 
@@ -353,7 +365,8 @@ fn cli_contimeout_default_is_none() {
 
 #[test]
 fn cli_both_timeout_and_contimeout() {
-    let parsed = parse_args(["rsync", "--timeout=30", "--contimeout=10", "src/", "dst/"]).expect("parse");
+    let parsed =
+        parse_args(["rsync", "--timeout=30", "--contimeout=10", "src/", "dst/"]).expect("parse");
     assert_eq!(parsed.timeout, Some(OsString::from("30")));
     assert_eq!(parsed.contimeout, Some(OsString::from("10")));
 }
@@ -456,8 +469,7 @@ fn timeout_error_includes_invalid_value_in_message() {
     let message = error.to_string();
     assert!(
         message.contains("invalid"),
-        "error should mention the invalid value: {}",
-        message
+        "error should mention the invalid value: {message}"
     );
 }
 
@@ -467,8 +479,7 @@ fn timeout_negative_error_includes_value() {
     let message = error.to_string();
     assert!(
         message.contains("-42"),
-        "error should mention the invalid value: {}",
-        message
+        "error should mention the invalid value: {message}"
     );
 }
 
@@ -478,8 +489,7 @@ fn timeout_overflow_error_is_descriptive() {
     let message = error.to_string();
     assert!(
         message.contains("exceeds") || message.contains("range"),
-        "error should mention overflow: {}",
-        message
+        "error should mention overflow: {message}"
     );
 }
 
@@ -490,13 +500,21 @@ fn timeout_overflow_error_is_descriptive() {
 #[test]
 fn timeout_parse_error_has_exit_code_1() {
     let error = parse_timeout_argument(OsStr::new("invalid")).unwrap_err();
-    assert_eq!(error.code(), Some(1), "syntax errors should have exit code 1");
+    assert_eq!(
+        error.code(),
+        Some(1),
+        "syntax errors should have exit code 1"
+    );
 }
 
 #[test]
 fn timeout_negative_error_has_exit_code_1() {
     let error = parse_timeout_argument(OsStr::new("-1")).unwrap_err();
-    assert_eq!(error.code(), Some(1), "negative value should have exit code 1");
+    assert_eq!(
+        error.code(),
+        Some(1),
+        "negative value should have exit code 1"
+    );
 }
 
 #[test]

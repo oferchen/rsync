@@ -407,19 +407,19 @@ impl StatxResult {
     /// Returns true if this entry is a regular file.
     #[must_use]
     pub fn is_file(&self) -> bool {
-        (self.mode & libc::S_IFMT as u32) == libc::S_IFREG as u32
+        (self.mode & libc::S_IFMT) == libc::S_IFREG
     }
 
     /// Returns true if this entry is a directory.
     #[must_use]
     pub fn is_dir(&self) -> bool {
-        (self.mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32
+        (self.mode & libc::S_IFMT) == libc::S_IFDIR
     }
 
     /// Returns true if this entry is a symbolic link.
     #[must_use]
     pub fn is_symlink(&self) -> bool {
-        (self.mode & libc::S_IFMT as u32) == libc::S_IFLNK as u32
+        (self.mode & libc::S_IFMT) == libc::S_IFLNK
     }
 
     /// Returns the permission bits (lower 12 bits of mode).

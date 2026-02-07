@@ -362,7 +362,9 @@ pub fn should_retry(error: &TransferError, attempt: u32, max_retries: u32) -> bo
         | TransferError::PermissionDenied => false,
 
         // Other I/O errors - check if they're transient
-        TransferError::Io(kind) => matches!(kind, io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock),
+        TransferError::Io(kind) => {
+            matches!(kind, io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock)
+        }
     }
 }
 
@@ -460,8 +462,7 @@ mod tests {
 
     #[test]
     fn partial_transfer_state_new() {
-        let state =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
+        let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
         assert_eq!(state.path, PathBuf::from("/tmp/file.txt"));
         assert_eq!(state.bytes_received, 1024);
         assert_eq!(state.expected_size, 2048);
@@ -471,8 +472,7 @@ mod tests {
     #[test]
     fn partial_transfer_state_is_resumable() {
         // Partially received - should be resumable
-        let state =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
+        let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
         assert!(state.is_resumable());
 
         // No data received - not resumable
@@ -480,27 +480,23 @@ mod tests {
         assert!(!state.is_resumable());
 
         // Fully received - not resumable
-        let state =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 2048, 2048, None);
+        let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 2048, 2048, None);
         assert!(!state.is_resumable());
 
         // Received more than expected (should not happen, but handle gracefully)
-        let state =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 3000, 2048, None);
+        let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 3000, 2048, None);
         assert!(!state.is_resumable());
     }
 
     #[test]
     fn partial_transfer_state_bytes_remaining() {
-        let state =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
+        let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
         assert_eq!(state.bytes_remaining(), 1024);
 
         let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 0, 2048, None);
         assert_eq!(state.bytes_remaining(), 2048);
 
-        let state =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 2048, 2048, None);
+        let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 2048, 2048, None);
         assert_eq!(state.bytes_remaining(), 0);
     }
 
@@ -572,8 +568,7 @@ mod tests {
     #[test]
     fn partial_transfer_log_clear() {
         let mut log = PartialTransferLog::new();
-        let state =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
+        let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
         log.record_partial(state);
         assert_eq!(log.count(), 1);
 
@@ -777,8 +772,7 @@ mod tests {
     #[test]
     fn determine_recovery_timeout_with_partial_resumes() {
         let err = TransferError::Timeout;
-        let partial =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
+        let partial = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
         assert_eq!(
             determine_recovery(&err, Some(&partial)),
             RecoveryAction::ResumeFrom(1024)
@@ -810,8 +804,7 @@ mod tests {
     #[test]
     fn determine_recovery_io_interrupted_with_partial_resumes() {
         let err = TransferError::Io(io::ErrorKind::Interrupted);
-        let partial =
-            PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 512, 1024, None);
+        let partial = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 512, 1024, None);
         assert_eq!(
             determine_recovery(&err, Some(&partial)),
             RecoveryAction::ResumeFrom(512)

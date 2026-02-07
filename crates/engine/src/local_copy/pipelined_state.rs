@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn controller_next_priority_fill_pipeline_second() {
-        let mut controller = PipelineController::new(4);
+        let controller = PipelineController::new(4);
 
         // No ready entries, can fill
         assert_eq!(
@@ -597,7 +597,7 @@ mod tests {
         controller.enqueue_entry(3);
         assert_eq!(controller.stats().max_pipeline_depth, 3);
 
-        controller.dequeue_ready();
+        let _ = controller.dequeue_ready();
         controller.enqueue_entry(4);
         controller.enqueue_entry(5);
         assert_eq!(controller.stats().max_pipeline_depth, 5);
@@ -629,9 +629,9 @@ mod tests {
 
         // Process second entry
         controller.mark_ready(2);
-        controller.dequeue_ready();
+        let _ = controller.dequeue_ready();
         controller.submit_response(2);
-        controller.dequeue_response();
+        let _ = controller.dequeue_response();
 
         // Mark complete
         controller.mark_wire_exhausted();
@@ -669,11 +669,11 @@ mod tests {
         assert_eq!(controller.stats().pipeline_depth, 2);
 
         controller.mark_ready(1);
-        controller.dequeue_ready();
+        let _ = controller.dequeue_ready();
         assert_eq!(controller.stats().pipeline_depth, 1);
 
         controller.mark_ready(2);
-        controller.dequeue_ready();
+        let _ = controller.dequeue_ready();
         assert_eq!(controller.stats().pipeline_depth, 0);
     }
 

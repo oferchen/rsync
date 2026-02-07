@@ -27,7 +27,7 @@
 //! - `io.c`: Protocol I/O and varint/varlong encoding
 //! - `checksum.c`: Checksum algorithm support
 
-use protocol::codec::{create_ndx_codec, create_protocol_codec, NdxCodec, ProtocolCodec};
+use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{
     ChecksumAlgorithm, CompatibilityFlags, CompressionAlgorithm, KnownCompatibilityFlag,
     ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual,
@@ -347,10 +347,7 @@ mod protocol_32_capability_flags {
     #[test]
     fn version_32_known_flag_enum() {
         assert_eq!(KnownCompatibilityFlag::ALL.len(), 9);
-        assert_eq!(
-            KnownCompatibilityFlag::IncRecurse.name(),
-            "CF_INC_RECURSE"
-        );
+        assert_eq!(KnownCompatibilityFlag::IncRecurse.name(), "CF_INC_RECURSE");
         assert_eq!(
             KnownCompatibilityFlag::SymlinkTimes.name(),
             "CF_SYMLINK_TIMES"
@@ -359,10 +356,7 @@ mod protocol_32_capability_flags {
             KnownCompatibilityFlag::SymlinkIconv.name(),
             "CF_SYMLINK_ICONV"
         );
-        assert_eq!(
-            KnownCompatibilityFlag::SafeFileList.name(),
-            "CF_SAFE_FLIST"
-        );
+        assert_eq!(KnownCompatibilityFlag::SafeFileList.name(), "CF_SAFE_FLIST");
         assert_eq!(
             KnownCompatibilityFlag::AvoidXattrOptimization.name(),
             "CF_AVOID_XATTR_OPTIM"
@@ -648,10 +642,7 @@ mod protocol_32_backward_compatibility {
             v31.safe_file_list_always_enabled(),
             v32.safe_file_list_always_enabled()
         );
-        assert_eq!(
-            v31.uses_varint_flist_flags(),
-            v32.uses_varint_flist_flags()
-        );
+        assert_eq!(v31.uses_varint_flist_flags(), v32.uses_varint_flist_flags());
     }
 
     /// v32 vs v30 feature comparison.
@@ -902,8 +893,7 @@ mod protocol_32_edge_cases {
             let result = select_highest_mutual([TestVersion(version.into())]);
             assert!(
                 result.is_ok(),
-                "version {} should negotiate successfully",
-                version
+                "version {version} should negotiate successfully"
             );
         }
     }

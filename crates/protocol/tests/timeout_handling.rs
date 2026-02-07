@@ -8,7 +8,7 @@
 // 5. Edge cases in timeout value ranges
 // 6. Timeout message parsing and generation
 
-use protocol::{MessageCode, MessageHeader, MPLEX_BASE};
+use protocol::{MPLEX_BASE, MessageCode, MessageHeader};
 
 // =============================================================================
 // MSG_IO_TIMEOUT Wire Format Tests
@@ -534,8 +534,8 @@ fn io_timeout_varying_payload_lengths() {
 // Multiplexed Stream send_msg / recv_msg Roundtrip Tests
 // =============================================================================
 
+use protocol::{MessageFrame, MplexReader, MplexWriter, recv_msg, send_msg};
 use std::io::Cursor;
-use protocol::{recv_msg, send_msg, MplexReader, MplexWriter, MessageFrame};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
@@ -811,17 +811,15 @@ fn end_to_end_io_timeout_writer_to_reader_pipeline() {
     let keepalive_count_clone = keepalive_count.clone();
 
     let mut reader = MplexReader::new(Cursor::new(wire));
-    reader.set_message_handler(move |code, payload| {
-        match code {
-            MessageCode::IoTimeout if payload.len() == 4 => {
-                let val = u32::from_le_bytes(payload.try_into().unwrap());
-                *received_timeout_clone.lock().unwrap() = Some(val);
-            }
-            MessageCode::NoOp => {
-                *keepalive_count_clone.lock().unwrap() += 1;
-            }
-            _ => {}
+    reader.set_message_handler(move |code, payload| match code {
+        MessageCode::IoTimeout if payload.len() == 4 => {
+            let val = u32::from_le_bytes(payload.try_into().unwrap());
+            *received_timeout_clone.lock().unwrap() = Some(val);
         }
+        MessageCode::NoOp => {
+            *keepalive_count_clone.lock().unwrap() += 1;
+        }
+        _ => {}
     });
 
     // Read all data

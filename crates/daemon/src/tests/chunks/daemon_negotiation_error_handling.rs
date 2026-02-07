@@ -481,7 +481,7 @@ fn daemon_negotiation_error_connection_closed_early() {
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let stream = connect_with_retries(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting

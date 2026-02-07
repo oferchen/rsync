@@ -857,10 +857,7 @@ fn quiet_flag_produces_no_output() {
         "-v --quiet should produce no stdout, got: {:?}",
         String::from_utf8_lossy(&stdout)
     );
-    assert_eq!(
-        std::fs::read(destination).expect("read"),
-        b"quiet mode"
-    );
+    assert_eq!(std::fs::read(destination).expect("read"), b"quiet mode");
 }
 
 // ============================================================================

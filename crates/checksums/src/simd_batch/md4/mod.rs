@@ -25,6 +25,7 @@ pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
 }
 
 /// Compute MD4 digest for a single input.
+#[allow(dead_code)]
 pub fn digest(input: &[u8]) -> Digest {
     scalar::digest(input)
 }

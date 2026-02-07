@@ -23,22 +23,19 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
+use protocol::ProtocolVersion;
 use protocol::flist::{FileEntry, FileListReader, FileListWriter};
 use protocol::wire::file_entry::{
-    calculate_device_flags, encode_rdev, XMIT_RDEV_MINOR_8_PRE30, XMIT_SAME_RDEV_MAJOR,
+    XMIT_RDEV_MINOR_8_PRE30, XMIT_SAME_RDEV_MAJOR, calculate_device_flags, encode_rdev,
 };
 use protocol::wire::file_entry_decode::decode_rdev;
-use protocol::ProtocolVersion;
 
 // ============================================================================
 // Test Helpers
 // ============================================================================
 
 /// Roundtrip a single device entry through FileListWriter/FileListReader.
-fn roundtrip_device(
-    entry: &FileEntry,
-    protocol: ProtocolVersion,
-) -> FileEntry {
+fn roundtrip_device(entry: &FileEntry, protocol: ProtocolVersion) -> FileEntry {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
     writer.write_entry(&mut buf, entry).expect("write failed");
@@ -53,10 +50,7 @@ fn roundtrip_device(
 }
 
 /// Roundtrip multiple device entries through FileListWriter/FileListReader.
-fn roundtrip_entries(
-    entries: &[FileEntry],
-    protocol: ProtocolVersion,
-) -> Vec<FileEntry> {
+fn roundtrip_entries(entries: &[FileEntry], protocol: ProtocolVersion) -> Vec<FileEntry> {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
     for entry in entries {
@@ -181,7 +175,7 @@ fn wire_level_roundtrip_rdev_all_protocols() {
 
     for proto in [28u8, 29, 30, 31, 32] {
         // Calculate flags as the implementation would
-        let xflags = if proto >= 28 && proto < 30 && minor <= 0xFF {
+        let xflags = if (28..30).contains(&proto) && minor <= 0xFF {
             (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8
         } else {
             0u32
@@ -192,13 +186,12 @@ fn wire_level_roundtrip_rdev_all_protocols() {
 
         let mut cursor = Cursor::new(&buf);
         let (dec_major, dec_minor) = decode_rdev(&mut cursor, xflags, 0, proto).unwrap();
-        assert_eq!(dec_major, major, "major mismatch for proto {}", proto);
-        assert_eq!(dec_minor, minor, "minor mismatch for proto {}", proto);
+        assert_eq!(dec_major, major, "major mismatch for proto {proto}");
+        assert_eq!(dec_minor, minor, "minor mismatch for proto {proto}");
         assert_eq!(
             cursor.position() as usize,
             buf.len(),
-            "not all bytes consumed for proto {}",
-            proto
+            "not all bytes consumed for proto {proto}"
         );
     }
 }
@@ -207,7 +200,7 @@ fn wire_level_roundtrip_rdev_all_protocols() {
 #[test]
 fn wire_level_roundtrip_rdev_zero_zero() {
     for proto in [29u8, 30, 32] {
-        let xflags = if proto >= 28 && proto < 30 {
+        let xflags = if (28..30).contains(&proto) {
             (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8
         } else {
             0u32
@@ -218,8 +211,8 @@ fn wire_level_roundtrip_rdev_zero_zero() {
 
         let mut cursor = Cursor::new(&buf);
         let (dec_major, dec_minor) = decode_rdev(&mut cursor, xflags, 0, proto).unwrap();
-        assert_eq!(dec_major, 0, "zero major for proto {}", proto);
-        assert_eq!(dec_minor, 0, "zero minor for proto {}", proto);
+        assert_eq!(dec_major, 0, "zero major for proto {proto}");
+        assert_eq!(dec_minor, 0, "zero minor for proto {proto}");
     }
 }
 
@@ -227,7 +220,7 @@ fn wire_level_roundtrip_rdev_zero_zero() {
 #[test]
 fn wire_level_roundtrip_rdev_max_8bit_minor() {
     for proto in [29u8, 30, 32] {
-        let xflags = if proto >= 28 && proto < 30 {
+        let xflags = if (28..30).contains(&proto) {
             (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8
         } else {
             0u32
@@ -262,22 +255,15 @@ fn wire_level_roundtrip_rdev_large_values() {
 
         let mut cursor = Cursor::new(&buf);
         let (dec_major, dec_minor) = decode_rdev(&mut cursor, 0, 0, 30).unwrap();
-        assert_eq!(dec_major, major, "major mismatch for ({}, {})", major, minor);
-        assert_eq!(dec_minor, minor, "minor mismatch for ({}, {})", major, minor);
+        assert_eq!(dec_major, major, "major mismatch for ({major}, {minor})");
+        assert_eq!(dec_minor, minor, "minor mismatch for ({major}, {minor})");
     }
 }
 
 /// Tests multiple consecutive rdev encodings at the wire level.
 #[test]
 fn wire_level_consecutive_rdev_entries() {
-    let devices: &[(u32, u32)] = &[
-        (8, 0),
-        (8, 1),
-        (8, 16),
-        (1, 3),
-        (1, 5),
-        (136, 0),
-    ];
+    let devices: &[(u32, u32)] = &[(8, 0), (8, 1), (8, 16), (1, 3), (1, 5), (136, 0)];
 
     for proto in [30u8, 32] {
         let mut buf = Vec::new();
@@ -290,13 +276,11 @@ fn wire_level_consecutive_rdev_entries() {
             let (dec_major, dec_minor) = decode_rdev(&mut cursor, 0, 0, proto).unwrap();
             assert_eq!(
                 dec_major, expected_major,
-                "major mismatch at entry {} for proto {}",
-                i, proto
+                "major mismatch at entry {i} for proto {proto}"
             );
             assert_eq!(
                 dec_minor, expected_minor,
-                "minor mismatch at entry {} for proto {}",
-                i, proto
+                "minor mismatch at entry {i} for proto {proto}"
             );
         }
         assert_eq!(cursor.position() as usize, buf.len());
@@ -358,8 +342,7 @@ fn device_flags_minor_boundary_255() {
         assert_ne!(
             flags & XMIT_RDEV_MINOR_8_PRE30,
             0,
-            "proto {} should set 8-bit flag for minor=255",
-            proto
+            "proto {proto} should set 8-bit flag for minor=255"
         );
     }
     // Protocol 30+: no 8-bit flag (uses varint)
@@ -376,8 +359,7 @@ fn device_flags_minor_boundary_256() {
         assert_eq!(
             flags & XMIT_RDEV_MINOR_8_PRE30,
             0,
-            "proto {} should NOT set 8-bit flag for minor=256",
-            proto
+            "proto {proto} should NOT set 8-bit flag for minor=256"
         );
     }
 }
@@ -389,7 +371,11 @@ fn device_flags_minor_boundary_256() {
 /// Tests high-level roundtrip of a block device (e.g., /dev/sda).
 #[test]
 fn flist_roundtrip_block_device() {
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let entry = make_block_device("sda", 8, 0);
         let decoded = roundtrip_device(&entry, protocol);
 
@@ -397,8 +383,8 @@ fn flist_roundtrip_block_device() {
         assert!(decoded.is_block_device());
         assert!(!decoded.is_char_device());
         assert_eq!(decoded.name(), "sda");
-        assert_eq!(decoded.rdev_major(), Some(8), "major for {:?}", protocol);
-        assert_eq!(decoded.rdev_minor(), Some(0), "minor for {:?}", protocol);
+        assert_eq!(decoded.rdev_major(), Some(8), "major for {protocol:?}");
+        assert_eq!(decoded.rdev_minor(), Some(0), "minor for {protocol:?}");
     }
 }
 
@@ -439,7 +425,11 @@ fn flist_block_device_size_is_zero() {
 /// Tests high-level roundtrip of a character device (e.g., /dev/null).
 #[test]
 fn flist_roundtrip_char_device() {
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let entry = make_char_device("null", 1, 3);
         let decoded = roundtrip_device(&entry, protocol);
 
@@ -447,8 +437,8 @@ fn flist_roundtrip_char_device() {
         assert!(decoded.is_char_device());
         assert!(!decoded.is_block_device());
         assert_eq!(decoded.name(), "null");
-        assert_eq!(decoded.rdev_major(), Some(1), "major for {:?}", protocol);
-        assert_eq!(decoded.rdev_minor(), Some(3), "minor for {:?}", protocol);
+        assert_eq!(decoded.rdev_major(), Some(1), "major for {protocol:?}");
+        assert_eq!(decoded.rdev_minor(), Some(3), "minor for {protocol:?}");
     }
 }
 
@@ -538,16 +528,12 @@ fn flist_roundtrip_device_large_values() {
         assert_eq!(
             decoded.rdev_major(),
             Some(major),
-            "major mismatch for ({}, {})",
-            major,
-            minor
+            "major mismatch for ({major}, {minor})"
         );
         assert_eq!(
             decoded.rdev_minor(),
             Some(minor),
-            "minor mismatch for ({}, {})",
-            major,
-            minor
+            "minor mismatch for ({major}, {minor})"
         );
     }
 }
@@ -555,16 +541,20 @@ fn flist_roundtrip_device_large_values() {
 /// Tests device encoding at the 8-bit boundary (255 and 256 minor).
 #[test]
 fn flist_roundtrip_device_minor_boundary() {
-    for protocol in [ProtocolVersion::V29, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V29,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         // Minor = 255 (fits in 8 bits)
         let entry255 = make_block_device("dev255", 8, 255);
         let decoded255 = roundtrip_device(&entry255, protocol);
-        assert_eq!(decoded255.rdev_minor(), Some(255), "255 for {:?}", protocol);
+        assert_eq!(decoded255.rdev_minor(), Some(255), "255 for {protocol:?}");
 
         // Minor = 256 (does not fit in 8 bits)
         let entry256 = make_block_device("dev256", 8, 256);
         let decoded256 = roundtrip_device(&entry256, protocol);
-        assert_eq!(decoded256.rdev_minor(), Some(256), "256 for {:?}", protocol);
+        assert_eq!(decoded256.rdev_minor(), Some(256), "256 for {protocol:?}");
     }
 }
 
@@ -589,9 +579,7 @@ fn flist_roundtrip_same_major_compression() {
             assert_eq!(
                 dec.rdev_major(),
                 Some(8),
-                "major mismatch at index {} for {:?}",
-                i,
-                protocol
+                "major mismatch at index {i} for {protocol:?}"
             );
         }
         assert_eq!(decoded[0].rdev_minor(), Some(0));
@@ -604,10 +592,10 @@ fn flist_roundtrip_same_major_compression() {
 #[test]
 fn flist_roundtrip_different_major_devices() {
     let entries = vec![
-        make_block_device("sda", 8, 0),    // SCSI disk
-        make_char_device("null", 1, 3),     // char device
-        make_block_device("loop0", 7, 0),   // loop device
-        make_char_device("tty0", 4, 0),     // terminal
+        make_block_device("sda", 8, 0),   // SCSI disk
+        make_char_device("null", 1, 3),   // char device
+        make_block_device("loop0", 7, 0), // loop device
+        make_char_device("tty0", 4, 0),   // terminal
     ];
 
     let decoded = roundtrip_entries(&entries, ProtocolVersion::NEWEST);
@@ -642,9 +630,7 @@ fn flist_same_major_compression_produces_smaller_encoding() {
     // Second entry should be smaller due to XMIT_SAME_RDEV_MAJOR
     assert!(
         second_len < first_len,
-        "second device ({} bytes) should be smaller than first ({} bytes)",
-        second_len,
-        first_len,
+        "second device ({second_len} bytes) should be smaller than first ({first_len} bytes)",
     );
 }
 
@@ -660,18 +646,28 @@ fn flist_block_vs_char_device_distinction() {
         make_char_device("char_dev", 1, 3),
     ];
 
-    for protocol in [ProtocolVersion::V28, ProtocolVersion::V30, ProtocolVersion::NEWEST] {
+    for protocol in [
+        ProtocolVersion::V28,
+        ProtocolVersion::V30,
+        ProtocolVersion::NEWEST,
+    ] {
         let decoded = roundtrip_entries(&entries, protocol);
 
         assert_eq!(decoded.len(), 2);
 
         // Block device
-        assert!(decoded[0].is_block_device(), "first should be block for {:?}", protocol);
+        assert!(
+            decoded[0].is_block_device(),
+            "first should be block for {protocol:?}"
+        );
         assert!(!decoded[0].is_char_device());
         assert_eq!(decoded[0].mode() & 0o170000, 0o060000); // S_IFBLK
 
         // Char device
-        assert!(decoded[1].is_char_device(), "second should be char for {:?}", protocol);
+        assert!(
+            decoded[1].is_char_device(),
+            "second should be char for {protocol:?}"
+        );
         assert!(!decoded[1].is_block_device());
         assert_eq!(decoded[1].mode() & 0o170000, 0o020000); // S_IFCHR
     }
@@ -820,8 +816,8 @@ fn flist_roundtrip_device_all_protocol_versions() {
         ProtocolVersion::NEWEST,
     ] {
         let decoded = roundtrip_device(&entry, protocol);
-        assert_eq!(decoded.rdev_major(), Some(8), "major for {:?}", protocol);
-        assert_eq!(decoded.rdev_minor(), Some(0), "minor for {:?}", protocol);
+        assert_eq!(decoded.rdev_major(), Some(8), "major for {protocol:?}");
+        assert_eq!(decoded.rdev_minor(), Some(0), "minor for {protocol:?}");
     }
 }
 
@@ -840,8 +836,8 @@ fn wire_format_protocol_30_rdev_more_compact() {
     // Protocol 29 with 8-bit minor uses varint30(major) + u8(minor)
     // For small values, they should be similar in size
     // (both should encode efficiently)
-    assert!(buf29.len() > 0);
-    assert!(buf30.len() > 0);
+    assert!(!buf29.is_empty());
+    assert!(!buf30.is_empty());
 
     // Verify both decode correctly
     let mut cursor29 = Cursor::new(&buf29);
@@ -947,19 +943,19 @@ fn flist_roundtrip_devices_with_specials_proto30() {
 #[test]
 fn flist_roundtrip_linux_common_devices() {
     let devices: Vec<FileEntry> = vec![
-        make_char_device("null", 1, 3),      // /dev/null
-        make_char_device("zero", 1, 5),      // /dev/zero
-        make_char_device("full", 1, 7),      // /dev/full
-        make_char_device("random", 1, 8),    // /dev/random
-        make_char_device("urandom", 1, 9),   // /dev/urandom
-        make_char_device("tty", 5, 0),       // /dev/tty
-        make_char_device("console", 5, 1),   // /dev/console
-        make_block_device("sda", 8, 0),      // /dev/sda
-        make_block_device("sda1", 8, 1),     // /dev/sda1
-        make_block_device("sda2", 8, 2),     // /dev/sda2
-        make_block_device("sdb", 8, 16),     // /dev/sdb
-        make_block_device("loop0", 7, 0),    // /dev/loop0
-        make_block_device("loop1", 7, 1),    // /dev/loop1
+        make_char_device("null", 1, 3),    // /dev/null
+        make_char_device("zero", 1, 5),    // /dev/zero
+        make_char_device("full", 1, 7),    // /dev/full
+        make_char_device("random", 1, 8),  // /dev/random
+        make_char_device("urandom", 1, 9), // /dev/urandom
+        make_char_device("tty", 5, 0),     // /dev/tty
+        make_char_device("console", 5, 1), // /dev/console
+        make_block_device("sda", 8, 0),    // /dev/sda
+        make_block_device("sda1", 8, 1),   // /dev/sda1
+        make_block_device("sda2", 8, 2),   // /dev/sda2
+        make_block_device("sdb", 8, 16),   // /dev/sdb
+        make_block_device("loop0", 7, 0),  // /dev/loop0
+        make_block_device("loop1", 7, 1),  // /dev/loop1
     ];
 
     let decoded = roundtrip_entries(&devices, ProtocolVersion::NEWEST);
@@ -1015,15 +1011,15 @@ fn flist_device_name_prefix_compression() {
 #[test]
 fn flist_roundtrip_many_partitions() {
     let entries: Vec<FileEntry> = (0..64)
-        .map(|i| make_block_device(&format!("sd{}", i), 8, i))
+        .map(|i| make_block_device(&format!("sd{i}"), 8, i))
         .collect();
 
     let decoded = roundtrip_entries(&entries, ProtocolVersion::NEWEST);
 
     assert_eq!(decoded.len(), 64);
     for (i, dec) in decoded.iter().enumerate() {
-        assert_eq!(dec.rdev_major(), Some(8), "major at index {}", i);
-        assert_eq!(dec.rdev_minor(), Some(i as u32), "minor at index {}", i);
+        assert_eq!(dec.rdev_major(), Some(8), "major at index {i}");
+        assert_eq!(dec.rdev_minor(), Some(i as u32), "minor at index {i}");
     }
 }
 
@@ -1052,7 +1048,11 @@ fn wire_level_same_major_zero_minor() {
     assert_eq!(dec_minor, 0);
 
     // Only minor should be encoded (varint for 0 = 1 byte)
-    assert_eq!(buf.len(), 1, "only minor should be encoded when SAME_RDEV_MAJOR");
+    assert_eq!(
+        buf.len(),
+        1,
+        "only minor should be encoded when SAME_RDEV_MAJOR"
+    );
 }
 
 /// Tests that the wire format produces known bytes for a common device.
@@ -1093,7 +1093,7 @@ fn wire_level_encode_decode_consistency() {
 
     for proto in [28u8, 29, 30, 31, 32] {
         for &(major, minor) in test_cases {
-            let xflags = if proto >= 28 && proto < 30 && minor <= 0xFF {
+            let xflags = if (28..30).contains(&proto) && minor <= 0xFF {
                 (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8
             } else {
                 0u32
@@ -1107,23 +1107,18 @@ fn wire_level_encode_decode_consistency() {
 
             assert_eq!(
                 dec_major, major,
-                "major mismatch for ({}, {}) proto={}",
-                major, minor, proto
+                "major mismatch for ({major}, {minor}) proto={proto}"
             );
             assert_eq!(
                 dec_minor, minor,
-                "minor mismatch for ({}, {}) proto={}",
-                major, minor, proto
+                "minor mismatch for ({major}, {minor}) proto={proto}"
             );
 
             // All bytes consumed
             assert_eq!(
                 cursor.position() as usize,
                 buf.len(),
-                "not all bytes consumed for ({}, {}) proto={}",
-                major,
-                minor,
-                proto
+                "not all bytes consumed for ({major}, {minor}) proto={proto}"
             );
         }
     }

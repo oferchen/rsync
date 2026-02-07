@@ -59,17 +59,33 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 - **Rust safety & performance**
 
   - Memory-safe implementation using idiomatic Rust.
-  - Hot path I/O and checksum operations are structured for future SIMD/vectorization work.
+  - SIMD-accelerated rolling checksums (AVX2/NEON) with runtime detection.
+  - Zero-copy I/O, mmap, sendfile, copy_file_range, and io_uring with automatic fallback.
+  - Parallel checksum computation, file list generation, and delta transfer.
 
 - **Composed workspace**
 
-  - Multiple crates separate concerns:
+  - 23 crates separate concerns:
     - `cli` for argument parsing and user experience.
-    - `core` for shared types, error model, and utilities.
-    - `protocol` for wire format, tags, and negotiation.
-    - `engine` for file list and data pump pipelines.
-    - `daemon` for rsync-style daemon behavior.
-    - `filters`, `checksums`, `bandwidth` for independent subsystems.
+    - `core` for shared types, error model, version reporting, and utilities.
+    - `protocol` for wire format, tags, negotiation, and error recovery.
+    - `engine` for file list and data pump pipelines with pipelined streaming.
+    - `transfer` for server-side generator, receiver, and delta transfer.
+    - `daemon` for rsync-style daemon behavior and module access control.
+    - `filters` for include/exclude pattern engine with chain-of-responsibility evaluation.
+    - `checksums` for rolling and strong checksum implementations with SIMD and pipelining.
+    - `bandwidth` for throttling and pacing primitives.
+    - `flist` for file list construction and serialization.
+    - `metadata` for file metadata handling (permissions, xattr, ACL).
+    - `signature`, `matching` for block-level delta signature and matching.
+    - `compress` for zstd, lz4, and zlib compression support.
+    - `fast_io` for platform-optimized I/O (mmap, io_uring, sendfile, copy_file_range).
+    - `branding` for workspace metadata, version reporting, and program identity.
+    - `logging`, `logging-sink` for structured logging infrastructure.
+    - `batch` for batch file generation and replay.
+    - `rsync_io` for rsync-specific I/O primitives.
+    - `embedding` for embedded resource support.
+    - `apple-fs`, `windows-gnu-eh` for platform-specific functionality.
 
 - **Strict hygiene**
 
@@ -109,20 +125,32 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ **Error handling** - RAII cleanup, error categorization, ENOSPC detection
 
 **Test Coverage**:
-- 10,285+ tests passing (100% pass rate)
+- 21,649+ tests passing (100% pass rate)
 - Comprehensive integration tests for delta transfer
-- Error scenario tests (cleanup, categorization, edge cases)
+- Output parity tests verifying --stats, --itemize-changes, --progress, --dry-run match upstream
+- Error scenario tests (cleanup, categorization, edge cases, network interruption)
 - Protocol version interoperability validated (protocols 28-32)
 - Content integrity and metadata preservation validated
 - Edge cases covered (empty files, large files, size mismatches, binary data)
 - Wire protocol compatibility verified against upstream rsync 3.4.1
+- Property-based fuzzing for protocol wire format and filter rule parser
+
+**Output Format Parity**:
+- ✅ `--stats` output matching upstream format exactly
+- ✅ `--itemize-changes` (-i) with 11-character YXcstpoguax format
+- ✅ `--progress` with per-file and overall transfer rates, ETA
+- ✅ `--dry-run` with "(DRY RUN)" marker and action summaries
+- ✅ `--info=FLAGS` with ALL/NONE keywords and verbosity mapping
+- ✅ `--version` with capabilities, optimizations, and algorithm lists
 
 **Production Readiness**:
 - ✅ Core delta transfer: Production-ready
 - ✅ Protocol interoperability: Tested with protocols 28-32
 - ✅ Metadata preservation: Complete and tested
 - ✅ End-to-end validation: Comprehensive integration tests
-- ✅ Error handling: Complete with categorization and cleanup
+- ✅ Error handling: Complete with categorization, cleanup, and recovery
+- ✅ Timeout handling: --timeout and --contimeout with keepalive support
+- ✅ Remote shell: --rsh/-e with SSH URI parsing and argument quoting
 
 For detailed implementation documentation:
 ```bash
@@ -132,9 +160,13 @@ cargo doc --workspace --no-deps --open
 
 **Key documentation modules**:
 - `transfer` - Server-side transfer implementation (generator, receiver, delta transfer)
-- `protocol` - Wire protocol, negotiation, file list encoding
-- `checksums` - Rolling and strong checksum implementations
+- `protocol` - Wire protocol, negotiation, file list encoding, error recovery
+- `checksums` - Rolling and strong checksum implementations with SIMD acceleration
+- `engine` - File list pipelines, pipelined streaming, parallel transfers
 - `daemon` - Rsync daemon mode and module configuration
+- `core` - Version reporting, timeout handling, remote shell, shared types
+- `filters` - Include/exclude pattern engine with debug tracing
+- `fast_io` - Platform-optimized I/O (mmap, io_uring, sendfile, copy_file_range)
 
 ---
 
@@ -333,17 +365,29 @@ High-level workspace structure:
 
 ```text
 src/bin/oc-rsync.rs     # Client + daemon entry point
-crates/cli/             # CLI: flags, help, UX parity
-crates/core/            # Core types, error model, shared utilities
-crates/protocol/        # Protocol v32: negotiation, tags, framing, IO
+crates/cli/             # CLI: flags, help, output formatting, UX parity
+crates/core/            # Core types, error model, version reporting, timeout, remote shell
+crates/protocol/        # Protocol v32: negotiation, tags, framing, IO, error recovery
 crates/transfer/        # Server-side transfer: generator, receiver, delta
-crates/engine/          # File list & data pump pipelines
-crates/daemon/          # Rsync-like daemon behaviors
-crates/filters/         # Include/exclude pattern engine
-crates/checksums/       # Rolling & strong checksum implementations
+crates/engine/          # File list & data pump pipelines, pipelined streaming
+crates/daemon/          # Rsync-like daemon behaviors, module access control
+crates/filters/         # Include/exclude pattern engine with debug tracing
+crates/checksums/       # Rolling & strong checksums, SIMD acceleration, pipelining
 crates/bandwidth/       # Throttling/pacing primitives
 crates/flist/           # File list construction and serialization
 crates/metadata/        # File metadata handling (permissions, xattr, ACL)
+crates/fast_io/         # Platform-optimized I/O (mmap, io_uring, sendfile)
+crates/signature/       # Block-level signature generation
+crates/match/           # Delta matching algorithms
+crates/compress/        # Compression: zstd, lz4, zlib
+crates/branding/        # Workspace metadata, version reporting, program identity
+crates/logging/         # Structured logging infrastructure
+crates/logging-sink/    # Log sink implementations
+crates/batch/           # Batch file generation and replay
+crates/rsync_io/        # Rsync-specific I/O primitives
+crates/embedding/       # Embedded resource support
+crates/apple-fs/        # macOS-specific filesystem operations (clonefile)
+crates/windows-gnu-eh/  # Windows GNU exception handling
 docs/                   # Design notes, internal docs
 tools/                  # Dev utilities (e.g., enforce_limits.sh)
 xtask/                  # Developer tasks: docs validation, packaging helpers
@@ -503,7 +547,7 @@ The workspace uses Cargo feature flags to enable optional functionality. The fol
 |---------|-------|-------------|
 | `parallel` | checksums, flist | Parallel processing using rayon (checksum computation, file list building) |
 | `async` | core, protocol, engine, daemon | Tokio-based async I/O for concurrent operations |
-| `tracing` | core, engine, daemon | Structured logging instrumentation for performance analysis |
+| `tracing` | core, engine, daemon, protocol, filters | Structured logging instrumentation for performance analysis and debug tracing (rsync::flist, rsync::send, rsync::recv, rsync::del, rsync::deltasum, rsync::filter, rsync::io) |
 | `concurrent-sessions` | daemon | Thread-safe session/connection tracking with DashMap |
 | `sd-notify` | daemon, core | systemd notification support for service integration |
 | `serde` | logging, protocol, flist | Serialization support for configuration and protocol types |
@@ -538,6 +582,7 @@ Some features have cross-crate dependencies:
 - `core/async` enables `engine/async`
 - `daemon/tracing` enables `core/tracing`
 - `daemon/concurrent-sessions` requires DashMap for lock-free concurrent data structures
+- `tracing` in protocol/filters enables debug tracing targets (rsync::io, rsync::filter, etc.)
 
 ---
 
@@ -546,6 +591,14 @@ Some features have cross-crate dependencies:
 * Structured logs with standard levels: `error`, `warn`, `info`, `debug`, `trace`.
 * Human-oriented progress output follows `rsync` UX conventions.
 * Diagnostics reference Rust module/function paths instead of C file/line pairs while preserving the same level of precision.
+* Debug tracing categories matching upstream rsync's `--debug=FLAGS`:
+  - `rsync::flist` - File list send/receive operations
+  - `rsync::send` - Sender-side delta and match operations
+  - `rsync::recv` - Receiver-side basis file selection and checksum verification
+  - `rsync::del` - Deletion operations across all timing modes
+  - `rsync::deltasum` - Delta/checksum hit/miss/false-alarm tracking
+  - `rsync::filter` - Filter rule evaluation and include/exclude decisions
+  - `rsync::io` - I/O read/write/multiplex throughput tracking
 
 ---
 

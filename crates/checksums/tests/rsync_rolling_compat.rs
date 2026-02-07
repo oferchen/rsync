@@ -50,9 +50,21 @@ fn single_byte_matches_formula() {
         let expected_s2 = byte as u16;
         let expected_value = ((byte as u32) << 16) | (byte as u32);
 
-        assert_eq!(checksum.digest().sum1(), expected_s1, "s1 mismatch for byte {byte:#02x}");
-        assert_eq!(checksum.digest().sum2(), expected_s2, "s2 mismatch for byte {byte:#02x}");
-        assert_eq!(checksum.value(), expected_value, "value mismatch for byte {byte:#02x}");
+        assert_eq!(
+            checksum.digest().sum1(),
+            expected_s1,
+            "s1 mismatch for byte {byte:#02x}"
+        );
+        assert_eq!(
+            checksum.digest().sum2(),
+            expected_s2,
+            "s2 mismatch for byte {byte:#02x}"
+        );
+        assert_eq!(
+            checksum.value(),
+            expected_value,
+            "value mismatch for byte {byte:#02x}"
+        );
     }
 }
 
@@ -66,8 +78,8 @@ fn two_bytes_matches_formula() {
     let mut checksum = RollingChecksum::new();
     checksum.update(&data);
 
-    let expected_s1 = (0x12 + 0x34) as u16;  // 0x46
-    let expected_s2 = (0x12 + 0x46) as u16;  // 0x58
+    let expected_s1 = (0x12 + 0x34) as u16; // 0x46
+    let expected_s2 = (0x12 + 0x46) as u16; // 0x58
     let expected_value = ((expected_s2 as u32) << 16) | (expected_s1 as u32);
 
     assert_eq!(checksum.digest().sum1(), expected_s1);
@@ -88,10 +100,7 @@ fn components_truncated_to_16_bits() {
     let s1 = checksum.digest().sum1();
     let s2 = checksum.digest().sum2();
 
-    // Both should be 16-bit values
-    assert!(s1 <= 0xFFFF);
-    assert!(s2 <= 0xFFFF);
-
+    // Both are u16 (16-bit values)
     // Verify value packing
     let value = checksum.value();
     assert_eq!(value & 0xFFFF, s1 as u32);
@@ -137,11 +146,9 @@ fn typical_rsync_block_sizes() {
         checksum.update(&data);
 
         assert_eq!(checksum.len(), block_size);
-        assert_ne!(checksum.value(), 0);  // Should produce non-zero checksum
+        assert_ne!(checksum.value(), 0); // Should produce non-zero checksum
 
-        // Verify components are within 16-bit range
-        assert!(checksum.digest().sum1() <= 0xFFFF);
-        assert!(checksum.digest().sum2() <= 0xFFFF);
+        // Components are u16 (16-bit values)
     }
 }
 
@@ -417,7 +424,10 @@ fn simd_scalar_compatibility() {
         let digest = checksum.digest();
 
         // Verify internal consistency
-        assert_eq!(value, ((digest.sum2() as u32) << 16) | (digest.sum1() as u32));
+        assert_eq!(
+            value,
+            ((digest.sum2() as u32) << 16) | (digest.sum1() as u32)
+        );
         assert_eq!(digest.len(), data.len());
     }
 }
@@ -443,13 +453,7 @@ fn deterministic_output() {
 /// Note: This is a weak checksum, so collisions can happen, but they should be rare.
 #[test]
 fn different_inputs_produce_different_checksums() {
-    let inputs = [
-        b"apple" as &[u8],
-        b"orange",
-        b"banana",
-        b"grape",
-        b"melon",
-    ];
+    let inputs = [b"apple" as &[u8], b"orange", b"banana", b"grape", b"melon"];
 
     let mut checksums = Vec::new();
     for input in &inputs {
@@ -462,11 +466,9 @@ fn different_inputs_produce_different_checksums() {
     for i in 0..checksums.len() {
         for j in (i + 1)..checksums.len() {
             assert_ne!(
-                checksums[i],
-                checksums[j],
+                checksums[i], checksums[j],
                 "Unexpected collision between {:?} and {:?}",
-                inputs[i],
-                inputs[j]
+                inputs[i], inputs[j]
             );
         }
     }

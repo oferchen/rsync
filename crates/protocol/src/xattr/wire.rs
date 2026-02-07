@@ -420,8 +420,8 @@ mod tests {
     fn round_trip_many_xattrs() {
         let mut list = XattrList::new();
         for i in 0..20 {
-            let name = format!("user.attr_{:02}", i);
-            let value = format!("value_{:02}", i);
+            let name = format!("user.attr_{i:02}");
+            let value = format!("value_{i:02}");
             list.push(XattrEntry::new(name.into_bytes(), value.into_bytes()));
         }
 
@@ -435,8 +435,8 @@ mod tests {
             RecvXattrResult::Literal(received) => {
                 assert_eq!(received.len(), 20);
                 for i in 0..20 {
-                    let expected_name = format!("user.attr_{:02}", i);
-                    let expected_value = format!("value_{:02}", i);
+                    let expected_name = format!("user.attr_{i:02}");
+                    let expected_value = format!("value_{i:02}");
                     assert_eq!(received.entries()[i].name(), expected_name.as_bytes());
                     assert_eq!(received.entries()[i].datum(), expected_value.as_bytes());
                 }
@@ -451,10 +451,22 @@ mod tests {
         let large_value = vec![0xCDu8; 100];
 
         let mut list = XattrList::new();
-        list.push(XattrEntry::new(b"user.small1".to_vec(), small_value.clone()));
-        list.push(XattrEntry::new(b"user.large1".to_vec(), large_value.clone()));
-        list.push(XattrEntry::new(b"user.small2".to_vec(), small_value.clone()));
-        list.push(XattrEntry::new(b"user.large2".to_vec(), large_value.clone()));
+        list.push(XattrEntry::new(
+            b"user.small1".to_vec(),
+            small_value.clone(),
+        ));
+        list.push(XattrEntry::new(
+            b"user.large1".to_vec(),
+            large_value.clone(),
+        ));
+        list.push(XattrEntry::new(
+            b"user.small2".to_vec(),
+            small_value.clone(),
+        ));
+        list.push(XattrEntry::new(
+            b"user.large2".to_vec(),
+            large_value.clone(),
+        ));
 
         let mut buf = Vec::new();
         send_xattr(&mut buf, &list, None).unwrap();
@@ -470,7 +482,10 @@ mod tests {
                 assert_eq!(received.entries()[0].datum(), &small_value);
                 // large1 - abbreviated
                 assert!(received.entries()[1].is_abbreviated());
-                assert!(checksum_matches(received.entries()[1].datum(), &large_value));
+                assert!(checksum_matches(
+                    received.entries()[1].datum(),
+                    &large_value
+                ));
                 // small2 - not abbreviated
                 assert!(!received.entries()[2].is_abbreviated());
                 // large2 - abbreviated
@@ -485,7 +500,10 @@ mod tests {
         // Binary data including null bytes
         let binary_value: Vec<u8> = vec![0x00, 0x01, 0xFF, 0xFE, 0x00, 0xAB, 0xCD, 0x00];
         let mut list = XattrList::new();
-        list.push(XattrEntry::new(b"user.binary".to_vec(), binary_value.clone()));
+        list.push(XattrEntry::new(
+            b"user.binary".to_vec(),
+            binary_value.clone(),
+        ));
 
         let mut buf = Vec::new();
         send_xattr(&mut buf, &list, None).unwrap();
@@ -532,7 +550,10 @@ mod tests {
         assert!(utf8_value.len() > MAX_FULL_DATUM); // Verify it's large enough
 
         let mut list = XattrList::new();
-        list.push(XattrEntry::new(b"user.utf8_large".to_vec(), utf8_value.clone()));
+        list.push(XattrEntry::new(
+            b"user.utf8_large".to_vec(),
+            utf8_value.clone(),
+        ));
 
         let mut buf = Vec::new();
         send_xattr(&mut buf, &list, None).unwrap();
@@ -544,10 +565,7 @@ mod tests {
             RecvXattrResult::Literal(received) => {
                 assert_eq!(received.len(), 1);
                 assert!(received.entries()[0].is_abbreviated());
-                assert!(checksum_matches(
-                    received.entries()[0].datum(),
-                    &utf8_value
-                ));
+                assert!(checksum_matches(received.entries()[0].datum(), &utf8_value));
             }
             _ => panic!("Expected literal data"),
         }
@@ -566,7 +584,7 @@ mod tests {
         let mut list = XattrList::new();
         for i in 0..=10 {
             list.push(XattrEntry::abbreviated(
-                format!("user.attr{}", i).into_bytes(),
+                format!("user.attr{i}").into_bytes(),
                 vec![0u8; MAX_XATTR_DIGEST_LEN],
                 100,
             ));

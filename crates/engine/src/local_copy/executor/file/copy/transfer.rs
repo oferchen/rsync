@@ -361,10 +361,12 @@ pub(super) fn execute_transfer(
     // Runtime selection: buffer pool path vs direct Vec allocation.
     // Both paths are always compiled; the context flag controls which is used.
     let mut pool_guard = if context.use_buffer_pool() {
-        Some(super::super::super::super::BufferPool::acquire_adaptive_from(
-            context.buffer_pool(),
-            file_size,
-        ))
+        Some(
+            super::super::super::super::BufferPool::acquire_adaptive_from(
+                context.buffer_pool(),
+                file_size,
+            ),
+        )
     } else {
         None
     };

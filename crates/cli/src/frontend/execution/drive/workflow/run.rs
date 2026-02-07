@@ -626,7 +626,7 @@ where
         inplace: inplace_enabled,
         append: append_enabled,
         append_verify,
-        whole_file: whole_file_enabled,  // Pass Option<bool> through for tri-state semantics
+        whole_file: whole_file_enabled, // Pass Option<bool> through for tri-state semantics
         force_fallback: batch_config.is_some(),
         timeout: timeout_setting,
         connect_timeout: connect_timeout_setting,

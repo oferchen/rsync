@@ -74,7 +74,11 @@ fn dry_run_with_verbose_lists_files_on_stdout() {
     ]);
 
     assert_eq!(code, 0);
-    assert!(stderr.is_empty(), "stderr should be empty: {:?}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stderr.is_empty(),
+        "stderr should be empty: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
 
     // With -v, rsync lists the files that would be transferred on stdout.
     let output = String::from_utf8_lossy(&stdout);
@@ -113,8 +117,15 @@ fn dry_run_with_recursive_does_not_create_directories() {
     ]);
 
     assert_eq!(code, 0);
-    assert!(stderr.is_empty(), "stderr: {:?}", String::from_utf8_lossy(&stderr));
-    assert!(!dest_dir.exists(), "recursive dry-run should not create destination");
+    assert!(
+        stderr.is_empty(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
+    assert!(
+        !dest_dir.exists(),
+        "recursive dry-run should not create destination"
+    );
 }
 
 #[test]
@@ -175,7 +186,11 @@ fn dry_run_with_delete_does_not_remove_files() {
     ]);
 
     assert_eq!(code, 0);
-    assert!(stderr.is_empty(), "stderr: {:?}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stderr.is_empty(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
     // extra.txt must still exist -- dry-run does not actually delete.
     assert!(
         dest_dir.join("extra.txt").exists(),
@@ -253,8 +268,15 @@ fn dry_run_with_archive_flag() {
     ]);
 
     assert_eq!(code, 0);
-    assert!(stderr.is_empty(), "stderr: {:?}", String::from_utf8_lossy(&stderr));
-    assert!(!dest_dir.exists(), "archive dry-run should not create destination");
+    assert!(
+        stderr.is_empty(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
+    assert!(
+        !dest_dir.exists(),
+        "archive dry-run should not create destination"
+    );
 }
 
 #[test]
@@ -283,7 +305,11 @@ fn dry_run_with_exclude_filter() {
     ]);
 
     assert_eq!(code, 0);
-    assert!(stderr.is_empty(), "stderr: {:?}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stderr.is_empty(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
 
     let output = String::from_utf8_lossy(&stdout);
     assert!(
@@ -344,7 +370,11 @@ fn dry_run_combined_with_stats_produces_summary() {
     ]);
 
     assert_eq!(code, 0);
-    assert!(stderr.is_empty(), "stderr: {:?}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stderr.is_empty(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
 
     // With --stats, rsync produces a summary block on stdout.
     let output = String::from_utf8_lossy(&stdout);
@@ -383,6 +413,10 @@ fn dry_run_multiple_files_exit_zero() {
     ]);
 
     assert_eq!(code, 0);
-    assert!(stderr.is_empty(), "stderr: {:?}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stderr.is_empty(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
     assert!(!dest_dir.exists());
 }

@@ -777,7 +777,7 @@ fn append_with_empty_source_and_empty_dest() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let summary = plan
+    let _summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
             LocalCopyOptions::default().append(true),

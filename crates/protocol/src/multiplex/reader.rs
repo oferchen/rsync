@@ -8,7 +8,10 @@
 use std::io::{self, Read};
 
 use super::helpers::{map_envelope_error, read_payload_into};
-use crate::envelope::{MessageCode, MessageHeader, HEADER_LEN};
+use crate::envelope::{HEADER_LEN, MessageCode, MessageHeader};
+
+/// Type alias for the message handler callback.
+type MessageHandler = Box<dyn FnMut(MessageCode, &[u8]) + Send>;
 
 /// A reader that transparently demultiplexes rsync protocol messages.
 ///
@@ -56,7 +59,7 @@ use crate::envelope::{MessageCode, MessageHeader, HEADER_LEN};
 /// use protocol::{MplexReader, MessageCode};
 ///
 /// # fn example() -> io::Result<()> {
-/// let reader = Cursor::new(Vec::new());
+/// let reader = Cursor::new(Vec::<u8>::new());
 /// let mut mplex = MplexReader::new(reader);
 ///
 /// mplex.set_message_handler(|code, msg| {
@@ -73,7 +76,7 @@ pub struct MplexReader<R> {
     /// Current read position in the buffer
     pos: usize,
     /// Handler for out-of-band messages
-    message_handler: Option<Box<dyn FnMut(MessageCode, &[u8]) + Send>>,
+    message_handler: Option<MessageHandler>,
 }
 
 impl<R> MplexReader<R> {
@@ -94,7 +97,7 @@ impl<R> MplexReader<R> {
     /// use std::io::Cursor;
     /// use protocol::MplexReader;
     ///
-    /// let reader = Cursor::new(Vec::new());
+    /// let reader = Cursor::new(Vec::<u8>::new());
     /// let mplex = MplexReader::with_capacity(reader, 64 * 1024);
     /// ```
     pub fn with_capacity(inner: R, capacity: usize) -> Self {
@@ -149,7 +152,7 @@ impl<R> MplexReader<R> {
     /// use std::io::Cursor;
     /// use protocol::{MplexReader, MessageCode};
     ///
-    /// let mut reader = MplexReader::new(Cursor::new(Vec::new()));
+    /// let mut reader = MplexReader::new(Cursor::new(Vec::<u8>::new()));
     ///
     /// reader.set_message_handler(|code, payload| {
     ///     if let Ok(msg) = std::str::from_utf8(payload) {
@@ -245,7 +248,7 @@ impl<R: Read> Read for MplexReader<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{send_msg, MessageCode};
+    use crate::{MessageCode, send_msg};
     use std::io::Cursor;
 
     #[test]
@@ -454,10 +457,10 @@ mod tests {
         assert_eq!(reader.buffered(), 0);
 
         let mut buf = [0u8; 5];
-        reader.read(&mut buf).unwrap();
+        let _ = reader.read(&mut buf).unwrap();
         assert_eq!(reader.buffered(), 6); // "hello world" - "hello" = " world"
 
-        reader.read(&mut buf).unwrap();
+        let _ = reader.read(&mut buf).unwrap();
         assert_eq!(reader.buffered(), 1); // " world" - " worl" = "d"
     }
 
@@ -506,7 +509,7 @@ mod tests {
                 Ok(0) => break, // Empty frame
                 Ok(n) => result.extend_from_slice(&buf[..n]),
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break, // EOF
-                Err(e) => panic!("unexpected error: {}", e),
+                Err(e) => panic!("unexpected error: {e}"),
             }
         }
 

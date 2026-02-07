@@ -6,8 +6,8 @@
 use std::io::{self, Cursor, ErrorKind, Read, Write};
 
 use protocol::{
-    decode_varint, read_varint, recv_msg, recv_msg_into, send_msg, write_varint, MessageCode,
-    MessageHeader, MplexReader, MplexWriter, MESSAGE_HEADER_LEN,
+    MESSAGE_HEADER_LEN, MessageCode, MessageHeader, MplexReader, MplexWriter, decode_varint,
+    read_varint, recv_msg, recv_msg_into, send_msg, write_varint,
 };
 
 // ============================================================================
@@ -78,7 +78,6 @@ impl Write for ErrorAfterNWrites {
         self.inner.flush()
     }
 }
-
 
 // ============================================================================
 // Connection Reset Tests
@@ -173,7 +172,10 @@ fn test_recv_msg_timeout() {
     let mut reader = ErrorAfterNBytes::new(stream, 3, ErrorKind::TimedOut);
 
     let result = recv_msg(&mut reader);
-    assert!(result.is_err(), "Should fail with timeout during header read");
+    assert!(
+        result.is_err(),
+        "Should fail with timeout during header read"
+    );
 }
 
 // ============================================================================
@@ -192,10 +194,7 @@ fn test_partial_varint_read() {
     let mut cursor = Cursor::new(data);
     let result = read_varint(&mut cursor);
 
-    assert!(
-        result.is_err(),
-        "Should fail when varint data is truncated"
-    );
+    assert!(result.is_err(), "Should fail when varint data is truncated");
 
     let err = result.unwrap_err();
     assert_eq!(
@@ -367,11 +366,7 @@ fn test_clean_eof() {
     let result = mplex.read(&mut buf);
 
     // MplexReader will try to read a header and fail with EOF
-    let is_eof = match result {
-        Ok(0) => true,
-        Err(_) => true,
-        _ => false,
-    };
+    let is_eof = matches!(result, Ok(0) | Err(_));
     assert!(is_eof, "Should handle EOF");
 }
 
@@ -419,7 +414,10 @@ fn test_mplex_write_with_error_writer() {
     // Flush to trigger actual write which will fail
     let result = mplex.flush();
 
-    assert!(result.is_err(), "MplexWriter should propagate write error on flush");
+    assert!(
+        result.is_err(),
+        "MplexWriter should propagate write error on flush"
+    );
 }
 
 #[test]
@@ -433,7 +431,7 @@ fn test_mplex_flush_error() {
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            Err(io::Error::new(ErrorKind::Other, "flush failed"))
+            Err(io::Error::other("flush failed"))
         }
     }
 
@@ -455,7 +453,7 @@ fn test_varint_from_error_stream() {
 
     impl Read for AlwaysErrorReader {
         fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-            Err(io::Error::new(ErrorKind::Other, "always fails"))
+            Err(io::Error::other("always fails"))
         }
     }
 
@@ -472,10 +470,7 @@ fn test_message_header_from_truncated_data() {
     let partial = vec![0x07, 0x10]; // Only 2 bytes
 
     let result = MessageHeader::decode(&partial);
-    assert!(
-        result.is_err(),
-        "Should fail when header data is too short"
-    );
+    assert!(result.is_err(), "Should fail when header data is too short");
 }
 
 #[test]
@@ -485,7 +480,8 @@ fn test_recv_msg_into_with_error_during_payload() {
     send_msg(&mut stream, MessageCode::Data, b"large payload here").unwrap();
 
     // Error after reading header but during payload read
-    let mut error_reader = ErrorAfterNBytes::new(stream, MESSAGE_HEADER_LEN + 5, ErrorKind::ConnectionReset);
+    let mut error_reader =
+        ErrorAfterNBytes::new(stream, MESSAGE_HEADER_LEN + 5, ErrorKind::ConnectionReset);
     let mut buf = Vec::new();
 
     let result = recv_msg_into(&mut error_reader, &mut buf);
@@ -540,11 +536,7 @@ fn test_many_errors_no_panic() {
         let result = read_varint(&mut reader);
 
         // Should fail gracefully, not panic
-        assert!(
-            result.is_err(),
-            "Should fail with error kind {:?}",
-            kind
-        );
+        assert!(result.is_err(), "Should fail with error kind {kind:?}");
     }
 }
 
@@ -571,10 +563,7 @@ fn test_many_partial_reads_no_panic() {
             Err(e) => {
                 // Expected error for truncated data
                 assert!(
-                    matches!(
-                        e.kind(),
-                        ErrorKind::UnexpectedEof | ErrorKind::InvalidData
-                    ),
+                    matches!(e.kind(), ErrorKind::UnexpectedEof | ErrorKind::InvalidData),
                     "Should fail with appropriate error, got: {:?}",
                     e.kind()
                 );
@@ -616,10 +605,7 @@ fn test_zero_byte_read_error() {
     let mut reader = ZeroReader;
     let result = read_varint(&mut reader);
 
-    assert!(
-        result.is_err(),
-        "Should fail when reader returns 0 (EOF)"
-    );
+    assert!(result.is_err(), "Should fail when reader returns 0 (EOF)");
     assert_eq!(
         result.unwrap_err().kind(),
         ErrorKind::UnexpectedEof,

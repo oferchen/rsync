@@ -247,9 +247,9 @@ pub fn parse_shell_command(command: &str) -> Vec<String> {
     let mut in_single_quote = false;
     let mut in_double_quote = false;
     let mut escaped = false;
-    let mut chars = command.chars().peekable();
+    let chars = command.chars().peekable();
 
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         if escaped {
             current.push(ch);
             escaped = false;
@@ -399,7 +399,7 @@ pub fn quote_shell_arg(arg: &str) -> Cow<'_, str> {
     // Use single quotes and escape any single quotes in the string
     // by ending the quote, adding an escaped quote, and starting a new quote
     let quoted = arg.replace('\'', r"'\''");
-    Cow::Owned(format!("'{}'", quoted))
+    Cow::Owned(format!("'{quoted}'"))
 }
 
 #[cfg(test)]
@@ -630,7 +630,12 @@ mod tests {
         let args = config.to_args();
         assert_eq!(
             args,
-            vec!["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"]
+            vec![
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null"
+            ]
         );
     }
 

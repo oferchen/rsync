@@ -85,8 +85,17 @@ fn itemize_output_format_is_eleven_chars_plus_space_plus_filename() {
     let line = output.trim_end_matches('\n');
     // Format: "YXcstpoguax filename" -- 11 chars + space + filename
     let parts: Vec<&str> = line.splitn(2, ' ').collect();
-    assert_eq!(parts.len(), 2, "should have format and filename separated by space");
-    assert_eq!(parts[0].len(), 11, "format string should be exactly 11 characters: {:?}", parts[0]);
+    assert_eq!(
+        parts.len(),
+        2,
+        "should have format and filename separated by space"
+    );
+    assert_eq!(
+        parts[0].len(),
+        11,
+        "format string should be exactly 11 characters: {:?}",
+        parts[0]
+    );
     assert_eq!(parts[1], "measure.txt");
 }
 
@@ -94,8 +103,8 @@ fn itemize_output_format_is_eleven_chars_plus_space_plus_filename() {
 
 #[test]
 fn itemize_updated_file_shows_change_indicators() {
-    use tempfile::tempdir;
     use filetime::{FileTime, set_file_mtime};
+    use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("updated.txt");
@@ -136,7 +145,11 @@ fn itemize_updated_file_shows_change_indicators() {
     // Position 1: 'f' for regular file
     assert_eq!(&format_str[1..2], "f");
     // Position 2: 'c' for checksum (content changed)
-    assert_eq!(&format_str[2..3], "c", "checksum should be 'c': {format_str:?}");
+    assert_eq!(
+        &format_str[2..3],
+        "c",
+        "checksum should be 'c': {format_str:?}"
+    );
     // Position 3: 's' for size changed
     assert_eq!(&format_str[3..4], "s", "size should be 's': {format_str:?}");
     // Position 4: 't' for time changed (preserved)
@@ -147,8 +160,8 @@ fn itemize_updated_file_shows_change_indicators() {
 
 #[test]
 fn itemize_unchanged_file_with_times_shows_no_output() {
-    use tempfile::tempdir;
     use filetime::{FileTime, set_file_mtime};
+    use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("same.txt");
@@ -365,8 +378,8 @@ fn itemize_recursive_new_directory_shows_cd_plus_pattern() {
 #[cfg(unix)]
 #[test]
 fn itemize_new_symlink_shows_cl_plus_pattern() {
-    use tempfile::tempdir;
     use std::os::unix::fs::symlink;
+    use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
     let src_dir = tmp.path().join("src");
@@ -404,8 +417,8 @@ fn itemize_new_symlink_shows_cl_plus_pattern() {
 #[cfg(unix)]
 #[test]
 fn itemize_chmod_shows_permission_indicator() {
-    use tempfile::tempdir;
     use filetime::{FileTime, set_file_mtime};
+    use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("perms.txt");
@@ -443,7 +456,8 @@ fn itemize_chmod_shows_permission_indicator() {
         );
         let format_str = &line[..11];
         assert_eq!(
-            &format_str[5..6], "p",
+            &format_str[5..6],
+            "p",
             "position 5 should show 'p' for permissions change: {format_str:?}"
         );
     }

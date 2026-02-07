@@ -183,17 +183,15 @@ fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
 /// - Upstream rsync accepts eventual consistency for performance
 #[cfg(all(unix, target_os = "linux"))]
 fn try_statx_optimized(path: &Path) -> io::Result<CachedMetadata> {
-    use rustix::fs::{statx, AtFlags, StatxFlags, CWD};
+    use rustix::fs::{AtFlags, CWD, StatxFlags, statx};
 
-    let flags = AtFlags::SYMLINK_NOFOLLOW
-        .union(AtFlags::STATX_DONT_SYNC);
+    let flags = AtFlags::SYMLINK_NOFOLLOW.union(AtFlags::STATX_DONT_SYNC);
 
     let mask = StatxFlags::MODE
         .union(StatxFlags::UID)
         .union(StatxFlags::GID);
 
-    let stat_result = statx(CWD, path, flags, mask)
-        .map_err(io::Error::from)?;
+    let stat_result = statx(CWD, path, flags, mask).map_err(io::Error::from)?;
 
     Ok(CachedMetadata {
         mode: stat_result.stx_mode as u32,
@@ -336,8 +334,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let paths: Vec<PathBuf> = (0..10)
             .map(|i| {
-                let path = temp.path().join(format!("file{}.txt", i));
-                fs::write(&path, format!("content{}", i)).expect("write");
+                let path = temp.path().join(format!("file{i}.txt"));
+                fs::write(&path, format!("content{i}")).expect("write");
                 path
             })
             .collect();
@@ -464,12 +462,16 @@ mod tests {
         let mut cache = MetadataCache::new();
 
         // First call should miss
-        cache.ownership_matches(&path, uid, gid).expect("ownership_matches");
+        cache
+            .ownership_matches(&path, uid, gid)
+            .expect("ownership_matches");
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.hits(), 0);
 
         // Second call should hit
-        cache.ownership_matches(&path, uid, gid).expect("ownership_matches");
+        cache
+            .ownership_matches(&path, uid, gid)
+            .expect("ownership_matches");
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.hits(), 1);
     }
@@ -574,7 +576,7 @@ mod tests {
         if result.is_ok() || result.as_ref().err().unwrap().raw_os_error() == Some(libc::ENOSYS) {
             // Success or expected ENOSYS is fine
         } else {
-            panic!("Unexpected error: {:?}", result);
+            panic!("Unexpected error: {result:?}");
         }
     }
 
@@ -705,8 +707,8 @@ mod tests {
 
         // Create and cache 1000 files
         for i in 0..1000 {
-            let path = temp.path().join(format!("file{}.txt", i));
-            fs::write(&path, format!("content{}", i)).expect("write");
+            let path = temp.path().join(format!("file{i}.txt"));
+            fs::write(&path, format!("content{i}")).expect("write");
             cache.get_or_fetch(&path).expect("fetch");
         }
 
@@ -715,7 +717,7 @@ mod tests {
 
         // Access random entries - should all hit
         for i in (0..1000).step_by(17) {
-            let path = temp.path().join(format!("file{}.txt", i));
+            let path = temp.path().join(format!("file{i}.txt"));
             cache.get_or_fetch(&path).expect("fetch");
         }
 

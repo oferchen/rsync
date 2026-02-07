@@ -386,8 +386,14 @@ fn resolver_static_methods() {
     tracker.register(key, 1);
 
     // Test static resolver
-    assert_eq!(HardlinkResolver::resolve(&tracker, 0), HardlinkAction::Transfer);
-    assert_eq!(HardlinkResolver::resolve(&tracker, 1), HardlinkAction::LinkTo(0));
+    assert_eq!(
+        HardlinkResolver::resolve(&tracker, 0),
+        HardlinkAction::Transfer
+    );
+    assert_eq!(
+        HardlinkResolver::resolve(&tracker, 1),
+        HardlinkAction::LinkTo(0)
+    );
 }
 
 #[test]
@@ -472,6 +478,9 @@ fn protocol_30plus_simulation() {
 
     // Can use these indices for wire protocol encoding
     for &link_idx in &groups[0].link_indices {
-        assert_eq!(tracker.get_hardlink_target(link_idx), Some(groups[0].source_index));
+        assert_eq!(
+            tracker.get_hardlink_target(link_idx),
+            Some(groups[0].source_index)
+        );
     }
 }

@@ -953,12 +953,10 @@ fn checksum_very_small_files() {
         cmd.assert_success();
 
         // Verify mtime wasn't changed (file should be skipped)
-        let final_time =
-            FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+        let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
         assert_eq!(
             final_time, preserved_time,
-            "Small file of size {} should match",
-            size
+            "Small file of size {size} should match"
         );
     }
 }
@@ -987,12 +985,10 @@ fn checksum_buffer_boundary_sizes() {
         ]);
         cmd.assert_success();
 
-        let final_time =
-            FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+        let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
         assert_eq!(
             final_time, preserved_time,
-            "File of size {} should match",
-            size
+            "File of size {size} should match"
         );
     }
 }
@@ -1055,7 +1051,9 @@ fn checksum_alternating_pattern() {
     let test_dir = TestDir::new().expect("create test dir");
 
     // Create alternating pattern
-    let content: Vec<u8> = (0..10000).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
+    let content: Vec<u8> = (0..10000)
+        .map(|i| if i % 2 == 0 { 0xAA } else { 0x55 })
+        .collect();
 
     let src_file = test_dir.write_file("pattern_src.bin", &content).unwrap();
     let dest_file = test_dir.write_file("pattern_dest.bin", &content).unwrap();
@@ -1074,7 +1072,10 @@ fn checksum_alternating_pattern() {
     cmd.assert_success();
 
     let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
-    assert_eq!(final_time, preserved_time, "Alternating pattern files should match");
+    assert_eq!(
+        final_time, preserved_time,
+        "Alternating pattern files should match"
+    );
 }
 
 // ============================================================================
@@ -1106,8 +1107,15 @@ fn checksum_transfer_preserves_content_exactly() {
     cmd.assert_success();
 
     let dest_content = fs::read(&dest_file).unwrap();
-    assert_eq!(dest_content.len(), content.len(), "Content length should match");
-    assert_eq!(dest_content, content, "Content should be byte-for-byte identical");
+    assert_eq!(
+        dest_content.len(),
+        content.len(),
+        "Content length should match"
+    );
+    assert_eq!(
+        dest_content, content,
+        "Content should be byte-for-byte identical"
+    );
 }
 
 /// Test checksum handles repeated transfers correctly (idempotent).
@@ -1138,7 +1146,10 @@ fn checksum_repeated_transfer_is_idempotent() {
 
     // After multiple runs, dest should still have original mtime (no changes)
     let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
-    assert_eq!(final_time, preserved_time, "Repeated transfers should be idempotent");
+    assert_eq!(
+        final_time, preserved_time,
+        "Repeated transfers should be idempotent"
+    );
     assert_eq!(fs::read(&dest_file).unwrap(), content);
 }
 
@@ -1165,9 +1176,8 @@ fn checksum_with_archive_preserves_all_metadata() {
     set_file_mtime(dest_dir.join("file.txt"), same_time).unwrap();
 
     // Record dest mtime before
-    let dest_time_before = FileTime::from_last_modification_time(
-        &fs::metadata(dest_dir.join("file.txt")).unwrap(),
-    );
+    let dest_time_before =
+        FileTime::from_last_modification_time(&fs::metadata(dest_dir.join("file.txt")).unwrap());
 
     std::thread::sleep(Duration::from_millis(50));
 
@@ -1181,10 +1191,12 @@ fn checksum_with_archive_preserves_all_metadata() {
 
     // With identical content AND identical mtime, file should be skipped
     // Dest mtime should remain unchanged
-    let final_time = FileTime::from_last_modification_time(
-        &fs::metadata(dest_dir.join("file.txt")).unwrap(),
+    let final_time =
+        FileTime::from_last_modification_time(&fs::metadata(dest_dir.join("file.txt")).unwrap());
+    assert_eq!(
+        final_time, dest_time_before,
+        "Archive+checksum should skip identical files"
     );
-    assert_eq!(final_time, dest_time_before, "Archive+checksum should skip identical files");
 }
 
 /// Test checksum with times preservation.
@@ -1215,5 +1227,8 @@ fn checksum_with_times_updates_mtime_when_content_differs() {
 
     // With --times, mtime should be copied from source
     let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
-    assert_eq!(final_time, source_time, "mtime should be updated when content differs");
+    assert_eq!(
+        final_time, source_time,
+        "mtime should be updated when content differs"
+    );
 }

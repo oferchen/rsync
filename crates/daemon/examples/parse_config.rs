@@ -21,7 +21,7 @@ fn main() {
     let config = match RsyncdConfig::from_file(config_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Error parsing config: {}", e);
+            eprintln!("Error parsing config: {e}");
             process::exit(1);
         }
     };
@@ -33,7 +33,7 @@ fn main() {
     println!("Global Settings:");
     println!("  Port: {}", config.global().port());
     if let Some(addr) = config.global().address() {
-        println!("  Address: {}", addr);
+        println!("  Address: {addr}");
     }
     if let Some(motd) = config.global().motd_file() {
         println!("  MOTD file: {}", motd.display());
@@ -54,7 +54,7 @@ fn main() {
         println!("    Path: {}", module.path().display());
 
         if let Some(comment) = module.comment() {
-            println!("    Comment: {}", comment);
+            println!("    Comment: {comment}");
         }
 
         println!("    Read-only: {}", module.read_only());
@@ -64,10 +64,10 @@ fn main() {
         println!("    Numeric IDs: {}", module.numeric_ids());
 
         if let Some(uid) = module.uid() {
-            println!("    UID: {}", uid);
+            println!("    UID: {uid}");
         }
         if let Some(gid) = module.gid() {
-            println!("    GID: {}", gid);
+            println!("    GID: {gid}");
         }
 
         if module.max_connections() > 0 {
@@ -93,7 +93,7 @@ fn main() {
         }
 
         if let Some(timeout) = module.timeout() {
-            println!("    Timeout: {} seconds", timeout);
+            println!("    Timeout: {timeout} seconds");
         }
     }
 }

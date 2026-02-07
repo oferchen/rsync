@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if handler.is_shutdown_requested() {
             println!("\n*** Shutdown requested ***");
             if let Some(reason) = handler.shutdown_reason() {
-                println!("Reason: {}", reason);
+                println!("Reason: {reason}");
                 println!("Exit code: {}", reason.exit_code().as_i32());
             }
 
@@ -98,9 +98,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 7. Determine exit code based on shutdown reason
     let exit_code = if let Some(reason) = handler.shutdown_reason() {
-        println!("Exiting with code: {} ({})",
-                 reason.exit_code().as_i32(),
-                 reason.exit_code().description());
+        println!(
+            "Exiting with code: {} ({})",
+            reason.exit_code().as_i32(),
+            reason.exit_code().description()
+        );
         reason.exit_code()
     } else {
         println!("Transfer completed successfully!");

@@ -884,7 +884,7 @@ fn filter_segment_delete_excluded_protected_path() {
     );
 
     assert!(
-        outcome.allows_deletion_when_excluded_removed() == false
+        !outcome.allows_deletion_when_excluded_removed()
             || !outcome.allows_deletion(),
         "protected excluded path must not be deletable even with delete_excluded"
     );

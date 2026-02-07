@@ -21,6 +21,8 @@
 //! tracer.end_file();
 //! ```
 
+#![allow(dead_code)]
+
 use std::time::{Duration, Instant};
 
 /// Target name for tracing events, matching rsync's debug category.
@@ -75,10 +77,11 @@ pub fn trace_checksum_block(block_index: usize, weak: u32, strong: &[u8]) {
         target: DELTASUM_TARGET,
         block_index = block_index,
         weak = format!("{:08x}", weak),
-        strong = format!("{:02x}", strong.iter().fold(String::new(), |mut acc, b| {
-            acc.push_str(&format!("{:02x}", b));
+        strong = strong.iter().fold(String::new(), |mut acc, b| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{b:02x}");
             acc
-        })),
+        }),
         "checksum: block"
     );
 }
@@ -269,7 +272,8 @@ pub fn trace_match_end(
     _data_bytes: u64,
     _matched_bytes: u64,
     _elapsed: Duration,
-) {}
+) {
+}
 
 /// Traces a summary of all delta/checksum operations.
 ///
@@ -316,7 +320,8 @@ pub fn trace_deltasum_summary(
     _total_false_alarms: usize,
     _total_matched: u64,
     _total_literal: u64,
-) {}
+) {
+}
 
 // ============================================================================
 // DeltasumTracer - stateful tracer for aggregating delta/checksum statistics
@@ -485,8 +490,9 @@ impl DeltasumTracer {
     /// * `length` - Length of the matched block in bytes
     pub fn record_hit(&mut self, length: u32) {
         self.current_file_hits = self.current_file_hits.saturating_add(1);
-        self.current_file_matched_bytes =
-            self.current_file_matched_bytes.saturating_add(u64::from(length));
+        self.current_file_matched_bytes = self
+            .current_file_matched_bytes
+            .saturating_add(u64::from(length));
     }
 
     /// Records a miss event (literal data required).
@@ -496,8 +502,9 @@ impl DeltasumTracer {
     /// * `length` - Length of the literal data in bytes
     pub fn record_miss(&mut self, length: u32) {
         self.current_file_misses = self.current_file_misses.saturating_add(1);
-        self.current_file_literal_bytes =
-            self.current_file_literal_bytes.saturating_add(u64::from(length));
+        self.current_file_literal_bytes = self
+            .current_file_literal_bytes
+            .saturating_add(u64::from(length));
     }
 
     /// Records a false alarm event (weak checksum collision).
@@ -575,7 +582,9 @@ impl DeltasumTracer {
     /// Returns 0.0 if no data has been processed.
     #[must_use]
     pub fn match_ratio(&self) -> f64 {
-        let total = self.total_matched_bytes.saturating_add(self.total_literal_bytes);
+        let total = self
+            .total_matched_bytes
+            .saturating_add(self.total_literal_bytes);
         if total == 0 {
             0.0
         } else {
@@ -588,7 +597,8 @@ impl DeltasumTracer {
     /// Returns `Duration::ZERO` if no file is currently being tracked.
     #[must_use]
     pub fn current_file_elapsed(&self) -> Duration {
-        self.current_file_start.map_or(Duration::ZERO, |t| t.elapsed())
+        self.current_file_start
+            .map_or(Duration::ZERO, |t| t.elapsed())
     }
 
     /// Resets all counters and timing state to zero.
@@ -826,7 +836,15 @@ mod tests {
         trace_match_hit(5, 4096, 4096, 0xdeadbeef);
         trace_match_miss(8192, 512);
         trace_match_false_alarm(0x12345678, 16384);
-        trace_match_end("test.txt", 10, 5, 2, 409600, 380000, Duration::from_millis(100));
+        trace_match_end(
+            "test.txt",
+            10,
+            5,
+            2,
+            409600,
+            380000,
+            Duration::from_millis(100),
+        );
 
         trace_deltasum_summary(5, 50, 25, 10, 2000000, 500000);
     }

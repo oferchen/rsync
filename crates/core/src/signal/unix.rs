@@ -81,6 +81,7 @@ impl std::fmt::Display for ShutdownReason {
 /// to check signal state during operations.
 #[derive(Debug)]
 pub struct SignalHandler {
+    #[allow(dead_code)]
     installed: bool,
 }
 
@@ -287,10 +288,7 @@ mod tests {
         assert_eq!(ShutdownReason::Interrupted.exit_code(), ExitCode::Signal);
         assert_eq!(ShutdownReason::Terminated.exit_code(), ExitCode::Signal);
         assert_eq!(ShutdownReason::HangUp.exit_code(), ExitCode::Signal);
-        assert_eq!(
-            ShutdownReason::PipeBroken.exit_code(),
-            ExitCode::SocketIo
-        );
+        assert_eq!(ShutdownReason::PipeBroken.exit_code(), ExitCode::SocketIo);
         assert_eq!(ShutdownReason::UserRequested.exit_code(), ExitCode::Ok);
     }
 

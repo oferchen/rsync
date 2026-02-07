@@ -78,10 +78,7 @@ mod tests {
     fn with_log_file_accepts_pathbuf() {
         let path = PathBuf::from("/tmp/transfer.log");
         let opts = LocalCopyOptions::new().with_log_file(Some(path));
-        assert_eq!(
-            opts.log_file_path(),
-            Some(Path::new("/tmp/transfer.log"))
-        );
+        assert_eq!(opts.log_file_path(), Some(Path::new("/tmp/transfer.log")));
     }
 
     #[test]

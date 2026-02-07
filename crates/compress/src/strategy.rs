@@ -88,7 +88,7 @@ use std::io::{self, Write};
 use crate::zstd::{self, CountingZstdEncoder};
 
 #[cfg(feature = "lz4")]
-use crate::lz4::{frame, CountingLz4Encoder};
+use crate::lz4::{CountingLz4Encoder, frame};
 
 // ============================================================================
 // CompressionAlgorithmKind - Algorithm enumeration
@@ -753,10 +753,7 @@ mod tests {
     fn no_compression_strategy_algorithm_name() {
         let strategy = NoCompressionStrategy::new();
         assert_eq!(strategy.algorithm_name(), "none");
-        assert_eq!(
-            strategy.algorithm_kind(),
-            CompressionAlgorithmKind::None
-        );
+        assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::None);
     }
 
     // ------------------------------------------------------------------------
@@ -782,10 +779,7 @@ mod tests {
     fn zlib_strategy_algorithm_name() {
         let strategy = ZlibStrategy::with_default_level();
         assert_eq!(strategy.algorithm_name(), "zlib");
-        assert_eq!(
-            strategy.algorithm_kind(),
-            CompressionAlgorithmKind::Zlib
-        );
+        assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Zlib);
     }
 
     #[test]
@@ -836,10 +830,7 @@ mod tests {
     fn zstd_strategy_algorithm_name() {
         let strategy = ZstdStrategy::with_default_level();
         assert_eq!(strategy.algorithm_name(), "zstd");
-        assert_eq!(
-            strategy.algorithm_kind(),
-            CompressionAlgorithmKind::Zstd
-        );
+        assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Zstd);
     }
 
     // ------------------------------------------------------------------------

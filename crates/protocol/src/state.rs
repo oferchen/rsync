@@ -523,8 +523,7 @@ impl DynamicProtocolState {
                 Ok(Phase::FileList)
             }
             Phase::FileList => {
-                self.file_count
-                    .ok_or(TransitionError::MissingFileCount)?;
+                self.file_count.ok_or(TransitionError::MissingFileCount)?;
                 self.phase = Phase::Transfer;
                 Ok(Phase::Transfer)
             }

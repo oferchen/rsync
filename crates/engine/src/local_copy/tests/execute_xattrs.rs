@@ -165,8 +165,8 @@ mod xattr_tests {
 
         // Set 20 xattrs
         for i in 0..20 {
-            let name = format!("user.attr_{:02}", i);
-            let value = format!("value_{:02}", i);
+            let name = format!("user.attr_{i:02}");
+            let value = format!("value_{i:02}");
             xattr::set(&source, &name, value.as_bytes()).expect("set xattr");
         }
 
@@ -187,8 +187,8 @@ mod xattr_tests {
 
         // Verify all 20 xattrs were copied
         for i in 0..20 {
-            let name = format!("user.attr_{:02}", i);
-            let expected_value = format!("value_{:02}", i);
+            let name = format!("user.attr_{i:02}");
+            let expected_value = format!("value_{i:02}");
             let copied = xattr::get(&destination, &name)
                 .expect("read xattr")
                 .expect("xattr present");
@@ -360,7 +360,7 @@ mod xattr_tests {
 
         // Set xattrs at different directory levels
         xattr::set(&source_root, "user.root_attr", b"root").expect("set root xattr");
-        xattr::set(&source_root.join("level1"), "user.level1_attr", b"level1").expect("set level1 xattr");
+        xattr::set(source_root.join("level1"), "user.level1_attr", b"level1").expect("set level1 xattr");
         xattr::set(&nested, "user.level2_attr", b"level2").expect("set level2 xattr");
 
         let dest_root = temp.path().join("dest");
@@ -388,13 +388,13 @@ mod xattr_tests {
             b"root"
         );
         assert_eq!(
-            xattr::get(&dest_root.join("level1"), "user.level1_attr")
+            xattr::get(dest_root.join("level1"), "user.level1_attr")
                 .expect("read")
                 .expect("present"),
             b"level1"
         );
         assert_eq!(
-            xattr::get(&dest_root.join("level1").join("level2"), "user.level2_attr")
+            xattr::get(dest_root.join("level1").join("level2"), "user.level2_attr")
                 .expect("read")
                 .expect("present"),
             b"level2"
@@ -416,7 +416,7 @@ mod xattr_tests {
         // Set xattr on directory
         xattr::set(&source_root, "user.dir_metadata", b"dir_value").expect("set dir xattr");
         // Set xattr on file
-        xattr::set(&source_root.join("file.txt"), "user.file_metadata", b"file_value")
+        xattr::set(source_root.join("file.txt"), "user.file_metadata", b"file_value")
             .expect("set file xattr");
 
         let dest_root = temp.path().join("dest");
@@ -444,7 +444,7 @@ mod xattr_tests {
         );
         // Verify file xattr
         assert_eq!(
-            xattr::get(&dest_root.join("file.txt"), "user.file_metadata")
+            xattr::get(dest_root.join("file.txt"), "user.file_metadata")
                 .expect("read")
                 .expect("present"),
             b"file_value"
@@ -878,11 +878,11 @@ mod xattr_tests {
             return;
         }
 
-        xattr::set(&source_root.join("file1.txt"), "user.file1_attr", b"value1")
+        xattr::set(source_root.join("file1.txt"), "user.file1_attr", b"value1")
             .expect("set file1 xattr");
-        xattr::set(&source_root.join("file2.txt"), "user.file2_attr", b"value2")
+        xattr::set(source_root.join("file2.txt"), "user.file2_attr", b"value2")
             .expect("set file2 xattr");
-        xattr::set(&source_root.join("file3.txt"), "user.file3_attr", b"value3")
+        xattr::set(source_root.join("file3.txt"), "user.file3_attr", b"value3")
             .expect("set file3 xattr");
 
         let dest_root = temp.path().join("dest");
@@ -903,19 +903,19 @@ mod xattr_tests {
 
         // Verify each file has its own xattr
         assert_eq!(
-            xattr::get(&dest_root.join("file1.txt"), "user.file1_attr")
+            xattr::get(dest_root.join("file1.txt"), "user.file1_attr")
                 .expect("read")
                 .expect("present"),
             b"value1"
         );
         assert_eq!(
-            xattr::get(&dest_root.join("file2.txt"), "user.file2_attr")
+            xattr::get(dest_root.join("file2.txt"), "user.file2_attr")
                 .expect("read")
                 .expect("present"),
             b"value2"
         );
         assert_eq!(
-            xattr::get(&dest_root.join("file3.txt"), "user.file3_attr")
+            xattr::get(dest_root.join("file3.txt"), "user.file3_attr")
                 .expect("read")
                 .expect("present"),
             b"value3"
@@ -964,7 +964,7 @@ mod xattr_tests {
         assert!(summary.files_copied() >= 1);
 
         // Verify xattr on the copied real file
-        let copied = xattr::get(&dest_root.join("real_file.txt"), "user.real_file_attr")
+        let copied = xattr::get(dest_root.join("real_file.txt"), "user.real_file_attr")
             .expect("read xattr")
             .expect("xattr present");
         assert_eq!(copied, b"real_value");

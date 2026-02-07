@@ -136,11 +136,7 @@ fn stress_10k_encode_decode_roundtrip() {
     }
 
     // Verify count
-    assert_eq!(
-        decoded.len(),
-        entries.len(),
-        "Decoded entry count mismatch"
-    );
+    assert_eq!(decoded.len(), entries.len(), "Decoded entry count mismatch");
 
     // Verify first and last entries
     assert_eq!(decoded[0].name(), entries[0].name());
@@ -224,8 +220,7 @@ fn stress_10k_compression_efficiency() {
     let compression_ratio = similar_buf.len() as f64 / random_buf.len() as f64;
     assert!(
         compression_ratio < 0.9,
-        "Expected better compression for similar paths: ratio = {:.2}",
-        compression_ratio
+        "Expected better compression for similar paths: ratio = {compression_ratio:.2}"
     );
 }
 
@@ -275,11 +270,7 @@ fn stress_10k_sort_and_clean_with_duplicates() {
     // Verify no duplicates remain
     for i in 0..cleaned.len() - 1 {
         if cleaned[i].name() == cleaned[i + 1].name() {
-            panic!(
-                "Duplicate found at index {}: {}",
-                i,
-                cleaned[i].name()
-            );
+            panic!("Duplicate found at index {}: {}", i, cleaned[i].name());
         }
     }
 }
@@ -307,8 +298,7 @@ fn stress_100k_encode_decode_roundtrip() {
     // Encoding 100K entries should complete in under 2 seconds
     assert!(
         encode_time.as_secs() < 5,
-        "Encoding took {:?}, expected < 5s",
-        encode_time
+        "Encoding took {encode_time:?}, expected < 5s"
     );
 
     // Decode
@@ -324,16 +314,11 @@ fn stress_100k_encode_decode_roundtrip() {
     // Decoding should complete in under 2 seconds
     assert!(
         decode_time.as_secs() < 5,
-        "Decoding took {:?}, expected < 5s",
-        decode_time
+        "Decoding took {decode_time:?}, expected < 5s"
     );
 
     // Verify count
-    assert_eq!(
-        decoded.len(),
-        entries.len(),
-        "Decoded entry count mismatch"
-    );
+    assert_eq!(decoded.len(), entries.len(), "Decoded entry count mismatch");
 }
 
 /// Tests sorting performance for 100K entries.
@@ -348,8 +333,7 @@ fn stress_100k_sorting_performance() {
     // Sorting 100K entries should complete in under 2 seconds
     assert!(
         elapsed.as_secs() < 5,
-        "Sorting took {:?}, expected < 5s",
-        elapsed
+        "Sorting took {elapsed:?}, expected < 5s"
     );
 
     // Verify sorted order (sample check)
@@ -373,8 +357,7 @@ fn stress_100k_memory_characteristics() {
     // Current estimate: ~300-400 bytes per entry with all fields
     assert!(
         entry_size < 600,
-        "FileEntry size {} exceeds expected maximum of 600 bytes",
-        entry_size
+        "FileEntry size {entry_size} exceeds expected maximum of 600 bytes"
     );
 
     let entries = generate_mock_entries(100_000);
@@ -509,11 +492,26 @@ fn stress_varied_types_10k() {
     assert_eq!(decoded.len(), entries.len());
 
     // Verify type distribution
-    let files = decoded.iter().filter(|e| e.file_type() == FileType::Regular).count();
-    let dirs = decoded.iter().filter(|e| e.file_type() == FileType::Directory).count();
-    let symlinks = decoded.iter().filter(|e| e.file_type() == FileType::Symlink).count();
-    let fifos = decoded.iter().filter(|e| e.file_type() == FileType::Fifo).count();
-    let sockets = decoded.iter().filter(|e| e.file_type() == FileType::Socket).count();
+    let files = decoded
+        .iter()
+        .filter(|e| e.file_type() == FileType::Regular)
+        .count();
+    let dirs = decoded
+        .iter()
+        .filter(|e| e.file_type() == FileType::Directory)
+        .count();
+    let symlinks = decoded
+        .iter()
+        .filter(|e| e.file_type() == FileType::Symlink)
+        .count();
+    let fifos = decoded
+        .iter()
+        .filter(|e| e.file_type() == FileType::Fifo)
+        .count();
+    let sockets = decoded
+        .iter()
+        .filter(|e| e.file_type() == FileType::Socket)
+        .count();
 
     assert_eq!(files, 2000);
     assert_eq!(dirs, 2000);
@@ -564,11 +562,7 @@ fn stress_long_paths_10k() {
 
     // Verify paths are preserved
     for (orig, dec) in entries.iter().zip(decoded.iter()) {
-        assert_eq!(
-            orig.name(),
-            dec.name(),
-            "Path mismatch"
-        );
+        assert_eq!(orig.name(), dec.name(), "Path mismatch");
     }
 }
 
@@ -616,12 +610,7 @@ fn stress_varied_sizes_10k() {
 
     // Verify sizes are preserved
     for (orig, dec) in entries.iter().zip(decoded.iter()) {
-        assert_eq!(
-            orig.size(),
-            dec.size(),
-            "Size mismatch for {}",
-            orig.name()
-        );
+        assert_eq!(orig.size(), dec.size(), "Size mismatch for {}", orig.name());
     }
 }
 
@@ -639,7 +628,9 @@ fn stress_chunked_processing_10k() {
         let mut writer = FileListWriter::new(protocol);
         let mut chunk_buf = Vec::new();
         for entry in chunk {
-            writer.write_entry(&mut chunk_buf, entry).expect("write failed");
+            writer
+                .write_entry(&mut chunk_buf, entry)
+                .expect("write failed");
         }
         total_encoded.extend_from_slice(&chunk_buf);
     }
@@ -669,8 +660,8 @@ fn stress_comparison_stability_10k() {
 
     // All sorts should produce identical results
     for i in 0..sorted1.len() {
-        assert_eq!(sorted1[i].name(), sorted2[i].name(), "Mismatch at {}", i);
-        assert_eq!(sorted2[i].name(), sorted3[i].name(), "Mismatch at {}", i);
+        assert_eq!(sorted1[i].name(), sorted2[i].name(), "Mismatch at {i}");
+        assert_eq!(sorted2[i].name(), sorted3[i].name(), "Mismatch at {i}");
     }
 }
 
@@ -693,10 +684,10 @@ fn stress_comparison_transitivity_10k() {
         let ac = compare_file_entries(a, c);
 
         if ab == Ordering::Less && bc == Ordering::Less {
-            assert_eq!(ac, Ordering::Less, "Transitivity violated at {}", i);
+            assert_eq!(ac, Ordering::Less, "Transitivity violated at {i}");
         }
         if ab == Ordering::Greater && bc == Ordering::Greater {
-            assert_eq!(ac, Ordering::Greater, "Transitivity violated at {}", i);
+            assert_eq!(ac, Ordering::Greater, "Transitivity violated at {i}");
         }
     }
 }
@@ -726,7 +717,7 @@ fn stress_no_memory_leak_encoding() {
         drop(entries);
 
         // If we got here without OOM for 5 batches, memory is being reclaimed
-        assert!(batch < 10, "Completed batch {}", batch);
+        assert!(batch < 10, "Completed batch {batch}");
     }
 }
 
@@ -771,7 +762,11 @@ fn stress_reader_state_bounded() {
     let mut reader = FileListReader::new(protocol);
     let mut count = 0;
 
-    while reader.read_entry(&mut cursor).expect("read failed").is_some() {
+    while reader
+        .read_entry(&mut cursor)
+        .expect("read failed")
+        .is_some()
+    {
         count += 1;
     }
 
