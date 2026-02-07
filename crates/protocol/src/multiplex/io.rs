@@ -242,6 +242,25 @@ fn write_validated_message<W: Write + ?Sized>(
     write_all_vectored(writer, header_bytes.as_slice(), payload)
 }
 
+/// Sends a keepalive (MSG_NOOP) message to prevent connection timeouts.
+///
+/// Upstream rsync periodically sends `MSG_NOOP` with an empty payload as a
+/// heartbeat when the sender may be silent for extended periods, such as during
+/// large file checksumming. The receiver silently discards these messages.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::send_keepalive;
+///
+/// let mut buffer = Vec::new();
+/// send_keepalive(&mut buffer).expect("keepalive must succeed");
+/// assert_eq!(buffer.len(), 4); // header only, no payload
+/// ```
+pub fn send_keepalive<W: Write>(writer: &mut W) -> io::Result<()> {
+    send_msg(writer, MessageCode::NoOp, &[])
+}
+
 /// Receives the next multiplexed message from `reader`.
 ///
 /// The function blocks until the full header and payload are read or an I/O
