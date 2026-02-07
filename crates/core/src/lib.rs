@@ -20,6 +20,8 @@ pub mod client;
 pub mod fallback;
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
+/// Remote shell command construction and SSH argument parsing.
+pub mod remote_shell;
 /// Server orchestration helpers consumed by CLI and embedding entry points.
 ///
 /// Re-exported from the [`transfer`] crate for backward compatibility.
