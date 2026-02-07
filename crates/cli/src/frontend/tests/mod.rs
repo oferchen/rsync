@@ -100,6 +100,8 @@ mod parse_args_allows_tests;
 mod parse_args_captures_tests;
 #[path = "parse_args_collects.rs"]
 mod parse_args_collects_tests;
+#[path = "compress_level_upstream.rs"]
+mod compress_level_upstream_tests;
 #[path = "parse_args_compress.rs"]
 mod parse_args_compress_tests;
 #[path = "parse_args_no.rs"]
@@ -248,6 +250,8 @@ mod password_tests;
 mod pow_tests;
 #[path = "process.rs"]
 mod process_tests;
+#[path = "progress_format_upstream.rs"]
+mod progress_format_upstream_tests;
 #[path = "progress_render.rs"]
 mod progress_render_tests;
 #[path = "progress.rs"]

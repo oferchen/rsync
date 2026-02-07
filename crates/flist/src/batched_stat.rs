@@ -263,6 +263,69 @@ impl DirectoryStatBatch {
         }
     }
 
+    /// Stats a file relative to the directory using statx (Linux 4.11+).
+    ///
+    /// Returns a lightweight [`StatxResult`] directly from the statx syscall,
+    /// avoiding construction of `fs::Metadata`. Falls back to `stat_relative()`
+    /// on older kernels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be stat'd.
+    #[cfg(target_os = "linux")]
+    pub fn statx_relative(
+        &self,
+        name: &OsString,
+        follow_symlinks: bool,
+    ) -> io::Result<StatxResult> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let name_bytes = name.as_bytes();
+        let c_name = CString::new(name_bytes).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("invalid filename: {e}"),
+            )
+        })?;
+
+        let flags = if follow_symlinks {
+            0i32
+        } else {
+            libc::AT_SYMLINK_NOFOLLOW
+        };
+
+        let mut statx_buf: libc::statx = unsafe { std::mem::zeroed() };
+
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_statx,
+                self.dir_fd,
+                c_name.as_ptr(),
+                flags,
+                libc::STATX_BASIC_STATS,
+                &mut statx_buf,
+            )
+        };
+
+        if ret != 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(StatxResult {
+            mode: statx_buf.stx_mode as u32,
+            size: statx_buf.stx_size,
+            mtime_sec: statx_buf.stx_mtime.tv_sec,
+            mtime_nsec: statx_buf.stx_mtime.tv_nsec,
+            uid: statx_buf.stx_uid,
+            gid: statx_buf.stx_gid,
+            ino: statx_buf.stx_ino,
+            nlink: statx_buf.stx_nlink,
+            rdev_major: statx_buf.stx_rdev_major,
+            rdev_minor: statx_buf.stx_rdev_minor,
+        })
+    }
+
     /// Stats multiple files in the directory in parallel.
     ///
     /// # Arguments
@@ -308,13 +371,82 @@ impl Drop for DirectoryStatBatch {
 // statx support for Linux 4.11+
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Lightweight metadata result from statx(2).
+///
+/// Contains only the fields rsync needs during file list generation,
+/// avoiding the overhead of constructing a full `fs::Metadata`. On Linux 4.11+
+/// the kernel can skip computing unwanted fields when the request mask
+/// excludes them.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+pub struct StatxResult {
+    /// File type and permission bits (stx_mode).
+    pub mode: u32,
+    /// File size in bytes.
+    pub size: u64,
+    /// Last modification time (seconds since epoch).
+    pub mtime_sec: i64,
+    /// Last modification time (nanoseconds component).
+    pub mtime_nsec: u32,
+    /// User ID of the owner.
+    pub uid: u32,
+    /// Group ID of the owner.
+    pub gid: u32,
+    /// Inode number.
+    pub ino: u64,
+    /// Number of hard links.
+    pub nlink: u32,
+    /// Device ID (major/minor combined).
+    pub rdev_major: u32,
+    /// Device ID minor.
+    pub rdev_minor: u32,
+}
+
+#[cfg(target_os = "linux")]
+impl StatxResult {
+    /// Returns true if this entry is a regular file.
+    #[must_use]
+    pub fn is_file(&self) -> bool {
+        (self.mode & libc::S_IFMT as u32) == libc::S_IFREG as u32
+    }
+
+    /// Returns true if this entry is a directory.
+    #[must_use]
+    pub fn is_dir(&self) -> bool {
+        (self.mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32
+    }
+
+    /// Returns true if this entry is a symbolic link.
+    #[must_use]
+    pub fn is_symlink(&self) -> bool {
+        (self.mode & libc::S_IFMT as u32) == libc::S_IFLNK as u32
+    }
+
+    /// Returns the permission bits (lower 12 bits of mode).
+    #[must_use]
+    pub fn permissions(&self) -> u32 {
+        self.mode & 0o7777
+    }
+}
+
 /// Checks if statx syscall is available.
 ///
 /// Returns true on Linux 4.11+ where statx is supported.
+/// The result is cached after the first call using a probe syscall.
 #[cfg(target_os = "linux")]
 #[must_use]
 pub fn has_statx_support() -> bool {
-    // Try a statx call to see if it's supported
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    // 0 = unknown, 1 = supported, 2 = not supported
+    static CACHED: AtomicU8 = AtomicU8::new(0);
+
+    match CACHED.load(Ordering::Relaxed) {
+        1 => return true,
+        2 => return false,
+        _ => {}
+    }
+
     use std::ffi::CString;
 
     let path = CString::new(".").unwrap();
@@ -331,7 +463,9 @@ pub fn has_statx_support() -> bool {
         )
     };
 
-    ret == 0
+    let supported = ret == 0;
+    CACHED.store(if supported { 1 } else { 2 }, Ordering::Relaxed);
+    supported
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -340,22 +474,90 @@ pub fn has_statx_support() -> bool {
     false
 }
 
-/// Fetches metadata using statx (Linux 4.11+).
+/// Fetches metadata using statx (Linux 4.11+) and returns a lightweight
+/// [`StatxResult`] instead of a full `fs::Metadata`.
 ///
-/// statx provides better performance and more granular control
-/// over which metadata fields to fetch.
+/// This avoids the overhead of Rust's standard library metadata construction
+/// and lets the kernel skip computing unrequested fields via the mask parameter.
+///
+/// # Arguments
+///
+/// * `path` - The path to stat.
+/// * `follow_symlinks` - If false, operates on the symlink itself (like lstat).
+///
+/// # Errors
+///
+/// Returns an error if the statx syscall fails (e.g., ENOENT, ENOSYS).
 #[cfg(target_os = "linux")]
-pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<fs::Metadata> {
+pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<StatxResult> {
+    statx_with_mask(
+        libc::AT_FDCWD,
+        path.as_ref(),
+        follow_symlinks,
+        libc::STATX_BASIC_STATS,
+    )
+}
+
+/// Fetches only the modification time using statx.
+///
+/// Requests only `STATX_MTIME` from the kernel, which is the minimum needed
+/// for rsync change detection. This reduces kernel overhead compared to
+/// fetching all metadata fields.
+///
+/// # Errors
+///
+/// Returns an error if the statx syscall fails or is not supported.
+#[cfg(target_os = "linux")]
+pub fn statx_mtime<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<(i64, u32)> {
+    let result = statx_with_mask(
+        libc::AT_FDCWD,
+        path.as_ref(),
+        follow_symlinks,
+        libc::STATX_MTIME,
+    )?;
+    Ok((result.mtime_sec, result.mtime_nsec))
+}
+
+/// Fetches only size and mtime using statx (common for rsync change detection).
+///
+/// # Errors
+///
+/// Returns an error if the statx syscall fails or is not supported.
+#[cfg(target_os = "linux")]
+pub fn statx_size_and_mtime<P: AsRef<Path>>(
+    path: P,
+    follow_symlinks: bool,
+) -> io::Result<(u64, i64, u32)> {
+    let result = statx_with_mask(
+        libc::AT_FDCWD,
+        path.as_ref(),
+        follow_symlinks,
+        libc::STATX_SIZE | libc::STATX_MTIME,
+    )?;
+    Ok((result.size, result.mtime_sec, result.mtime_nsec))
+}
+
+/// Core statx wrapper that accepts a directory fd and field mask.
+///
+/// This is the low-level building block used by all other statx functions.
+/// The `dir_fd` parameter enables directory-relative lookups (AT_FDCWD for
+/// absolute paths, or an open directory fd for relative paths).
+#[cfg(target_os = "linux")]
+fn statx_with_mask(
+    dir_fd: i32,
+    path: &Path,
+    follow_symlinks: bool,
+    mask: u32,
+) -> io::Result<StatxResult> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
-    let path = path.as_ref();
     let path_bytes = path.as_os_str().as_bytes();
     let c_path = CString::new(path_bytes)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("invalid path: {e}")))?;
 
     let flags = if follow_symlinks {
-        0
+        0i32
     } else {
         libc::AT_SYMLINK_NOFOLLOW
     };
@@ -365,10 +567,10 @@ pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<fs::M
     let ret = unsafe {
         libc::syscall(
             libc::SYS_statx,
-            libc::AT_FDCWD,
+            dir_fd,
             c_path.as_ptr(),
             flags,
-            libc::STATX_BASIC_STATS, // Fetch basic metadata
+            mask,
             &mut statx_buf,
         )
     };
@@ -377,13 +579,18 @@ pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<fs::M
         return Err(io::Error::last_os_error());
     }
 
-    // Convert statx to fs::Metadata by falling back to regular stat
-    // (statx provides more info but fs::Metadata doesn't expose a constructor)
-    if follow_symlinks {
-        fs::metadata(path)
-    } else {
-        fs::symlink_metadata(path)
-    }
+    Ok(StatxResult {
+        mode: statx_buf.stx_mode as u32,
+        size: statx_buf.stx_size,
+        mtime_sec: statx_buf.stx_mtime.tv_sec,
+        mtime_nsec: statx_buf.stx_mtime.tv_nsec,
+        uid: statx_buf.stx_uid,
+        gid: statx_buf.stx_gid,
+        ino: statx_buf.stx_ino,
+        nlink: statx_buf.stx_nlink,
+        rdev_major: statx_buf.stx_rdev_major,
+        rdev_minor: statx_buf.stx_rdev_minor,
+    })
 }
 
 #[cfg(test)]
@@ -553,6 +760,12 @@ mod tests {
         if has_statx_support() {
             let result = statx(&path, false);
             assert!(result.is_ok());
+
+            let sr = result.unwrap();
+            assert!(sr.is_file());
+            assert!(!sr.is_dir());
+            assert!(!sr.is_symlink());
+            assert_eq!(sr.size, 0); // empty file
         }
     }
 
@@ -822,15 +1035,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn test_statx_nonexistent() {
-        if has_statx_support() {
-            let result = statx("/nonexistent/path/xyz", false);
-            assert!(result.is_err());
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
     fn test_statx_follow_symlinks() {
         if !has_statx_support() {
             return;
@@ -841,13 +1045,15 @@ mod tests {
         let link = temp.path().join("link.txt");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        // Test without following
-        let result_nofollow = statx(&link, false);
-        assert!(result_nofollow.is_ok());
+        // Test without following -- should see symlink
+        let result_nofollow = statx(&link, false).unwrap();
+        assert!(result_nofollow.is_symlink());
+        assert!(!result_nofollow.is_file());
 
-        // Test with following
-        let result_follow = statx(&link, true);
-        assert!(result_follow.is_ok());
+        // Test with following -- should see regular file
+        let result_follow = statx(&link, true).unwrap();
+        assert!(result_follow.is_file());
+        assert!(!result_follow.is_symlink());
     }
 
     #[cfg(target_os = "linux")]
@@ -858,8 +1064,110 @@ mod tests {
         }
 
         let temp = create_test_tree();
-        let result = statx(temp.path().join("subdir"), false);
-        assert!(result.is_ok());
+        let result = statx(temp.path().join("subdir"), false).unwrap();
+        assert!(result.is_dir());
+        assert!(!result.is_file());
+        assert!(!result.is_symlink());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_file_with_content() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let path = temp.path().join("sized.txt");
+        fs::write(&path, b"hello world").unwrap();
+
+        let result = statx(&path, false).unwrap();
+        assert!(result.is_file());
+        assert_eq!(result.size, 11);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_metadata_matches_std() {
+        use std::os::unix::fs::MetadataExt;
+
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let path = temp.path().join("file1.txt");
+
+        let sr = statx(&path, false).unwrap();
+        let std_meta = fs::symlink_metadata(&path).unwrap();
+
+        // Compare key fields with std metadata
+        assert_eq!(sr.size, std_meta.len());
+        assert_eq!(sr.uid, std_meta.uid());
+        assert_eq!(sr.gid, std_meta.gid());
+        assert_eq!(sr.ino, std_meta.ino());
+        assert_eq!(sr.nlink as u64, std_meta.nlink());
+        // Mode comparison: statx returns only st_mode bits, std returns full
+        assert_eq!(sr.mode, std_meta.mode() & 0o777_7777);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_mtime_only() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let path = temp.path().join("file1.txt");
+
+        let (mtime_sec, _mtime_nsec) = statx_mtime(&path, false).unwrap();
+        // mtime should be recent (within last hour)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!(mtime_sec > now - 3600, "mtime too old: {mtime_sec}");
+        assert!(mtime_sec <= now + 1, "mtime in the future: {mtime_sec}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_size_and_mtime() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let path = temp.path().join("combo.txt");
+        fs::write(&path, b"1234567890").unwrap();
+
+        let (size, mtime_sec, _mtime_nsec) = statx_size_and_mtime(&path, false).unwrap();
+        assert_eq!(size, 10);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!(mtime_sec > now - 3600);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let path = temp.path().join("perms.txt");
+        fs::write(&path, b"test").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let sr = statx(&path, false).unwrap();
+        assert_eq!(sr.permissions(), 0o755);
     }
 
     #[cfg(target_os = "linux")]
@@ -874,16 +1182,182 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_nonexistent() {
+        if has_statx_support() {
+            let result = statx("/nonexistent/path/xyz", false);
+            assert!(result.is_err());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_relative_via_directory_batch() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let path = temp.path().join("reltest.txt");
+        fs::write(&path, b"relative test").unwrap();
+
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+        let name = OsString::from("reltest.txt");
+        let sr = batch.statx_relative(&name, false).unwrap();
+
+        assert!(sr.is_file());
+        assert_eq!(sr.size, 13);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_relative_directory() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+        let name = OsString::from("subdir");
+        let sr = batch.statx_relative(&name, false).unwrap();
+
+        assert!(sr.is_dir());
+        assert!(!sr.is_file());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_relative_symlink() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let target = temp.path().join("file1.txt");
+        let link = temp.path().join("statxlink.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+        let name = OsString::from("statxlink.txt");
+
+        // Without following
+        let sr_nofollow = batch.statx_relative(&name, false).unwrap();
+        assert!(sr_nofollow.is_symlink());
+
+        // With following
+        let sr_follow = batch.statx_relative(&name, true).unwrap();
+        assert!(sr_follow.is_file());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_relative_nonexistent() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+        let name = OsString::from("does_not_exist.txt");
+        let result = batch.statx_relative(&name, false);
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_result_clone() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let path = temp.path().join("file1.txt");
+        let sr = statx(&path, false).unwrap();
+        let sr_clone = sr.clone();
+
+        assert_eq!(sr.mode, sr_clone.mode);
+        assert_eq!(sr.size, sr_clone.size);
+        assert_eq!(sr.uid, sr_clone.uid);
+        assert_eq!(sr.ino, sr_clone.ino);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_result_debug() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let path = temp.path().join("file1.txt");
+        let sr = statx(&path, false).unwrap();
+        let debug = format!("{sr:?}");
+        assert!(debug.contains("StatxResult"));
+        assert!(debug.contains("mode"));
+        assert!(debug.contains("size"));
+    }
+
     #[test]
     fn test_has_statx_support_does_not_panic() {
         // Should not panic on any platform
         let _ = has_statx_support();
     }
 
+    /// Verifies that has_statx_support() returns consistent results across calls
+    /// (tests the caching mechanism).
+    #[test]
+    fn test_has_statx_support_consistent() {
+        let result1 = has_statx_support();
+        let result2 = has_statx_support();
+        let result3 = has_statx_support();
+        assert_eq!(result1, result2);
+        assert_eq!(result2, result3);
+    }
+
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn test_statx_not_supported_on_non_linux() {
         assert!(!has_statx_support());
+    }
+
+    /// Tests that the fallback path (regular stat via fs::metadata) still works
+    /// even on platforms that support statx. This verifies cross-platform
+    /// compatibility.
+    #[test]
+    fn test_fallback_stat_works() {
+        let temp = create_test_tree();
+        let path = temp.path().join("file1.txt");
+
+        // Regular stat should always work regardless of statx support
+        let metadata = fs::symlink_metadata(&path);
+        assert!(metadata.is_ok());
+        assert!(metadata.unwrap().is_file());
+    }
+
+    /// Tests that the fallback for directories works on all platforms.
+    #[test]
+    fn test_fallback_stat_directory() {
+        let temp = create_test_tree();
+        let path = temp.path().join("subdir");
+
+        let metadata = fs::symlink_metadata(&path);
+        assert!(metadata.is_ok());
+        assert!(metadata.unwrap().is_dir());
+    }
+
+    /// Tests that the fallback for symlinks works on all unix platforms.
+    #[cfg(unix)]
+    #[test]
+    fn test_fallback_stat_symlink() {
+        let temp = create_test_tree();
+        let target = temp.path().join("file1.txt");
+        let link = temp.path().join("fallback_link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let metadata = fs::symlink_metadata(&link);
+        assert!(metadata.is_ok());
+        assert!(metadata.unwrap().file_type().is_symlink());
     }
 
     #[test]

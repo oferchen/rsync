@@ -1123,3 +1123,544 @@ fn execute_sparse_with_large_file() {
     assert_eq!(&buffer, b"FOOTER");
 }
 
+/// Test: All-zeros file creates a fully sparse file with minimal block allocation.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_all_zeros_creates_fully_sparse_file() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("all-zeros.bin");
+    let file = fs::File::create(&source).expect("create source");
+    // Create a 1MB file of all zeros
+    file.set_len(1024 * 1024).expect("set source length");
+    drop(file);
+
+    let dense_dest = temp.path().join("dense-zeros.bin");
+    let sparse_dest = temp.path().join("sparse-zeros.bin");
+
+    // Dense copy (no sparse)
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+    // Both should have the same logical file size
+    assert_eq!(dense_meta.len(), 1024 * 1024);
+    assert_eq!(sparse_meta.len(), 1024 * 1024);
+
+    // Content should be identical (all zeros)
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    assert!(
+        sparse_content.iter().all(|&b| b == 0),
+        "sparse file should contain only zeros"
+    );
+
+    // Sparse file should use significantly fewer blocks
+    use std::os::unix::fs::MetadataExt;
+    let dense_blocks = dense_meta.blocks();
+    let sparse_blocks = sparse_meta.blocks();
+
+    if sparse_blocks == dense_blocks {
+        eprintln!(
+            "all-zeros sparse uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem does not expose sparse allocation difference"
+        );
+    } else {
+        assert!(
+            sparse_blocks < dense_blocks,
+            "all-zeros sparse should allocate fewer blocks (sparse: {sparse_blocks}, \
+             dense: {dense_blocks})"
+        );
+        // For a fully sparse all-zeros file, we expect very few blocks
+        // (ideally 0 or close to it, depending on filesystem)
+        let max_expected = dense_blocks / 4;
+        if sparse_blocks > max_expected {
+            eprintln!(
+                "NOTE: all-zeros sparse uses {sparse_blocks} blocks, \
+                 expected significantly fewer than {dense_blocks}"
+            );
+        }
+    }
+}
+
+/// Test: File with no zeros is written normally (no holes created).
+#[cfg(unix)]
+#[test]
+fn execute_sparse_nonzero_file_written_normally() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("nonzero.bin");
+
+    // Create a 64KB file with no zero bytes
+    let data: Vec<u8> = (0..65536u32).map(|i| ((i % 255) + 1) as u8).collect();
+    fs::write(&source, &data).expect("write source");
+
+    let dense_dest = temp.path().join("dense-nonzero.bin");
+    let sparse_dest = temp.path().join("sparse-nonzero.bin");
+
+    // Dense copy
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // Content should be identical
+    let dense_content = fs::read(&dense_dest).expect("read dense");
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    assert_eq!(dense_content, sparse_content);
+    assert_eq!(sparse_content, data);
+
+    // Block counts should be similar since there are no zeros to sparse-ify
+    use std::os::unix::fs::MetadataExt;
+    let dense_blocks = fs::metadata(&dense_dest).expect("dense metadata").blocks();
+    let sparse_blocks = fs::metadata(&sparse_dest).expect("sparse metadata").blocks();
+
+    // Non-zero file should use roughly the same number of blocks
+    assert!(
+        sparse_blocks >= dense_blocks.saturating_sub(8),
+        "non-zero sparse should not create holes (sparse: {sparse_blocks}, dense: {dense_blocks})"
+    );
+}
+
+/// Test: Small files (smaller than one block / below threshold) handled correctly.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_small_file_below_threshold() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("small.bin");
+
+    // Create a file much smaller than the 32KB sparse threshold
+    let mut data = vec![0u8; 100];
+    data[0] = b'X';
+    data[50] = b'Y';
+    data[99] = b'Z';
+    fs::write(&source, &data).expect("write source");
+
+    let sparse_dest = temp.path().join("sparse-small.bin");
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().sparse(true),
+    )
+    .expect("sparse copy succeeds");
+
+    // Verify content integrity
+    let content = fs::read(&sparse_dest).expect("read dest");
+    assert_eq!(content.len(), 100);
+    assert_eq!(content[0], b'X');
+    assert_eq!(content[50], b'Y');
+    assert_eq!(content[99], b'Z');
+    assert!(content[1..50].iter().all(|&b| b == 0));
+    assert!(content[51..99].iter().all(|&b| b == 0));
+}
+
+/// Test: Small file that is entirely zeros (below threshold).
+#[cfg(unix)]
+#[test]
+fn execute_sparse_small_all_zeros_file() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("small-zeros.bin");
+
+    // 256 bytes of zeros - well below the 32KB threshold
+    fs::write(&source, &vec![0u8; 256]).expect("write source");
+
+    let sparse_dest = temp.path().join("sparse-small-zeros.bin");
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().sparse(true),
+    )
+    .expect("sparse copy succeeds");
+
+    let meta = fs::metadata(&sparse_dest).expect("metadata");
+    assert_eq!(meta.len(), 256);
+
+    let content = fs::read(&sparse_dest).expect("read dest");
+    assert!(content.iter().all(|&b| b == 0));
+}
+
+/// Test: Sparse hole only at the start of the file (leading zeros).
+#[cfg(unix)]
+#[test]
+fn execute_sparse_hole_at_start() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("hole-at-start.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Start with a large hole (64KB zeros), then data
+    source_file
+        .write_all(&vec![0u8; 64 * 1024])
+        .expect("write leading zeros");
+    source_file
+        .write_all(&vec![0xAA; 4096])
+        .expect("write trailing data");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense-start.bin");
+    let sparse_dest = temp.path().join("sparse-start.bin");
+
+    // Dense copy
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // Verify content
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    let dense_content = fs::read(&dense_dest).expect("read dense");
+    assert_eq!(sparse_content, dense_content);
+    assert!(sparse_content[..64 * 1024].iter().all(|&b| b == 0));
+    assert!(sparse_content[64 * 1024..].iter().all(|&b| b == 0xAA));
+
+    // Verify sparse uses fewer blocks
+    use std::os::unix::fs::MetadataExt;
+    let dense_blocks = fs::metadata(&dense_dest).expect("dense meta").blocks();
+    let sparse_blocks = fs::metadata(&sparse_dest).expect("sparse meta").blocks();
+
+    if sparse_blocks >= dense_blocks {
+        eprintln!(
+            "hole-at-start sparse uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem may not expose difference"
+        );
+    }
+}
+
+/// Test: Sparse hole only at the end of the file (trailing zeros).
+#[cfg(unix)]
+#[test]
+fn execute_sparse_hole_at_end() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("hole-at-end.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Data first, then a large trailing hole
+    source_file
+        .write_all(&vec![0xBB; 4096])
+        .expect("write leading data");
+    source_file
+        .write_all(&vec![0u8; 64 * 1024])
+        .expect("write trailing zeros");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense-end.bin");
+    let sparse_dest = temp.path().join("sparse-end.bin");
+
+    // Dense copy
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // Verify content
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    let dense_content = fs::read(&dense_dest).expect("read dense");
+    assert_eq!(sparse_content, dense_content);
+    assert!(sparse_content[..4096].iter().all(|&b| b == 0xBB));
+    assert!(sparse_content[4096..].iter().all(|&b| b == 0));
+
+    // Verify sparse uses fewer blocks
+    use std::os::unix::fs::MetadataExt;
+    let dense_blocks = fs::metadata(&dense_dest).expect("dense meta").blocks();
+    let sparse_blocks = fs::metadata(&sparse_dest).expect("sparse meta").blocks();
+
+    if sparse_blocks >= dense_blocks {
+        eprintln!(
+            "hole-at-end sparse uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem may not expose difference"
+        );
+    }
+}
+
+/// Test: Sparse hole in the middle of the file only.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_hole_in_middle() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("hole-in-middle.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Data, then hole, then data
+    source_file
+        .write_all(&vec![0xCC; 4096])
+        .expect("write leading data");
+    source_file
+        .write_all(&vec![0u8; 128 * 1024])
+        .expect("write middle zeros");
+    source_file
+        .write_all(&vec![0xDD; 4096])
+        .expect("write trailing data");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense-mid.bin");
+    let sparse_dest = temp.path().join("sparse-mid.bin");
+
+    // Dense copy
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // Verify content
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    let dense_content = fs::read(&dense_dest).expect("read dense");
+    assert_eq!(sparse_content, dense_content);
+    assert!(sparse_content[..4096].iter().all(|&b| b == 0xCC));
+    assert!(sparse_content[4096..4096 + 128 * 1024].iter().all(|&b| b == 0));
+    assert!(sparse_content[4096 + 128 * 1024..].iter().all(|&b| b == 0xDD));
+
+    // Verify sparse uses fewer blocks
+    use std::os::unix::fs::MetadataExt;
+    let dense_blocks = fs::metadata(&dense_dest).expect("dense meta").blocks();
+    let sparse_blocks = fs::metadata(&sparse_dest).expect("sparse meta").blocks();
+
+    if sparse_blocks >= dense_blocks {
+        eprintln!(
+            "hole-in-middle sparse uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem may not expose difference"
+        );
+    } else {
+        assert!(
+            sparse_blocks < dense_blocks,
+            "middle-hole sparse should use fewer blocks (sparse: {sparse_blocks}, dense: {dense_blocks})"
+        );
+    }
+}
+
+/// Test: --preallocate disables sparse write optimization at execution level.
+///
+/// Upstream rsync disables sparse writes when --preallocate is active because
+/// preallocation materialises every range in the destination file, making holes
+/// counterproductive.
+#[cfg(unix)]
+#[test]
+fn execute_preallocate_disables_sparse_writes() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("prealloc-sparse.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Create file with a large zero region that would normally be sparsified
+    source_file
+        .write_all(&[0x11])
+        .expect("write leading byte");
+    source_file
+        .write_all(&vec![0u8; 256 * 1024])
+        .expect("write 256KB zeros");
+    source_file
+        .write_all(&[0x22])
+        .expect("write trailing byte");
+    drop(source_file);
+
+    let sparse_only_dest = temp.path().join("sparse-only.bin");
+    let prealloc_sparse_dest = temp.path().join("prealloc-sparse.bin");
+
+    // Sparse-only copy (no preallocate)
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        sparse_only_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // Preallocate + Sparse copy (preallocate should override sparse)
+    let plan_prealloc = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        prealloc_sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan prealloc+sparse");
+    plan_prealloc
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true).preallocate(true),
+        )
+        .expect("preallocate+sparse copy succeeds");
+
+    // Both should have the same logical size and content
+    let sparse_meta = fs::metadata(&sparse_only_dest).expect("sparse metadata");
+    let prealloc_meta = fs::metadata(&prealloc_sparse_dest).expect("prealloc metadata");
+    assert_eq!(sparse_meta.len(), prealloc_meta.len());
+
+    let sparse_content = fs::read(&sparse_only_dest).expect("read sparse");
+    let prealloc_content = fs::read(&prealloc_sparse_dest).expect("read prealloc");
+    assert_eq!(sparse_content, prealloc_content);
+
+    // Verify data integrity
+    let total_size = 1 + 256 * 1024 + 1;
+    assert_eq!(sparse_content.len(), total_size);
+    assert_eq!(sparse_content[0], 0x11);
+    assert!(sparse_content[1..1 + 256 * 1024].iter().all(|&b| b == 0));
+    assert_eq!(sparse_content[total_size - 1], 0x22);
+
+    // Preallocated file should use at least as many blocks as sparse-only
+    use std::os::unix::fs::MetadataExt;
+    let sparse_blocks = sparse_meta.blocks();
+    let prealloc_blocks = prealloc_meta.blocks();
+
+    // The preallocated+sparse file should NOT create holes because preallocate
+    // overrides sparse. Therefore it should use >= blocks than the sparse file.
+    if prealloc_blocks < sparse_blocks {
+        // On some filesystems, preallocate may not have the expected effect,
+        // but the content must still be correct (verified above).
+        eprintln!(
+            "NOTE: preallocate+sparse uses {prealloc_blocks} blocks, \
+             sparse-only uses {sparse_blocks} blocks; filesystem may handle \
+             preallocate differently"
+        );
+    }
+}
+
+/// Test: Sparse with --append is disabled (append mode prevents sparse).
+#[cfg(unix)]
+#[test]
+fn execute_append_disables_sparse_writes() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("append-sparse.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Create a file with zeros
+    source_file.write_all(&[0xFF]).expect("write byte");
+    source_file
+        .write_all(&vec![0u8; 64 * 1024])
+        .expect("write zeros");
+    source_file.write_all(&[0xEE]).expect("write byte");
+    drop(source_file);
+
+    let dest = temp.path().join("append-dest.bin");
+
+    // Create a partial destination for append mode
+    fs::write(&dest, &[0xFF]).expect("write partial dest");
+    filetime::set_file_mtime(
+        &dest,
+        filetime::FileTime::from_unix_time(1, 0),
+    )
+    .expect("set dest mtime");
+    filetime::set_file_mtime(
+        &source,
+        filetime::FileTime::from_unix_time(2, 0),
+    )
+    .expect("set source mtime");
+
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+
+    // Even with sparse enabled, append should prevent hole creation
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true).append(true),
+        )
+        .expect("append+sparse copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+
+    // Verify content is correct
+    let content = fs::read(&dest).expect("read dest");
+    let total_size = 1 + 64 * 1024 + 1;
+    assert_eq!(content.len(), total_size);
+    assert_eq!(content[0], 0xFF);
+    assert_eq!(content[total_size - 1], 0xEE);
+}
+

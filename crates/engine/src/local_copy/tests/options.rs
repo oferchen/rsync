@@ -344,6 +344,65 @@ fn local_copy_options_preallocate_round_trip() {
 }
 
 #[test]
+fn local_copy_options_preallocate_toggle() {
+    let enabled = LocalCopyOptions::default().preallocate(true);
+    assert!(enabled.preallocate_enabled());
+
+    let disabled = enabled.preallocate(false);
+    assert!(!disabled.preallocate_enabled());
+
+    let reenabled = disabled.preallocate(true);
+    assert!(reenabled.preallocate_enabled());
+}
+
+#[test]
+fn local_copy_options_preallocate_via_builder() {
+    let options = LocalCopyOptions::builder()
+        .preallocate(true)
+        .build()
+        .expect("valid options");
+    assert!(options.preallocate_enabled());
+
+    let options = LocalCopyOptions::builder()
+        .preallocate(false)
+        .build()
+        .expect("valid options");
+    assert!(!options.preallocate_enabled());
+}
+
+#[test]
+fn local_copy_options_preallocate_builder_default_is_false() {
+    let options = LocalCopyOptions::builder().build().expect("valid options");
+    assert!(!options.preallocate_enabled());
+}
+
+#[test]
+fn local_copy_options_preallocate_with_inplace() {
+    // Preallocate should work together with inplace (no conflict)
+    let options = LocalCopyOptions::builder()
+        .preallocate(true)
+        .inplace(true)
+        .build()
+        .expect("valid options");
+    assert!(options.preallocate_enabled());
+    assert!(options.inplace_enabled());
+}
+
+#[test]
+fn local_copy_options_preallocate_with_sparse() {
+    // Both can be set simultaneously at the options level;
+    // the engine's copy_file logic handles the interaction by disabling
+    // sparse writes when preallocate is active
+    let options = LocalCopyOptions::builder()
+        .preallocate(true)
+        .sparse(true)
+        .build()
+        .expect("valid options");
+    assert!(options.preallocate_enabled());
+    assert!(options.sparse_enabled());
+}
+
+#[test]
 fn preallocate_destination_reserves_space() {
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("prealloc.bin");
@@ -358,6 +417,58 @@ fn preallocate_destination_reserves_space() {
 
     let metadata = fs::metadata(&path).expect("metadata");
     assert_eq!(metadata.len(), 4096);
+}
+
+#[test]
+fn preallocate_destination_skips_when_disabled() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("no_prealloc.bin");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .expect("create file");
+
+    maybe_preallocate_destination(&mut file, &path, 4096, 0, false).expect("should succeed");
+
+    let metadata = fs::metadata(&path).expect("metadata");
+    assert_eq!(metadata.len(), 0, "disabled preallocate should not change file size");
+}
+
+#[test]
+fn preallocate_destination_skips_zero_length() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("zero.bin");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .expect("create file");
+
+    maybe_preallocate_destination(&mut file, &path, 0, 0, true).expect("should succeed");
+
+    let metadata = fs::metadata(&path).expect("metadata");
+    assert_eq!(metadata.len(), 0, "zero-length preallocate should not change file");
+}
+
+#[test]
+fn preallocate_destination_skips_when_already_large() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("existing.bin");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .expect("create file");
+
+    // existing_bytes (1024) > total_len (512) means skip
+    maybe_preallocate_destination(&mut file, &path, 512, 1024, true).expect("should succeed");
+
+    let metadata = fs::metadata(&path).expect("metadata");
+    assert_eq!(metadata.len(), 0, "should skip when existing >= total");
 }
 
 #[test]
