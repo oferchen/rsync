@@ -108,8 +108,10 @@ use std::net::IpAddr;
 #[cfg(test)]
 use std::path::{Path, PathBuf};
 mod defaults;
+pub mod dry_run;
 mod filter_rules;
 mod help;
+pub mod info_output;
 pub mod itemize;
 mod out_format;
 pub(crate) mod password;
