@@ -12,6 +12,8 @@ pub mod bandwidth;
 pub mod exit_code;
 /// Signal handling for graceful shutdown and cleanup.
 pub mod signal;
+/// Timeout configuration and tracking for rsync connections and I/O operations.
+pub mod timeout;
 /// Branding constants shared across binaries and packaging layers.
 pub use ::branding::branding;
 /// Client orchestration helpers consumed by the CLI binary.
