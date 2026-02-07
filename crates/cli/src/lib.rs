@@ -17,6 +17,8 @@
 mod frontend;
 mod platform;
 
+pub use frontend::dry_run::{DryRunAction, DryRunFormatter, DryRunSummary, format_number_with_commas};
+pub use frontend::info_output;
 pub use frontend::itemize::{FileType, ItemizeChange, UpdateType, format_itemize};
 pub use frontend::stats_format;
 pub use frontend::{exit_code_from, run};
