@@ -816,6 +816,7 @@ dependencies = [
  "proptest",
  "tempfile",
  "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]
@@ -1669,6 +1670,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
