@@ -3,6 +3,33 @@ use digest::Digest;
 use super::StrongDigest;
 
 /// Streaming SHA-512 hasher used by rsync when peers negotiate the strongest daemon authentication digest.
+///
+/// SHA-512 produces a 512-bit (64-byte) digest and provides the maximum
+/// security level among the supported algorithms. It is used for daemon
+/// authentication when maximum collision resistance is required.
+///
+/// # Examples
+///
+/// One-shot hashing:
+///
+/// ```
+/// use checksums::strong::Sha512;
+///
+/// let digest = Sha512::digest(b"important data");
+/// assert_eq!(digest.len(), 64);
+/// ```
+///
+/// Incremental hashing:
+///
+/// ```
+/// use checksums::strong::Sha512;
+///
+/// let mut hasher = Sha512::new();
+/// hasher.update(b"chunk a");
+/// hasher.update(b"chunk b");
+/// let digest = hasher.finalize();
+/// assert_eq!(digest, Sha512::digest(b"chunk achunk b"));
+/// ```
 #[derive(Clone, Debug)]
 pub struct Sha512 {
     inner: sha2::Sha512,

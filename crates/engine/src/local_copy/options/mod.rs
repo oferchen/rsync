@@ -1,4 +1,9 @@
 //! Configuration structures and helpers for local copy execution.
+//!
+//! [`LocalCopyOptions`] gathers all behavioural flags that influence how a
+//! [`LocalCopyPlan`](super::LocalCopyPlan) is executed. Construct instances
+//! through the [`LocalCopyOptionsBuilder`] returned by
+//! [`LocalCopyOptions::builder()`].
 
 mod backup;
 mod batch;

@@ -1,6 +1,11 @@
 use thiserror::Error;
 
-/// Error produced when a rule cannot be compiled into a matcher.
+/// Error produced when a [`FilterRule`](crate::FilterRule) cannot be compiled
+/// into a glob matcher.
+///
+/// This error is returned by [`FilterSet::from_rules`](crate::FilterSet::from_rules)
+/// when a pattern expands to an invalid glob expression. The error retains the
+/// offending pattern and the underlying [`globset::Error`] for diagnostics.
 #[derive(Debug, Error)]
 #[error("failed to compile filter pattern '{pattern}': {source}")]
 pub struct FilterError {

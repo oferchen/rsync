@@ -2,66 +2,66 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-//! crates/transfer/src/lib.rs
-//!
 //! Server-side transfer engine for the Rust rsync implementation.
 //!
-//! This module provides the server-side entry points for `--server` mode,
+//! This crate provides the server-side entry points for `--server` mode,
 //! handling both Receiver and Generator roles as negotiated with the client.
+//! It implements the rsync delta transfer algorithm with full protocol 32
+//! compatibility, SIMD-accelerated checksums, and metadata preservation.
 //!
-//! # Implementation Status
+//! # Architecture
 //!
-//! **Delta Transfer**: ✅ **Production-ready** (as of 2025-12-09)
+//! The transfer engine is structured around a pipeline of protocol phases:
 //!
-//! The server fully implements rsync's delta transfer algorithm with metadata preservation:
+//! ```text
+//! ┌────────────┐    ┌────────────┐    ┌────────────┐    ┌──────────────┐
+//! │ Handshake  │───▶│  Protocol  │───▶│  Multiplex │───▶│  Role-based  │
+//! │ (version)  │    │   Setup    │    │ Activation │    │  Transfer    │
+//! └────────────┘    └────────────┘    └────────────┘    └──────────────┘
+//!    handshake          setup           writer/reader     generator or
+//!    module             module          modules           receiver
+//! ```
 //!
-//! - ✅ **Signature generation** (receiver module) - Rolling and strong checksums from basis files
-//! - ✅ **Delta generation** (generator module) - Efficient copy references + literals
-//! - ✅ **Delta application** (receiver module) - Atomic file reconstruction
-//! - ✅ **Metadata preservation** - Permissions, timestamps, ownership with nanosecond precision
-//! - ✅ **Wire protocol** - Full protocol 32 compatibility
-//! - ✅ **SIMD acceleration** - AVX2/NEON for rolling checksums
+//! 1. **Handshake** ([`handshake`]) - Binary or legacy ASCII protocol version exchange
+//! 2. **Protocol Setup** ([`setup`]) - Compatibility flags, checksum/compression negotiation, seed exchange
+//! 3. **Multiplex Activation** - Output stream wrapped for protocol-framed I/O
+//! 4. **Role Dispatch** - [`GeneratorContext`] (sender) or [`ReceiverContext`] (receiver) runs the transfer
 //!
-//! **Test Coverage**: 3,228 tests passing (100% pass rate)
-//! - 8 unit tests for delta transfer helpers
-//! - 12 comprehensive integration tests (content integrity, metadata, edge cases)
-//!
-//! **Documentation**: See the `delta_transfer` module for comprehensive implementation guide
-//!
-//! # Quick Start
-//!
-//! For detailed information on how delta transfer works, start with the `delta_transfer` module
-//! documentation which provides:
-//! - Architecture overview and data flow
-//! - Component documentation with code examples
-//! - Testing and debugging strategies
-//! - Performance considerations
+//! Within a transfer, the receiver uses a **request pipeline** ([`pipeline`]) to overlap
+//! signature generation and delta application with network I/O, and an **ACK batcher**
+//! ([`ack_batcher`]) to amortize per-file acknowledgment overhead.
 //!
 //! # Roles
 //!
-//! The server can operate in two roles:
+//! The server can operate in two roles, selected by [`ServerRole`]:
 //!
 //! ## Receiver Role
 //!
-//! Managed by `ReceiverContext`. The receiver:
-//! 1. Receives file list from generator
-//! 2. For each file: generates signature from basis file
-//! 3. Receives delta operations from generator
-//! 4. Applies delta to reconstruct file
+//! Managed by [`ReceiverContext`]. The receiver:
+//! 1. Receives file list from the generator (sender)
+//! 2. For each file: generates a signature from the local basis file
+//! 3. Receives delta operations from the generator
+//! 4. Applies the delta to reconstruct the file atomically via a temporary file
 //! 5. Applies metadata (permissions, timestamps, ownership)
-//!
-//! See the `receiver` module documentation for usage examples.
 //!
 //! ## Generator Role
 //!
-//! Managed by `GeneratorContext`. The generator:
-//! 1. Walks filesystem and builds file list
-//! 2. Sends file list to receiver
-//! 3. For each file: receives signature from receiver
-//! 4. Generates delta operations (copy references + literals)
-//! 5. Sends delta to receiver
+//! Managed by [`GeneratorContext`]. The generator:
+//! 1. Walks the local filesystem and builds a file list
+//! 2. Sends the file list to the receiver (client)
+//! 3. For each file: receives a signature from the receiver
+//! 4. Generates delta operations (copy references + literal data)
+//! 5. Sends the delta stream to the receiver
 //!
-//! See the `generator` module documentation for implementation details.
+//! # Entry Points
+//!
+//! - [`run_server_stdio`] - Full server lifecycle over stdin/stdout (handshake + transfer)
+//! - [`run_server_with_handshake`] - Transfer with a pre-negotiated handshake (daemon mode)
+//!
+//! # Delta Transfer Details
+//!
+//! For a comprehensive guide to how the delta transfer algorithm works, see the
+//! [`delta_transfer`] module documentation.
 
 use std::io::{self, BufReader, BufWriter, Read, Write};
 
@@ -79,6 +79,10 @@ pub mod config;
 /// Encapsulates the logic for applying delta data received from a sender.
 /// Mirrors upstream rsync's `receive_data()` function from `receiver.c:240`.
 pub mod delta_apply;
+/// Delta generator configuration parameter object.
+///
+/// Provides `DeltaGeneratorConfig` struct for encapsulating delta generation parameters.
+pub mod delta_config;
 /// Delta transfer implementation guide and documentation.
 ///
 /// **Start here** for comprehensive documentation on how the delta transfer algorithm works,
@@ -128,8 +132,9 @@ pub use self::adaptive_buffer::{
     adaptive_writer_capacity,
 };
 pub use self::config::{ReferenceDirectory, ReferenceDirectoryKind, ServerConfig};
+pub use self::delta_config::DeltaGeneratorConfig;
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
-pub use self::generator::{GeneratorContext, GeneratorStats};
+pub use self::generator::{GeneratorContext, GeneratorStats, generate_delta_from_signature};
 pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_handshake};
 pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
@@ -147,16 +152,22 @@ pub use pipeline::{
 #[cfg(test)]
 mod tests;
 
-/// Statistics returned from server execution.
+/// Statistics returned from server execution, tagged by role.
+///
+/// After [`run_server_stdio`] or [`run_server_with_handshake`] completes,
+/// the caller can inspect this enum to obtain role-specific transfer metrics.
 #[derive(Debug, Clone)]
 pub enum ServerStats {
-    /// Statistics from receiver role.
+    /// Statistics from a receiver transfer (files received, bytes transferred, etc.).
     Receiver(TransferStats),
-    /// Statistics from generator role.
+    /// Statistics from a generator transfer (files sent, bytes transferred, etc.).
     Generator(GeneratorStats),
 }
 
-/// Result type for server operations.
+/// Result type for the top-level server entry points.
+///
+/// On success, contains [`ServerStats`] with role-specific transfer metrics.
+/// On failure, contains the [`io::Error`] that caused the transfer to abort.
 pub type ServerResult = io::Result<ServerStats>;
 
 /// Executes the native server entry point over standard I/O.

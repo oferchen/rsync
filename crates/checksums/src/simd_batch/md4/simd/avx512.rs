@@ -3,6 +3,8 @@
 //! Processes 16 independent MD4 computations simultaneously using 512-bit ZMM registers.
 //! Uses stable inline assembly since AVX-512 intrinsics require nightly Rust.
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 #[cfg(target_arch = "x86_64")]
 use std::arch::asm;
 

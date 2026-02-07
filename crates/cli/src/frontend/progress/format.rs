@@ -592,6 +592,190 @@ mod tests {
     }
 
     #[test]
+    fn format_list_size_zero_pads_correctly() {
+        let result = format_list_size(0, HumanReadableMode::Disabled);
+        assert_eq!(result.len(), 15);
+        assert_eq!(result.trim(), "0");
+        // Should be right-aligned: leading spaces then "0"
+        assert!(result.ends_with('0'));
+    }
+
+    #[test]
+    fn format_list_size_large_value_with_separators() {
+        let result = format_list_size(1_234_567, HumanReadableMode::Disabled);
+        assert_eq!(result.len(), 15);
+        assert!(
+            result.contains("1,234,567"),
+            "large value should have thousands separators: {result:?}"
+        );
+    }
+
+    #[test]
+    fn format_list_size_very_large_value() {
+        let result = format_list_size(1_234_567_890_123, HumanReadableMode::Disabled);
+        assert!(
+            result.contains("1,234,567,890,123"),
+            "very large value should be formatted with separators: {result:?}"
+        );
+    }
+
+    #[test]
+    fn format_list_size_human_readable_small() {
+        // Values under 1000 should show plain digits
+        let result = format_list_size(500, HumanReadableMode::Enabled);
+        assert_eq!(result.len(), 15);
+        assert_eq!(result.trim(), "500");
+    }
+
+    #[test]
+    fn format_list_size_human_readable_kilo() {
+        let result = format_list_size(1_500, HumanReadableMode::Enabled);
+        assert_eq!(result.len(), 15);
+        assert!(
+            result.contains("1.50K"),
+            "1500 bytes should show as 1.50K in human-readable: {result:?}"
+        );
+    }
+
+    #[test]
+    fn format_list_size_human_readable_mega() {
+        let result = format_list_size(2_500_000, HumanReadableMode::Enabled);
+        assert_eq!(result.len(), 15);
+        assert!(
+            result.contains("2.50M"),
+            "2.5M bytes should show as 2.50M in human-readable: {result:?}"
+        );
+    }
+
+    #[test]
+    fn format_list_size_is_right_aligned() {
+        let small = format_list_size(1, HumanReadableMode::Disabled);
+        let large = format_list_size(1_000_000, HumanReadableMode::Disabled);
+
+        // Both should be 15 chars
+        assert_eq!(small.len(), 15);
+        assert_eq!(large.len(), 15);
+
+        // Small value should have more leading spaces
+        let small_spaces = small.len() - small.trim_start().len();
+        let large_spaces = large.len() - large.trim_start().len();
+        assert!(
+            small_spaces > large_spaces,
+            "smaller value should have more leading spaces: small={small_spaces}, large={large_spaces}"
+        );
+    }
+
+    #[test]
+    fn format_list_timestamp_none_returns_epoch() {
+        let result = format_list_timestamp(None);
+        assert_eq!(result, "1970/01/01 00:00:00");
+    }
+
+    #[test]
+    fn format_list_timestamp_epoch_returns_epoch() {
+        let result = format_list_timestamp(Some(SystemTime::UNIX_EPOCH));
+        assert_eq!(result, "1970/01/01 00:00:00");
+    }
+
+    #[test]
+    fn format_list_timestamp_has_correct_length() {
+        let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let result = format_list_timestamp(Some(time));
+        assert_eq!(
+            result.len(),
+            19,
+            "timestamp should be 19 chars (YYYY/MM/DD HH:MM:SS): {result:?}"
+        );
+    }
+
+    #[test]
+    fn format_list_timestamp_has_correct_separators() {
+        let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let result = format_list_timestamp(Some(time));
+
+        assert_eq!(result.as_bytes()[4], b'/', "first separator is /");
+        assert_eq!(result.as_bytes()[7], b'/', "second separator is /");
+        assert_eq!(result.as_bytes()[10], b' ', "date/time separator is space");
+        assert_eq!(result.as_bytes()[13], b':', "hour/minute separator is :");
+        assert_eq!(result.as_bytes()[16], b':', "minute/second separator is :");
+    }
+
+    #[test]
+    fn format_list_timestamp_year_month_day_are_digits() {
+        let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let result = format_list_timestamp(Some(time));
+
+        // Year: chars 0-3
+        assert!(result[0..4].chars().all(|c| c.is_ascii_digit()), "year should be digits");
+        // Month: chars 5-6
+        assert!(result[5..7].chars().all(|c| c.is_ascii_digit()), "month should be digits");
+        // Day: chars 8-9
+        assert!(result[8..10].chars().all(|c| c.is_ascii_digit()), "day should be digits");
+        // Hours: chars 11-12
+        assert!(result[11..13].chars().all(|c| c.is_ascii_digit()), "hours should be digits");
+        // Minutes: chars 14-15
+        assert!(result[14..16].chars().all(|c| c.is_ascii_digit()), "minutes should be digits");
+        // Seconds: chars 17-18
+        assert!(result[17..19].chars().all(|c| c.is_ascii_digit()), "seconds should be digits");
+    }
+
+    #[test]
+    fn list_only_event_includes_data_copied() {
+        assert!(list_only_event(&ClientEventKind::DataCopied));
+    }
+
+    #[test]
+    fn list_only_event_includes_metadata_reused() {
+        assert!(list_only_event(&ClientEventKind::MetadataReused));
+    }
+
+    #[test]
+    fn list_only_event_includes_directory_created() {
+        assert!(list_only_event(&ClientEventKind::DirectoryCreated));
+    }
+
+    #[test]
+    fn list_only_event_includes_symlink_copied() {
+        assert!(list_only_event(&ClientEventKind::SymlinkCopied));
+    }
+
+    #[test]
+    fn list_only_event_includes_hard_link() {
+        assert!(list_only_event(&ClientEventKind::HardLink));
+    }
+
+    #[test]
+    fn list_only_event_includes_fifo_copied() {
+        assert!(list_only_event(&ClientEventKind::FifoCopied));
+    }
+
+    #[test]
+    fn list_only_event_includes_device_copied() {
+        assert!(list_only_event(&ClientEventKind::DeviceCopied));
+    }
+
+    #[test]
+    fn list_only_event_excludes_skipped_kinds() {
+        assert!(!list_only_event(&ClientEventKind::SkippedExisting));
+        assert!(!list_only_event(&ClientEventKind::SkippedNonRegular));
+        assert!(!list_only_event(&ClientEventKind::SkippedDirectory));
+        assert!(!list_only_event(&ClientEventKind::SkippedUnsafeSymlink));
+        assert!(!list_only_event(&ClientEventKind::SkippedMountPoint));
+        assert!(!list_only_event(&ClientEventKind::SkippedNewerDestination));
+        assert!(!list_only_event(&ClientEventKind::SkippedMissingDestination));
+    }
+
+    #[test]
+    fn list_only_event_excludes_deleted() {
+        assert!(!list_only_event(&ClientEventKind::EntryDeleted));
+    }
+
+    #[test]
+    fn list_only_event_excludes_source_removed() {
+        assert!(!list_only_event(&ClientEventKind::SourceRemoved));
+    }
+
+    #[test]
     fn describe_event_kind_data_copied() {
         assert_eq!(describe_event_kind(&ClientEventKind::DataCopied), "copied");
     }

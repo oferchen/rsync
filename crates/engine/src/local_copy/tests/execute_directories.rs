@@ -1584,3 +1584,1062 @@ fn execute_dry_run_with_delete_and_force_reports_all_actions() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.items_deleted(), 1);
 }
+
+// ============================================================================
+// Recursive Directory Creation Tests
+// ============================================================================
+
+#[test]
+fn execute_recursive_creates_mixed_content_hierarchy() {
+    // A hierarchy with files at various depths, empty dirs, and deep nesting
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("a").join("b").join("c")).expect("create deep");
+    fs::create_dir_all(source_root.join("a").join("empty_sibling")).expect("create empty sibling");
+    fs::create_dir_all(source_root.join("x").join("y")).expect("create xy");
+    fs::write(source_root.join("root.txt"), b"root").expect("write root");
+    fs::write(source_root.join("a").join("mid.txt"), b"mid").expect("write mid");
+    fs::write(
+        source_root.join("a").join("b").join("c").join("deep.txt"),
+        b"deep",
+    )
+    .expect("write deep");
+    fs::write(source_root.join("x").join("y").join("leaf.txt"), b"leaf").expect("write leaf");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan.execute().expect("copy succeeds");
+
+    assert_eq!(
+        fs::read(dest_root.join("root.txt")).expect("read root"),
+        b"root"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("a").join("mid.txt")).expect("read mid"),
+        b"mid"
+    );
+    assert_eq!(
+        fs::read(
+            dest_root
+                .join("a")
+                .join("b")
+                .join("c")
+                .join("deep.txt")
+        )
+        .expect("read deep"),
+        b"deep"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("x").join("y").join("leaf.txt")).expect("read leaf"),
+        b"leaf"
+    );
+    assert!(dest_root.join("a").join("empty_sibling").is_dir());
+    assert_eq!(summary.files_copied(), 4);
+    // source + a + b + c + empty_sibling + x + y = 7
+    assert!(summary.directories_created() >= 7);
+}
+
+#[test]
+fn execute_recursive_creates_only_subdirs_no_files() {
+    // Source has a tree of directories with no files at all
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("a").join("b")).expect("create a/b");
+    fs::create_dir_all(source_root.join("c")).expect("create c");
+    fs::create_dir_all(source_root.join("d").join("e").join("f")).expect("create d/e/f");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan.execute().expect("copy succeeds");
+
+    assert!(dest_root.join("a").join("b").is_dir());
+    assert!(dest_root.join("c").is_dir());
+    assert!(dest_root.join("d").join("e").join("f").is_dir());
+    assert_eq!(summary.files_copied(), 0);
+    // source + a + b + c + d + e + f = 7
+    assert!(summary.directories_created() >= 7);
+}
+
+#[test]
+fn execute_recursive_files_at_every_level() {
+    // Files at each nesting level to ensure all are copied
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("l1").join("l2").join("l3")).expect("create dirs");
+    fs::write(source_root.join("f0.txt"), b"level0").expect("write f0");
+    fs::write(source_root.join("l1").join("f1.txt"), b"level1").expect("write f1");
+    fs::write(
+        source_root.join("l1").join("l2").join("f2.txt"),
+        b"level2",
+    )
+    .expect("write f2");
+    fs::write(
+        source_root.join("l1").join("l2").join("l3").join("f3.txt"),
+        b"level3",
+    )
+    .expect("write f3");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan.execute().expect("copy succeeds");
+
+    assert_eq!(
+        fs::read(dest_root.join("f0.txt")).expect("read f0"),
+        b"level0"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("l1").join("f1.txt")).expect("read f1"),
+        b"level1"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("l1").join("l2").join("f2.txt")).expect("read f2"),
+        b"level2"
+    );
+    assert_eq!(
+        fs::read(
+            dest_root
+                .join("l1")
+                .join("l2")
+                .join("l3")
+                .join("f3.txt")
+        )
+        .expect("read f3"),
+        b"level3"
+    );
+    assert_eq!(summary.files_copied(), 4);
+}
+
+#[test]
+fn execute_recursive_idempotent_second_run() {
+    // Running the same copy twice should succeed; second run copies nothing new
+    let ctx = test_helpers::setup_copy_test();
+    test_helpers::create_file_with_mtime(
+        &ctx.source.join("sub").join("file.txt"),
+        b"content",
+        test_helpers::TEST_TIMESTAMP,
+    );
+
+    let operands = ctx.operands_with_trailing_separator();
+    let options = LocalCopyOptions::default().times(true);
+
+    // First run: copies the file and creates directories
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan1");
+    let summary1 = plan
+        .execute_with_options(LocalCopyExecution::Apply, options.clone())
+        .expect("first copy succeeds");
+    assert_eq!(summary1.files_copied(), 1);
+    assert!(summary1.directories_created() >= 1);
+
+    // Second run: file is unchanged (same size + mtime) so should not be re-copied
+    let plan2 = LocalCopyPlan::from_operands(&operands).expect("plan2");
+    let summary2 = plan2
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("second copy succeeds");
+
+    assert_eq!(summary2.files_copied(), 0);
+    assert_eq!(summary2.directories_created(), 0);
+    assert_eq!(ctx.read_dest("sub/file.txt"), b"content");
+}
+
+#[test]
+fn execute_trailing_separator_with_nested_empty_dirs() {
+    // Trailing separator + nested empty directories
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("empty1")).expect("create empty1");
+    fs::create_dir_all(source_root.join("empty2").join("nested_empty")).expect("create nested empty");
+    fs::write(source_root.join("file.txt"), b"root file").expect("write root file");
+
+    let dest_root = temp.path().join("dest");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan.execute().expect("copy succeeds");
+
+    assert!(dest_root.join("empty1").is_dir());
+    assert!(dest_root.join("empty2").join("nested_empty").is_dir());
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read"),
+        b"root file"
+    );
+    assert!(!dest_root.join("source").exists(), "should not contain source dir itself");
+    assert_eq!(summary.files_copied(), 1);
+}
+
+// ============================================================================
+// --mkpath Behavior Tests
+// ============================================================================
+
+#[test]
+fn execute_mkpath_creates_deeply_nested_missing_parents() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    fs::write(&source, b"mkpath deep").expect("write source");
+
+    let destination = temp
+        .path()
+        .join("a")
+        .join("b")
+        .join("c")
+        .join("d")
+        .join("dest.txt");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().implied_dirs(false).mkpath(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(destination.exists());
+    assert_eq!(fs::read(&destination).expect("read dest"), b"mkpath deep");
+}
+
+#[test]
+fn execute_mkpath_with_directory_source_creates_parents() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+
+    let dest_root = temp.path().join("nested").join("deep").join("dest");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().implied_dirs(false).mkpath(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest_root.is_dir());
+    assert!(dest_root.join("file.txt").exists());
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read"),
+        b"content"
+    );
+}
+
+#[test]
+fn execute_mkpath_dry_run_does_not_create_parents() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    fs::write(&source, b"mkpath dry").expect("write source");
+
+    let destination = temp.path().join("missing").join("deep").join("dest.txt");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().implied_dirs(false).mkpath(true);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect("dry-run succeeds");
+
+    assert!(!destination.exists());
+    assert!(!temp.path().join("missing").exists());
+    assert_eq!(summary.files_copied(), 1);
+}
+
+#[test]
+fn execute_mkpath_with_existing_parents_succeeds() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    fs::write(&source, b"data").expect("write source");
+
+    let parent = temp.path().join("already").join("exists");
+    fs::create_dir_all(&parent).expect("create parent");
+    let destination = parent.join("dest.txt");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().implied_dirs(false).mkpath(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert_eq!(fs::read(&destination).expect("read"), b"data");
+}
+
+// ============================================================================
+// --prune-empty-dirs Behavior Tests (directory-specific scenarios)
+// ============================================================================
+
+#[test]
+fn execute_prune_empty_dirs_nested_hierarchy_file_at_bottom() {
+    // Deep nesting: only the very deepest directory has a file
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let deep = source_root.join("a").join("b").join("c").join("d");
+    fs::create_dir_all(&deep).expect("create deep");
+    fs::write(deep.join("bottom.txt"), b"bottom").expect("write bottom");
+    // Create a parallel empty branch
+    fs::create_dir_all(source_root.join("a").join("empty_branch")).expect("create empty branch");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().prune_empty_dirs(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Full path to the bottom file should exist
+    assert!(dest_root.join("a").join("b").join("c").join("d").join("bottom.txt").exists());
+    // Empty branch should be pruned
+    assert!(
+        !dest_root.join("a").join("empty_branch").exists(),
+        "empty branch should be pruned"
+    );
+}
+
+#[test]
+fn execute_prune_empty_dirs_with_trailing_separator_and_nested() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("populated").join("sub")).expect("create populated");
+    fs::create_dir_all(source_root.join("barren").join("sub")).expect("create barren");
+    fs::write(
+        source_root.join("populated").join("sub").join("data.txt"),
+        b"data",
+    )
+    .expect("write data");
+
+    let dest_root = temp.path().join("dest");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().prune_empty_dirs(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest_root.join("populated").join("sub").join("data.txt").exists());
+    assert!(
+        !dest_root.join("barren").exists(),
+        "barren directory tree should be pruned"
+    );
+}
+
+#[test]
+fn execute_prune_empty_dirs_preserves_dir_with_only_subdirs_containing_files() {
+    // Parent dir has no files of its own, but grandchild does
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("parent").join("child")).expect("create dirs");
+    fs::write(
+        source_root.join("parent").join("child").join("file.txt"),
+        b"deep",
+    )
+    .expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().prune_empty_dirs(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(
+        dest_root.join("parent").is_dir(),
+        "parent should be kept because grandchild has files"
+    );
+    assert!(dest_root.join("parent").join("child").join("file.txt").exists());
+}
+
+// ============================================================================
+// --omit-dir-times Behavior Tests (directory-specific scenarios)
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn execute_omit_dir_times_nested_dirs_preserves_file_times_at_all_levels() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested = source_root.join("sub1").join("sub2");
+    fs::create_dir_all(&nested).expect("create nested");
+
+    let file_root = source_root.join("f_root.txt");
+    let file_sub1 = source_root.join("sub1").join("f_sub1.txt");
+    let file_sub2 = nested.join("f_sub2.txt");
+    fs::write(&file_root, b"root").expect("write root file");
+    fs::write(&file_sub1, b"sub1").expect("write sub1 file");
+    fs::write(&file_sub2, b"sub2").expect("write sub2 file");
+
+    let root_file_mtime = FileTime::from_unix_time(1_400_000_000, 0);
+    let sub1_file_mtime = FileTime::from_unix_time(1_450_000_000, 0);
+    let sub2_file_mtime = FileTime::from_unix_time(1_500_000_000, 0);
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+
+    set_file_mtime(&file_root, root_file_mtime).expect("set root file mtime");
+    set_file_mtime(&file_sub1, sub1_file_mtime).expect("set sub1 file mtime");
+    set_file_mtime(&file_sub2, sub2_file_mtime).expect("set sub2 file mtime");
+    set_file_mtime(&nested, dir_mtime).expect("set sub2 dir mtime");
+    set_file_mtime(nested.parent().unwrap(), dir_mtime).expect("set sub1 dir mtime");
+    set_file_mtime(&source_root, dir_mtime).expect("set root dir mtime");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().times(true).omit_dir_times(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // File times should be preserved
+    let dest_root_file_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("f_root.txt")).expect("root file metadata"),
+    );
+    let dest_sub1_file_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("sub1").join("f_sub1.txt")).expect("sub1 file metadata"),
+    );
+    let dest_sub2_file_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("sub1").join("sub2").join("f_sub2.txt"))
+            .expect("sub2 file metadata"),
+    );
+    assert_eq!(dest_root_file_mtime, root_file_mtime);
+    assert_eq!(dest_sub1_file_mtime, sub1_file_mtime);
+    assert_eq!(dest_sub2_file_mtime, sub2_file_mtime);
+
+    // Directory times should NOT be preserved
+    let dest_root_dir_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(&dest_root).expect("root dir metadata"),
+    );
+    let dest_sub1_dir_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("sub1")).expect("sub1 dir metadata"),
+    );
+    let dest_sub2_dir_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("sub1").join("sub2")).expect("sub2 dir metadata"),
+    );
+    assert_ne!(dest_root_dir_mtime, dir_mtime);
+    assert_ne!(dest_sub1_dir_mtime, dir_mtime);
+    assert_ne!(dest_sub2_dir_mtime, dir_mtime);
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_omit_dir_times_with_trailing_separator() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested = source_root.join("sub");
+    fs::create_dir_all(&nested).expect("create sub");
+    fs::write(nested.join("file.txt"), b"content").expect("write file");
+
+    let file_mtime = FileTime::from_unix_time(1_500_000_000, 0);
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&nested.join("file.txt"), file_mtime).expect("set file mtime");
+    set_file_mtime(&nested, dir_mtime).expect("set sub dir mtime");
+    set_file_mtime(&source_root, dir_mtime).expect("set root dir mtime");
+
+    let dest_root = temp.path().join("dest");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().times(true).omit_dir_times(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // File time preserved
+    let dest_file_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("sub").join("file.txt")).expect("file metadata"),
+    );
+    assert_eq!(dest_file_mtime, file_mtime);
+
+    // Directory time NOT preserved
+    let dest_sub_dir_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("sub")).expect("sub metadata"),
+    );
+    assert_ne!(dest_sub_dir_mtime, dir_mtime);
+}
+
+// ============================================================================
+// Directory Permission Handling Tests
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn execute_directory_permissions_with_chmod_nested_applies_to_all_dirs() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested = source_root.join("a").join("b");
+    fs::create_dir_all(&nested).expect("create nested");
+    fs::set_permissions(&source_root, PermissionsExt::from_mode(0o777)).expect("set root perms");
+    fs::set_permissions(source_root.join("a").as_path(), PermissionsExt::from_mode(0o777))
+        .expect("set a perms");
+    fs::set_permissions(&nested, PermissionsExt::from_mode(0o777)).expect("set b perms");
+    fs::write(nested.join("file.txt"), b"content").expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Remove write from group and other on directories: 0o777 -> 0o755
+    let modifiers = ChmodModifiers::parse("Dgo-w").expect("parse chmod");
+    let options = LocalCopyOptions::default()
+        .permissions(true)
+        .with_chmod(Some(modifiers));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert_eq!(
+        fs::metadata(&dest_root).expect("root").permissions().mode() & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(dest_root.join("a")).expect("a").permissions().mode() & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(dest_root.join("a").join("b"))
+            .expect("b")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_directory_preserves_mixed_permissions_in_hierarchy() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let public_dir = source_root.join("public");
+    let private_dir = source_root.join("private");
+    let shared_dir = source_root.join("shared");
+    fs::create_dir_all(&public_dir).expect("create public");
+    fs::create_dir_all(&private_dir).expect("create private");
+    fs::create_dir_all(&shared_dir).expect("create shared");
+
+    fs::set_permissions(&source_root, PermissionsExt::from_mode(0o755)).expect("set root");
+    fs::set_permissions(&public_dir, PermissionsExt::from_mode(0o755)).expect("set public");
+    fs::set_permissions(&private_dir, PermissionsExt::from_mode(0o700)).expect("set private");
+    fs::set_permissions(&shared_dir, PermissionsExt::from_mode(0o750)).expect("set shared");
+
+    fs::write(public_dir.join("pub.txt"), b"pub").expect("write pub");
+    fs::write(private_dir.join("priv.txt"), b"priv").expect("write priv");
+    fs::write(shared_dir.join("sh.txt"), b"sh").expect("write sh");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().permissions(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert_eq!(
+        fs::metadata(&dest_root).expect("root").permissions().mode() & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(dest_root.join("public"))
+            .expect("public")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(dest_root.join("private"))
+            .expect("private")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(dest_root.join("shared"))
+            .expect("shared")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o750
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_directory_permissions_with_dry_run_does_not_set() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::set_permissions(&source_root, PermissionsExt::from_mode(0o700)).expect("set perms");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().permissions(true);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect("dry-run succeeds");
+
+    assert!(!dest_root.exists(), "destination should not be created in dry-run");
+    assert!(summary.directories_created() >= 1);
+}
+
+// ============================================================================
+// Nested Directory Hierarchy Tests
+// ============================================================================
+
+#[test]
+fn execute_nested_hierarchy_with_overlapping_names() {
+    // Test directories with similar names at different levels
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("dir").join("dir").join("dir")).expect("create same-name dirs");
+    fs::write(source_root.join("dir").join("file.txt"), b"level1").expect("write level1");
+    fs::write(
+        source_root.join("dir").join("dir").join("file.txt"),
+        b"level2",
+    )
+    .expect("write level2");
+    fs::write(
+        source_root
+            .join("dir")
+            .join("dir")
+            .join("dir")
+            .join("file.txt"),
+        b"level3",
+    )
+    .expect("write level3");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan.execute().expect("copy succeeds");
+
+    assert_eq!(
+        fs::read(dest_root.join("dir").join("file.txt")).expect("l1"),
+        b"level1"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("dir").join("dir").join("file.txt")).expect("l2"),
+        b"level2"
+    );
+    assert_eq!(
+        fs::read(
+            dest_root
+                .join("dir")
+                .join("dir")
+                .join("dir")
+                .join("file.txt")
+        )
+        .expect("l3"),
+        b"level3"
+    );
+    assert_eq!(summary.files_copied(), 3);
+}
+
+#[test]
+fn execute_nested_hierarchy_mixed_empty_and_populated() {
+    // Verify that a hierarchy with intermixed empty and populated directories works
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    // populated -> empty -> populated
+    fs::create_dir_all(source_root.join("top").join("empty").join("bottom")).expect("create dirs");
+    fs::write(source_root.join("top").join("top.txt"), b"top").expect("write top");
+    fs::write(
+        source_root.join("top").join("empty").join("bottom").join("bottom.txt"),
+        b"bottom",
+    )
+    .expect("write bottom");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan.execute().expect("copy succeeds");
+
+    assert_eq!(
+        fs::read(dest_root.join("top").join("top.txt")).expect("read top"),
+        b"top"
+    );
+    assert!(
+        dest_root.join("top").join("empty").is_dir(),
+        "intermediate empty dir should be created"
+    );
+    assert_eq!(
+        fs::read(
+            dest_root
+                .join("top")
+                .join("empty")
+                .join("bottom")
+                .join("bottom.txt")
+        )
+        .expect("read bottom"),
+        b"bottom"
+    );
+    assert_eq!(summary.files_copied(), 2);
+}
+
+#[test]
+fn execute_directory_with_many_siblings() {
+    // Stress test with many sibling directories
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let count = 50;
+    for i in 0..count {
+        let dir = source_root.join(format!("dir_{i:04}"));
+        fs::create_dir_all(&dir).expect("create dir");
+        fs::write(dir.join("f.txt"), format!("content_{i}").as_bytes()).expect("write file");
+    }
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan.execute().expect("copy succeeds");
+
+    for i in 0..count {
+        let dest_file = dest_root.join(format!("dir_{i:04}")).join("f.txt");
+        assert!(dest_file.exists(), "dir_{i:04}/f.txt should exist");
+        assert_eq!(
+            fs::read(&dest_file).expect("read"),
+            format!("content_{i}").as_bytes()
+        );
+    }
+    assert_eq!(summary.files_copied(), count);
+    assert!(summary.directories_created() >= count + 1); // source + N dirs
+}
+
+// ============================================================================
+// Combined Directory Options Tests
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn execute_directory_prune_empty_dirs_with_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let kept = source_root.join("kept");
+    let pruned = source_root.join("pruned");
+    fs::create_dir_all(&kept).expect("create kept");
+    fs::create_dir_all(&pruned).expect("create pruned");
+    fs::set_permissions(&kept, PermissionsExt::from_mode(0o750)).expect("set kept perms");
+    fs::set_permissions(&pruned, PermissionsExt::from_mode(0o700)).expect("set pruned perms");
+    fs::write(kept.join("file.txt"), b"data").expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .prune_empty_dirs(true)
+        .permissions(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest_root.join("kept").is_dir());
+    assert_eq!(
+        fs::metadata(dest_root.join("kept"))
+            .expect("kept")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o750
+    );
+    assert!(
+        !dest_root.join("pruned").exists(),
+        "empty pruned dir should not exist"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_directory_prune_empty_dirs_with_omit_dir_times() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let kept = source_root.join("kept");
+    let pruned = source_root.join("pruned");
+    fs::create_dir_all(&kept).expect("create kept");
+    fs::create_dir_all(&pruned).expect("create pruned");
+    fs::write(kept.join("file.txt"), b"data").expect("write file");
+
+    let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&kept, dir_mtime).expect("set kept mtime");
+    set_file_mtime(&source_root, dir_mtime).expect("set root mtime");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .prune_empty_dirs(true)
+        .times(true)
+        .omit_dir_times(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest_root.join("kept").is_dir());
+    assert!(!dest_root.join("pruned").exists());
+
+    // Directory time should NOT be preserved because of omit_dir_times
+    let dest_kept_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("kept")).expect("kept metadata"),
+    );
+    assert_ne!(dest_kept_mtime, dir_mtime);
+}
+
+#[test]
+fn execute_directory_mkpath_with_prune_empty_dirs() {
+    // mkpath creates missing parents, prune removes empty dirs from source
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("kept")).expect("create kept");
+    fs::create_dir_all(source_root.join("empty")).expect("create empty");
+    fs::write(source_root.join("kept").join("file.txt"), b"data").expect("write file");
+
+    let dest_root = temp.path().join("missing_parent").join("dest");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .mkpath(true)
+        .prune_empty_dirs(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest_root.join("kept").join("file.txt").exists());
+    assert!(
+        !dest_root.join("empty").exists(),
+        "empty dir should be pruned even with mkpath"
+    );
+}
+
+#[test]
+fn execute_directory_collect_events_records_all_directory_operations() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested = source_root.join("a").join("b");
+    fs::create_dir_all(&nested).expect("create nested");
+    fs::write(nested.join("file.txt"), b"content").expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().collect_events(true);
+
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let records = report.records();
+    let dir_records: Vec<_> = records
+        .iter()
+        .filter(|r| r.action() == &LocalCopyAction::DirectoryCreated)
+        .collect();
+
+    // Should have created: source, a, b (3 directories)
+    assert!(
+        dir_records.len() >= 3,
+        "expected at least 3 directory creation records, got {}",
+        dir_records.len()
+    );
+
+    // Verify that file copy event is also present
+    let file_records: Vec<_> = records
+        .iter()
+        .filter(|r| matches!(r.action(), LocalCopyAction::DataCopied))
+        .collect();
+    assert_eq!(file_records.len(), 1);
+}
+
+#[test]
+fn execute_directory_delete_removes_extraneous_subdirs() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("keep")).expect("create keep");
+    fs::write(source_root.join("keep").join("file.txt"), b"data").expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(dest_root.join("keep")).expect("pre-create keep");
+    fs::write(dest_root.join("keep").join("file.txt"), b"old").expect("write old");
+    fs::create_dir_all(dest_root.join("extra_dir")).expect("create extraneous dir");
+    fs::write(dest_root.join("extra_dir").join("old.txt"), b"extra").expect("write extra");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().delete(true);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest_root.join("keep").join("file.txt").exists());
+    assert!(
+        !dest_root.join("extra_dir").exists(),
+        "extraneous subdir should be deleted"
+    );
+    assert!(summary.items_deleted() >= 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_directory_archive_preserves_permissions_and_times_nested() {
+    use filetime::{FileTime, set_file_mtime};
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let sub_a = source_root.join("a");
+    let sub_b = sub_a.join("b");
+    fs::create_dir_all(&sub_b).expect("create nested");
+    fs::write(sub_b.join("file.txt"), b"deep").expect("write file");
+
+    fs::set_permissions(&source_root, PermissionsExt::from_mode(0o755)).expect("set root");
+    fs::set_permissions(&sub_a, PermissionsExt::from_mode(0o750)).expect("set a");
+    fs::set_permissions(&sub_b, PermissionsExt::from_mode(0o700)).expect("set b");
+
+    let root_mtime = FileTime::from_unix_time(1_600_000_000, 0);
+    let a_mtime = FileTime::from_unix_time(1_650_000_000, 0);
+    let b_mtime = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&sub_b, b_mtime).expect("set b mtime");
+    set_file_mtime(&sub_a, a_mtime).expect("set a mtime");
+    set_file_mtime(&source_root, root_mtime).expect("set root mtime");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .permissions(true)
+        .times(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Permissions
+    assert_eq!(
+        fs::metadata(&dest_root).expect("root").permissions().mode() & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(dest_root.join("a"))
+            .expect("a")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o750
+    );
+    assert_eq!(
+        fs::metadata(dest_root.join("a").join("b"))
+            .expect("b")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+
+    // Times
+    let dest_root_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("root"));
+    let dest_a_mtime =
+        FileTime::from_last_modification_time(&fs::metadata(dest_root.join("a")).expect("a"));
+    let dest_b_mtime = FileTime::from_last_modification_time(
+        &fs::metadata(dest_root.join("a").join("b")).expect("b"),
+    );
+    assert_eq!(dest_root_mtime, root_mtime);
+    assert_eq!(dest_a_mtime, a_mtime);
+    assert_eq!(dest_b_mtime, b_mtime);
+}
