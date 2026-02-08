@@ -1,0 +1,14 @@
+# Minimal runtime image for CI-built binaries
+# Used by the release workflow with pre-built musl static binaries
+#
+# The TARGETARCH build arg is set automatically by Docker Buildx:
+#   linux/amd64 → TARGETARCH=amd64
+#   linux/arm64 → TARGETARCH=arm64
+
+FROM alpine:3.21
+
+ARG TARGETARCH
+
+COPY bin/${TARGETARCH}/oc-rsync /usr/local/bin/oc-rsync
+
+ENTRYPOINT ["oc-rsync"]
