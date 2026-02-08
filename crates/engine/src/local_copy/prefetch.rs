@@ -4,7 +4,7 @@
 //! that the file will be read sequentially, enabling aggressive read-ahead.
 //! On unsupported platforms, the hints are silently ignored (no-op).
 
-#![allow(dead_code)]
+#![allow(dead_code, unsafe_code)]
 
 use std::fs::File;
 use std::io;
