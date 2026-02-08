@@ -546,6 +546,19 @@ fn run_pull_transfer(
         .set_nodelay(true)
         .map_err(|e| socket_error("set nodelay on", "daemon socket", e))?;
 
+    // Clear the handshake-phase socket timeouts before the data transfer begins.
+    // DAEMON_SOCKET_TIMEOUT (10s) was set during connect_direct() to detect
+    // unresponsive servers during the handshake, but during the actual transfer
+    // the remote server may legitimately take longer to prepare the file list.
+    // On Linux, an expired read timeout manifests as EAGAIN (errno 11), not
+    // ETIMEDOUT, which causes spurious "Resource temporarily unavailable" errors.
+    stream
+        .set_read_timeout(None)
+        .map_err(|e| socket_error("clear read timeout on", "daemon socket", e))?;
+    stream
+        .set_write_timeout(None)
+        .map_err(|e| socket_error("clear write timeout on", "daemon socket", e))?;
+
     // Build filter rules to pass to server config
     // (will be sent after multiplex activation in run_server_with_handshake)
     let filter_rules = build_wire_format_rules(config.filter_rules())?;
@@ -601,6 +614,14 @@ fn run_push_transfer(
     stream
         .set_nodelay(true)
         .map_err(|e| socket_error("set nodelay on", "daemon socket", e))?;
+
+    // Clear the handshake-phase socket timeouts (same rationale as run_pull_transfer).
+    stream
+        .set_read_timeout(None)
+        .map_err(|e| socket_error("clear read timeout on", "daemon socket", e))?;
+    stream
+        .set_write_timeout(None)
+        .map_err(|e| socket_error("clear write timeout on", "daemon socket", e))?;
 
     // Build filter rules to pass to server config
     // (will be sent after multiplex activation in run_server_with_handshake)
