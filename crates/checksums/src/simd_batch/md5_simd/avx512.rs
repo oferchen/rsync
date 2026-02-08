@@ -397,7 +397,9 @@ unsafe fn process_block_avx512(
         ($i:expr, $m_reg:literal, $s:literal) => {
             asm!(
                 // F = (B & C) | (~B & D) using vpternlogd (0xCA)
-                "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+                // vpternlogd uses dest as first input, so initialize zmm24 = B first
+                "vmovdqa32 zmm24, zmm1",
+                "vpternlogd zmm24, zmm2, zmm3, 0xCA",
                 concat!("vpaddd zmm24, zmm24, zmm", $m_reg),
                 "vpaddd zmm24, zmm24, zmm0",
                 "vpbroadcastd zmm25, {k:e}",
@@ -417,7 +419,9 @@ unsafe fn process_block_avx512(
     macro_rules! round_g {
         ($i:expr, $m_reg:literal, $s:literal) => {
             asm!(
-                "vpternlogd zmm24, zmm3, zmm1, 0xCA",
+                // vpternlogd uses dest as first input, so initialize zmm24 = D first
+                "vmovdqa32 zmm24, zmm3",
+                "vpternlogd zmm24, zmm1, zmm2, 0xCA",
                 concat!("vpaddd zmm24, zmm24, zmm", $m_reg),
                 "vpaddd zmm24, zmm24, zmm0",
                 "vpbroadcastd zmm25, {k:e}",
