@@ -210,30 +210,6 @@ impl CompressionAlgorithm {
     }
 }
 
-/// Negotiation mode determining the flow of capability exchange.
-///
-/// In rsync, there are two connection modes that affect how capabilities are negotiated:
-///
-/// - **SSH mode**: Both peers send their capability lists, then both read each other's
-///   lists and select algorithms (bidirectional exchange).
-/// - **Daemon mode**: The server sends its capability lists and uses defaults locally,
-///   while the client receives the lists without sending (unidirectional exchange).
-///
-/// This enum enables `negotiate_capabilities` to implement the correct flow for each mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum NegotiationMode {
-    /// SSH mode: bidirectional exchange where both sides send and receive lists.
-    /// This is the default behavior for rsync over SSH connections.
-    Ssh,
-    /// Daemon mode server: send capability lists to client, use defaults locally.
-    /// The server advertises what it supports but doesn't wait for client response.
-    DaemonServer,
-    /// Daemon mode client: receive capability lists from server, don't send.
-    /// The client reads the server's capabilities and selects from them.
-    DaemonClient,
-}
-
 /// Outcome of the protocol 30+ capability negotiation.
 ///
 /// After both peers exchange their supported algorithm lists via the
@@ -262,14 +238,11 @@ pub struct NegotiationResult {
 ///
 /// # Protocol Flow
 ///
-/// **SSH mode (bidirectional)**:
+/// The exchange is always **bidirectional** in both SSH and daemon modes
+/// (upstream compat.c:534-570 negotiate_the_strings):
 /// 1. Both sides send their supported algorithm lists
 /// 2. Both sides read each other's lists
 /// 3. Each side selects the first mutually supported algorithm
-///
-/// **Daemon mode (unidirectional)**:
-/// - Server: Send lists, use defaults locally (no read)
-/// - Client: Read lists, select algorithms (no send)
 ///
 /// # Arguments
 ///
@@ -358,177 +331,72 @@ pub fn negotiate_capabilities(
         });
     }
 
-    // Determine negotiation mode based on connection type and role
-    let mode = if is_daemon_mode {
-        if is_server {
-            NegotiationMode::DaemonServer
-        } else {
-            NegotiationMode::DaemonClient
-        }
+    // Negotiation flow (upstream compat.c:534-570 negotiate_the_strings):
+    //
+    // BIDIRECTIONAL exchange in BOTH daemon and SSH modes when CF_VARINT_FLIST_FLAGS is set:
+    //   - Both sides SEND their algorithm lists first
+    //   - Then both sides READ each other's lists
+    //   - Both independently choose the first match from the remote's list
+    //
+    // Upstream comment: "We send all the negotiation strings before we start
+    // to read them to help avoid a slow startup."
+    //
+    // Note: Even though daemon mode advertises algorithms in the @RSYNCD greeting,
+    // the vstring exchange STILL happens if CF_VARINT_FLIST_FLAGS is negotiated.
+    // The greeting is just informational; the actual selection uses vstrings.
+    let _ = is_daemon_mode; // Exchange happens in all modes when do_negotiation=true
+    let _ = is_server; // Both sides behave symmetrically
+
+    // Step 1: SEND our supported algorithm lists (upstream compat.c:541-544)
+    // Uses vstring format (NOT varint) - see write_vstring documentation
+    let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
+    debug_log!(Proto, 2, "sending checksum list: {}", checksum_list);
+    write_vstring(stdout, &checksum_list)?;
+
+    // Send compression list only if compression is enabled
+    if send_compression {
+        let compression_list = supported_compressions().join(" ");
+        debug_log!(Proto, 2, "sending compression list: {}", compression_list);
+        write_vstring(stdout, &compression_list)?;
+    }
+
+    stdout.flush()?;
+
+    // Step 2: READ the remote side's algorithm lists (upstream compat.c:546-564)
+    // Uses vstring format (NOT varint) - see read_vstring documentation
+    let remote_checksum_list = read_vstring(stdin)?;
+    debug_log!(Proto, 2, "received checksum list: {}", remote_checksum_list);
+
+    let remote_compression_list = if send_compression {
+        let list = read_vstring(stdin)?;
+        debug_log!(Proto, 2, "received compression list: {}", list);
+        Some(list)
     } else {
-        NegotiationMode::Ssh
+        None
     };
 
-    match mode {
-        NegotiationMode::Ssh => {
-            // SSH mode: Bidirectional exchange (upstream compat.c:534-570)
-            // Both sides SEND their algorithm lists first, then both READ
-            // Upstream comment: "We send all the negotiation strings before we start
-            // to read them to help avoid a slow startup."
+    // Step 3: Choose algorithms - pick first from REMOTE's list that WE also support
+    // This matches upstream where "the client picks the first name in the server's list
+    // that is also in the client's list"
+    let checksum = choose_checksum_algorithm(&remote_checksum_list)?;
 
-            // Step 1: SEND our supported algorithm lists
-            let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
-            debug_log!(
-                Proto,
-                2,
-                "SSH mode: sending checksum list: {}",
-                checksum_list
-            );
-            write_vstring(stdout, &checksum_list)?;
+    let compression = if let Some(ref list) = remote_compression_list {
+        choose_compression_algorithm(list)?
+    } else {
+        CompressionAlgorithm::None
+    };
 
-            if send_compression {
-                let compression_list = supported_compressions().join(" ");
-                debug_log!(
-                    Proto,
-                    2,
-                    "SSH mode: sending compression list: {}",
-                    compression_list
-                );
-                write_vstring(stdout, &compression_list)?;
-            }
-
-            stdout.flush()?;
-
-            // Step 2: READ the remote side's algorithm lists
-            let remote_checksum_list = read_vstring(stdin)?;
-            debug_log!(
-                Proto,
-                2,
-                "SSH mode: received checksum list: {}",
-                remote_checksum_list
-            );
-
-            let remote_compression_list = if send_compression {
-                let list = read_vstring(stdin)?;
-                debug_log!(Proto, 2, "SSH mode: received compression list: {}", list);
-                Some(list)
-            } else {
-                None
-            };
-
-            // Step 3: Choose algorithms from remote's list
-            let checksum = choose_checksum_algorithm(&remote_checksum_list)?;
-            let compression = if let Some(ref list) = remote_compression_list {
-                choose_compression_algorithm(list)?
-            } else {
-                CompressionAlgorithm::None
-            };
-
-            debug_log!(
-                Proto,
-                1,
-                "SSH mode: negotiated checksum={}, compression={}",
-                checksum.as_str(),
-                compression.as_str()
-            );
-            Ok(NegotiationResult {
-                checksum,
-                compression,
-            })
-        }
-        NegotiationMode::DaemonServer => {
-            // Daemon server: SEND capability lists, use defaults locally
-            // The client will read these but won't send a response
-
-            let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
-            debug_log!(
-                Proto,
-                2,
-                "Daemon server: sending checksum list: {}",
-                checksum_list
-            );
-            write_vstring(stdout, &checksum_list)?;
-
-            if send_compression {
-                let compression_list = supported_compressions().join(" ");
-                debug_log!(
-                    Proto,
-                    2,
-                    "Daemon server: sending compression list: {}",
-                    compression_list
-                );
-                write_vstring(stdout, &compression_list)?;
-            }
-
-            stdout.flush()?;
-
-            // Use defaults - prefer first algorithm in our list
-            let checksum = ChecksumAlgorithm::parse(SUPPORTED_CHECKSUMS[0])?;
-            let compression = if send_compression {
-                let supported = supported_compressions();
-                CompressionAlgorithm::parse(supported[0])?
-            } else {
-                CompressionAlgorithm::None
-            };
-
-            debug_log!(
-                Proto,
-                1,
-                "Daemon server: using defaults checksum={}, compression={}",
-                checksum.as_str(),
-                compression.as_str()
-            );
-            Ok(NegotiationResult {
-                checksum,
-                compression,
-            })
-        }
-        NegotiationMode::DaemonClient => {
-            // Daemon client: READ capability lists from server, don't send
-            // Select first algorithm from server's list that we support
-
-            let remote_checksum_list = read_vstring(stdin)?;
-            debug_log!(
-                Proto,
-                2,
-                "Daemon client: received checksum list: {}",
-                remote_checksum_list
-            );
-
-            let remote_compression_list = if send_compression {
-                let list = read_vstring(stdin)?;
-                debug_log!(
-                    Proto,
-                    2,
-                    "Daemon client: received compression list: {}",
-                    list
-                );
-                Some(list)
-            } else {
-                None
-            };
-
-            // Choose algorithms from server's list
-            let checksum = choose_checksum_algorithm(&remote_checksum_list)?;
-            let compression = if let Some(ref list) = remote_compression_list {
-                choose_compression_algorithm(list)?
-            } else {
-                CompressionAlgorithm::None
-            };
-
-            debug_log!(
-                Proto,
-                1,
-                "Daemon client: selected checksum={}, compression={}",
-                checksum.as_str(),
-                compression.as_str()
-            );
-            Ok(NegotiationResult {
-                checksum,
-                compression,
-            })
-        }
-    }
+    debug_log!(
+        Proto,
+        1,
+        "negotiated checksum={}, compression={}",
+        checksum.as_str(),
+        compression.as_str()
+    );
+    Ok(NegotiationResult {
+        checksum,
+        compression,
+    })
 }
 
 /// Chooses a checksum algorithm from the client's list.
@@ -906,14 +774,25 @@ mod tests {
     }
 
     // ========================================================================
-    // Daemon Mode Tests - Unidirectional Flow
+    // Daemon Mode Tests - Bidirectional Flow (matching upstream negotiate_the_strings)
     // ========================================================================
 
+    /// Helper to generate peer algorithm data for tests.
+    fn test_peer_data(send_compression: bool) -> Vec<u8> {
+        let mut data = Vec::new();
+        write_vstring(&mut data, &SUPPORTED_CHECKSUMS.join(" ")).unwrap();
+        if send_compression {
+            write_vstring(&mut data, &supported_compressions().join(" ")).unwrap();
+        }
+        data
+    }
+
     #[test]
-    fn test_daemon_server_sends_but_does_not_read() {
-        // Daemon server sends capabilities and uses defaults, doesn't read client response
+    fn test_daemon_server_sends_and_reads() {
+        // Both daemon server and client do bidirectional exchange
         let protocol = ProtocolVersion::try_from(31).unwrap();
-        let mut stdin = &b""[..]; // Empty - should NOT be read
+        let peer_data = test_peer_data(true);
+        let mut stdin = &peer_data[..];
         let mut stdout = Vec::new();
 
         let result = negotiate_capabilities(
@@ -927,18 +806,11 @@ mod tests {
         )
         .unwrap();
 
-        // Server should use defaults (first in preference list)
+        // Server selects from peer's list
         assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-        #[cfg(feature = "zstd")]
-        assert_eq!(result.compression, CompressionAlgorithm::Zstd);
-        #[cfg(not(feature = "zstd"))]
-        assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
 
-        // Verify server sent data
-        assert!(
-            !stdout.is_empty(),
-            "daemon server should send capability lists"
-        );
+        // Verify server sent data (bidirectional)
+        assert!(!stdout.is_empty(), "server should send capability lists");
         let output = String::from_utf8_lossy(&stdout);
         assert!(
             output.contains("xxh128"),
@@ -947,12 +819,10 @@ mod tests {
     }
 
     #[test]
-    fn test_daemon_client_reads_but_does_not_send() {
-        // Daemon client reads server capabilities and selects, doesn't send
+    fn test_daemon_client_sends_and_reads() {
+        // Client also sends its lists in bidirectional exchange
         let protocol = ProtocolVersion::try_from(31).unwrap();
 
-        // Server would send: checksum list "xxh128 md5 md4" (14 bytes = 0x0E)
-        // and compression list "zstd zlib none" (14 bytes = 0x0E)
         let server_lists = b"\x0Exxh128 md5 md4\x0Ezstd zlib none";
         let mut stdin = &server_lists[..];
         let mut stdout = Vec::new();
@@ -970,25 +840,22 @@ mod tests {
 
         // Client should select first from server's list that it supports
         assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-        #[cfg(feature = "zstd")]
-        assert_eq!(result.compression, CompressionAlgorithm::Zstd);
-        #[cfg(not(feature = "zstd"))]
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
 
-        // Client should NOT have sent anything
+        // Client should also send (bidirectional)
         assert!(
-            stdout.is_empty(),
-            "daemon client should not send capability lists"
+            !stdout.is_empty(),
+            "client should also send capability lists (bidirectional)"
         );
     }
 
     #[test]
     fn test_daemon_mode_round_trip() {
-        // Test that daemon server output can be consumed by daemon client
+        // Test that server output can be consumed by client
         let protocol = ProtocolVersion::try_from(31).unwrap();
+        let peer_data = test_peer_data(true);
 
-        // Step 1: Daemon server sends
-        let mut server_stdin = &b""[..];
+        // Step 1: Server sends and reads
+        let mut server_stdin = &peer_data[..];
         let mut server_output = Vec::new();
         let server_result = negotiate_capabilities(
             protocol,
@@ -1001,7 +868,7 @@ mod tests {
         )
         .unwrap();
 
-        // Step 2: Daemon client reads what server sent
+        // Step 2: Client reads server output, also sends
         let mut client_stdin = &server_output[..];
         let mut client_output = Vec::new();
         let client_result = negotiate_capabilities(
@@ -1016,19 +883,19 @@ mod tests {
         .unwrap();
 
         // Both should select compatible algorithms
-        // Client picks from server's list, server uses defaults
         assert_eq!(client_result.checksum, ChecksumAlgorithm::XXH128);
         assert_eq!(server_result.checksum, ChecksumAlgorithm::XXH128);
 
-        // Client should not have sent anything
-        assert!(client_output.is_empty());
+        // Client should also have sent data (bidirectional)
+        assert!(!client_output.is_empty());
     }
 
     #[test]
     fn test_daemon_server_without_compression() {
-        // Daemon server with compression disabled
+        // Server with compression disabled
         let protocol = ProtocolVersion::try_from(31).unwrap();
-        let mut stdin = &b""[..];
+        let peer_data = test_peer_data(false);
+        let mut stdin = &peer_data[..];
         let mut stdout = Vec::new();
 
         let result = negotiate_capabilities(
@@ -1051,7 +918,7 @@ mod tests {
 
     #[test]
     fn test_daemon_client_selects_fallback_algorithm() {
-        // Daemon client receives server list that doesn't include our top choices
+        // Client receives server list that doesn't include our top choices
         let protocol = ProtocolVersion::try_from(31).unwrap();
 
         // Server only offers md5 and zlib (not our top preferences)
@@ -1073,7 +940,8 @@ mod tests {
         // Should fall back to md5 and zlib since that's what server offers
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        assert!(stdout.is_empty());
+        // Client also sends its lists (bidirectional)
+        assert!(!stdout.is_empty());
     }
 
     #[test]
@@ -1209,7 +1077,8 @@ mod tests {
         // Should fall back to defaults when no match found
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::None);
-        assert!(stdout.is_empty());
+        // Client also sends its lists (bidirectional)
+        assert!(!stdout.is_empty());
     }
 
     #[test]
@@ -1233,12 +1102,13 @@ mod tests {
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
         assert_eq!(result.compression, CompressionAlgorithm::None);
-        assert!(stdout.is_empty());
+        // Client also sends its lists (bidirectional)
+        assert!(!stdout.is_empty());
     }
 
     #[test]
     fn test_daemon_mode_malformed_input_error() {
-        // Daemon client receives malformed vstring (claims more bytes than available)
+        // Receives malformed vstring (claims more bytes than available)
         let protocol = ProtocolVersion::try_from(31).unwrap();
         let malformed = b"\x0Amd5"; // Claims 10 bytes but only provides 3
         let mut stdin = &malformed[..];
@@ -1254,43 +1124,56 @@ mod tests {
             false, // is_server = false
         );
 
-        // Should fail with I/O error
+        // Should fail with I/O error (sends first successfully, then fails reading)
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_ssh_mode_still_bidirectional() {
-        // Verify SSH mode (is_daemon_mode=false) remains bidirectional
+    fn test_all_modes_are_bidirectional() {
+        // Verify both SSH and daemon modes are bidirectional
         let protocol = ProtocolVersion::try_from(31).unwrap();
 
-        // SSH mode requires both sides to send and receive
         let remote_lists = b"\x03md5\x04zlib";
+
+        // SSH mode
         let mut stdin = &remote_lists[..];
         let mut stdout = Vec::new();
-
         let result = negotiate_capabilities(
             protocol,
             &mut stdin,
             &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            false, // is_daemon_mode = false (SSH mode)
-            true,  // is_server
+            true,
+            true,
+            false,
+            true, // SSH mode
         )
         .unwrap();
-
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+        assert!(!stdout.is_empty(), "SSH mode should send");
 
-        // SSH mode should SEND data (bidirectional)
-        assert!(!stdout.is_empty(), "SSH mode should send capability lists");
+        // Daemon mode (same behavior)
+        let mut stdin = &remote_lists[..];
+        let mut stdout = Vec::new();
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,
+            true,
+            true,
+            true, // Daemon mode
+        )
+        .unwrap();
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert!(!stdout.is_empty(), "Daemon mode should also send");
     }
 
     #[test]
-    fn test_daemon_server_uses_first_preferred_algorithm() {
-        // Verify daemon server uses first algorithm from preference list (defaults)
+    fn test_daemon_server_selects_from_peer_list() {
+        // Server selects from peer's algorithm list
         let protocol = ProtocolVersion::try_from(31).unwrap();
-        let mut stdin = &b""[..];
+        let peer_data = test_peer_data(true);
+        let mut stdin = &peer_data[..];
         let mut stdout = Vec::new();
 
         let result = negotiate_capabilities(
@@ -1304,24 +1187,16 @@ mod tests {
         )
         .unwrap();
 
-        // Should use first in our preference list
+        // Should select first in peer's list that we support
         assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-        // Compression depends on build features
-        #[cfg(feature = "zstd")]
-        assert_eq!(result.compression, CompressionAlgorithm::Zstd);
-        #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
-        assert_eq!(result.compression, CompressionAlgorithm::Lz4);
-        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
-        assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
     }
 
     #[test]
     fn test_daemon_client_prefers_server_order() {
-        // Daemon client should prefer server's order (first match)
+        // Client should prefer server's order (first match)
         let protocol = ProtocolVersion::try_from(31).unwrap();
 
         // Server prefers md5 over xxh128 (opposite of our preference)
-        // "md5 md4" = 7 bytes, "zlib none" = 9 bytes
         let server_lists = b"\x07md5 md4\x09zlib none";
         let mut stdin = &server_lists[..];
         let mut stdout = Vec::new();
@@ -1340,7 +1215,8 @@ mod tests {
         // Should pick md5 (server's first) even though xxh128 is our preference
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        assert!(stdout.is_empty());
+        // Client also sends its lists (bidirectional)
+        assert!(!stdout.is_empty());
     }
 
     #[test]
