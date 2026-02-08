@@ -4,6 +4,7 @@ use super::scenarios::BehaviorScenario;
 use crate::error::{TaskError, TaskResult};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -136,15 +137,32 @@ fn collect_entries(
             None
         };
 
+        #[cfg(unix)]
+        let (mode, inode, dev) = (
+            metadata.mode(),
+            symlink_metadata.ino(),
+            symlink_metadata.dev(),
+        );
+
+        #[cfg(not(unix))]
+        let (mode, inode, dev) = {
+            let m = if metadata.permissions().readonly() {
+                0o444
+            } else {
+                0o644
+            };
+            (m, 0u64, 0u64)
+        };
+
         entries.insert(
             rel_path.clone(),
             FileEntry {
                 content,
                 file_type,
-                mode: metadata.mode(),
+                mode,
                 symlink_target,
-                inode: symlink_metadata.ino(),
-                dev: symlink_metadata.dev(),
+                inode,
+                dev,
                 size: metadata.len(),
             },
         );

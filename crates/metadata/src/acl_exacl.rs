@@ -53,7 +53,9 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use exacl::{AclOption, getfacl, setfacl};
+use exacl::{getfacl, setfacl};
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use exacl::AclOption;
 
 use crate::MetadataError;
 
@@ -104,7 +106,8 @@ pub fn sync_acls(
         }
     };
 
-    // Check if the source is a directory (for default ACLs)
+    // Check if the source is a directory (for default ACLs on Linux/FreeBSD)
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let is_dir = match fs::symlink_metadata(source) {
         Ok(m) => m.is_dir(),
         Err(e) => return Err(MetadataError::new("stat", source, e)),
@@ -171,55 +174,59 @@ pub fn sync_acls(
 
 /// Resets the access ACL to match the file's permission bits.
 ///
-/// Converts the file's Unix permission mode (e.g., 0o755) into a minimal
-/// ACL containing only the base owner/group/other entries. This is used
-/// when the source file has no extended ACL entries.
-///
-/// # Platform Differences
-///
-/// - **Unix**: Extracts mode from `metadata.permissions().mode() & 0o777`
-/// - **Non-Unix**: Uses `0o444` (read-only) or `0o644` (writable) based on
-///   the readonly flag
+/// On Linux and FreeBSD, converts the file's Unix permission mode into a
+/// minimal ACL using [`exacl::from_mode`]. On macOS, clears extended ACL
+/// entries by setting an empty ACL list.
 ///
 /// # Errors
 ///
-/// Returns [`MetadataError`] if:
-/// - Reading file metadata fails
-/// - Setting the ACL fails (except for unsupported filesystem errors)
+/// Returns [`MetadataError`] if reading file metadata or setting the ACL
+/// fails (unsupported filesystem errors are silently ignored).
 ///
 /// # Upstream Reference
 ///
 /// Matches upstream rsync's behavior when the source has no extended
-/// ACL entries - the destination should have only the base owner/group/other
-/// entries derived from permission bits.
+/// ACL entries — the destination retains only base owner/group/other entries.
 fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(m) => m,
-        Err(e) => return Err(MetadataError::new("stat", path, e)),
-    };
+    // Linux/FreeBSD: convert permission mode to a minimal POSIX ACL
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(m) => m,
+            Err(e) => return Err(MetadataError::new("stat", path, e)),
+        };
 
-    #[cfg(unix)]
-    let mode = {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o777
-    };
+        let mode = {
+            use std::os::unix::fs::PermissionsExt;
+            metadata.permissions().mode() & 0o777
+        };
 
-    #[cfg(not(unix))]
-    let mode = if metadata.permissions().readonly() {
-        0o444
-    } else {
-        0o644
-    };
+        let base_acl = exacl::from_mode(mode);
 
-    let base_acl = exacl::from_mode(mode);
+        if let Err(e) = setfacl(&[path], &base_acl, None) {
+            if !is_unsupported_error(&e) {
+                return Err(MetadataError::new(
+                    "reset ACL",
+                    path,
+                    io::Error::other(e.to_string()),
+                ));
+            }
+        }
+    }
 
-    if let Err(e) = setfacl(&[path], &base_acl, None) {
-        if !is_unsupported_error(&e) {
-            return Err(MetadataError::new(
-                "reset ACL",
-                path,
-                io::Error::other(e.to_string()),
-            ));
+    // macOS: clear extended ACL entries by setting an empty list.
+    // macOS does not have exacl::from_mode; the permission bits are
+    // managed separately from the extended ACL.
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = setfacl(&[path], &[], None) {
+            if !is_unsupported_error(&e) {
+                return Err(MetadataError::new(
+                    "reset ACL",
+                    path,
+                    io::Error::other(e.to_string()),
+                ));
+            }
         }
     }
 
