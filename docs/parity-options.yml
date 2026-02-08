@@ -612,10 +612,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-x
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --update
     short: u
@@ -780,28 +780,28 @@ options:
     status: implemented
     notes: ""
   - option: --force
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-force
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --ignore-errors
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-ignore-errors
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --max-delete
     short: 
@@ -864,10 +864,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-W
-    short: 
+    short:
     category: general
     upstream_default: enabled by default (-1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --checksum
     short: c
@@ -876,16 +876,16 @@ options:
     status: implemented
     notes: ""
   - option: --no-checksum
-    short: 
+    short:
     category: transfer
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-c
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --checksum-choice
     short: 
@@ -966,10 +966,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-z
-    short: 
+    short:
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --compress-choice
     short: 
@@ -1062,10 +1062,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-m
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --log-file
     short: 
@@ -1098,16 +1098,16 @@ options:
     status: implemented
     notes: ""
   - option: --no-itemize-changes
-    short: 
+    short:
     category: logging
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-i
-    short: 
+    short:
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --bwlimit
     short: 
@@ -1128,10 +1128,10 @@ options:
     status: implemented
     notes: ""
   - option: --no-backup
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --backup-dir
     short: 
@@ -1272,10 +1272,10 @@ options:
     status: implemented
     notes: ""
   - option: --no-timeout
-    short: 
+    short:
     category: connection
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --contimeout
     short: 
@@ -1284,10 +1284,10 @@ options:
     status: implemented
     notes: ""
   - option: --no-contimeout
-    short: 
+    short:
     category: connection
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --fsync
     short: 
