@@ -41,6 +41,7 @@
 //! ```
 
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -470,6 +471,7 @@ pub fn has_statx_support() -> bool {
 
 #[cfg(not(target_os = "linux"))]
 #[must_use]
+/// Returns whether the platform supports the `statx` syscall (always `false` on non-Linux).
 pub fn has_statx_support() -> bool {
     false
 }
