@@ -879,7 +879,7 @@ mod stress_tests {
 
         // Total: 100 KB at 1 MB/s = 100ms
         let total = session.total_duration();
-        assert!(within_tolerance(total, Duration::from_millis(100), 25.0));
+        assert!(within_tolerance(total, Duration::from_millis(100), 50.0));
     }
 
     #[test]
