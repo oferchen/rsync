@@ -42,8 +42,8 @@ checksums = { path = "../checksums" }
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }
 
-# libc is needed for O_NOATIME on Linux/Android
-[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+# libc is needed for O_NOATIME (Linux), clonefile (macOS), posix_fadvise, syncfs
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [features]
