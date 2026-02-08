@@ -97,7 +97,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 ## Status
 
 - **Upstream baseline:** tracking `rsync` **3.4.1** (protocol 32).
-- **oc-rsync release:** **0.5.3**.
+- **oc-rsync release:** **0.5.4**.
 - **Stability:** beta; core transfer functionality is complete with full protocol interoperability. Ongoing work focuses on edge cases, performance optimization, and production hardening.
 
 ### Implementation Status
@@ -193,9 +193,9 @@ Each release provides artifacts built with three Rust toolchains:
 | **nightly** | `oc-rsync-VERSION-PLATFORM-nightly.EXT` | Experimental/bleeding-edge |
 
 **Examples:**
-- Stable: `oc-rsync_0.5.3-1_amd64.deb`, `oc-rsync-0.5.3-darwin-x86_64.tar.gz`
-- Beta: `oc-rsync_0.5.3-1-beta_amd64.deb`, `oc-rsync-0.5.3-darwin-x86_64-beta.tar.gz`
-- Nightly: `oc-rsync_0.5.3-1-nightly_amd64.deb`, `oc-rsync-0.5.3-darwin-x86_64-nightly.tar.gz`
+- Stable: `oc-rsync_0.5.4-1_amd64.deb`, `oc-rsync-0.5.4-darwin-x86_64.tar.gz`
+- Beta: `oc-rsync_0.5.4-1-beta_amd64.deb`, `oc-rsync-0.5.4-darwin-x86_64-beta.tar.gz`
+- Nightly: `oc-rsync_0.5.4-1-nightly_amd64.deb`, `oc-rsync-0.5.4-darwin-x86_64-nightly.tar.gz`
 
 #### Linux Package Compatibility
 

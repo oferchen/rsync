@@ -12,10 +12,12 @@ use crate::local_copy::sync_acls_if_requested;
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyArgumentError,
-    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, copy_device, copy_fifo,
+    LocalCopyError, LocalCopyMetadata, LocalCopyRecord, copy_device, copy_fifo,
     copy_file, copy_symlink, delete_extraneous_entries, follow_symlink_metadata,
     map_metadata_error,
 };
+#[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+use crate::local_copy::LocalCopyExecution;
 use ::metadata::apply_directory_metadata_with_options;
 
 use super::super::non_empty_path;
