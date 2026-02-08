@@ -32,8 +32,18 @@ use logging::debug_log;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use crate::constants::{CHUNK_SIZE, leading_zero_count, trailing_zero_count};
-use crate::map_file::{AdaptiveMapStrategy, MapFile};
+#[cfg(unix)]
+use crate::map_file::AdaptiveMapStrategy;
+#[cfg(not(unix))]
+use crate::map_file::BufferedMap;
+use crate::map_file::MapFile;
 use crate::token_buffer::TokenBuffer;
+
+// The strategy type used for basis file mapping
+#[cfg(unix)]
+type BasisMapStrategy = AdaptiveMapStrategy;
+#[cfg(not(unix))]
+type BasisMapStrategy = BufferedMap;
 
 // ============================================================================
 // Sparse Write State - Tracks pending zeros for hole creation
@@ -272,9 +282,10 @@ pub struct DeltaApplyResult {
 ///
 /// # Performance Optimizations
 ///
-/// - Uses `MapFile` with `AdaptiveMapStrategy` for basis file access:
-///   - Files < 1MB: Buffered I/O with 256KB sliding window cache
-///   - Files >= 1MB: Memory-mapped for zero-copy access
+/// - Uses `MapFile` with `BasisMapStrategy` for basis file access:
+///   - Unix: `AdaptiveMapStrategy` - files < 1MB use buffered I/O with 256KB sliding window,
+///     files >= 1MB use memory-mapped for zero-copy access
+///   - Non-Unix: `BufferedMap` - buffered I/O with 256KB sliding window for all files
 /// - Uses `TokenBuffer` for literal data, reusing the same allocation across
 ///   all tokens to avoid per-token heap allocations.
 pub struct DeltaApplicator<'a> {
@@ -283,8 +294,8 @@ pub struct DeltaApplicator<'a> {
     checksum_verifier: ChecksumVerifier,
     basis_signature: Option<&'a FileSignature>,
     /// Cached basis file mapper - opened once and reused for all block refs
-    /// Uses AdaptiveMapStrategy: mmap for large files, buffered for small
-    basis_map: Option<MapFile<AdaptiveMapStrategy>>,
+    /// Uses BasisMapStrategy: adaptive on Unix, buffered on Windows
+    basis_map: Option<MapFile<BasisMapStrategy>>,
     /// Reusable buffer for literal token data
     token_buffer: TokenBuffer,
     stats: DeltaApplyResult,
@@ -294,8 +305,9 @@ impl<'a> DeltaApplicator<'a> {
     /// Creates a new delta applicator.
     ///
     /// If `basis_path` is provided, opens the file once and caches it for
-    /// efficient block reference lookups. Uses `AdaptiveMapStrategy` which
-    /// automatically selects mmap for files >= 1MB, buffered I/O for smaller.
+    /// efficient block reference lookups. Uses `BasisMapStrategy` which:
+    /// - On Unix: automatically selects mmap for files >= 1MB, buffered I/O for smaller
+    /// - On non-Unix: uses buffered I/O for all files
     pub fn new(
         output: File,
         config: &DeltaApplyConfig,
@@ -304,9 +316,14 @@ impl<'a> DeltaApplicator<'a> {
         basis_path: Option<&'a Path>,
     ) -> io::Result<Self> {
         // Open basis file once if provided - cached for all block references
-        // Uses AdaptiveMapStrategy: mmap for large files, buffered for small
+        // Uses BasisMapStrategy: adaptive on Unix, buffered on Windows
         let basis_map = if let Some(path) = basis_path {
-            Some(MapFile::open_adaptive(path).map_err(|e| {
+            #[cfg(unix)]
+            let map = MapFile::open_adaptive(path);
+            #[cfg(not(unix))]
+            let map = MapFile::<BufferedMap>::open(path);
+
+            Some(map.map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
             })?)
         } else {
