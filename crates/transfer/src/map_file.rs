@@ -34,9 +34,8 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::constants::{MAX_MAP_SIZE, align_down};
-use fast_io::FileReader;
 #[cfg(unix)]
-use fast_io::MmapReader;
+use fast_io::{FileReader, MmapReader};
 
 /// Threshold above which memory mapping is preferred over buffered I/O.
 /// Files larger than 1MB benefit from mmap's zero-copy access.
@@ -243,13 +242,13 @@ pub struct MmapStrategy {
     mmap: MmapReader,
 }
 
+#[cfg(unix)]
 impl MmapStrategy {
     /// Opens a file for memory-mapped access.
     ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or mapped.
-    #[cfg(unix)]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Ok(Self {
             mmap: MmapReader::open(path)?,
@@ -258,7 +257,6 @@ impl MmapStrategy {
 
     /// Returns the underlying memory map as a slice.
     #[must_use]
-    #[cfg(unix)]
     pub fn as_slice(&self) -> &[u8] {
         self.mmap.as_slice()
     }
