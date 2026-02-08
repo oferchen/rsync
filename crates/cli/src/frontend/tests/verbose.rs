@@ -384,10 +384,13 @@ fn level_3_at_least_as_verbose_as_level_2() {
     ]);
 
     assert_eq!(code, 0);
+    // At verbosity 3, debug_log! messages may appear on stderr, so we only
+    // verify that stderr contains no error-level output (no "rsync error:"
+    // or "rsync: error" prefixes).
+    let stderr_str = String::from_utf8_lossy(&stderr);
     assert!(
-        stderr.is_empty(),
-        "stderr: {:?}",
-        String::from_utf8_lossy(&stderr)
+        !stderr_str.contains("rsync error:") && !stderr_str.contains("rsync: error"),
+        "stderr should contain no errors, got: {stderr_str:?}"
     );
     let rendered = String::from_utf8(stdout).expect("utf8");
     assert!(
