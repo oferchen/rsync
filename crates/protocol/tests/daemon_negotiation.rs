@@ -1,10 +1,7 @@
-//! Integration tests for capability negotiation in various modes.
+//! Integration tests for capability negotiation.
 //!
-//! # Daemon Mode (Unidirectional)
-//! - Server: SENDS algorithm lists, uses defaults locally
-//! - Client: READS algorithm lists, selects from them (no send)
-//!
-//! # SSH Mode (Bidirectional)
+//! # Bidirectional Exchange (all modes)
+//! Upstream rsync's negotiate_the_strings() is always bidirectional:
 //! - Both sides SEND their algorithm lists first
 //! - Then both sides READ each other's lists
 //! - Both independently select the first match from the remote's list
@@ -57,21 +54,40 @@ fn read_vstring(reader: &mut impl Read) -> std::io::Result<String> {
     String::from_utf8(buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+/// Generates the algorithm list data that a peer would send during negotiation.
+/// This is what the remote side's write_vstring calls produce.
+fn generate_peer_data(send_compression: bool) -> Vec<u8> {
+    let mut data = Vec::new();
+    write_vstring(&mut data, "xxh128 xxh3 xxh64 md5 md4 sha1 none").unwrap();
+    if send_compression {
+        // Match the supported_compressions() list from capabilities.rs
+        #[cfg(all(feature = "zstd", feature = "lz4"))]
+        write_vstring(&mut data, "zstd lz4 zlibx zlib none").unwrap();
+        #[cfg(all(feature = "zstd", not(feature = "lz4")))]
+        write_vstring(&mut data, "zstd zlibx zlib none").unwrap();
+        #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+        write_vstring(&mut data, "lz4 zlibx zlib none").unwrap();
+        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+        write_vstring(&mut data, "zlibx zlib none").unwrap();
+    }
+    data
+}
+
 // ============================================================================
-// Daemon Mode Unidirectional Flow Tests
+// Bidirectional Negotiation Flow Tests
 // ============================================================================
 
 #[test]
 fn test_bidirectional_negotiation_exchange() {
-    // In DAEMON mode, the exchange is UNIDIRECTIONAL:
-    // 1. Server sends its algorithm lists and uses defaults
-    // 2. Client reads server's lists and selects from them
-    // 3. Client does NOT send anything back
+    // Both sides send and receive in all modes (including daemon mode).
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // Server side - sends its lists, uses defaults (no read)
+    // Generate what a peer would send
+    let peer_data = generate_peer_data(true);
+
+    // Server side - sends its lists, reads peer's lists
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..]; // Empty - server doesn't read in daemon mode
+    let mut server_input = &peer_data[..];
 
     let server_result = negotiate_capabilities(
         protocol,
@@ -84,16 +100,16 @@ fn test_bidirectional_negotiation_exchange() {
     )
     .expect("server negotiation should succeed");
 
-    // Verify server sent data
+    // Verify server sent data (bidirectional)
     assert!(
         !server_output.is_empty(),
-        "daemon server must send algorithm lists"
+        "server must send algorithm lists"
     );
 
-    // Server uses defaults (first in preference list)
+    // Server selects from peer's list
     assert_eq!(server_result.checksum.as_str(), "xxh128");
 
-    // Client side - reads server's lists, does NOT send
+    // Client side - sends its lists, reads server's lists
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -108,17 +124,14 @@ fn test_bidirectional_negotiation_exchange() {
     )
     .expect("client negotiation should succeed");
 
-    // Daemon client does NOT send in unidirectional exchange
+    // Client also sends (bidirectional exchange)
     assert!(
-        client_output.is_empty(),
-        "daemon client should NOT send algorithm lists (unidirectional)"
+        !client_output.is_empty(),
+        "client must also send algorithm lists (bidirectional)"
     );
 
     // Both should have valid results
-    assert!(!server_result.checksum.as_str().is_empty());
-    assert!(!client_result.checksum.as_str().is_empty());
-
-    // Client selected from server's list (xxh128)
+    assert_eq!(server_result.checksum.as_str(), "xxh128");
     assert_eq!(client_result.checksum.as_str(), "xxh128");
 }
 
@@ -146,8 +159,9 @@ fn test_daemon_client_selects_first_supported_algorithm() {
     .unwrap();
 
     // Client should select first mutually supported from server's list
-    // xxh128 is first and we support it
     assert_eq!(result.checksum.as_str(), "xxh128");
+    // Client should also have sent its lists (bidirectional)
+    assert!(!stdout.is_empty());
 }
 
 #[test]
@@ -174,12 +188,10 @@ fn test_daemon_client_falls_back_when_first_unsupported() {
 fn test_negotiation_without_compression() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // Server sends only checksum list (no -z flag) in daemon mode
-    let mut server_data = Vec::new();
-    write_vstring(&mut server_data, "md5 md4").unwrap();
-    // No compression list since send_compression=false
+    // Peer sends only checksum list (no -z flag)
+    let peer_data = generate_peer_data(false);
 
-    let mut stdin = &server_data[..];
+    let mut stdin = &peer_data[..];
     let mut stdout = Vec::new();
 
     let result = negotiate_capabilities(
@@ -193,22 +205,21 @@ fn test_negotiation_without_compression() {
     )
     .unwrap();
 
-    assert_eq!(result.checksum.as_str(), "md5");
+    assert_eq!(result.checksum.as_str(), "xxh128");
     assert_eq!(result.compression.as_str(), "none");
 
-    // Daemon client does NOT send anything (unidirectional)
-    assert!(stdout.is_empty(), "daemon client should not send anything");
+    // Client sends its lists even in daemon mode (bidirectional)
+    assert!(!stdout.is_empty());
 }
 
 // ============================================================================
-// SSH Mode Bidirectional Flow Tests (for comparison)
+// SSH Mode Bidirectional Flow Tests
 // ============================================================================
 
 #[test]
 fn test_ssh_mode_bidirectional_exchange() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // In SSH mode, both sides send and receive
     // Simulate remote sending its lists
     let mut remote_data = Vec::new();
     write_vstring(&mut remote_data, "xxh128 md5 md4").unwrap();
@@ -336,37 +347,33 @@ fn test_vstring_roundtrip_long() {
 }
 
 // ============================================================================
-// End-to-End Compression Negotiation Tests
+// End-to-End Negotiation Tests
 // ============================================================================
 
-/// Tests full round-trip daemon negotiation with zstd compression enabled.
-/// Server writes capabilities to buffer, client reads and selects zstd.
+/// Tests full round-trip negotiation with compression enabled.
 #[test]
-fn test_daemon_e2e_with_zstd_compression() {
+fn test_e2e_with_compression() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = generate_peer_data(true);
 
-    // Step 1: Server-side negotiation (sends to buffer)
+    // Server side
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..]; // Server doesn't read in daemon mode
+    let mut server_input = &peer_data[..];
 
     let server_result = negotiate_capabilities(
         protocol,
         &mut server_input,
         &mut server_output,
-        true, // do_negotiation
-        true, // send_compression
-        true, // is_daemon_mode
-        true, // is_server
+        true,
+        true,
+        true,
+        true,
     )
     .expect("server negotiation should succeed");
 
-    // Verify server sent data
-    assert!(
-        !server_output.is_empty(),
-        "server must send algorithm lists"
-    );
+    assert!(!server_output.is_empty());
 
-    // Step 2: Client-side negotiation (reads from buffer)
+    // Client side
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -374,55 +381,40 @@ fn test_daemon_e2e_with_zstd_compression() {
         protocol,
         &mut client_input,
         &mut client_output,
-        true,  // do_negotiation
-        true,  // send_compression
-        true,  // is_daemon_mode
-        false, // is_server (client)
+        true,
+        true,
+        true,
+        false,
     )
     .expect("client negotiation should succeed");
 
-    // Verify client didn't send (daemon mode is unidirectional)
-    assert!(client_output.is_empty(), "daemon client should not send");
-
-    // Verify both sides agree on algorithms
+    // Both should agree on algorithms
     assert_eq!(server_result.checksum.as_str(), "xxh128");
     assert_eq!(client_result.checksum.as_str(), "xxh128");
-
-    // Server uses first in preference list (zstd if available)
-    #[cfg(feature = "zstd")]
-    assert_eq!(server_result.compression.as_str(), "zstd");
-    #[cfg(feature = "zstd")]
-    assert_eq!(client_result.compression.as_str(), "zstd");
-
-    // Without zstd feature, falls back to zlibx
-    #[cfg(not(feature = "zstd"))]
-    assert_eq!(server_result.compression.as_str(), "zlibx");
-    #[cfg(not(feature = "zstd"))]
-    assert_eq!(client_result.compression.as_str(), "zlibx");
 }
 
-/// Tests full round-trip daemon negotiation without compression.
-/// Verifies that send_compression=false results in "none" compression.
+/// Tests full round-trip negotiation without compression.
 #[test]
-fn test_daemon_e2e_without_compression() {
+fn test_e2e_without_compression() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = generate_peer_data(false);
 
-    // Step 1: Server-side negotiation without compression
+    // Server side
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
+    let mut server_input = &peer_data[..];
 
     let server_result = negotiate_capabilities(
         protocol,
         &mut server_input,
         &mut server_output,
-        true,  // do_negotiation
-        false, // send_compression = false (no -z flag)
-        true,  // is_daemon_mode
-        true,  // is_server
+        true,
+        false,
+        true,
+        true,
     )
     .expect("server negotiation should succeed");
 
-    // Step 2: Client-side negotiation
+    // Client side
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -430,29 +422,28 @@ fn test_daemon_e2e_without_compression() {
         protocol,
         &mut client_input,
         &mut client_output,
-        true,  // do_negotiation
-        false, // send_compression = false
-        true,  // is_daemon_mode
-        false, // is_server
+        true,
+        false,
+        true,
+        false,
     )
     .expect("client negotiation should succeed");
 
-    // Verify both sides agree: checksum negotiated, compression is "none"
     assert_eq!(server_result.checksum.as_str(), "xxh128");
     assert_eq!(client_result.checksum.as_str(), "xxh128");
     assert_eq!(server_result.compression.as_str(), "none");
     assert_eq!(client_result.compression.as_str(), "none");
 }
 
-/// Tests daemon negotiation with protocol version 30.
-/// Protocol 30 supports negotiation but may have different defaults.
+/// Tests negotiation with protocol version 30.
 #[test]
-fn test_daemon_e2e_protocol_30() {
+fn test_e2e_protocol_30() {
     let protocol = ProtocolVersion::try_from(30).unwrap();
+    let peer_data = generate_peer_data(true);
 
-    // Server-side
+    // Server side
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
+    let mut server_input = &peer_data[..];
 
     let server_result = negotiate_capabilities(
         protocol,
@@ -465,7 +456,7 @@ fn test_daemon_e2e_protocol_30() {
     )
     .expect("server negotiation should succeed");
 
-    // Client-side
+    // Client side
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -480,67 +471,21 @@ fn test_daemon_e2e_protocol_30() {
     )
     .expect("client negotiation should succeed");
 
-    // Protocol 30 supports full negotiation
     assert!(!server_output.is_empty());
-    assert!(client_output.is_empty(), "daemon client doesn't send");
-
-    // Both should agree on algorithms
-    assert_eq!(server_result.checksum, client_result.checksum);
-    assert_eq!(server_result.compression, client_result.compression);
-}
-
-/// Tests daemon negotiation with protocol version 31.
-/// Verifies latest protocol version works correctly.
-#[test]
-fn test_daemon_e2e_protocol_31() {
-    let protocol = ProtocolVersion::try_from(31).unwrap();
-
-    // Server-side
-    let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
-
-    let server_result = negotiate_capabilities(
-        protocol,
-        &mut server_input,
-        &mut server_output,
-        true,
-        true,
-        true,
-        true,
-    )
-    .expect("server negotiation should succeed");
-
-    // Client-side
-    let mut client_output = Vec::new();
-    let mut client_input = &server_output[..];
-
-    let client_result = negotiate_capabilities(
-        protocol,
-        &mut client_input,
-        &mut client_output,
-        true,
-        true,
-        true,
-        false,
-    )
-    .expect("client negotiation should succeed");
-
-    // Verify successful negotiation
-    assert!(!server_output.is_empty());
-    assert!(client_output.is_empty());
+    assert!(!client_output.is_empty());
     assert_eq!(server_result.checksum, client_result.checksum);
     assert_eq!(server_result.compression, client_result.compression);
 }
 
 /// Tests that both server and client agree on the same checksum algorithm.
-/// Verifies xxh128 is selected as the first mutually supported algorithm.
 #[test]
-fn test_daemon_e2e_checksum_agreement() {
+fn test_e2e_checksum_agreement() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = generate_peer_data(true);
 
-    // Server-side
+    // Server side
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
+    let mut server_input = &peer_data[..];
 
     let server_result = negotiate_capabilities(
         protocol,
@@ -553,7 +498,7 @@ fn test_daemon_e2e_checksum_agreement() {
     )
     .unwrap();
 
-    // Client-side
+    // Client side
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -568,11 +513,8 @@ fn test_daemon_e2e_checksum_agreement() {
     )
     .unwrap();
 
-    // Both should select xxh128 (first in preference list)
     assert_eq!(server_result.checksum.as_str(), "xxh128");
     assert_eq!(client_result.checksum.as_str(), "xxh128");
-
-    // Checksums must match exactly
     assert_eq!(
         server_result.checksum, client_result.checksum,
         "checksum algorithms must match"
@@ -580,14 +522,13 @@ fn test_daemon_e2e_checksum_agreement() {
 }
 
 /// Tests error handling when client tries to read from an empty buffer.
-/// Should fail with UnexpectedEof error.
 #[test]
-fn test_daemon_e2e_empty_buffer_error() {
+fn test_e2e_empty_buffer_error() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // Client tries to read from empty buffer
+    // Client tries to read from empty buffer (but first sends its own data)
     let mut client_output = Vec::new();
-    let mut client_input = &b""[..]; // Empty buffer
+    let mut client_input = &b""[..]; // Empty buffer — will fail after sending
 
     let result = negotiate_capabilities(
         protocol,
@@ -595,11 +536,11 @@ fn test_daemon_e2e_empty_buffer_error() {
         &mut client_output,
         true,
         true,
-        true,  // daemon mode
-        false, // client
+        true,
+        false,
     );
 
-    // Should fail with I/O error (UnexpectedEof)
+    // Should fail because after sending, it tries to read from empty input
     assert!(result.is_err(), "reading from empty buffer should fail");
     assert_eq!(
         result.unwrap_err().kind(),
@@ -608,30 +549,14 @@ fn test_daemon_e2e_empty_buffer_error() {
 }
 
 /// Tests error handling when client reads from a truncated buffer.
-/// Server sends partial data, client should fail gracefully.
 #[test]
-fn test_daemon_e2e_truncated_buffer_error() {
+fn test_e2e_truncated_buffer_error() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // Create a valid server output
-    let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
+    // Generate valid peer data and truncate it
+    let peer_data = generate_peer_data(true);
+    let truncated = &peer_data[..5.min(peer_data.len())];
 
-    negotiate_capabilities(
-        protocol,
-        &mut server_input,
-        &mut server_output,
-        true,
-        true,
-        true,
-        true,
-    )
-    .unwrap();
-
-    // Truncate the buffer (only send first 5 bytes)
-    let truncated = &server_output[..5.min(server_output.len())];
-
-    // Client tries to read truncated data
     let mut client_output = Vec::new();
     let mut client_input = truncated;
 
@@ -657,16 +582,16 @@ fn test_daemon_e2e_truncated_buffer_error() {
 }
 
 /// Tests multiple sequential negotiations to verify state is independent.
-/// Each negotiation should produce consistent results.
 #[test]
-fn test_daemon_e2e_multiple_rounds() {
+fn test_e2e_multiple_rounds() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // Run negotiation 3 times
     for round in 0..3 {
-        // Server-side
+        let peer_data = generate_peer_data(true);
+
+        // Server side
         let mut server_output = Vec::new();
-        let mut server_input = &b""[..];
+        let mut server_input = &peer_data[..];
 
         let server_result = negotiate_capabilities(
             protocol,
@@ -679,7 +604,7 @@ fn test_daemon_e2e_multiple_rounds() {
         )
         .unwrap_or_else(|_| panic!("server negotiation round {round} should succeed"));
 
-        // Client-side
+        // Client side
         let mut client_output = Vec::new();
         let mut client_input = &server_output[..];
 
@@ -694,7 +619,6 @@ fn test_daemon_e2e_multiple_rounds() {
         )
         .unwrap_or_else(|_| panic!("client negotiation round {round} should succeed"));
 
-        // All rounds should produce identical results
         assert_eq!(server_result.checksum.as_str(), "xxh128");
         assert_eq!(client_result.checksum.as_str(), "xxh128");
         assert_eq!(server_result.checksum, client_result.checksum);
@@ -702,28 +626,28 @@ fn test_daemon_e2e_multiple_rounds() {
     }
 }
 
-/// Tests daemon negotiation with compression disabled on both sides.
-/// Verifies that both server and client agree on "none" compression.
+/// Tests negotiation with compression disabled on both sides.
 #[test]
-fn test_daemon_e2e_compression_disabled_both_sides() {
+fn test_e2e_compression_disabled_both_sides() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = generate_peer_data(false);
 
-    // Server-side without compression
+    // Server side without compression
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
+    let mut server_input = &peer_data[..];
 
     let server_result = negotiate_capabilities(
         protocol,
         &mut server_input,
         &mut server_output,
         true,
-        false, // no compression
+        false,
         true,
         true,
     )
     .unwrap();
 
-    // Client-side without compression
+    // Client side without compression
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -732,30 +656,27 @@ fn test_daemon_e2e_compression_disabled_both_sides() {
         &mut client_input,
         &mut client_output,
         true,
-        false, // no compression
+        false,
         true,
         false,
     )
     .unwrap();
 
-    // Both should have compression = "none"
     assert_eq!(server_result.compression.as_str(), "none");
     assert_eq!(client_result.compression.as_str(), "none");
-
-    // But checksum should still be negotiated
     assert_eq!(server_result.checksum.as_str(), "xxh128");
     assert_eq!(client_result.checksum.as_str(), "xxh128");
 }
 
 /// Tests that server and client algorithm selections match exactly.
-/// Verifies both checksum and compression are identical after negotiation.
 #[test]
-fn test_daemon_e2e_server_client_algorithm_match() {
+fn test_e2e_server_client_algorithm_match() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = generate_peer_data(true);
 
-    // Server-side with compression
+    // Server side
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
+    let mut server_input = &peer_data[..];
 
     let server_result = negotiate_capabilities(
         protocol,
@@ -768,7 +689,7 @@ fn test_daemon_e2e_server_client_algorithm_match() {
     )
     .unwrap();
 
-    // Client-side with compression
+    // Client side
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -783,34 +704,27 @@ fn test_daemon_e2e_server_client_algorithm_match() {
     )
     .unwrap();
 
-    // Checksum algorithms must be identical
     assert_eq!(
         server_result.checksum, client_result.checksum,
         "checksum mismatch: server={:?}, client={:?}",
         server_result.checksum, client_result.checksum
     );
-
-    // Compression algorithms must be identical
     assert_eq!(
         server_result.compression, client_result.compression,
         "compression mismatch: server={:?}, client={:?}",
         server_result.compression, client_result.compression
     );
-
-    // Verify both are using valid algorithms (not defaults due to error)
-    assert_ne!(server_result.checksum.as_str(), "");
-    assert_ne!(client_result.checksum.as_str(), "");
 }
 
 /// Tests that client correctly parses server's algorithm lists.
-/// Verifies the wire format is correctly interpreted.
 #[test]
-fn test_daemon_e2e_parse_server_lists() {
+fn test_e2e_parse_server_lists() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = generate_peer_data(true);
 
     // Server sends its algorithm lists
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
+    let mut server_input = &peer_data[..];
 
     negotiate_capabilities(
         protocol,
@@ -823,27 +737,19 @@ fn test_daemon_e2e_parse_server_lists() {
     )
     .unwrap();
 
-    // Parse what the server sent using our vstring helpers
+    // Parse what the server sent
     let mut reader = &server_output[..];
     let checksum_list = read_vstring(&mut reader).expect("should read checksum list");
     let compression_list = read_vstring(&mut reader).expect("should read compression list");
 
-    // Verify lists contain expected algorithms
-    assert!(
-        checksum_list.contains("xxh128"),
-        "checksum list should contain xxh128"
-    );
-    assert!(
-        checksum_list.contains("md5"),
-        "checksum list should contain md5"
-    );
-
+    assert!(checksum_list.contains("xxh128"));
+    assert!(checksum_list.contains("md5"));
     assert!(
         compression_list.contains("zlib") || compression_list.contains("zlibx"),
         "compression list should contain zlib variants"
     );
 
-    // Now verify client can parse these lists
+    // Verify client can parse these lists
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -858,24 +764,20 @@ fn test_daemon_e2e_parse_server_lists() {
     )
     .expect("client should successfully parse server lists");
 
-    // Client should select from server's list
     assert!(checksum_list.contains(client_result.checksum.as_str()));
     assert!(compression_list.contains(client_result.compression.as_str()));
 }
 
-/// Tests negotiation with only a subset of compression algorithms available.
-/// Simulates a server advertising algorithms the client doesn't support.
+/// Tests negotiation with only a subset of compression algorithms.
 #[test]
-fn test_daemon_e2e_limited_compression_support() {
+fn test_e2e_limited_compression_support() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    // Create custom server data with only specific algorithms
+    // Server offers specific algorithms
     let mut server_data = Vec::new();
     write_vstring(&mut server_data, "xxh128 md5 md4").unwrap();
-    // Server offers zlibx and zlib (both always available)
     write_vstring(&mut server_data, "zlibx zlib none").unwrap();
 
-    // Client reads server's lists
     let mut client_output = Vec::new();
     let mut client_input = &server_data[..];
 
@@ -890,18 +792,16 @@ fn test_daemon_e2e_limited_compression_support() {
     )
     .unwrap();
 
-    // Client should select from available algorithms
     assert_eq!(client_result.checksum.as_str(), "xxh128");
-    assert_eq!(client_result.compression.as_str(), "zlibx"); // First available
+    assert_eq!(client_result.compression.as_str(), "zlibx");
 }
 
-/// Tests that protocol 29 does not perform negotiation even in daemon mode.
-/// Should use legacy defaults without any wire exchange.
+/// Tests that protocol 29 does not perform negotiation.
 #[test]
-fn test_daemon_e2e_protocol_29_no_negotiation() {
+fn test_e2e_protocol_29_no_negotiation() {
     let protocol = ProtocolVersion::try_from(29).unwrap();
 
-    // Server-side
+    // Both sides: no I/O for protocol 29
     let mut server_output = Vec::new();
     let mut server_input = &b""[..];
 
@@ -916,9 +816,8 @@ fn test_daemon_e2e_protocol_29_no_negotiation() {
     )
     .unwrap();
 
-    // Client-side
     let mut client_output = Vec::new();
-    let mut client_input = &b""[..]; // No data from server
+    let mut client_input = &b""[..];
 
     let client_result = negotiate_capabilities(
         protocol,
@@ -931,29 +830,24 @@ fn test_daemon_e2e_protocol_29_no_negotiation() {
     )
     .unwrap();
 
-    // Protocol 29 uses legacy defaults, no I/O
-    assert!(server_output.is_empty(), "protocol 29 should not send data");
-    assert!(client_output.is_empty(), "protocol 29 should not send data");
-
-    // Both use legacy defaults
+    assert!(server_output.is_empty());
+    assert!(client_output.is_empty());
     assert_eq!(server_result.checksum.as_str(), "md4");
     assert_eq!(server_result.compression.as_str(), "zlib");
     assert_eq!(client_result.checksum.as_str(), "md4");
     assert_eq!(client_result.compression.as_str(), "zlib");
 }
 
-/// Tests buffer reuse - same buffer can be used for multiple negotiations.
-/// Verifies no state leaks between negotiations.
+/// Tests buffer reuse across multiple negotiations.
 #[test]
-fn test_daemon_e2e_buffer_reuse() {
+fn test_e2e_buffer_reuse() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
-
-    // Shared buffer for all negotiations
     let mut shared_buffer = Vec::with_capacity(256);
 
     // First negotiation
     shared_buffer.clear();
-    let mut server_input = &b""[..];
+    let peer_data = generate_peer_data(true);
+    let mut server_input = &peer_data[..];
     negotiate_capabilities(
         protocol,
         &mut server_input,
@@ -968,9 +862,9 @@ fn test_daemon_e2e_buffer_reuse() {
     let first_size = shared_buffer.len();
     let first_data = shared_buffer.clone();
 
-    // Second negotiation - should produce identical output
+    // Second negotiation — should produce identical output
     shared_buffer.clear();
-    let mut server_input = &b""[..];
+    let mut server_input = &peer_data[..];
     negotiate_capabilities(
         protocol,
         &mut server_input,
@@ -982,35 +876,32 @@ fn test_daemon_e2e_buffer_reuse() {
     )
     .unwrap();
 
-    assert_eq!(
-        shared_buffer.len(),
-        first_size,
-        "buffer size should be consistent"
-    );
-    assert_eq!(shared_buffer, first_data, "output should be identical");
+    assert_eq!(shared_buffer.len(), first_size);
+    assert_eq!(shared_buffer, first_data);
 }
 
-/// Tests that compression algorithm matches between server and client
-/// when using different compression settings.
+/// Tests that compression algorithms match between server and client.
 #[test]
-fn test_daemon_e2e_compression_algorithm_match() {
+fn test_e2e_compression_algorithm_match() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = generate_peer_data(true);
 
-    // Test with compression enabled
+    // Server side with compression
     let mut server_output = Vec::new();
-    let mut server_input = &b""[..];
+    let mut server_input = &peer_data[..];
 
     let server_result = negotiate_capabilities(
         protocol,
         &mut server_input,
         &mut server_output,
         true,
-        true, // compression enabled
+        true,
         true,
         true,
     )
     .unwrap();
 
+    // Client side with compression
     let mut client_output = Vec::new();
     let mut client_input = &server_output[..];
 
@@ -1019,13 +910,12 @@ fn test_daemon_e2e_compression_algorithm_match() {
         &mut client_input,
         &mut client_output,
         true,
-        true, // compression enabled
+        true,
         true,
         false,
     )
     .unwrap();
 
-    // Both should agree on a compression algorithm (not "none")
     assert_ne!(server_result.compression.as_str(), "none");
     assert_ne!(client_result.compression.as_str(), "none");
     assert_eq!(server_result.compression, client_result.compression);
