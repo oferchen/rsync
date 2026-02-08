@@ -49,6 +49,7 @@
 //! # }
 //! ```
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::fs;
 use std::io;
 use std::path::Path;
