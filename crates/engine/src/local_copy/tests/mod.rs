@@ -62,7 +62,7 @@ fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
     apple_fs::mkfifo(path, bits)
 }
 
-#[cfg(all(unix, feature = "acl", not(target_vendor = "apple")))]
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 
 #[cfg(all(unix, feature = "acl"))]

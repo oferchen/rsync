@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "acl"), deny(unsafe_code))]
+#![cfg_attr(all(not(feature = "acl"), not(test)), deny(unsafe_code))]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
