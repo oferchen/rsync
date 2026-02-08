@@ -70,7 +70,7 @@ impl std::fmt::Display for ShutdownReason {
 /// Signal handler state (stub implementation).
 #[derive(Debug)]
 pub struct SignalHandler {
-    installed: bool,
+    _installed: bool,
 }
 
 impl SignalHandler {
@@ -107,7 +107,7 @@ impl SignalHandler {
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
     // On Windows, we could use SetConsoleCtrlHandler here
     // For now, just return a stub handler
-    Ok(SignalHandler { installed: true })
+    Ok(SignalHandler { _installed: true })
 }
 
 /// Blocks waiting for a signal (stub implementation).
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn signal_handler_methods_work() {
         super::super::reset_for_testing();
-        let handler = SignalHandler { installed: true };
+        let handler = SignalHandler { _installed: true };
 
         assert!(!handler.is_shutdown_requested());
         assert!(!handler.is_abort_requested());
