@@ -33,6 +33,7 @@
 
 use std::fs::File;
 use std::io;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 
 /// Minimum file size to attempt copy_file_range (below this, read/write is faster).

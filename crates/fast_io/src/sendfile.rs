@@ -21,14 +21,18 @@
 //! ```no_run
 //! use std::fs::File;
 //! use std::net::TcpStream;
+//! # #[cfg(unix)]
 //! use std::os::fd::AsRawFd;
 //! use fast_io::sendfile::send_file_to_fd;
 //!
 //! # fn main() -> std::io::Result<()> {
 //! let file = File::open("large_file.bin")?;
 //! let mut socket = TcpStream::connect("127.0.0.1:8080")?;
+//! # #[cfg(unix)]
 //! let socket_fd = socket.as_raw_fd();
+//! # #[cfg(unix)]
 //! let sent = send_file_to_fd(&file, socket_fd, 1024 * 1024)?;
+//! # #[cfg(unix)]
 //! println!("Sent {} bytes", sent);
 //! # Ok(())
 //! # }
@@ -40,11 +44,13 @@ use std::io::{self, Read, Write};
 /// Minimum file size to attempt sendfile (below this, read/write is fine).
 ///
 /// Small files benefit from the simpler read/write path due to lower syscall overhead.
+#[cfg(target_os = "linux")]
 const SENDFILE_THRESHOLD: u64 = 64 * 1024; // 64KB
 
 /// Maximum bytes per sendfile call (Linux limit to avoid signal interruption).
 ///
 /// Linux `sendfile` can be interrupted by signals, so we limit each call to ~2GB.
+#[cfg(target_os = "linux")]
 const SENDFILE_CHUNK_SIZE: usize = 0x7fff_f000; // ~2GB
 
 /// Transfers file contents to a writer, using buffered read/write.
@@ -123,19 +129,22 @@ pub fn send_file_to_writer<W: Write>(
 /// ```no_run
 /// use std::fs::File;
 /// use std::net::TcpStream;
+/// # #[cfg(unix)]
 /// use std::os::fd::AsRawFd;
 /// use fast_io::sendfile::send_file_to_fd;
 ///
 /// # fn main() -> std::io::Result<()> {
 /// let file = File::open("data.bin")?;
 /// let socket = TcpStream::connect("127.0.0.1:8080")?;
+/// # #[cfg(unix)]
 /// let sent = send_file_to_fd(&file, socket.as_raw_fd(), 1024 * 1024)?;
+/// # #[cfg(unix)]
 /// assert_eq!(sent, 1024 * 1024);
 /// # Ok(())
 /// # }
 /// ```
 #[cfg(target_os = "linux")]
-pub fn send_file_to_fd(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::Result<u64> {
+pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     if length >= SENDFILE_THRESHOLD {
         if let Ok(n) = try_sendfile(source, dest_fd, length) {
             return Ok(n);
@@ -148,7 +157,7 @@ pub fn send_file_to_fd(source: &File, dest_fd: std::os::fd::RawFd, length: u64) 
 
 /// Stub for non-Linux platforms - always uses read/write fallback.
 #[cfg(not(target_os = "linux"))]
-pub fn send_file_to_fd(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::Result<u64> {
+pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     copy_via_fd_write(source, dest_fd, length)
 }
 
@@ -182,7 +191,8 @@ pub fn send_file_to_fd(source: &File, dest_fd: std::os::fd::RawFd, length: u64) 
 ///
 /// Uses unsafe FFI to call `libc::sendfile`. File descriptors must be valid.
 #[cfg(target_os = "linux")]
-fn try_sendfile(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::Result<u64> {
+fn try_sendfile(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
+    #[cfg(unix)]
     use std::os::fd::AsRawFd;
 
     let src_fd = source.as_raw_fd();
@@ -237,7 +247,7 @@ fn try_sendfile(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::
 ///
 /// Returns an error if reading or writing fails.
 #[cfg(target_os = "linux")]
-fn copy_via_fd_write(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::Result<u64> {
+fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);
     let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
     let mut total: u64 = 0;
@@ -277,7 +287,7 @@ fn copy_via_fd_write(source: &File, dest_fd: std::os::fd::RawFd, length: u64) ->
 
 /// Stub for non-Linux platforms.
 #[cfg(not(target_os = "linux"))]
-fn copy_via_fd_write(source: &File, dest_fd: std::os::fd::RawFd, length: u64) -> io::Result<u64> {
+fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);
     let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
     let mut total: u64 = 0;
