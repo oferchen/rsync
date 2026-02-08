@@ -171,6 +171,7 @@ dependencies = [
  "filetime",
  "libc",
  "mimalloc",
+ "protocol",
  "tempfile",
  "transfer",
  "windows-gnu-eh",
