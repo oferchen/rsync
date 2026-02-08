@@ -345,13 +345,17 @@ unsafe fn process_block_avx512(
     // zmm8-zmm15 = m[0..7] (first 8 message words)
     // zmm16-zmm23 = m[8..15] (second 8 message words)
     // zmm24 = temp/f, zmm25 = k constant, zmm26 = all-ones for NOT
+    //
+    // IMPORTANT: All assembly is in a single asm! block to prevent the compiler
+    // from inserting code between rounds that could clobber ZMM registers.
+    // K constants are loaded from memory via pointer instead of per-round operands.
 
-    // Get base pointer for message array
-    let m_ptr = m.as_ptr() as *const u32;
+    let k_ptr = K.as_ptr();
 
-    // Load state and first 8 message words
     asm!(
-        // Load current state
+        // ============================================================
+        // Load state
+        // ============================================================
         "vmovdqu32 zmm0, [{a}]",
         "vmovdqu32 zmm1, [{b}]",
         "vmovdqu32 zmm2, [{c}]",
@@ -361,7 +365,7 @@ unsafe fn process_block_avx512(
         "vmovdqa32 zmm5, zmm1",
         "vmovdqa32 zmm6, zmm2",
         "vmovdqa32 zmm7, zmm3",
-        // Load message words m[0..7] - each Aligned512 is 64 bytes
+        // Load message words m[0..15] - each Aligned512 is 64 bytes
         "vmovdqu32 zmm8,  [{m}]",
         "vmovdqu32 zmm9,  [{m} + 64]",
         "vmovdqu32 zmm10, [{m} + 128]",
@@ -370,7 +374,6 @@ unsafe fn process_block_avx512(
         "vmovdqu32 zmm13, [{m} + 320]",
         "vmovdqu32 zmm14, [{m} + 384]",
         "vmovdqu32 zmm15, [{m} + 448]",
-        // Load message words m[8..15]
         "vmovdqu32 zmm16, [{m} + 512]",
         "vmovdqu32 zmm17, [{m} + 576]",
         "vmovdqu32 zmm18, [{m} + 640]",
@@ -381,189 +384,833 @@ unsafe fn process_block_avx512(
         "vmovdqu32 zmm23, [{m} + 960]",
         // Create all-ones for NOT operations
         "vpternlogd zmm26, zmm26, zmm26, 0xff",
-        a = in(reg) state_a.0.as_ptr(),
-        b = in(reg) state_b.0.as_ptr(),
-        c = in(reg) state_c.0.as_ptr(),
-        d = in(reg) state_d.0.as_ptr(),
-        m = in(reg) m_ptr,
-        options(nostack),
-    );
 
-    // Process 64 rounds using macros for each round type
-    // Shift values: F=[7,12,17,22], G=[5,9,14,20], H=[4,11,16,23], I=[6,10,15,21]
+        // ============================================================
+        // Rounds 0-15: F = (B & C) | (~B & D), g = i
+        // ============================================================
+        // Round 0: m[0]=zmm8, s=7
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm8",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k}]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 7",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 1: m[1]=zmm9, s=12
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm9",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 4]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 12",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 2: m[2]=zmm10, s=17
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm10",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 8]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 17",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 3: m[3]=zmm11, s=22
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm11",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 12]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 22",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 4: m[4]=zmm12, s=7
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm12",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 16]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 7",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 5: m[5]=zmm13, s=12
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm13",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 20]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 12",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 6: m[6]=zmm14, s=17
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm14",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 24]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 17",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 7: m[7]=zmm15, s=22
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm15",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 28]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 22",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 8: m[8]=zmm16, s=7
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm16",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 32]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 7",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 9: m[9]=zmm17, s=12
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm17",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 36]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 12",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 10: m[10]=zmm18, s=17
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm18",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 40]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 17",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 11: m[11]=zmm19, s=22
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm19",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 44]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 22",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 12: m[12]=zmm20, s=7
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm20",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 48]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 7",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 13: m[13]=zmm21, s=12
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm21",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 52]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 12",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 14: m[14]=zmm22, s=17
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm22",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 56]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 17",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 15: m[15]=zmm23, s=22
+        "vmovdqa32 zmm24, zmm1",
+        "vpternlogd zmm24, zmm2, zmm3, 0xCA",
+        "vpaddd zmm24, zmm24, zmm23",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 60]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 22",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
 
-    // Round type F (0-15): F = (B & C) | (~B & D), g = i
-    macro_rules! round_f {
-        ($i:expr, $m_reg:literal, $s:literal) => {
-            asm!(
-                // F = (B & C) | (~B & D) using vpternlogd (0xCA)
-                // vpternlogd uses dest as first input, so initialize zmm24 = B first
-                "vmovdqa32 zmm24, zmm1",
-                "vpternlogd zmm24, zmm2, zmm3, 0xCA",
-                concat!("vpaddd zmm24, zmm24, zmm", $m_reg),
-                "vpaddd zmm24, zmm24, zmm0",
-                "vpbroadcastd zmm25, {k:e}",
-                "vpaddd zmm24, zmm24, zmm25",
-                concat!("vprold zmm24, zmm24, ", $s),
-                "vmovdqa32 zmm0, zmm3",
-                "vmovdqa32 zmm3, zmm2",
-                "vmovdqa32 zmm2, zmm1",
-                "vpaddd zmm1, zmm1, zmm24",
-                k = in(reg) K[$i],
-                options(nostack),
-            );
-        };
-    }
+        // ============================================================
+        // Rounds 16-31: G = (D & B) | (~D & C), g = (5*i+1)%16
+        // ============================================================
+        // Round 16: m[1]=zmm9, s=5
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm9",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 64]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 5",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 17: m[6]=zmm14, s=9
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm14",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 68]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 9",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 18: m[11]=zmm19, s=14
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm19",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 72]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 14",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 19: m[0]=zmm8, s=20
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm8",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 76]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 20",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 20: m[5]=zmm13, s=5
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm13",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 80]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 5",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 21: m[10]=zmm18, s=9
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm18",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 84]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 9",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 22: m[15]=zmm23, s=14
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm23",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 88]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 14",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 23: m[4]=zmm12, s=20
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm12",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 92]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 20",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 24: m[9]=zmm17, s=5
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm17",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 96]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 5",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 25: m[14]=zmm22, s=9
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm22",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 100]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 9",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 26: m[3]=zmm11, s=14
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm11",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 104]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 14",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 27: m[8]=zmm16, s=20
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm16",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 108]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 20",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 28: m[13]=zmm21, s=5
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm21",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 112]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 5",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 29: m[2]=zmm10, s=9
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm10",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 116]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 9",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 30: m[7]=zmm15, s=14
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm15",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 120]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 14",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 31: m[12]=zmm20, s=20
+        "vmovdqa32 zmm24, zmm3",
+        "vpternlogd zmm24, zmm1, zmm2, 0xCA",
+        "vpaddd zmm24, zmm24, zmm20",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 124]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 20",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
 
-    // Round type G (16-31): G = (D & B) | (~D & C), g = (5*i + 1) % 16
-    macro_rules! round_g {
-        ($i:expr, $m_reg:literal, $s:literal) => {
-            asm!(
-                // vpternlogd uses dest as first input, so initialize zmm24 = D first
-                "vmovdqa32 zmm24, zmm3",
-                "vpternlogd zmm24, zmm1, zmm2, 0xCA",
-                concat!("vpaddd zmm24, zmm24, zmm", $m_reg),
-                "vpaddd zmm24, zmm24, zmm0",
-                "vpbroadcastd zmm25, {k:e}",
-                "vpaddd zmm24, zmm24, zmm25",
-                concat!("vprold zmm24, zmm24, ", $s),
-                "vmovdqa32 zmm0, zmm3",
-                "vmovdqa32 zmm3, zmm2",
-                "vmovdqa32 zmm2, zmm1",
-                "vpaddd zmm1, zmm1, zmm24",
-                k = in(reg) K[$i],
-                options(nostack),
-            );
-        };
-    }
+        // ============================================================
+        // Rounds 32-47: H = B ^ C ^ D, g = (3*i+5)%16
+        // ============================================================
+        // Round 32: m[5]=zmm13, s=4
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm13",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 128]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 4",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 33: m[8]=zmm16, s=11
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm16",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 132]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 11",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 34: m[11]=zmm19, s=16
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm19",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 136]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 16",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 35: m[14]=zmm22, s=23
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm22",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 140]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 23",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 36: m[1]=zmm9, s=4
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm9",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 144]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 4",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 37: m[4]=zmm12, s=11
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm12",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 148]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 11",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 38: m[7]=zmm15, s=16
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm15",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 152]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 16",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 39: m[10]=zmm18, s=23
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm18",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 156]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 23",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 40: m[13]=zmm21, s=4
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm21",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 160]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 4",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 41: m[0]=zmm8, s=11
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm8",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 164]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 11",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 42: m[3]=zmm11, s=16
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm11",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 168]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 16",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 43: m[6]=zmm14, s=23
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm14",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 172]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 23",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 44: m[9]=zmm17, s=4
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm17",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 176]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 4",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 45: m[12]=zmm20, s=11
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm20",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 180]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 11",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 46: m[15]=zmm23, s=16
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm23",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 184]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 16",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 47: m[2]=zmm10, s=23
+        "vmovdqa32 zmm24, zmm1",
+        "vpxord zmm24, zmm24, zmm2",
+        "vpxord zmm24, zmm24, zmm3",
+        "vpaddd zmm24, zmm24, zmm10",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 188]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 23",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
 
-    // Round type H (32-47): H = B ^ C ^ D, g = (3*i + 5) % 16
-    macro_rules! round_h {
-        ($i:expr, $m_reg:literal, $s:literal) => {
-            asm!(
-                // H = B ^ C ^ D using vpternlogd (0x96 for XOR)
-                "vmovdqa32 zmm24, zmm1",
-                "vpxord zmm24, zmm24, zmm2",
-                "vpxord zmm24, zmm24, zmm3",
-                concat!("vpaddd zmm24, zmm24, zmm", $m_reg),
-                "vpaddd zmm24, zmm24, zmm0",
-                "vpbroadcastd zmm25, {k:e}",
-                "vpaddd zmm24, zmm24, zmm25",
-                concat!("vprold zmm24, zmm24, ", $s),
-                "vmovdqa32 zmm0, zmm3",
-                "vmovdqa32 zmm3, zmm2",
-                "vmovdqa32 zmm2, zmm1",
-                "vpaddd zmm1, zmm1, zmm24",
-                k = in(reg) K[$i],
-                options(nostack),
-            );
-        };
-    }
+        // ============================================================
+        // Rounds 48-63: I = C ^ (B | ~D), g = (7*i)%16
+        // ============================================================
+        // Round 48: m[0]=zmm8, s=6
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm8",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 192]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 6",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 49: m[7]=zmm15, s=10
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm15",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 196]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 10",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 50: m[14]=zmm22, s=15
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm22",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 200]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 15",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 51: m[5]=zmm13, s=21
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm13",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 204]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 21",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 52: m[12]=zmm20, s=6
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm20",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 208]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 6",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 53: m[3]=zmm11, s=10
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm11",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 212]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 10",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 54: m[10]=zmm18, s=15
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm18",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 216]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 15",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 55: m[1]=zmm9, s=21
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm9",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 220]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 21",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 56: m[8]=zmm16, s=6
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm16",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 224]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 6",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 57: m[15]=zmm23, s=10
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm23",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 228]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 10",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 58: m[6]=zmm14, s=15
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm14",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 232]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 15",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 59: m[13]=zmm21, s=21
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm21",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 236]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 21",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 60: m[4]=zmm12, s=6
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm12",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 240]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 6",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 61: m[11]=zmm19, s=10
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm19",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 244]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 10",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 62: m[2]=zmm10, s=15
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm10",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 248]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 15",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
+        // Round 63: m[9]=zmm17, s=21
+        "vpxord zmm24, zmm3, zmm26",
+        "vpord zmm24, zmm1, zmm24",
+        "vpxord zmm24, zmm2, zmm24",
+        "vpaddd zmm24, zmm24, zmm17",
+        "vpaddd zmm24, zmm24, zmm0",
+        "vpbroadcastd zmm25, dword ptr [{k} + 252]",
+        "vpaddd zmm24, zmm24, zmm25",
+        "vprold zmm24, zmm24, 21",
+        "vmovdqa32 zmm0, zmm3",
+        "vmovdqa32 zmm3, zmm2",
+        "vmovdqa32 zmm2, zmm1",
+        "vpaddd zmm1, zmm1, zmm24",
 
-    // Round type I (48-63): I = C ^ (B | ~D), g = (7*i) % 16
-    macro_rules! round_i {
-        ($i:expr, $m_reg:literal, $s:literal) => {
-            asm!(
-                "vpxord zmm24, zmm3, zmm26",
-                "vpord zmm24, zmm1, zmm24",
-                "vpxord zmm24, zmm2, zmm24",
-                concat!("vpaddd zmm24, zmm24, zmm", $m_reg),
-                "vpaddd zmm24, zmm24, zmm0",
-                "vpbroadcastd zmm25, {k:e}",
-                "vpaddd zmm24, zmm24, zmm25",
-                concat!("vprold zmm24, zmm24, ", $s),
-                "vmovdqa32 zmm0, zmm3",
-                "vmovdqa32 zmm3, zmm2",
-                "vmovdqa32 zmm2, zmm1",
-                "vpaddd zmm1, zmm1, zmm24",
-                k = in(reg) K[$i],
-                options(nostack),
-            );
-        };
-    }
-
-    // Rounds 0-15: F function, g = i, shifts = [7, 12, 17, 22] repeating
-    round_f!(0, "8", "7");
-    round_f!(1, "9", "12");
-    round_f!(2, "10", "17");
-    round_f!(3, "11", "22");
-    round_f!(4, "12", "7");
-    round_f!(5, "13", "12");
-    round_f!(6, "14", "17");
-    round_f!(7, "15", "22");
-    round_f!(8, "16", "7");
-    round_f!(9, "17", "12");
-    round_f!(10, "18", "17");
-    round_f!(11, "19", "22");
-    round_f!(12, "20", "7");
-    round_f!(13, "21", "12");
-    round_f!(14, "22", "17");
-    round_f!(15, "23", "22");
-
-    // Rounds 16-31: G function, g = (5*i + 1) % 16, shifts = [5, 9, 14, 20] repeating
-    round_g!(16, "9", "5"); // m[1]
-    round_g!(17, "14", "9"); // m[6]
-    round_g!(18, "19", "14"); // m[11]
-    round_g!(19, "8", "20"); // m[0]
-    round_g!(20, "13", "5"); // m[5]
-    round_g!(21, "18", "9"); // m[10]
-    round_g!(22, "23", "14"); // m[15]
-    round_g!(23, "12", "20"); // m[4]
-    round_g!(24, "17", "5"); // m[9]
-    round_g!(25, "22", "9"); // m[14]
-    round_g!(26, "11", "14"); // m[3]
-    round_g!(27, "16", "20"); // m[8]
-    round_g!(28, "21", "5"); // m[13]
-    round_g!(29, "10", "9"); // m[2]
-    round_g!(30, "15", "14"); // m[7]
-    round_g!(31, "20", "20"); // m[12]
-
-    // Rounds 32-47: H function, g = (3*i + 5) % 16, shifts = [4, 11, 16, 23] repeating
-    round_h!(32, "13", "4"); // m[5]
-    round_h!(33, "16", "11"); // m[8]
-    round_h!(34, "19", "16"); // m[11]
-    round_h!(35, "22", "23"); // m[14]
-    round_h!(36, "9", "4"); // m[1]
-    round_h!(37, "12", "11"); // m[4]
-    round_h!(38, "15", "16"); // m[7]
-    round_h!(39, "18", "23"); // m[10]
-    round_h!(40, "21", "4"); // m[13]
-    round_h!(41, "8", "11"); // m[0]
-    round_h!(42, "11", "16"); // m[3]
-    round_h!(43, "14", "23"); // m[6]
-    round_h!(44, "17", "4"); // m[9]
-    round_h!(45, "20", "11"); // m[12]
-    round_h!(46, "23", "16"); // m[15]
-    round_h!(47, "10", "23"); // m[2]
-
-    // Rounds 48-63: I function, g = (7*i) % 16, shifts = [6, 10, 15, 21] repeating
-    round_i!(48, "8", "6"); // m[0]
-    round_i!(49, "15", "10"); // m[7]
-    round_i!(50, "22", "15"); // m[14]
-    round_i!(51, "13", "21"); // m[5]
-    round_i!(52, "20", "6"); // m[12]
-    round_i!(53, "11", "10"); // m[3]
-    round_i!(54, "18", "15"); // m[10]
-    round_i!(55, "9", "21"); // m[1]
-    round_i!(56, "16", "6"); // m[8]
-    round_i!(57, "23", "10"); // m[15]
-    round_i!(58, "14", "15"); // m[6]
-    round_i!(59, "21", "21"); // m[13]
-    round_i!(60, "12", "6"); // m[4]
-    round_i!(61, "19", "10"); // m[11]
-    round_i!(62, "10", "15"); // m[2]
-    round_i!(63, "17", "21"); // m[9]
-
-    // Add saved state and apply mask
-    asm!(
-        // Compute new state
-        "vpaddd zmm27, zmm0, zmm4",  // new_a = a + aa
-        "vpaddd zmm28, zmm1, zmm5",  // new_b = b + bb
-        "vpaddd zmm29, zmm2, zmm6",  // new_c = c + cc
-        "vpaddd zmm30, zmm3, zmm7",  // new_d = d + dd
+        // ============================================================
+        // Add saved state and apply mask
+        // ============================================================
+        "vpaddd zmm27, zmm0, zmm4",
+        "vpaddd zmm28, zmm1, zmm5",
+        "vpaddd zmm29, zmm2, zmm6",
+        "vpaddd zmm30, zmm3, zmm7",
         // Apply mask: blend old state for inactive lanes
         "kmovw k1, {mask:e}",
-        "vpblendmd zmm27 {{k1}}, zmm4, zmm27",  // blend: k1=1 -> new, k1=0 -> old
+        "vpblendmd zmm27 {{k1}}, zmm4, zmm27",
         "vpblendmd zmm28 {{k1}}, zmm5, zmm28",
         "vpblendmd zmm29 {{k1}}, zmm6, zmm29",
         "vpblendmd zmm30 {{k1}}, zmm7, zmm30",
@@ -572,11 +1219,24 @@ unsafe fn process_block_avx512(
         "vmovdqu32 [{b}], zmm28",
         "vmovdqu32 [{c}], zmm29",
         "vmovdqu32 [{d}], zmm30",
-        mask = in(reg) mask_bits as u32,
+
         a = in(reg) state_a.0.as_mut_ptr(),
         b = in(reg) state_b.0.as_mut_ptr(),
         c = in(reg) state_c.0.as_mut_ptr(),
         d = in(reg) state_d.0.as_mut_ptr(),
+        m = in(reg) m.as_ptr() as *const u32,
+        k = in(reg) k_ptr,
+        mask = in(reg) mask_bits as u32,
+        // Clobber all ZMM registers used
+        out("zmm0") _, out("zmm1") _, out("zmm2") _, out("zmm3") _,
+        out("zmm4") _, out("zmm5") _, out("zmm6") _, out("zmm7") _,
+        out("zmm8") _, out("zmm9") _, out("zmm10") _, out("zmm11") _,
+        out("zmm12") _, out("zmm13") _, out("zmm14") _, out("zmm15") _,
+        out("zmm16") _, out("zmm17") _, out("zmm18") _, out("zmm19") _,
+        out("zmm20") _, out("zmm21") _, out("zmm22") _, out("zmm23") _,
+        out("zmm24") _, out("zmm25") _, out("zmm26") _, out("zmm27") _,
+        out("zmm28") _, out("zmm29") _, out("zmm30") _,
+        out("k1") _,
         options(nostack),
     );
 }
