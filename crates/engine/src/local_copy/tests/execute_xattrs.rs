@@ -212,7 +212,10 @@ mod xattr_tests {
 
         // Create a large xattr value (4KB)
         let large_value: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
-        xattr::set(&source, "user.large_data", &large_value).expect("set large xattr");
+        if xattr::set(&source, "user.large_data", &large_value).is_err() {
+            eprintln!("filesystem does not support large xattr values, skipping test");
+            return;
+        }
 
         let operands = vec![
             source.into_os_string(),
