@@ -128,11 +128,12 @@ fn build_index(
     block_size: Option<u32>,
     algorithm: SignatureAlgorithm,
 ) -> DeltaSignatureIndex {
+    let digest_len = algorithm.digest_len().min(16) as u8;
     let params = SignatureLayoutParams::new(
         data.len() as u64,
         block_size.and_then(NonZeroU32::new),
         ProtocolVersion::NEWEST,
-        NonZeroU8::new(16).unwrap(),
+        NonZeroU8::new(digest_len).unwrap(),
     );
     let layout = calculate_signature_layout(params).expect("layout");
     let signature = generate_file_signature(data, layout, algorithm).expect("signature");
