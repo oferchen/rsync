@@ -47,6 +47,7 @@ macro_rules! rotl_const {
 /// # Safety
 /// Caller must ensure NEON is available (mandatory on aarch64).
 #[cfg(target_arch = "aarch64")]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     // Find the maximum length to determine block count
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
