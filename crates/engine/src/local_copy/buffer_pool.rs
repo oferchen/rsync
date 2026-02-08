@@ -6,7 +6,7 @@
 //!
 //! # Adaptive Buffer Sizing
 //!
-//! The [`adaptive_buffer_size`] function selects an appropriate I/O buffer size
+//! The `adaptive_buffer_size` function selects an appropriate I/O buffer size
 //! based on the file being transferred. Small files use smaller buffers to reduce
 //! memory overhead, while large files use larger buffers for better throughput.
 //! Use [`BufferPool::acquire_adaptive_from`] to acquire a buffer sized to match
