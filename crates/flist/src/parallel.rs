@@ -9,6 +9,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use logging::info_log;
 use rayon::prelude::*;
 
 use crate::batched_stat::BatchedStatCache;
@@ -45,6 +46,9 @@ pub fn collect_parallel(walker: FileListWalker) -> Result<Vec<FileListEntry>, Fi
     // First, collect all entries sequentially (traversal must be sequential
     // to maintain correct ordering and handle the stack-based approach)
     let entries: Result<Vec<_>, _> = walker.collect();
+    if let Ok(ref list) = entries {
+        info_log!(Flist, 1, "built file list with {} entries", list.len());
+    }
     entries
 }
 
