@@ -27,31 +27,33 @@ const DEFAULT_DAEMON_PORT: u16 = 8873;
 const DEFAULT_RUNS: usize = 5;
 
 /// Public rsync mirrors for remote benchmarking (not kernel.org).
+///
+/// Selected for diverse geography, file profiles, and practical transfer sizes.
 const REMOTE_MIRRORS: &[RemoteMirror] = &[
     RemoteMirror {
-        name: "GNU",
-        url: "rsync://ftp.gnu.org/gnu/coreutils/",
-        description: "GNU coreutils (~50MB)",
+        name: "GNU-hello",
+        url: "rsync://ftp.gnu.org/gnu/hello/",
+        description: "GNU hello — 44 files, ~12MB (US)",
+    },
+    RemoteMirror {
+        name: "GNU-which",
+        url: "rsync://ftp.gnu.org/gnu/which/",
+        description: "GNU which — 15 files, ~1MB (US, connection overhead test)",
     },
     RemoteMirror {
         name: "Apache",
         url: "rsync://rsync.apache.org/apache-dist/httpd/",
-        description: "Apache HTTP Server distribution (~200MB)",
+        description: "Apache HTTPD dist — 55 files, ~35MB (US)",
     },
     RemoteMirror {
-        name: "Ubuntu",
-        url: "rsync://archive.ubuntu.com/ubuntu/pool/main/b/bash/",
-        description: "Ubuntu bash packages (~30MB)",
+        name: "Berkeley",
+        url: "rsync://mirrors.ocf.berkeley.edu/gnu/findutils/",
+        description: "UC Berkeley GNU findutils — 47 files, ~34MB (US West)",
     },
     RemoteMirror {
-        name: "FreeBSD",
-        url: "rsync://ftp.freebsd.org/pub/FreeBSD/README.TXT",
-        description: "FreeBSD README (small file test)",
-    },
-    RemoteMirror {
-        name: "Debian",
-        url: "rsync://ftp.debian.org/debian/doc/",
-        description: "Debian documentation (~100MB)",
+        name: "CTAN",
+        url: "rsync://rsync.dante.ctan.org/CTAN/macros/latex/base/",
+        description: "CTAN LaTeX base — 314 files, ~54MB (Germany)",
     },
 ];
 
