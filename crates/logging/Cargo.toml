@@ -28,3 +28,7 @@ tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+
+[[example]]
+name = "tracing_demo"
+required-features = ["tracing"]
