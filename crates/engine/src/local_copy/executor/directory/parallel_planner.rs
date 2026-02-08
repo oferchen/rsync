@@ -19,6 +19,7 @@
 
 use std::fs;
 use std::io;
+#[cfg(unix)]
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -100,6 +101,7 @@ pub(crate) fn prefetch_entry_metadata(
         .map(|(index, entry)| {
             let entry_type = entry.metadata.file_type();
             let is_symlink = entry_type.is_symlink();
+            #[cfg(unix)]
             let is_dir = entry_type.is_dir();
 
             // Prefetch symlink target metadata if needed

@@ -41,6 +41,7 @@ checksums = { path = "../checksums" }
 
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 
 # libc is needed for O_NOATIME (Linux), clonefile (macOS), posix_fadvise, syncfs
 [target.'cfg(unix)'.dependencies]
