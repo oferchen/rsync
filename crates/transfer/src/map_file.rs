@@ -34,7 +34,9 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::constants::{MAX_MAP_SIZE, align_down};
-use fast_io::{FileReader, MmapReader};
+use fast_io::FileReader;
+#[cfg(unix)]
+use fast_io::MmapReader;
 
 /// Threshold above which memory mapping is preferred over buffered I/O.
 /// Files larger than 1MB benefit from mmap's zero-copy access.
@@ -234,6 +236,7 @@ impl MapStrategy for BufferedMap {
 /// Memory-mapped files can cause undefined behavior if the underlying file
 /// is modified while mapped. This implementation is safe as long as the
 /// basis file is not modified during delta application.
+#[cfg(unix)]
 #[derive(Debug)]
 pub struct MmapStrategy {
     /// The memory-mapped file reader.
@@ -246,6 +249,7 @@ impl MmapStrategy {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or mapped.
+    #[cfg(unix)]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Ok(Self {
             mmap: MmapReader::open(path)?,
@@ -254,11 +258,13 @@ impl MmapStrategy {
 
     /// Returns the underlying memory map as a slice.
     #[must_use]
+    #[cfg(unix)]
     pub fn as_slice(&self) -> &[u8] {
         self.mmap.as_slice()
     }
 }
 
+#[cfg(unix)]
 impl MapStrategy for MmapStrategy {
     fn map_ptr(&mut self, offset: u64, len: usize) -> io::Result<&[u8]> {
         if len == 0 {
@@ -302,6 +308,7 @@ impl MapStrategy for MmapStrategy {
 ///
 /// - **Small files (< 1 MB)**: Buffered I/O avoids mmap setup overhead
 /// - **Large files (>= 1 MB)**: Mmap provides zero-copy access
+#[cfg(unix)]
 #[derive(Debug)]
 pub enum AdaptiveMapStrategy {
     /// Buffered I/O for small files.
@@ -310,6 +317,7 @@ pub enum AdaptiveMapStrategy {
     Mmap(MmapStrategy),
 }
 
+#[cfg(unix)]
 impl AdaptiveMapStrategy {
     /// Opens a file with automatic strategy selection.
     ///
@@ -351,6 +359,7 @@ impl AdaptiveMapStrategy {
     }
 }
 
+#[cfg(unix)]
 impl MapStrategy for AdaptiveMapStrategy {
     fn map_ptr(&mut self, offset: u64, len: usize) -> io::Result<&[u8]> {
         match self {
@@ -412,6 +421,7 @@ impl MapFile<BufferedMap> {
     }
 }
 
+#[cfg(unix)]
 impl MapFile<MmapStrategy> {
     /// Opens a file for mapped access using memory-mapped strategy.
     ///
@@ -425,6 +435,7 @@ impl MapFile<MmapStrategy> {
     }
 }
 
+#[cfg(unix)]
 impl MapFile<AdaptiveMapStrategy> {
     /// Opens a file with automatic strategy selection.
     ///

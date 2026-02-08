@@ -15,7 +15,7 @@ use std::io::{BufWriter, IoSlice, Read, Write};
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tempfile::{NamedTempFile, tempdir};
 
-#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+#[cfg(all(unix, not(all(target_os = "linux", feature = "io_uring"))))]
 use fast_io::MmapReader;
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
@@ -270,7 +270,7 @@ fn bench_io_uring_writes(c: &mut Criterion) {
 // Benchmark: Memory-Mapped I/O vs Standard I/O
 // ============================================================================
 
-#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+#[cfg(all(unix, not(all(target_os = "linux", feature = "io_uring"))))]
 fn bench_mmap_io(c: &mut Criterion) {
     let mut group = c.benchmark_group("mmap_io");
 
@@ -376,12 +376,20 @@ criterion_group!(
     bench_buffered_writes,
 );
 
-#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+#[cfg(all(unix, not(all(target_os = "linux", feature = "io_uring"))))]
 criterion_group!(
     io_optimizations,
     bench_vectored_io,
     bench_adaptive_buffers,
     bench_mmap_io,
+    bench_buffered_writes,
+);
+
+#[cfg(all(not(unix), not(all(target_os = "linux", feature = "io_uring"))))]
+criterion_group!(
+    io_optimizations,
+    bench_vectored_io,
+    bench_adaptive_buffers,
     bench_buffered_writes,
 );
 

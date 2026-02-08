@@ -20,17 +20,19 @@ thiserror = "2.0"
 # Cached sorting with Schwartzian transform
 permutation = "0.4"
 
-# Memory-mapped I/O (always compiled; runtime fallback to buffered I/O)
+[target.'cfg(unix)'.dependencies]
+# Memory-mapped I/O (unix-only; runtime fallback to buffered I/O)
 memmap2 = "0.9"
-
-# Optional: io_uring support (Linux 5.6+)
-io-uring = { version = "0.7", optional = true }
 
 # libc is used for copy_file_range syscall on Linux (always compiled, runtime detection)
 libc = "0.2"
 
 # rustix is used for statx syscall on Linux (always compiled, runtime detection)
 rustix = { version = "0.38", features = ["fs"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Optional: io_uring support (Linux 5.6+)
+io-uring = { version = "0.7", optional = true }
 
 [features]
 default = []
