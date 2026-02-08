@@ -11,5 +11,7 @@ status-level = "fail"
 final-status-level = "fail"
 failure-output = "immediate-final"
 success-output = "never"
+# Per-test timeout: fail individual tests that hang rather than hitting CI job timeout.
+slow-timeout = { period = "120s", terminate-after = 3 }
 # Generate JUnit XML for CI dashboards (optional, not currently used)
 # junit.path = "junit.xml"

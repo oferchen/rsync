@@ -7,6 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use logging::{debug_log, info_log};
+
 use crate::local_copy::{CopyContext, LocalCopyAction, LocalCopyError, LocalCopyRecord};
 
 /// Deletes entries in `destination` that are not in `source_entries`.
@@ -76,6 +78,12 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
         })?;
 
         if !context.allows_deletion(entry_relative.as_path(), file_type.is_dir()) {
+            debug_log!(
+                Filter,
+                2,
+                "filter protected {} from deletion",
+                entry_relative.display()
+            );
             continue;
         }
 
@@ -101,6 +109,11 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
         }
 
         context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
+        if file_type.is_dir() {
+            info_log!(Del, 1, "deleting directory {}", entry_relative.display());
+        } else {
+            info_log!(Del, 1, "deleting {}", entry_relative.display());
+        }
         remove_extraneous_path(&path, file_type)?;
         context.summary_mut().record_deletion();
         context.record(LocalCopyRecord::new(
@@ -115,6 +128,12 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
     }
 
     if skipped_due_to_limit > 0 {
+        info_log!(
+            Del,
+            1,
+            "max deletions reached, skipping {} remaining",
+            skipped_due_to_limit
+        );
         return Err(LocalCopyError::delete_limit_exceeded(skipped_due_to_limit));
     }
 
@@ -162,6 +181,7 @@ pub(crate) fn remove_source_entry_if_requested(
 
     match fs::remove_file(source) {
         Ok(()) => {
+            info_log!(Remove, 1, "removing source {}", source.display());
             context.summary_mut().record_source_removed();
             if let Some(path) = record_path {
                 context.record(LocalCopyRecord::new(
