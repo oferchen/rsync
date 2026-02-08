@@ -29,7 +29,6 @@ pub(crate) struct LogFileConfig {
 pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) config: ClientConfig,
     pub(crate) msgs_to_stderr: bool,
-    #[allow(dead_code)]
     pub(crate) stderr_mode: StderrMode,
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) human_readable_mode: HumanReadableMode,
@@ -56,7 +55,7 @@ where
     let TransferExecutionInputs {
         config,
         msgs_to_stderr,
-        stderr_mode: _,
+        stderr_mode,
         progress_mode: requested_progress_mode,
         human_readable_mode,
         itemize_changes,
@@ -68,6 +67,11 @@ where
         name_overridden,
         log_file,
     } = inputs;
+
+    // `StderrMode::All` is handled by the caller setting `msgs_to_stderr = true`.
+    // `Client` mode applies to remote transfers only (server-side message routing);
+    // for local transfers it behaves identically to `Errors`.
+    let _ = stderr_mode;
 
     let mut live_progress = requested_progress_mode.map(|mode| {
         with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {

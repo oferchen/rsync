@@ -203,14 +203,19 @@ where
     let human_readable_setting = human_readable;
     let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Disabled);
     let human_readable_enabled = human_readable_mode.is_enabled();
-    let msgs_to_stderr_enabled = msgs_to_stderr_option.unwrap_or(false);
-
     // Parse stderr mode (defaults to Errors if unspecified or invalid)
     let stderr_mode_setting = stderr_mode
         .as_ref()
         .and_then(|s| s.to_str())
         .and_then(StderrMode::from_str)
         .unwrap_or_default();
+
+    // --stderr=all routes all output to stderr (supersedes --msgs2stderr).
+    // --stderr=errors/client keeps the --msgs2stderr flag behaviour.
+    let msgs_to_stderr_enabled = match stderr_mode_setting {
+        StderrMode::All => true,
+        StderrMode::Errors | StderrMode::Client => msgs_to_stderr_option.unwrap_or(false),
+    };
 
     // Initialize verbosity system from -v level (--info/--debug flags applied later in derive_settings)
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
