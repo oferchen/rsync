@@ -19,13 +19,10 @@ pub enum Backend {
     /// SSE2 with 4 parallel lanes (baseline x86_64).
     Sse2,
     /// ARM NEON with 4 parallel lanes.
-    #[allow(dead_code)]
     Neon,
     /// WebAssembly SIMD with 4 parallel lanes.
-    #[allow(dead_code)]
     Wasm,
     /// Scalar fallback (1 lane).
-    #[allow(dead_code)]
     Scalar,
 }
 
@@ -73,42 +70,111 @@ impl Dispatcher {
         Self { backend }
     }
 
+    /// Dual-path feature detection: all variants are compiled on all platforms.
+    /// On non-matching architectures the detection returns false, so the variant
+    /// is never selected at runtime but the code path is still compiled.
     fn detect_backend() -> Backend {
+        if Self::has_avx512() {
+            return Backend::Avx512;
+        }
+        if Self::has_avx2() {
+            return Backend::Avx2;
+        }
+        if Self::has_sse41() {
+            return Backend::Sse41;
+        }
+        if Self::has_ssse3() {
+            return Backend::Ssse3;
+        }
+        if Self::has_sse2() {
+            return Backend::Sse2;
+        }
+        if Self::has_neon() {
+            return Backend::Neon;
+        }
+        if Self::has_wasm_simd() {
+            return Backend::Wasm;
+        }
+        Backend::Scalar
+    }
+
+    fn has_avx512() -> bool {
         #[cfg(target_arch = "x86_64")]
         {
-            if is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") {
-                return Backend::Avx512;
-            }
-            if is_x86_feature_detected!("avx2") {
-                return Backend::Avx2;
-            }
-            if is_x86_feature_detected!("sse4.1") {
-                return Backend::Sse41;
-            }
-            if is_x86_feature_detected!("ssse3") {
-                return Backend::Ssse3;
-            }
-            // SSE2 is baseline for x86_64, always available
-            Backend::Sse2
+            is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw")
         }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
 
+    fn has_avx2() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            is_x86_feature_detected!("avx2")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    fn has_sse41() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            is_x86_feature_detected!("sse4.1")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    fn has_ssse3() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            is_x86_feature_detected!("ssse3")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    fn has_sse2() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SSE2 is baseline for x86_64, always available
+            true
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    fn has_neon() -> bool {
         #[cfg(target_arch = "aarch64")]
         {
             // NEON is mandatory on aarch64
-            return Backend::Neon;
+            true
         }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            false
+        }
+    }
 
+    fn has_wasm_simd() -> bool {
         #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
         {
-            return Backend::Wasm;
+            true
         }
-
-        #[cfg(not(any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            all(target_arch = "wasm32", target_feature = "simd128")
-        )))]
-        Backend::Scalar
+        #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+        {
+            false
+        }
     }
 
     /// Get the selected backend.
@@ -118,29 +184,91 @@ impl Dispatcher {
     }
 
     /// Compute MD5 digests for multiple inputs.
+    ///
+    /// All match arms compile on all platforms. On non-matching architectures
+    /// the SIMD call is replaced with the scalar fallback.
     pub fn digest_batch<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         if inputs.is_empty() {
             return Vec::new();
         }
 
         match self.backend {
-            #[cfg(target_arch = "x86_64")]
-            Backend::Avx512 => self.digest_batch_avx512(inputs),
-            #[cfg(target_arch = "x86_64")]
-            Backend::Avx2 => self.digest_batch_avx2(inputs),
-            #[cfg(target_arch = "x86_64")]
-            Backend::Sse41 => self.digest_batch_sse41(inputs),
-            #[cfg(target_arch = "x86_64")]
-            Backend::Ssse3 => self.digest_batch_ssse3(inputs),
-            #[cfg(target_arch = "x86_64")]
-            Backend::Sse2 => self.digest_batch_sse2(inputs),
-            #[cfg(target_arch = "aarch64")]
-            Backend::Neon => self.digest_batch_neon(inputs),
-            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-            Backend::Wasm => self.digest_batch_wasm(inputs),
-            // Scalar fallback
-            _ => inputs.iter().map(|i| scalar::digest(i.as_ref())).collect(),
+            Backend::Avx512 => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    self.digest_batch_avx512(inputs)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Avx2 => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    self.digest_batch_avx2(inputs)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Sse41 => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    self.digest_batch_sse41(inputs)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Ssse3 => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    self.digest_batch_ssse3(inputs)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Sse2 => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    self.digest_batch_sse2(inputs)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Neon => {
+                #[cfg(target_arch = "aarch64")]
+                {
+                    self.digest_batch_neon(inputs)
+                }
+                #[cfg(not(target_arch = "aarch64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Wasm => {
+                #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                {
+                    self.digest_batch_wasm(inputs)
+                }
+                #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Scalar => Self::digest_batch_scalar(inputs),
         }
+    }
+
+    fn digest_batch_scalar<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
+        inputs.iter().map(|i| scalar::digest(i.as_ref())).collect()
     }
 
     /// AVX-512 batched digest implementation.
