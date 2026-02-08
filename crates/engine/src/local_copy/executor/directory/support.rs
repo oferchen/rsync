@@ -519,12 +519,12 @@ mod tests {
 
         let result = super::read_directory_entries_sorted_parallel(temp.path());
         assert!(result.is_ok());
-        let entries = result.unwrap();
+        let _entries = result.unwrap();
 
         // Verify symlinks are included with correct metadata (symlink_metadata, not target)
         #[cfg(unix)]
         {
-            let symlink_entries: Vec<_> = entries
+            let symlink_entries: Vec<_> = _entries
                 .iter()
                 .filter(|e| e.file_name.to_string_lossy().starts_with("link_"))
                 .collect();

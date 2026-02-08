@@ -636,8 +636,6 @@ fn omit_dir_times_with_delete_flag() {
 
 #[test]
 fn omit_dir_times_in_report_mode() {
-    use filetime::{FileTime, set_file_mtime};
-
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
@@ -646,6 +644,7 @@ fn omit_dir_times_in_report_mode() {
 
     #[cfg(unix)]
     {
+        use filetime::{FileTime, set_file_mtime};
         let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
         set_file_mtime(&nested, dir_mtime).expect("set nested mtime");
         set_file_mtime(&source_root, dir_mtime).expect("set root mtime");
