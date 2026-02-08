@@ -357,6 +357,7 @@ fn timespec_from_option(time: Option<SystemTime>) -> libc::timespec {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or(std::time::Duration::from_secs(0));
             libc::timespec {
+                #[allow(deprecated)]
                 tv_sec: duration.as_secs() as libc::time_t,
                 tv_nsec: duration.subsec_nanos() as libc::c_long,
             }
