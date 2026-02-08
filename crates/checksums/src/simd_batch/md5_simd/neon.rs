@@ -160,6 +160,7 @@ macro_rules! rotl_const {
 /// - Aligned memory access via `vst1q_u32`
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
