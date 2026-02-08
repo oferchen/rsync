@@ -8,6 +8,7 @@ name: Release-cross
 #   2. Builds release artifacts for all platforms (parallelized)
 #   3. Uploads artifacts to GitHub Release
 #   4. Updates Homebrew formula and creates PR
+#   5. Builds and pushes multi-arch Docker image to GHCR
 #
 # Trigger: Push a tag matching vX.Y.Z (e.g., v0.5.1)
 # Prerequisites: Cargo.toml version MUST match the tag (without 'v' prefix)
@@ -31,6 +32,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -847,3 +849,80 @@ jobs:
             --head "${BRANCH}"
         env:
           GH_TOKEN: ${{ secrets.OC_RSYNC_BREW_TOKEN }}
+
+  # ===========================================================================
+  # Docker Multi-arch Image
+  # ===========================================================================
+  # Uses pre-built musl static binaries from the linux-musl job to create
+  # multi-platform Docker images (amd64 + arm64) without QEMU compilation.
+  # Pushes to ghcr.io/<owner>/oc-rsync with version and latest tags.
+  # ===========================================================================
+  docker:
+    name: build and push Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - validate-version
+      - linux-musl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download stable musl artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-linux-musl-*-stable
+          path: dist-musl
+          merge-multiple: true
+
+      - name: Prepare binaries for multi-arch build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate-version.outputs.version }}"
+
+          # Extract binaries into buildx-expected directory structure
+          mkdir -p bin/amd64 bin/arm64
+
+          tar -xzf dist-musl/oc-rsync-${VERSION}-linux-x86_64-musl.tar.gz \
+            -C bin/amd64 --strip-components=1
+          tar -xzf dist-musl/oc-rsync-${VERSION}-linux-aarch64-musl.tar.gz \
+            -C bin/arm64 --strip-components=1
+
+          chmod +x bin/amd64/oc-rsync bin/arm64/oc-rsync
+
+          echo "=== Prepared binaries ==="
+          file bin/amd64/oc-rsync
+          file bin/arm64/oc-rsync
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/oc-rsync:${{ needs.validate-version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/oc-rsync:latest
+          labels: |
+            org.opencontainers.image.title=oc-rsync
+            org.opencontainers.image.description=Pure-Rust rsync implementation
+            org.opencontainers.image.version=${{ needs.validate-version.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
