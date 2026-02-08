@@ -433,7 +433,11 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(results[0].error.is_some());
-        assert!(results[0].error.as_ref().unwrap().contains("No such file"));
+        let err = results[0].error.as_ref().unwrap();
+        assert!(
+            err.contains("No such file") || err.contains("cannot find the file"),
+            "unexpected error message: {err}"
+        );
     }
 
     #[test]
@@ -455,7 +459,11 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(results[0].error.is_some());
-        assert!(results[0].error.as_ref().unwrap().contains("No such file"));
+        let err = results[0].error.as_ref().unwrap();
+        assert!(
+            err.contains("No such file") || err.contains("cannot find the file"),
+            "unexpected error message: {err}"
+        );
     }
 
     #[test]
