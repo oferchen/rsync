@@ -90,7 +90,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "apple-fs"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "libc",
  "nix",
@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "bandwidth"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "memchr",
  "proptest",
@@ -149,7 +149,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "batch"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "protocol",
  "tempfile",
@@ -158,7 +158,7 @@ dependencies = [
 
 [[package]]
 name = "bin"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "assert_cmd",
  "checksums",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "branding"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -304,7 +304,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "checksums"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "criterion",
  "digest",
@@ -392,7 +392,7 @@ checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "cli"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "apple-fs",
  "assert_cmd",
@@ -439,7 +439,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
 name = "compress"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "flate2",
  "lz4_flex",
@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "core"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "bandwidth",
  "base64",
@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "daemon"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "bandwidth",
  "base64",
@@ -699,7 +699,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "embedding"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "cli",
  "core",
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "engine"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "apple-fs",
  "bandwidth",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "fast_io"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "criterion",
  "io-uring",
@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "filters"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "globset",
  "logging",
@@ -840,7 +840,7 @@ dependencies = [
 
 [[package]]
 name = "flist"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "libc",
  "logging",
@@ -1227,7 +1227,7 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "logging"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "logging-sink"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "core",
 ]
@@ -1262,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "matching"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "checksums",
  "criterion",
@@ -1328,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "metadata"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "apple-fs",
  "exacl",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "bytes",
  "compress",
@@ -1823,7 +1823,7 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
 name = "rsync_io"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "logging",
  "memchr",
@@ -2074,7 +2074,7 @@ dependencies = [
 
 [[package]]
 name = "signature"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "checksums",
  "protocol",
@@ -2411,7 +2411,7 @@ dependencies = [
 
 [[package]]
 name = "transfer"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "checksums",
  "compress",
@@ -2631,7 +2631,7 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows-gnu-eh"
-version = "0.5.3"
+version = "0.5.4"
 
 [[package]]
 name = "windows-link"
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "anstyle",
  "anyhow",
