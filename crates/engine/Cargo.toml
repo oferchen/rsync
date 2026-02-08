@@ -111,3 +111,7 @@ harness = false
 [[bench]]
 name = "parallel_checksum"
 harness = false
+
+[[bench]]
+name = "delta_transfer_benchmark"
+harness = false
