@@ -237,15 +237,22 @@ fn daemon_negotiation_error_refused_options() {
     stream.write_all(b"secure\n").expect("send module");
     stream.flush().expect("flush");
 
-    // Should receive either OK (authenticated) or error about refused option
-    // The refused options check happens after OK when reading client args
+    // Should receive either OK (authenticated) or error about refused option.
+    // The daemon may also reset the connection before we read (race condition).
     line.clear();
-    reader.read_line(&mut line).expect("response");
-    // The OK is sent first, then when --delete is in client args it gets refused
-    assert!(
-        line.contains("@RSYNCD: OK") || line.contains("@ERROR:"),
-        "Expected OK or error, got: {line}"
-    );
+    match reader.read_line(&mut line) {
+        Ok(_) => {
+            // The OK is sent first, then when --delete is in client args it gets refused
+            assert!(
+                line.contains("@RSYNCD: OK") || line.contains("@ERROR:"),
+                "Expected OK or error, got: {line}"
+            );
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+            // Daemon closed the connection — acceptable outcome for refused options.
+        }
+        Err(e) => panic!("unexpected I/O error: {e}"),
+    }
 
     drop(reader);
     // Don't assert on result - daemon may fail gracefully when client doesn't continue

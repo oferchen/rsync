@@ -11,7 +11,6 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::tempdir;
@@ -788,6 +787,8 @@ fn guard_staging_path_is_accessible_and_valid() {
 #[cfg(unix)]
 #[test]
 fn cross_device_rename_falls_back_to_copy() {
+    use std::path::PathBuf;
+
     // This test attempts to trigger the CrossesDevices error path by using
     // /tmp as temp dir (often tmpfs) and user space as destination (often ext4/btrfs)
     let temp = tempdir().expect("tempdir");
