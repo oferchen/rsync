@@ -697,6 +697,11 @@ fn backup_only_when_content_differs() {
     let existing_same = dest_root.join("same.txt");
     fs::write(&existing_same, b"identical").expect("write dest same");
 
+    // Set identical mtime so rsync's size+mtime check identifies them as unchanged
+    let mtime = FileTime::from_unix_time(1_000_000, 0);
+    set_file_mtime(&same_file, mtime).expect("set source mtime");
+    set_file_mtime(&existing_same, mtime).expect("set dest mtime");
+
     let operands = vec![
         ctx.source.into_os_string(),
         ctx.dest.clone().into_os_string(),
