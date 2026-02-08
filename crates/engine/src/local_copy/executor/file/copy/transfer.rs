@@ -3,6 +3,8 @@ use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use logging::debug_log;
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::os::unix::fs::OpenOptionsExt;
 
@@ -156,6 +158,12 @@ pub(super) fn execute_transfer(
         }
 
         if skip {
+            debug_log!(
+                Deltasum,
+                2,
+                "skipping {}: already up-to-date",
+                record_path.display()
+            );
             apply_file_metadata_with_options(destination, metadata, &metadata_options)
                 .map_err(crate::local_copy::map_metadata_error)?;
             #[cfg(all(unix, feature = "xattr"))]
@@ -272,7 +280,16 @@ pub(super) fn execute_transfer(
         return Ok(());
     }
     let append_offset = match append_mode {
-        AppendMode::Append(offset) => offset,
+        AppendMode::Append(offset) => {
+            debug_log!(
+                Send,
+                2,
+                "appending to {}: resuming at offset {}",
+                record_path.display(),
+                offset
+            );
+            offset
+        }
         AppendMode::Disabled | AppendMode::Skip => 0,
     };
     reader
@@ -343,6 +360,13 @@ pub(super) fn execute_transfer(
             context.temp_directory_path(),
         )?;
         staging_path = Some(new_guard.staging_path().to_path_buf());
+        debug_log!(
+            Io,
+            3,
+            "created temp file {} for {}",
+            new_guard.staging_path().display(),
+            record_path.display()
+        );
         guard = Some(new_guard);
         file
     };
@@ -383,6 +407,18 @@ pub(super) fn execute_transfer(
     };
 
     let start = Instant::now();
+    debug_log!(
+        Send,
+        1,
+        "sending {}: {} bytes{}",
+        record_path.display(),
+        file_size,
+        if delta_signature.is_some() {
+            " (delta)"
+        } else {
+            ""
+        }
+    );
 
     let copy_result = context.copy_file_contents(
         &mut reader,
@@ -454,6 +490,14 @@ pub(super) fn execute_transfer(
     context.record_hard_link(metadata, hard_link_path);
 
     let elapsed = start.elapsed();
+    debug_log!(
+        Deltasum,
+        2,
+        "transferred {}: {} literal bytes in {:.3}s",
+        record_path.display(),
+        outcome.literal_bytes(),
+        elapsed.as_secs_f64()
+    );
     let compressed_bytes = outcome.compressed_bytes();
     context
         .summary_mut()
@@ -535,6 +579,12 @@ pub(super) fn execute_transfer(
             context.register_deferred_update(update);
         } else {
             let destination_path = guard.final_path().to_path_buf();
+            debug_log!(
+                Io,
+                3,
+                "renaming temp file to {}",
+                destination_path.display()
+            );
             guard.commit()?;
             context.apply_metadata_and_finalize(
                 destination_path.as_path(),
