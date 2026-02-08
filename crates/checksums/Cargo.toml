@@ -34,7 +34,6 @@ openssl-vendored = ["openssl", "openssl/vendored"]
 
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
-md-5 = { version = "0.10", default-features = false, features = ["std", "asm"] }
 digest = { version = "0.10", default-features = false, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
@@ -45,6 +44,13 @@ thiserror = "2.0"
 openssl = { version = "0.10", optional = true }
 rayon = { version = "1.10" }
 logging = { path = "../logging" }
+
+# md5-asm requires NASM on Windows and fails under MSVC; enable asm only on unix
+[target.'cfg(unix)'.dependencies]
+md-5 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+
+[target.'cfg(not(unix))'.dependencies]
+md-5 = { version = "0.10", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1.4"
