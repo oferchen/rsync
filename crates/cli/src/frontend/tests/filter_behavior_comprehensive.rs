@@ -1000,6 +1000,7 @@ fn transfer_with_mixed_f_and_filter_preserves_order() {
 // Integration: -f with cluster -avf
 // =============================================================================
 
+#[cfg(unix)]
 #[test]
 fn transfer_with_cluster_avf_excludes_files() {
     use tempfile::tempdir;
