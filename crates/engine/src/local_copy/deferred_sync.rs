@@ -297,6 +297,7 @@ fn sync_filesystem(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 fn sync_filesystem(_path: &Path) -> io::Result<()> {
     // Not available on this platform
     Err(io::Error::new(
