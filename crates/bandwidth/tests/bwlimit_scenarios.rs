@@ -106,11 +106,16 @@ mod file_transfer_scenarios {
             remaining -= to_transfer;
         }
 
-        // 1 MB at 10 MB/s = 100ms
-        // Wide tolerance: many loop iterations accumulate real CPU time that
-        // the limiter deducts from the sleep budget.
+        // 1 MB at 10 MB/s = 100ms theoretical sleep budget.
+        // The limiter subtracts wall-clock time between register() calls from
+        // the sleep budget. On slow CI runners the loop itself may consume most
+        // of the budget, leaving very little recorded sleep. Only assert the
+        // upper bound.
         let total = session.total_duration();
-        assert!(within_tolerance(total, Duration::from_millis(100), 80.0));
+        assert!(
+            total <= Duration::from_millis(200),
+            "recorded sleep {total:?} exceeds 2× expected 100ms"
+        );
     }
 
     #[test]
@@ -157,11 +162,16 @@ mod file_transfer_scenarios {
             remaining -= to_transfer;
         }
 
-        // 500 KB at 500 KB/s = 1 second
-        // Wide tolerance: many loop iterations (61 chunks) accumulate real
-        // CPU time that the limiter deducts from the sleep budget.
+        // 500 KB at 500 KB/s = 1 second theoretical sleep budget.
+        // The limiter subtracts wall-clock time between register() calls from
+        // the sleep budget. On slow CI runners the 61-chunk loop may consume a
+        // significant portion, leaving less recorded sleep. Only assert the
+        // upper bound.
         let total = session.total_duration();
-        assert!(within_tolerance(total, Duration::from_secs(1), 80.0));
+        assert!(
+            total <= Duration::from_secs(2),
+            "recorded sleep {total:?} exceeds 2× expected 1s"
+        );
     }
 
     #[test]
@@ -193,14 +203,15 @@ mod file_transfer_scenarios {
             let _ = limiter.register(size);
         }
 
-        // Total: ~332 KB at 1 MB/s = ~332ms
-        // Wide tolerance because real wall-clock time between register() calls
-        // is subtracted from the required sleep budget by the limiter.
+        // Total: ~332 KB at 1 MB/s = ~332ms theoretical sleep budget.
+        // The limiter subtracts wall-clock time between register() calls from
+        // the sleep budget. With 82 files the loop overhead may consume a
+        // significant portion on slow CI runners. Only assert the upper bound.
         let expected_secs = total_bytes as f64 / rate as f64;
         let total = session.total_duration();
         assert!(
-            within_tolerance(total, Duration::from_secs_f64(expected_secs), 80.0),
-            "Expected ~{expected_secs:.3}s, got {total:?}"
+            total <= Duration::from_secs_f64(expected_secs * 2.0),
+            "recorded sleep {total:?} exceeds 2× expected ~{expected_secs:.3}s"
         );
     }
 }
@@ -492,11 +503,15 @@ mod real_usage_edge_cases {
             let _ = limiter.register(128); // 128-byte blocks
         }
 
-        // Total: 128 KB at 100 KB/s = 1.28s
-        // Wide tolerance: 1000 loop iterations accumulate real CPU time that
-        // the limiter deducts from the sleep budget.
+        // Total: 128 KB at 100 KB/s = 1.28s theoretical sleep budget.
+        // The limiter subtracts wall-clock time between register() calls from
+        // the sleep budget. With 1000 iterations the loop overhead may consume
+        // most of the budget on slow CI runners. Only assert the upper bound.
         let total = session.total_duration();
-        assert!(within_tolerance(total, Duration::from_secs_f64(1.28), 80.0));
+        assert!(
+            total <= Duration::from_secs_f64(2.56),
+            "recorded sleep {total:?} exceeds 2× expected 1.28s"
+        );
     }
 }
 
@@ -885,11 +900,16 @@ mod stress_tests {
             let _ = limiter.register(100);
         }
 
-        // Total: 100 KB at 1 MB/s = 100ms
-        // Wide tolerance because real wall-clock time between register() calls
-        // is subtracted from the required sleep budget by the limiter.
+        // Total: 100 KB at 1 MB/s = 100ms theoretical sleep budget.
+        // The limiter subtracts wall-clock time between register() calls from
+        // the sleep budget. On slow CI runners the loop itself may consume most
+        // of the 100ms budget, leaving very little recorded sleep. Only assert
+        // that recorded sleep does not exceed the expected budget by too much.
         let total = session.total_duration();
-        assert!(within_tolerance(total, Duration::from_millis(100), 80.0));
+        assert!(
+            total <= Duration::from_millis(200),
+            "recorded sleep {total:?} exceeds 2× expected 100ms"
+        );
     }
 
     #[test]

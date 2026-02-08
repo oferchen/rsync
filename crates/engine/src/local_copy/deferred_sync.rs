@@ -268,7 +268,11 @@ impl Default for DeferredSync {
 /// Syncs a single file to disk.
 #[allow(dead_code)] // Used by flush methods which are tested
 fn sync_file(path: &Path) -> io::Result<()> {
-    let file = File::open(path)?;
+    // On Windows, FlushFileBuffers requires write access; read-only won't work.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
     file.sync_all()
 }
 
