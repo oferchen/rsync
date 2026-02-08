@@ -19,12 +19,13 @@ fn main() {
     // For musl targets, use static linking
     // libacl depends on libattr, so link both (attr must come after acl)
     if is_musl_target() {
-        // Add search path for cross-compiled musl sysroot
         if let Ok(target) = env::var("TARGET") {
             // Cross toolchain stores libs in /usr/local/{arch}-linux-musl/lib/
             let arch = target.split('-').next().unwrap_or("x86_64");
             println!("cargo:rustc-link-search=native=/usr/local/{arch}-linux-musl/lib");
         }
+        // Native musl (e.g. Alpine) stores libs in /usr/lib
+        println!("cargo:rustc-link-search=native=/usr/lib");
         println!("cargo:rustc-link-lib=static=acl");
         println!("cargo:rustc-link-lib=static=attr");
         return;
