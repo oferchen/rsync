@@ -321,8 +321,10 @@ fn set_file_times(
     // For setting times, we need to use platform-specific APIs
     #[cfg(unix)]
     {
+        use std::os::unix::ffi::OsStrExt;
+
         // We need to use libc for utimensat
-        let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
 
         let times = [timespec_from_option(atime), timespec_from_option(mtime)];
@@ -339,6 +341,9 @@ fn set_file_times(
 
     #[cfg(not(unix))]
     {
+        // Suppress unused variable warnings
+        let _ = (path, atime, mtime);
+
         // On non-Unix platforms, we can't easily set times individually
         // Return unsupported error
         Err(io::Error::new(
