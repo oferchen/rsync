@@ -1,0 +1,6 @@
+target/
+.github/
+.cargo/
+dist/
+*.md
+!LICENSE
