@@ -54,9 +54,9 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use exacl::{getfacl, setfacl};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use exacl::AclOption;
+use exacl::{getfacl, setfacl};
 
 use crate::MetadataError;
 
