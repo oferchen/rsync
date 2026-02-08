@@ -26,12 +26,18 @@
 
 pub mod buffer_pool;
 pub mod cached_sort;
-pub mod copy_file_range;
-pub mod mmap_reader;
 pub mod parallel;
-pub mod sendfile;
-pub mod syscall_batch;
 pub mod traits;
+
+// Unix-only modules that depend on unix-specific APIs
+#[cfg(unix)]
+pub mod copy_file_range;
+#[cfg(unix)]
+pub mod mmap_reader;
+#[cfg(unix)]
+pub mod sendfile;
+#[cfg(unix)]
+pub mod syscall_batch;
 
 /// io_uring-based async file I/O for Linux 5.6+.
 ///
@@ -43,9 +49,11 @@ pub mod io_uring;
 
 pub use buffer_pool::{BufferGuard, BufferPool};
 pub use cached_sort::{CachedSortKey, cached_sort_by};
-pub use mmap_reader::MmapReader;
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use traits::{FileReader, FileWriter};
+
+#[cfg(unix)]
+pub use mmap_reader::MmapReader;
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 pub use io_uring::{
