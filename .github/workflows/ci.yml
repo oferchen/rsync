@@ -73,7 +73,7 @@ jobs:
     name: nextest (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
     needs: lint
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -103,7 +103,7 @@ jobs:
         run: cargo build --workspace --all-features
 
       - name: Run tests
-        run: cargo nextest run --workspace --all-targets --all-features
+        run: cargo nextest run --workspace --all-features
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

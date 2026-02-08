@@ -631,13 +631,13 @@ fn list_only_shows_multiple_file_types_in_single_listing() {
         )
         .expect("dry run succeeds");
 
-        assert!(records.iter().any(|r| {
+        assert!(collector.records.iter().any(|r| {
             r.metadata()
                 .map(|m| m.kind() == LocalCopyFileKind::File)
                 .unwrap_or(false)
         }));
 
-        assert!(records.iter().any(|r| {
+        assert!(collector.records.iter().any(|r| {
             r.metadata()
                 .map(|m| m.kind() == LocalCopyFileKind::Directory)
                 .unwrap_or(false)

@@ -7,6 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use logging::debug_log;
+
 use crate::local_copy::{
     CopyContext, LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata,
     LocalCopyRecord,
@@ -50,6 +52,13 @@ pub(crate) fn copy_file(
                 .unwrap_or_default()
         });
     let file_size = metadata.len();
+    debug_log!(
+        Send,
+        3,
+        "copy_file {} ({} bytes)",
+        record_path.display(),
+        file_size
+    );
     context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
 
