@@ -202,14 +202,12 @@ pub fn run_scenario(
         ))
     })?;
 
-    // Build the command arguments
+    // Build the command arguments, rewriting relative paths to absolute
     let mut cmd_args = scenario.args.clone();
 
-    // Replace "rsync" with actual binary and "dest/" with actual dest path
+    // Rewrite dest/ references to point to the actual dest directory
     for arg in &mut cmd_args {
-        if arg == "rsync" || arg.starts_with("rsync") {
-            *arg = rsync_binary.to_string_lossy().to_string();
-        } else if arg == "dest/" || arg.ends_with("dest/") {
+        if arg == "dest/" || arg.ends_with("dest/") {
             *arg = format!("{}/", dest_dir.display());
         } else if arg.starts_with("dest/") {
             let suffix = arg.strip_prefix("dest/").unwrap();
@@ -239,12 +237,16 @@ pub fn run_scenario(
     }
 
     if options.verbose {
-        eprintln!("[runner] Executing: {:?}", cmd_args);
+        eprintln!(
+            "[runner] Executing: {} {:?}",
+            rsync_binary.display(),
+            cmd_args
+        );
     }
 
-    // Execute the command
-    let output = Command::new(&cmd_args[0])
-        .args(&cmd_args[1..])
+    // Execute the command with the rsync binary as the program
+    let output = Command::new(rsync_binary)
+        .args(&cmd_args)
         .current_dir(work_dir)
         .output()
         .map_err(|e| {
