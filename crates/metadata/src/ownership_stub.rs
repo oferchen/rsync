@@ -4,6 +4,8 @@
 //! the raw numeric value unchanged.  This allows callers to use the
 //! same API unconditionally without cfg-gating their own code.
 
+#![allow(dead_code)]
+
 /// Convert a raw UID to the platform owner type.
 ///
 /// On non-Unix platforms, this is an identity function returning the raw u32.
