@@ -21,6 +21,7 @@
 
 use std::fs::Metadata;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -42,6 +43,11 @@ pub struct FakeSuperStat {
 
 impl FakeSuperStat {
     /// Creates a new `FakeSuperStat` from file metadata.
+    ///
+    /// On Unix, extracts mode, uid, gid, and device numbers from the metadata.
+    /// On non-Unix, returns default values (regular file owned by uid/gid 0)
+    /// since Windows metadata lacks POSIX ownership fields.
+    #[cfg(unix)]
     pub fn from_metadata(metadata: &Metadata) -> Self {
         let mode = metadata.mode();
         let uid = metadata.uid();
@@ -60,6 +66,20 @@ impl FakeSuperStat {
             uid,
             gid,
             rdev,
+        }
+    }
+
+    /// Creates a new `FakeSuperStat` from file metadata (non-Unix fallback).
+    ///
+    /// Returns default values since non-Unix platforms lack POSIX
+    /// ownership and mode semantics.
+    #[cfg(not(unix))]
+    pub fn from_metadata(_metadata: &Metadata) -> Self {
+        Self {
+            mode: 0o100644,
+            uid: 0,
+            gid: 0,
+            rdev: None,
         }
     }
 
