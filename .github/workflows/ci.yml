@@ -233,20 +233,13 @@ jobs:
           retention-days: 7
 
   # ===========================================================================
-  # Alpine musl Test - Static musl binary build and test
+  # Linux musl Test - Static musl binary build and test on Ubuntu
   # ===========================================================================
-  alpine-musl:
-    name: Alpine musl (${{ matrix.arch }})
+  linux-musl:
+    name: Linux musl (stable)
     runs-on: ubuntu-latest
     needs: lint
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86_64]
-        include:
-          - arch: x86_64
-            target: x86_64-unknown-linux-musl
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -255,37 +248,33 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-musl
 
-      - name: Install cross
-        uses: taiki-e/install-action@d4422f254e595ee762a758628fe4f16ce050fa2e # v2
-        with:
-          tool: cross
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
-          shared-key: ci-musl-${{ matrix.arch }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-musl-x86_64-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build static musl binary
-        run: |
-          set -euo pipefail
-          printf 'Building %s static musl binary...\n' "${{ matrix.target }}"
-          cross build --workspace --target ${{ matrix.target }}
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@d4422f254e595ee762a758628fe4f16ce050fa2e # v2
+        with:
+          tool: cargo-nextest
 
-      - name: Test musl binary
-        run: |
-          set -euo pipefail
-          printf 'Testing %s static musl binary...\n' "${{ matrix.target }}"
-          cross test --workspace --target ${{ matrix.target }}
+      - name: Build
+        run: cargo build --workspace --target x86_64-unknown-linux-musl
+
+      - name: Test
+        run: cargo nextest run --workspace --target x86_64-unknown-linux-musl
 
       - name: Verify static linking
         run: |
           set -euo pipefail
-          BINARY="target/${{ matrix.target }}/debug/oc-rsync"
+          BINARY="target/x86_64-unknown-linux-musl/debug/oc-rsync"
           if [ -f "${BINARY}" ]; then
             file "${BINARY}"
-            # Verify it's statically linked (no dynamic linker reference)
             if ldd "${BINARY}" 2>&1 | grep -q "not a dynamic executable"; then
               printf 'Binary is statically linked\n'
             else
