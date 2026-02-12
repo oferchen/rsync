@@ -67,7 +67,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 - **Composed workspace**
 
-  - 26 crates separate concerns:
+  - 23 crates separate concerns:
     - `cli` for argument parsing and user experience.
     - `core` for shared types, error model, version reporting, and utilities.
     - `protocol` for wire format, tags, negotiation, and error recovery.
@@ -127,7 +127,7 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ **Error handling** - RAII cleanup, error categorization, ENOSPC detection
 
 **Test Coverage**:
-- 21,400+ tests passing (100% pass rate)
+- 21,700+ tests passing (100% pass rate)
 - Comprehensive integration tests for delta transfer
 - Output parity tests verifying --stats, --itemize-changes, --progress, --dry-run match upstream
 - Error scenario tests (cleanup, categorization, edge cases, network interruption)
