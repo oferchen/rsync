@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! UID/GID lookup and mapping utilities.
 //!
 //! This module provides functions for looking up user and group names from
