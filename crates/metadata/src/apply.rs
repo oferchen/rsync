@@ -10,6 +10,7 @@ use crate::error::MetadataError;
 use crate::options::MetadataOptions;
 use filetime::{FileTime, set_file_times, set_symlink_file_times};
 use std::fs;
+#[cfg(unix)]
 use std::io;
 use std::path::Path;
 
@@ -162,6 +163,7 @@ fn set_owner_like(
     {
         // Ownership preservation is a no-op on non-Unix platforms.
         // Windows ACL semantics are different; silently succeed.
+        let _ = destination;
         let _ = metadata;
         let _ = follow_symlinks;
         let _ = options;
