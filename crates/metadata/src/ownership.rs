@@ -1,4 +1,3 @@
-#![cfg(unix)]
 #![allow(unsafe_code)]
 
 //! Raw UID/GID conversion helpers.
