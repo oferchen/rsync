@@ -16,7 +16,9 @@
 //! # Platform Support
 //!
 //! - **Linux**: Uses `statx()` for improved metadata operations in batched path
-//! - **Other platforms**: Batched path uses standard library calls with grouping optimization
+//! - **Other Unix**: Batched path uses standard library calls with grouping optimization
+//! - **Non-Unix (Windows)**: Portable fallbacks — `filetime` crate for timestamps,
+//!   readonly attribute mapping for permissions
 //!
 //! # Performance Characteristics
 //!
