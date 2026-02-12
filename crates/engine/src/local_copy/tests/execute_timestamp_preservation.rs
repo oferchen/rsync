@@ -215,6 +215,8 @@ fn atime_and_mtime_can_differ() {
 // Subsecond Precision Tests
 // ============================================================================
 
+// Windows NTFS truncates nanoseconds to 100ns intervals.
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn subsecond_precision_is_preserved_full_nanoseconds() {
     let temp = tempdir().expect("tempdir");
@@ -246,6 +248,8 @@ fn subsecond_precision_is_preserved_full_nanoseconds() {
     assert_eq!(dest_mtime.nanoseconds(), 123_456_789, "nanoseconds component should match exactly");
 }
 
+// Windows NTFS truncates nanoseconds to 100ns intervals.
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn subsecond_precision_various_values() {
     let temp = tempdir().expect("tempdir");
@@ -293,6 +297,8 @@ fn subsecond_precision_various_values() {
     }
 }
 
+// Windows NTFS truncates nanoseconds to 100ns intervals.
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn subsecond_precision_round_trip() {
     let temp = tempdir().expect("tempdir");
@@ -514,6 +520,8 @@ fn copy_file_when_timestamps_differ() {
     assert_eq!(final_mtime, source_mtime);
 }
 
+// 1ns difference is invisible to Windows NTFS (100ns resolution).
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn nanosecond_difference_triggers_copy() {
     let temp = tempdir().expect("tempdir");
@@ -614,6 +622,8 @@ fn unix_epoch_timestamp_preserved() {
     assert_eq!(dest_mtime, epoch_time, "Unix epoch timestamp should be preserved");
 }
 
+// Windows NTFS truncates nanoseconds to 100ns intervals.
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn far_future_timestamp_preserved() {
     let temp = tempdir().expect("tempdir");
@@ -642,6 +652,8 @@ fn far_future_timestamp_preserved() {
     assert_eq!(dest_mtime, future_time, "far future timestamp should be preserved");
 }
 
+// Windows NTFS truncates nanoseconds to 100ns intervals.
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn year_2038_boundary_timestamp_preserved() {
     let temp = tempdir().expect("tempdir");
@@ -706,7 +718,8 @@ fn empty_file_timestamp_preserved() {
 
     fs::write(&source, b"").expect("write empty source");
 
-    let mtime = FileTime::from_unix_time(1_700_000_000, 111_222_333);
+    // Use 100ns-aligned nanoseconds for Windows NTFS compatibility.
+    let mtime = FileTime::from_unix_time(1_700_000_000, 111_222_300);
     set_file_mtime(&source, mtime).expect("set mtime");
 
     let operands = vec![
