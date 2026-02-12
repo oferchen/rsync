@@ -775,7 +775,15 @@ fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
     assert_eq!(summary.fifos_created(), 1);
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
     use std::os::unix::fs::{symlink, FileTypeExt};
@@ -933,7 +941,15 @@ fn execute_symlink_replaces_existing_fifo() {
     assert_eq!(fs::read_link(&dest).expect("read link"), target);
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_symlink_replaces_existing_socket() {
     use std::os::unix::fs::symlink;
@@ -1556,7 +1572,15 @@ fn execute_without_links_skips_symlink_records_event() {
 
 // ==================== Specials Combined with All Metadata Options ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_fifo_with_archive_options_preserves_all_metadata() {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -1748,7 +1772,15 @@ fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
 
 // ==================== Dry Run with Specials and Symlinks Together ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_dry_run_mixed_specials_and_symlinks_no_side_effects() {
     use std::os::unix::fs::symlink;
