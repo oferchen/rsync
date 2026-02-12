@@ -43,10 +43,10 @@ impl VerbosityConfig {
                 config.info.name = 2;
                 config.info.stats = 1;
                 config.info.symsafe = 1;
-                config.info.backup = 2;
-                config.info.mount = 2;
-                config.info.remove = 2;
-                config.info.skip = 2;
+                config.info.backup = 1;
+                config.info.mount = 1;
+                config.info.remove = 1;
+                config.info.skip = 1;
                 config.debug.bind = 1;
                 config.debug.cmd = 1;
                 config.debug.connect = 1;
@@ -66,10 +66,10 @@ impl VerbosityConfig {
                 config.info.name = 2;
                 config.info.stats = 1;
                 config.info.symsafe = 1;
-                config.info.backup = 2;
-                config.info.mount = 2;
-                config.info.remove = 2;
-                config.info.skip = 2;
+                config.info.backup = 1;
+                config.info.mount = 1;
+                config.info.remove = 1;
+                config.info.skip = 1;
                 config.debug.bind = 1;
                 config.debug.cmd = 1;
                 config.debug.connect = 2;
@@ -87,7 +87,7 @@ impl VerbosityConfig {
                 config.debug.recv = 1;
                 config.debug.send = 1;
                 config.debug.time = 1;
-                config.debug.exit = 2;
+                config.debug.exit = 1;
             }
             4 => {
                 config.info.nonreg = 1;
@@ -98,10 +98,10 @@ impl VerbosityConfig {
                 config.info.name = 2;
                 config.info.stats = 1;
                 config.info.symsafe = 1;
-                config.info.backup = 2;
-                config.info.mount = 2;
-                config.info.remove = 2;
-                config.info.skip = 2;
+                config.info.backup = 1;
+                config.info.mount = 1;
+                config.info.remove = 1;
+                config.info.skip = 1;
                 config.debug.bind = 1;
                 config.debug.cmd = 2;
                 config.debug.connect = 2;
@@ -119,8 +119,8 @@ impl VerbosityConfig {
                 config.debug.recv = 1;
                 config.debug.send = 1;
                 config.debug.time = 2;
-                config.debug.exit = 3;
-                config.debug.proto = 2;
+                config.debug.exit = 2;
+                config.debug.proto = 1;
             }
             _ => {
                 // Level 5+
@@ -132,10 +132,10 @@ impl VerbosityConfig {
                 config.info.name = 2;
                 config.info.stats = 1;
                 config.info.symsafe = 1;
-                config.info.backup = 2;
-                config.info.mount = 2;
-                config.info.remove = 2;
-                config.info.skip = 2;
+                config.info.backup = 1;
+                config.info.mount = 1;
+                config.info.remove = 1;
+                config.info.skip = 1;
                 config.debug.bind = 1;
                 config.debug.cmd = 2;
                 config.debug.connect = 2;
@@ -153,8 +153,8 @@ impl VerbosityConfig {
                 config.debug.recv = 1;
                 config.debug.send = 1;
                 config.debug.time = 2;
-                config.debug.exit = 3;
-                config.debug.proto = 2;
+                config.debug.exit = 2;
+                config.debug.proto = 1;
                 config.debug.chdir = 1;
                 config.debug.hash = 1;
                 config.debug.hlink = 1;
@@ -279,10 +279,10 @@ mod tests {
 
         assert_eq!(config.info.misc, 2);
         assert_eq!(config.info.name, 2);
-        assert_eq!(config.info.backup, 2);
-        assert_eq!(config.info.mount, 2);
-        assert_eq!(config.info.remove, 2);
-        assert_eq!(config.info.skip, 2);
+        assert_eq!(config.info.backup, 1);
+        assert_eq!(config.info.mount, 1);
+        assert_eq!(config.info.remove, 1);
+        assert_eq!(config.info.skip, 1);
 
         assert_eq!(config.debug.bind, 1);
         assert_eq!(config.debug.cmd, 1);
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(config.debug.recv, 1);
         assert_eq!(config.debug.send, 1);
         assert_eq!(config.debug.time, 1);
-        assert_eq!(config.debug.exit, 2);
+        assert_eq!(config.debug.exit, 1);
     }
 
     #[test]
@@ -385,8 +385,8 @@ mod tests {
         assert_eq!(config.debug.iconv, 2);
         assert_eq!(config.debug.own, 2);
         assert_eq!(config.debug.time, 2);
-        assert_eq!(config.debug.exit, 3);
-        assert_eq!(config.debug.proto, 2);
+        assert_eq!(config.debug.exit, 2);
+        assert_eq!(config.debug.proto, 1);
     }
 
     #[test]

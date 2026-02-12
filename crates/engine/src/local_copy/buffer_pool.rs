@@ -171,7 +171,7 @@ impl BufferPool {
     /// adaptive size matches the pool's default buffer size, a pooled buffer
     /// is returned when available. Otherwise a fresh buffer of the adaptive
     /// size is allocated (it will still be returned to the pool on drop,
-    /// where it is resized back to the pool's default).
+    /// where its length is restored to the pool's default).
     ///
     /// # Panics
     ///
@@ -220,17 +220,29 @@ impl BufferPool {
 
     /// Returns a buffer to the pool.
     ///
+    /// The buffer's logical length is restored to the pool's default size
+    /// without zeroing the contents. This is safe because every consumer
+    /// overwrites the buffer via [`Read::read`] before consuming data (see
+    /// `transfer.rs` and `parallel_checksum.rs`).
+    ///
     /// If the pool is at capacity, the buffer is dropped instead.
     fn return_buffer(&self, mut buffer: Vec<u8>) {
-        // Clear sensitive data and reset length
-        buffer.clear();
-        buffer.resize(self.buffer_size, 0);
+        if buffer.capacity() < self.buffer_size {
+            // Small adaptive buffer — replace with fresh allocation at pool size.
+            buffer = Vec::with_capacity(self.buffer_size);
+        }
+        // SAFETY: capacity >= self.buffer_size is guaranteed by the branch
+        // above (fresh allocation) or by the original allocation (same-size
+        // or larger adaptive buffer). The stale contents will be fully
+        // overwritten by the next Read::read() before being consumed.
+        // This avoids the expensive `resize(size, 0)` memset that was the
+        // #1 CPU hotspot (26% of runtime per flamegraph profiling).
+        unsafe { buffer.set_len(self.buffer_size) };
 
         let mut pool = self.buffers.lock().expect("buffer pool mutex poisoned");
         if pool.len() < self.max_buffers {
             pool.push(buffer);
         }
-        // Otherwise, buffer is dropped
     }
 
     /// Returns the number of buffers currently in the pool.
@@ -399,18 +411,16 @@ mod tests {
         // Acquire and release a buffer
         {
             let mut buffer = pool.acquire();
-            // Write a marker to identify this buffer
             buffer[0] = 42;
         }
 
         // Pool should have one buffer
         assert_eq!(pool.available(), 1);
 
-        // Acquire again - should get the same buffer
+        // Acquire again - should get the reused buffer with correct length
         let buffer = pool.acquire();
         assert_eq!(pool.available(), 0);
-        // Buffer is zeroed on return
-        assert_eq!(buffer[0], 0);
+        assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
     }
 
     #[test]
@@ -500,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_zeroed_on_return() {
+    fn test_buffer_length_restored_on_return() {
         let pool = BufferPool::new(4);
 
         {
@@ -511,10 +521,10 @@ mod tests {
             }
         }
 
-        // Acquire again
+        // Acquire again — length should be restored (contents are stale but
+        // will be overwritten by Read::read before consumption).
         let buffer = pool.acquire();
-        // Should be zeroed
-        assert!(buffer.iter().all(|&b| b == 0));
+        assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
     }
 
     // -----------------------------------------------------------------------

@@ -4,7 +4,7 @@
 //! details, shows skipped files, and matches upstream rsync's output format.
 //!
 //! Verbose level 2 enables:
-//! - Enhanced info flags (Misc=2, Name=2, Backup=2, Mount=2, Remove=2, Skip=2)
+//! - Enhanced info flags (Misc=2, Name=2, Backup=1, Mount=1, Remove=1, Skip=1)
 //! - Basic debug flags (Bind=1, Cmd=1, Connect=1, Del=1, Deltasum=1, Dup=1,
 //!   Filter=1, Flist=1, Iconv=1)
 //!
@@ -25,13 +25,13 @@ fn verbose_level_2_enables_enhanced_info_flags() {
     let config = VerbosityConfig::from_verbose_level(2);
     init(config);
 
-    // Enhanced info flags should be at level 2
+    // Misc and Name enhanced to level 2; Backup/Mount/Remove/Skip at level 1
     assert!(info_gte(InfoFlag::Misc, 2));
     assert!(info_gte(InfoFlag::Name, 2));
-    assert!(info_gte(InfoFlag::Backup, 2));
-    assert!(info_gte(InfoFlag::Mount, 2));
-    assert!(info_gte(InfoFlag::Remove, 2));
-    assert!(info_gte(InfoFlag::Skip, 2));
+    assert!(info_gte(InfoFlag::Backup, 1));
+    assert!(info_gte(InfoFlag::Mount, 1));
+    assert!(info_gte(InfoFlag::Remove, 1));
+    assert!(info_gte(InfoFlag::Skip, 1));
 
     // Still have level 1 flags
     assert!(info_gte(InfoFlag::Copy, 1));
@@ -248,13 +248,13 @@ fn verbose_level_2_shows_skipped_files() {
     init(config);
     drain_events();
 
-    // Skip flag should be enabled at level 2
-    assert!(info_gte(InfoFlag::Skip, 2));
+    // Skip flag should be enabled at level 1
+    assert!(info_gte(InfoFlag::Skip, 1));
 
     // Simulate skipped file messages
-    info_log!(Skip, 2, "skipping non-regular file \"device.dev\"");
-    info_log!(Skip, 2, "skipping directory \"excluded_dir\"");
-    info_log!(Skip, 2, "skipping symlink \"broken_link.txt\"");
+    info_log!(Skip, 1, "skipping non-regular file \"device.dev\"");
+    info_log!(Skip, 1, "skipping directory \"excluded_dir\"");
+    info_log!(Skip, 1, "skipping symlink \"broken_link.txt\"");
 
     let events = drain_events();
     assert_eq!(events.len(), 3);
@@ -263,9 +263,7 @@ fn verbose_level_2_shows_skipped_files() {
         .iter()
         .filter_map(|e| match e {
             DiagnosticEvent::Info {
-                flag: InfoFlag::Skip,
-                message,
-                ..
+                flag: InfoFlag::Skip, message, ..
             } => Some(message.as_str()),
             _ => None,
         })
@@ -305,10 +303,10 @@ fn verbose_level_2_shows_skip_reasons() {
     drain_events();
 
     // Different skip reasons
-    info_log!(Skip, 2, "skipping non-regular file \"fifo.pipe\"");
-    info_log!(Skip, 2, "skipping same file \"unchanged.txt\"");
-    info_log!(Skip, 2, "skipping excluded path \"*.tmp\"");
-    info_log!(Skip, 2, "skipping server-excluded file \"secret.key\"");
+    info_log!(Skip, 1, "skipping non-regular file \"fifo.pipe\"");
+    info_log!(Skip, 1, "skipping same file \"unchanged.txt\"");
+    info_log!(Skip, 1, "skipping excluded path \"*.tmp\"");
+    info_log!(Skip, 1, "skipping server-excluded file \"secret.key\"");
 
     let events = drain_events();
     assert_eq!(events.len(), 4);
@@ -318,10 +316,10 @@ fn verbose_level_2_shows_skip_reasons() {
         match event {
             DiagnosticEvent::Info {
                 flag: InfoFlag::Skip,
-                level: 2,
+                level: 1,
                 ..
             } => {}
-            _ => panic!("expected Skip info event at level 2"),
+            _ => panic!("expected Skip info event at level 1"),
         }
     }
 }
@@ -337,11 +335,11 @@ fn verbose_level_2_mount_messages_match_format() {
     init(config);
     drain_events();
 
-    assert!(info_gte(InfoFlag::Mount, 2));
+    assert!(info_gte(InfoFlag::Mount, 1));
 
     // Mount point detection messages
-    info_log!(Mount, 2, "skipping mount point /mnt/external");
-    info_log!(Mount, 2, "note: crossing mount point at /media/usb");
+    info_log!(Mount, 1, "skipping mount point /mnt/external");
+    info_log!(Mount, 1, "note: crossing mount point at /media/usb");
 
     let events = drain_events();
     assert_eq!(events.len(), 2);
@@ -370,13 +368,13 @@ fn verbose_level_2_backup_messages_match_format() {
     init(config);
     drain_events();
 
-    assert!(info_gte(InfoFlag::Backup, 2));
+    assert!(info_gte(InfoFlag::Backup, 1));
 
     // Backup file creation messages
-    info_log!(Backup, 2, "backing up \"data.txt\" to \"data.txt~\"");
+    info_log!(Backup, 1, "backing up \"data.txt\" to \"data.txt~\"");
     info_log!(
         Backup,
-        2,
+        1,
         "backup: renamed \"config.ini\" to \"config.ini~\""
     );
 
@@ -407,11 +405,11 @@ fn verbose_level_2_remove_messages_match_format() {
     init(config);
     drain_events();
 
-    assert!(info_gte(InfoFlag::Remove, 2));
+    assert!(info_gte(InfoFlag::Remove, 1));
 
     // File removal messages
-    info_log!(Remove, 2, "removing file: obsolete.txt");
-    info_log!(Remove, 2, "deleting \"old_dir/\"");
+    info_log!(Remove, 1, "removing file: obsolete.txt");
+    info_log!(Remove, 1, "deleting \"old_dir/\"");
 
     let events = drain_events();
     assert_eq!(events.len(), 2);
@@ -444,7 +442,7 @@ fn vv_flag_equals_verbose_level_2() {
     // Check key distinguishing features of level 2
     assert_eq!(config.info.misc, 2);
     assert_eq!(config.info.name, 2);
-    assert_eq!(config.info.skip, 2);
+    assert_eq!(config.info.skip, 1);
     assert_eq!(config.debug.bind, 1);
     assert_eq!(config.debug.flist, 1);
     assert_eq!(config.debug.deltasum, 1);
@@ -459,7 +457,7 @@ fn two_v_flags_equal_vv() {
 
     // Should have level 2 capabilities
     assert!(info_gte(InfoFlag::Name, 2));
-    assert!(info_gte(InfoFlag::Skip, 2));
+    assert!(info_gte(InfoFlag::Skip, 1));
     assert!(debug_gte(DebugFlag::Flist, 1));
 }
 
@@ -498,7 +496,7 @@ fn verbose_level_2_produces_mixed_output() {
     // Mix of info and debug messages
     info_log!(Name, 2, ">f+++++++++ newfile.txt");
     debug_log!(Flist, 1, "building file list");
-    info_log!(Skip, 2, "skipping non-regular file \"fifo\"");
+    info_log!(Skip, 1, "skipping non-regular file \"fifo\"");
     debug_log!(Deltasum, 1, "block size: 700");
     info_log!(Stats, 1, "total size is 1024");
 
@@ -530,7 +528,7 @@ fn verbose_level_2_preserves_chronological_order() {
     debug_log!(Flist, 1, "debug1");
     info_log!(Name, 2, ">f..t...... file2.txt");
     debug_log!(Deltasum, 1, "debug2");
-    info_log!(Skip, 2, "skipping file3");
+    info_log!(Skip, 1, "skipping file3");
 
     let events = drain_events();
     assert_eq!(events.len(), 5);

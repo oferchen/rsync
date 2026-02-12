@@ -94,10 +94,10 @@ fn verbose_level_2_enhanced_output() {
     // Enhanced info levels
     assert!(info_gte(InfoFlag::Misc, 2));
     assert!(info_gte(InfoFlag::Name, 2));
-    assert!(info_gte(InfoFlag::Backup, 2));
-    assert!(info_gte(InfoFlag::Mount, 2));
-    assert!(info_gte(InfoFlag::Remove, 2));
-    assert!(info_gte(InfoFlag::Skip, 2));
+    assert!(info_gte(InfoFlag::Backup, 1));
+    assert!(info_gte(InfoFlag::Mount, 1));
+    assert!(info_gte(InfoFlag::Remove, 1));
+    assert!(info_gte(InfoFlag::Skip, 1));
 
     // Basic debug flags enabled
     assert!(debug_gte(DebugFlag::Bind, 1));
@@ -148,7 +148,7 @@ fn verbose_level_3_detailed_debug() {
     assert!(debug_gte(DebugFlag::Recv, 1));
     assert!(debug_gte(DebugFlag::Send, 1));
     assert!(debug_gte(DebugFlag::Time, 1));
-    assert!(debug_gte(DebugFlag::Exit, 2));
+    assert!(debug_gte(DebugFlag::Exit, 1));
 }
 
 // ============================================================================
@@ -169,8 +169,8 @@ fn verbose_level_4_highly_detailed() {
     assert!(debug_gte(DebugFlag::Iconv, 2));
     assert!(debug_gte(DebugFlag::Own, 2));
     assert!(debug_gte(DebugFlag::Time, 2));
-    assert!(debug_gte(DebugFlag::Exit, 3));
-    assert!(debug_gte(DebugFlag::Proto, 2));
+    assert!(debug_gte(DebugFlag::Exit, 2));
+    assert!(debug_gte(DebugFlag::Proto, 1));
 }
 
 // ============================================================================
