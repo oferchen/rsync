@@ -50,7 +50,7 @@ fn run_with_live_progress(
         rendered_flag = live.rendered();
         live.finish().expect("finish succeeds");
         let output = String::from_utf8(buffer).expect("output is valid UTF-8");
-        return (output, summary, rendered_flag);
+        (output, summary, rendered_flag)
     }
 }
 
@@ -617,15 +617,13 @@ fn e2e_progress_observer_reports_correct_total() {
     assert_eq!(
         totals.len(),
         1,
-        "all updates should report the same total, got {:?}",
-        totals
+        "all updates should report the same total, got {totals:?}",
     );
 
     let total = *totals.iter().next().unwrap();
     assert!(
         total >= 2,
-        "total should reflect at least 2 data files, got {}",
-        total
+        "total should reflect at least 2 data files, got {total}",
     );
 }
 
