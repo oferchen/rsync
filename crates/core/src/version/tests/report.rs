@@ -3,8 +3,7 @@ use crate::branding::Brand;
 use crate::version::report::{
     default_checksum_algorithms, default_compress_algorithms, default_daemon_auth_algorithms,
 };
-#[allow(deprecated)]
-use libc::{ino_t, off_t, time_t};
+use libc::{ino_t, off_t};
 use std::mem;
 
 fn gpl_footer(program_name: &str) -> String {
@@ -21,7 +20,7 @@ fn version_info_report_renders_default_report() {
 
     let bit_files = mem::size_of::<off_t>() * 8;
     let bit_inums = mem::size_of::<ino_t>() * 8;
-    let bit_timestamps = mem::size_of::<time_t>() * 8;
+    let bit_timestamps = mem::size_of::<TimeT>() * 8;
     let bit_long_ints = mem::size_of::<i64>() * 8;
     assert!(actual.starts_with(&format!("{PROGRAM_NAME} v{RUST_VERSION}")));
     assert!(actual.contains(&format!(

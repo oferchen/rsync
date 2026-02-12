@@ -5,11 +5,11 @@ use libc::{ino_t, off_t};
 use std::borrow::Cow;
 
 // libc::time_t is deprecated on musl targets (musl 1.2.0+ uses 64-bit time_t).
-// Use a platform-specific type alias to avoid the deprecation warning.
+// Provide a platform-safe alias: i64 on musl, libc::time_t elsewhere.
 #[cfg(target_env = "musl")]
-type TimeT = i64;
+pub(crate) type TimeT = i64;
 #[cfg(not(target_env = "musl"))]
-type TimeT = libc::time_t;
+pub(crate) type TimeT = libc::time_t;
 use std::fmt::{self, Write as FmtWrite};
 use std::mem;
 use std::string::String;

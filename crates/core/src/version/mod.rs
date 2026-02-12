@@ -97,6 +97,8 @@ pub use metadata::{
     version_metadata, version_metadata_for_client_brand, version_metadata_for_daemon_brand,
     version_metadata_for_program,
 };
+#[cfg(test)]
+pub(crate) use report::TimeT;
 pub use report::{VersionInfoConfig, VersionInfoConfigBuilder, VersionInfoReport};
 pub use secluded_args::{ParseSecludedArgsModeError, SecludedArgsMode};
 
