@@ -82,12 +82,34 @@ mod acl_exacl;
 ))]
 mod acl_stub;
 
+// Universal no-op for platforms without any ACL implementation
+// (covers: acl feature disabled, or acl enabled on uncovered platforms like Windows)
+#[cfg(not(any(
+    all(
+        feature = "acl",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    ),
+)))]
+mod acl_noop;
+
 mod apply;
 mod chmod;
 mod error;
 
 #[cfg(unix)]
 pub mod id_lookup;
+
+#[cfg(not(unix))]
+pub mod id_lookup_stub;
+#[cfg(not(unix))]
+pub use id_lookup_stub as id_lookup;
 
 #[cfg(unix)]
 mod mapping;
@@ -100,6 +122,11 @@ mod options;
 #[cfg(unix)]
 mod ownership;
 
+#[cfg(not(unix))]
+mod ownership_stub;
+#[cfg(not(unix))]
+use ownership_stub as ownership;
+
 /// Optimized metadata caching with statx support on Linux.
 pub mod stat_cache;
 
@@ -108,10 +135,17 @@ mod special;
 #[cfg(all(unix, feature = "xattr"))]
 mod xattr;
 
+#[cfg(not(all(unix, feature = "xattr")))]
+mod xattr_stub;
+
 #[cfg(all(unix, feature = "xattr"))]
 pub mod nfsv4_acl;
 
-#[cfg(unix)]
+#[cfg(not(all(unix, feature = "xattr")))]
+pub mod nfsv4_acl_stub;
+#[cfg(not(all(unix, feature = "xattr")))]
+pub use nfsv4_acl_stub as nfsv4_acl;
+
 pub mod fake_super;
 
 // Export sync_acls from the appropriate platform module
@@ -126,6 +160,22 @@ pub use acl_exacl::sync_acls;
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 pub use acl_stub::sync_acls;
+
+// Universal no-op for all other platforms (acl feature disabled or uncovered OS)
+#[cfg(not(any(
+    all(
+        feature = "acl",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    ),
+)))]
+pub use acl_noop::sync_acls;
 
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
@@ -150,7 +200,9 @@ pub use special::{create_device_node, create_fifo};
 #[cfg(all(unix, feature = "xattr"))]
 pub use xattr::sync_xattrs;
 
-#[cfg(unix)]
+#[cfg(not(all(unix, feature = "xattr")))]
+pub use xattr_stub::sync_xattrs;
+
 pub use fake_super::{
     FAKE_SUPER_XATTR, FakeSuperStat, load_fake_super, remove_fake_super, store_fake_super,
 };
