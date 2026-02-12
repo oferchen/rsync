@@ -12,7 +12,7 @@ use crate::cli::{BenchmarkArgs, BenchmarkMode};
 use crate::error::{TaskError, TaskResult};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -54,6 +54,26 @@ const REMOTE_MIRRORS: &[RemoteMirror] = &[
         name: "CTAN",
         url: "rsync://rsync.dante.ctan.org/CTAN/macros/latex/base/",
         description: "CTAN LaTeX base — 314 files, ~54MB (Germany)",
+    },
+    RemoteMirror {
+        name: "CPAN",
+        url: "rsync://cpan-rsync.perl.org/CPAN/modules/by-module/HTTP/",
+        description: "CPAN HTTP modules — varied sizes (US)",
+    },
+    RemoteMirror {
+        name: "RIT-Arch",
+        url: "rsync://mirrors.rit.edu/archlinux/core/os/x86_64/",
+        description: "RIT Arch Linux core — ~400 files, ~300MB (US East)",
+    },
+    RemoteMirror {
+        name: "Princeton",
+        url: "rsync://mirror.math.princeton.edu/pub/slackware/slackware64-current/ChangeLog.txt",
+        description: "Princeton Math single file — connection latency test (US East, Internet2)",
+    },
+    RemoteMirror {
+        name: "OSUOSL",
+        url: "rsync://rsync.osuosl.org/ubuntu/dists/noble/Release",
+        description: "OSUOSL Ubuntu release file — connection test (US West)",
     },
 ];
 
@@ -122,30 +142,45 @@ impl From<BenchmarkArgs> for BenchmarkOptions {
     }
 }
 
+/// Result of a single benchmark iteration (timing + transfer stats).
+#[derive(Clone, Debug)]
+struct RunSample {
+    elapsed: Duration,
+    #[allow(dead_code)]
+    bytes_sent: u64,
+    bytes_received: u64,
+    total_size: u64,
+}
+
 /// Result of a single benchmark run.
 #[derive(Clone, Debug)]
 struct BenchmarkResult {
     version: String,
     runs: Vec<Duration>,
+    samples: Vec<RunSample>,
     mean: Duration,
     min: Duration,
     max: Duration,
     stddev: f64,
+    mean_throughput_mbps: f64,
 }
 
 impl BenchmarkResult {
-    fn new(version: String, runs: Vec<Duration>) -> Self {
-        if runs.is_empty() {
+    fn new(version: String, samples: Vec<RunSample>) -> Self {
+        if samples.is_empty() {
             return Self {
                 version,
-                runs,
+                runs: Vec::new(),
+                samples: Vec::new(),
                 mean: Duration::ZERO,
                 min: Duration::ZERO,
                 max: Duration::ZERO,
                 stddev: 0.0,
+                mean_throughput_mbps: 0.0,
             };
         }
 
+        let runs: Vec<Duration> = samples.iter().map(|s| s.elapsed).collect();
         let mean = runs.iter().sum::<Duration>() / runs.len() as u32;
         let min = *runs.iter().min().unwrap_or(&Duration::ZERO);
         let max = *runs.iter().max().unwrap_or(&Duration::ZERO);
@@ -161,13 +196,24 @@ impl BenchmarkResult {
             / runs.len() as f64;
         let stddev = variance.sqrt();
 
+        // Calculate mean throughput: total bytes received / total elapsed
+        let total_bytes: u64 = samples.iter().map(|s| s.bytes_received).sum();
+        let total_secs: f64 = samples.iter().map(|s| s.elapsed.as_secs_f64()).sum();
+        let mean_throughput_mbps = if total_secs > 0.0 {
+            (total_bytes as f64) / total_secs / (1024.0 * 1024.0)
+        } else {
+            0.0
+        };
+
         Self {
             version,
             runs,
+            samples,
             mean,
             min,
             max,
             stddev,
+            mean_throughput_mbps,
         }
     }
 }
@@ -278,12 +324,12 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
 
         for (version, binary) in &binaries {
             println!("\nBenchmarking {version}...");
-            let runs = run_benchmark(binary, url, &dest_dir, options.runs)?;
-            if runs.is_empty() {
+            let samples = run_benchmark(binary, url, &dest_dir, options.runs)?;
+            if samples.is_empty() {
                 eprintln!("  Skipping {version} - all runs failed");
                 continue;
             }
-            let result = BenchmarkResult::new(version.clone(), runs);
+            let result = BenchmarkResult::new(version.clone(), samples);
             url_results.push(result);
         }
 
@@ -580,13 +626,13 @@ fn build_version(workspace: &Path, version: &str, output: &Path) -> TaskResult<(
     Ok(())
 }
 
-/// Runs a benchmark and returns timing results.
+/// Runs a benchmark and returns timing + throughput results.
 fn run_benchmark(
     binary: &Path,
     source_url: &str,
     dest_dir: &Path,
     runs: usize,
-) -> TaskResult<Vec<Duration>> {
+) -> TaskResult<Vec<RunSample>> {
     let mut results = Vec::with_capacity(runs);
 
     for i in 0..runs {
@@ -598,27 +644,76 @@ fn run_benchmark(
         let _ = Command::new("sync").status();
 
         let start = Instant::now();
-        let status = Command::new(binary)
-            .args(["-a", source_url, dest_dir.to_str().unwrap()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?;
+        let output = Command::new(binary)
+            .args(["-a", "--stats", source_url, dest_dir.to_str().unwrap()])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()?;
 
         let elapsed = start.elapsed();
 
-        if !status.success() {
-            eprintln!("  Run {} failed with exit code {:?}", i + 1, status.code());
+        if !output.status.success() {
+            eprintln!("  Run {} failed with exit code {:?}", i + 1, output.status.code());
             continue;
         }
 
-        print!("  Run {}: {:.3}s", i + 1, elapsed.as_secs_f64());
-        std::io::stdout().flush().ok();
-        println!();
+        let stats_text = String::from_utf8_lossy(&output.stdout);
+        let sample = parse_stats_output(&stats_text, elapsed);
 
-        results.push(elapsed);
+        let throughput = if elapsed.as_secs_f64() > 0.0 {
+            sample.bytes_received as f64 / elapsed.as_secs_f64() / (1024.0 * 1024.0)
+        } else {
+            0.0
+        };
+
+        println!(
+            "  Run {}: {:.3}s  ({:.2} MB/s, {} bytes received)",
+            i + 1,
+            elapsed.as_secs_f64(),
+            throughput,
+            sample.bytes_received,
+        );
+
+        results.push(sample);
     }
 
     Ok(results)
+}
+
+/// Parses rsync `--stats` output to extract transfer metrics.
+fn parse_stats_output(output: &str, elapsed: Duration) -> RunSample {
+    let mut bytes_sent = 0u64;
+    let mut bytes_received = 0u64;
+    let mut total_size = 0u64;
+
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("Total bytes sent:") {
+            bytes_sent = parse_stat_value(rest);
+        } else if let Some(rest) = line.strip_prefix("Total bytes received:") {
+            bytes_received = parse_stat_value(rest);
+        } else if let Some(rest) = line.strip_prefix("Total file size:") {
+            total_size = parse_stat_value(rest);
+        }
+    }
+
+    RunSample {
+        elapsed,
+        bytes_sent,
+        bytes_received,
+        total_size,
+    }
+}
+
+/// Parses a numeric value from stats output, stripping commas and unit suffixes.
+fn parse_stat_value(s: &str) -> u64 {
+    // Format is typically "  1,234,567 bytes" or "  1,234,567"
+    s.split_whitespace()
+        .next()
+        .unwrap_or("0")
+        .replace(',', "")
+        .parse()
+        .unwrap_or(0)
 }
 
 /// Outputs results for multiple URLs as formatted tables.
@@ -628,10 +723,10 @@ fn output_table_multi(result_sets: &[BenchmarkResultSet]) {
     for result_set in result_sets {
         println!("--- {} ({}) ---\n", result_set.url_name, result_set.url);
         println!(
-            "{:<12} {:>10} {:>10} {:>10} {:>10}",
-            "Version", "Mean", "Min", "Max", "Stddev"
+            "{:<12} {:>10} {:>10} {:>10} {:>10} {:>12}",
+            "Version", "Mean", "Min", "Max", "Stddev", "Throughput"
         );
-        println!("{}", "-".repeat(54));
+        println!("{}", "-".repeat(68));
 
         let baseline = result_set
             .results
@@ -656,13 +751,20 @@ fn output_table_multi(result_sets: &[BenchmarkResultSet]) {
                 format!(" ({faster:.1}% faster)")
             };
 
+            let throughput_str = if result.mean_throughput_mbps > 0.0 {
+                format!("{:.2} MB/s", result.mean_throughput_mbps)
+            } else {
+                "-".to_string()
+            };
+
             println!(
-                "{:<12} {:>10.3}s {:>10.3}s {:>10.3}s {:>10.4}s{}",
+                "{:<12} {:>10.3}s {:>10.3}s {:>10.3}s {:>10.4}s {:>12}{}",
                 result.version,
                 result.mean.as_secs_f64(),
                 result.min.as_secs_f64(),
                 result.max.as_secs_f64(),
                 result.stddev,
+                throughput_str,
                 speedup_str
             );
         }
@@ -730,6 +832,12 @@ fn output_json_multi(result_sets: &[BenchmarkResultSet]) -> TaskResult<()> {
             } else {
                 ""
             };
+            let total_bytes: u64 = result.samples.iter().map(|s| s.bytes_received).sum();
+            let total_size: u64 = result
+                .samples
+                .last()
+                .map(|s| s.total_size)
+                .unwrap_or(0);
             println!("        {{");
             println!("          \"version\": \"{}\",", result.version);
             println!(
@@ -745,6 +853,12 @@ fn output_json_multi(result_sets: &[BenchmarkResultSet]) -> TaskResult<()> {
                 result.max.as_secs_f64() * 1000.0
             );
             println!("          \"stddev_ms\": {:.3},", result.stddev * 1000.0);
+            println!(
+                "          \"throughput_mbps\": {:.3},",
+                result.mean_throughput_mbps
+            );
+            println!("          \"total_bytes_received\": {total_bytes},");
+            println!("          \"total_file_size\": {total_size},");
             println!(
                 "          \"runs_ms\": [{}]",
                 result
@@ -770,19 +884,41 @@ mod tests {
 
     #[test]
     fn benchmark_result_calculates_stats() {
-        let runs = vec![
-            Duration::from_millis(100),
-            Duration::from_millis(110),
-            Duration::from_millis(90),
-            Duration::from_millis(105),
-            Duration::from_millis(95),
+        let samples = vec![
+            RunSample { elapsed: Duration::from_millis(100), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
+            RunSample { elapsed: Duration::from_millis(110), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
+            RunSample { elapsed: Duration::from_millis(90), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
+            RunSample { elapsed: Duration::from_millis(105), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
+            RunSample { elapsed: Duration::from_millis(95), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
         ];
-        let result = BenchmarkResult::new("test".to_string(), runs);
+        let result = BenchmarkResult::new("test".to_string(), samples);
 
         assert_eq!(result.min, Duration::from_millis(90));
         assert_eq!(result.max, Duration::from_millis(110));
         // Mean should be 100ms
         assert!((result.mean.as_millis() as i64 - 100).abs() <= 1);
+        assert!(result.mean_throughput_mbps > 0.0);
+    }
+
+    #[test]
+    fn parse_stats_output_extracts_values() {
+        let stats = "\
+Number of files: 42 (reg: 40, dir: 2)
+Total file size: 1,234,567 bytes
+Total bytes sent: 456
+Total bytes received: 1,234,567
+";
+        let sample = parse_stats_output(stats, Duration::from_secs(1));
+        assert_eq!(sample.bytes_sent, 456);
+        assert_eq!(sample.bytes_received, 1_234_567);
+        assert_eq!(sample.total_size, 1_234_567);
+    }
+
+    #[test]
+    fn parse_stat_value_handles_commas() {
+        assert_eq!(parse_stat_value(" 1,234,567 bytes"), 1_234_567);
+        assert_eq!(parse_stat_value(" 42"), 42);
+        assert_eq!(parse_stat_value(" 0"), 0);
     }
 
     #[test]

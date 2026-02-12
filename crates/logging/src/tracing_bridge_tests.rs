@@ -147,7 +147,7 @@ fn test_verbosity_level_progression() {
     // Level 4
     let config4 = VerbosityConfig::from_verbose_level(4);
     assert_eq!(config4.debug.cmd, 2); // Further enhanced
-    assert_eq!(config4.debug.proto, 2); // Protocol debugging
+    assert_eq!(config4.debug.proto, 1); // Protocol debugging (upstream: "PROTO" at level 4)
 
     // Level 5+
     let config5 = VerbosityConfig::from_verbose_level(5);
