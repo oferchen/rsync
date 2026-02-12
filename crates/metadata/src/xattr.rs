@@ -1,5 +1,3 @@
-#![cfg(all(unix, feature = "xattr"))]
-
 use crate::error::MetadataError;
 use std::collections::HashSet;
 use std::ffi::OsString;
