@@ -219,7 +219,16 @@ fn execute_copies_socket_within_directory() {
 
 // ==================== Mixed FIFOs and Sockets ====================
 
-#[cfg(unix)]
+// Socket creation in temp dirs requires elevated privileges on macOS.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_copies_mixed_fifos_and_sockets() {
     use std::os::unix::fs::FileTypeExt;
