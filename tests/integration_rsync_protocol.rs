@@ -46,9 +46,21 @@ fn locate_oc_rsync() -> Option<std::path::PathBuf> {
         }
     }
 
-    // Try common locations
-    for subdir in ["target/release", "target/debug"] {
-        let candidate = PathBuf::from(subdir).join("oc-rsync");
+    let binary_name = format!("oc-rsync{}", std::env::consts::EXE_SUFFIX);
+    let current_exe = env::current_exe().ok()?;
+    let mut dir = current_exe.parent()?;
+
+    // Walk up, checking each ancestor (handles cross-compilation target dirs)
+    while !dir.ends_with("target") {
+        let candidate = dir.join(&binary_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
+
+    for subdir in ["debug", "release"] {
+        let candidate = dir.join(subdir).join(&binary_name);
         if candidate.is_file() {
             return Some(candidate);
         }
