@@ -478,6 +478,23 @@ cleanup() {
   exit "$exit_code"
 }
 
+# Wait for a TCP port to become reachable, with timeout.
+wait_for_port() {
+  local port=$1
+  local max_wait=${2:-10}
+  local elapsed=0
+
+  while [ $elapsed -lt $max_wait ]; do
+    if (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.5
+    elapsed=$((elapsed + 1))
+  done
+  echo "Warning: port $port not ready after ${max_wait}s" >&2
+  return 1
+}
+
 # IMPORTANT: oc-rsync --daemon needs the port on CLI, otherwise it binds to 873 (privileged)
 # NOTE: Daemon defaults to delegating to system rsync. Set OC_RSYNC_DAEMON_FALLBACK=0
 # to force native handling (required for interop testing).
@@ -494,7 +511,7 @@ start_oc_daemon() {
   OC_RSYNC_DAEMON_FALLBACK=0 \
     "$oc_binary" --daemon --config "$config" --port "$port" --log-file "$log_file" &
   oc_pid=$!
-  sleep 1
+  wait_for_port "$port" 10 || true
 }
 
 start_upstream_daemon() {
@@ -507,7 +524,15 @@ start_upstream_daemon() {
   # Close stdin to prevent SIGPIPE when daemon writes to closed pipe
   "$binary" --daemon --config "$config" --no-detach --log-file "$log_file" </dev/null &
   up_pid=$!
-  sleep 1
+
+  # Extract port from config for wait_for_port
+  local port
+  port=$(grep -oP 'port\s*=\s*\K\d+' "$config" 2>/dev/null || echo "")
+  if [[ -n "$port" ]]; then
+    wait_for_port "$port" 10 || true
+  else
+    sleep 1
+  fi
 }
 
 run_interop_case() {
