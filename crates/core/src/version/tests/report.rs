@@ -3,6 +3,7 @@ use crate::branding::Brand;
 use crate::version::report::{
     default_checksum_algorithms, default_compress_algorithms, default_daemon_auth_algorithms,
 };
+#[allow(deprecated)]
 use libc::{ino_t, off_t, time_t};
 use std::mem;
 

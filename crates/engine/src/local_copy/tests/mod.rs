@@ -889,20 +889,19 @@ mod test_helpers {
         /// Options for archive-like copy (-a equivalent).
         ///
         /// Enables: recursive, links, permissions, times, group, owner, devices, specials.
-        /// On Windows, owner/group preservation is skipped because the platform
-        /// does not support POSIX ownership semantics.
+        /// Matches the `archive()` builder method which unconditionally sets all
+        /// flags (including owner/group) per upstream rsync `-a` semantics.
         #[allow(dead_code)]
         pub fn archive_options() -> LocalCopyOptions {
-            let opts = LocalCopyOptions::default()
+            LocalCopyOptions::default()
                 .recursive(true)
                 .links(true)
                 .permissions(true)
                 .times(true)
+                .group(true)
+                .owner(true)
                 .devices(true)
-                .specials(true);
-            #[cfg(unix)]
-            let opts = opts.group(true).owner(true);
-            opts
+                .specials(true)
         }
 
         /// Options for basic copy with times preservation.
