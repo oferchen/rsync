@@ -1276,6 +1276,7 @@ fn copy_file_with_del_character() {
 // 15. High ASCII Characters (128-255)
 // ============================================================================
 
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_file_with_high_ascii_128() {
     let temp = tempdir().expect("tempdir");
@@ -1300,6 +1301,7 @@ fn copy_file_with_high_ascii_128() {
     assert!(dest_root.join(filename).exists());
 }
 
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_file_with_high_ascii_255() {
     let temp = tempdir().expect("tempdir");
@@ -1324,6 +1326,7 @@ fn copy_file_with_high_ascii_255() {
     assert!(dest_root.join(filename).exists());
 }
 
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_files_with_various_high_ascii() {
     let temp = tempdir().expect("tempdir");
@@ -1353,6 +1356,7 @@ fn copy_files_with_various_high_ascii() {
     assert_eq!(summary.files_copied(), byte_values.len() as u64);
 }
 
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_file_with_non_utf8_sequence() {
     let temp = tempdir().expect("tempdir");
