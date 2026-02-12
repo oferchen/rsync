@@ -98,6 +98,8 @@ mod operands_tests;
 mod out_tests;
 #[path = "outbuf.rs"]
 mod outbuf_tests;
+#[path = "output_parity.rs"]
+mod output_parity_tests;
 #[path = "parse_args_allows.rs"]
 mod parse_args_allows_tests;
 #[path = "parse_args_captures.rs"]
@@ -252,6 +254,8 @@ mod pow_tests;
 mod process_tests;
 #[path = "progress_format_upstream.rs"]
 mod progress_format_upstream_tests;
+#[path = "progress_live.rs"]
+mod progress_live_tests;
 #[path = "progress_render.rs"]
 mod progress_render_tests;
 #[path = "progress.rs"]
