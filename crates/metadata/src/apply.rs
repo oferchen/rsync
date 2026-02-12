@@ -160,22 +160,11 @@ fn set_owner_like(
 
     #[cfg(not(unix))]
     {
+        // Ownership preservation is a no-op on non-Unix platforms.
+        // Windows ACL semantics are different; silently succeed.
         let _ = metadata;
         let _ = follow_symlinks;
-        if options.owner()
-            || options.group()
-            || options.owner_override().is_some()
-            || options.group_override().is_some()
-        {
-            return Err(MetadataError::new(
-                "preserve ownership",
-                destination,
-                io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "preserving ownership is not supported on this platform",
-                ),
-            ));
-        }
+        let _ = options;
     }
 
     Ok(())
