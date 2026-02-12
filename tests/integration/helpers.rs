@@ -193,17 +193,20 @@ fn locate_binary(name: &str) -> Option<PathBuf> {
         }
     }
 
-    // Try to find in target directory
+    let binary_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
     let current_exe = env::current_exe().ok()?;
     let mut dir = current_exe.parent()?;
 
-    // Walk up to find target directory
+    // Walk up, checking each ancestor (handles cross-compilation target dirs)
     while !dir.ends_with("target") {
+        let candidate = dir.join(&binary_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
         dir = dir.parent()?;
     }
 
-    // Check common locations
-    let binary_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    // Check common locations under target/
     for subdir in ["debug", "release"] {
         let candidate = dir.join(subdir).join(&binary_name);
         if candidate.is_file() {

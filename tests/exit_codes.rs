@@ -87,7 +87,12 @@ fn locate_binary(name: &str) -> Option<PathBuf> {
     let current_exe = std::env::current_exe().ok()?;
     let mut dir = current_exe.parent()?;
 
+    // Walk up, checking each ancestor (handles cross-compilation target dirs)
     while !dir.ends_with("target") {
+        let candidate = dir.join(&binary_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
         dir = dir.parent()?;
     }
 
