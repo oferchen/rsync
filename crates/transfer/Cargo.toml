@@ -44,7 +44,7 @@ default-features = false
 features = ["xattr"]
 
 [features]
-default = ["zstd", "lz4", "acl", "xattr", "incremental-flist"]
+default = ["zstd", "lz4", "xattr", "incremental-flist"]
 
 # ============================================================================
 # Compression Features
