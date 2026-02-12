@@ -123,6 +123,7 @@ mod ownership;
 #[cfg(not(unix))]
 mod ownership_stub;
 #[cfg(not(unix))]
+#[allow(unused_imports)]
 use ownership_stub as ownership;
 
 /// Optimized metadata caching with statx support on Linux.

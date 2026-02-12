@@ -230,6 +230,7 @@ pub fn remove_fake_super(path: &Path) -> io::Result<()> {
 }
 
 /// Checks if the file mode indicates a device file.
+#[cfg(unix)]
 const fn is_device_file(mode: u32) -> bool {
     const S_IFMT: u32 = 0o170000;
     const S_IFBLK: u32 = 0o060000;
@@ -251,7 +252,7 @@ const fn is_device_file(mode: u32) -> bool {
 /// ```
 ///
 /// Formula: `major = bits[11:8] | bits[43:32]`
-#[cfg(target_os = "linux")]
+#[cfg(all(unix, target_os = "linux"))]
 const fn major(rdev: u64) -> u32 {
     ((rdev >> 8) & 0xfff) as u32 | (((rdev >> 32) & !0xfff) as u32)
 }
@@ -265,7 +266,7 @@ const fn major(rdev: u64) -> u32 {
 /// rdev bits:  31..24    23..0
 /// meaning:    major     minor
 /// ```
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn major(rdev: u64) -> u32 {
     (rdev >> 24) as u32
 }
@@ -282,7 +283,7 @@ fn major(rdev: u64) -> u32 {
 /// ```
 ///
 /// Formula: `minor = bits[7:0] | bits[19:12]`
-#[cfg(target_os = "linux")]
+#[cfg(all(unix, target_os = "linux"))]
 const fn minor(rdev: u64) -> u32 {
     (rdev & 0xff) as u32 | (((rdev >> 12) & !0xff) as u32)
 }
@@ -292,7 +293,7 @@ const fn minor(rdev: u64) -> u32 {
 /// # BSD/macOS Encoding
 ///
 /// Minor occupies the low 24 bits.
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn minor(rdev: u64) -> u32 {
     (rdev & 0xffffff) as u32
 }
