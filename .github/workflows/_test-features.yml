@@ -41,6 +41,12 @@ jobs:
             args: "-p daemon -p core -p engine --features tracing"
           - name: serde
             args: "-p logging -p protocol -p flist --features serde"
+          - name: io_uring
+            args: "-p transfer -p fast_io --features io_uring"
+            linux_only: true
+          - name: copy_file_range
+            args: "-p fast_io --features copy_file_range"
+            linux_only: true
 
     env:
       CARGO_TERM_COLOR: always
@@ -49,26 +55,28 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust (${{ inputs.rust_toolchain }})
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
           toolchain: ${{ inputs.rust_toolchain }}
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
           key: features-${{ matrix.name }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@d4422f254e595ee762a758628fe4f16ce050fa2e # v2
         with:
           tool: cargo-nextest
 
       - name: Build (${{ matrix.name }})
+        if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
         run: cargo build ${{ matrix.args }}
 
       - name: Test (${{ matrix.name }})
+        if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
         run: cargo nextest run ${{ matrix.args }}
