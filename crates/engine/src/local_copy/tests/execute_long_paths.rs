@@ -12,7 +12,21 @@
 // - Error handling for paths exceeding limits
 // - Relative paths that become long when resolved
 
-// PATH_MAX on Linux is typically 4096 bytes
+// PATH_MAX is platform-dependent: 4096 on Linux, 1024 on macOS/iOS
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+))]
+#[allow(dead_code)]
+const PATH_MAX: usize = 1024;
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
 #[allow(dead_code)]
 const PATH_MAX: usize = 4096;
 // Leave buffer for filesystem operations
