@@ -421,7 +421,14 @@ pub fn read_delta_op<R: Read>(reader: &mut R) -> io::Result<DeltaOp> {
 
     match opcode[0] {
         0x00 => {
-            let length = read_varint(reader)? as usize;
+            let raw_length = read_varint(reader)?;
+            if raw_length < 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "negative literal length in delta op",
+                ));
+            }
+            let length = raw_length as usize;
             let mut data = vec![0u8; length];
             reader.read_exact(&mut data)?;
             Ok(DeltaOp::Literal(data))
@@ -474,8 +481,17 @@ pub fn write_delta<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Result<()> 
 /// - Reading from the underlying stream fails
 /// - An invalid opcode is encountered in any delta operation
 pub fn read_delta<R: Read>(reader: &mut R) -> io::Result<Vec<DeltaOp>> {
-    let count = read_varint(reader)? as usize;
-    let mut ops = Vec::with_capacity(count);
+    let raw_count = read_varint(reader)?;
+    if raw_count < 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "negative delta operation count",
+        ));
+    }
+    let count = raw_count as usize;
+    // Cap pre-allocation to avoid OOM on malformed input; the loop still
+    // iterates `count` times but will hit EOF naturally if the data is short.
+    let mut ops = Vec::with_capacity(count.min(1024));
 
     for _ in 0..count {
         ops.push(read_delta_op(reader)?);
