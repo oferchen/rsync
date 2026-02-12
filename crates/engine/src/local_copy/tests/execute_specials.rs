@@ -10,7 +10,18 @@
 /// Uses `std::os::unix::net::UnixListener::bind` which creates the socket
 /// node on the filesystem. The listener is immediately dropped, but the
 /// socket node remains.
-#[cfg(unix)]
+///
+/// Socket creation in temp dirs requires elevated privileges on macOS,
+/// so this helper and all tests using it are gated to non-Apple platforms.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 fn mksocket_for_tests(path: &Path) -> io::Result<()> {
     use std::os::unix::net::UnixListener;
     let _listener = UnixListener::bind(path)?;
@@ -20,7 +31,15 @@ fn mksocket_for_tests(path: &Path) -> io::Result<()> {
 
 // ==================== Socket Single-Source Tests ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_copies_socket_with_specials_enabled() {
     use std::os::unix::fs::FileTypeExt;
@@ -51,7 +70,15 @@ fn execute_copies_socket_with_specials_enabled() {
     assert_eq!(summary.fifos_created(), 1, "sockets count as fifos_created");
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_without_specials_skips_socket() {
     let temp = tempdir().expect("tempdir");
@@ -76,7 +103,15 @@ fn execute_without_specials_skips_socket() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_without_specials_records_socket_skip_event() {
     let temp = tempdir().expect("tempdir");
@@ -109,7 +144,15 @@ fn execute_without_specials_records_socket_skip_event() {
 
 // ==================== Socket Metadata Preservation ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_copies_socket_preserving_permissions() {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -145,7 +188,15 @@ fn execute_copies_socket_preserving_permissions() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_copies_socket_preserving_timestamps() {
     use filetime::{FileTime, set_file_times};
@@ -182,7 +233,15 @@ fn execute_copies_socket_preserving_timestamps() {
 
 // ==================== Socket Within Directory ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_copies_socket_within_directory() {
     use std::os::unix::fs::FileTypeExt;
@@ -290,7 +349,15 @@ fn execute_copies_mixed_fifos_and_sockets() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_without_specials_skips_both_fifos_and_sockets() {
     let temp = tempdir().expect("tempdir");
@@ -432,7 +499,15 @@ fn execute_archive_mode_copies_fifo_and_socket_together() {
 
 // ==================== Dry Run ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_dry_run_does_not_create_socket() {
     let temp = tempdir().expect("tempdir");
@@ -463,7 +538,15 @@ fn execute_dry_run_does_not_create_socket() {
 
 // ==================== Force Replacement ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_socket_replaces_directory_when_force_enabled() {
     use std::os::unix::fs::FileTypeExt;
@@ -496,7 +579,15 @@ fn execute_socket_replaces_directory_when_force_enabled() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_socket_replaces_regular_file() {
     use std::os::unix::fs::FileTypeExt;
@@ -529,7 +620,15 @@ fn execute_socket_replaces_regular_file() {
 
 // ==================== Socket Hard Link Preservation ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_preserves_socket_hard_links() {
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -578,7 +677,15 @@ fn execute_preserves_socket_hard_links() {
 
 // ==================== Specials with Delete ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_delete_removes_extraneous_socket() {
     let temp = tempdir().expect("tempdir");
@@ -618,7 +725,15 @@ fn execute_delete_removes_extraneous_socket() {
 
 // ==================== Specials Disabled Does Not Delete Specials ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_without_specials_with_delete_does_not_delete_socket_from_keep_list() {
     // When --specials is disabled, sockets in the source are skipped and
@@ -658,7 +773,15 @@ fn execute_without_specials_with_delete_does_not_delete_socket_from_keep_list() 
 
 // ==================== Specials with Collect Events ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_socket_produces_fifo_copied_event() {
     let temp = tempdir().expect("tempdir");
@@ -692,7 +815,15 @@ fn execute_socket_produces_fifo_copied_event() {
 
 // ==================== Socket Idempotent Re-copy ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_recopy_socket_replaces_existing_socket() {
     use std::os::unix::fs::FileTypeExt;
@@ -725,7 +856,15 @@ fn execute_recopy_socket_replaces_existing_socket() {
 
 // ==================== Specials with Symlinks ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_copies_socket_and_symlink_together() {
     use std::os::unix::fs::{FileTypeExt, symlink};
