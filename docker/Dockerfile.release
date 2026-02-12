@@ -12,7 +12,8 @@ ARG TARGETARCH
 
 COPY bin/${TARGETARCH}/oc-rsync /usr/local/bin/oc-rsync
 
-RUN chmod +x /usr/local/bin/oc-rsync && \
+RUN apk add --no-cache file && \
+    chmod +x /usr/local/bin/oc-rsync && \
     file /usr/local/bin/oc-rsync && \
     /usr/local/bin/oc-rsync --version
 
