@@ -333,6 +333,8 @@ mod transfer_request_with_remove_tests;
 mod transfer_request_with_sparse_tests;
 #[path = "transfer_request_with_times.rs"]
 mod transfer_request_with_times_tests;
+#[path = "tracing_integration.rs"]
+mod tracing_integration_tests;
 #[path = "verbose.rs"]
 mod verbose_tests;
 #[path = "version.rs"]

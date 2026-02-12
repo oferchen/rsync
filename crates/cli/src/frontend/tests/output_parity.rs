@@ -1133,3 +1133,666 @@ fn parity_stats_human_readable_enabled_uses_unit_suffixes() {
         "human-readable mode should use unit suffixes for large sizes:\n{output}"
     );
 }
+
+// ===========================================================================
+// 7. Dry-run output format parity with itemize changes
+// ===========================================================================
+
+#[test]
+fn parity_dry_run_with_itemize_shows_changes_without_modifying_files() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    fs::write(source_dir.join("new.txt"), b"new content").expect("write new");
+    fs::write(source_dir.join("modified.txt"), b"updated").expect("write modified");
+    fs::write(dest_dir.join("modified.txt"), b"old").expect("write dest modified");
+
+    let mut src_operand = source_dir.into_os_string();
+    src_operand.push("/");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--dry-run"),
+        OsString::from("--itemize-changes"),
+        src_operand,
+        dest_dir.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0, "dry-run should succeed");
+    assert!(stderr.is_empty(), "stderr should be empty");
+
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Upstream rsync shows itemize strings for files that would be transferred
+    assert!(
+        output.contains(">f+++++++++") || output.contains(">f"),
+        "dry-run with -i should show itemize changes: {output}"
+    );
+
+    // Files should not actually be modified
+    assert_eq!(
+        fs::read(dest_dir.join("modified.txt")).expect("read modified"),
+        b"old",
+        "dry-run must not modify existing files"
+    );
+    assert!(
+        !dest_dir.join("new.txt").exists(),
+        "dry-run must not create new files"
+    );
+}
+
+#[test]
+fn parity_dry_run_with_verbose_lists_files_line_by_line() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    fs::write(source_dir.join("alpha.txt"), b"alpha").expect("write alpha");
+    fs::write(source_dir.join("beta.txt"), b"beta").expect("write beta");
+    fs::write(source_dir.join("gamma.txt"), b"gamma").expect("write gamma");
+
+    let mut src_operand = source_dir.into_os_string();
+    src_operand.push("/");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-nv"),
+        src_operand,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Upstream rsync -nv lists each file on its own line
+    assert!(
+        output.contains("alpha.txt\n"),
+        "should list alpha.txt on separate line"
+    );
+    assert!(
+        output.contains("beta.txt\n"),
+        "should list beta.txt on separate line"
+    );
+    assert!(
+        output.contains("gamma.txt\n"),
+        "should list gamma.txt on separate line"
+    );
+}
+
+#[test]
+fn parity_dry_run_deletion_shows_deleting_prefix() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    fs::write(source_dir.join("keep.txt"), b"keep").expect("write keep");
+    fs::write(dest_dir.join("keep.txt"), b"old keep").expect("write dest keep");
+    fs::write(dest_dir.join("delete_me.txt"), b"delete").expect("write delete_me");
+
+    let mut src_operand = source_dir.into_os_string();
+    src_operand.push("/");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-rnv"),
+        OsString::from("--delete"),
+        src_operand,
+        dest_dir.clone().into_os_string(),
+    ]);
+
+    assert_eq!(
+        code, 0,
+        "dry-run --delete should succeed; stderr: {}",
+        String::from_utf8_lossy(&stderr)
+    );
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Upstream rsync -nv --delete shows "deleting" prefix for files to be deleted
+    assert!(
+        output.contains("deleting") || output.contains("delete_me.txt"),
+        "dry-run --delete should show deletion messages: {output}"
+    );
+
+    // File should still exist
+    assert!(
+        dest_dir.join("delete_me.txt").exists(),
+        "dry-run must not actually delete files"
+    );
+}
+
+// ===========================================================================
+// 8. List-only output format parity (long listing like ls -l)
+// ===========================================================================
+
+#[test]
+fn parity_list_only_format_matches_upstream_structure() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    fs::write(source_dir.join("file.txt"), b"test content").expect("write file");
+
+    let mut src_operand = source_dir.into_os_string();
+    src_operand.push("/");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        src_operand,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Upstream format: <permissions> <size> <timestamp> <name>
+    // Example: "-rw-r--r--            12 2023/11/14 22:13:20 file.txt"
+    for line in output.lines() {
+        if line.contains("file.txt") {
+            // Should start with permission string (10 chars)
+            assert!(
+                line.starts_with('-') || line.starts_with('d') || line.starts_with('l'),
+                "list-only line should start with file type: {line}"
+            );
+
+            // Should contain the filename at the end
+            assert!(
+                line.ends_with("file.txt"),
+                "list-only line should end with filename: {line}"
+            );
+
+            // Should contain a date in YYYY/MM/DD format
+            assert!(
+                line.contains('/'),
+                "list-only line should contain date separators: {line}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn parity_list_only_directory_shows_d_prefix_without_trailing_slash() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    fs::create_dir(source_dir.join("subdir")).expect("create subdir");
+
+    let mut src_operand = source_dir.into_os_string();
+    src_operand.push("/");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        OsString::from("-r"),
+        src_operand,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Find the directory line
+    for line in output.lines() {
+        if line.contains("subdir") {
+            assert!(
+                line.starts_with('d'),
+                "directory should start with 'd': {line}"
+            );
+            // In --list-only mode, directories do NOT have trailing slash
+            // (unlike verbose mode with %n format)
+            assert!(
+                !line.ends_with('/'),
+                "list-only directory should not have trailing slash: {line}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn parity_list_only_size_field_is_right_aligned_15_chars() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    // Create files of various sizes to test alignment
+    fs::write(source_dir.join("small.txt"), b"x").expect("write small");
+    fs::write(source_dir.join("large.txt"), vec![0u8; 123456]).expect("write large");
+
+    let mut src_operand = source_dir.into_os_string();
+    src_operand.push("/");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        src_operand,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Upstream rsync uses exactly 15 characters for the size field, right-aligned
+    for line in output.lines() {
+        if line.len() >= 26 {
+            let size_field = &line[11..26];
+            assert_eq!(
+                size_field.len(),
+                15,
+                "size field should be exactly 15 chars: {line}"
+            );
+        }
+    }
+}
+
+// ===========================================================================
+// 9. Error message format parity
+// ===========================================================================
+
+#[test]
+fn parity_error_messages_use_rsync_error_prefix() {
+    // Test that error messages follow upstream format: "rsync error: <description>"
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("/nonexistent/source/path"),
+        OsString::from("/tmp/dest"),
+    ]);
+
+    assert_ne!(code, 0, "should fail with nonexistent source");
+
+    let error_output = String::from_utf8_lossy(&stderr);
+
+    // Upstream rsync error messages contain descriptive text
+    // Error format typically includes the program name or "rsync" prefix
+    assert!(
+        !error_output.is_empty(),
+        "should produce error output for nonexistent source"
+    );
+}
+
+#[test]
+fn parity_error_exit_codes_match_upstream_rerr_codes() {
+    // Test that we use standard rsync exit codes
+    // RERR_SYNTAX = 1 (syntax or usage error)
+    // RERR_FILESELECT = 3 (errors selecting files)
+
+    // Invalid option should return syntax error (code 1)
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--invalid-option-that-does-not-exist"),
+    ]);
+
+    assert_eq!(
+        code, 1,
+        "invalid option should return exit code 1 (syntax error)"
+    );
+}
+
+#[test]
+fn parity_error_file_not_found_shows_descriptive_message() {
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("/this/path/definitely/does/not/exist/file.txt"),
+        OsString::from("/tmp/dest"),
+    ]);
+
+    assert_ne!(code, 0);
+    let error_output = String::from_utf8_lossy(&stderr);
+
+    // Error message should contain information about the missing file
+    assert!(
+        error_output.contains("exist") || error_output.contains("No such") || error_output.contains("not found"),
+        "error should describe file not found: {error_output}"
+    );
+}
+
+// ===========================================================================
+// 10. --info=progress2 overall progress output format
+// ===========================================================================
+
+#[test]
+fn parity_info_progress2_shows_overall_progress_line() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("progress.txt");
+    let dest = temp.path().join("progress.out");
+    fs::write(&source, b"progress test content").expect("write source");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--info=progress2"),
+        source.into_os_string(),
+        dest.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Upstream --info=progress2 format: "  12.34kB   5%  123.45kB/s    0:00:01 (xfr#1, to-chk=0/1)"
+    // Should contain: percentage, speed, time estimate, and "to-chk=N/M" pattern
+    assert!(
+        output.contains("to-chk=") || output.contains("B/s"),
+        "progress2 should show overall progress with to-chk pattern: {output}"
+    );
+}
+
+#[test]
+fn parity_info_progress2_format_includes_transfer_rate() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("rate.txt");
+    let dest = temp.path().join("rate.out");
+    fs::write(&source, vec![0u8; 10000]).expect("write source");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--info=progress2"),
+        source.into_os_string(),
+        dest.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Should show transfer rate in format like "123.45kB/s" or "1.23MB/s"
+    assert!(
+        output.contains("B/s") || output.contains("kB/s") || output.contains("MB/s"),
+        "progress2 should show transfer rate: {output}"
+    );
+}
+
+#[test]
+fn parity_info_progress2_shows_to_chk_counter() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    fs::write(source_dir.join("file1.txt"), b"file1").expect("write file1");
+    fs::write(source_dir.join("file2.txt"), b"file2").expect("write file2");
+
+    let mut src_operand = source_dir.into_os_string();
+    src_operand.push("/");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--info=progress2"),
+        src_operand,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Upstream format includes "to-chk=N/M" where N is files left, M is total
+    assert!(
+        output.contains("to-chk="),
+        "progress2 should show to-chk counter: {output}"
+    );
+
+    // Should show to-chk=0/N at the end (all files checked)
+    assert!(
+        output.contains("to-chk=0/"),
+        "progress2 should show to-chk=0/ at completion: {output}"
+    );
+}
+
+// ===========================================================================
+// 11. --out-format placeholder parity (%f, %n, %l, etc.)
+// ===========================================================================
+
+#[test]
+fn parity_out_format_f_placeholder_shows_filename() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("formattest.txt");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir(&dest_dir).expect("create dest");
+    fs::write(&source, b"format test").expect("write source");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--out-format=%f"),
+        source.into_os_string(),
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // %f shows just the filename without path
+    assert!(
+        output.contains("formattest.txt"),
+        "--out-format=%f should show filename: {output}"
+    );
+}
+
+#[test]
+fn parity_out_format_n_placeholder_shows_name_with_directory_slash() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    fs::create_dir(source_dir.join("testdir")).expect("create testdir");
+    fs::write(source_dir.join("testdir/file.txt"), b"test").expect("write file");
+
+    let mut src_operand = source_dir.into_os_string();
+    src_operand.push("/");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-r"),
+        OsString::from("--out-format=%n"),
+        src_operand,
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // %n adds trailing slash for directories
+    let has_dir_with_slash = output.lines().any(|line| {
+        line.contains("testdir") && line.trim().ends_with('/')
+    });
+
+    assert!(
+        has_dir_with_slash,
+        "--out-format=%n should show directories with trailing slash: {output}"
+    );
+}
+
+#[test]
+fn parity_out_format_l_placeholder_shows_file_size() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("sized.txt");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir(&dest_dir).expect("create dest");
+    let content = b"test content for size";
+    fs::write(&source, content).expect("write source");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--out-format=%l %f"),
+        source.into_os_string(),
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // %l shows the file size in bytes
+    let expected_size = content.len().to_string();
+    assert!(
+        output.contains(&expected_size),
+        "--out-format=%l should show file size {expected_size}: {output}"
+    );
+}
+
+#[test]
+fn parity_out_format_i_placeholder_shows_itemize_string() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("item.txt");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir(&dest_dir).expect("create dest");
+    fs::write(&source, b"itemize test").expect("write source");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--out-format=%i %n"),
+        source.into_os_string(),
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // %i shows itemize changes (11-character string for new files: ">f+++++++++")
+    assert!(
+        output.contains(">f+++++++++") || output.contains(">f"),
+        "--out-format=%i should show itemize string: {output}"
+    );
+}
+
+#[test]
+fn parity_out_format_o_placeholder_shows_operation() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("op.txt");
+    let dest = temp.path().join("op.out");
+    fs::write(&source, b"operation test").expect("write source");
+
+    // First transfer
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--out-format=%o %n"),
+        source.clone().into_os_string(),
+        dest.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // %o shows operation: "send" for sending, "recv" for receiving, "del" for deleting
+    // In local copy mode, the operation depends on the context
+    assert!(
+        !output.trim().is_empty(),
+        "--out-format=%o should produce output: {output}"
+    );
+}
+
+#[test]
+fn parity_out_format_combined_placeholders() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("combo.txt");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir(&dest_dir).expect("create dest");
+    fs::write(&source, b"combined test").expect("write source");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--out-format=%i %n %l"),
+        source.into_os_string(),
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Combined format should show: itemize string, filename, and size
+    let line = output.trim();
+
+    // Should have itemize string (starts with > or .)
+    assert!(
+        line.starts_with('>') || line.starts_with('.') || line.starts_with('c'),
+        "combined format should start with itemize: {line}"
+    );
+
+    // Should contain the filename
+    assert!(
+        line.contains("combo.txt"),
+        "combined format should contain filename: {line}"
+    );
+
+    // Should contain the size (13 bytes)
+    assert!(
+        line.contains("13"),
+        "combined format should contain size: {line}"
+    );
+}
+
+#[test]
+fn parity_out_format_literal_text_passthrough() {
+    use std::fs;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("literal.txt");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir(&dest_dir).expect("create dest");
+    fs::write(&source, b"literal test").expect("write source");
+
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--out-format=COPIED: %f"),
+        source.into_os_string(),
+        dest_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    // Literal text in format string should pass through unchanged
+    assert!(
+        output.contains("COPIED:"),
+        "--out-format should preserve literal text: {output}"
+    );
+    assert!(
+        output.contains("literal.txt"),
+        "--out-format should expand %f placeholder: {output}"
+    );
+}

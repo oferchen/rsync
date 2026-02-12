@@ -449,6 +449,8 @@ fn compression_setting_try_from_numeric_matches_upstream_levels() {
 fn local_copy_with_all_valid_compress_levels() {
     use tempfile::tempdir;
 
+    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
+    let _guard = EnvGuard::remove("OC_RSYNC_FORCE_NO_COMPRESS");
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("source.txt");
     std::fs::write(&source, b"compressible test data content").expect("write source");
