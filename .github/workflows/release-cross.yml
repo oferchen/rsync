@@ -810,7 +810,7 @@ jobs:
 
           printf 'Pushed branch %s\n' "${BRANCH}"
         env:
-          BREW_TOKEN: ${{ secrets.OC_RSYNC_BREW_TOKEN }}
+          BREW_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create pull request
         shell: bash
@@ -850,7 +850,7 @@ jobs:
             --base master \
             --head "${BRANCH}"
         env:
-          GH_TOKEN: ${{ secrets.OC_RSYNC_BREW_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ===========================================================================
   # Docker Multi-arch Image
