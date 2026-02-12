@@ -182,6 +182,14 @@ fn execute_copies_file_near_path_max() {
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"near max");
 }
 
+// macOS PATH_MAX is 1024; this test's total path (~1021 bytes) exceeds it
+// depending on the temp dir prefix length.
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
 #[test]
 fn execute_copies_combined_long_path_and_long_filename() {
     let temp = tempdir().expect("tempdir");

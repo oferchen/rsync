@@ -29,12 +29,14 @@ pub fn execute(workspace: &Path, options: InteropOptions) -> TaskResult<()> {
             behavior::execute(workspace, opts)?;
         }
         InteropCommand::All => {
-            // Run exit codes and messages validation (not behavior by default)
             eprintln!("Running exit code validation...");
             exit_codes::execute(workspace, args::ExitCodesOptions::default())?;
 
             eprintln!("\nRunning message format validation...");
             messages::execute(workspace, args::MessagesOptions::default())?;
+
+            eprintln!("\nRunning behavior comparison...");
+            behavior::execute(workspace, args::BehaviorOptions::default())?;
         }
     }
 
