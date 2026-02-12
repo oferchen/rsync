@@ -1,14 +1,34 @@
-# Minimal runtime image for CI-built binaries
-# Used by the release workflow with pre-built musl static binaries
+# Multi-stage release image for pre-built musl static binaries
+# Produces a minimal Alpine runtime image with health check
 #
 # The TARGETARCH build arg is set automatically by Docker Buildx:
-#   linux/amd64 → TARGETARCH=amd64
-#   linux/arm64 → TARGETARCH=arm64
+#   linux/amd64 -> TARGETARCH=amd64
+#   linux/arm64 -> TARGETARCH=arm64
 
-FROM alpine:3.21
+# Stage 1: Verify the static binary
+FROM alpine:3.21 AS verifier
 
 ARG TARGETARCH
 
 COPY bin/${TARGETARCH}/oc-rsync /usr/local/bin/oc-rsync
+
+RUN chmod +x /usr/local/bin/oc-rsync && \
+    file /usr/local/bin/oc-rsync && \
+    /usr/local/bin/oc-rsync --version
+
+# Stage 2: Minimal runtime
+FROM alpine:3.21
+
+LABEL org.opencontainers.image.title="oc-rsync" \
+      org.opencontainers.image.description="Pure-Rust rsync implementation" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
+      org.opencontainers.image.base.name="alpine:3.21"
+
+RUN apk add --no-cache libacl
+
+COPY --from=verifier /usr/local/bin/oc-rsync /usr/local/bin/oc-rsync
+
+HEALTHCHECK --interval=60s --timeout=5s --retries=1 \
+    CMD ["/usr/local/bin/oc-rsync", "--version"]
 
 ENTRYPOINT ["oc-rsync"]
