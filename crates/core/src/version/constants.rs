@@ -36,10 +36,10 @@ pub const LEGACY_DAEMON_PROGRAM_NAME: &str = branding::UPSTREAM_DAEMON_PROGRAM_N
 pub const COPYRIGHT_START_YEAR: &str = "2025";
 
 /// Latest copyright year recorded by the Rust implementation.
-pub const LATEST_COPYRIGHT_YEAR: &str = "2025";
+pub const LATEST_COPYRIGHT_YEAR: &str = "2026";
 
 /// Copyright notice rendered by `rsync`.
-pub const COPYRIGHT_NOTICE: &str = "(C) 2025 by Ofer Chen.";
+pub const COPYRIGHT_NOTICE: &str = "(C) 2025-2026 by Ofer Chen.";
 
 /// Repository URL advertised by version banners and documentation.
 pub const SOURCE_URL: &str = workspace::SOURCE_URL;

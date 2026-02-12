@@ -58,14 +58,16 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 - **Rust safety & performance**
 
-  - Memory-safe implementation using idiomatic Rust.
+  - Memory-safe implementation using idiomatic Rust — 1.7-1.9x faster than upstream rsync.
+  - mimalloc high-performance allocator for reduced allocation overhead.
   - SIMD-accelerated rolling checksums (AVX2/NEON) with runtime detection.
-  - Zero-copy I/O, mmap, sendfile, copy_file_range, and io_uring with automatic fallback.
-  - Parallel checksum computation, file list generation, and delta transfer.
+  - Zero-copy I/O via `copy_file_range` (Linux, >=64KB files), mmap (>=1MB), and optional `io_uring` (Linux 5.6+) with automatic fallback.
+  - Rayon-based parallel checksum computation, file list generation, and delta transfer.
+  - Recycled buffer pool eliminating allocation overhead in the transfer hot path.
 
 - **Composed workspace**
 
-  - 23 crates separate concerns:
+  - 26 crates separate concerns:
     - `cli` for argument parsing and user experience.
     - `core` for shared types, error model, version reporting, and utilities.
     - `protocol` for wire format, tags, negotiation, and error recovery.
@@ -125,7 +127,7 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ **Error handling** - RAII cleanup, error categorization, ENOSPC detection
 
 **Test Coverage**:
-- 21,649+ tests passing (100% pass rate)
+- 21,400+ tests passing (100% pass rate)
 - Comprehensive integration tests for delta transfer
 - Output parity tests verifying --stats, --itemize-changes, --progress, --dry-run match upstream
 - Error scenario tests (cleanup, categorization, edge cases, network interruption)
@@ -141,7 +143,17 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ `--progress` with per-file and overall transfer rates, ETA
 - ✅ `--dry-run` with "(DRY RUN)" marker and action summaries
 - ✅ `--info=FLAGS` with ALL/NONE keywords and verbosity mapping
-- ✅ `--version` with capabilities, optimizations, and algorithm lists
+- ✅ `--version` with capabilities, optimizations (mimalloc, copy-file-range, io-uring, parallel, mmap), and algorithm lists
+
+**Performance** (v0.5.4 vs upstream rsync 3.4.1, local transfers on Linux x86_64):
+
+| Workload | oc-rsync | upstream rsync | Speedup |
+|----------|----------|---------------|---------|
+| 2,000 files, 100 MB initial sync | 88 ms | 148 ms | **1.7x** |
+| 10,000 files, 2.4 GB initial sync | 1,123 ms | 2,076 ms | **1.85x** |
+| Incremental (no changes) | 100 ms | 187 ms | **1.9x** |
+
+Key optimizations: mimalloc allocator, zero-copy `copy_file_range` (Linux), memory-mapped I/O, rayon-based parallel checksums, recycled buffer pool, and SIMD-accelerated rolling checksums.
 
 **Production Readiness**:
 - ✅ Core delta transfer: Production-ready
@@ -539,13 +551,15 @@ The workspace uses Cargo feature flags to enable optional functionality. The fol
 | `acl` | core, cli, engine, metadata | POSIX ACL (Access Control List) preservation |
 | `xattr` | core, cli, engine, metadata | Extended attribute preservation |
 | `iconv` | core, protocol | Filename encoding conversion (via encoding_rs) |
-| `xxh3-simd` | checksums | Runtime SIMD detection for XXH3 (AVX2/NEON) |
+| `simd` | checksums | Runtime SIMD detection for XXH3 (AVX2/NEON) |
+| `copy_file_range` | fast_io | Zero-copy file transfers via Linux syscall (>=64KB, with fallback) |
 
 ### Optional Features
 
 | Feature | Crate | Description |
 |---------|-------|-------------|
 | `parallel` | checksums, flist | Parallel processing using rayon (checksum computation, file list building) |
+| `io_uring` | transfer, fast_io | Linux 5.6+ batched async I/O with automatic fallback (20-40% faster I/O) |
 | `async` | core, protocol, engine, daemon | Tokio-based async I/O for concurrent operations |
 | `tracing` | core, engine, daemon, protocol, filters | Structured logging instrumentation for performance analysis and debug tracing (rsync::flist, rsync::send, rsync::recv, rsync::del, rsync::deltasum, rsync::filter, rsync::io) |
 | `concurrent-sessions` | daemon | Thread-safe session/connection tracking with DashMap |

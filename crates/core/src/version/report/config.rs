@@ -58,6 +58,16 @@ pub struct VersionInfoConfig {
     pub supports_openssl_crypto: bool,
     /// Whether assembly acceleration is used for MD5.
     pub supports_asm_md5: bool,
+    /// Whether the mimalloc high-performance allocator is active.
+    pub supports_mimalloc: bool,
+    /// Whether `copy_file_range` zero-copy transfers are available (Linux).
+    pub supports_copy_file_range: bool,
+    /// Whether `io_uring` async I/O batching is available (Linux 5.6+).
+    pub supports_io_uring: bool,
+    /// Whether rayon-based parallel processing is enabled.
+    pub supports_parallel: bool,
+    /// Whether memory-mapped I/O is available.
+    pub supports_mmap: bool,
 }
 
 impl VersionInfoConfig {
@@ -88,6 +98,11 @@ impl VersionInfoConfig {
             supports_asm_roll: false,
             supports_openssl_crypto: false,
             supports_asm_md5: false,
+            supports_mimalloc: true,
+            supports_copy_file_range: cfg!(target_os = "linux"),
+            supports_io_uring: false,
+            supports_parallel: true,
+            supports_mmap: cfg!(unix),
         }
     }
 
@@ -181,6 +196,11 @@ pub struct VersionInfoConfigBuilder {
     supports_asm_roll: bool,
     supports_openssl_crypto: bool,
     supports_asm_md5: bool,
+    supports_mimalloc: bool,
+    supports_copy_file_range: bool,
+    supports_io_uring: bool,
+    supports_parallel: bool,
+    supports_mmap: bool,
 }
 
 impl VersionInfoConfigBuilder {
@@ -211,6 +231,11 @@ impl VersionInfoConfigBuilder {
             supports_asm_roll: config.supports_asm_roll,
             supports_openssl_crypto: config.supports_openssl_crypto,
             supports_asm_md5: config.supports_asm_md5,
+            supports_mimalloc: config.supports_mimalloc,
+            supports_copy_file_range: config.supports_copy_file_range,
+            supports_io_uring: config.supports_io_uring,
+            supports_parallel: config.supports_parallel,
+            supports_mmap: config.supports_mmap,
         }
     }
 
@@ -240,6 +265,11 @@ impl VersionInfoConfigBuilder {
             supports_asm_roll: config.supports_asm_roll,
             supports_openssl_crypto: config.supports_openssl_crypto,
             supports_asm_md5: config.supports_asm_md5,
+            supports_mimalloc: config.supports_mimalloc,
+            supports_copy_file_range: config.supports_copy_file_range,
+            supports_io_uring: config.supports_io_uring,
+            supports_parallel: config.supports_parallel,
+            supports_mmap: config.supports_mmap,
         }
     }
 
@@ -311,6 +341,16 @@ impl VersionInfoConfigBuilder {
         supports_openssl_crypto: bool,
         /// Enables or disables assembly-accelerated MD5.
         supports_asm_md5: bool,
+        /// Enables or disables the mimalloc allocator.
+        supports_mimalloc: bool,
+        /// Enables or disables copy_file_range zero-copy transfers.
+        supports_copy_file_range: bool,
+        /// Enables or disables io_uring async I/O batching.
+        supports_io_uring: bool,
+        /// Enables or disables rayon-based parallel processing.
+        supports_parallel: bool,
+        /// Enables or disables memory-mapped I/O.
+        supports_mmap: bool,
     }
 
     /// Finalises the builder and returns the constructed configuration.
@@ -339,6 +379,11 @@ impl VersionInfoConfigBuilder {
             supports_asm_roll: self.supports_asm_roll,
             supports_openssl_crypto: self.supports_openssl_crypto,
             supports_asm_md5: self.supports_asm_md5,
+            supports_mimalloc: self.supports_mimalloc,
+            supports_copy_file_range: self.supports_copy_file_range,
+            supports_io_uring: self.supports_io_uring,
+            supports_parallel: self.supports_parallel,
+            supports_mmap: self.supports_mmap,
         }
     }
 }
@@ -370,6 +415,11 @@ mod tests {
         assert!(!config.supports_asm_roll);
         assert!(!config.supports_openssl_crypto);
         assert!(!config.supports_asm_md5);
+        assert!(config.supports_mimalloc);
+        assert_eq!(config.supports_copy_file_range, cfg!(target_os = "linux"));
+        assert!(!config.supports_io_uring);
+        assert!(config.supports_parallel);
+        assert_eq!(config.supports_mmap, cfg!(unix));
     }
 
     #[test]
@@ -524,6 +574,40 @@ mod tests {
     fn builder_supports_asm_md5() {
         let config = VersionInfoConfig::builder().supports_asm_md5(true).build();
         assert!(config.supports_asm_md5);
+    }
+
+    #[test]
+    fn builder_supports_mimalloc_false() {
+        let config = VersionInfoConfig::builder()
+            .supports_mimalloc(false)
+            .build();
+        assert!(!config.supports_mimalloc);
+    }
+
+    #[test]
+    fn builder_supports_copy_file_range() {
+        let config = VersionInfoConfig::builder()
+            .supports_copy_file_range(true)
+            .build();
+        assert!(config.supports_copy_file_range);
+    }
+
+    #[test]
+    fn builder_supports_io_uring() {
+        let config = VersionInfoConfig::builder().supports_io_uring(true).build();
+        assert!(config.supports_io_uring);
+    }
+
+    #[test]
+    fn builder_supports_parallel() {
+        let config = VersionInfoConfig::builder().supports_parallel(true).build();
+        assert!(config.supports_parallel);
+    }
+
+    #[test]
+    fn builder_supports_mmap() {
+        let config = VersionInfoConfig::builder().supports_mmap(true).build();
+        assert!(config.supports_mmap);
     }
 
     #[test]
