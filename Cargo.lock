@@ -781,6 +781,7 @@ name = "fast_io"
 version = "0.5.4"
 dependencies = [
  "criterion",
+ "filetime",
  "io-uring",
  "libc",
  "memmap2",

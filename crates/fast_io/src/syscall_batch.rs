@@ -341,15 +341,20 @@ fn set_file_times(
 
     #[cfg(not(unix))]
     {
-        // Suppress unused variable warnings
-        let _ = (path, atime, mtime);
+        // Use the filetime crate as a portable fallback on non-Unix platforms.
+        let ft_atime = atime.map(filetime::FileTime::from_system_time);
+        let ft_mtime = mtime.map(filetime::FileTime::from_system_time);
 
-        // On non-Unix platforms, we can't easily set times individually
-        // Return unsupported error
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "set_file_times not supported on this platform",
-        ))
+        // filetime::set_file_times requires both; use current values for omitted.
+        let meta = fs::metadata(path)?;
+        let current_atime = filetime::FileTime::from_last_access_time(&meta);
+        let current_mtime = filetime::FileTime::from_last_modification_time(&meta);
+
+        filetime::set_file_times(
+            path,
+            ft_atime.unwrap_or(current_atime),
+            ft_mtime.unwrap_or(current_mtime),
+        )
     }
 }
 
@@ -385,13 +390,15 @@ fn set_file_permissions(path: &Path, mode: u32) -> io::Result<()> {
     fs::set_permissions(path, perms)
 }
 
-/// Set file permissions (non-Unix stub).
+/// Set file permissions (non-Unix fallback).
+///
+/// Maps Unix mode bits to Windows readonly attribute: writable if owner
+/// write bit is set, readonly otherwise.
 #[cfg(not(unix))]
-fn set_file_permissions(_path: &Path, _mode: u32) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "set_permissions not supported on this platform",
-    ))
+fn set_file_permissions(path: &Path, mode: u32) -> io::Result<()> {
+    let mut perms = fs::metadata(path)?.permissions();
+    perms.set_readonly(mode & 0o200 == 0);
+    fs::set_permissions(path, perms)
 }
 
 #[cfg(test)]
