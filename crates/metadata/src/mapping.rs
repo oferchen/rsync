@@ -1,3 +1,4 @@
+#![cfg(unix)]
 #![allow(unsafe_code)]
 
 use crate::id_lookup::{

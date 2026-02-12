@@ -1,3 +1,5 @@
+#![cfg(not(unix))]
+
 //! User/group mapping stubs for Windows.
 //!
 //! Windows lacks POSIX user/group concepts, so ownership mapping options
