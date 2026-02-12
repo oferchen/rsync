@@ -1276,6 +1276,8 @@ fn backup_suffix_with_dot_prefix() {
     assert_eq!(fs::read(&backup).expect("read backup"), b"old config");
 }
 
+// Backup suffix contains colons (e.g. 12:30:00) which are illegal in Windows filenames.
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn backup_suffix_with_long_extension() {
     let ctx = test_helpers::setup_copy_test();
