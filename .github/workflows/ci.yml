@@ -268,10 +268,10 @@ jobs:
           tool: cargo-nextest
 
       - name: Build
-        run: cargo build --workspace --target x86_64-unknown-linux-musl
+        run: cargo build --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,simd,parallel,copy_file_range"
 
       - name: Test
-        run: cargo nextest run --workspace --target x86_64-unknown-linux-musl
+        run: cargo nextest run --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,simd,parallel,copy_file_range"
 
       - name: Verify static linking
         run: |
