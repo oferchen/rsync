@@ -192,14 +192,9 @@ fn create_device_node_inner(
 
 #[cfg(not(unix))]
 fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(), MetadataError> {
-    Err(MetadataError::new(
-        "create fifo",
-        destination,
-        io::Error::new(
-            io::ErrorKind::Unsupported,
-            "FIFO creation is not supported on this platform",
-        ),
-    ))
+    // No-op on non-Unix platforms: FIFOs don't exist on Windows.
+    let _ = destination;
+    Ok(())
 }
 
 #[cfg(not(unix))]
@@ -207,14 +202,9 @@ fn create_device_node_inner(
     destination: &Path,
     _metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    Err(MetadataError::new(
-        "create device",
-        destination,
-        io::Error::new(
-            io::ErrorKind::Unsupported,
-            "device node creation is not supported on this platform",
-        ),
-    ))
+    // No-op on non-Unix platforms: device nodes don't exist on Windows.
+    let _ = destination;
+    Ok(())
 }
 
 #[cfg(unix)]
