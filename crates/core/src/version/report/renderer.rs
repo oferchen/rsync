@@ -275,7 +275,7 @@ impl VersionInfoReport {
     }
 
     fn info_items(&self) -> Vec<InfoItem> {
-        const BASE_CAPACITY: usize = 32;
+        const BASE_CAPACITY: usize = 40;
 
         let config = self.config;
         let mut items = Vec::with_capacity(BASE_CAPACITY);
@@ -319,6 +319,14 @@ impl VersionInfoReport {
             config.supports_openssl_crypto,
         ));
         items.push(capability_entry("asm-MD5", config.supports_asm_md5));
+        items.push(capability_entry("mimalloc", config.supports_mimalloc));
+        items.push(capability_entry(
+            "copy-file-range",
+            config.supports_copy_file_range,
+        ));
+        items.push(capability_entry("io-uring", config.supports_io_uring));
+        items.push(capability_entry("parallel", config.supports_parallel));
+        items.push(capability_entry("mmap", config.supports_mmap));
 
         debug_assert!(items.capacity() >= BASE_CAPACITY);
         items
