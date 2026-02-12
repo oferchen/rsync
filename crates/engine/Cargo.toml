@@ -48,7 +48,7 @@ windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 libc = "0.2"
 
 [features]
-default = ["zstd", "lz4", "acl", "xattr", "lazy-metadata"]
+default = ["zstd", "lz4", "xattr", "lazy-metadata"]
 
 # ============================================================================
 # Compression Features
