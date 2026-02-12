@@ -223,11 +223,7 @@ fn debug_del_flag_shows_deletion_debug_output() {
         dest_dir.clone().into_os_string(),
     ]);
 
-    assert_eq!(
-        code, 0,
-        "stderr: {}",
-        String::from_utf8_lossy(&stderr)
-    );
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     let output = String::from_utf8(stdout).expect("utf8");
     assert!(
         output.contains("deleting") || output.contains("extra.txt"),

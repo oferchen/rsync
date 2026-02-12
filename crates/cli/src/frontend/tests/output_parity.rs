@@ -4,14 +4,14 @@
 // that the rendered output matches the structure and content expected by upstream
 // rsync's --stats, --verbose, and --itemize-changes modes.
 
+use super::common::{RSYNC, run_with_args};
 use super::*;
 use super::{
     NameOutputLevel, OutFormatContext, ProgressSetting, emit_transfer_summary, parse_out_format,
 };
-use super::common::{RSYNC, run_with_args};
 use core::client::{
-    ClientConfig, ClientEntryKind, ClientEvent, ClientEventKind, ClientSummary,
-    HumanReadableMode, run_client,
+    ClientConfig, ClientEntryKind, ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode,
+    run_client,
 };
 use engine::local_copy::{LocalCopyChangeSet, TimeChange};
 use std::ffi::OsStr;
@@ -1254,7 +1254,8 @@ fn parity_dry_run_deletion_shows_deleting_prefix() {
     ]);
 
     assert_eq!(
-        code, 0,
+        code,
+        0,
         "dry-run --delete should succeed; stderr: {}",
         String::from_utf8_lossy(&stderr)
     );
@@ -1470,7 +1471,9 @@ fn parity_error_file_not_found_shows_descriptive_message() {
 
     // Error message should contain information about the missing file
     assert!(
-        error_output.contains("exist") || error_output.contains("No such") || error_output.contains("not found"),
+        error_output.contains("exist")
+            || error_output.contains("No such")
+            || error_output.contains("not found"),
         "error should describe file not found: {error_output}"
     );
 }
@@ -1630,9 +1633,9 @@ fn parity_out_format_n_placeholder_shows_name_with_directory_slash() {
     let output = String::from_utf8(stdout).expect("utf8");
 
     // %n adds trailing slash for directories
-    let has_dir_with_slash = output.lines().any(|line| {
-        line.contains("testdir") && line.trim().ends_with('/')
-    });
+    let has_dir_with_slash = output
+        .lines()
+        .any(|line| line.contains("testdir") && line.trim().ends_with('/'));
 
     assert!(
         has_dir_with_slash,
