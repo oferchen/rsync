@@ -818,8 +818,11 @@ fn archive_no_recursive_disables_recursion_in_options() {
     assert!(options.links_enabled());
     assert!(options.preserve_permissions());
     assert!(options.preserve_times());
-    assert!(options.preserve_group());
-    assert!(options.preserve_owner());
+    #[cfg(unix)]
+    {
+        assert!(options.preserve_group());
+        assert!(options.preserve_owner());
+    }
     assert!(options.devices_enabled());
     assert!(options.specials_enabled());
 }

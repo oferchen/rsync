@@ -271,7 +271,15 @@ mod tests {
         assert!(!is_fifo(metadata.file_type()));
     }
 
-    #[cfg(unix)]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        ))
+    ))]
     #[test]
     fn is_fifo_returns_true_for_fifo() {
         use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
