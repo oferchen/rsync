@@ -19,6 +19,13 @@ impl ClientConfigBuilder {
         self
     }
 
+    #[cfg(not(all(unix, feature = "xattr")))]
+    /// No-op on platforms without xattr support.
+    #[must_use]
+    pub const fn xattrs(self, _preserve: bool) -> Self {
+        self
+    }
+
     builder_setter! {
         /// Applies an explicit ownership override using numeric identifiers.
         #[doc(alias = "--chown")]
@@ -185,6 +192,13 @@ impl ClientConfigBuilder {
     #[doc(alias = "-A")]
     pub const fn acls(mut self, preserve: bool) -> Self {
         self.preserve_acls = preserve;
+        self
+    }
+
+    #[cfg(not(all(unix, feature = "acl")))]
+    /// No-op on platforms without ACL support.
+    #[must_use]
+    pub const fn acls(self, _preserve: bool) -> Self {
         self
     }
 }
