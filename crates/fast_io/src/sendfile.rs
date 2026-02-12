@@ -638,6 +638,7 @@ mod tests {
         assert_eq!(output, content);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_threshold_boundary() {
         // Test at exact threshold boundary

@@ -29,22 +29,31 @@ pub mod cached_sort;
 pub mod parallel;
 pub mod traits;
 
-// Unix-only modules that depend on unix-specific APIs
-#[cfg(unix)]
+// These modules already handle all platforms internally via #[cfg] blocks:
+// - copy_file_range: uses Linux copy_file_range syscall, falls back to read/write
+// - sendfile: uses Linux sendfile syscall, falls back to read/write
+// - syscall_batch: uses Linux statx + libc, falls back to std::fs + filetime
 pub mod copy_file_range;
+pub mod sendfile;
+pub mod syscall_batch;
+
+// mmap_reader depends on memmap2 (Unix-only dependency), so needs a stub
 #[cfg(unix)]
 pub mod mmap_reader;
-#[cfg(unix)]
-pub mod sendfile;
-#[cfg(unix)]
-pub mod syscall_batch;
+#[cfg(not(unix))]
+#[path = "mmap_reader_stub.rs"]
+pub mod mmap_reader;
 
 /// io_uring-based async file I/O for Linux 5.6+.
 ///
-/// This module is only available on Linux with the `io_uring` feature enabled.
-/// It provides high-performance file I/O with automatic fallback to standard I/O
-/// on unsupported systems.
+/// This module provides high-performance file I/O using Linux's io_uring interface
+/// with automatic fallback to standard I/O on unsupported systems. On non-Linux
+/// platforms or without the `io_uring` feature, a stub is used that always falls
+/// back to standard I/O.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
+pub mod io_uring;
+#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+#[path = "io_uring_stub.rs"]
 pub mod io_uring;
 
 pub use buffer_pool::{BufferGuard, BufferPool};
@@ -52,10 +61,8 @@ pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use traits::{FileReader, FileWriter};
 
-#[cfg(unix)]
 pub use mmap_reader::MmapReader;
 
-#[cfg(all(target_os = "linux", feature = "io_uring"))]
 pub use io_uring::{
     IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
     IoUringWriter, IoUringWriterFactory, is_io_uring_available,
