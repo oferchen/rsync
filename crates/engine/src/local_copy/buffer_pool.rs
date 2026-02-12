@@ -226,6 +226,7 @@ impl BufferPool {
     /// `transfer.rs` and `parallel_checksum.rs`).
     ///
     /// If the pool is at capacity, the buffer is dropped instead.
+    #[allow(unsafe_code)]
     fn return_buffer(&self, mut buffer: Vec<u8>) {
         if buffer.capacity() < self.buffer_size {
             // Small adaptive buffer — replace with fresh allocation at pool size.
