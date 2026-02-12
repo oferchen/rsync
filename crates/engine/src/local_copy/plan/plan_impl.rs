@@ -96,6 +96,7 @@ impl LocalCopyPlan {
         self.destination.path()
     }
 
+    /// Returns the full destination specification including trailing-slash semantics.
     pub(in crate::local_copy) const fn destination_spec(&self) -> &DestinationSpec {
         &self.destination
     }
