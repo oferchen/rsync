@@ -326,7 +326,15 @@ fn execute_without_specials_skips_both_fifos_and_sockets() {
 
 // ==================== Archive Mode (--specials implied) ====================
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_archive_mode_copies_socket() {
     use std::os::unix::fs::FileTypeExt;
@@ -359,7 +367,15 @@ fn execute_archive_mode_copies_socket() {
     assert_eq!(summary.fifos_created(), 1);
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 #[test]
 fn execute_archive_mode_copies_fifo_and_socket_together() {
     use std::os::unix::fs::FileTypeExt;
