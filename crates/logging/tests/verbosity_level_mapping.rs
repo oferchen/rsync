@@ -106,11 +106,11 @@ fn verbose_level_2_increases_verbosity() {
     assert_eq!(config.info.misc, 2);
     assert_eq!(config.info.name, 2);
 
-    // Level 2 should enable additional info flags
-    assert_eq!(config.info.backup, 2);
-    assert_eq!(config.info.mount, 2);
-    assert_eq!(config.info.remove, 2);
-    assert_eq!(config.info.skip, 2);
+    // Level 2 should enable additional info flags (at level 1, per upstream)
+    assert_eq!(config.info.backup, 1);
+    assert_eq!(config.info.mount, 1);
+    assert_eq!(config.info.remove, 1);
+    assert_eq!(config.info.skip, 1);
 
     // Level 2 should enable basic debug output
     assert_eq!(config.debug.bind, 1);
@@ -150,13 +150,14 @@ fn verbose_level_2_message_filtering() {
     // These should pass through (level 1 and 2 info, level 1 debug)
     info_log!(Name, 1, "file.txt");
     info_log!(Name, 2, "itemized change");
-    info_log!(Backup, 2, "backup created");
-    info_log!(Skip, 2, "skipped file");
+    info_log!(Backup, 1, "backup created");
+    info_log!(Skip, 1, "skipped file");
     debug_log!(Deltasum, 1, "computing checksum");
     debug_log!(Flist, 1, "building file list");
 
-    // These should be filtered (level 3 info, level 2+ debug)
+    // These should be filtered (exceeds configured levels)
     info_log!(Name, 3, "level 3 info");
+    info_log!(Backup, 2, "backup level 2");
     debug_log!(Deltasum, 2, "detailed checksum");
     debug_log!(Connect, 2, "connection detail");
 
@@ -181,7 +182,7 @@ fn verbose_level_3_increases_debug_verbosity() {
     assert_eq!(config.debug.deltasum, 2);
     assert_eq!(config.debug.filter, 2);
     assert_eq!(config.debug.flist, 2);
-    assert_eq!(config.debug.exit, 2);
+    assert_eq!(config.debug.exit, 1);
 
     // Level 3 should enable additional debug flags
     assert_eq!(config.debug.acl, 1);
