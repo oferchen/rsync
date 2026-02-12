@@ -8,8 +8,8 @@
 
 use super::*;
 use core::client::{
-    ClientConfig, ClientEventKind, ClientProgressObserver, ClientProgressUpdate,
-    HumanReadableMode, run_client_with_observer,
+    ClientConfig, ClientEventKind, ClientProgressObserver, ClientProgressUpdate, HumanReadableMode,
+    run_client_with_observer,
 };
 use std::io::Cursor;
 use tempfile::TempDir;
@@ -88,10 +88,17 @@ fn live_progress_per_file_renders_file_path() {
     let (tmp, source_dir) = setup_single_file("hello.txt", 128);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, rendered) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, rendered) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
-    assert!(rendered, "rendered() should return true after receiving events");
+    assert!(
+        rendered,
+        "rendered() should return true after receiving events"
+    );
     assert!(
         output.contains("hello.txt"),
         "per-file mode should print the file name: {output:?}"
@@ -103,8 +110,12 @@ fn live_progress_per_file_renders_xfr_and_to_chk() {
     let (tmp, source_dir) = setup_single_file("single.bin", 64);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
     assert!(
         output.contains("xfr#1"),
@@ -121,8 +132,12 @@ fn live_progress_per_file_renders_percentage() {
     let (tmp, source_dir) = setup_single_file("pct.bin", 256);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
     assert!(
         output.contains("100%"),
@@ -135,8 +150,12 @@ fn live_progress_per_file_renders_rate() {
     let (tmp, source_dir) = setup_single_file("rate.bin", 512);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
     assert!(
         output.contains("B/s"),
@@ -149,8 +168,12 @@ fn live_progress_per_file_renders_elapsed_time() {
     let (tmp, source_dir) = setup_single_file("elapsed.bin", 128);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
     // Elapsed format is H:MM:SS; for a fast transfer it should start with "0:00:0"
     assert!(
@@ -164,8 +187,12 @@ fn live_progress_per_file_renders_byte_count() {
     let (tmp, source_dir) = setup_single_file("bytes.bin", 1_536);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
     assert!(
         output.contains("1,536"),
@@ -179,21 +206,16 @@ fn live_progress_per_file_multiple_files_renders_all_xfr() {
     let (tmp, source_dir) = setup_multiple_files(&files);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
-    assert!(
-        output.contains("xfr#1"),
-        "should contain xfr#1: {output:?}"
-    );
-    assert!(
-        output.contains("xfr#2"),
-        "should contain xfr#2: {output:?}"
-    );
-    assert!(
-        output.contains("xfr#3"),
-        "should contain xfr#3: {output:?}"
-    );
+    assert!(output.contains("xfr#1"), "should contain xfr#1: {output:?}");
+    assert!(output.contains("xfr#2"), "should contain xfr#2: {output:?}");
+    assert!(output.contains("xfr#3"), "should contain xfr#3: {output:?}");
 
     // Last transfer should show to-chk=0/N
     assert!(
@@ -219,7 +241,11 @@ fn live_progress_per_file_finish_completes_without_error() {
         .build();
 
     let mut buffer: Vec<u8> = Vec::new();
-    let mut live = LiveProgress::new(&mut buffer, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let mut live = LiveProgress::new(
+        &mut buffer,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
     let _summary =
         run_client_with_observer(config, Some(&mut live as &mut dyn ClientProgressObserver))
             .expect("transfer succeeds");
@@ -237,8 +263,12 @@ fn live_progress_overall_renders_xfr_and_to_chk() {
     let (tmp, source_dir) = setup_single_file("overall.bin", 256);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, rendered) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::Overall, HumanReadableMode::Disabled);
+    let (output, _summary, rendered) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::Overall,
+        HumanReadableMode::Disabled,
+    );
 
     assert!(rendered, "rendered() should return true in overall mode");
     assert!(
@@ -256,17 +286,19 @@ fn live_progress_overall_does_not_print_filename() {
     let (tmp, source_dir) = setup_single_file("noname.bin", 128);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::Overall, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::Overall,
+        HumanReadableMode::Disabled,
+    );
 
     // Overall mode should NOT print the individual file name as a separate line
     // (unlike per-file mode which prints filename\n before the progress line)
     let lines: Vec<&str> = output.lines().collect();
     // In overall mode, no line should be just the filename
-    let standalone_filename_lines: Vec<&&str> = lines
-        .iter()
-        .filter(|l| l.trim() == "noname.bin")
-        .collect();
+    let standalone_filename_lines: Vec<&&str> =
+        lines.iter().filter(|l| l.trim() == "noname.bin").collect();
     assert!(
         standalone_filename_lines.is_empty(),
         "overall mode should not print standalone filename lines: {output:?}"
@@ -278,8 +310,12 @@ fn live_progress_overall_renders_percentage_and_rate() {
     let (tmp, source_dir) = setup_single_file("overall_pct.bin", 512);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::Overall, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::Overall,
+        HumanReadableMode::Disabled,
+    );
 
     assert!(
         output.contains('%'),
@@ -297,8 +333,12 @@ fn live_progress_overall_multiple_files() {
     let (tmp, source_dir) = setup_multiple_files(&files);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::Overall, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::Overall,
+        HumanReadableMode::Disabled,
+    );
 
     assert!(
         output.contains("xfr#2"),
@@ -319,8 +359,12 @@ fn live_progress_human_readable_formats_bytes() {
     let (tmp, source_dir) = setup_single_file("human.bin", 1_536);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Enabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Enabled,
+    );
 
     // Human-readable mode should show K/M/G suffixes instead of thousands separators
     assert!(
@@ -334,8 +378,12 @@ fn live_progress_combined_human_readable_shows_both_formats() {
     let (tmp, source_dir) = setup_single_file("combined.bin", 1_536);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Combined);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Combined,
+    );
 
     // Combined mode should show both human-readable and decimal
     assert!(
@@ -351,7 +399,11 @@ fn live_progress_combined_human_readable_shows_both_formats() {
 #[test]
 fn live_progress_rendered_returns_false_before_events() {
     let mut buffer: Vec<u8> = Vec::new();
-    let live = LiveProgress::new(&mut buffer, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let live = LiveProgress::new(
+        &mut buffer,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
     assert!(
         !live.rendered(),
         "rendered() should be false before any events"
@@ -364,8 +416,12 @@ fn live_progress_rendered_returns_true_after_transfer() {
     let (tmp, source_dir) = setup_single_file("rendered.bin", 64);
     let dest_dir = tmp.path().join("dest");
 
-    let (_output, _summary, rendered) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (_output, _summary, rendered) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
     assert!(
         rendered,
@@ -427,7 +483,8 @@ fn e2e_progress_observer_receives_events_for_single_file() {
         .build();
 
     let mut observer = RecordingObserver::default();
-    let _summary = run_client_with_observer(config, Some(&mut observer)).expect("transfer succeeds");
+    let _summary =
+        run_client_with_observer(config, Some(&mut observer)).expect("transfer succeeds");
 
     assert!(
         !observer.updates.is_empty(),
@@ -435,11 +492,8 @@ fn e2e_progress_observer_receives_events_for_single_file() {
     );
 
     // Verify the final update
-    let final_updates: Vec<&RecordedUpdate> = observer
-        .updates
-        .iter()
-        .filter(|u| u.is_final)
-        .collect();
+    let final_updates: Vec<&RecordedUpdate> =
+        observer.updates.iter().filter(|u| u.is_final).collect();
     assert!(
         !final_updates.is_empty(),
         "should have at least one final update"
@@ -462,11 +516,7 @@ fn e2e_progress_observer_receives_events_for_single_file() {
 
 #[test]
 fn e2e_progress_observer_receives_events_for_multiple_files() {
-    let files = [
-        ("alpha.txt", 100),
-        ("beta.txt", 200),
-        ("gamma.txt", 300),
-    ];
+    let files = [("alpha.txt", 100), ("beta.txt", 200), ("gamma.txt", 300)];
     let (tmp, source_dir) = setup_multiple_files(&files);
     let dest_dir = tmp.path().join("dest");
 
@@ -482,7 +532,8 @@ fn e2e_progress_observer_receives_events_for_multiple_files() {
         .build();
 
     let mut observer = RecordingObserver::default();
-    let _summary = run_client_with_observer(config, Some(&mut observer)).expect("transfer succeeds");
+    let _summary =
+        run_client_with_observer(config, Some(&mut observer)).expect("transfer succeeds");
 
     let data_updates: Vec<&RecordedUpdate> = observer
         .updates
@@ -494,7 +545,10 @@ fn e2e_progress_observer_receives_events_for_multiple_files() {
         data_updates.len() >= 3,
         "should have at least 3 data-copy events, got {}: {:?}",
         data_updates.len(),
-        data_updates.iter().map(|u| u.path.display().to_string()).collect::<Vec<_>>()
+        data_updates
+            .iter()
+            .map(|u| u.path.display().to_string())
+            .collect::<Vec<_>>()
     );
 
     // Check that overall_transferred is non-decreasing
@@ -549,7 +603,8 @@ fn e2e_progress_observer_reports_correct_total() {
         .build();
 
     let mut observer = RecordingObserver::default();
-    let _summary = run_client_with_observer(config, Some(&mut observer)).expect("transfer succeeds");
+    let _summary =
+        run_client_with_observer(config, Some(&mut observer)).expect("transfer succeeds");
 
     let data_updates: Vec<&RecordedUpdate> = observer
         .updates
@@ -583,8 +638,12 @@ fn live_progress_output_matches_upstream_format_pattern() {
     let (tmp, source_dir) = setup_single_file("pattern_check.dat", 2048);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
     let normalized = output.replace('\r', "\n");
     let lines: Vec<&str> = normalized.lines().collect();
@@ -609,10 +668,7 @@ fn live_progress_output_matches_upstream_format_pattern() {
     );
 
     // 3. Contains rate with /s
-    assert!(
-        xfr_line.contains("/s"),
-        "should contain rate: {xfr_line:?}"
-    );
+    assert!(xfr_line.contains("/s"), "should contain rate: {xfr_line:?}");
 
     // 4. Contains elapsed time H:MM:SS
     assert!(
@@ -632,8 +688,12 @@ fn live_progress_per_file_prints_filename_before_progress_line() {
     let (tmp, source_dir) = setup_single_file("order_test.txt", 128);
     let dest_dir = tmp.path().join("dest");
 
-    let (output, _summary, _) =
-        run_with_live_progress(&source_dir, &dest_dir, ProgressMode::PerFile, HumanReadableMode::Disabled);
+    let (output, _summary, _) = run_with_live_progress(
+        &source_dir,
+        &dest_dir,
+        ProgressMode::PerFile,
+        HumanReadableMode::Disabled,
+    );
 
     let normalized = output.replace('\r', "\n");
 
@@ -654,18 +714,12 @@ fn live_progress_per_file_prints_filename_before_progress_line() {
 
 #[test]
 fn format_progress_bytes_zero_disabled() {
-    assert_eq!(
-        format_progress_bytes(0, HumanReadableMode::Disabled),
-        "0"
-    );
+    assert_eq!(format_progress_bytes(0, HumanReadableMode::Disabled), "0");
 }
 
 #[test]
 fn format_progress_bytes_small_disabled() {
-    assert_eq!(
-        format_progress_bytes(42, HumanReadableMode::Disabled),
-        "42"
-    );
+    assert_eq!(format_progress_bytes(42, HumanReadableMode::Disabled), "42");
 }
 
 #[test]
@@ -694,10 +748,7 @@ fn format_progress_bytes_gigabytes_disabled() {
 
 #[test]
 fn format_progress_bytes_zero_human() {
-    assert_eq!(
-        format_progress_bytes(0, HumanReadableMode::Enabled),
-        "0"
-    );
+    assert_eq!(format_progress_bytes(0, HumanReadableMode::Enabled), "0");
 }
 
 #[test]
@@ -730,7 +781,11 @@ fn format_progress_bytes_giga_human() {
 
 #[test]
 fn format_progress_rate_nonzero_bytes_nonzero_elapsed() {
-    let rate = format_progress_rate(1_048_576, Duration::from_secs(1), HumanReadableMode::Disabled);
+    let rate = format_progress_rate(
+        1_048_576,
+        Duration::from_secs(1),
+        HumanReadableMode::Disabled,
+    );
     assert!(
         rate.contains("MB/s"),
         "1MB in 1s should show MB/s: {rate:?}"
@@ -744,10 +799,7 @@ fn format_progress_rate_large_bytes_short_duration() {
         Duration::from_secs(10),
         HumanReadableMode::Disabled,
     );
-    assert!(
-        rate.contains("GB/s"),
-        "~1GB/s should show GB/s: {rate:?}"
-    );
+    assert!(rate.contains("GB/s"), "~1GB/s should show GB/s: {rate:?}");
 }
 
 #[test]
@@ -806,10 +858,7 @@ fn format_progress_elapsed_mixed() {
 
 #[test]
 fn format_progress_elapsed_just_under_minute() {
-    assert_eq!(
-        format_progress_elapsed(Duration::from_secs(59)),
-        "0:00:59"
-    );
+    assert_eq!(format_progress_elapsed(Duration::from_secs(59)), "0:00:59");
 }
 
 #[test]
