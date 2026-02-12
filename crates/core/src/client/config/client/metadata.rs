@@ -139,6 +139,13 @@ impl ClientConfig {
         self.preserve_acls
     }
 
+    /// Always returns `false` on platforms without ACL support.
+    #[cfg(not(all(unix, feature = "acl")))]
+    #[must_use]
+    pub const fn preserve_acls(&self) -> bool {
+        false
+    }
+
     /// Reports whether extended attributes should be preserved.
     #[cfg(all(unix, feature = "xattr"))]
     #[must_use]
@@ -146,6 +153,13 @@ impl ClientConfig {
     #[doc(alias = "-X")]
     pub const fn preserve_xattrs(&self) -> bool {
         self.preserve_xattrs
+    }
+
+    /// Always returns `false` on platforms without xattr support.
+    #[cfg(not(all(unix, feature = "xattr")))]
+    #[must_use]
+    pub const fn preserve_xattrs(&self) -> bool {
+        false
     }
 
     /// Returns whether hard links should be preserved when copying files.
