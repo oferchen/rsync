@@ -161,6 +161,69 @@ jobs:
         if: steps.validate-messages.outcome == 'failure'
         run: exit 1
 
+  validate-behavior:
+    name: Behavior Comparison
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: behavior
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Run behavior comparison
+        id: validate-behavior
+        run: |
+          cargo xtask interop behavior --verbose
+        continue-on-error: true
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Behavior Comparison Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.validate-behavior.outcome }}" = "success" ]; then
+            echo "All behavior comparison scenarios passed." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Some behavior scenarios failed. Check the logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail if validation failed
+        if: steps.validate-behavior.outcome == 'failure'
+        run: exit 1
+
   regenerate-goldens:
     name: Regenerate Golden Files (Manual)
     runs-on: ubuntu-latest
