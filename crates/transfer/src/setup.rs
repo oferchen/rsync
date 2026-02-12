@@ -946,9 +946,10 @@ mod tests {
     }
 
     #[test]
-    fn setup_protocol_server_generates_different_seeds() {
-        // Each call to setup_protocol should generate a different seed
-        let protocol = ProtocolVersion::try_from(29).unwrap(); // Use protocol 29 for simpler test
+    fn setup_protocol_server_generates_deterministic_seeds() {
+        // Same process within the same second produces the same seed
+        // (seed = time_secs ^ (pid << 6)), so rapid calls are deterministic
+        let protocol = ProtocolVersion::try_from(29).unwrap();
         let mut stdin = &b""[..];
 
         let config = ProtocolSetupConfig {
@@ -965,21 +966,14 @@ mod tests {
         let result1 =
             setup_protocol(&mut stdout1, &mut stdin, &config).expect("first setup should succeed");
 
-        // Small delay to ensure different timestamp
-        std::thread::sleep(std::time::Duration::from_millis(1));
-
         let mut stdout2 = Vec::new();
         let result2 =
             setup_protocol(&mut stdout2, &mut stdin, &config).expect("second setup should succeed");
 
-        // Seeds should be different (includes timestamp and PID)
-        // Note: This test may flake if both calls happen in the same second
-        // with the same PID, but that's highly unlikely in practice
         assert_eq!(
             result1.checksum_seed, result2.checksum_seed,
             "Same process in same second should have same seed (deterministic)"
         );
-        // The seed includes PID so different processes would differ
     }
 
     #[test]
