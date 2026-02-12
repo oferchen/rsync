@@ -84,19 +84,17 @@ mod acl_stub;
 
 // Universal no-op for platforms without any ACL implementation
 // (covers: acl feature disabled, or acl enabled on uncovered platforms like Windows)
-#[cfg(not(any(
-    all(
-        feature = "acl",
-        any(
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "freebsd",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "watchos"
-        )
-    ),
-)))]
+#[cfg(not(any(all(
+    feature = "acl",
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+),)))]
 mod acl_noop;
 
 mod apply;
@@ -162,19 +160,17 @@ pub use acl_exacl::sync_acls;
 pub use acl_stub::sync_acls;
 
 // Universal no-op for all other platforms (acl feature disabled or uncovered OS)
-#[cfg(not(any(
-    all(
-        feature = "acl",
-        any(
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "freebsd",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "watchos"
-        )
-    ),
-)))]
+#[cfg(not(any(all(
+    feature = "acl",
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+),)))]
 pub use acl_noop::sync_acls;
 
 pub use apply::{
