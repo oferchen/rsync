@@ -273,7 +273,7 @@ impl DirectoryStatBatch {
     /// # Errors
     ///
     /// Returns an error if the file cannot be stat'd.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     pub fn statx_relative(
         &self,
         name: &OsString,
@@ -378,7 +378,7 @@ impl Drop for DirectoryStatBatch {
 /// avoiding the overhead of constructing a full `fs::Metadata`. On Linux 4.11+
 /// the kernel can skip computing unwanted fields when the request mask
 /// excludes them.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 #[derive(Debug, Clone)]
 pub struct StatxResult {
     /// File type and permission bits (stx_mode).
@@ -403,7 +403,7 @@ pub struct StatxResult {
     pub rdev_minor: u32,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 impl StatxResult {
     /// Returns true if this entry is a regular file.
     #[must_use]
@@ -434,7 +434,7 @@ impl StatxResult {
 ///
 /// Returns true on Linux 4.11+ where statx is supported.
 /// The result is cached after the first call using a probe syscall.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 #[must_use]
 pub fn has_statx_support() -> bool {
     use std::sync::atomic::{AtomicU8, Ordering};
@@ -469,7 +469,7 @@ pub fn has_statx_support() -> bool {
     supported
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(not(target_os = "linux"), target_env = "musl"))]
 #[must_use]
 /// Returns whether the platform supports the `statx` syscall (always `false` on non-Linux).
 pub fn has_statx_support() -> bool {
@@ -490,7 +490,7 @@ pub fn has_statx_support() -> bool {
 /// # Errors
 ///
 /// Returns an error if the statx syscall fails (e.g., ENOENT, ENOSYS).
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<StatxResult> {
     statx_with_mask(
         libc::AT_FDCWD,
@@ -509,7 +509,7 @@ pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<Statx
 /// # Errors
 ///
 /// Returns an error if the statx syscall fails or is not supported.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 pub fn statx_mtime<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<(i64, u32)> {
     let result = statx_with_mask(
         libc::AT_FDCWD,
@@ -525,7 +525,7 @@ pub fn statx_mtime<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result
 /// # Errors
 ///
 /// Returns an error if the statx syscall fails or is not supported.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 pub fn statx_size_and_mtime<P: AsRef<Path>>(
     path: P,
     follow_symlinks: bool,
@@ -544,7 +544,7 @@ pub fn statx_size_and_mtime<P: AsRef<Path>>(
 /// This is the low-level building block used by all other statx functions.
 /// The `dir_fd` parameter enables directory-relative lookups (AT_FDCWD for
 /// absolute paths, or an open directory fd for relative paths).
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 fn statx_with_mask(
     dir_fd: i32,
     path: &Path,
@@ -753,7 +753,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_basic() {
         let temp = create_test_tree();
@@ -1035,7 +1035,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_follow_symlinks() {
         if !has_statx_support() {
@@ -1058,7 +1058,7 @@ mod tests {
         assert!(!result_follow.is_symlink());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_directory() {
         if !has_statx_support() {
@@ -1072,7 +1072,7 @@ mod tests {
         assert!(!result.is_symlink());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_file_with_content() {
         if !has_statx_support() {
@@ -1088,7 +1088,7 @@ mod tests {
         assert_eq!(result.size, 11);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_metadata_matches_std() {
         use std::os::unix::fs::MetadataExt;
@@ -1113,7 +1113,7 @@ mod tests {
         assert_eq!(sr.mode, std_meta.mode() & 0o777_7777);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_mtime_only() {
         if !has_statx_support() {
@@ -1133,7 +1133,7 @@ mod tests {
         assert!(mtime_sec <= now + 1, "mtime in the future: {mtime_sec}");
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_size_and_mtime() {
         if !has_statx_support() {
@@ -1154,7 +1154,7 @@ mod tests {
         assert!(mtime_sec > now - 3600);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_permissions() {
         use std::os::unix::fs::PermissionsExt;
@@ -1172,7 +1172,7 @@ mod tests {
         assert_eq!(sr.permissions(), 0o755);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_invalid_path() {
         if !has_statx_support() {
@@ -1184,7 +1184,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_nonexistent() {
         if has_statx_support() {
@@ -1193,7 +1193,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_relative_via_directory_batch() {
         if !has_statx_support() {
@@ -1212,7 +1212,7 @@ mod tests {
         assert_eq!(sr.size, 13);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_relative_directory() {
         if !has_statx_support() {
@@ -1228,7 +1228,7 @@ mod tests {
         assert!(!sr.is_file());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_relative_symlink() {
         if !has_statx_support() {
@@ -1252,7 +1252,7 @@ mod tests {
         assert!(sr_follow.is_file());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_relative_nonexistent() {
         if !has_statx_support() {
@@ -1266,7 +1266,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_result_clone() {
         if !has_statx_support() {
@@ -1284,7 +1284,7 @@ mod tests {
         assert_eq!(sr.ino, sr_clone.ino);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     #[test]
     fn test_statx_result_debug() {
         if !has_statx_support() {
@@ -1317,7 +1317,7 @@ mod tests {
         assert_eq!(result2, result3);
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(not(target_os = "linux"), target_env = "musl"))]
     #[test]
     fn test_statx_not_supported_on_non_linux() {
         assert!(!has_statx_support());
