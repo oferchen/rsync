@@ -263,7 +263,9 @@ fn verbose_level_2_shows_skipped_files() {
         .iter()
         .filter_map(|e| match e {
             DiagnosticEvent::Info {
-                flag: InfoFlag::Skip, message, ..
+                flag: InfoFlag::Skip,
+                message,
+                ..
             } => Some(message.as_str()),
             _ => None,
         })

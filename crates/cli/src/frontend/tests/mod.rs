@@ -283,6 +283,8 @@ mod stats_tests;
 mod stop_tests;
 #[path = "timeout.rs"]
 mod timeout_tests;
+#[path = "tracing_integration.rs"]
+mod tracing_integration_tests;
 #[path = "transfer_request_copies.rs"]
 mod transfer_request_copies_tests;
 #[path = "transfer_request_reports.rs"]
@@ -333,8 +335,6 @@ mod transfer_request_with_remove_tests;
 mod transfer_request_with_sparse_tests;
 #[path = "transfer_request_with_times.rs"]
 mod transfer_request_with_times_tests;
-#[path = "tracing_integration.rs"]
-mod tracing_integration_tests;
 #[path = "verbose.rs"]
 mod verbose_tests;
 #[path = "version.rs"]

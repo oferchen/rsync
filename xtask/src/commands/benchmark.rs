@@ -653,7 +653,11 @@ fn run_benchmark(
         let elapsed = start.elapsed();
 
         if !output.status.success() {
-            eprintln!("  Run {} failed with exit code {:?}", i + 1, output.status.code());
+            eprintln!(
+                "  Run {} failed with exit code {:?}",
+                i + 1,
+                output.status.code()
+            );
             continue;
         }
 
@@ -833,11 +837,7 @@ fn output_json_multi(result_sets: &[BenchmarkResultSet]) -> TaskResult<()> {
                 ""
             };
             let total_bytes: u64 = result.samples.iter().map(|s| s.bytes_received).sum();
-            let total_size: u64 = result
-                .samples
-                .last()
-                .map(|s| s.total_size)
-                .unwrap_or(0);
+            let total_size: u64 = result.samples.last().map(|s| s.total_size).unwrap_or(0);
             println!("        {{");
             println!("          \"version\": \"{}\",", result.version);
             println!(
@@ -885,11 +885,36 @@ mod tests {
     #[test]
     fn benchmark_result_calculates_stats() {
         let samples = vec![
-            RunSample { elapsed: Duration::from_millis(100), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
-            RunSample { elapsed: Duration::from_millis(110), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
-            RunSample { elapsed: Duration::from_millis(90), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
-            RunSample { elapsed: Duration::from_millis(105), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
-            RunSample { elapsed: Duration::from_millis(95), bytes_sent: 100, bytes_received: 1000, total_size: 2000 },
+            RunSample {
+                elapsed: Duration::from_millis(100),
+                bytes_sent: 100,
+                bytes_received: 1000,
+                total_size: 2000,
+            },
+            RunSample {
+                elapsed: Duration::from_millis(110),
+                bytes_sent: 100,
+                bytes_received: 1000,
+                total_size: 2000,
+            },
+            RunSample {
+                elapsed: Duration::from_millis(90),
+                bytes_sent: 100,
+                bytes_received: 1000,
+                total_size: 2000,
+            },
+            RunSample {
+                elapsed: Duration::from_millis(105),
+                bytes_sent: 100,
+                bytes_received: 1000,
+                total_size: 2000,
+            },
+            RunSample {
+                elapsed: Duration::from_millis(95),
+                bytes_sent: 100,
+                bytes_received: 1000,
+                total_size: 2000,
+            },
         ];
         let result = BenchmarkResult::new("test".to_string(), samples);
 
