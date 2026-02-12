@@ -1528,25 +1528,21 @@ fn parity_error_missing_destination_returns_syntax_error() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn parity_error_permission_denied_returns_io_error() {
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
 
-    // Create a file then make destination unwritable
     let temp = tempfile::tempdir().expect("tempdir");
     let source = temp.path().join("perm.txt");
     let dest_dir = temp.path().join("dest_no_write");
     fs::write(&source, b"permission test").expect("write");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // Make destination read-only
     let mut perms = fs::metadata(&dest_dir).expect("metadata").permissions();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        perms.set_mode(0o444);
-        fs::set_permissions(&dest_dir, perms.clone()).expect("set perms");
-    }
+    perms.set_mode(0o444);
+    fs::set_permissions(&dest_dir, perms.clone()).expect("set perms");
 
     let (code, _stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -1554,17 +1550,9 @@ fn parity_error_permission_denied_returns_io_error() {
         dest_dir.clone().into_os_string(),
     ]);
 
-    // Restore permissions for cleanup
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        perms.set_mode(0o755);
-        let _ = fs::set_permissions(&dest_dir, perms);
-    }
+    perms.set_mode(0o755);
+    let _ = fs::set_permissions(&dest_dir, perms);
 
-    // Permission errors should return non-zero (typically 23 for partial transfer
-    // or 3 for file selection error)
-    #[cfg(unix)]
     assert!(
         code != 0,
         "permission denied should return non-zero exit code"
