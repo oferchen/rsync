@@ -5,6 +5,8 @@
 //! This allows callers to use the same API unconditionally without
 //! cfg-gating their own code.
 
+#![allow(dead_code)]
+
 use std::io;
 
 /// Raw user ID type (u32 on all platforms for wire compatibility).
