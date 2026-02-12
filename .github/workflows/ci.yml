@@ -12,6 +12,8 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/workflows/_test-features.yml'
       - '.github/workflows/_interop.yml'
+      - 'docker/**'
+      - 'Cross.toml'
   pull_request:
     paths:
       - 'crates/**'
@@ -22,6 +24,8 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/workflows/_test-features.yml'
       - '.github/workflows/_interop.yml'
+      - 'docker/**'
+      - 'Cross.toml'
   workflow_dispatch:
 
 concurrency:
@@ -178,25 +182,31 @@ jobs:
           retention-days: 7
 
   # ===========================================================================
-  # macOS Test - Platform-specific testing
+  # macOS Test - Platform-specific testing with toolchain matrix
   # ===========================================================================
   macos-test:
-    name: macOS (stable)
+    name: macOS (${{ matrix.toolchain }})
     runs-on: macos-latest
     needs: lint
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install Rust (stable)
+      - name: Install Rust (${{ matrix.toolchain }})
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
-          shared-key: ci-macos-stable-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@d4422f254e595ee762a758628fe4f16ce050fa2e # v2
@@ -215,12 +225,74 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: build-macos-stable
+          name: build-macos-${{ matrix.toolchain }}
           path: |
             target/debug/oc-rsync
             target/debug/xtask
           if-no-files-found: warn
           retention-days: 7
+
+  # ===========================================================================
+  # Alpine musl Test - Static musl binary build and test
+  # ===========================================================================
+  alpine-musl:
+    name: Alpine musl (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64]
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        uses: taiki-e/install-action@d4422f254e595ee762a758628fe4f16ce050fa2e # v2
+        with:
+          tool: cross
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-musl-${{ matrix.arch }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build static musl binary
+        run: |
+          set -euo pipefail
+          printf 'Building %s static musl binary...\n' "${{ matrix.target }}"
+          cross build --workspace --target ${{ matrix.target }}
+
+      - name: Test musl binary
+        run: |
+          set -euo pipefail
+          printf 'Testing %s static musl binary...\n' "${{ matrix.target }}"
+          cross test --workspace --target ${{ matrix.target }}
+
+      - name: Verify static linking
+        run: |
+          set -euo pipefail
+          BINARY="target/${{ matrix.target }}/debug/oc-rsync"
+          if [ -f "${BINARY}" ]; then
+            file "${BINARY}"
+            # Verify it's statically linked (no dynamic linker reference)
+            if ldd "${BINARY}" 2>&1 | grep -q "not a dynamic executable"; then
+              printf 'Binary is statically linked\n'
+            else
+              printf 'Warning: binary may not be fully statically linked\n'
+              ldd "${BINARY}" || true
+            fi
+          fi
 
   # ===========================================================================
   # Interop Tests - Compatibility with upstream rsync (reusable workflow)
