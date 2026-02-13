@@ -51,9 +51,7 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
             ])
             .build();
 
-        let handle = thread::spawn(move || run_daemon(config));
-
-        let mut stream = connect_with_retries(port);
+        let (mut stream, handle) = start_daemon(config, port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
         // Read greeting
@@ -141,9 +139,7 @@ fn daemon_negotiation_auth_denies_wrong_password() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -237,9 +233,7 @@ fn daemon_negotiation_auth_denies_unknown_user() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -320,9 +314,7 @@ fn daemon_negotiation_auth_skipped_for_unprotected_module() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -396,9 +388,7 @@ fn daemon_negotiation_auth_denies_empty_credentials() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -483,9 +473,7 @@ fn daemon_negotiation_auth_successful_sends_ok() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting

@@ -40,9 +40,7 @@ fn run_daemon_enforces_module_connection_limit() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut first_stream = connect_with_retries(port);
+    let (mut first_stream, handle) = start_daemon(config, port);
     let mut first_reader = BufReader::new(first_stream.try_clone().expect("clone stream"));
 
     let expected_greeting = legacy_daemon_greeting();
