@@ -491,6 +491,14 @@ impl ReceiverContext {
         ndx_write_codec: &mut protocol::codec::NdxCodecEnum,
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
     ) -> io::Result<()> {
+        // Exchange NDX_DONE markers to complete the transfer phases.
+        //
+        // The sender's generate_files() loop reads NDX_DONE from us for each phase
+        // transition and sends NDX_DONE back. It needs max_phase + 1 NDX_DONEs to
+        // break out of the loop (phases 1..=max_phase transition, then phase > max_phase
+        // triggers break).
+        //
+        // Upstream reference: send.c generate_files() phase transition loop
         let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
         let mut phase: i32 = 0;
 
@@ -517,7 +525,8 @@ impl ReceiverContext {
             }
         }
 
-        // Read final NDX_DONE from sender
+        // Read final NDX_DONE from sender (sender's generate_files sends this
+        // before breaking out of its loop)
         let final_ndx = ndx_read_codec.read_ndx(reader)?;
         if final_ndx != -1 {
             return Err(io::Error::new(
@@ -1080,9 +1089,12 @@ impl ReceiverContext {
         // Exchange phase transitions with sender
         self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
-        // Receive transfer statistics from sender
-        // The sender sends stats after the transfer loop but before goodbye.
-        let _sender_stats = self.receive_stats(reader)?;
+        // Receive transfer statistics from sender.
+        // Only in client mode: the sender writes stats over the wire when we pull from a daemon.
+        // In server mode, the client sender calls handle_stats(-1) which is a no-op.
+        if self.config.client_mode {
+            let _sender_stats = self.receive_stats(reader)?;
+        }
 
         // Handle goodbye handshake
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
@@ -1312,8 +1324,15 @@ impl ReceiverContext {
         // Exchange phase transitions with sender
         self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
-        // Receive transfer statistics from sender
-        let _sender_stats = self.receive_stats(reader)?;
+        // Receive transfer statistics from sender.
+        // Only in client mode: when we are a client receiver pulling from a daemon sender,
+        // the daemon sender writes stats over the wire.
+        // In server mode (daemon receiver), the client sender calls handle_stats(-1) which
+        // returns without writing stats. In upstream rsync, stats flow through an internal
+        // pipe between forked generator/receiver processes, not over the wire.
+        if self.config.client_mode {
+            let _sender_stats = self.receive_stats(reader)?;
+        }
 
         // Handle goodbye handshake
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
@@ -1548,7 +1567,12 @@ impl ReceiverContext {
             &mut ndx_write_codec,
             &mut ndx_read_codec,
         )?;
-        let _sender_stats = self.receive_stats(&mut reader)?;
+
+        // Only read stats in client mode (see run_pipelined for explanation)
+        if self.config.client_mode {
+            let _sender_stats = self.receive_stats(&mut reader)?;
+        }
+
         self.handle_goodbye(
             &mut reader,
             writer,
