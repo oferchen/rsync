@@ -316,10 +316,6 @@ pub fn run_server_with_handshake<W: Write>(
     handshake.checksum_seed = setup_result.checksum_seed;
 
     // CRITICAL: Flush stdout BEFORE wrapping it in ServerWriter!
-    // The setup_protocol() call above may have buffered data (compat flags varint).
-    // If we don't flush here, that buffered data will be written AFTER we activate
-    // multiplex, causing the client to interpret it as multiplexed data instead of
-    // plain data, resulting in "unexpected tag" errors.
     stdout.flush()?;
 
     // Activate multiplex (mirrors upstream main.c:1247-1260 and do_server_recv:1167)
@@ -437,7 +433,6 @@ pub fn run_server_with_handshake<W: Write>(
         )?;
         writer.flush()?;
     }
-
     // NOTE: Compression is NOT applied at the stream level.
     //
     // Upstream rsync applies compression at the TOKEN level during delta transfer only:
