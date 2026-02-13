@@ -48,9 +48,7 @@ fn daemon_receiver_accepts_file_push() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read daemon greeting

@@ -191,7 +191,32 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
     fs::set_permissions(path, permissions).expect("set script permissions");
 }
 
+/// Spawn a daemon thread and connect, failing fast if the daemon exits early.
+///
+/// Returns the connected stream and the daemon thread handle.  If the daemon
+/// thread finishes before a connection succeeds the actual daemon error is
+/// included in the panic message instead of waiting for the full 30-second
+/// timeout.
+pub(super) fn start_daemon(
+    config: crate::DaemonConfig,
+    port: u16,
+) -> (
+    TcpStream,
+    thread::JoinHandle<Result<(), crate::DaemonError>>,
+) {
+    let handle = thread::spawn(move || run_daemon(config));
+    let stream = connect_to_daemon(port, Some(&handle));
+    (stream, handle)
+}
+
 pub(super) fn connect_with_retries(port: u16) -> TcpStream {
+    connect_to_daemon(port, None)
+}
+
+fn connect_to_daemon(
+    port: u16,
+    handle: Option<&thread::JoinHandle<Result<(), crate::DaemonError>>>,
+) -> TcpStream {
     const INITIAL_BACKOFF: Duration = Duration::from_millis(50);
     const MAX_BACKOFF: Duration = Duration::from_millis(500);
     // CI environments may have resource constraints causing slower daemon startup
@@ -202,6 +227,16 @@ pub(super) fn connect_with_retries(port: u16) -> TcpStream {
     let mut backoff = INITIAL_BACKOFF;
 
     loop {
+        // Fail fast if the daemon thread has already exited.
+        if let Some(h) = handle {
+            if h.is_finished() {
+                panic!(
+                    "daemon exited before accepting a connection on port {port}; \
+                     check daemon startup logs for bind errors or config issues"
+                );
+            }
+        }
+
         match TcpStream::connect_timeout(&target, backoff) {
             Ok(stream) => return stream,
             Err(error) => {
