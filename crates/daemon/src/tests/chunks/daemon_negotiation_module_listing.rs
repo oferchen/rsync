@@ -24,9 +24,7 @@ fn daemon_negotiation_module_list_sends_capabilities_before_ok() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -103,9 +101,7 @@ fn daemon_negotiation_module_list_respects_listable_flag() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -167,9 +163,7 @@ fn daemon_negotiation_module_list_includes_comments() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -218,9 +212,7 @@ fn daemon_negotiation_module_list_empty_when_no_modules() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
