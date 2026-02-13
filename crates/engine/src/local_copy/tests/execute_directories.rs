@@ -144,14 +144,21 @@ fn execute_into_child_directory_succeeds_without_recursing() {
 #[test]
 fn execute_with_delete_removes_extraneous_entries() {
     let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("source");
-    fs::create_dir_all(&source_root).expect("create source root");
-    fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
 
+    // Write destination FIRST so its mtime is older than source.
+    // Both "fresh" and "stale" are 5 bytes, so without distinct mtimes the
+    // metadata skip check would consider them identical (matching upstream
+    // rsync behavior where size+mtime match → skip).
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
     fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
     fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+    let past = filetime::FileTime::from_unix_time(1_000_000, 0);
+    filetime::set_file_mtime(dest_root.join("keep.txt"), past).expect("set old mtime");
+
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -175,14 +182,17 @@ fn execute_with_delete_removes_extraneous_entries() {
 #[test]
 fn execute_with_delete_after_removes_extraneous_entries() {
     let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("source");
-    fs::create_dir_all(&source_root).expect("create source root");
-    fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
     fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
     fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+    let past = filetime::FileTime::from_unix_time(1_000_000, 0);
+    filetime::set_file_mtime(dest_root.join("keep.txt"), past).expect("set old mtime");
+
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -206,14 +216,17 @@ fn execute_with_delete_after_removes_extraneous_entries() {
 #[test]
 fn execute_with_delete_delay_removes_extraneous_entries() {
     let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("source");
-    fs::create_dir_all(&source_root).expect("create source root");
-    fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
     fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
     fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+    let past = filetime::FileTime::from_unix_time(1_000_000, 0);
+    filetime::set_file_mtime(dest_root.join("keep.txt"), past).expect("set old mtime");
+
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
