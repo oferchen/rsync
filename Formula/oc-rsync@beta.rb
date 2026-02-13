@@ -2,17 +2,17 @@ class OcRsyncATBeta < Formula
   desc "Pure-Rust rsync 3.4.1-compatible implementation (beta toolchain)"
   homepage "https://github.com/oferchen/rsync"
   license "GPL-3.0-or-later"
-  version "0.5.3"
+  version "0.5.4"
 
   on_macos do
     on_intel do
-      url "https://github.com/oferchen/rsync/releases/download/v0.5.3/oc-rsync-0.5.3-darwin-x86_64-beta.tar.gz"
-      sha256 "f19de646488e65834a51a1138221e13cef1d6f1a9270d265dfd2e743c3c2d458"
+      url "https://github.com/oferchen/rsync/releases/download/v0.5.4/oc-rsync-0.5.4-darwin-x86_64-beta.tar.gz"
+      sha256 "cfc32ea8ec0dff2dafe15906a867e9f61e2e8315722de05b5d9680b8ddd3b94b"
     end
 
     on_arm do
-      url "https://github.com/oferchen/rsync/releases/download/v0.5.3/oc-rsync-0.5.3-darwin-aarch64-beta.tar.gz"
-      sha256 "6820430a0044e59b15f0d4ec3b870f27033edcdb725d3e77fdb54438e29afb07"
+      url "https://github.com/oferchen/rsync/releases/download/v0.5.4/oc-rsync-0.5.4-darwin-aarch64-beta.tar.gz"
+      sha256 "83c03d01ac667ed9fd13e54d8b46deca45cdf2892dd950ea403894772c54e8ab"
     end
   end
 
