@@ -21,9 +21,7 @@ fn daemon_negotiation_error_unknown_module() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -78,9 +76,7 @@ fn daemon_negotiation_error_empty_module_request() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -144,9 +140,7 @@ fn daemon_negotiation_error_host_denied() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -213,9 +207,7 @@ fn daemon_negotiation_error_refused_options() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -301,10 +293,9 @@ fn daemon_negotiation_error_max_connections_exceeded() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
+    let (mut stream1, handle) = start_daemon(config, port);
 
     // First connection should succeed (up to the OK)
-    let mut stream1 = connect_with_retries(port);
     let mut reader1 = BufReader::new(stream1.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -377,9 +368,7 @@ fn daemon_negotiation_error_sanitizes_module_name_in_response() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -431,9 +420,7 @@ fn daemon_negotiation_error_sends_exit_after_error() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -486,9 +473,7 @@ fn daemon_negotiation_error_connection_closed_early() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let stream = connect_with_retries(port);
+    let (stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -523,9 +508,7 @@ fn daemon_negotiation_error_invalid_greeting_response() {
         ])
         .build();
 
-    let handle = thread::spawn(move || run_daemon(config));
-
-    let mut stream = connect_with_retries(port);
+    let (mut stream, handle) = start_daemon(config, port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
