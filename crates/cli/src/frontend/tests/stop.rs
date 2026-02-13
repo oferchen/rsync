@@ -50,6 +50,13 @@ fn stop_at_argument_rejects_invalid_format() {
 #[test]
 fn stop_at_argument_rejects_past_time() {
     let now = OffsetDateTime::now_local().expect("local time");
+
+    // Skip near midnight: subtracting 1 minute wraps to 23:59 which the
+    // parser treats as 23:59 *today* — that is in the future at 00:00.
+    if now.hour() == 0 && now.minute() < 5 {
+        return;
+    }
+
     let past = now - TimeDuration::minutes(1);
     let formatted = format!("{:02}:{:02}", past.hour(), past.minute());
     let error = parse_stop_at_argument(OsStr::new(&formatted)).expect_err("reject past");
