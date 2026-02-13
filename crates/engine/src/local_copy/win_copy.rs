@@ -209,11 +209,39 @@ pub fn copy_file_standard(src: &Path, dst: &Path) -> io::Result<u64> {
 // Platform-specific implementations
 // ---------------------------------------------------------------------------
 
+/// Minimal FFI wrapper isolating the single unsafe call behind a safe API.
+#[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
+mod ffi {
+    use std::io;
+
+    /// Call `CopyFileExW` with the given null-terminated wide-string paths.
+    pub fn copy_file_ex_w(src_wide: &[u16], dst_wide: &[u16], flags: u32) -> io::Result<()> {
+        // SAFETY: src_wide and dst_wide are null-terminated UTF-16 slices
+        // produced by OsStrExt::encode_wide + chain(once(0)).
+        // Progress callback, data, and cancel pointers are null (unused).
+        let result = unsafe {
+            windows_sys::Win32::Storage::FileSystem::CopyFileExW(
+                src_wide.as_ptr(),
+                dst_wide.as_ptr(),
+                None,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                flags,
+            )
+        };
+        if result != 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn try_win_copy_impl(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Result<u64> {
     use std::os::windows::ffi::OsStrExt;
 
-    // Convert paths to wide strings for Win32 API
     let src_wide: Vec<u16> = src
         .as_os_str()
         .encode_wide()
@@ -225,37 +253,16 @@ fn try_win_copy_impl(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Resu
         .chain(std::iter::once(0))
         .collect();
 
-    // Set flags: COPY_FILE_NO_BUFFERING = 0x00000008 for large files
     let flags = if use_no_buffering {
         0x00000008_u32 // COPY_FILE_NO_BUFFERING
     } else {
         0_u32
     };
 
-    // SAFETY: We're passing valid wide-string pointers to CopyFileExW.
-    // - src_wide and dst_wide are null-terminated wide strings
-    // - We pass null pointers for the progress callback and cancel flag (not using them)
-    // - The syscall is safe to call with valid paths
-    // - Any errors are returned via GetLastError and converted to io::Error
-    let result = unsafe {
-        windows_sys::Win32::Storage::FileSystem::CopyFileExW(
-            src_wide.as_ptr(),
-            dst_wide.as_ptr(),
-            None,                 // no progress callback
-            std::ptr::null(),     // no callback data
-            std::ptr::null_mut(), // no cancel flag
-            flags,
-        )
-    };
+    ffi::copy_file_ex_w(&src_wide, &dst_wide, flags)?;
 
-    if result != 0 {
-        // Success: get file size for return value
-        let metadata = std::fs::metadata(dst)?;
-        Ok(metadata.len())
-    } else {
-        // Failed: return last OS error
-        Err(io::Error::last_os_error())
-    }
+    let metadata = std::fs::metadata(dst)?;
+    Ok(metadata.len())
 }
 
 #[cfg(not(target_os = "windows"))]
