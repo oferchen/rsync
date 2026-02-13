@@ -251,6 +251,20 @@ perf*.data
 flamegraph*.svg
 benchmark*.json
 benchmark_results.csv
+benchmark-results.txt
+
+# Build artifacts
+*.rlib
+
+# Test data directories
+test-dest/
+test-src/
+
+# Binary captures
+*.pcap
+
+# Node.js (not a JS project)
+package-lock.json
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,linux,macos,windows,rust-analyzer,visualstudiocode,jetbrains
 .worktrees/
