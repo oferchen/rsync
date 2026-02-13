@@ -324,14 +324,20 @@ fn delete_delay_processes_deletions_even_after_successful_transfer() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    // Create simple source
-    fs::write(ctx.source.join("file.txt"), b"new content").expect("write source");
-
-    // Create destination with extra files
+    // Create destination with extra files (written FIRST so mtime is older)
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("file.txt"), b"old content").expect("write old");
     fs::write(target_root.join("delete_me.txt"), b"delete").expect("write delete_me");
+
+    // Set destination mtime to the past so the metadata check detects the change.
+    // Both files are 11 bytes, so without a distinct mtime the transfer would be
+    // skipped (upstream rsync also skips when size+mtime match).
+    let past = filetime::FileTime::from_unix_time(1_000_000, 0);
+    filetime::set_file_mtime(target_root.join("file.txt"), past).expect("set old mtime");
+
+    // Create simple source (written AFTER destination so mtime is newer)
+    fs::write(ctx.source.join("file.txt"), b"new content").expect("write source");
 
     let operands = vec![
         ctx.source.clone().into_os_string(),

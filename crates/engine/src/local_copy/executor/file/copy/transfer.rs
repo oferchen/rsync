@@ -135,9 +135,8 @@ pub(super) fn execute_transfer(
 
         if skip {
             // sometimes we still need to re-verify
-            let requires_content_verification = existing.is_file()
-                && !checksum_enabled
-                && (context.options().backup_enabled() || context.delete_timing().is_some());
+            let requires_content_verification =
+                existing.is_file() && !checksum_enabled && context.options().backup_enabled();
 
             if requires_content_verification {
                 skip = match files_checksum_match(
