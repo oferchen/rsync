@@ -119,6 +119,9 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     file_type: fs::FileType,
     destination_previously_existed: bool,
 
+    #[cfg(unix)]
+    fd: Option<std::os::fd::BorrowedFd<'a>>,
+
     #[cfg(all(unix, feature = "xattr"))]
     preserve_xattrs: bool,
 
@@ -147,11 +150,20 @@ impl<'a> FinalizeMetadataParams<'a> {
             relative,
             file_type,
             destination_previously_existed,
+            #[cfg(unix)]
+            fd: None,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls,
         }
+    }
+
+    /// Attach an open file descriptor for fd-based metadata operations.
+    #[cfg(unix)]
+    pub(crate) const fn with_fd(mut self, fd: std::os::fd::BorrowedFd<'a>) -> Self {
+        self.fd = Some(fd);
+        self
     }
 }
 

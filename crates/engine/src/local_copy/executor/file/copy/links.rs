@@ -198,34 +198,24 @@ pub(super) fn process_links(
                 context.summary_mut().record_regular_file_matched();
                 let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                 let total_bytes = Some(metadata_snapshot.len());
-                let xattrs_enabled = {
-                    #[cfg(all(unix, feature = "xattr"))]
-                    {
-                        preserve_xattrs
-                    }
-                    #[cfg(not(all(unix, feature = "xattr")))]
-                    {
-                        false
-                    }
-                };
-                let acls_enabled = {
-                    #[cfg(all(unix, feature = "acl"))]
-                    {
-                        preserve_acls
-                    }
-                    #[cfg(not(all(unix, feature = "acl")))]
-                    {
-                        false
-                    }
-                };
                 let change_set = LocalCopyChangeSet::for_file(
                     metadata,
                     existing_metadata,
                     &metadata_options,
                     true,
                     false,
-                    xattrs_enabled,
-                    acls_enabled,
+                    {
+                        #[cfg(all(unix, feature = "xattr"))]
+                        { preserve_xattrs }
+                        #[cfg(not(all(unix, feature = "xattr")))]
+                        { false }
+                    },
+                    {
+                        #[cfg(all(unix, feature = "acl"))]
+                        { preserve_acls }
+                        #[cfg(not(all(unix, feature = "acl")))]
+                        { false }
+                    },
                 );
                 context.record(
                     LocalCopyRecord::new(

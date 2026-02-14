@@ -20,6 +20,8 @@ pub(crate) use copy::take_fsync_call_count;
 pub use guard::{
     DestinationWriteGuard, remove_existing_destination, remove_incomplete_destination,
 };
+#[cfg(test)]
+pub(crate) use guard::DirectWriteGuard;
 pub use partial::{PartialFileManager, PartialMode};
 #[cfg(test)]
 pub(crate) use paths::partial_destination_path;

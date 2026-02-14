@@ -44,7 +44,7 @@ Protocol-handling crates enforce `#![deny(unsafe_code)]`:
 - `matching` - Delta generation
 
 The only crates with unsafe code:
-- `engine` - Conditional unsafe for ACL support (`#![cfg_attr(not(feature = "acl"), deny(unsafe_code))]`)
+- `engine` - Denies unsafe outside tests (`#![cfg_attr(not(test), deny(unsafe_code))]`) with targeted `#[allow(unsafe_code)]` on platform FFI functions (clonefile, syncfs, prefetch, buffer pool)
 - `windows-gnu-eh` - Required for Windows FFI (properly documented)
 
 ## CVE Monitoring

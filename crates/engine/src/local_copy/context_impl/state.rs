@@ -149,6 +149,8 @@ impl<'a> CopyContext<'a> {
             relative,
             file_type,
             destination_previously_existed,
+            #[cfg(unix)]
+            fd,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
             #[cfg(all(unix, feature = "acl"))]
@@ -161,8 +163,28 @@ impl<'a> CopyContext<'a> {
             destination_previously_existed,
         );
 
-        apply_file_metadata_with_options(destination, metadata, &metadata_options)
-            .map_err(map_metadata_error)?;
+        // Use fd-based metadata operations when an open fd is available (Unix).
+        // Falls back to path-based operations on non-Unix or when no fd is present.
+        #[cfg(unix)]
+        {
+            if let Some(fd) = fd {
+                ::metadata::apply_file_metadata_with_fd(
+                    destination,
+                    metadata,
+                    &metadata_options,
+                    fd,
+                )
+                .map_err(map_metadata_error)?;
+            } else {
+                apply_file_metadata_with_options(destination, metadata, &metadata_options)
+                    .map_err(map_metadata_error)?;
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            apply_file_metadata_with_options(destination, metadata, &metadata_options)
+                .map_err(map_metadata_error)?;
+        }
 
         #[cfg(all(unix, feature = "xattr"))]
         {
@@ -492,6 +514,8 @@ impl<'a> CopyContext<'a> {
                 relative: relative.as_deref(),
                 file_type,
                 destination_previously_existed,
+                #[cfg(unix)]
+                fd: None, // No fd available for deferred updates
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
                 #[cfg(all(unix, feature = "acl"))]

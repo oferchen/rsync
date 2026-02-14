@@ -176,9 +176,11 @@ pub use acl_noop::sync_acls;
 
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
-    apply_file_metadata_with_options, apply_metadata_from_file_entry, apply_symlink_metadata,
-    apply_symlink_metadata_with_options,
+    apply_file_metadata_if_changed, apply_file_metadata_with_options,
+    apply_metadata_from_file_entry, apply_symlink_metadata, apply_symlink_metadata_with_options,
 };
+#[cfg(unix)]
+pub use apply::{apply_file_metadata_with_fd, apply_file_metadata_with_fd_if_changed};
 
 pub use chmod::{ChmodError, ChmodModifiers};
 

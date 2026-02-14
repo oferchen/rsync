@@ -248,10 +248,11 @@ pub fn process_file_response<R: Read>(
         let token = i32::from_le_bytes(token_buf);
 
         if token == 0 {
-            // End of file - verify checksum
+            // End of file - verify checksum using stack buffer (max 32 bytes for SHA-256)
             let checksum_len = checksum_verifier.digest_len();
-            let mut file_checksum = vec![0u8; checksum_len];
-            reader.read_exact(&mut file_checksum)?;
+            let mut checksum_stack = [0u8; 32];
+            let file_checksum = &mut checksum_stack[..checksum_len];
+            reader.read_exact(file_checksum)?;
 
             let computed = checksum_verifier.finalize();
             if computed.len() != file_checksum.len() {
@@ -264,7 +265,7 @@ pub fn process_file_response<R: Read>(
                     ),
                 ));
             }
-            if computed != file_checksum {
+            if computed != *file_checksum {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
