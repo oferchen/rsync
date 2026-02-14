@@ -90,6 +90,17 @@ pub fn sync_acls(
         return Ok(());
     }
 
+    // Verify source exists before reading ACLs — an ENOENT from getfacl
+    // would otherwise be masked by is_unsupported_error() which treats
+    // NotFound as "filesystem lacks ACL support".
+    if !source.exists() {
+        return Err(MetadataError::new(
+            "read ACL",
+            source,
+            io::Error::new(io::ErrorKind::NotFound, "source does not exist"),
+        ));
+    }
+
     // Read the source ACL
     let source_acl = match getfacl(source, None) {
         Ok(acl) => acl,
