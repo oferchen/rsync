@@ -845,13 +845,29 @@ fn symlink_with_unicode_path() {
 }
 
 /// Verifies empty symlink target is handled (though typically invalid).
+///
+/// Behavior is platform-dependent: Linux rejects empty targets with `ENOENT`,
+/// while macOS allows creating symlinks with empty targets.
 #[test]
-#[should_panic(expected = "create empty symlink")]
 fn symlink_empty_target_rejected() {
     let fixture = SymlinkTestFixture::new();
     let link_path = fixture.source().join("empty_target_link");
-    // This should fail - empty target is invalid
-    symlink("", &link_path).expect("create empty symlink");
+    match symlink("", &link_path) {
+        Err(e) => {
+            // Linux: empty target is rejected at the syscall level
+            assert!(
+                e.raw_os_error().is_some(),
+                "expected OS error for empty symlink target, got: {e}"
+            );
+        }
+        Ok(()) => {
+            // macOS: empty target is accepted; verify the link was created
+            assert!(
+                link_path.symlink_metadata().is_ok(),
+                "symlink with empty target should exist on macOS"
+            );
+        }
+    }
 }
 
 /// Verifies multiple symlinks to the same target are all preserved.

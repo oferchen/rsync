@@ -552,25 +552,14 @@ pub fn decode_uid<R: Read>(
     prev_uid: u32,
     protocol_version: u8,
 ) -> io::Result<Option<(u32, Option<String>)>> {
-    if flags & (XMIT_SAME_UID as u32) != 0 {
-        Ok(Some((prev_uid, None)))
-    } else {
-        let uid = if protocol_version >= 30 {
-            read_varint(reader)? as u32
-        } else {
-            read_int(reader)? as u32
-        };
-
-        // Check if name follows (protocol 30+)
-        let name =
-            if protocol_version >= 30 && (flags & ((XMIT_USER_NAME_FOLLOWS as u32) << 8)) != 0 {
-                Some(decode_owner_name(reader)?)
-            } else {
-                None
-            };
-
-        Ok(Some((uid, name)))
-    }
+    decode_owner_id(
+        reader,
+        flags,
+        prev_uid,
+        protocol_version,
+        XMIT_SAME_UID,
+        XMIT_USER_NAME_FOLLOWS,
+    )
 }
 
 /// Decodes a group ID from the wire format.
@@ -602,24 +591,46 @@ pub fn decode_gid<R: Read>(
     prev_gid: u32,
     protocol_version: u8,
 ) -> io::Result<Option<(u32, Option<String>)>> {
-    if flags & (XMIT_SAME_GID as u32) != 0 {
-        Ok(Some((prev_gid, None)))
+    decode_owner_id(
+        reader,
+        flags,
+        prev_gid,
+        protocol_version,
+        XMIT_SAME_GID,
+        XMIT_GROUP_NAME_FOLLOWS,
+    )
+}
+
+/// Shared implementation for decoding a user or group ID from the wire format.
+///
+/// The only difference between UID and GID decoding is which flag constants
+/// are checked: `same_flag` for reusing the previous value, and
+/// `name_follows_flag` for reading an associated owner name.
+fn decode_owner_id<R: Read>(
+    reader: &mut R,
+    flags: u32,
+    prev_id: u32,
+    protocol_version: u8,
+    same_flag: u8,
+    name_follows_flag: u8,
+) -> io::Result<Option<(u32, Option<String>)>> {
+    if flags & (same_flag as u32) != 0 {
+        Ok(Some((prev_id, None)))
     } else {
-        let gid = if protocol_version >= 30 {
+        let id = if protocol_version >= 30 {
             read_varint(reader)? as u32
         } else {
             read_int(reader)? as u32
         };
 
-        // Check if name follows (protocol 30+)
         let name =
-            if protocol_version >= 30 && (flags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0 {
+            if protocol_version >= 30 && (flags & ((name_follows_flag as u32) << 8)) != 0 {
                 Some(decode_owner_name(reader)?)
             } else {
                 None
             };
 
-        Ok(Some((gid, name)))
+        Ok(Some((id, name)))
     }
 }
 

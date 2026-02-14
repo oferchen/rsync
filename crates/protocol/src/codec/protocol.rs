@@ -375,6 +375,31 @@ pub enum ProtocolCodecEnum {
     Modern(ModernProtocolCodec),
 }
 
+/// Generates a delegating trait method that dispatches to the inner Legacy or
+/// Modern codec variant. Two arms handle the two method shapes in
+/// [`ProtocolCodec`]:
+///
+/// - `read`: `fn name<R: Read + ?Sized>(&self, reader) -> ReturnType`
+/// - `write`: `fn name<W: Write + ?Sized>(&self, writer, arg) -> io::Result<()>`
+macro_rules! delegate_codec {
+    (read $method:ident -> $ret:ty) => {
+        fn $method<R: Read + ?Sized>(&self, reader: &mut R) -> $ret {
+            match self {
+                Self::Legacy(c) => c.$method(reader),
+                Self::Modern(c) => c.$method(reader),
+            }
+        }
+    };
+    (write $method:ident, $arg:ident : $ty:ty) => {
+        fn $method<W: Write + ?Sized>(&self, writer: &mut W, $arg: $ty) -> io::Result<()> {
+            match self {
+                Self::Legacy(c) => c.$method(writer, $arg),
+                Self::Modern(c) => c.$method(writer, $arg),
+            }
+        }
+    };
+}
+
 impl ProtocolCodec for ProtocolCodecEnum {
     fn protocol_version(&self) -> u8 {
         match self {
@@ -383,47 +408,12 @@ impl ProtocolCodec for ProtocolCodecEnum {
         }
     }
 
-    fn write_file_size<W: Write + ?Sized>(&self, writer: &mut W, size: i64) -> io::Result<()> {
-        match self {
-            Self::Legacy(c) => c.write_file_size(writer, size),
-            Self::Modern(c) => c.write_file_size(writer, size),
-        }
-    }
-
-    fn read_file_size<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64> {
-        match self {
-            Self::Legacy(c) => c.read_file_size(reader),
-            Self::Modern(c) => c.read_file_size(reader),
-        }
-    }
-
-    fn write_mtime<W: Write + ?Sized>(&self, writer: &mut W, mtime: i64) -> io::Result<()> {
-        match self {
-            Self::Legacy(c) => c.write_mtime(writer, mtime),
-            Self::Modern(c) => c.write_mtime(writer, mtime),
-        }
-    }
-
-    fn read_mtime<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64> {
-        match self {
-            Self::Legacy(c) => c.read_mtime(reader),
-            Self::Modern(c) => c.read_mtime(reader),
-        }
-    }
-
-    fn write_long_name_len<W: Write + ?Sized>(&self, writer: &mut W, len: usize) -> io::Result<()> {
-        match self {
-            Self::Legacy(c) => c.write_long_name_len(writer, len),
-            Self::Modern(c) => c.write_long_name_len(writer, len),
-        }
-    }
-
-    fn read_long_name_len<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<usize> {
-        match self {
-            Self::Legacy(c) => c.read_long_name_len(reader),
-            Self::Modern(c) => c.read_long_name_len(reader),
-        }
-    }
+    delegate_codec!(write write_file_size, size: i64);
+    delegate_codec!(read read_file_size -> io::Result<i64>);
+    delegate_codec!(write write_mtime, mtime: i64);
+    delegate_codec!(read read_mtime -> io::Result<i64>);
+    delegate_codec!(write write_long_name_len, len: usize);
+    delegate_codec!(read read_long_name_len -> io::Result<usize>);
 }
 
 // ============================================================================

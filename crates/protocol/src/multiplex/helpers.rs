@@ -92,7 +92,6 @@ pub(super) fn read_payload_into<R: Read>(
     }
 
     reserve_payload(buffer, len)?;
-
     buffer.resize(len, 0);
 
     let mut read_total = 0;

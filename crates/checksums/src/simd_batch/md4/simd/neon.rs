@@ -99,6 +99,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 
         // Load message words (transposed: word i from all 4 inputs)
         let mut m = [vdupq_n_u32(0); 16];
+        #[allow(clippy::needless_range_loop)]
         for word_idx in 0..16 {
             let word_offset = block_offset + word_idx * 4;
             let words: [u32; 4] = std::array::from_fn(|lane| {

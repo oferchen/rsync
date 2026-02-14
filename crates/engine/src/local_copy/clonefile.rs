@@ -125,6 +125,7 @@ pub fn copy_file_standard(src: &Path, dst: &Path) -> io::Result<u64> {
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
 fn try_clonefile_impl(src: &Path, dst: &Path) -> io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;

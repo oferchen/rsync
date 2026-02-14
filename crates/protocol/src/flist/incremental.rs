@@ -274,6 +274,21 @@ impl IncrementalFileList {
         orphans
     }
 
+    /// Synthesizes a placeholder directory and releases its pending children.
+    ///
+    /// Returns 1 (the number of placeholders created) for counting.
+    fn synthesize_placeholder(&mut self, dir_path: &str) -> usize {
+        debug_log!(
+            Flist,
+            2,
+            "finalize: synthesizing placeholder directory \"{}\"",
+            dir_path
+        );
+        self.created_dirs.insert(dir_path.to_string());
+        self.release_pending_children(dir_path);
+        1
+    }
+
     /// Finalizes incremental processing with full orphan resolution.
     ///
     /// Unlike [`finish()`](Self::finish), this method attempts to resolve orphaned
@@ -345,54 +360,13 @@ impl IncrementalFileList {
 
             for ancestor in &ancestors {
                 if !self.created_dirs.contains(ancestor.as_str()) {
-                    debug_log!(
-                        Flist,
-                        2,
-                        "finalize: synthesizing placeholder directory \"{}\"",
-                        ancestor
-                    );
-                    self.created_dirs.insert(ancestor.clone());
-                    placeholder_count += 1;
-
-                    // Release any entries waiting for this ancestor.
-                    // This may cascade via release_pending_children if any
-                    // released entry is itself a directory with pending children.
-                    if let Some(children) = self.pending.remove(ancestor.as_str()) {
-                        let count = children.len();
-                        for child in children {
-                            if child.is_dir() {
-                                self.created_dirs.insert(child.name().to_string());
-                                self.release_pending_children(child.name());
-                            }
-                            self.ready.push_back(child);
-                        }
-                        self.entries_pending = self.entries_pending.saturating_sub(count);
-                    }
+                    placeholder_count += self.synthesize_placeholder(ancestor);
                 }
             }
 
             // Now create the parent itself if still missing
             if !self.created_dirs.contains(parent_path.as_str()) {
-                debug_log!(
-                    Flist,
-                    2,
-                    "finalize: synthesizing placeholder directory \"{}\"",
-                    parent_path
-                );
-                self.created_dirs.insert(parent_path.clone());
-                placeholder_count += 1;
-
-                if let Some(children) = self.pending.remove(parent_path.as_str()) {
-                    let count = children.len();
-                    for child in children {
-                        if child.is_dir() {
-                            self.created_dirs.insert(child.name().to_string());
-                            self.release_pending_children(child.name());
-                        }
-                        self.ready.push_back(child);
-                    }
-                    self.entries_pending = self.entries_pending.saturating_sub(count);
-                }
+                placeholder_count += self.synthesize_placeholder(parent_path);
             }
         }
 
