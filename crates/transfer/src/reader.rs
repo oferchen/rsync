@@ -104,7 +104,10 @@ pub(super) struct MultiplexReader<R> {
     pos: usize,
 }
 
-/// Default buffer capacity for MultiplexReader - matches IO_BUFFER_SIZE (32KB)
+/// Default buffer capacity for MultiplexReader.
+///
+/// 32KB balances memory usage and read throughput across both
+/// local (pipe) and remote (TCP) transfer paths.
 const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 32 * 1024;
 
 impl<R: Read> MultiplexReader<R> {

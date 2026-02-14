@@ -7,6 +7,11 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use super::super::DaemonAddress;
 use crate::client::{AddressMode, ClientError, SOCKET_IO_EXIT_CODE, daemon_error, socket_error};
 
+/// Establishes a direct TCP connection to an rsync daemon.
+///
+/// Resolves the daemon address, iterates through candidates filtered by
+/// `address_mode`, and returns the first successful connection. I/O timeouts
+/// are applied to the resulting stream.
 pub(crate) fn connect_direct(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
@@ -39,6 +44,10 @@ pub(crate) fn connect_direct(
     Err(socket_error("connect to", candidate, error))
 }
 
+/// Resolves a [`DaemonAddress`] to a list of [`SocketAddr`]s, filtered by address family.
+///
+/// Returns an error when resolution fails or the requested family yields no
+/// results.
 pub(crate) fn resolve_daemon_addresses(
     addr: &DaemonAddress,
     mode: AddressMode,
@@ -98,6 +107,11 @@ pub(crate) fn resolve_daemon_addresses(
     Ok(filtered)
 }
 
+/// Opens a TCP connection to `target`, optionally binding to a local address first.
+///
+/// When `bind_address` is provided its port is forced to `0` so the OS picks
+/// an ephemeral port. A `connect_timeout`, when given, is forwarded to the
+/// underlying socket.
 pub(crate) fn connect_with_optional_bind(
     target: SocketAddr,
     bind_address: Option<SocketAddr>,

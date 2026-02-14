@@ -89,24 +89,30 @@ fn basic_utf8_accented_characters() {
         "should be able to create at least one accented filename"
     );
 
+    // Count actual distinct files on disk. On macOS APFS, Unicode-normalized
+    // equivalents (e.g. NFC "é" and NFD "e+\u{0301}") map to the same file,
+    // so the on-disk count may be less than created_count.
+    let actual_files: usize = fs::read_dir(&root).unwrap().count();
+
     let walker = FileListBuilder::new(&root).build().expect("build walker");
     let paths = collect_relative_paths(walker);
 
     assert_eq!(
         paths.len(),
-        created_count,
-        "walker should find all created files"
+        actual_files,
+        "walker should find all files on disk"
     );
 
-    // Verify we can find specific files
-    for name in &names {
-        let path = PathBuf::from(*name);
-        if root.join(name).exists() {
-            assert!(
-                paths.contains(&path),
-                "should find file with accented name: {name}"
-            );
-        }
+    // On macOS, APFS normalizes Unicode (NFC ↔ NFD), so the on-disk name
+    // may differ from the name used to create the file. Verify that every
+    // file visible via readdir is also returned by the walker.
+    for entry in fs::read_dir(&root).unwrap() {
+        let entry = entry.unwrap();
+        let ondisk_name = PathBuf::from(entry.file_name());
+        assert!(
+            paths.contains(&ondisk_name),
+            "should find file with on-disk name: {ondisk_name:?}"
+        );
     }
 }
 

@@ -494,69 +494,33 @@ impl FileListReader {
         };
 
         // 6. Read UID and optional user name
-        let mut user_name = None;
-        let uid = if self.preserve_uid {
-            if flags.same_uid() {
-                // Use previous UID
-                Some(self.state.prev_uid())
-            } else {
-                // Read UID from wire (fixed encoding for protocol < 30)
-                let uid = if self.protocol.uses_fixed_encoding() {
-                    let mut buf = [0u8; 4];
-                    reader.read_exact(&mut buf)?;
-                    i32::from_le_bytes(buf) as u32
-                } else {
-                    read_varint(reader)? as u32
-                };
-                self.state.update_uid(uid);
-                // Read user name if flag set (protocol 30+)
-                if flags.user_name_follows() {
-                    let mut len_buf = [0u8; 1];
-                    reader.read_exact(&mut len_buf)?;
-                    let len = len_buf[0] as usize;
-                    if len > 0 {
-                        let mut name_bytes = vec![0u8; len];
-                        reader.read_exact(&mut name_bytes)?;
-                        user_name = Some(String::from_utf8_lossy(&name_bytes).into_owned());
-                    }
-                }
-                Some(uid)
-            }
+        let (uid, user_name) = if self.preserve_uid {
+            let (id, name) = read_owner_id(
+                reader,
+                flags.same_uid(),
+                flags.user_name_follows(),
+                self.state.prev_uid(),
+                self.protocol.uses_fixed_encoding(),
+            )?;
+            self.state.update_uid(id);
+            (Some(id), name)
         } else {
-            None
+            (None, None)
         };
 
         // 7. Read GID and optional group name
-        let mut group_name = None;
-        let gid = if self.preserve_gid {
-            if flags.same_gid() {
-                // Use previous GID
-                Some(self.state.prev_gid())
-            } else {
-                // Read GID from wire (fixed encoding for protocol < 30)
-                let gid = if self.protocol.uses_fixed_encoding() {
-                    let mut buf = [0u8; 4];
-                    reader.read_exact(&mut buf)?;
-                    i32::from_le_bytes(buf) as u32
-                } else {
-                    read_varint(reader)? as u32
-                };
-                self.state.update_gid(gid);
-                // Read group name if flag set (protocol 30+)
-                if flags.group_name_follows() {
-                    let mut len_buf = [0u8; 1];
-                    reader.read_exact(&mut len_buf)?;
-                    let len = len_buf[0] as usize;
-                    if len > 0 {
-                        let mut name_bytes = vec![0u8; len];
-                        reader.read_exact(&mut name_bytes)?;
-                        group_name = Some(String::from_utf8_lossy(&name_bytes).into_owned());
-                    }
-                }
-                Some(gid)
-            }
+        let (gid, group_name) = if self.preserve_gid {
+            let (id, name) = read_owner_id(
+                reader,
+                flags.same_gid(),
+                flags.group_name_follows(),
+                self.state.prev_gid(),
+                self.protocol.uses_fixed_encoding(),
+            )?;
+            self.state.update_gid(id);
+            (Some(id), name)
         } else {
-            None
+            (None, None)
         };
 
         // Determine content_dir for directories (protocol 30+)
@@ -1153,6 +1117,48 @@ impl FileListReader {
 
 /// Reads a single file entry from a reader.
 ///
+/// Reads an owner ID (uid or gid) and optional name from the wire.
+///
+/// Returns `(id, optional_name)`. When `same` is true, returns the previous
+/// value unchanged. Otherwise reads the ID using fixed or varint encoding,
+/// and optionally reads a name string if `name_follows` is set.
+fn read_owner_id<R: Read + ?Sized>(
+    reader: &mut R,
+    same: bool,
+    name_follows: bool,
+    prev_id: u32,
+    fixed_encoding: bool,
+) -> io::Result<(u32, Option<String>)> {
+    if same {
+        return Ok((prev_id, None));
+    }
+
+    let id = if fixed_encoding {
+        let mut buf = [0u8; 4];
+        reader.read_exact(&mut buf)?;
+        i32::from_le_bytes(buf) as u32
+    } else {
+        read_varint(reader)? as u32
+    };
+
+    let name = if name_follows {
+        let mut len_buf = [0u8; 1];
+        reader.read_exact(&mut len_buf)?;
+        let len = len_buf[0] as usize;
+        if len > 0 {
+            let mut name_bytes = vec![0u8; len];
+            reader.read_exact(&mut name_bytes)?;
+            Some(String::from_utf8_lossy(&name_bytes).into_owned())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok((id, name))
+}
+
 /// This is a convenience function for reading individual entries without
 /// maintaining reader state. For reading multiple entries, use [`FileListReader`]
 /// to benefit from cross-entry compression.

@@ -82,8 +82,8 @@ pub struct MplexReader<R> {
 impl<R> MplexReader<R> {
     /// Creates a new multiplexed reader wrapping the given reader.
     ///
-    /// The buffer is pre-allocated to 32KB to match upstream rsync's
-    /// IO_BUFFER_SIZE, reducing allocations during transfers.
+    /// The buffer is pre-allocated to 32KB, balancing memory usage and
+    /// throughput across both local (pipe) and remote (TCP) paths.
     #[inline]
     pub fn new(inner: R) -> Self {
         Self::with_capacity(inner, 32 * 1024)
@@ -98,7 +98,7 @@ impl<R> MplexReader<R> {
     /// use protocol::MplexReader;
     ///
     /// let reader = Cursor::new(Vec::<u8>::new());
-    /// let mplex = MplexReader::with_capacity(reader, 64 * 1024);
+    /// let mplex = MplexReader::with_capacity(reader, 32 * 1024);
     /// ```
     pub fn with_capacity(inner: R, capacity: usize) -> Self {
         Self {

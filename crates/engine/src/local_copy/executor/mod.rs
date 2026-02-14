@@ -23,6 +23,9 @@ pub use file::{
     SparseRegion, SparseWriter, remove_existing_destination, remove_incomplete_destination,
 };
 #[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use file::DirectWriteGuard;
+#[cfg(test)]
 pub(crate) use file::{
     files_checksum_match, maybe_preallocate_destination, partial_destination_path,
     temporary_destination_path,
