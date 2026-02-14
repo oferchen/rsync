@@ -12,6 +12,8 @@ use filetime::{FileTime, set_file_times, set_symlink_file_times};
 use std::fs;
 #[cfg(unix)]
 use std::io;
+#[cfg(unix)]
+use std::os::fd::BorrowedFd;
 use std::path::Path;
 
 #[cfg(unix)]
@@ -42,10 +44,10 @@ pub fn apply_directory_metadata_with_options(
     metadata: &fs::Metadata,
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, true, &options)?;
-    apply_permissions_with_chmod(destination, metadata, &options)?;
+    set_owner_like(metadata, destination, true, &options, None)?;
+    apply_permissions_with_chmod(destination, metadata, &options, None)?;
     if options.times() {
-        set_timestamp_like(metadata, destination, true)?;
+        set_timestamp_like(metadata, destination, true, None)?;
     }
     Ok(())
 }
@@ -67,10 +69,72 @@ pub fn apply_file_metadata_with_options(
     metadata: &fs::Metadata,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, true, options)?;
-    apply_permissions_with_chmod(destination, metadata, options)?;
+    set_owner_like(metadata, destination, true, options, None)?;
+    apply_permissions_with_chmod(destination, metadata, options, None)?;
     if options.times() {
-        set_timestamp_like(metadata, destination, true)?;
+        set_timestamp_like(metadata, destination, true, None)?;
+    }
+    Ok(())
+}
+
+/// Applies file metadata using an open file descriptor for efficiency.
+///
+/// When an fd is available (e.g. after writing a file), this avoids redundant
+/// path lookups by using `fchmod`/`fchown`/`futimens` instead of their
+/// path-based equivalents. Falls back to path-based operations where fd-based
+/// variants are unavailable (e.g. chmod modifiers that need a fresh stat).
+#[cfg(unix)]
+pub fn apply_file_metadata_with_fd(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    fd: BorrowedFd<'_>,
+) -> Result<(), MetadataError> {
+    set_owner_like_with_fd(metadata, destination, options, fd, None)?;
+    apply_permissions_with_chmod_fd(destination, metadata, options, Some(fd), None)?;
+    if options.times() {
+        set_timestamp_with_fd(metadata, destination, fd, None)?;
+    }
+    Ok(())
+}
+
+/// Applies only the file metadata fields that differ from `existing`.
+///
+/// Compares each metadata field (ownership, permissions, timestamps) against
+/// the destination's current state and skips syscalls for values that already
+/// match. This eliminates redundant `chown`/`chmod`/`utimensat` calls on the
+/// no-change transfer path.
+pub fn apply_file_metadata_if_changed(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    existing: &fs::Metadata,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    set_owner_like(metadata, destination, true, options, Some(existing))?;
+    apply_permissions_with_chmod(destination, metadata, options, Some(existing))?;
+    if options.times() {
+        set_timestamp_like(metadata, destination, true, Some(existing))?;
+    }
+    Ok(())
+}
+
+/// fd-based variant of [`apply_file_metadata_if_changed`].
+///
+/// Combines fd-based syscalls with comparison guards — only issues
+/// `fchown`/`fchmod`/`futimens` when the value actually differs from
+/// `existing`.
+#[cfg(unix)]
+pub fn apply_file_metadata_with_fd_if_changed(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    existing: &fs::Metadata,
+    options: &MetadataOptions,
+    fd: BorrowedFd<'_>,
+) -> Result<(), MetadataError> {
+    set_owner_like_with_fd(metadata, destination, options, fd, Some(existing))?;
+    apply_permissions_with_chmod_fd(destination, metadata, options, Some(fd), Some(existing))?;
+    if options.times() {
+        set_timestamp_with_fd(metadata, destination, fd, Some(existing))?;
     }
     Ok(())
 }
@@ -90,11 +154,80 @@ pub fn apply_symlink_metadata_with_options(
     metadata: &fs::Metadata,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, false, options)?;
+    set_owner_like(metadata, destination, false, options, None)?;
     if options.times() {
-        set_timestamp_like(metadata, destination, false)?;
+        set_timestamp_like(metadata, destination, false, None)?;
     }
     Ok(())
+}
+
+/// Resolves the target UID and GID after applying overrides, mappings, and
+/// numeric-id rules. Returns `(None, None)` when no ownership change is
+/// requested.
+#[cfg(unix)]
+fn resolve_ownership(
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    destination: &Path,
+) -> Result<(Option<unix_fs::Uid>, Option<unix_fs::Gid>), MetadataError> {
+    if options.owner_override().is_none()
+        && options.group_override().is_none()
+        && !options.owner()
+        && !options.group()
+    {
+        return Ok((None, None));
+    }
+
+    let owner = if let Some(uid) = options.owner_override() {
+        Some(ownership::uid_from_raw(uid as RawUid))
+    } else if options.owner() {
+        let mut raw_uid = metadata.uid() as RawUid;
+        if let Some(mapping) = options.user_mapping()
+            && let Some(mapped) = mapping
+                .map_uid(raw_uid)
+                .map_err(|error| MetadataError::new("apply user mapping", destination, error))?
+        {
+            raw_uid = mapped;
+        }
+        map_uid(raw_uid, options.numeric_ids_enabled())
+    } else {
+        None
+    };
+    let group = if let Some(gid) = options.group_override() {
+        Some(ownership::gid_from_raw(gid as RawGid))
+    } else if options.group() {
+        let mut raw_gid = metadata.gid() as RawGid;
+        if let Some(mapping) = options.group_mapping()
+            && let Some(mapped) = mapping.map_gid(raw_gid).map_err(|error| {
+                MetadataError::new("apply group mapping", destination, error)
+            })?
+        {
+            raw_gid = mapped;
+        }
+        map_gid(raw_gid, options.numeric_ids_enabled())
+    } else {
+        None
+    };
+
+    Ok((owner, group))
+}
+
+/// Returns `true` when the resolved ownership already matches `existing`.
+#[cfg(unix)]
+fn ownership_matches(
+    owner: &Option<unix_fs::Uid>,
+    group: &Option<unix_fs::Gid>,
+    existing: &fs::Metadata,
+) -> bool {
+    let uid_ok = match owner {
+        Some(uid) => uid.as_raw() == existing.uid(),
+        None => true,
+    };
+    let gid_ok = match group {
+        Some(gid) => gid.as_raw() == existing.gid(),
+        None => true,
+    };
+    uid_ok && gid_ok
 }
 
 fn set_owner_like(
@@ -102,50 +235,20 @@ fn set_owner_like(
     destination: &Path,
     follow_symlinks: bool,
     options: &MetadataOptions,
+    existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
-        if options.owner_override().is_none()
-            && options.group_override().is_none()
-            && !options.owner()
-            && !options.group()
-        {
-            return Ok(());
-        }
-
-        let owner = if let Some(uid) = options.owner_override() {
-            Some(ownership::uid_from_raw(uid as RawUid))
-        } else if options.owner() {
-            let mut raw_uid = metadata.uid() as RawUid;
-            if let Some(mapping) = options.user_mapping()
-                && let Some(mapped) = mapping
-                    .map_uid(raw_uid)
-                    .map_err(|error| MetadataError::new("apply user mapping", destination, error))?
-            {
-                raw_uid = mapped;
-            }
-            map_uid(raw_uid, options.numeric_ids_enabled())
-        } else {
-            None
-        };
-        let group = if let Some(gid) = options.group_override() {
-            Some(ownership::gid_from_raw(gid as RawGid))
-        } else if options.group() {
-            let mut raw_gid = metadata.gid() as RawGid;
-            if let Some(mapping) = options.group_mapping()
-                && let Some(mapped) = mapping.map_gid(raw_gid).map_err(|error| {
-                    MetadataError::new("apply group mapping", destination, error)
-                })?
-            {
-                raw_gid = mapped;
-            }
-            map_gid(raw_gid, options.numeric_ids_enabled())
-        } else {
-            None
-        };
+        let (owner, group) = resolve_ownership(metadata, options, destination)?;
 
         if owner.is_none() && group.is_none() {
             return Ok(());
+        }
+
+        if let Some(existing) = existing {
+            if ownership_matches(&owner, &group, existing) {
+                return Ok(());
+            }
         }
 
         let flags = if follow_symlinks {
@@ -161,13 +264,40 @@ fn set_owner_like(
 
     #[cfg(not(unix))]
     {
-        // Ownership preservation is a no-op on non-Unix platforms.
-        // Windows ACL semantics are different; silently succeed.
         let _ = destination;
         let _ = metadata;
         let _ = follow_symlinks;
         let _ = options;
+        let _ = existing;
     }
+
+    Ok(())
+}
+
+/// fd-based variant of [`set_owner_like`] that uses `fchown` instead of `chownat`.
+#[cfg(unix)]
+fn set_owner_like_with_fd(
+    metadata: &fs::Metadata,
+    destination: &Path,
+    options: &MetadataOptions,
+    fd: BorrowedFd<'_>,
+    existing: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    let (owner, group) = resolve_ownership(metadata, options, destination)?;
+
+    if owner.is_none() && group.is_none() {
+        return Ok(());
+    }
+
+    if let Some(existing) = existing {
+        if ownership_matches(&owner, &group, existing) {
+            return Ok(());
+        }
+    }
+
+    unix_fs::fchown(fd, owner, group).map_err(|error| {
+        MetadataError::new("preserve ownership", destination, io::Error::from(error))
+    })?;
 
     Ok(())
 }
@@ -199,10 +329,19 @@ fn set_permissions_like(metadata: &fs::Metadata, destination: &Path) -> Result<(
     Ok(())
 }
 
+/// Returns `true` when `target_mode` already matches the permission bits on
+/// `existing`, comparing only the lower 12 bits (suid/sgid/sticky + rwx).
+#[cfg(unix)]
+fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    (existing.permissions().mode() & 0o7777) == (target_mode & 0o7777)
+}
+
 fn apply_permissions_with_chmod(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
+    existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
@@ -210,8 +349,14 @@ fn apply_permissions_with_chmod(
 
         if let Some(modifiers) = options.chmod() {
             let mut mode = base_mode_for_permissions(destination, metadata, options)?;
-
             mode = modifiers.apply(mode, metadata.file_type());
+
+            if let Some(existing) = existing {
+                if permissions_match(mode, existing) {
+                    return Ok(());
+                }
+            }
+
             let permissions = PermissionsExt::from_mode(mode);
             fs::set_permissions(destination, permissions)
                 .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
@@ -220,7 +365,71 @@ fn apply_permissions_with_chmod(
     }
 
     if options.permissions() || options.executability() {
-        apply_permissions_without_chmod(destination, metadata, options)?;
+        apply_permissions_without_chmod(destination, metadata, options, existing)?;
+    }
+
+    Ok(())
+}
+
+/// fd-based variant of permission application.
+///
+/// Uses `fchmod` when an fd is available and we can determine the mode without
+/// reading the current destination permissions. Falls back to path-based
+/// operations for chmod modifiers that require a fresh stat, or when no fd
+/// is provided.
+#[cfg(unix)]
+fn apply_permissions_with_chmod_fd(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    fd: Option<BorrowedFd<'_>>,
+    existing: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Some(modifiers) = options.chmod() {
+        let mut mode = base_mode_for_permissions(destination, metadata, options)?;
+        mode = modifiers.apply(mode, metadata.file_type());
+
+        if let Some(existing) = existing {
+            if permissions_match(mode, existing) {
+                return Ok(());
+            }
+        }
+
+        if let Some(fd) = fd {
+            unix_fs::fchmod(fd, unix_fs::Mode::from_raw_mode(mode as rustix::fs::RawMode)).map_err(|error| {
+                MetadataError::new("preserve permissions", destination, io::Error::from(error))
+            })?;
+        } else {
+            let permissions = PermissionsExt::from_mode(mode);
+            fs::set_permissions(destination, permissions)
+                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+        }
+        return Ok(());
+    }
+
+    if options.permissions() {
+        let mode = metadata.permissions().mode();
+
+        if let Some(existing) = existing {
+            if permissions_match(mode, existing) {
+                return Ok(());
+            }
+        }
+
+        if let Some(fd) = fd {
+            unix_fs::fchmod(fd, unix_fs::Mode::from_raw_mode(mode as rustix::fs::RawMode)).map_err(|error| {
+                MetadataError::new("preserve permissions", destination, io::Error::from(error))
+            })?;
+        } else {
+            set_permissions_like(metadata, destination)?;
+        }
+        return Ok(());
+    }
+
+    if options.executability() && metadata.is_file() {
+        apply_permissions_without_chmod(destination, metadata, options, existing)?;
     }
 
     Ok(())
@@ -259,8 +468,16 @@ fn apply_permissions_without_chmod(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
+    existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     if options.permissions() {
+        #[cfg(unix)]
+        if let Some(existing) = existing {
+            use std::os::unix::fs::PermissionsExt;
+            if permissions_match(metadata.permissions().mode(), existing) {
+                return Ok(());
+            }
+        }
         set_permissions_like(metadata, destination)?;
         return Ok(());
     }
@@ -284,6 +501,12 @@ fn apply_permissions_without_chmod(
                 destination_permissions |= 0o111;
             }
 
+            if let Some(existing) = existing {
+                if permissions_match(destination_permissions, existing) {
+                    return Ok(());
+                }
+            }
+
             let permissions = PermissionsExt::from_mode(destination_permissions);
             fs::set_permissions(destination, permissions)
                 .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
@@ -297,9 +520,16 @@ fn set_timestamp_like(
     metadata: &fs::Metadata,
     destination: &Path,
     follow_symlinks: bool,
+    existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     let accessed = FileTime::from_last_access_time(metadata);
     let modified = FileTime::from_last_modification_time(metadata);
+
+    if let Some(existing) = existing {
+        if FileTime::from_last_modification_time(existing) == modified {
+            return Ok(());
+        }
+    }
 
     if follow_symlinks {
         set_file_times(destination, accessed, modified)
@@ -308,6 +538,41 @@ fn set_timestamp_like(
         set_symlink_file_times(destination, accessed, modified)
             .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?
     }
+
+    Ok(())
+}
+
+/// fd-based variant of [`set_timestamp_like`] that uses `futimens` on the open fd.
+#[cfg(unix)]
+fn set_timestamp_with_fd(
+    metadata: &fs::Metadata,
+    destination: &Path,
+    fd: BorrowedFd<'_>,
+    existing: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    let accessed = FileTime::from_last_access_time(metadata);
+    let modified = FileTime::from_last_modification_time(metadata);
+
+    if let Some(existing) = existing {
+        if FileTime::from_last_modification_time(existing) == modified {
+            return Ok(());
+        }
+    }
+
+    let timestamps = rustix::fs::Timestamps {
+        last_access: rustix::fs::Timespec {
+            tv_sec: accessed.unix_seconds(),
+            tv_nsec: accessed.nanoseconds().into(),
+        },
+        last_modification: rustix::fs::Timespec {
+            tv_sec: modified.unix_seconds(),
+            tv_nsec: modified.nanoseconds().into(),
+        },
+    };
+
+    rustix::fs::futimens(fd, &timestamps).map_err(|error| {
+        MetadataError::new("preserve timestamps", destination, io::Error::from(error))
+    })?;
 
     Ok(())
 }
@@ -350,15 +615,18 @@ pub fn apply_metadata_from_file_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
+    // Cache a single stat call for all three sub-functions to avoid redundant syscalls.
+    let cached_meta = fs::metadata(destination).ok();
+
     // Step 1: Apply ownership (if requested)
-    apply_ownership_from_entry(destination, entry, options)?;
+    apply_ownership_from_entry(destination, entry, options, cached_meta.as_ref())?;
 
     // Step 2: Apply permissions (if requested)
-    apply_permissions_from_entry(destination, entry, options)?;
+    apply_permissions_from_entry(destination, entry, options, cached_meta.as_ref())?;
 
     // Step 3: Apply timestamps (if requested)
     if options.times() {
-        apply_timestamps_from_entry(destination, entry)?;
+        apply_timestamps_from_entry(destination, entry, cached_meta.as_ref())?;
     }
 
     Ok(())
@@ -369,6 +637,7 @@ fn apply_ownership_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
+    cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     use rustix::fs::{AtFlags, CWD, chownat};
     use rustix::process::{RawGid, RawUid};
@@ -443,8 +712,7 @@ fn apply_ownership_from_entry(
     if owner.is_some() || group.is_some() {
         // Optimization: check current ownership and skip syscall if already correct.
         // This matches upstream rsync behavior which avoids redundant chown calls.
-        let current_meta = fs::metadata(destination).ok();
-        let needs_chown = match current_meta {
+        let needs_chown = match cached_meta {
             Some(ref meta) => {
                 let current_uid = meta.uid();
                 let current_gid = meta.gid();
@@ -510,6 +778,7 @@ fn apply_ownership_from_entry(
     _destination: &Path,
     _entry: &protocol::flist::FileEntry,
     _options: &MetadataOptions,
+    _cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     // Non-Unix platforms: ownership is not supported
     Ok(())
@@ -519,6 +788,7 @@ fn apply_permissions_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
+    cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
@@ -533,9 +803,8 @@ fn apply_permissions_from_entry(
             let mode = entry.permissions();
             // Optimization: check current permissions and skip syscall if already correct.
             // This matches upstream rsync behavior which avoids redundant chmod calls.
-            let current_meta = fs::metadata(destination).ok();
-            let needs_chmod = match current_meta {
-                Some(ref meta) => (meta.permissions().mode() & 0o7777) != (mode & 0o7777),
+            let needs_chmod = match cached_meta {
+                Some(meta) => (meta.permissions().mode() & 0o7777) != (mode & 0o7777),
                 None => true, // Can't stat, try chmod anyway
             };
 
@@ -549,9 +818,21 @@ fn apply_permissions_from_entry(
 
         // Apply chmod modifiers if present
         if let Some(chmod) = options.chmod() {
-            // Get current permissions
-            let current_meta = fs::metadata(destination)
-                .map_err(|error| MetadataError::new("read permissions", destination, error))?;
+            // Get current permissions — use cached metadata if available,
+            // otherwise fall back to a fresh stat (chmod may have changed them above).
+            let fresh_meta;
+            let current_meta = if options.permissions() {
+                // Permissions were just set above, need fresh stat
+                fresh_meta = fs::metadata(destination)
+                    .map_err(|error| MetadataError::new("read permissions", destination, error))?;
+                &fresh_meta
+            } else if let Some(meta) = cached_meta {
+                meta
+            } else {
+                fresh_meta = fs::metadata(destination)
+                    .map_err(|error| MetadataError::new("read permissions", destination, error))?;
+                &fresh_meta
+            };
             let current_mode = current_meta.permissions().mode();
 
             // Apply chmod modifiers
@@ -570,11 +851,16 @@ fn apply_permissions_from_entry(
         if options.permissions() {
             // Non-Unix: only readonly flag
             let readonly = entry.permissions() & 0o200 == 0;
-            let mut dest_perms = fs::metadata(destination)
-                .map_err(|error| {
-                    MetadataError::new("read destination permissions", destination, error)
-                })?
-                .permissions();
+            let dest_perms_meta = if let Some(meta) = cached_meta {
+                meta.permissions()
+            } else {
+                fs::metadata(destination)
+                    .map_err(|error| {
+                        MetadataError::new("read destination permissions", destination, error)
+                    })?
+                    .permissions()
+            };
+            let mut dest_perms = dest_perms_meta;
             if dest_perms.readonly() != readonly {
                 dest_perms.set_readonly(readonly);
                 fs::set_permissions(destination, dest_perms).map_err(|error| {
@@ -590,6 +876,7 @@ fn apply_permissions_from_entry(
 fn apply_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
+    cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     // Build FileTime from FileEntry's (mtime, mtime_nsec)
     // This preserves nanosecond precision!
@@ -599,9 +886,8 @@ fn apply_timestamps_from_entry(
     // Optimization: check current mtime and skip syscall if already correct.
     // This matches upstream rsync behavior which avoids redundant utimensat calls.
     // Compare at second granularity first (fast path), then nanoseconds if needed.
-    let current_meta = fs::metadata(destination).ok();
-    let needs_utime = match current_meta {
-        Some(ref meta) => {
+    let needs_utime = match cached_meta {
+        Some(meta) => {
             let current_mtime = FileTime::from_last_modification_time(meta);
             current_mtime != mtime
         }

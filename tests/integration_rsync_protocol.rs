@@ -8,30 +8,74 @@ mod integration;
 use integration::helpers::*;
 use std::fs;
 
-/// Skip test if network is unavailable or server is unreachable.
+/// Checks whether a public rsync server is reachable within a short timeout.
+///
+/// Spawns `rsync --list-only` in a background thread and kills the process if
+/// it does not complete within 5 seconds.
 fn check_rsync_server(url: &str) -> bool {
-    use std::process::Command;
-    let result = Command::new("timeout")
-        .args(["5", "rsync", "--list-only", url])
-        .output();
-    match result {
-        Ok(output) => output.status.success(),
-        Err(_) => false,
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    let mut child = match Command::new("rsync")
+        .args(["--list-only", url])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => return false,
+        }
     }
 }
 
-/// Helper to run oc-rsync with timeout.
+/// Runs oc-rsync with the given arguments, killing the process after
+/// `timeout_secs` seconds if it has not exited.
 fn rsync_with_timeout(args: &[&str], timeout_secs: u64) -> std::process::Output {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
 
     let binary = locate_oc_rsync().expect("oc-rsync binary must be available");
 
-    Command::new("timeout")
-        .arg(format!("{timeout_secs}"))
-        .arg(&binary)
+    let mut child = Command::new(&binary)
         .args(args)
-        .output()
-        .expect("failed to execute oc-rsync")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn oc-rsync");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => break,
+        }
+    }
+
+    child
+        .wait_with_output()
+        .expect("failed to collect oc-rsync output")
 }
 
 fn locate_oc_rsync() -> Option<std::path::PathBuf> {

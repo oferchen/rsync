@@ -226,114 +226,68 @@ fn process_planned_entry(
     let entry_metadata = planned.metadata();
     let record_relative = non_empty_path(planned.relative.as_path());
 
+    // Handle skip actions first (no directory creation or batch capture needed)
     match planned.action {
-        EntryAction::SkipExcluded => Ok(false),
+        EntryAction::SkipExcluded => return Ok(false),
         EntryAction::SkipNonRegular => {
             if entry_metadata.file_type().is_symlink() {
                 context.summary_mut().record_symlink_total();
             }
             context.record_skipped_non_regular(record_relative);
-            Ok(false)
+            return Ok(false);
         }
         EntryAction::SkipMountPoint => {
             context.record_skipped_mount_point(record_relative);
-            Ok(false)
+            return Ok(false);
         }
-        EntryAction::CopyDirectory => {
-            ensure_directory(context)?;
-            // Capture directory entry to batch file
-            if let Some(rel_path) = record_relative {
-                capture_batch_file_entry(context, rel_path, entry_metadata)?;
-            }
-            copy_directory_recursive(
-                context,
-                planned.entry.path.as_path(),
-                &target_path,
-                entry_metadata,
-                Some(planned.relative.as_path()),
-                root_device,
-            )
-        }
-        EntryAction::CopyFile => {
-            ensure_directory(context)?;
-            // Capture file entry to batch file
-            if let Some(rel_path) = record_relative {
-                capture_batch_file_entry(context, rel_path, entry_metadata)?;
-            }
-            let kept = copy_file(
-                context,
-                planned.entry.path.as_path(),
-                &target_path,
-                entry_metadata,
-                Some(planned.relative.as_path()),
-            )?;
-            Ok(kept)
+        _ => {}
+    }
+
+    // All copy actions share: ensure parent directory exists + capture to batch
+    ensure_directory(context)?;
+    if let Some(rel_path) = record_relative {
+        capture_batch_file_entry(context, rel_path, entry_metadata)?;
+    }
+
+    let source = planned.entry.path.as_path();
+    let relative = Some(planned.relative.as_path());
+
+    match planned.action {
+        EntryAction::CopyDirectory => copy_directory_recursive(
+            context,
+            source,
+            &target_path,
+            entry_metadata,
+            relative,
+            root_device,
+        ),
+        EntryAction::CopyFile | EntryAction::CopyDeviceAsFile => {
+            copy_file(context, source, &target_path, entry_metadata, relative)
         }
         EntryAction::CopySymlink => {
-            ensure_directory(context)?;
-            // Capture symlink entry to batch file
-            if let Some(rel_path) = record_relative {
-                capture_batch_file_entry(context, rel_path, entry_metadata)?;
-            }
             let metadata_options = context.metadata_options();
             copy_symlink(
-                context,
-                planned.entry.path.as_path(),
-                &target_path,
-                entry_metadata,
-                &metadata_options,
-                Some(planned.relative.as_path()),
+                context, source, &target_path, entry_metadata, &metadata_options, relative,
             )?;
             Ok(true)
         }
         EntryAction::CopyFifo => {
-            ensure_directory(context)?;
-            // Capture FIFO entry to batch file
-            if let Some(rel_path) = record_relative {
-                capture_batch_file_entry(context, rel_path, entry_metadata)?;
-            }
             let metadata_options = context.metadata_options();
             copy_fifo(
-                context,
-                planned.entry.path.as_path(),
-                &target_path,
-                entry_metadata,
-                &metadata_options,
-                Some(planned.relative.as_path()),
+                context, source, &target_path, entry_metadata, &metadata_options, relative,
             )?;
             Ok(true)
         }
         EntryAction::CopyDevice => {
-            ensure_directory(context)?;
-            // Capture device entry to batch file
-            if let Some(rel_path) = record_relative {
-                capture_batch_file_entry(context, rel_path, entry_metadata)?;
-            }
             let metadata_options = context.metadata_options();
             copy_device(
-                context,
-                planned.entry.path.as_path(),
-                &target_path,
-                entry_metadata,
-                &metadata_options,
-                Some(planned.relative.as_path()),
+                context, source, &target_path, entry_metadata, &metadata_options, relative,
             )?;
             Ok(true)
         }
-        EntryAction::CopyDeviceAsFile => {
-            ensure_directory(context)?;
-            // Capture device-as-file entry to batch file
-            if let Some(rel_path) = record_relative {
-                capture_batch_file_entry(context, rel_path, entry_metadata)?;
-            }
-            let kept = copy_file(
-                context,
-                planned.entry.path.as_path(),
-                &target_path,
-                entry_metadata,
-                Some(planned.relative.as_path()),
-            )?;
-            Ok(kept)
+        // Skip variants already handled above
+        EntryAction::SkipExcluded | EntryAction::SkipNonRegular | EntryAction::SkipMountPoint => {
+            unreachable!()
         }
     }
 }
@@ -825,7 +779,7 @@ mod tests {
 
         // Don't create destination file
 
-        let entries = vec![entry];
+        let entries = [entry];
         let planned: Vec<PlannedEntry> = vec![PlannedEntry {
             entry: &entries[0],
             relative: PathBuf::from("file.txt"),
@@ -860,7 +814,7 @@ mod tests {
         // Create destination file with different size (50 bytes)
         std::fs::write(dest_dir.join("file.txt"), vec![0u8; 50]).unwrap();
 
-        let entries = vec![entry];
+        let entries = [entry];
         let planned: Vec<PlannedEntry> = vec![PlannedEntry {
             entry: &entries[0],
             relative: PathBuf::from("file.txt"),
@@ -895,7 +849,7 @@ mod tests {
         // Create destination file with same size (100 bytes)
         std::fs::write(dest_dir.join("file.txt"), vec![0u8; 100]).unwrap();
 
-        let entries = vec![entry];
+        let entries = [entry];
         let planned: Vec<PlannedEntry> = vec![PlannedEntry {
             entry: &entries[0],
             relative: PathBuf::from("file.txt"),

@@ -1,8 +1,8 @@
 //! Integration tests for PATH_MAX and deeply nested path handling.
 //!
 //! These tests verify correct behavior when dealing with paths that approach
-//! or exceed system limits (PATH_MAX = 4096 on most Linux systems). The tests
-//! ensure that:
+//! or exceed system limits. PATH_MAX varies by platform: 4096 on Linux, 1024
+//! on macOS. The tests ensure that:
 //! 1. Paths approaching PATH_MAX are handled correctly
 //! 2. Deeply nested directory hierarchies can be traversed
 //! 3. Relative paths work correctly with deep nesting
@@ -14,10 +14,22 @@ use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// PATH_MAX on Linux is typically 4096 bytes
+// Use platform-appropriate PATH_MAX
+#[cfg(target_os = "macos")]
+const PATH_MAX: usize = 1024;
+#[cfg(not(target_os = "macos"))]
 const PATH_MAX: usize = 4096;
+
 // Leave some room for filesystem operations and null terminators
 const SAFE_PATH_LIMIT: usize = PATH_MAX - 256;
+
+/// Calculates the maximum number of directory levels that fit within
+/// PATH_MAX given a root path and per-directory name length.
+fn max_levels_for(root: &Path, dir_name_len: usize) -> usize {
+    let root_len = root.as_os_str().len();
+    let available = SAFE_PATH_LIMIT.saturating_sub(root_len);
+    available / (dir_name_len + 1) // +1 for separator
+}
 
 // ============================================================================
 // Helper Functions
@@ -64,21 +76,24 @@ fn calculate_path_length(root: &Path, relative: &Path) -> usize {
 // Deep Nesting Tests - Basic Functionality
 // ============================================================================
 
-/// Verifies that very deep directory structures (100+ levels) can be traversed.
+/// Verifies that very deep directory structures can be traversed.
 #[test]
 fn traverse_very_deep_directory_hierarchy() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("deep");
 
-    // Create 100 levels deep
-    let deep_path = create_deep_structure(&root, 100, 10);
+    // Scale depth to fit within platform PATH_MAX
+    let levels = max_levels_for(&root, 10).min(100);
+    assert!(levels >= 10, "need at least 10 levels for meaningful test");
+
+    let deep_path = create_deep_structure(&root, levels, 10);
     fs::write(deep_path.join("deep_file.txt"), b"buried treasure").expect("write deep file");
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
     let entries = collect_all_entries(walker);
 
-    // Should have: root + 100 directories + 1 file = 102 entries
-    assert_eq!(entries.len(), 102, "should traverse all levels");
+    // Should have: root + levels directories + 1 file
+    assert_eq!(entries.len(), levels + 2, "should traverse all levels");
 
     // Verify the deepest file is found
     let deep_file = entries.iter().find(|e| {
@@ -86,8 +101,12 @@ fn traverse_very_deep_directory_hierarchy() {
             .to_string_lossy()
             .ends_with("deep_file.txt")
     });
-    assert!(deep_file.is_some(), "should find file at depth 100");
-    assert_eq!(deep_file.unwrap().depth(), 101, "file depth should be 101");
+    assert!(deep_file.is_some(), "should find file at max depth");
+    assert_eq!(
+        deep_file.unwrap().depth(),
+        levels + 1,
+        "file depth should match"
+    );
 }
 
 /// Verifies multiple deep branches can coexist and be traversed correctly.
@@ -206,8 +225,10 @@ fn relative_paths_correct_for_long_absolute_paths() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("long_relative");
 
-    // Create moderately deep structure
-    let levels = 20;
+    // Scale depth to fit within PATH_MAX
+    let levels = max_levels_for(&root, 50).min(20);
+    assert!(levels >= 3, "need at least 3 levels for meaningful test");
+
     let deep_path = create_deep_structure(&root, levels, 50);
     fs::write(deep_path.join("file.txt"), b"data").expect("write file");
 
@@ -691,8 +712,11 @@ fn lazy_evaluation_for_very_deep_structures() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("lazy");
 
-    // Create a very deep structure (200 levels)
-    let deep_path = create_deep_structure(&root, 200, 8);
+    // Scale depth to fit within PATH_MAX (use short names to maximize depth)
+    let levels = max_levels_for(&root, 8).min(200);
+    assert!(levels >= 60, "need at least 60 levels for meaningful test");
+
+    let deep_path = create_deep_structure(&root, levels, 8);
     fs::write(deep_path.join("bottom.txt"), b"deepest point").expect("write file");
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -710,7 +734,7 @@ fn lazy_evaluation_for_very_deep_structures() {
     assert_eq!(count, 50, "should get first 50 entries");
 
     // If walker was eagerly loading everything, this would have consumed
-    // memory for all 200+ entries. Instead, we only processed 50.
+    // memory for all entries. Instead, we only processed 50.
     // This is an implicit test - we're verifying it doesn't panic or OOM.
 }
 
@@ -812,8 +836,12 @@ fn long_path_with_long_filename_combination() {
     let root = temp.path().join("combo");
     fs::create_dir(&root).expect("create root");
 
-    // Create a moderately deep structure
-    let deep_path = create_deep_structure(&root, 20, 50);
+    // Scale depth to fit within PATH_MAX, leaving room for the long filename
+    let levels = max_levels_for(&root, 50).min(20);
+    let levels = levels.saturating_sub(4); // Reserve space for 200-char filename
+    assert!(levels >= 2, "need at least 2 levels for meaningful test");
+
+    let deep_path = create_deep_structure(&root, levels, 50);
 
     // Try to create a file with a long name (200 chars)
     let long_filename = format!("{}.txt", "long_name_".repeat(19));
@@ -900,10 +928,11 @@ fn walk_structure_approaching_limit_from_multiple_branches() {
 
     for branch in &branches {
         let branch_root = root.join(branch);
-        // Try to create 15 levels with 100-char names
+        // Scale depth to fit within PATH_MAX
+        let levels = max_levels_for(&branch_root, 100).min(15);
         match fs::create_dir_all(&branch_root) {
             Ok(_) => {
-                let deep = create_deep_structure(&branch_root, 15, 100);
+                let deep = create_deep_structure(&branch_root, levels, 100);
                 if fs::write(deep.join("leaf.txt"), b"data").is_ok() {
                     total_files += 1;
                 }
@@ -1013,9 +1042,10 @@ mod symlink_long_path_tests {
         let root = temp.path().join("link_long");
         fs::create_dir(&root).expect("create root");
 
-        // Create a deep target structure
+        // Create a deep target structure, scaled to fit within PATH_MAX
         let target_root = temp.path().join("target_deep");
-        let deep_target = create_deep_structure(&target_root, 30, 50);
+        let levels = max_levels_for(&target_root, 50).min(30);
+        let deep_target = create_deep_structure(&target_root, levels, 50);
         fs::write(deep_target.join("target.txt"), b"target data").expect("write target");
 
         // Create a symlink to the deep target
@@ -1156,8 +1186,11 @@ fn very_long_base_path_handling() {
     // This tests what happens when the starting path itself is very long
     let temp = tempfile::tempdir().expect("create tempdir");
 
-    // Create a moderately deep starting point
-    let deep_start = create_deep_structure(temp.path(), 20, 80);
+    // Scale depth to fit within PATH_MAX
+    let levels = max_levels_for(temp.path(), 80).min(20);
+    assert!(levels >= 2, "need at least 2 levels for meaningful test");
+
+    let deep_start = create_deep_structure(temp.path(), levels, 80);
 
     // Can we build a walker from this deep starting point?
     match FileListBuilder::new(&deep_start).build() {
@@ -1189,9 +1222,7 @@ fn entry_creation_at_path_limits() {
     fs::create_dir(&root).expect("create root");
 
     // Create structure close to but not exceeding limits
-    let root_len = root.as_os_str().len();
-    let safe_depth = (SAFE_PATH_LIMIT - root_len) / 101; // 100-char names + separator
-    let safe_depth = safe_depth.min(35); // Cap for reasonable test time
+    let safe_depth = max_levels_for(&root, 100).min(35); // Cap for reasonable test time
 
     let deep_path = create_deep_structure(&root, safe_depth, 100);
     fs::write(deep_path.join("safe.txt"), b"safe").expect("write file");
@@ -1251,8 +1282,11 @@ fn no_relative_path_truncation_in_deep_structure() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("deep_no_trunc");
 
-    // Create deep structure
-    let deep_path = create_deep_structure(&root, 20, 50);
+    // Scale depth to fit within PATH_MAX
+    let levels = max_levels_for(&root, 50).min(20);
+    assert!(levels >= 3, "need at least 3 levels for meaningful test");
+
+    let deep_path = create_deep_structure(&root, levels, 50);
     fs::write(deep_path.join("deep.txt"), b"data").expect("write file");
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -1323,8 +1357,13 @@ fn combined_deep_long_symlink_structure() {
     let root = temp.path().join("combined");
     fs::create_dir(&root).expect("create root");
 
-    // Create deep structure with long directory names
-    let deep_with_long = create_deep_structure(&root.join("deep"), 10, 80);
+    // Scale depth to fit within PATH_MAX, leaving room for the long filename
+    let deep_root = root.join("deep");
+    let levels = max_levels_for(&deep_root, 80).min(10);
+    let levels = levels.saturating_sub(3); // Reserve space for long filename
+    assert!(levels >= 2, "need at least 2 levels for meaningful test");
+
+    let deep_with_long = create_deep_structure(&deep_root, levels, 80);
 
     // Create file with long name at the deep location
     let long_filename = format!("{}.txt", "file_".repeat(40));
@@ -1361,10 +1400,8 @@ fn empty_directories_at_path_limits() {
     let root = temp.path().join("empty_deep");
     fs::create_dir(&root).expect("create root");
 
-    // Create structure of empty directories approaching the limit
-    let root_len = root.as_os_str().len();
-    let levels = (SAFE_PATH_LIMIT - root_len) / 51; // 50-char names + separator
-    let levels = levels.min(60); // Cap for test performance
+    // Scale to fit within platform PATH_MAX
+    let levels = max_levels_for(&root, 50).min(60); // Cap for test performance
 
     let _deep_path = create_deep_structure(&root, levels, 50);
     // Don't create any files - just empty directories
@@ -1396,8 +1433,11 @@ fn iterator_patterns_with_long_paths() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("iter_long");
 
-    // Create deep structure with files at various levels
-    let deep_path = create_deep_structure(&root, 25, 60);
+    // Scale depth to fit within PATH_MAX
+    let levels = max_levels_for(&root, 60).min(25);
+    assert!(levels >= 6, "need at least 6 levels for meaningful test");
+
+    let deep_path = create_deep_structure(&root, levels, 60);
     fs::write(deep_path.join("deepest.txt"), b"deep").expect("write deep file");
 
     // Add some files at intermediate depths
@@ -1430,7 +1470,7 @@ fn iterator_patterns_with_long_paths() {
 
     assert!(depths.contains(&0), "should have depth 0");
     assert!(
-        *depths.iter().max().unwrap() > 20,
+        *depths.iter().max().unwrap() >= levels,
         "should have deep entries"
     );
 }

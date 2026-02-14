@@ -684,75 +684,22 @@ impl ReceiverContext {
     /// For production use, prefer the default `run()` which uses pipelining.
     pub fn run_sync<R: Read, W: Write + ?Sized>(
         &mut self,
-        mut reader: super::reader::ServerReader<R>,
+        reader: super::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<TransferStats> {
-        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30.
-        // This matches upstream do_server_recv() at main.c:1167 which calls io_start_multiplex_in()
-        // BEFORE calling recv_filter_list() at line 1171.
-        // The client sends ALL data (including filter list) as multiplexed MSG_DATA frames for protocol >= 30.
-        if self.protocol.as_u8() >= 30 {
-            reader = reader.activate_multiplex().map_err(|e| {
-                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
-            })?;
-        }
+        let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
+        let reader = &mut reader;
 
-        // NOTE: Compression is NOT applied at the stream level.
-        // Upstream rsync uses token-level compression (send_deflated_token/recv_deflated_token)
-        // only during the delta transfer phase. Filter list and file list are plain data.
-
-        // Read filter list from sender if appropriate
-        if self.should_read_filter_list() {
-            let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
-                io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
-            })?;
-        }
-
-        let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
-
-        // Print verbose message before receiving file list (mirrors upstream flist.c:2571-2572)
-        // INFO_GTE(FLIST, 1) && !am_server - when verbose and acting as client
-        if self.config.flags.verbose && self.config.client_mode {
-            eprintln!("receiving incremental file list");
-        }
-
-        // Receive file list from sender
-        let file_count = self.receive_file_list(reader)?;
-        let _ = file_count; // Suppress unused warning (file list stored in self.file_list)
-
-        // NOTE: Do NOT send NDX_DONE here!
-        // The receiver/generator should immediately start sending file indices
-        // for files it wants. NDX_DONE is sent at the END of the transfer phase.
+        let PipelineSetup {
+            dest_dir,
+            metadata_opts,
+            checksum_length,
+            checksum_algorithm,
+        } = setup;
 
         // Transfer loop: for each file, generate signature, receive delta, apply
         let mut files_transferred = 0;
         let mut bytes_received = 0u64;
-
-        // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)
-        let checksum_factory = ChecksumFactory::from_negotiation(
-            self.negotiated_algorithms.as_ref(),
-            self.protocol,
-            self.checksum_seed,
-            self.compat_flags.as_ref(),
-        );
-        let checksum_algorithm = checksum_factory.signature_algorithm();
-        let checksum_length = DEFAULT_CHECKSUM_LENGTH;
-
-        // Build metadata options from server config flags
-        let metadata_opts = MetadataOptions::new()
-            .preserve_permissions(self.config.flags.perms)
-            .preserve_times(self.config.flags.times)
-            .preserve_owner(self.config.flags.owner)
-            .preserve_group(self.config.flags.group)
-            .numeric_ids(self.config.flags.numeric_ids);
-
-        // Extract destination directory from config args
-        // For receiver, args[0] is the destination path where files should be written
-        let dest_dir = self
-            .config
-            .args
-            .first()
-            .map_or_else(|| PathBuf::from("."), PathBuf::from);
 
         // First pass: create directories from file list
         let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
@@ -1083,30 +1030,15 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
-        // Create separate NDX codec for reading (needs its own state for delta decoding)
-        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+        self.finalize_transfer(reader, writer)?;
 
-        // Exchange phase transitions with sender
-        self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
-
-        // Receive transfer statistics from sender.
-        // Only in client mode: the sender writes stats over the wire when we pull from a daemon.
-        // In server mode, the client sender calls handle_stats(-1) which is a no-op.
-        if self.config.client_mode {
-            let _sender_stats = self.receive_stats(reader)?;
-        }
-
-        // Handle goodbye handshake
-        self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
-
-        // Calculate total source bytes from file list (mirrors upstream stats.total_size)
         let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
 
         Ok(TransferStats {
             files_listed: file_count,
             files_transferred,
             bytes_received,
-            bytes_sent: 0, // Set by caller after run() via CountingWriter
+            bytes_sent: 0,
             total_source_bytes,
             metadata_errors,
             entries_received: 0,
@@ -1140,82 +1072,15 @@ impl ReceiverContext {
     /// The protocol requires in-order response processing which is preserved.
     pub fn run_pipelined<R: Read, W: Write + ?Sized>(
         &mut self,
-        mut reader: super::reader::ServerReader<R>,
+        reader: super::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
     ) -> io::Result<TransferStats> {
-        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30.
-        if self.protocol.as_u8() >= 30 {
-            reader = reader.activate_multiplex().map_err(|e| {
-                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
-            })?;
-        }
-
-        // Read filter list from sender if appropriate
-        if self.should_read_filter_list() {
-            let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
-                io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
-            })?;
-        }
-
+        let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
-        // Print verbose message before receiving file list
-        if self.config.flags.verbose && self.config.client_mode {
-            eprintln!("receiving incremental file list");
-        }
-
-        // Receive file list from sender
-        let file_count = self.receive_file_list(reader)?;
-
-        // Setup for transfer
-        let mut files_transferred = 0;
-        let mut bytes_received = 0u64;
-
-        let checksum_factory = ChecksumFactory::from_negotiation(
-            self.negotiated_algorithms.as_ref(),
-            self.protocol,
-            self.checksum_seed,
-            self.compat_flags.as_ref(),
-        );
-        let checksum_algorithm = checksum_factory.signature_algorithm();
-        let checksum_length = DEFAULT_CHECKSUM_LENGTH;
-
-        let metadata_opts = MetadataOptions::new()
-            .preserve_permissions(self.config.flags.perms)
-            .preserve_times(self.config.flags.times)
-            .preserve_owner(self.config.flags.owner)
-            .preserve_group(self.config.flags.group)
-            .numeric_ids(self.config.flags.numeric_ids);
-
-        let dest_dir = self
-            .config
-            .args
-            .first()
-            .map_or_else(|| PathBuf::from("."), PathBuf::from);
-
-        // First pass: create directories from file list
-        let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
-
-        // Setup codecs
-        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
-        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
-
-        // Create request config
-        let request_config = RequestConfig {
-            protocol: self.protocol,
-            write_iflags: self.protocol.as_u8() >= 29,
-            checksum_length,
-            checksum_algorithm,
-            negotiated_algorithms: self.negotiated_algorithms.as_ref(),
-            compat_flags: self.compat_flags.as_ref(),
-            checksum_seed: self.checksum_seed,
-            use_sparse: self.config.flags.sparse,
-            do_fsync: self.config.fsync,
-        };
-
-        // Initialize pipeline state
-        let mut pipeline = PipelineState::new(pipeline_config);
+        // Batch directory creation
+        let mut metadata_errors = self.create_directories(&setup.dest_dir, &setup.metadata_opts)?;
 
         // Build list of files to transfer (filter out non-regular files)
         let files_to_transfer: Vec<(usize, &FileEntry)> = self
@@ -1225,91 +1090,17 @@ impl ReceiverContext {
             .filter(|(_, entry)| entry.is_file())
             .collect();
 
-        let mut file_iter = files_to_transfer.into_iter();
-        let mut pending_files_info: Vec<(PathBuf, &FileEntry)> =
-            Vec::with_capacity(pipeline.window_size());
+        // Run pipelined transfer
+        let (files_transferred, bytes_received) = self.run_pipeline_loop(
+            reader,
+            writer,
+            pipeline_config,
+            &setup,
+            files_to_transfer,
+            &mut metadata_errors,
+        )?;
 
-        // Pipelined transfer loop
-        loop {
-            // Phase 1: Fill the pipeline with requests
-            while pipeline.can_send() {
-                if let Some((file_idx, file_entry)) = file_iter.next() {
-                    let relative_path = file_entry.path();
-                    let file_path = if relative_path.as_os_str() == "." {
-                        dest_dir.clone()
-                    } else {
-                        dest_dir.join(relative_path)
-                    };
-
-                    // Verbose output
-                    if self.config.flags.verbose && self.config.client_mode {
-                        eprintln!("{}", relative_path.display());
-                    }
-
-                    // Find basis file and generate signature
-                    let basis_config = BasisFileConfig {
-                        file_path: &file_path,
-                        dest_dir: &dest_dir,
-                        relative_path,
-                        target_size: file_entry.size(),
-                        fuzzy_enabled: self.config.flags.fuzzy,
-                        reference_directories: &self.config.reference_directories,
-                        protocol: self.protocol,
-                        checksum_length,
-                        checksum_algorithm,
-                    };
-                    let basis_result = find_basis_file_with_config(&basis_config);
-
-                    // Send request
-                    let pending = send_file_request(
-                        writer,
-                        &mut ndx_write_codec,
-                        file_idx as i32,
-                        file_path.clone(),
-                        basis_result.signature,
-                        basis_result.basis_path,
-                        file_entry.size(),
-                        &request_config,
-                    )?;
-
-                    // Track pending transfer
-                    pipeline.push(pending);
-                    pending_files_info.push((file_path, file_entry));
-                } else {
-                    // No more files to request
-                    break;
-                }
-            }
-
-            // Phase 2: Process responses if pipeline has outstanding requests
-            if pipeline.is_empty() {
-                break; // Done with all transfers
-            }
-
-            // Process one response
-            let pending = pipeline.pop().expect("pipeline not empty");
-            let (file_path, file_entry) = pending_files_info.remove(0);
-
-            let response_ctx = ResponseContext {
-                config: &request_config,
-            };
-
-            let total_bytes =
-                process_file_response(reader, &mut ndx_read_codec, pending, &response_ctx)?;
-
-            // Apply metadata
-            if let Err(meta_err) =
-                apply_metadata_from_file_entry(&file_path, file_entry, &metadata_opts)
-            {
-                metadata_errors.push((file_path, meta_err.to_string()));
-            }
-
-            // Track stats
-            bytes_received += total_bytes;
-            files_transferred += 1;
-        }
-
-        // Print verbose directories that were skipped
+        // Print verbose directories
         for file_entry in &self.file_list {
             if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
                 let relative_path = file_entry.path();
@@ -1321,23 +1112,9 @@ impl ReceiverContext {
             }
         }
 
-        // Exchange phase transitions with sender
-        self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+        // Finalize handshake
+        self.finalize_transfer(reader, writer)?;
 
-        // Receive transfer statistics from sender.
-        // Only in client mode: when we are a client receiver pulling from a daemon sender,
-        // the daemon sender writes stats over the wire.
-        // In server mode (daemon receiver), the client sender calls handle_stats(-1) which
-        // returns without writing stats. In upstream rsync, stats flow through an internal
-        // pipe between forked generator/receiver processes, not over the wire.
-        if self.config.client_mode {
-            let _sender_stats = self.receive_stats(reader)?;
-        }
-
-        // Handle goodbye handshake
-        self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
-
-        // Calculate total source bytes from file list
         let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
 
         Ok(TransferStats {
@@ -1372,16 +1149,93 @@ impl ReceiverContext {
     /// requirement - rsync uses same connection for list and transfer data).
     pub fn run_pipelined_incremental<R: Read, W: Write + ?Sized>(
         &mut self,
-        mut reader: super::reader::ServerReader<R>,
+        reader: super::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
     ) -> io::Result<TransferStats> {
-        // Phase 1: Setup
-        if self.protocol.as_u8() >= 30 {
-            reader = reader.activate_multiplex().map_err(|e| {
-                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
-            })?;
+        let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
+        let reader = &mut reader;
+
+        // Incremental directory creation with failure tracking
+        let mut stats = TransferStats {
+            files_listed: file_count,
+            entries_received: file_count as u64,
+            ..Default::default()
+        };
+        let mut failed_dirs = FailedDirectories::new();
+        let mut metadata_errors: Vec<(PathBuf, String)> = Vec::new();
+
+        for file_entry in &self.file_list {
+            if file_entry.is_dir() {
+                if self.create_directory_incremental(
+                    &setup.dest_dir,
+                    file_entry,
+                    &setup.metadata_opts,
+                    &mut failed_dirs,
+                )? {
+                    stats.directories_created += 1;
+                } else {
+                    stats.directories_failed += 1;
+                }
+            }
         }
+
+        // Build file transfer list, skipping children of failed dirs
+        let mut files_to_transfer: Vec<(usize, &FileEntry)> = Vec::new();
+        for (idx, entry) in self.file_list.iter().enumerate() {
+            if entry.is_file() {
+                if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
+                    if self.config.flags.verbose && self.config.client_mode {
+                        eprintln!(
+                            "skipping {} (parent {} failed)",
+                            entry.name(),
+                            failed_parent
+                        );
+                    }
+                    stats.files_skipped += 1;
+                } else {
+                    files_to_transfer.push((idx, entry));
+                }
+            }
+        }
+
+        // Run pipelined transfer
+        let (files_transferred, bytes_received) = self.run_pipeline_loop(
+            reader,
+            writer,
+            pipeline_config,
+            &setup,
+            files_to_transfer,
+            &mut metadata_errors,
+        )?;
+
+        // Finalize
+        stats.files_transferred = files_transferred;
+        stats.bytes_received = bytes_received;
+        stats.total_source_bytes = self.file_list.iter().map(|e| e.size()).sum();
+        stats.metadata_errors = metadata_errors;
+
+        self.finalize_transfer(reader, writer)?;
+
+        Ok(stats)
+    }
+
+    /// Common setup for both pipelined transfer modes.
+    ///
+    /// Activates multiplex, reads filter list, prints verbose header,
+    /// receives the file list, and builds shared configuration.
+    /// Returns the (possibly activated) reader, file count, and setup values.
+    fn setup_transfer<R: Read>(
+        &mut self,
+        reader: super::reader::ServerReader<R>,
+    ) -> io::Result<(super::reader::ServerReader<R>, usize, PipelineSetup)> {
+        let mut reader = if self.protocol.as_u8() >= 30 {
+            reader.activate_multiplex().map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
+            })?
+        } else {
+            reader
+        };
 
         if self.should_read_filter_list() {
             let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
@@ -1393,17 +1247,8 @@ impl ReceiverContext {
             eprintln!("receiving incremental file list");
         }
 
-        // Phase 2: Receive file list
         let file_count = self.receive_file_list(&mut reader)?;
 
-        // Statistics tracking
-        let mut stats = TransferStats {
-            files_listed: file_count,
-            entries_received: file_count as u64,
-            ..Default::default()
-        };
-
-        // Setup checksum and metadata
         let checksum_factory = ChecksumFactory::from_negotiation(
             self.negotiated_algorithms.as_ref(),
             self.protocol,
@@ -1426,53 +1271,38 @@ impl ReceiverContext {
             .first()
             .map_or_else(|| PathBuf::from("."), PathBuf::from);
 
-        // Phase 3: Incremental directory creation with failure tracking
-        let mut failed_dirs = FailedDirectories::new();
-        let mut metadata_errors: Vec<(PathBuf, String)> = Vec::new();
+        Ok((
+            reader,
+            file_count,
+            PipelineSetup {
+                dest_dir,
+                metadata_opts,
+                checksum_length,
+                checksum_algorithm,
+            },
+        ))
+    }
 
-        for file_entry in &self.file_list {
-            if file_entry.is_dir() {
-                if self.create_directory_incremental(
-                    &dest_dir,
-                    file_entry,
-                    &metadata_opts,
-                    &mut failed_dirs,
-                )? {
-                    stats.directories_created += 1;
-                } else {
-                    stats.directories_failed += 1;
-                }
-            }
-        }
-
-        // Phase 4: Build file transfer list, skipping children of failed dirs
-        let mut files_to_transfer: Vec<(usize, &FileEntry)> = Vec::new();
-        for (idx, entry) in self.file_list.iter().enumerate() {
-            if entry.is_file() {
-                if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
-                    if self.config.flags.verbose && self.config.client_mode {
-                        eprintln!(
-                            "skipping {} (parent {} failed)",
-                            entry.name(),
-                            failed_parent
-                        );
-                    }
-                    stats.files_skipped += 1;
-                } else {
-                    files_to_transfer.push((idx, entry));
-                }
-            }
-        }
-
-        // Setup codecs
+    /// Runs the core pipelined transfer loop over a list of files.
+    ///
+    /// Returns `(files_transferred, bytes_received)`.
+    fn run_pipeline_loop<R: Read, W: Write + ?Sized>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+        pipeline_config: PipelineConfig,
+        setup: &PipelineSetup,
+        files_to_transfer: Vec<(usize, &FileEntry)>,
+        metadata_errors: &mut Vec<(PathBuf, String)>,
+    ) -> io::Result<(usize, u64)> {
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
         let request_config = RequestConfig {
             protocol: self.protocol,
             write_iflags: self.protocol.as_u8() >= 29,
-            checksum_length,
-            checksum_algorithm,
+            checksum_length: setup.checksum_length,
+            checksum_algorithm: setup.checksum_algorithm,
             negotiated_algorithms: self.negotiated_algorithms.as_ref(),
             compat_flags: self.compat_flags.as_ref(),
             checksum_seed: self.checksum_seed,
@@ -1480,21 +1310,22 @@ impl ReceiverContext {
             do_fsync: self.config.fsync,
         };
 
-        // Phase 5: Pipelined file transfer
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
         let mut pending_files_info: Vec<(PathBuf, &FileEntry)> =
             Vec::with_capacity(pipeline.window_size());
+        let mut files_transferred = 0usize;
+        let mut bytes_received = 0u64;
 
         loop {
-            // Fill pipeline
+            // Fill the pipeline with requests
             while pipeline.can_send() {
                 if let Some((file_idx, file_entry)) = file_iter.next() {
                     let relative_path = file_entry.path();
                     let file_path = if relative_path.as_os_str() == "." {
-                        dest_dir.clone()
+                        setup.dest_dir.clone()
                     } else {
-                        dest_dir.join(relative_path)
+                        setup.dest_dir.join(relative_path)
                     };
 
                     if self.config.flags.verbose && self.config.client_mode {
@@ -1503,14 +1334,14 @@ impl ReceiverContext {
 
                     let basis_config = BasisFileConfig {
                         file_path: &file_path,
-                        dest_dir: &dest_dir,
+                        dest_dir: &setup.dest_dir,
                         relative_path,
                         target_size: file_entry.size(),
                         fuzzy_enabled: self.config.flags.fuzzy,
                         reference_directories: &self.config.reference_directories,
                         protocol: self.protocol,
-                        checksum_length,
-                        checksum_algorithm,
+                        checksum_length: setup.checksum_length,
+                        checksum_algorithm: setup.checksum_algorithm,
                     };
                     let basis_result = find_basis_file_with_config(&basis_config);
 
@@ -1545,43 +1376,50 @@ impl ReceiverContext {
             };
 
             let total_bytes =
-                process_file_response(&mut reader, &mut ndx_read_codec, pending, &response_ctx)?;
+                process_file_response(reader, &mut ndx_read_codec, pending, &response_ctx)?;
 
             if let Err(meta_err) =
-                apply_metadata_from_file_entry(&file_path, file_entry, &metadata_opts)
+                apply_metadata_from_file_entry(&file_path, file_entry, &setup.metadata_opts)
             {
                 metadata_errors.push((file_path, meta_err.to_string()));
             }
 
-            stats.bytes_received += total_bytes;
-            stats.files_transferred += 1;
+            bytes_received += total_bytes;
+            files_transferred += 1;
         }
 
-        // Phase 6: Finalization
-        stats.total_source_bytes = self.file_list.iter().map(|e| e.size()).sum();
-        stats.metadata_errors = metadata_errors;
-
-        self.exchange_phase_done(
-            &mut reader,
-            writer,
-            &mut ndx_write_codec,
-            &mut ndx_read_codec,
-        )?;
-
-        // Only read stats in client mode (see run_pipelined for explanation)
-        if self.config.client_mode {
-            let _sender_stats = self.receive_stats(&mut reader)?;
-        }
-
-        self.handle_goodbye(
-            &mut reader,
-            writer,
-            &mut ndx_write_codec,
-            &mut ndx_read_codec,
-        )?;
-
-        Ok(stats)
+        Ok((files_transferred, bytes_received))
     }
+
+    /// Exchange phase transitions, receive stats, and handle goodbye handshake.
+    fn finalize_transfer<R: Read, W: Write + ?Sized>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+
+        self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+
+        // Only read stats in client mode: daemon sender writes stats over the wire,
+        // but in server mode the client sender returns without writing stats.
+        if self.config.client_mode {
+            let _sender_stats = self.receive_stats(reader)?;
+        }
+
+        self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+
+        Ok(())
+    }
+}
+
+/// Shared configuration produced by [`ReceiverContext::setup_transfer`].
+struct PipelineSetup {
+    dest_dir: PathBuf,
+    metadata_opts: MetadataOptions,
+    checksum_length: NonZeroU8,
+    checksum_algorithm: engine::signature::SignatureAlgorithm,
 }
 
 // ============================================================================

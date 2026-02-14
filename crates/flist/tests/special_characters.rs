@@ -1658,7 +1658,10 @@ fn comma_in_filename() {
 // ============================================================================
 
 /// Verifies handling of non-UTF8 byte sequences in filenames.
+/// macOS APFS rejects non-UTF8 filenames with EILSEQ, so this test is
+/// Linux/FreeBSD only.
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "macOS APFS rejects non-UTF8 filenames")]
 fn non_utf8_bytes_in_filename() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("nonutf8");
@@ -1678,7 +1681,9 @@ fn non_utf8_bytes_in_filename() {
 }
 
 /// Verifies handling of high bytes (0x80-0xFF) in filenames.
+/// macOS APFS rejects non-UTF8 filenames with EILSEQ.
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "macOS APFS rejects non-UTF8 filenames")]
 fn high_bytes_in_filename() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("highbytes");
@@ -1701,7 +1706,9 @@ fn high_bytes_in_filename() {
 }
 
 /// Verifies handling of directory with non-UTF8 name.
+/// macOS APFS rejects non-UTF8 filenames with EILSEQ.
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "macOS APFS rejects non-UTF8 filenames")]
 fn directory_with_non_utf8_name() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("nonutf8_dir");
@@ -1760,19 +1767,21 @@ fn each_ascii_printable_separately() {
     fs::create_dir(&root).expect("create root");
 
     // Create file for each printable ASCII except / and null
-    let mut expected_count = 0;
     for c in 32u8..127 {
         if c != b'/' {
             let name_bytes = [c, b'.', b't', b'x', b't'];
             create_test_file(&root, OsStr::from_bytes(&name_bytes));
-            expected_count += 1;
         }
     }
+
+    // Count actual files on disk — on case-insensitive filesystems (default
+    // macOS APFS) A.txt and a.txt are the same file, so the count is lower.
+    let actual_files: usize = fs::read_dir(&root).unwrap().count();
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
     let paths = collect_relative_paths(walker);
 
-    assert_eq!(paths.len(), expected_count);
+    assert_eq!(paths.len(), actual_files);
 }
 
 // ============================================================================
