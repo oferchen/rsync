@@ -100,7 +100,7 @@ fn new_files_in_subdirectories_use_direct_write() {
 #[test]
 fn existing_file_update_uses_temp_rename() {
     let ctx = test_helpers::setup_copy_test();
-    ctx.write_source("update.txt", b"new version");
+    ctx.write_source("update.txt", b"new version with extra content");
     ctx.write_dest("update.txt", b"old version");
 
     let operands = ctx.operands_with_trailing_separator();
@@ -110,7 +110,7 @@ fn existing_file_update_uses_temp_rename() {
         .expect("copy");
 
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(ctx.read_dest("update.txt"), b"new version");
+    assert_eq!(ctx.read_dest("update.txt"), b"new version with extra content");
 }
 
 #[test]

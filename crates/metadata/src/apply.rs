@@ -478,6 +478,7 @@ fn apply_permissions_without_chmod(
     options: &MetadataOptions,
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
+    let _ = &existing; // used only on unix
     if options.permissions() {
         #[cfg(unix)]
         if let Some(existing) = existing {
