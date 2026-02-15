@@ -38,7 +38,8 @@ use std::time::Duration;
 use rsync_io::ssh::{SshCommand, SshConnection, SshReader, SshWriter, parse_ssh_operand};
 
 use super::super::config::ClientConfig;
-use super::super::error::{ClientError, invalid_argument_error};
+use super::super::error::{ClientError, invalid_argument_error, invalid_argument_error_typed};
+use crate::exit_code::ExitCode;
 use super::super::summary::ClientSummary;
 use super::invocation::{RemoteInvocationBuilder, RemoteOperands, RemoteRole};
 
@@ -286,9 +287,33 @@ fn run_bidirectional_relay(
             }
         })??;
 
-    // Wait for child processes
-    let _ = source_handle.wait();
-    let _ = dest_handle.wait();
+    // Wait for child processes and check exit status.
+    // Mirror upstream: propagate the worst exit code from either child.
+    let source_exit = match source_handle.wait() {
+        Ok(status) => super::ssh_transfer::map_child_exit_status(status),
+        Err(_) => ExitCode::WaitChild,
+    };
+    let dest_exit = match dest_handle.wait() {
+        Ok(status) => super::ssh_transfer::map_child_exit_status(status),
+        Err(_) => ExitCode::WaitChild,
+    };
+
+    // Take the worst (highest) exit code from either child.
+    let worst_exit = if source_exit.as_i32() >= dest_exit.as_i32() {
+        source_exit
+    } else {
+        dest_exit
+    };
+
+    if !worst_exit.is_success() {
+        return Err(invalid_argument_error_typed(
+            &format!(
+                "remote process exited with error: {}",
+                worst_exit.description()
+            ),
+            worst_exit,
+        ));
+    }
 
     Ok(ProxyStats {
         bytes_source_to_dest: s2d_result,

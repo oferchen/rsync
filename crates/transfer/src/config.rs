@@ -85,6 +85,14 @@ pub struct ServerConfig {
     /// - `receiver.c:340`: `if (do_fsync && (fd != -1) && fsync(fd) != 0) { ... }`
     /// - `options.c`: `--fsync` flag (long-form only, no short character)
     pub fsync: bool,
+    /// Enable direct write optimization for new files.
+    ///
+    /// When true, the receiver writes directly to the destination for brand-new
+    /// files instead of using temp file + rename. This skips renameat and getrandom
+    /// syscalls for each new file, improving performance.
+    ///
+    /// Default is true. Use `--no-direct-write` to disable.
+    pub direct_write: bool,
     /// Optional user-specified checksum seed from `--checksum-seed=NUM`.
     ///
     /// When `Some(seed)`, the server uses this fixed seed instead of generating
@@ -138,6 +146,7 @@ impl ServerConfig {
             iconv: None,
             ignore_errors: false,
             fsync: false,
+            direct_write: true,
             checksum_seed: None,
         })
     }

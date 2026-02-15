@@ -742,6 +742,10 @@ fn build_server_config_for_receiver(
     // Set verbose flag for local output (not sent to daemon in server protocol string)
     server_config.flags.verbose = config.verbosity() > 0;
 
+    // Propagate long-form-only flags that aren't part of the server flag string
+    server_config.fsync = config.fsync();
+    server_config.direct_write = config.direct_write();
+
     Ok(server_config)
 }
 
@@ -769,6 +773,10 @@ fn build_server_config_for_generator(
 
     // Set verbose flag for local output (not sent to daemon in server protocol string)
     server_config.flags.verbose = config.verbosity() > 0;
+
+    // Propagate long-form-only flags that aren't part of the server flag string
+    server_config.fsync = config.fsync();
+    server_config.direct_write = config.direct_write();
 
     Ok(server_config)
 }

@@ -20,12 +20,13 @@ use protocol::filters::{FilterRuleWireFormat, RuleType, write_filter_list};
 use rsync_io::ssh::{SshCommand, SshConnection, parse_ssh_operand};
 
 use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
-use super::super::error::{ClientError, invalid_argument_error};
+use super::super::error::{ClientError, invalid_argument_error, invalid_argument_error_typed};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
 };
+use crate::exit_code::ExitCode;
 use crate::server::{ServerConfig, ServerRole};
 
 /// SSH invocation result containing args, host, optional user, and optional port.
@@ -330,20 +331,104 @@ fn convert_server_stats_to_summary(
     ClientSummary::from_summary(summary)
 }
 
+/// Maps an SSH child process exit status to an rsync exit code.
+///
+/// Mirrors upstream rsync's `wait_process_with_flush()` logic in `main.c`:
+/// - Exit 0: success
+/// - Exit 127: command not found (`RERR_CMD_NOTFOUND`)
+/// - Exit 255: SSH connection failure (`RERR_CMD_FAILED`)
+/// - Killed by signal: `RERR_CMD_KILLED`
+/// - Other rsync exit codes: passed through directly
+/// - Unknown codes: fall back to `PartialTransfer`
+pub(super) fn map_child_exit_status(status: std::process::ExitStatus) -> ExitCode {
+    if status.success() {
+        return ExitCode::Ok;
+    }
+
+    // On Unix, check if killed by signal
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if status.signal().is_some() {
+            return ExitCode::CommandKilled;
+        }
+    }
+
+    match status.code() {
+        Some(127) => ExitCode::CommandNotFound,
+        Some(255) => ExitCode::CommandFailed,
+        Some(code) => {
+            // Try to interpret as a known rsync exit code from the remote side.
+            ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer)
+        }
+        None => ExitCode::WaitChild,
+    }
+}
+
 /// Runs server over an SSH connection using split read/write halves.
 ///
 /// This uses [`SshConnection::split`] to obtain separate reader and writer handles,
 /// avoiding the need for unsafe aliased mutable references.
+///
+/// After the transfer completes, the SSH child process is waited on and its exit
+/// status is mapped to an rsync exit code. The worst (highest) exit code from the
+/// transfer result and the child exit status is propagated, mirroring upstream
+/// rsync's `wait_process_with_flush()` behavior.
 fn run_server_over_ssh_connection(
     config: ServerConfig,
     connection: SshConnection,
 ) -> Result<crate::server::ServerStats, ClientError> {
-    let (mut reader, mut writer, _child_handle) = connection
+    let (mut reader, mut writer, child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
 
-    crate::server::run_server_stdio(config, &mut reader, &mut writer)
-        .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
+    let transfer_result = crate::server::run_server_stdio(config, &mut reader, &mut writer);
+
+    // Close the writer to signal EOF to the remote process, allowing it to exit.
+    drop(writer);
+
+    // Wait for SSH child and map its exit status.
+    // Mirror upstream: wait_process_with_flush() in main.c
+    let child_exit_code = match child_handle.wait() {
+        Ok(status) => map_child_exit_status(status),
+        Err(_) => ExitCode::WaitChild,
+    };
+
+    match transfer_result {
+        Ok(stats) => {
+            // Transfer succeeded -- check if the child reported an error.
+            // Mirror upstream: take MAX of transfer and child exit codes.
+            if child_exit_code.is_success() {
+                Ok(stats)
+            } else {
+                Err(invalid_argument_error_typed(
+                    &format!(
+                        "remote process exited with error: {}",
+                        child_exit_code.description()
+                    ),
+                    child_exit_code,
+                ))
+            }
+        }
+        Err(transfer_error) => {
+            // Transfer failed -- propagate the worse of the two exit codes.
+            let transfer_exit = ExitCode::from_io_error(&transfer_error);
+            if child_exit_code.as_i32() > transfer_exit.as_i32() {
+                Err(invalid_argument_error_typed(
+                    &format!(
+                        "transfer failed and remote process exited with error: {}",
+                        child_exit_code.description()
+                    ),
+                    child_exit_code,
+                ))
+            } else {
+                Err(invalid_argument_error(
+                    &format!("transfer failed: {transfer_error}"),
+                    transfer_exit.as_i32(),
+                ))
+            }
+        }
+    }
 }
 
 /// Builds server configuration for receiver role (pull transfer).
@@ -747,5 +832,74 @@ mod tests {
         assert!(rules[0].no_inherit); // inherit(false) -> no_inherit(true)
         assert!(rules[0].exclude_from_merge); // exclude_filter_file(true)
         assert!(rules[0].word_split); // use_whitespace()
+    }
+
+    // Tests for map_child_exit_status
+    mod child_exit_status_tests {
+        use super::*;
+        use crate::exit_code::ExitCode;
+
+        #[cfg(unix)]
+        fn exit_status_for_code(code: i32) -> std::process::ExitStatus {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("exit {code}"))
+                .status()
+                .expect("failed to run sh")
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_success_to_ok() {
+            let status = exit_status_for_code(0);
+            assert_eq!(map_child_exit_status(status), ExitCode::Ok);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_exit_127_to_command_not_found() {
+            let status = exit_status_for_code(127);
+            assert_eq!(map_child_exit_status(status), ExitCode::CommandNotFound);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_exit_255_to_command_failed() {
+            let status = exit_status_for_code(255);
+            assert_eq!(map_child_exit_status(status), ExitCode::CommandFailed);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_rsync_exit_code_23_to_partial_transfer() {
+            let status = exit_status_for_code(23);
+            assert_eq!(map_child_exit_status(status), ExitCode::PartialTransfer);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_rsync_exit_code_24_to_vanished() {
+            let status = exit_status_for_code(24);
+            assert_eq!(map_child_exit_status(status), ExitCode::Vanished);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_unknown_exit_code_to_partial_transfer() {
+            let status = exit_status_for_code(42);
+            assert_eq!(map_child_exit_status(status), ExitCode::PartialTransfer);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_signal_killed_to_command_killed() {
+            let mut child = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("kill -9 $$")
+                .spawn()
+                .expect("spawn");
+            let status = child.wait().expect("wait");
+            assert_eq!(map_child_exit_status(status), ExitCode::CommandKilled);
+        }
     }
 }

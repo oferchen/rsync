@@ -138,6 +138,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --append-verify  Append data while verifying that existing bytes match the sender.\n",
             "      --preallocate  Preallocate destination files before writing.\n",
             "      --fsync    Fsync updated files after writing completes.\n",
+            "      --direct-write  Write new files directly to destination, skipping temp+rename (default).\n",
+            "      --no-direct-write  Always use temp file + rename, even for new files.\n",
             "      --inplace    Write updated data directly to destination files.\n",
             "      --no-inplace Use temporary files when updating regular files.\n",
             "  -h, --human-readable  Output numbers in a human-readable format.\n",
