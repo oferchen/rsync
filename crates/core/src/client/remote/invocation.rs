@@ -216,6 +216,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--fsync"));
         }
 
+        // NOTE: --direct-write is a receiver-local optimization that does not
+        // affect the wire protocol.  It is NOT forwarded to the remote server
+        // because upstream rsync does not recognise it and would reject the
+        // connection.  The local receiver applies it from its own config.
+
         // Build compact flag string
         let flags = self.build_flag_string();
         if !flags.is_empty() {
@@ -808,5 +813,93 @@ mod tests {
             !args.iter().any(|a| a == "--fsync"),
             "unexpected --fsync in args: {args:?}"
         );
+    }
+
+    #[test]
+    fn direct_write_never_sent_to_remote_receiver() {
+        // --direct-write is a receiver-local optimization; it must never be
+        // forwarded to a remote server (upstream rsync would reject it).
+        let config = ClientConfig::builder().direct_write(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+        let args = builder.build("/path");
+
+        assert!(
+            !args.iter().any(|a| a == "--direct-write"),
+            "unexpected --direct-write in remote args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn direct_write_never_sent_to_remote_sender() {
+        let config = ClientConfig::builder().direct_write(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            !args.iter().any(|a| a == "--direct-write"),
+            "unexpected --direct-write in remote sender args: {args:?}"
+        );
+    }
+
+    /// Allowlist of long-form arguments that upstream rsync 3.x recognises in
+    /// `--server` mode.  Any long flag emitted by `RemoteInvocationBuilder`
+    /// that is NOT on this list would break interop with stock rsync.
+    const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
+        "--server",
+        "--sender",
+        "--ignore-errors",
+        "--fsync",
+    ];
+
+    /// Validate that every argument sent to the remote server is compatible
+    /// with upstream rsync's `--server` mode.  This catches regressions where
+    /// an oc-rsync-only flag accidentally leaks into the remote invocation.
+    #[test]
+    fn remote_invocation_only_sends_upstream_compatible_args() {
+        // Build a config with every oc-rsync extension enabled so we can
+        // verify none of them leak into the remote argument vector.
+        let config = ClientConfig::builder()
+            .direct_write(true)
+            .fsync(true)
+            .ignore_errors(true)
+            .recursive(true)
+            .links(true)
+            .owner(true)
+            .group(true)
+            .times(true)
+            .permissions(true)
+            .compress(true)
+            .checksum(true)
+            .sparse(true)
+            .build();
+
+        for role in [RemoteRole::Sender, RemoteRole::Receiver] {
+            let builder = RemoteInvocationBuilder::new(&config, role);
+            let args = builder.build("/path");
+
+            for arg in &args {
+                let s = arg.to_string_lossy();
+
+                // Skip the program name, the "." placeholder, and remote paths
+                if s == "rsync" || s == "." || !s.starts_with('-') {
+                    continue;
+                }
+
+                // Compact flag strings (single dash, not "--") are upstream-compatible
+                // by construction — they use the same single-char flags as upstream.
+                if s.starts_with('-') && !s.starts_with("--") {
+                    continue;
+                }
+
+                // Long-form args must be on the upstream allowlist
+                assert!(
+                    UPSTREAM_SERVER_LONG_ARGS.contains(&s.as_ref()),
+                    "remote invocation contains non-upstream long arg {s:?} \
+                     (role={role:?}, full args={args:?}). \
+                     If this is intentional, add it to UPSTREAM_SERVER_LONG_ARGS \
+                     after verifying upstream rsync accepts it."
+                );
+            }
+        }
     }
 }

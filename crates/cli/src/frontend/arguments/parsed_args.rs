@@ -1036,6 +1036,16 @@ pub struct ParsedArgs {
     /// Default: `None`
     pub fsync: Option<bool>,
 
+    /// Enable direct write optimization for new files.
+    ///
+    /// When set, write new files directly to their destination path
+    /// instead of using temp file + rename.
+    ///
+    /// Corresponds to: `--direct-write`
+    ///
+    /// Default: `false`
+    pub direct_write: bool,
+
     /// Delay updates until the end of the transfer.
     ///
     /// Uses temporary files and renames them after all transfers complete.

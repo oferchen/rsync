@@ -1727,6 +1727,7 @@ mod tests {
             iconv: None,
             ignore_errors: false,
             fsync: false,
+            direct_write: false,
             checksum_seed: None,
         }
     }
@@ -2843,6 +2844,7 @@ mod tests {
             iconv: None,
             ignore_errors: false,
             fsync: false,
+            direct_write: false,
             checksum_seed: None,
         }
     }

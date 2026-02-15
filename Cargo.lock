@@ -2421,6 +2421,7 @@ dependencies = [
  "engine",
  "fast_io",
  "filters",
+ "getrandom 0.3.4",
  "logging",
  "metadata",
  "protocol",
