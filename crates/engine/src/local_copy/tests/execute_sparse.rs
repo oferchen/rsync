@@ -88,6 +88,17 @@ fn execute_inplace_disables_sparse_writes() {
     fs::write(&dense_dest, &initial).expect("initialise dense destination");
     fs::write(&sparse_dest, &initial).expect("initialise sparse destination");
 
+    // Backdate destinations so rsync's quick-check detects them as stale
+    let past = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    fs::File::open(&dense_dest)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+    fs::File::open(&sparse_dest)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+
     let dense_plan = LocalCopyPlan::from_operands(&[
         source.clone().into_os_string(),
         dense_dest.clone().into_os_string(),
