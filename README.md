@@ -53,6 +53,16 @@ Download from the [Releases](https://github.com/oferchen/rsync/releases) page:
 | macOS (x86_64, aarch64) | `.tar.gz` |
 | Windows (x86_64) | `.tar.gz`, `.zip` |
 
+Each release includes three build variants:
+
+| Variant | Description |
+|---------|-------------|
+| **stable** (recommended) | Built with Rust stable. No filename suffix. |
+| **beta** | Built with Rust beta. Filename includes `-beta`. |
+| **nightly** | Built with Rust nightly. Filename includes `-nightly`. |
+
+Most users should download the **stable** variant.
+
 ### Build from source
 
 Requires Rust **1.88+**.
