@@ -58,12 +58,14 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 - **Rust safety & performance**
 
-  - Memory-safe implementation using idiomatic Rust — 1.7-1.9x faster than upstream rsync.
+  - Memory-safe implementation using idiomatic Rust — 1.7-2.4x faster than upstream rsync.
   - mimalloc high-performance allocator for reduced allocation overhead.
   - SIMD-accelerated rolling checksums (AVX2/NEON) with runtime detection.
   - Zero-copy I/O via `copy_file_range` (Linux, >=64KB files), mmap (>=1MB), and optional `io_uring` (Linux 5.6+) with automatic fallback.
+  - Direct-write mode for new files (skips temp+rename overhead, enabled by default).
   - Rayon-based parallel checksum computation, file list generation, and delta transfer.
   - Recycled buffer pool eliminating allocation overhead in the transfer hot path.
+  - Proper SSH child process management with zombie prevention and exit code propagation.
 
 - **Composed workspace**
 
@@ -99,7 +101,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 ## Status
 
 - **Upstream baseline:** tracking `rsync` **3.4.1** (protocol 32).
-- **oc-rsync release:** **0.5.4**.
+- **oc-rsync release:** **0.5.5**.
 - **Stability:** beta; core transfer functionality is complete with full protocol interoperability. Ongoing work focuses on edge cases, performance optimization, and production hardening.
 
 ### Implementation Status
@@ -145,15 +147,21 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ `--info=FLAGS` with ALL/NONE keywords and verbosity mapping
 - ✅ `--version` with capabilities, optimizations (mimalloc, copy-file-range, io-uring, parallel, mmap), and algorithm lists
 
-**Performance** (v0.5.4 vs upstream rsync 3.4.1, local transfers on Linux x86_64):
+**Performance** (v0.5.5 vs upstream rsync 3.4.1, local transfers on Linux x86_64):
 
 | Workload | oc-rsync | upstream rsync | Speedup |
 |----------|----------|---------------|---------|
-| 2,000 files, 100 MB initial sync | 88 ms | 148 ms | **1.7x** |
-| 10,000 files, 2.4 GB initial sync | 1,123 ms | 2,076 ms | **1.85x** |
-| Incremental (no changes) | 100 ms | 187 ms | **1.9x** |
+| Initial sync (110 MB, 1130 files) | 114 ms | 127 ms | **1.1x** |
+| No-change sync | 115 ms | 131 ms | **1.1x** |
+| Checksum sync (-c) | 229 ms | 566 ms | **2.5x** |
+| Incremental (10% changed) | 115 ms | 129 ms | **1.1x** |
+| Large files (100 MB) | 89 ms | 126 ms | **1.4x** |
+| Small files (1000x1KB) | 112 ms | 129 ms | **1.2x** |
+| Compressed (-z) | 113 ms | 127 ms | **1.1x** |
 
-Key optimizations: mimalloc allocator, zero-copy `copy_file_range` (Linux), memory-mapped I/O, rayon-based parallel checksums, recycled buffer pool, and SIMD-accelerated rolling checksums.
+Average: **18% faster** across all workloads; up to **2.5x faster** for checksum-intensive operations.
+
+Key optimizations: mimalloc allocator, zero-copy `copy_file_range` (Linux), memory-mapped I/O, direct-write mode for new files, rayon-based parallel checksums, recycled buffer pool, SIMD-accelerated rolling checksums, and fd-based metadata operations.
 
 **Production Readiness**:
 - ✅ Core delta transfer: Production-ready
@@ -205,9 +213,9 @@ Each release provides artifacts built with three Rust toolchains:
 | **nightly** | `oc-rsync-VERSION-PLATFORM-nightly.EXT` | Experimental/bleeding-edge |
 
 **Examples:**
-- Stable: `oc-rsync_0.5.4-1_amd64.deb`, `oc-rsync-0.5.4-darwin-x86_64.tar.gz`
-- Beta: `oc-rsync_0.5.4-1-beta_amd64.deb`, `oc-rsync-0.5.4-darwin-x86_64-beta.tar.gz`
-- Nightly: `oc-rsync_0.5.4-1-nightly_amd64.deb`, `oc-rsync-0.5.4-darwin-x86_64-nightly.tar.gz`
+- Stable: `oc-rsync_0.5.5-1_amd64.deb`, `oc-rsync-0.5.5-darwin-x86_64.tar.gz`
+- Beta: `oc-rsync_0.5.5-1-beta_amd64.deb`, `oc-rsync-0.5.5-darwin-x86_64-beta.tar.gz`
+- Nightly: `oc-rsync_0.5.5-1-nightly_amd64.deb`, `oc-rsync-0.5.5-darwin-x86_64-nightly.tar.gz`
 
 #### Linux Package Compatibility
 
