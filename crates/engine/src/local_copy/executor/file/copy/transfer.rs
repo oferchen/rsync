@@ -677,6 +677,7 @@ fn finalize_guard_and_metadata(
                 destination_path.display()
             );
             guard.commit()?;
+            #[allow(unused_mut)] // mut needed on unix for with_fd()
             let mut params = FinalizeMetadataParams::new(
                 metadata,
                 metadata_options,
