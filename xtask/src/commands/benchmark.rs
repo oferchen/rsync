@@ -950,7 +950,10 @@ fn generate_loopback_data(bench_dir: &Path, profile: DataProfile) -> TaskResult<
     if marker.exists() {
         if let Ok(existing) = fs::read_to_string(&marker) {
             if existing.trim() == profile_name {
-                println!("Reusing existing {profile_name} test data in {}", data_dir.display());
+                println!(
+                    "Reusing existing {profile_name} test data in {}",
+                    data_dir.display()
+                );
                 return Ok(data_dir);
             }
         }
@@ -961,9 +964,7 @@ fn generate_loopback_data(bench_dir: &Path, profile: DataProfile) -> TaskResult<
     fs::create_dir_all(&data_dir)?;
 
     let (file_count, dir_count) = profile_params(profile);
-    println!(
-        "Generating {profile_name} test data: {file_count} files in {dir_count} dirs..."
-    );
+    println!("Generating {profile_name} test data: {file_count} files in {dir_count} dirs...");
 
     // Create directory structure (2 levels)
     let dirs_per_level = (dir_count as f64).sqrt().ceil() as usize;
@@ -1003,9 +1004,9 @@ fn generate_loopback_data(bench_dir: &Path, profile: DataProfile) -> TaskResult<
 
         let r = (next_rand() % 100) as u32;
         let size = match r {
-            0..5 => 0,                                           // empty
-            5..35 => (next_rand() % 1024) as usize,             // tiny: 0-1023
-            35..75 => 1024 + (next_rand() % (9 * 1024)) as usize,  // small: 1KB-10KB
+            0..5 => 0,                                                  // empty
+            5..35 => (next_rand() % 1024) as usize,                     // tiny: 0-1023
+            35..75 => 1024 + (next_rand() % (9 * 1024)) as usize,       // small: 1KB-10KB
             75..95 => 10 * 1024 + (next_rand() % (90 * 1024)) as usize, // medium: 10-100KB
             _ => 100 * 1024 + (next_rand() % (900 * 1024)) as usize,    // large: 100KB-1MB
         };
@@ -1302,14 +1303,8 @@ fn run_loopback_benchmarks(workspace: &Path, options: &BenchmarkOptions) -> Task
     for version in &oc_versions {
         let port = version_ports[version];
         let binary = &binaries[version];
-        match try_start_loopback_daemon(
-            version,
-            binary,
-            &data_dir,
-            port,
-            &options.bench_dir,
-            true,
-        )? {
+        match try_start_loopback_daemon(version, binary, &data_dir, port, &options.bench_dir, true)?
+        {
             Some(guard) => {
                 guards.push(guard);
                 daemon_started.insert(version.clone(), true);
@@ -1390,10 +1385,7 @@ fn run_loopback_benchmarks(workspace: &Path, options: &BenchmarkOptions) -> Task
 }
 
 /// Outputs loopback results as formatted tables.
-fn output_loopback_table(
-    client_results: &[BenchmarkResult],
-    server_results: &[BenchmarkResult],
-) {
+fn output_loopback_table(client_results: &[BenchmarkResult], server_results: &[BenchmarkResult]) {
     println!("\n=== Loopback Benchmark Results ===");
 
     println!("\n--- Client Performance (version as client → dev reference daemon) ---\n");
@@ -1417,8 +1409,7 @@ fn print_result_table(results: &[BenchmarkResult]) {
 
     for result in results {
         let diff_pct = if baseline > Duration::ZERO {
-            ((result.mean.as_secs_f64() - baseline.as_secs_f64()) / baseline.as_secs_f64())
-                * 100.0
+            ((result.mean.as_secs_f64() - baseline.as_secs_f64()) / baseline.as_secs_f64()) * 100.0
         } else {
             0.0
         };

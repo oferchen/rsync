@@ -194,7 +194,10 @@ pub(super) fn execute_transfer(
                 record_path.display()
             );
             ::metadata::apply_file_metadata_if_changed(
-                destination, metadata, existing, &metadata_options,
+                destination,
+                metadata,
+                existing,
+                &metadata_options,
             )
             .map_err(crate::local_copy::map_metadata_error)?;
             #[cfg(all(unix, feature = "xattr"))]
@@ -488,7 +491,10 @@ pub(super) fn execute_transfer(
     #[cfg(target_os = "linux")]
     let mut writer_for_metadata: Option<fs::File> = Some(writer);
     #[cfg(not(target_os = "linux"))]
-    let mut writer_for_metadata: Option<fs::File> = { drop(writer); None };
+    let mut writer_for_metadata: Option<fs::File> = {
+        drop(writer);
+        None
+    };
 
     let staging_path_for_links = guard
         .as_ref()

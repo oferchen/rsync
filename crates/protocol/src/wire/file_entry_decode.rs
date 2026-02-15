@@ -623,12 +623,11 @@ fn decode_owner_id<R: Read>(
             read_int(reader)? as u32
         };
 
-        let name =
-            if protocol_version >= 30 && (flags & ((name_follows_flag as u32) << 8)) != 0 {
-                Some(decode_owner_name(reader)?)
-            } else {
-                None
-            };
+        let name = if protocol_version >= 30 && (flags & ((name_follows_flag as u32) << 8)) != 0 {
+            Some(decode_owner_name(reader)?)
+        } else {
+            None
+        };
 
         Ok(Some((id, name)))
     }

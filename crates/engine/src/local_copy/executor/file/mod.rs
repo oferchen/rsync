@@ -17,11 +17,11 @@ pub(crate) use comparison::{CopyComparison, should_skip_copy};
 pub(crate) use copy::copy_file;
 #[cfg(test)]
 pub(crate) use copy::take_fsync_call_count;
+#[cfg(test)]
+pub(crate) use guard::DirectWriteGuard;
 pub use guard::{
     DestinationWriteGuard, remove_existing_destination, remove_incomplete_destination,
 };
-#[cfg(test)]
-pub(crate) use guard::DirectWriteGuard;
 pub use partial::{PartialFileManager, PartialMode};
 #[cfg(test)]
 pub(crate) use paths::partial_destination_path;
