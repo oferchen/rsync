@@ -211,8 +211,7 @@ pub fn process_file_response<R: Read>(
     //
     // For delta transfers (existing files), we always use temp+rename to ensure
     // atomic replacement of the destination.
-    let (file, mut cleanup_guard, needs_rename) = if basis_path.is_none()
-        && ctx.config.direct_write
+    let (file, mut cleanup_guard, needs_rename) = if basis_path.is_none() && ctx.config.direct_write
     {
         match fs::OpenOptions::new()
             .write(true)
