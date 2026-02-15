@@ -169,6 +169,18 @@ impl SshChildHandle {
     }
 }
 
+impl Drop for SshChildHandle {
+    fn drop(&mut self) {
+        // Reap the child process to prevent zombies.
+        // Unlike SshConnection::Drop, stdin is not owned here (it lives in
+        // SshWriter) so we skip the close_stdin step.
+        if let Ok(None) = self.child.try_wait() {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+}
+
 impl Read for SshConnection {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self.stdout.as_mut() {

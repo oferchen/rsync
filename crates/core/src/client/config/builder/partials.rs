@@ -79,6 +79,15 @@ impl ClientConfigBuilder {
         self.fsync = fsync;
         self
     }
+
+    /// Enables the direct write optimization for new files.
+    #[must_use]
+    #[doc(alias = "--direct-write")]
+    #[doc(alias = "--no-direct-write")]
+    pub const fn direct_write(mut self, direct_write: bool) -> Self {
+        self.direct_write = direct_write;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -196,5 +205,17 @@ mod tests {
     fn fsync_false_clears_flag() {
         let config = builder().fsync(true).fsync(false).build();
         assert!(!config.fsync());
+    }
+
+    #[test]
+    fn direct_write_sets_flag() {
+        let config = builder().direct_write(true).build();
+        assert!(config.direct_write());
+    }
+
+    #[test]
+    fn direct_write_false_clears_flag() {
+        let config = builder().direct_write(true).direct_write(false).build();
+        assert!(!config.direct_write());
     }
 }
