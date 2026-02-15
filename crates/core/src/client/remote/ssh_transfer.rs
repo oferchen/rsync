@@ -835,6 +835,7 @@ mod tests {
     }
 
     // Tests for map_child_exit_status
+    #[cfg(unix)]
     mod child_exit_status_tests {
         use super::*;
         use crate::exit_code::ExitCode;
