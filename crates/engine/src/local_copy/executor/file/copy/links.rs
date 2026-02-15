@@ -206,15 +206,23 @@ pub(super) fn process_links(
                     false,
                     {
                         #[cfg(all(unix, feature = "xattr"))]
-                        { preserve_xattrs }
+                        {
+                            preserve_xattrs
+                        }
                         #[cfg(not(all(unix, feature = "xattr")))]
-                        { false }
+                        {
+                            false
+                        }
                     },
                     {
                         #[cfg(all(unix, feature = "acl"))]
-                        { preserve_acls }
+                        {
+                            preserve_acls
+                        }
                         #[cfg(not(all(unix, feature = "acl")))]
-                        { false }
+                        {
+                            false
+                        }
                     },
                 );
                 context.record(

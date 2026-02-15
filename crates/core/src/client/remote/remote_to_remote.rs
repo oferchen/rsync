@@ -39,9 +39,9 @@ use rsync_io::ssh::{SshCommand, SshConnection, SshReader, SshWriter, parse_ssh_o
 
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error, invalid_argument_error_typed};
-use crate::exit_code::ExitCode;
 use super::super::summary::ClientSummary;
 use super::invocation::{RemoteInvocationBuilder, RemoteOperands, RemoteRole};
+use crate::exit_code::ExitCode;
 
 /// Parsed source connection information: host, optional user, optional port, and paths.
 ///

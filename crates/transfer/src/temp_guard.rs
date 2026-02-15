@@ -131,10 +131,7 @@ fn truncate_utf8_safe(s: &str, max_len: usize) -> String {
 ///
 /// A tuple of `(File, TempFileGuard)` — the open file handle and an RAII guard
 /// that cleans up the temp file on drop unless `keep()` is called.
-pub fn open_tmpfile(
-    dest: &Path,
-    temp_dir: Option<&Path>,
-) -> io::Result<(fs::File, TempFileGuard)> {
+pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::File, TempFileGuard)> {
     let template = get_tmpname(dest, temp_dir)?;
     let template_str = template.to_string_lossy().into_owned();
 
@@ -351,7 +348,10 @@ mod tests {
         assert!(result.starts_with(temp_dir));
         let name = result.file_name().unwrap().to_string_lossy();
         assert!(name.starts_with("file.txt."), "got: {name}");
-        assert!(!name.starts_with('.'), "unexpected dot with temp_dir: {name}");
+        assert!(
+            !name.starts_with('.'),
+            "unexpected dot with temp_dir: {name}"
+        );
     }
 
     #[test]

@@ -198,9 +198,9 @@ fn resolve_ownership(
     } else if options.group() {
         let mut raw_gid = metadata.gid() as RawGid;
         if let Some(mapping) = options.group_mapping()
-            && let Some(mapped) = mapping.map_gid(raw_gid).map_err(|error| {
-                MetadataError::new("apply group mapping", destination, error)
-            })?
+            && let Some(mapped) = mapping
+                .map_gid(raw_gid)
+                .map_err(|error| MetadataError::new("apply group mapping", destination, error))?
         {
             raw_gid = mapped;
         }
@@ -398,7 +398,11 @@ fn apply_permissions_with_chmod_fd(
         }
 
         if let Some(fd) = fd {
-            unix_fs::fchmod(fd, unix_fs::Mode::from_raw_mode(mode as rustix::fs::RawMode)).map_err(|error| {
+            unix_fs::fchmod(
+                fd,
+                unix_fs::Mode::from_raw_mode(mode as rustix::fs::RawMode),
+            )
+            .map_err(|error| {
                 MetadataError::new("preserve permissions", destination, io::Error::from(error))
             })?;
         } else {
@@ -419,7 +423,11 @@ fn apply_permissions_with_chmod_fd(
         }
 
         if let Some(fd) = fd {
-            unix_fs::fchmod(fd, unix_fs::Mode::from_raw_mode(mode as rustix::fs::RawMode)).map_err(|error| {
+            unix_fs::fchmod(
+                fd,
+                unix_fs::Mode::from_raw_mode(mode as rustix::fs::RawMode),
+            )
+            .map_err(|error| {
                 MetadataError::new("preserve permissions", destination, io::Error::from(error))
             })?;
         } else {

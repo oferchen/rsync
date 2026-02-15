@@ -844,12 +844,8 @@ mod tests {
     /// Allowlist of long-form arguments that upstream rsync 3.x recognises in
     /// `--server` mode.  Any long flag emitted by `RemoteInvocationBuilder`
     /// that is NOT on this list would break interop with stock rsync.
-    const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
-        "--server",
-        "--sender",
-        "--ignore-errors",
-        "--fsync",
-    ];
+    const UPSTREAM_SERVER_LONG_ARGS: &[&str] =
+        &["--server", "--sender", "--ignore-errors", "--fsync"];
 
     /// Validate that every argument sent to the remote server is compatible
     /// with upstream rsync's `--server` mode.  This catches regressions where

@@ -267,21 +267,36 @@ fn process_planned_entry(
         EntryAction::CopySymlink => {
             let metadata_options = context.metadata_options();
             copy_symlink(
-                context, source, &target_path, entry_metadata, &metadata_options, relative,
+                context,
+                source,
+                &target_path,
+                entry_metadata,
+                &metadata_options,
+                relative,
             )?;
             Ok(true)
         }
         EntryAction::CopyFifo => {
             let metadata_options = context.metadata_options();
             copy_fifo(
-                context, source, &target_path, entry_metadata, &metadata_options, relative,
+                context,
+                source,
+                &target_path,
+                entry_metadata,
+                &metadata_options,
+                relative,
             )?;
             Ok(true)
         }
         EntryAction::CopyDevice => {
             let metadata_options = context.metadata_options();
             copy_device(
-                context, source, &target_path, entry_metadata, &metadata_options, relative,
+                context,
+                source,
+                &target_path,
+                entry_metadata,
+                &metadata_options,
+                relative,
             )?;
             Ok(true)
         }
