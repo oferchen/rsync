@@ -721,7 +721,7 @@ fn apply_ownership_from_entry(
         // Optimization: check current ownership and skip syscall if already correct.
         // This matches upstream rsync behavior which avoids redundant chown calls.
         let needs_chown = match cached_meta {
-            Some(ref meta) => {
+            Some(meta) => {
                 let current_uid = meta.uid();
                 let current_gid = meta.gid();
                 let desired_uid = owner.map(|o| o.as_raw()).unwrap_or(current_uid);
