@@ -44,8 +44,9 @@ use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
 use crate::pipeline::PendingTransfer;
 use crate::receiver::{SenderAttrs, SumHead, write_signature_blocks};
-use crate::temp_guard::TempFileGuard;
+use crate::temp_guard::{TempFileGuard, open_tmpfile};
 use crate::token_buffer::TokenBuffer;
+use fast_io::FileWriter;
 
 /// Configuration for sending file transfer requests and processing responses.
 ///
@@ -71,6 +72,8 @@ pub struct RequestConfig<'a> {
     pub use_sparse: bool,
     /// Whether to fsync after write.
     pub do_fsync: bool,
+    /// Whether to enable direct write optimization for new files.
+    pub direct_write: bool,
 }
 
 /// Sends a file transfer request to the sender.
@@ -200,17 +203,49 @@ pub fn process_file_response<R: Read>(
     // Decompose pending transfer
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
-    // Apply delta to reconstruct file
-    let temp_path = file_path.with_extension("oc-rsync.tmp");
-    let mut temp_guard = TempFileGuard::new(temp_path.clone());
+    // Choose write strategy: direct write for new files, temp+rename for updates.
+    //
+    // When no basis file was found (basis_path is None), the destination doesn't
+    // exist, so we can skip the temp file + rename overhead. This mirrors the
+    // DirectWriteGuard optimization in the local copy engine.
+    //
+    // For delta transfers (existing files), we always use temp+rename to ensure
+    // atomic replacement of the destination.
+    let (file, mut cleanup_guard, needs_rename) = if basis_path.is_none()
+        && ctx.config.direct_write
+    {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file_path)
+        {
+            Ok(file) => {
+                // Direct write: guard cleans up file_path on failure, no rename needed.
+                (file, TempFileGuard::new(file_path.clone()), false)
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                // Race: file appeared between basis check and create. Use temp+rename
+                // with upstream rsync's `.filename.XXXXXX` naming convention.
+                let (file, guard) = open_tmpfile(&file_path, None)?;
+                (file, guard, true)
+            }
+            Err(e) => return Err(e),
+        }
+    } else {
+        // Existing file / delta transfer: use temp+rename for atomicity.
+        // Uses upstream rsync's `.filename.XXXXXX` naming convention so
+        // retries succeed even if a previous temp file was not cleaned up.
+        let (file, guard) = open_tmpfile(&file_path, None)?;
+        (file, guard, true)
+    };
 
-    // Use BufWriter with adaptive capacity based on file size:
+    // Use io_uring when available (Linux 5.6+), falling back to BufWriter.
+    // Buffer capacity is adaptive based on file size:
     // - Small files (< 64KB): 4KB buffer to avoid wasted memory
     // - Medium files (64KB - 1MB): 64KB buffer for balanced performance
     // - Large files (> 1MB): 256KB buffer to maximize throughput
-    let file = fs::File::create(&temp_path)?;
     let writer_capacity = adaptive_writer_capacity(target_size);
-    let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
+    let mut output = fast_io::writer_from_file(file, writer_capacity);
     let mut total_bytes: u64 = 0;
 
     // Sparse file support
@@ -341,22 +376,25 @@ pub fn process_file_response<R: Read>(
         let _final_pos = sparse.finish(&mut output)?;
     }
 
-    // Flush and optionally sync
-    let file = output.into_inner().map_err(|e| {
-        io::Error::other(format!(
-            "failed to flush output buffer for {file_path:?}: {e}"
-        ))
-    })?;
+    // Flush and optionally sync (uses io_uring fsync op when available)
     if ctx.config.do_fsync {
-        file.sync_all().map_err(|e| {
+        output.sync().map_err(|e| {
             io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
         })?;
+    } else {
+        output.flush().map_err(|e| {
+            io::Error::other(format!(
+                "failed to flush output buffer for {file_path:?}: {e}"
+            ))
+        })?;
     }
-    drop(file);
+    drop(output);
 
-    // Atomic rename
-    fs::rename(&temp_path, &file_path)?;
-    temp_guard.keep();
+    // Atomic rename (only needed for temp+rename path)
+    if needs_rename {
+        fs::rename(cleanup_guard.path(), &file_path)?;
+    }
+    cleanup_guard.keep();
 
     Ok(total_bytes)
 }
@@ -379,6 +417,7 @@ mod tests {
             checksum_seed: 0,
             use_sparse: false,
             do_fsync: false,
+            direct_write: false,
         };
         let debug_str = format!("{config:?}");
         assert!(debug_str.contains("RequestConfig"));
