@@ -79,6 +79,20 @@ pub enum BenchmarkMode {
     Local,
     /// Use remote rsync:// servers (public mirrors).
     Remote,
+    /// Use local loopback daemons (one per version, deterministic).
+    Loopback,
+}
+
+/// Data profile for loopback benchmark test data generation.
+#[derive(Debug, Clone, Copy, Default, ValueEnum, PartialEq, Eq)]
+pub enum DataProfile {
+    /// 1,000 files in 10 dirs, ~5 MB total.
+    Small,
+    /// 10,000 files in 100 dirs, ~50 MB total.
+    #[default]
+    Medium,
+    /// 50,000 files in 500 dirs, ~500 MB total.
+    Large,
 }
 
 /// Arguments for the `benchmark` command.
@@ -119,6 +133,10 @@ pub struct BenchmarkArgs {
     /// List available public rsync mirrors and exit.
     #[arg(long)]
     pub list_mirrors: bool,
+
+    /// Data profile for loopback mode test data generation.
+    #[arg(long, value_enum, default_value = "medium")]
+    pub data_profile: DataProfile,
 }
 
 /// Output format for branding command.
@@ -781,6 +799,37 @@ mod tests {
                 assert_eq!(args.versions.len(), 2);
                 assert_eq!(args.versions[0], "v0.5.2");
                 assert_eq!(args.versions[1], "v0.5.3");
+            }
+            _ => panic!("expected benchmark command"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_loopback_mode() {
+        let cli = Cli::parse_from(["cargo-xtask", "benchmark", "--mode", "loopback"]);
+        match cli.command {
+            Command::Benchmark(args) => {
+                assert_eq!(args.mode, BenchmarkMode::Loopback);
+                assert_eq!(args.data_profile, DataProfile::Medium);
+            }
+            _ => panic!("expected benchmark command"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_loopback_with_profile() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "benchmark",
+            "--mode",
+            "loopback",
+            "--data-profile",
+            "small",
+        ]);
+        match cli.command {
+            Command::Benchmark(args) => {
+                assert_eq!(args.mode, BenchmarkMode::Loopback);
+                assert_eq!(args.data_profile, DataProfile::Small);
             }
             _ => panic!("expected benchmark command"),
         }

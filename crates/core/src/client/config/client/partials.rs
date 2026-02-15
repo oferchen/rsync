@@ -57,6 +57,13 @@ impl ClientConfig {
     pub const fn fsync(&self) -> bool {
         self.fsync
     }
+
+    /// Reports whether the direct write optimization is enabled.
+    #[must_use]
+    #[doc(alias = "--direct-write")]
+    pub const fn direct_write(&self) -> bool {
+        self.direct_write
+    }
 }
 
 #[cfg(test)]
@@ -121,5 +128,12 @@ mod tests {
     fn fsync_default_is_false() {
         let config = default_config();
         assert!(!config.fsync());
+    }
+
+    // Tests for direct_write
+    #[test]
+    fn direct_write_default_is_true() {
+        let config = default_config();
+        assert!(config.direct_write());
     }
 }

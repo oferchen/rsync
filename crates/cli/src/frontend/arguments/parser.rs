@@ -327,6 +327,7 @@ where
     let no_partial = matches.get_flag("no-partial");
     let preallocate = matches.get_flag("preallocate");
     let fsync = tri_state_flag_positive_first(&matches, "fsync", "no-fsync");
+    let direct_write = !matches.get_flag("no-direct-write") || matches.get_flag("direct-write");
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
     let partial_dir_cli = matches
         .remove_one::<OsString>("partial-dir")
@@ -623,6 +624,7 @@ where
         partial,
         preallocate,
         fsync,
+        direct_write,
         delay_updates,
         partial_dir,
         temp_dir,

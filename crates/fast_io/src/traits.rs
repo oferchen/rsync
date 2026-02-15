@@ -136,6 +136,14 @@ impl StdFileWriter {
         })
     }
 
+    /// Wraps an existing file handle with buffered writing.
+    pub fn from_file_with_capacity(file: File, capacity: usize) -> Self {
+        Self {
+            inner: BufWriter::with_capacity(capacity, file),
+            bytes_written: 0,
+        }
+    }
+
     /// Creates a file with pre-allocated space.
     pub fn create_with_size(path: &Path, size: u64) -> io::Result<Self> {
         let file = File::create(path)?;
@@ -156,6 +164,12 @@ impl Write for StdFileWriter {
 
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
+    }
+}
+
+impl Seek for StdFileWriter {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
     }
 }
 

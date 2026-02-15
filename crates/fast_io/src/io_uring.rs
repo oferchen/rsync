@@ -29,7 +29,7 @@
 
 use std::ffi::CStr;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -339,6 +339,21 @@ impl IoUringWriter {
         })
     }
 
+    /// Wraps an existing file handle for writing with io_uring.
+    pub fn from_file(file: File, config: &IoUringConfig) -> io::Result<Self> {
+        let ring = RawIoUring::new(config.sq_entries)
+            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
+
+        Ok(Self {
+            ring,
+            file,
+            bytes_written: 0,
+            buffer: vec![0u8; config.buffer_size],
+            buffer_pos: 0,
+            buffer_size: config.buffer_size,
+        })
+    }
+
     /// Creates a file with preallocated space.
     pub fn create_with_size<P: AsRef<Path>>(
         path: P,
@@ -496,6 +511,15 @@ impl FileWriter for IoUringWriter {
 
     fn preallocate(&mut self, size: u64) -> io::Result<()> {
         self.file.set_len(size)
+    }
+}
+
+impl Seek for IoUringWriter {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.flush_buffer()?;
+        let new_pos = self.file.seek(pos)?;
+        self.bytes_written = new_pos;
+        Ok(new_pos)
     }
 }
 
@@ -664,6 +688,15 @@ impl Write for IoUringOrStdWriter {
     }
 }
 
+impl Seek for IoUringOrStdWriter {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match self {
+            IoUringOrStdWriter::IoUring(w) => w.seek(pos),
+            IoUringOrStdWriter::Std(w) => w.seek(pos),
+        }
+    }
+}
+
 impl FileWriter for IoUringOrStdWriter {
     fn bytes_written(&self) -> u64 {
         match self {
@@ -732,6 +765,34 @@ pub fn read_file<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
     let factory = IoUringReaderFactory::default();
     let mut reader = factory.open(path.as_ref())?;
     reader.read_all()
+}
+
+/// Creates a writer from an existing file handle, using io_uring when available.
+///
+/// This is the primary integration point for hot paths that open files
+/// themselves (e.g., with `create_new` for atomic creation) but want to
+/// leverage io_uring for the actual writes.
+///
+/// Falls back to standard buffered I/O when io_uring is unavailable.
+pub fn writer_from_file(file: File, buffer_capacity: usize) -> IoUringOrStdWriter {
+    if is_io_uring_available() {
+        // Try creating the ring before consuming the file handle, so we
+        // can fall back to standard I/O if ring creation fails.
+        if let Ok(ring) = RawIoUring::new(IoUringConfig::default().sq_entries) {
+            return IoUringOrStdWriter::IoUring(IoUringWriter {
+                ring,
+                file,
+                bytes_written: 0,
+                buffer: vec![0u8; buffer_capacity],
+                buffer_pos: 0,
+                buffer_size: buffer_capacity,
+            });
+        }
+    }
+    IoUringOrStdWriter::Std(crate::traits::StdFileWriter::from_file_with_capacity(
+        file,
+        buffer_capacity,
+    ))
 }
 
 /// Writes data to a file using io_uring if available, falling back to standard I/O.

@@ -1308,6 +1308,7 @@ impl ReceiverContext {
             checksum_seed: self.checksum_seed,
             use_sparse: self.config.flags.sparse,
             do_fsync: self.config.fsync,
+            direct_write: self.config.direct_write,
         };
 
         let mut pipeline = PipelineState::new(pipeline_config);
@@ -2356,6 +2357,7 @@ mod tests {
             iconv: None,
             ignore_errors: false,
             fsync: false,
+            direct_write: false,
             checksum_seed: None,
         }
     }
@@ -3253,6 +3255,7 @@ mod tests {
             iconv: None,
             ignore_errors: false,
             fsync: false,
+            direct_write: false,
             checksum_seed: None,
         }
     }

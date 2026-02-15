@@ -344,3 +344,34 @@ fn wait_returns_success_after_split() {
     let status = handle.wait().expect("wait via handle");
     assert!(status.success());
 }
+
+#[cfg(unix)]
+#[test]
+fn drop_child_handle_reaps_process() {
+    let connection = spawn_echo_process();
+    let (_reader, writer, child_handle) = connection.split().expect("split");
+
+    // Close writer to signal EOF so the child exits naturally.
+    writer.close().expect("close writer");
+
+    // Drop the child handle WITHOUT calling wait().
+    // The Drop impl should reap the process, preventing a zombie.
+    drop(child_handle);
+}
+
+#[cfg(unix)]
+#[test]
+fn drop_child_handle_kills_running_process() {
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("sleep 60");
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
+
+    // Drop without waiting -- Drop should kill then reap.
+    // If Drop didn't kill, this test would hang for 60 seconds.
+    drop(child_handle);
+}

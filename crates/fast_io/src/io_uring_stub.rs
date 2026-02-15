@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::traits::{
@@ -180,6 +180,15 @@ impl Write for IoUringWriter {
     }
 }
 
+impl Seek for IoUringWriter {
+    fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring is not available on this platform",
+        ))
+    }
+}
+
 impl FileWriter for IoUringWriter {
     fn bytes_written(&self) -> u64 {
         0
@@ -345,6 +354,15 @@ impl Write for IoUringOrStdWriter {
     }
 }
 
+impl Seek for IoUringOrStdWriter {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match self {
+            IoUringOrStdWriter::IoUring(w) => w.seek(pos),
+            IoUringOrStdWriter::Std(w) => w.seek(pos),
+        }
+    }
+}
+
 impl FileWriter for IoUringOrStdWriter {
     fn bytes_written(&self) -> u64 {
         match self {
@@ -380,6 +398,11 @@ impl FileWriterFactory for IoUringWriterFactory {
             path, size,
         )?))
     }
+}
+
+/// Creates a writer from an existing file handle (always standard I/O on this platform).
+pub fn writer_from_file(file: std::fs::File, buffer_capacity: usize) -> IoUringOrStdWriter {
+    IoUringOrStdWriter::Std(StdFileWriter::from_file_with_capacity(file, buffer_capacity))
 }
 
 /// Reads an entire file using standard I/O (io_uring not available).
