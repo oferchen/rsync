@@ -1,8 +1,8 @@
 //! RAII guard for temporary file cleanup and upstream-compatible temp file naming.
 //!
 //! This module provides:
-//! - [`TempFileGuard`]: RAII guard ensuring temporary files are deleted on error.
-//! - [`open_tmpfile`]: Creates a temp file using upstream rsync's `.filename.XXXXXX`
+//! - `TempFileGuard`: RAII guard ensuring temporary files are deleted on error.
+//! - `open_tmpfile`: Creates a temp file using upstream rsync's `.filename.XXXXXX`
 //!   naming convention with `O_EXCL` atomicity.
 //!
 //! # Upstream Reference
