@@ -1,0 +1,46 @@
+# Containerfile for oc-rsync performance benchmarking
+#
+# Three-way comparison: upstream rsync 3.4.1 vs oc-rsync v0.5.4 vs dev snapshot.
+# Uses the local rust-dev image (Arch Linux with Rust toolchain).
+
+FROM localhost/rust-dev:latest
+
+USER root
+
+# Install upstream rsync build deps (Arch packages)
+RUN pacman -Sy --noconfirm acl attr zlib curl python3 git && \
+    pacman -Scc --noconfirm
+
+WORKDIR /build
+
+# Build upstream rsync 3.4.1
+RUN curl -fsSL https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz | tar xz && \
+    cd rsync-3.4.1 && \
+    ./configure --disable-xxhash --disable-zstd --disable-lz4 && \
+    make -j"$(nproc)" && \
+    cp rsync /usr/local/bin/upstream-rsync
+
+# Copy full oc-rsync source (with git history for tag checkout)
+COPY --chown=dev:dev . /build/oc-rsync
+
+# Build oc-rsync v0.5.4 (tagged release)
+USER dev
+WORKDIR /build/oc-rsync
+RUN git checkout v0.5.4 && cargo build --release && \
+    cp target/release/oc-rsync /tmp/oc-rsync-v054
+
+# Build dev snapshot (current HEAD)
+RUN git checkout - && cargo build --release && \
+    cp target/release/oc-rsync /tmp/oc-rsync-dev
+
+USER root
+RUN cp /tmp/oc-rsync-v054 /usr/local/bin/oc-rsync-v054 && \
+    cp /tmp/oc-rsync-dev /usr/local/bin/oc-rsync-dev
+
+# Embed the benchmark script
+COPY scripts/run_benchmark_inside.py /usr/local/bin/run_benchmark.py
+
+ENV BENCH_RUNS=5
+
+ENTRYPOINT ["/bin/bash", "-c"]
+CMD ["python3 /usr/local/bin/run_benchmark.py --runs ${BENCH_RUNS}"]

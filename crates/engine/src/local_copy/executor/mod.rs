@@ -13,6 +13,9 @@ pub(crate) use directory::ChecksumCache;
 pub(crate) use directory::{copy_directory_recursive, is_device, is_fifo};
 #[cfg(test)]
 #[allow(unused_imports)]
+pub(crate) use file::DirectWriteGuard;
+#[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use file::take_fsync_call_count;
 pub(crate) use file::{
     CopyComparison, SparseWriteState, compute_backup_path, copy_entry_to_backup, copy_file,
@@ -22,9 +25,6 @@ pub use file::{
     DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetector, SparseReader,
     SparseRegion, SparseWriter, remove_existing_destination, remove_incomplete_destination,
 };
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use file::DirectWriteGuard;
 #[cfg(test)]
 pub(crate) use file::{
     files_checksum_match, maybe_preallocate_destination, partial_destination_path,

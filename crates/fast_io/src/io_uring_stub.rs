@@ -402,7 +402,10 @@ impl FileWriterFactory for IoUringWriterFactory {
 
 /// Creates a writer from an existing file handle (always standard I/O on this platform).
 pub fn writer_from_file(file: std::fs::File, buffer_capacity: usize) -> IoUringOrStdWriter {
-    IoUringOrStdWriter::Std(StdFileWriter::from_file_with_capacity(file, buffer_capacity))
+    IoUringOrStdWriter::Std(StdFileWriter::from_file_with_capacity(
+        file,
+        buffer_capacity,
+    ))
 }
 
 /// Reads an entire file using standard I/O (io_uring not available).
