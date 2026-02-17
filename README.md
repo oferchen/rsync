@@ -12,13 +12,22 @@ Binary name: **`oc-rsync`** — installs alongside system `rsync` without confli
 
 ## Status
 
-**Release:** 0.5.5 (beta)
+**Release:** 0.5.6 (beta)
 
-Core transfer, delta algorithm, daemon mode, and SSH transport are complete. Interoperability tested against upstream rsync 3.4.1.
+Core transfer, delta algorithm, daemon mode, and SSH transport are complete. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
 ### Performance
 
-v0.5.5 vs upstream rsync 3.4.1 on Linux x86_64 (110 MB, 1130 files):
+v0.5.6 vs upstream rsync 3.4.1 — push-to-daemon over TCP loopback on Linux aarch64:
+
+| Workload | oc-rsync | upstream | Speedup |
+|----------|----------|----------|---------|
+| 10K × 4KB files (40 MB) | 388 ms | 484 ms | **1.25x** |
+| 1K × 128KB files (128 MB) | 142 ms | 237 ms | **1.68x** |
+| 100 × 1MB files (100 MB) | 90 ms | 180 ms | **1.99x** |
+| Empty directory | 3 ms | 96 ms | **32x** |
+
+Local transfer — Linux x86_64 (110 MB, 1130 files):
 
 | Workload | oc-rsync | upstream | Speedup |
 |----------|----------|----------|---------|
@@ -27,10 +36,10 @@ v0.5.5 vs upstream rsync 3.4.1 on Linux x86_64 (110 MB, 1130 files):
 | Checksum sync (-c) | 229 ms | 566 ms | **2.5x** |
 | Incremental (10% changed) | 115 ms | 129 ms | 1.1x |
 | Large files (100 MB) | 89 ms | 126 ms | 1.4x |
-| Small files (1000x1KB) | 112 ms | 129 ms | 1.2x |
+| Small files (1000 × 1KB) | 112 ms | 129 ms | 1.2x |
 | Compressed (-z) | 113 ms | 127 ms | 1.1x |
 
-18% faster on average; up to 2.5x faster for checksum-intensive workloads.
+Single-process architecture eliminates fork overhead: 22% fewer syscalls, 36 context switches vs upstream's 92 per transfer.
 
 ---
 
@@ -117,15 +126,24 @@ cargo nextest run --workspace --all-features
 ```text
 src/bin/oc-rsync.rs     # Entry point
 crates/cli/             # CLI flags, help, output formatting
-crates/core/            # Shared types, error model, config
-crates/protocol/        # Wire protocol (v28-32)
-crates/transfer/        # Generator, receiver, delta transfer
-crates/engine/          # File list and data pump pipelines
-crates/daemon/          # Daemon mode and module access control
-crates/checksums/       # Rolling and strong checksums (SIMD)
-crates/filters/         # Include/exclude pattern engine
-crates/fast_io/         # Platform I/O (mmap, io_uring, copy_file_range)
-crates/compress/        # zstd, lz4, zlib compression
+crates/core/            # Orchestration facade, session management, config
+crates/protocol/        # Wire protocol (v28-32), multiplex framing
+crates/transfer/        # Generator (sender), receiver, delta transfer
+crates/engine/          # Local copy executor, sparse writes, temp-file commit
+crates/daemon/          # Daemon mode, module access control, systemd
+crates/checksums/       # Rolling and strong checksums (MD4, MD5, XXH3, SIMD)
+crates/filters/         # Include/exclude pattern engine, .rsync-filter
+crates/metadata/        # Permissions, uid/gid, mtime, ACLs, xattrs
+crates/rsync_io/        # SSH stdio, rsync:// TCP transport, handshake
+crates/fast_io/         # Platform I/O (io_uring, copy_file_range)
+crates/compress/        # zstd, lz4, zlib compression codecs
+crates/bandwidth/       # Bandwidth limiting and rate control
+crates/signature/       # Signature layout and block-size calculations
+crates/match/           # Delta matching and block search
+crates/flist/           # File list generation and traversal
+crates/logging/         # Logging macros and verbosity control
+crates/batch/           # Batch file read/write support
+crates/branding/        # Binary naming and version metadata
 ```
 
 See `cargo doc --workspace --no-deps --open` for API documentation.
@@ -134,7 +152,7 @@ See `cargo doc --workspace --no-deps --open` for API documentation.
 
 ## Security
 
-Protocol parsing crates enforce `#![deny(unsafe_code)]`. Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747).
+Protocol parsing crates enforce `#![deny(unsafe_code)]`. Unsafe code is limited to SIMD-accelerated checksums and platform I/O, both with safe fallbacks. Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747).
 
 For security issues, see [SECURITY.md](./SECURITY.md).
 

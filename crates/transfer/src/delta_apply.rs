@@ -225,6 +225,9 @@ impl ChecksumVerifier {
         }
     }
 
+    /// Maximum digest length across all supported algorithms (SHA1 = 20 bytes).
+    pub const MAX_DIGEST_LEN: usize = 20;
+
     /// Returns the digest length for the current algorithm.
     #[inline]
     #[must_use]
@@ -247,6 +250,24 @@ impl ChecksumVerifier {
             Self::Xxh3(h) => h.finalize().as_ref().to_vec(),
             Self::Xxh128(h) => h.finalize().as_ref().to_vec(),
         }
+    }
+
+    /// Finalizes the digest into a caller-provided stack buffer.
+    ///
+    /// Returns the number of bytes written (equals `digest_len()`).
+    /// Avoids heap allocation, suitable for hot paths.
+    #[inline]
+    pub fn finalize_into(self, buf: &mut [u8; Self::MAX_DIGEST_LEN]) -> usize {
+        let len = self.digest_len();
+        match self {
+            Self::Md4(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
+            Self::Md5(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
+            Self::Sha1(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
+            Self::Xxh64(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
+            Self::Xxh3(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
+            Self::Xxh128(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
+        }
+        len
     }
 }
 
