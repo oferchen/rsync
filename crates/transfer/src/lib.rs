@@ -63,7 +63,7 @@
 //! For a comprehensive guide to how the delta transfer algorithm works, see the
 //! [`delta_transfer`] module documentation.
 
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -336,8 +336,10 @@ pub fn run_server_with_handshake<W: Write>(
     // significant per-file overhead in daemon transfers.
     let buffered_stdin = BufReader::with_capacity(64 * 1024, chained_stdin);
     let reader = reader::ServerReader::new_plain(buffered_stdin);
-    let buffered_stdout = BufWriter::with_capacity(64 * 1024, stdout);
-    let mut writer = writer::ServerWriter::new_plain(buffered_stdout);
+    // No BufWriter: MultiplexWriter provides all buffering (64KB, matching upstream
+    // rsync's iobuf_out). Removing BufWriter eliminates one memcpy layer — data
+    // goes from MultiplexWriter's buffer directly to the socket via writev().
+    let mut writer = writer::ServerWriter::new_plain(stdout);
 
     // Activate OUTPUT multiplex based on mode and protocol version.
     //

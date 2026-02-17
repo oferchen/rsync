@@ -40,11 +40,13 @@ use logging::{debug_log, info_log};
 use protocol::codec::{
     NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec,
 };
-use protocol::codec::{ProtocolCodec, create_protocol_codec};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
 use protocol::idlist::IdList;
-use protocol::wire::{CompressedTokenEncoder, DeltaOp, SignatureBlock, write_token_stream};
+use protocol::wire::{
+    CHUNK_SIZE, CompressedTokenEncoder, DeltaOp, SignatureBlock, write_token_end,
+    write_token_stream,
+};
 use protocol::{
     ChecksumAlgorithm, CompatibilityFlags, CompressionAlgorithm, NegotiationResult, ProtocolVersion,
 };
@@ -54,6 +56,7 @@ use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken
 #[cfg(unix)]
 use metadata::id_lookup::{lookup_group_name, lookup_user_name};
 
+use super::adaptive_buffer::adaptive_buffer_size;
 use super::config::ServerConfig;
 use super::delta_config::DeltaGeneratorConfig;
 use super::handshake::HandshakeResult;
@@ -497,6 +500,7 @@ impl GeneratorContext {
 
         let mut files_transferred = 0;
         let mut bytes_sent = 0u64;
+        let mut stream_buf = Vec::new();
 
         // Create NDX codecs using Strategy pattern for protocol-version-aware encoding.
         // Upstream rsync uses separate static variables for read and write state (io.c:2244-2245).
@@ -602,16 +606,23 @@ impl GeneratorContext {
                 continue;
             }
 
-            // Open source file
-            let source_file = match fs::File::open(source_path) {
-                Ok(f) => f,
-                Err(_e) => {
-                    continue;
-                }
-            };
+            // Generate and send file data.
+            // We already know file_size from the file list, so no fstat needed —
+            // this gives openat + read + close = 3 syscalls per file, matching
+            // upstream's pattern (upstream does openat + fstat + read + close = 4).
+            let file_size = file_entry.size();
+            let ndx_i32 = ndx as i32;
 
-            // Generate delta (or send whole file if no basis)
-            let delta_script = if has_basis {
+            if has_basis {
+                // Delta path: build DeltaScript (needs random access for block matching),
+                // then hash and write in separate passes.
+                let source: Box<dyn Read> = match fs::File::open(source_path) {
+                    Ok(f) => Box::new(io::BufReader::with_capacity(
+                        adaptive_buffer_size(file_size),
+                        f,
+                    )),
+                    Err(_e) => continue,
+                };
                 let config = DeltaGeneratorConfig {
                     block_length,
                     sig_blocks,
@@ -621,44 +632,58 @@ impl GeneratorContext {
                     compat_flags: self.compat_flags.as_ref(),
                     checksum_seed: self.checksum_seed,
                 };
-                generate_delta_from_signature(source_file, config)?
+                let delta_script = generate_delta_from_signature(source, config)?;
+
+                // Send ndx, iflags, sum_head
+                ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
+                if self.protocol.as_u8() >= 29 {
+                    writer.write_all(&iflags.raw().to_le_bytes())?;
+                }
+                sum_head.write(&mut *writer)?;
+
+                // Compute checksum, convert to wire ops, write
+                let checksum_algorithm = self.get_checksum_algorithm();
+                let file_checksum = compute_file_checksum(
+                    &delta_script,
+                    checksum_algorithm,
+                    self.checksum_seed,
+                    self.compat_flags.as_ref(),
+                );
+                let delta_total_bytes = delta_script.total_bytes();
+                let wire_ops = script_to_wire_delta(delta_script);
+                let compression = self.negotiated_algorithms.map(|n| n.compression);
+                write_delta_with_compression(&mut *writer, &wire_ops, compression)?;
+                writer.write_all(&file_checksum)?;
+                bytes_sent += delta_total_bytes;
             } else {
-                generate_whole_file_delta(source_file)?
-            };
+                // Whole-file path: single-pass streaming (read → hash → write).
+                // Pre-open file to fail before sending protocol headers.
+                let source = fs::File::open(source_path)?;
 
-            // Send ndx and attrs back to receiver
-            let ndx_i32 = ndx as i32;
-            ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
+                // Send ndx, iflags, sum_head (only after successful file open)
+                ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
+                if self.protocol.as_u8() >= 29 {
+                    writer.write_all(&iflags.raw().to_le_bytes())?;
+                }
+                sum_head.write(&mut *writer)?;
 
-            // For protocol >= 29, echo back iflags
-            if self.protocol.as_u8() >= 29 {
-                writer.write_all(&iflags.raw().to_le_bytes())?;
+                // Stream: read → hash → write in one pass (no DeltaScript intermediate).
+                // No flush here — data accumulates in MultiplexWriter's 64KB buffer,
+                // auto-flushing when full. This matches upstream rsync's batched
+                // iobuf_out pattern (sender.c send_files).
+                let checksum_algorithm = self.get_checksum_algorithm();
+                let compression = self.negotiated_algorithms.map(|n| n.compression);
+                let result = stream_whole_file_transfer(
+                    &mut *writer,
+                    source,
+                    file_size,
+                    checksum_algorithm,
+                    compression,
+                    &mut stream_buf,
+                )?;
+                writer.write_all(&result.checksum)?;
+                bytes_sent += result.total_bytes;
             }
-
-            // Send sum_head back to receiver
-            sum_head.write(&mut *writer)?;
-
-            // Compute file checksum and save stats before consuming delta script
-            let checksum_algorithm = self.get_checksum_algorithm();
-            let file_checksum = compute_file_checksum(
-                &delta_script,
-                checksum_algorithm,
-                self.checksum_seed,
-                self.compat_flags.as_ref(),
-            );
-            let delta_total_bytes = delta_script.total_bytes();
-
-            // Send delta tokens (consumes delta_script to avoid clones)
-            let wire_ops = script_to_wire_delta(delta_script);
-            let compression = self.negotiated_algorithms.map(|n| n.compression);
-            write_delta_with_compression(&mut *writer, &wire_ops, compression)?;
-
-            // Send file transfer checksum
-            writer.write_all(&file_checksum)?;
-            writer.flush()?;
-
-            // Track stats
-            bytes_sent += delta_total_bytes;
             files_transferred += 1;
         }
 
@@ -670,32 +695,6 @@ impl GeneratorContext {
             files_transferred,
             bytes_sent,
         })
-    }
-
-    /// Sends transfer statistics to the receiver.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `main.c:813-844` - `handle_stats()` implementation
-    fn send_stats<W: Write>(&self, writer: &mut W, bytes_sent: u64) -> io::Result<()> {
-        let total_read: u64 = self.total_bytes_read;
-        let total_written: u64 = bytes_sent;
-        let total_size: u64 = self.file_list.iter().map(FileEntry::size).sum();
-
-        let flist_buildtime = calculate_duration_ms(self.flist_build_start, self.flist_build_end);
-        let flist_xfertime = calculate_duration_ms(self.flist_xfer_start, self.flist_xfer_end);
-
-        // Use protocol-aware codec for stats encoding
-        let stats_codec = create_protocol_codec(self.protocol.as_u8());
-        stats_codec.write_stat(writer, total_read as i64)?;
-        stats_codec.write_stat(writer, total_written as i64)?;
-        stats_codec.write_stat(writer, total_size as i64)?;
-        if self.protocol.as_u8() >= 29 {
-            stats_codec.write_stat(writer, flist_buildtime as i64)?;
-            stats_codec.write_stat(writer, flist_xfertime as i64)?;
-        }
-        writer.flush()?;
-        Ok(())
     }
 
     /// Handles the goodbye handshake at end of transfer.
@@ -1057,10 +1056,12 @@ impl GeneratorContext {
         // Step 7: Run main transfer loop
         let transfer_result = self.run_transfer_loop(reader, writer)?;
 
-        // Step 8: Send statistics to receiver
-        self.send_stats(writer, transfer_result.bytes_sent)?;
-
-        // Step 9: Handle goodbye handshake
+        // Step 8: Handle goodbye handshake
+        //
+        // No stats are sent here. Upstream client-sender calls handle_stats(-1)
+        // which is a no-op (main.c:360-384). Stats are only written by the
+        // server-sender (am_server && am_sender) path. The client already has
+        // all stats locally via GeneratorStats.
         self.handle_goodbye(reader, writer)?;
 
         // Calculate timing stats for return value
@@ -1500,24 +1501,38 @@ pub fn generate_delta_from_signature<R: Read>(
 /// For files over this size, consider using delta transfers with a basis file.
 const LARGE_FILE_WARNING_THRESHOLD: u64 = 8 * 1024 * 1024 * 1024; // 8 GB
 
-/// Generates a delta script containing the entire file as literals (whole-file transfer).
-///
-/// # Streaming Approach
-///
-/// This function reads the file in chunks to support files of any size while
-/// keeping memory usage bounded. Each chunk becomes a separate literal token
-/// in the delta script.
-///
-/// # Large File Warning
-///
-/// Files larger than 8 GB will log a warning but will still be transferred.
-/// For very large files, consider using delta transfers with a basis file
-/// to reduce network and memory usage.
-fn generate_whole_file_delta(mut source: fs::File) -> io::Result<DeltaScript> {
-    // Get file size for pre-allocation and logging
-    let file_size = source.metadata()?.len();
+/// Result of streaming a whole file to the wire.
+struct StreamResult {
+    total_bytes: u64,
+    checksum: Vec<u8>,
+}
 
-    // Log warning for very large files
+/// Streams a whole file to the wire in a single pass: read → hash → write.
+///
+/// Eliminates the `DeltaScript` intermediate representation. Each chunk is read
+/// into a reusable buffer, fed to the checksum verifier, and written directly
+/// to the wire. This reduces memory passes from 3 to 1 and eliminates
+/// per-file allocation for the many-small-files case.
+///
+/// The buffer `buf` is caller-owned and reused across files to avoid allocation.
+///
+/// # Wire format
+///
+/// Produces the same byte sequence as the previous `DeltaScript`-based path:
+/// `[write_int(len) + data]` per 32KB chunk, followed by `write_int(0)` end marker.
+///
+/// # Upstream Reference
+///
+/// Mirrors upstream `match.c` interleaved pattern where `sum_update()` and
+/// `send_token()` happen on the same data pass.
+fn stream_whole_file_transfer<W: Write>(
+    writer: &mut W,
+    mut source: fs::File,
+    file_size: u64,
+    checksum_algorithm: ChecksumAlgorithm,
+    compression: Option<CompressionAlgorithm>,
+    buf: &mut Vec<u8>,
+) -> io::Result<StreamResult> {
     if file_size > LARGE_FILE_WARNING_THRESHOLD {
         debug_log!(
             Send,
@@ -1528,36 +1543,79 @@ fn generate_whole_file_delta(mut source: fs::File) -> io::Result<DeltaScript> {
         );
     }
 
-    // For files up to 64 MB, read entire file at once (common case optimization)
-    const SMALL_FILE_THRESHOLD: u64 = 64 * 1024 * 1024;
+    let is_none_checksum = matches!(checksum_algorithm, ChecksumAlgorithm::None);
+    let mut verifier = if is_none_checksum {
+        None
+    } else {
+        Some(ChecksumVerifier::for_algorithm(checksum_algorithm))
+    };
 
-    if file_size <= SMALL_FILE_THRESHOLD {
-        let mut data = Vec::with_capacity(file_size as usize);
-        source.read_to_end(&mut data)?;
-        let total_bytes = data.len() as u64;
-        let tokens = vec![DeltaToken::Literal(data)];
-        return Ok(DeltaScript::new(tokens, total_bytes, total_bytes));
-    }
+    let use_compression = matches!(
+        compression,
+        Some(CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX)
+    );
 
-    // For larger files, read in chunks to bound memory usage
-    // Use 16 MB chunks for good I/O performance while limiting memory
-    const CHUNK_SIZE: usize = 16 * 1024 * 1024;
+    // Read buffer sized for fewer syscalls (up to 256KB per read).
+    // Buffer is reused across files — no allocation after the first large file.
+    const MAX_READ_SIZE: usize = 256 * 1024;
+    let read_size = (file_size as usize).clamp(1, MAX_READ_SIZE);
 
-    let mut tokens = Vec::new();
     let mut total_bytes: u64 = 0;
-    let mut buffer = vec![0u8; CHUNK_SIZE];
+    let mut remaining = file_size;
 
-    loop {
-        let bytes_read = source.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
+    if use_compression {
+        buf.resize(read_size, 0);
+        let mut encoder = CompressedTokenEncoder::default();
+        while remaining > 0 {
+            let to_read = buf.len().min(remaining as usize);
+            source.read_exact(&mut buf[..to_read])?;
+            if let Some(ref mut v) = verifier {
+                v.update(&buf[..to_read]);
+            }
+            encoder.send_literal(writer, &buf[..to_read])?;
+            total_bytes += to_read as u64;
+            remaining -= to_read as u64;
         }
-
-        total_bytes += bytes_read as u64;
-        tokens.push(DeltaToken::Literal(buffer[..bytes_read].to_vec()));
+        encoder.finish(writer)?;
+    } else {
+        // Reserve 4 bytes at front for the length prefix of each wire chunk.
+        // Data is read at buf[4..], then for each 32KB wire chunk the 4-byte
+        // length prefix is written into the space before the chunk data.
+        // The combined write (4 + 32768 = 32772 bytes) exceeds MultiplexWriter's
+        // 32KB buffer threshold, triggering direct-send to the socket layer
+        // and bypassing one memcpy. Upstream reference: match.c send_token().
+        buf.resize(4 + read_size, 0);
+        while remaining > 0 {
+            let to_read = (buf.len() - 4).min(remaining as usize);
+            source.read_exact(&mut buf[4..4 + to_read])?;
+            if let Some(ref mut v) = verifier {
+                v.update(&buf[4..4 + to_read]);
+            }
+            // Write wire chunks with combined [length_prefix + data].
+            // For offset 0, the prefix uses the reserved buf[0..4].
+            // For subsequent offsets, the prefix overwrites already-sent bytes.
+            let mut wire_off = 0;
+            while wire_off < to_read {
+                let chunk = (to_read - wire_off).min(CHUNK_SIZE);
+                buf[wire_off..wire_off + 4].copy_from_slice(&(chunk as i32).to_le_bytes());
+                writer.write_all(&buf[wire_off..wire_off + 4 + chunk])?;
+                wire_off += chunk;
+            }
+            total_bytes += to_read as u64;
+            remaining -= to_read as u64;
+        }
+        write_token_end(writer)?;
     }
 
-    Ok(DeltaScript::new(tokens, total_bytes, total_bytes))
+    let checksum = match verifier {
+        Some(v) => v.finalize(),
+        None => vec![0u8],
+    };
+
+    Ok(StreamResult {
+        total_bytes,
+        checksum,
+    })
 }
 
 /// Computes the file transfer checksum from delta script data.
@@ -2177,7 +2235,8 @@ mod tests {
     }
 
     #[test]
-    fn generate_whole_file_delta_reads_entire_file() {
+    fn stream_whole_file_produces_correct_wire_format() {
+        use protocol::wire::write_whole_file_delta;
         use std::io::Write;
         use tempfile::NamedTempFile;
 
@@ -2186,105 +2245,160 @@ mod tests {
         temp_file.write_all(data).unwrap();
         temp_file.flush().unwrap();
 
-        let file = fs::File::open(temp_file.path()).unwrap();
-        let script = generate_whole_file_delta(file).unwrap();
+        let source = fs::File::open(temp_file.path()).unwrap();
+        let mut wire_output = Vec::new();
+        let mut buf = vec![0u8; protocol::wire::CHUNK_SIZE];
+        let result = stream_whole_file_transfer(
+            &mut wire_output,
+            source,
+            data.len() as u64,
+            ChecksumAlgorithm::MD5,
+            None,
+            &mut buf,
+        )
+        .unwrap();
 
-        assert_eq!(script.tokens().len(), 1);
-        assert_eq!(script.total_bytes(), data.len() as u64);
-        assert_eq!(script.literal_bytes(), data.len() as u64);
+        assert_eq!(result.total_bytes, data.len() as u64);
+        assert!(!result.checksum.is_empty());
 
-        match &script.tokens()[0] {
-            DeltaToken::Literal(content) => assert_eq!(content, &data.to_vec()),
-            _ => panic!("expected literal token"),
-        }
+        // Compare wire output byte-for-byte with write_whole_file_delta
+        let mut expected = Vec::new();
+        write_whole_file_delta(&mut expected, data).unwrap();
+        assert_eq!(wire_output, expected);
     }
 
     #[test]
-    fn generate_whole_file_delta_handles_empty_file() {
+    fn stream_whole_file_handles_empty_file() {
         use tempfile::NamedTempFile;
 
         let temp_file = NamedTempFile::new().unwrap();
+        let source = fs::File::open(temp_file.path()).unwrap();
+        let mut wire_output = Vec::new();
+        let mut buf = vec![0u8; protocol::wire::CHUNK_SIZE];
+        let result = stream_whole_file_transfer(
+            &mut wire_output,
+            source,
+            0,
+            ChecksumAlgorithm::MD5,
+            None,
+            &mut buf,
+        )
+        .unwrap();
 
-        let file = fs::File::open(temp_file.path()).unwrap();
-        let script = generate_whole_file_delta(file).unwrap();
-
-        // Empty file still produces one token (empty literal) via the small file path
-        assert_eq!(script.tokens().len(), 1);
-        assert_eq!(script.total_bytes(), 0);
-        assert_eq!(script.literal_bytes(), 0);
-
-        match &script.tokens()[0] {
-            DeltaToken::Literal(content) => assert!(content.is_empty()),
-            _ => panic!("expected literal token"),
-        }
+        assert_eq!(result.total_bytes, 0);
+        // Wire output should only contain the end marker: write_int(0) = 4 zero bytes
+        assert_eq!(wire_output, [0u8; 4]);
     }
 
     #[test]
-    fn generate_whole_file_delta_warning_threshold_exists() {
-        // Test that the warning threshold constant exists and is reasonable (8GB)
-        assert_eq!(LARGE_FILE_WARNING_THRESHOLD, 8 * 1024 * 1024 * 1024);
-    }
-
-    #[test]
-    fn generate_whole_file_delta_accepts_large_file() {
+    fn stream_whole_file_computes_correct_checksum() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        // Test with a 1KB file to verify the logic works
         let data = vec![0xAB; 1024];
         let mut temp_file = NamedTempFile::new().unwrap();
         temp_file.write_all(&data).unwrap();
         temp_file.flush().unwrap();
 
-        let file = fs::File::open(temp_file.path()).unwrap();
-        let script = generate_whole_file_delta(file).unwrap();
+        let source = fs::File::open(temp_file.path()).unwrap();
+        let mut wire_output = Vec::new();
+        let mut buf = vec![0u8; protocol::wire::CHUNK_SIZE];
+        let result = stream_whole_file_transfer(
+            &mut wire_output,
+            source,
+            data.len() as u64,
+            ChecksumAlgorithm::MD5,
+            None,
+            &mut buf,
+        )
+        .unwrap();
 
-        assert_eq!(script.tokens().len(), 1);
-        assert_eq!(script.total_bytes(), 1024);
-        assert_eq!(script.literal_bytes(), 1024);
+        // Independently compute expected checksum
+        let mut verifier = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
+        verifier.update(&data);
+        let expected_checksum = verifier.finalize();
 
-        match &script.tokens()[0] {
-            DeltaToken::Literal(content) => {
-                assert_eq!(content.len(), 1024);
-                assert!(content.iter().all(|&b| b == 0xAB));
-            }
-            _ => panic!("expected literal token"),
-        }
+        assert_eq!(result.checksum, expected_checksum);
+        assert_eq!(result.total_bytes, 1024);
     }
 
     #[test]
-    fn generate_whole_file_delta_chunks_medium_file() {
+    fn stream_whole_file_reuses_buffer() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        // Test with a file larger than SMALL_FILE_THRESHOLD (64 MB)
-        // Use 65 MB to trigger chunking behavior
-        const SIZE: usize = 65 * 1024 * 1024;
-        let data = vec![0xCD; SIZE];
+        let mut buf = vec![0u8; protocol::wire::CHUNK_SIZE];
+        let initial_capacity = buf.capacity();
 
+        // Stream first file
+        let data1 = vec![0x11; 512];
+        let mut temp1 = NamedTempFile::new().unwrap();
+        temp1.write_all(&data1).unwrap();
+        temp1.flush().unwrap();
+        let source1 = fs::File::open(temp1.path()).unwrap();
+        let mut out1 = Vec::new();
+        stream_whole_file_transfer(
+            &mut out1,
+            source1,
+            512,
+            ChecksumAlgorithm::None,
+            None,
+            &mut buf,
+        )
+        .unwrap();
+
+        // Stream second file with same buffer
+        let data2 = vec![0x22; 2048];
+        let mut temp2 = NamedTempFile::new().unwrap();
+        temp2.write_all(&data2).unwrap();
+        temp2.flush().unwrap();
+        let source2 = fs::File::open(temp2.path()).unwrap();
+        let mut out2 = Vec::new();
+        stream_whole_file_transfer(
+            &mut out2,
+            source2,
+            2048,
+            ChecksumAlgorithm::None,
+            None,
+            &mut buf,
+        )
+        .unwrap();
+
+        // Buffer capacity should not have grown beyond initial CHUNK_SIZE
+        assert_eq!(buf.capacity(), initial_capacity);
+    }
+
+    #[test]
+    fn stream_whole_file_none_checksum() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let data = vec![0xFF; 256];
         let mut temp_file = NamedTempFile::new().unwrap();
         temp_file.write_all(&data).unwrap();
         temp_file.flush().unwrap();
 
-        let file = fs::File::open(temp_file.path()).unwrap();
-        let script = generate_whole_file_delta(file).unwrap();
+        let source = fs::File::open(temp_file.path()).unwrap();
+        let mut wire_output = Vec::new();
+        let mut buf = vec![0u8; protocol::wire::CHUNK_SIZE];
+        let result = stream_whole_file_transfer(
+            &mut wire_output,
+            source,
+            data.len() as u64,
+            ChecksumAlgorithm::None,
+            None,
+            &mut buf,
+        )
+        .unwrap();
 
-        // Should be chunked into multiple tokens (16 MB chunks)
-        // 65 MB / 16 MB = 4.0625, so 5 tokens
-        assert!(script.tokens().len() > 1);
-        assert_eq!(script.total_bytes(), SIZE as u64);
-        assert_eq!(script.literal_bytes(), SIZE as u64);
+        // None algorithm produces a 1-byte placeholder
+        assert_eq!(result.checksum, vec![0u8]);
+        assert_eq!(result.total_bytes, 256);
+    }
 
-        // Verify all tokens are literals with correct total content
-        let mut total_content: Vec<u8> = Vec::new();
-        for token in script.tokens() {
-            match token {
-                DeltaToken::Literal(content) => total_content.extend(content),
-                _ => panic!("expected literal token"),
-            }
-        }
-        assert_eq!(total_content.len(), SIZE);
-        assert!(total_content.iter().all(|&b| b == 0xCDu8));
+    #[test]
+    fn stream_whole_file_warning_threshold_exists() {
+        assert_eq!(LARGE_FILE_WARNING_THRESHOLD, 8 * 1024 * 1024 * 1024);
     }
 
     // ========================================================================
