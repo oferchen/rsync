@@ -80,7 +80,7 @@
 //! | >= 36    | Zstd              |
 
 use crate::algorithm::CompressionAlgorithm;
-use crate::zlib::{self, CompressionLevel, CountingZlibEncoder};
+use crate::zlib::{CompressionLevel, CountingZlibEncoder};
 use std::fmt;
 use std::io::{self, Write};
 
@@ -329,10 +329,10 @@ impl CompressionStrategy for ZlibStrategy {
     }
 
     fn decompress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
-        let decompressed = zlib::decompress_to_vec(input)?;
-        let len = decompressed.len();
-        output.extend_from_slice(&decompressed);
-        Ok(len)
+        let initial_len = output.len();
+        let mut decoder = flate2::read::DeflateDecoder::new(input);
+        io::copy(&mut decoder, output)?;
+        Ok(output.len() - initial_len)
     }
 
     fn algorithm_kind(&self) -> CompressionAlgorithmKind {
@@ -385,10 +385,7 @@ impl CompressionStrategy for ZstdStrategy {
     }
 
     fn decompress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
-        let decompressed = zstd::decompress_to_vec(input)?;
-        let len = decompressed.len();
-        output.extend_from_slice(&decompressed);
-        Ok(len)
+        zstd::decompress_into(input, output)
     }
 
     fn algorithm_kind(&self) -> CompressionAlgorithmKind {
@@ -441,10 +438,7 @@ impl CompressionStrategy for Lz4Strategy {
     }
 
     fn decompress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
-        let decompressed = frame::decompress_to_vec(input)?;
-        let len = decompressed.len();
-        output.extend_from_slice(&decompressed);
-        Ok(len)
+        frame::decompress_into(input, output)
     }
 
     fn algorithm_kind(&self) -> CompressionAlgorithmKind {
