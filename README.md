@@ -12,13 +12,13 @@ Binary name: **`oc-rsync`** — installs alongside system `rsync` without confli
 
 ## Status
 
-**Release:** 0.5.6 (beta)
+**Release:** 0.5.7 (beta)
 
 Core transfer, delta algorithm, daemon mode, and SSH transport are complete. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
 ### Performance
 
-v0.5.6 vs upstream rsync 3.4.1 — push-to-daemon over TCP loopback on Linux aarch64:
+v0.5.7 vs upstream rsync 3.4.1 — push-to-daemon over TCP loopback on Linux aarch64:
 
 | Workload | oc-rsync | upstream | Speedup |
 |----------|----------|----------|---------|
