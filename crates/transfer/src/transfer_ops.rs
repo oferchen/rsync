@@ -39,7 +39,7 @@ use engine::signature::FileSignature;
 use protocol::ProtocolVersion;
 use protocol::codec::NdxCodec;
 
-use crate::adaptive_buffer::{adaptive_token_capacity, adaptive_writer_capacity};
+use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
 use crate::pipeline::PendingTransfer;
@@ -162,12 +162,18 @@ pub struct ResponseContext<'a> {
 /// Reads echoed attributes, delta tokens, and applies them to create the file.
 /// Returns the number of bytes received for this file.
 ///
+/// The caller provides reusable `checksum_verifier` and `token_buffer` to avoid
+/// per-file allocation overhead. The verifier is reset internally via
+/// `mem::replace` before checksum finalization.
+///
 /// # Arguments
 ///
 /// * `reader` - Input stream from sender
 /// * `ndx_codec` - NDX decoder (maintains delta decoding state)
 /// * `pending` - The pending transfer to process
 /// * `ctx` - Response processing context
+/// * `checksum_verifier` - Reusable checksum verifier (reset per call)
+/// * `token_buffer` - Reusable token buffer for cross-frame literal tokens
 ///
 /// # Returns
 ///
@@ -177,11 +183,14 @@ pub struct ResponseContext<'a> {
 ///
 /// - `receiver.c:recv_files()` reads deltas
 /// - `receiver.c:receive_data()` applies delta tokens
+#[allow(clippy::too_many_arguments)]
 pub fn process_file_response<R: Read>(
     reader: &mut ServerReader<R>,
     ndx_codec: &mut impl NdxCodec,
     pending: PendingTransfer,
     ctx: &ResponseContext<'_>,
+    checksum_verifier: &mut ChecksumVerifier,
+    token_buffer: &mut TokenBuffer,
 ) -> io::Result<u64> {
     let expected_ndx = pending.ndx();
 
@@ -255,14 +264,6 @@ pub fn process_file_response<R: Read>(
         None
     };
 
-    // Create checksum verifier
-    let mut checksum_verifier = ChecksumVerifier::new(
-        ctx.config.negotiated_algorithms,
-        ctx.config.protocol,
-        ctx.config.checksum_seed,
-        ctx.config.compat_flags,
-    );
-
     // Open basis file if delta transfer
     let mut basis_map = if let Some(ref path) = basis_path {
         Some(MapFile::open(path).map_err(|e| {
@@ -272,10 +273,6 @@ pub fn process_file_response<R: Read>(
         None
     };
 
-    // Use adaptive token buffer capacity based on file size
-    let token_capacity = adaptive_token_capacity(target_size);
-    let mut token_buffer = TokenBuffer::with_capacity(token_capacity);
-
     // Read and apply delta tokens
     loop {
         let mut token_buf = [0u8; 4];
@@ -283,14 +280,18 @@ pub fn process_file_response<R: Read>(
         let token = i32::from_le_bytes(token_buf);
 
         if token == 0 {
-            // End of file - verify checksum using stack buffers.
-            // Mirrors upstream sum_end(char *sum) which writes into caller-provided buffer.
+            // End of file — verify checksum using stack buffers.
+            // Use mem::replace to consume the verifier for finalization while
+            // resetting it for the next file (avoids per-file construction).
             let checksum_len = checksum_verifier.digest_len();
             let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
             reader.read_exact(&mut expected[..checksum_len])?;
 
+            let algo = checksum_verifier.algorithm();
+            let old_verifier =
+                std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
             let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-            let computed_len = checksum_verifier.finalize_into(&mut computed);
+            let computed_len = old_verifier.finalize_into(&mut computed);
             if computed_len != checksum_len {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
