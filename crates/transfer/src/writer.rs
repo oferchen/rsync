@@ -9,7 +9,7 @@ use std::io::{self, IoSlice, Write};
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
-use protocol::MessageCode;
+use protocol::{MessageCode, MessageHeader};
 
 use super::compressed_writer::CompressedWriter;
 
@@ -258,9 +258,13 @@ pub(super) struct MultiplexWriter<W> {
 
 impl<W: Write> MultiplexWriter<W> {
     fn new(inner: W) -> Self {
-        // Match upstream rsync's IO_BUFFER_SIZE (32KB) from rsync.h
-        // Larger buffer reduces multiplex frame overhead for bulk transfers
-        const DEFAULT_BUFFER_SIZE: usize = 32 * 1024;
+        // 64KB buffer — serves as the sole buffering layer (no outer BufWriter).
+        // This matches upstream rsync's iobuf_out pattern where a single buffer
+        // accumulates data before flushing to the socket. Upstream uses
+        // IO_BUFFER_SIZE (32KB) in rsync.h, but we use 64KB to compensate for
+        // the MSG_DATA frame headers (4 bytes per frame) and to batch ~2 wire
+        // chunks per flush for better syscall efficiency.
+        const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
         Self {
             inner,
             buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
@@ -315,8 +319,10 @@ impl<W: Write> Write for MultiplexWriter<W> {
             self.flush_buffer()?;
         }
 
-        // If buf is larger than buffer size, send directly
-        if buf.len() > self.buffer_size {
+        // If buf fills or exceeds the buffer, send directly as a MSG_DATA frame.
+        // This bypasses one copy (into the internal buffer) for bulk data,
+        // matching upstream rsync's behavior of flushing iobuf_out when full.
+        if buf.len() >= self.buffer_size {
             let code = MessageCode::Data;
             protocol::send_msg(&mut self.inner, code, buf)?;
             return Ok(buf.len());
@@ -329,11 +335,12 @@ impl<W: Write> Write for MultiplexWriter<W> {
 
     /// Writes multiple buffers using vectored I/O to reduce syscall overhead.
     ///
-    /// This method batches multiple small writes into the internal buffer,
-    /// reducing the number of MSG_DATA frames sent. When the total data
-    /// exceeds the buffer size, it flushes efficiently.
+    /// Small writes are batched into the internal buffer. When the total data
+    /// exceeds the buffer size, a MSG_DATA frame is written directly to the
+    /// inner writer without an intermediate allocation — the header is written
+    /// first, then each slice sequentially. This mirrors upstream rsync's
+    /// `writefd_unbuffered()` pattern in io.c.
     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
-        // Calculate total length of all buffers
         let total_len: usize = bufs.iter().map(|b| b.len()).sum();
 
         if total_len == 0 {
@@ -348,34 +355,24 @@ impl<W: Write> Write for MultiplexWriter<W> {
             return Ok(total_len);
         }
 
-        // If total data is larger than buffer size and buffer is empty,
-        // we can potentially send a large chunk directly
-        if self.buffer.is_empty() && total_len > self.buffer_size {
-            // For very large vectored writes, concatenate and send directly
-            // This avoids multiple MSG_DATA frames for a single logical write
-            let mut combined = Vec::with_capacity(total_len);
-            for buf in bufs {
-                combined.extend_from_slice(buf);
-            }
-            protocol::send_msg(&mut self.inner, MessageCode::Data, &combined)?;
-            return Ok(total_len);
-        }
-
-        // General case: flush current buffer, then handle the new data
+        // Flush existing buffer to maintain ordering
         self.flush_buffer()?;
 
-        // Now buffer is empty - check if we should send directly or buffer
-        if total_len > self.buffer_size {
-            // Large write: concatenate and send directly
-            let mut combined = Vec::with_capacity(total_len);
-            for buf in bufs {
-                combined.extend_from_slice(buf);
-            }
-            protocol::send_msg(&mut self.inner, MessageCode::Data, &combined)?;
-        } else {
-            // Fits in buffer: copy all slices to buffer
+        if total_len <= self.buffer_size {
+            // Fits in the now-empty buffer
             for buf in bufs {
                 self.buffer.extend_from_slice(buf);
+            }
+        } else {
+            // Large vectored write: send MSG_DATA frame directly to inner writer.
+            // Writes header + each slice sequentially, avoiding the intermediate
+            // Vec allocation that the previous implementation used.
+            let header = MessageHeader::new(MessageCode::Data, total_len as u32)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+            let header_bytes = header.encode();
+            self.inner.write_all(&header_bytes)?;
+            for buf in bufs {
+                self.inner.write_all(buf)?;
             }
         }
 
