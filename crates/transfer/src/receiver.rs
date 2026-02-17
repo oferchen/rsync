@@ -51,7 +51,7 @@ use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 #[cfg(unix)]
 use metadata::id_lookup::{lookup_group_by_name, lookup_user_by_name};
 
-use super::adaptive_buffer::{adaptive_token_capacity, adaptive_writer_capacity};
+use super::adaptive_buffer::adaptive_writer_capacity;
 use super::delta_apply::{ChecksumVerifier, SparseWriteState};
 use super::map_file::MapFile;
 use super::token_buffer::TokenBuffer;
@@ -724,6 +724,15 @@ impl ReceiverContext {
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
+        // Reusable per-file resources — created once, reset between files
+        let mut checksum_verifier = ChecksumVerifier::new(
+            self.negotiated_algorithms.as_ref(),
+            self.protocol,
+            self.checksum_seed,
+            self.compat_flags.as_ref(),
+        );
+        let mut token_buffer = TokenBuffer::with_default_capacity();
+
         for (file_idx, file_entry) in self.file_list.iter().enumerate() {
             let relative_path = file_entry.path();
 
@@ -735,11 +744,7 @@ impl ReceiverContext {
             };
 
             // Skip non-regular files (directories, symlinks, devices, etc.)
-            // Only regular files are transferred via delta transfer protocol.
-            // Symlinks have their targets stored in the file list entry itself.
-            // Devices/specials just need metadata, not content transfer.
             if !file_entry.is_file() {
-                // Output directory name with trailing slash in verbose mode
                 if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
                     if relative_path.as_os_str() == "." {
                         eprintln!("./");
@@ -756,22 +761,17 @@ impl ReceiverContext {
             }
 
             // Send file index using NDX encoding via NdxCodec Strategy pattern.
-            // The codec handles protocol-version-aware encoding automatically.
             let ndx = file_idx as i32;
             ndx_write_codec.write_ndx(&mut *writer, ndx)?;
 
             // For protocol >= 29, sender expects iflags after NDX
             // ITEM_TRANSFER (0x8000) tells sender to read sum_head and send delta
-            // See upstream read_ndx_and_attrs() in rsync.c:383
             if self.protocol.as_u8() >= 29 {
                 const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
                 writer.write_all(&ITEM_TRANSFER.to_le_bytes())?;
             }
-            // Note: No flush here - we batch NDX+iflags with sum_head+signature
-            // and flush once after sending the complete request.
 
-            // Step 1 & 2: Generate signature if basis file exists
-            // Uses find_basis_file_with_config() to encapsulate exact match, reference directories, and fuzzy logic.
+            // Generate signature if basis file exists
             let basis_config = BasisFileConfig {
                 file_path: &file_path,
                 dest_dir: &dest_dir,
@@ -787,27 +787,22 @@ impl ReceiverContext {
             let signature_opt = basis_result.signature;
             let basis_path_opt = basis_result.basis_path;
 
-            // Step 3: Send sum_head (signature header) using SumHead struct
-            // Upstream write_sum_head() sends: count, blength, s2length, remainder
+            // Send sum_head (signature header) — upstream write_sum_head()
             let sum_head = match signature_opt {
                 Some(ref signature) => SumHead::from_signature(signature),
                 None => SumHead::empty(),
             };
             sum_head.write(&mut *writer)?;
 
-            // Write signature blocks if we have a basis file
             if let Some(ref signature) = signature_opt {
                 write_signature_blocks(&mut *writer, signature, sum_head.s2length)?;
             }
             writer.flush()?;
 
-            // Step 4: Read sender attributes using SenderAttrs helper
-            // The sender echoes back: ndx, iflags, and optional fields.
-            // Uses NdxCodec to properly decode variable-length NDX for protocol 30+.
+            // Read sender attributes (echoed NDX + iflags)
             let (echoed_ndx, _sender_attrs) =
                 SenderAttrs::read_with_codec(reader, &mut ndx_read_codec)?;
 
-            // Verify the sender echoed back the correct file index
             debug_assert_eq!(
                 echoed_ndx, ndx,
                 "sender echoed NDX {echoed_ndx} but we requested {ndx}"
@@ -816,21 +811,15 @@ impl ReceiverContext {
             // Read sum_head echoed by sender (we don't use it, but must consume it)
             let _echoed_sum_head = SumHead::read(reader)?;
 
-            // Step 5: Apply delta to reconstruct file
+            // Apply delta to reconstruct file
             let temp_path = file_path.with_extension("oc-rsync.tmp");
             let mut temp_guard = TempFileGuard::new(temp_path.clone());
-            // Use BufWriter with adaptive capacity based on file size:
-            // - Small files (< 64KB): 4KB buffer to avoid wasted memory
-            // - Medium files (64KB - 1MB): 64KB buffer for balanced performance
-            // - Large files (> 1MB): 256KB buffer to maximize throughput
             let target_size = file_entry.size();
             let file = fs::File::create(&temp_path)?;
             let writer_capacity = adaptive_writer_capacity(target_size);
             let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
             let mut total_bytes: u64 = 0;
 
-            // Sparse file support: track zero runs to create holes
-            // Mirrors upstream rsync's write_sparse() in fileio.c
             let use_sparse = self.config.flags.sparse;
             let mut sparse_state = if use_sparse {
                 Some(SparseWriteState::default())
@@ -838,21 +827,7 @@ impl ReceiverContext {
                 None
             };
 
-            // Create checksum verifier for integrity verification
-            // Mirrors upstream rsync's file checksum calculation during delta application
-            let mut checksum_verifier = ChecksumVerifier::new(
-                self.negotiated_algorithms.as_ref(),
-                self.protocol,
-                self.checksum_seed,
-                self.compat_flags.as_ref(),
-            );
-
-            // Performance optimizations:
-            // 1. MapFile: Cache basis file with 256KB sliding window to avoid
-            //    repeated open/seek/read syscalls for each block reference.
-            //    For a typical 16MB file with 700-byte blocks, this prevents ~23,000 syscalls.
-            // 2. TokenBuffer: Adaptive initial capacity based on file size to
-            //    avoid both memory waste and unnecessary reallocation.
+            // MapFile: Cache basis file with 256KB sliding window
             let mut basis_map = if let Some(ref path) = basis_path_opt {
                 Some(MapFile::open(path).map_err(|e| {
                     io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
@@ -860,8 +835,6 @@ impl ReceiverContext {
             } else {
                 None
             };
-            let token_capacity = adaptive_token_capacity(target_size);
-            let mut token_buffer = TokenBuffer::with_capacity(token_capacity);
 
             // Read tokens in a loop
             loop {
@@ -870,20 +843,19 @@ impl ReceiverContext {
                 let token = i32::from_le_bytes(token_buf);
 
                 if token == 0 {
-                    // End of file delta tokens
-                    // Read file checksum from sender - upstream receiver.c:408
-                    // The sender sends xfer_sum_len bytes after all delta tokens.
-                    // Use digest_len() from ChecksumVerifier to get the correct length.
-                    // Read expected checksum into stack buffer — mirrors upstream
-                    // sum_end(char *sum) which writes into caller-provided buffer.
+                    // End of file — verify checksum using stack buffers.
+                    // Use mem::replace to reset the verifier for the next file.
                     let checksum_len = checksum_verifier.digest_len();
-                    let mut file_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-                    reader.read_exact(&mut file_checksum[..checksum_len])?;
+                    let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                    reader.read_exact(&mut expected_buf[..checksum_len])?;
 
-                    // Verify checksum matches computed hash
-                    // Upstream receiver.c:440-457 - verification after delta application
+                    let algo = checksum_verifier.algorithm();
+                    let old_verifier = std::mem::replace(
+                        &mut checksum_verifier,
+                        ChecksumVerifier::for_algorithm(algo),
+                    );
                     let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-                    let computed_len = checksum_verifier.finalize_into(&mut computed);
+                    let computed_len = old_verifier.finalize_into(&mut computed);
                     if computed_len != checksum_len {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -892,32 +864,40 @@ impl ReceiverContext {
                             ),
                         ));
                     }
-                    if computed[..computed_len] != file_checksum[..checksum_len] {
+                    if computed[..computed_len] != expected_buf[..checksum_len] {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!(
                                 "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
-                                &file_checksum[..checksum_len],
+                                &expected_buf[..checksum_len],
                                 &computed[..computed_len]
                             ),
                         ));
                     }
                     break;
                 } else if token > 0 {
-                    // Literal data: token bytes follow
-                    // Reuse TokenBuffer to avoid per-token allocation
+                    // Literal data — try zero-copy from multiplex frame buffer,
+                    // falling back to TokenBuffer when data spans frame boundaries.
                     let len = token as usize;
-                    token_buffer.resize_for(len);
-                    reader.read_exact(token_buffer.as_mut_slice())?;
-                    let data = token_buffer.as_slice();
-                    // Use sparse writing if enabled
-                    if let Some(ref mut sparse) = sparse_state {
-                        sparse.write(&mut output, data)?;
+
+                    if let Some(data) = reader.try_borrow_exact(len)? {
+                        if let Some(ref mut sparse) = sparse_state {
+                            sparse.write(&mut output, data)?;
+                        } else {
+                            output.write_all(data)?;
+                        }
+                        checksum_verifier.update(data);
                     } else {
-                        output.write_all(data)?;
+                        token_buffer.resize_for(len);
+                        reader.read_exact(token_buffer.as_mut_slice())?;
+                        let data = token_buffer.as_slice();
+                        if let Some(ref mut sparse) = sparse_state {
+                            sparse.write(&mut output, data)?;
+                        } else {
+                            output.write_all(data)?;
+                        }
+                        checksum_verifier.update(data);
                     }
-                    // Update checksum with literal data
-                    checksum_verifier.update(data);
                     total_bytes += len as u64;
                 } else {
                     // Negative: block reference = -(token+1)
@@ -1289,7 +1269,7 @@ impl ReceiverContext {
     /// Returns `(files_transferred, bytes_received)`.
     fn run_pipeline_loop<R: Read, W: Write + ?Sized>(
         &self,
-        reader: &mut R,
+        reader: &mut super::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
         setup: &PipelineSetup,
@@ -1318,6 +1298,15 @@ impl ReceiverContext {
             Vec::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
+
+        // Reusable per-file resources — created once, reset between files
+        let mut checksum_verifier = ChecksumVerifier::new(
+            self.negotiated_algorithms.as_ref(),
+            self.protocol,
+            self.checksum_seed,
+            self.compat_flags.as_ref(),
+        );
+        let mut token_buffer = TokenBuffer::with_default_capacity();
 
         loop {
             // Fill the pipeline with requests
@@ -1377,8 +1366,14 @@ impl ReceiverContext {
                 config: &request_config,
             };
 
-            let total_bytes =
-                process_file_response(reader, &mut ndx_read_codec, pending, &response_ctx)?;
+            let total_bytes = process_file_response(
+                reader,
+                &mut ndx_read_codec,
+                pending,
+                &response_ctx,
+                &mut checksum_verifier,
+                &mut token_buffer,
+            )?;
 
             if let Err(meta_err) =
                 apply_metadata_from_file_entry(&file_path, file_entry, &setup.metadata_opts)
