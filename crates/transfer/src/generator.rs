@@ -681,7 +681,7 @@ impl GeneratorContext {
                     compression,
                     &mut stream_buf,
                 )?;
-                writer.write_all(&result.checksum)?;
+                writer.write_all(&result.checksum_buf[..result.checksum_len])?;
                 bytes_sent += result.total_bytes;
             }
             files_transferred += 1;
@@ -771,8 +771,16 @@ impl GeneratorContext {
         info_log!(Flist, 1, "building file list...");
         self.clear_file_list();
 
+        // Pre-allocate capacity to reduce reallocations during recursive walk.
+        // Upstream rsync pre-allocates FLIST_START_LARGE = 32768 pointer slots
+        // (flist.c:2192). clear() retains existing capacity, so this only
+        // allocates on the first call.
+        const FLIST_START: usize = 4096;
+        self.file_list.reserve(FLIST_START);
+        self.full_paths.reserve(FLIST_START);
+
         for base_path in base_paths {
-            self.walk_path(base_path, base_path)?;
+            self.walk_path(base_path, base_path.clone())?;
         }
 
         // Sort file list using rsync's ordering (upstream flist.c:f_name_cmp).
@@ -817,8 +825,8 @@ impl GeneratorContext {
     /// to create the destination directory and properly set its attributes.
     ///
     /// See flist.c:send_file_list() which adds "." for the top-level directory.
-    fn walk_path(&mut self, base: &Path, path: &Path) -> io::Result<()> {
-        let metadata = match std::fs::symlink_metadata(path) {
+    fn walk_path(&mut self, base: &Path, path: PathBuf) -> io::Result<()> {
+        let metadata = match std::fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(e) => {
                 // Record error and continue (upstream rsync behavior)
@@ -828,18 +836,18 @@ impl GeneratorContext {
         };
 
         // Calculate relative path
-        let relative = path.strip_prefix(base).unwrap_or(path).to_path_buf();
+        let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
         // For the base directory, skip the "." entry and just walk children
         // Some clients may not expect/handle the "." entry correctly
         if relative.as_os_str().is_empty() && metadata.is_dir() {
             // Walk children of the base directory (no "." entry)
-            match std::fs::read_dir(path) {
+            match std::fs::read_dir(&path) {
                 Ok(entries) => {
                     for entry in entries {
                         match entry {
                             Ok(entry) => {
-                                self.walk_path(base, &entry.path())?;
+                                self.walk_path(base, entry.path())?;
                             }
                             Err(e) => {
                                 // Entry vanished or unreadable during iteration
@@ -864,8 +872,8 @@ impl GeneratorContext {
             }
         }
 
-        // Create file entry based on type
-        let entry = match self.create_entry(path, &relative, &metadata) {
+        // Create file entry based on type (moves relative — no clone)
+        let entry = match self.create_entry(&path, relative, &metadata) {
             Ok(e) => e,
             Err(_) => {
                 // Failed to create entry (e.g., symlink target unreadable)
@@ -873,25 +881,34 @@ impl GeneratorContext {
                 return Ok(());
             }
         };
-        self.push_file_item(entry, path.to_path_buf());
 
-        // Recurse into directories if recursive mode is enabled
-        if metadata.is_dir() && self.config.flags.recursive {
-            match std::fs::read_dir(path) {
-                Ok(entries) => {
-                    for dir_entry in entries {
-                        match dir_entry {
-                            Ok(dir_entry) => {
-                                self.walk_path(base, &dir_entry.path())?;
-                            }
-                            Err(e) => {
-                                self.record_io_error(&e);
-                            }
-                        }
-                    }
-                }
+        // Read directory entries BEFORE moving path into push_file_item.
+        // Upstream rsync: flist.c send_file_list() similarly scans then records.
+        let should_recurse = metadata.is_dir() && self.config.flags.recursive;
+        let dir_entries = if should_recurse {
+            match std::fs::read_dir(&path) {
+                Ok(entries) => Some(entries),
                 Err(e) => {
                     self.record_io_error(&e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        self.push_file_item(entry, path); // Move, no clone
+
+        // Recurse into directories if recursive mode is enabled
+        if let Some(entries) = dir_entries {
+            for dir_entry in entries {
+                match dir_entry {
+                    Ok(de) => {
+                        self.walk_path(base, de.path())?;
+                    }
+                    Err(e) => {
+                        self.record_io_error(&e);
+                    }
                 }
             }
         }
@@ -906,7 +923,7 @@ impl GeneratorContext {
     fn create_entry(
         &self,
         full_path: &Path,
-        relative_path: &Path,
+        relative_path: PathBuf,
         metadata: &std::fs::Metadata,
     ) -> io::Result<FileEntry> {
         #[cfg(unix)]
@@ -924,21 +941,21 @@ impl GeneratorContext {
                 0o644
             };
 
-            FileEntry::new_file(relative_path.to_path_buf(), metadata.len(), mode)
+            FileEntry::new_file(relative_path, metadata.len(), mode)
         } else if file_type.is_dir() {
             #[cfg(unix)]
             let mode = metadata.mode() & 0o7777;
             #[cfg(not(unix))]
             let mode = 0o755;
 
-            FileEntry::new_directory(relative_path.to_path_buf(), mode)
+            FileEntry::new_directory(relative_path, mode)
         } else if file_type.is_symlink() {
             let target = std::fs::read_link(full_path).unwrap_or_else(|_| PathBuf::from(""));
 
-            FileEntry::new_symlink(relative_path.to_path_buf(), target)
+            FileEntry::new_symlink(relative_path, target)
         } else {
             // Other file types (devices, etc.)
-            FileEntry::new_file(relative_path.to_path_buf(), 0, 0o644)
+            FileEntry::new_file(relative_path, 0, 0o644)
         };
 
         // Set modification time
@@ -1504,7 +1521,8 @@ const LARGE_FILE_WARNING_THRESHOLD: u64 = 8 * 1024 * 1024 * 1024; // 8 GB
 /// Result of streaming a whole file to the wire.
 struct StreamResult {
     total_bytes: u64,
-    checksum: Vec<u8>,
+    checksum_buf: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+    checksum_len: usize,
 }
 
 /// Streams a whole file to the wire in a single pass: read → hash → write.
@@ -1607,14 +1625,16 @@ fn stream_whole_file_transfer<W: Write>(
         write_token_end(writer)?;
     }
 
-    let checksum = match verifier {
-        Some(v) => v.finalize(),
-        None => vec![0u8],
+    let mut checksum_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let checksum_len = match verifier {
+        Some(v) => v.finalize_into(&mut checksum_buf),
+        None => 1, // 1-byte zero placeholder for None algorithm
     };
 
     Ok(StreamResult {
         total_bytes,
-        checksum,
+        checksum_buf,
+        checksum_len,
     })
 }
 
@@ -2259,7 +2279,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.total_bytes, data.len() as u64);
-        assert!(!result.checksum.is_empty());
+        assert!(result.checksum_len > 0);
 
         // Compare wire output byte-for-byte with write_whole_file_delta
         let mut expected = Vec::new();
@@ -2318,7 +2338,10 @@ mod tests {
         verifier.update(&data);
         let expected_checksum = verifier.finalize();
 
-        assert_eq!(result.checksum, expected_checksum);
+        assert_eq!(
+            &result.checksum_buf[..result.checksum_len],
+            expected_checksum.as_slice()
+        );
         assert_eq!(result.total_bytes, 1024);
     }
 
@@ -2391,8 +2414,9 @@ mod tests {
         )
         .unwrap();
 
-        // None algorithm produces a 1-byte placeholder
-        assert_eq!(result.checksum, vec![0u8]);
+        // None algorithm produces a 1-byte zero placeholder
+        assert_eq!(result.checksum_len, 1);
+        assert_eq!(result.checksum_buf[0], 0);
         assert_eq!(result.total_bytes, 256);
     }
 

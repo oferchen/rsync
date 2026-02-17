@@ -1017,6 +1017,10 @@ impl FileListWriter {
             return Ok(());
         }
 
+        // Max checksum length: SHA1 = 20 bytes. Stack array avoids per-entry heap allocation.
+        const MAX_CSUM_LEN: usize = 20;
+        let zeros = [0u8; MAX_CSUM_LEN];
+
         if is_regular {
             // Write actual checksum from entry, or zeros if not set
             if let Some(sum) = entry.checksum() {
@@ -1024,18 +1028,15 @@ impl FileListWriter {
                 writer.write_all(&sum[..len])?;
                 // Pad with zeros if checksum is shorter than expected
                 if len < self.flist_csum_len {
-                    let padding = vec![0u8; self.flist_csum_len - len];
-                    writer.write_all(&padding)?;
+                    writer.write_all(&zeros[..self.flist_csum_len - len])?;
                 }
             } else {
                 // No checksum set, write zeros
-                let zeros = vec![0u8; self.flist_csum_len];
-                writer.write_all(&zeros)?;
+                writer.write_all(&zeros[..self.flist_csum_len])?;
             }
         } else {
             // Non-regular file (proto < 28): write empty_sum (all zeros)
-            let zeros = vec![0u8; self.flist_csum_len];
-            writer.write_all(&zeros)?;
+            writer.write_all(&zeros[..self.flist_csum_len])?;
         }
 
         Ok(())
