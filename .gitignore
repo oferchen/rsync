@@ -268,3 +268,7 @@ package-lock.json
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,linux,macos,windows,rust-analyzer,visualstudiocode,jetbrains
 .worktrees/
+
+# serena plugin
+.serena/
+
