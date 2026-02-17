@@ -183,6 +183,14 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
     Ok(output)
 }
 
+/// Decompresses `input` directly into `output`, avoiding intermediate allocation.
+pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
+    let initial_len = output.len();
+    let mut decoder = ZstdDecoder::new(input).map_err(io::Error::other)?;
+    io::copy(&mut decoder, output)?;
+    Ok(output.len() - initial_len)
+}
+
 /// Returns the preferred compression algorithm when callers do not provide one explicitly.
 #[must_use]
 pub const fn default_algorithm() -> CompressionAlgorithm {

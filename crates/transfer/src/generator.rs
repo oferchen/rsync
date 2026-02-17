@@ -500,7 +500,8 @@ impl GeneratorContext {
 
         let mut files_transferred = 0;
         let mut bytes_sent = 0u64;
-        let mut stream_buf = Vec::new();
+        // Pre-allocate to match upstream IO_BUFFER_SIZE (32KB) for write batching
+        let mut stream_buf = Vec::with_capacity(32 * 1024);
 
         // Create NDX codecs using Strategy pattern for protocol-version-aware encoding.
         // Upstream rsync uses separate static variables for read and write state (io.c:2244-2245).
@@ -643,7 +644,7 @@ impl GeneratorContext {
 
                 // Compute checksum, convert to wire ops, write
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let file_checksum = compute_file_checksum(
+                let (checksum_buf, checksum_len) = compute_file_checksum(
                     &delta_script,
                     checksum_algorithm,
                     self.checksum_seed,
@@ -653,7 +654,7 @@ impl GeneratorContext {
                 let wire_ops = script_to_wire_delta(delta_script);
                 let compression = self.negotiated_algorithms.map(|n| n.compression);
                 write_delta_with_compression(&mut *writer, &wire_ops, compression)?;
-                writer.write_all(&file_checksum)?;
+                writer.write_all(&checksum_buf[..checksum_len])?;
                 bytes_sent += delta_total_bytes;
             } else {
                 // Whole-file path: single-pass streaming (read → hash → write).
@@ -1647,15 +1648,20 @@ fn stream_whole_file_transfer<W: Write>(
 /// - `sum_init(xfer_sum_nni, checksum_seed);` - start with seed
 /// - `sum_end(sender_file_sum);` - finalize
 /// - `write_buf(f, sender_file_sum, xfer_sum_len);` - send checksum
+///
+/// Computes file checksum for delta transfer, returning result on the stack.
+///
+/// Mirrors upstream `sum_end(char *sum)` (checksum.c:686) which writes the
+/// digest into a caller-provided buffer, never allocating.
 fn compute_file_checksum(
     script: &DeltaScript,
     algorithm: ChecksumAlgorithm,
     _seed: i32,
     _compat_flags: Option<&CompatibilityFlags>,
-) -> Vec<u8> {
+) -> ([u8; ChecksumVerifier::MAX_DIGEST_LEN], usize) {
     // Special case: None uses a 1-byte placeholder
     if matches!(algorithm, ChecksumAlgorithm::None) {
-        return vec![0u8];
+        return ([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 1);
     }
 
     // Use ChecksumVerifier for all other algorithms (uses trait delegation internally)
@@ -1671,7 +1677,9 @@ fn compute_file_checksum(
         // where sum_update is called on each data chunk during match processing).
     }
 
-    verifier.finalize()
+    let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len = verifier.finalize_into(&mut buf);
+    (buf, len)
 }
 
 /// Converts engine delta script to wire protocol delta operations.
@@ -2336,11 +2344,12 @@ mod tests {
         // Independently compute expected checksum
         let mut verifier = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
         verifier.update(&data);
-        let expected_checksum = verifier.finalize();
+        let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let expected_len = verifier.finalize_into(&mut expected_buf);
 
         assert_eq!(
             &result.checksum_buf[..result.checksum_len],
-            expected_checksum.as_slice()
+            &expected_buf[..expected_len]
         );
         assert_eq!(result.total_bytes, 1024);
     }

@@ -167,6 +167,14 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
     Ok(output)
 }
 
+/// Decompresses `input` directly into `output`, avoiding intermediate allocation.
+pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
+    let initial_len = output.len();
+    let mut decoder = FrameDecoder::new(input);
+    io::copy(&mut decoder, output)?;
+    Ok(output.len() - initial_len)
+}
+
 fn frame_info_for_level(level: CompressionLevel) -> FrameInfo {
     let block_size = match level {
         CompressionLevel::None => BlockSize::Max64KB,
