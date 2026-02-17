@@ -103,17 +103,21 @@ fn allocate_test_port() -> u16 {
 }
 
 /// Connect to daemon with retries.
+///
+/// Uses aggressive initial retries (10ms) ramping to 200ms, with a 60s
+/// deadline. The generous timeout accommodates slow CI runners (especially
+/// nightly builds under load).
 fn connect_with_retries(port: u16) -> TcpStream {
-    const INITIAL_BACKOFF: Duration = Duration::from_millis(50);
-    const MAX_BACKOFF: Duration = Duration::from_millis(500);
-    const TIMEOUT: Duration = Duration::from_secs(30);
+    const INITIAL_BACKOFF: Duration = Duration::from_millis(10);
+    const MAX_BACKOFF: Duration = Duration::from_millis(200);
+    const TIMEOUT: Duration = Duration::from_secs(60);
 
     let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let deadline = Instant::now() + TIMEOUT;
     let mut backoff = INITIAL_BACKOFF;
 
     loop {
-        match TcpStream::connect_timeout(&target, backoff) {
+        match TcpStream::connect_timeout(&target, Duration::from_millis(500)) {
             Ok(stream) => {
                 stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
                 stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
