@@ -43,6 +43,7 @@ use crate::adaptive_buffer::{adaptive_token_capacity, adaptive_writer_capacity};
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
 use crate::pipeline::PendingTransfer;
+use crate::reader::ServerReader;
 use crate::receiver::{SenderAttrs, SumHead, write_signature_blocks};
 use crate::temp_guard::{TempFileGuard, open_tmpfile};
 use crate::token_buffer::TokenBuffer;
@@ -177,7 +178,7 @@ pub struct ResponseContext<'a> {
 /// - `receiver.c:recv_files()` reads deltas
 /// - `receiver.c:receive_data()` applies delta tokens
 pub fn process_file_response<R: Read>(
-    reader: &mut R,
+    reader: &mut ServerReader<R>,
     ndx_codec: &mut impl NdxCodec,
     pending: PendingTransfer,
     ctx: &ResponseContext<'_>,
@@ -310,18 +311,30 @@ pub fn process_file_response<R: Read>(
             }
             break;
         } else if token > 0 {
-            // Literal data
+            // Literal data — try zero-copy from the multiplex frame buffer,
+            // falling back to TokenBuffer when the token spans frame boundaries.
             let len = token as usize;
-            token_buffer.resize_for(len);
-            reader.read_exact(token_buffer.as_mut_slice())?;
-            let data = token_buffer.as_slice();
 
-            if let Some(ref mut sparse) = sparse_state {
-                sparse.write(&mut output, data)?;
+            if let Some(data) = reader.try_borrow_exact(len)? {
+                // Zero-copy path: data borrowed directly from MultiplexReader buffer
+                if let Some(ref mut sparse) = sparse_state {
+                    sparse.write(&mut output, data)?;
+                } else {
+                    output.write_all(data)?;
+                }
+                checksum_verifier.update(data);
             } else {
-                output.write_all(data)?;
+                // Fallback: token spans frame boundary, copy into TokenBuffer
+                token_buffer.resize_for(len);
+                reader.read_exact(token_buffer.as_mut_slice())?;
+                let data = token_buffer.as_slice();
+                if let Some(ref mut sparse) = sparse_state {
+                    sparse.write(&mut output, data)?;
+                } else {
+                    output.write_all(data)?;
+                }
+                checksum_verifier.update(data);
             }
-            checksum_verifier.update(data);
             total_bytes += len as u64;
         } else {
             // Block reference

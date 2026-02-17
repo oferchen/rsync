@@ -904,20 +904,28 @@ impl ReceiverContext {
                     }
                     break;
                 } else if token > 0 {
-                    // Literal data: token bytes follow
-                    // Reuse TokenBuffer to avoid per-token allocation
+                    // Literal data — try zero-copy from multiplex frame buffer,
+                    // falling back to TokenBuffer when data spans frame boundaries.
                     let len = token as usize;
-                    token_buffer.resize_for(len);
-                    reader.read_exact(token_buffer.as_mut_slice())?;
-                    let data = token_buffer.as_slice();
-                    // Use sparse writing if enabled
-                    if let Some(ref mut sparse) = sparse_state {
-                        sparse.write(&mut output, data)?;
+
+                    if let Some(data) = reader.try_borrow_exact(len)? {
+                        if let Some(ref mut sparse) = sparse_state {
+                            sparse.write(&mut output, data)?;
+                        } else {
+                            output.write_all(data)?;
+                        }
+                        checksum_verifier.update(data);
                     } else {
-                        output.write_all(data)?;
+                        token_buffer.resize_for(len);
+                        reader.read_exact(token_buffer.as_mut_slice())?;
+                        let data = token_buffer.as_slice();
+                        if let Some(ref mut sparse) = sparse_state {
+                            sparse.write(&mut output, data)?;
+                        } else {
+                            output.write_all(data)?;
+                        }
+                        checksum_verifier.update(data);
                     }
-                    // Update checksum with literal data
-                    checksum_verifier.update(data);
                     total_bytes += len as u64;
                 } else {
                     // Negative: block reference = -(token+1)
@@ -1289,7 +1297,7 @@ impl ReceiverContext {
     /// Returns `(files_transferred, bytes_received)`.
     fn run_pipeline_loop<R: Read, W: Write + ?Sized>(
         &self,
-        reader: &mut R,
+        reader: &mut super::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
         setup: &PipelineSetup,
