@@ -68,7 +68,8 @@ use super::pipeline::{PipelineConfig, PipelineState};
 use super::shared::ChecksumFactory;
 use super::temp_guard::TempFileGuard;
 use super::transfer_ops::{
-    RequestConfig, ResponseContext, process_file_response, send_file_request,
+    RequestConfig, ResponseContext, process_file_response, process_file_response_streaming,
+    send_file_request,
 };
 
 use metadata::{MetadataOptions, apply_metadata_from_file_entry};
@@ -1071,8 +1072,8 @@ impl ReceiverContext {
             .filter(|(_, entry)| entry.is_file())
             .collect();
 
-        // Run pipelined transfer
-        let (files_transferred, bytes_received) = self.run_pipeline_loop(
+        // Run pipelined transfer with decoupled network/disk I/O
+        let (files_transferred, bytes_received) = self.run_pipeline_loop_decoupled(
             reader,
             writer,
             pipeline_config,
@@ -1180,8 +1181,8 @@ impl ReceiverContext {
             }
         }
 
-        // Run pipelined transfer
-        let (files_transferred, bytes_received) = self.run_pipeline_loop(
+        // Run pipelined transfer with decoupled network/disk I/O
+        let (files_transferred, bytes_received) = self.run_pipeline_loop_decoupled(
             reader,
             writer,
             pipeline_config,
@@ -1267,6 +1268,7 @@ impl ReceiverContext {
     /// Runs the core pipelined transfer loop over a list of files.
     ///
     /// Returns `(files_transferred, bytes_received)`.
+    #[allow(dead_code)]
     fn run_pipeline_loop<R: Read, W: Write + ?Sized>(
         &self,
         reader: &mut super::reader::ServerReader<R>,
@@ -1386,6 +1388,166 @@ impl ReceiverContext {
         }
 
         Ok((files_transferred, bytes_received))
+    }
+
+    /// Pipelined transfer loop with decoupled network/disk I/O.
+    ///
+    /// Same protocol flow as [`Self::run_pipeline_loop`], but streams delta
+    /// data through a bounded channel to a dedicated disk commit thread.
+    /// The network thread never blocks on disk I/O, and the disk thread
+    /// never blocks on network reads — achieving overlap similar to upstream
+    /// rsync's `fork()` model.
+    fn run_pipeline_loop_decoupled<R: Read, W: Write + ?Sized>(
+        &self,
+        reader: &mut super::reader::ServerReader<R>,
+        writer: &mut W,
+        pipeline_config: PipelineConfig,
+        setup: &PipelineSetup,
+        files_to_transfer: Vec<(usize, &FileEntry)>,
+        metadata_errors: &mut Vec<(PathBuf, String)>,
+    ) -> io::Result<(usize, u64)> {
+        use crate::disk_commit::DiskCommitConfig;
+        use crate::pipeline::receiver::PipelinedReceiver;
+
+        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+
+        let request_config = RequestConfig {
+            protocol: self.protocol,
+            write_iflags: self.protocol.as_u8() >= 29,
+            checksum_length: setup.checksum_length,
+            checksum_algorithm: setup.checksum_algorithm,
+            negotiated_algorithms: self.negotiated_algorithms.as_ref(),
+            compat_flags: self.compat_flags.as_ref(),
+            checksum_seed: self.checksum_seed,
+            use_sparse: self.config.flags.sparse,
+            do_fsync: self.config.fsync,
+            direct_write: self.config.direct_write,
+        };
+
+        let mut pipeline = PipelineState::new(pipeline_config);
+        let mut file_iter = files_to_transfer.into_iter();
+        let mut pending_files_info: Vec<(PathBuf, &FileEntry)> =
+            Vec::with_capacity(pipeline.window_size());
+        let mut files_transferred = 0usize;
+        let mut bytes_received = 0u64;
+
+        // Reusable per-file resources
+        let mut checksum_verifier = ChecksumVerifier::new(
+            self.negotiated_algorithms.as_ref(),
+            self.protocol,
+            self.checksum_seed,
+            self.compat_flags.as_ref(),
+        );
+        let mut token_buffer = TokenBuffer::with_default_capacity();
+
+        // Spawn the disk commit thread.
+        let disk_config = DiskCommitConfig {
+            do_fsync: self.config.fsync,
+            ..DiskCommitConfig::default()
+        };
+        let mut pipelined_receiver = PipelinedReceiver::new(disk_config);
+
+        let result = (|| -> io::Result<(usize, u64)> {
+            loop {
+                // Fill the pipeline with requests
+                while pipeline.can_send() {
+                    if let Some((file_idx, file_entry)) = file_iter.next() {
+                        let relative_path = file_entry.path();
+                        let file_path = if relative_path.as_os_str() == "." {
+                            setup.dest_dir.clone()
+                        } else {
+                            setup.dest_dir.join(relative_path)
+                        };
+
+                        if self.config.flags.verbose && self.config.client_mode {
+                            eprintln!("{}", relative_path.display());
+                        }
+
+                        let basis_config = BasisFileConfig {
+                            file_path: &file_path,
+                            dest_dir: &setup.dest_dir,
+                            relative_path,
+                            target_size: file_entry.size(),
+                            fuzzy_enabled: self.config.flags.fuzzy,
+                            reference_directories: &self.config.reference_directories,
+                            protocol: self.protocol,
+                            checksum_length: setup.checksum_length,
+                            checksum_algorithm: setup.checksum_algorithm,
+                        };
+                        let basis_result = find_basis_file_with_config(&basis_config);
+
+                        let pending = send_file_request(
+                            writer,
+                            &mut ndx_write_codec,
+                            file_idx as i32,
+                            file_path.clone(),
+                            basis_result.signature,
+                            basis_result.basis_path,
+                            file_entry.size(),
+                            &request_config,
+                        )?;
+
+                        pipeline.push(pending);
+                        pending_files_info.push((file_path, file_entry));
+                    } else {
+                        break;
+                    }
+                }
+
+                if pipeline.is_empty() {
+                    break;
+                }
+
+                // Process one response — streams chunks to disk thread.
+                let pending = pipeline.pop().expect("pipeline not empty");
+                let (file_path, file_entry) = pending_files_info.remove(0);
+
+                let response_ctx = ResponseContext {
+                    config: &request_config,
+                };
+
+                let total_bytes = process_file_response_streaming(
+                    reader,
+                    &mut ndx_read_codec,
+                    pending,
+                    &response_ctx,
+                    &mut checksum_verifier,
+                    &mut token_buffer,
+                    pipelined_receiver.file_sender(),
+                    0, // file_entry_index (metadata applied below)
+                )?;
+
+                pipelined_receiver.note_commit_sent();
+
+                // Non-blocking: collect any ready disk results to detect early errors.
+                let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_ready_results()?;
+                bytes_received += disk_bytes;
+                metadata_errors.extend(disk_meta_errors);
+
+                // Apply metadata on the network thread (file_path is available here).
+                if let Err(meta_err) =
+                    apply_metadata_from_file_entry(&file_path, file_entry, &setup.metadata_opts)
+                {
+                    metadata_errors.push((file_path, meta_err.to_string()));
+                }
+
+                bytes_received += total_bytes;
+                files_transferred += 1;
+            }
+
+            // Drain all remaining disk results.
+            let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
+            bytes_received += disk_bytes;
+            metadata_errors.extend(disk_meta_errors);
+
+            Ok((files_transferred, bytes_received))
+        })();
+
+        // Graceful shutdown regardless of success or failure.
+        let _ = pipelined_receiver.shutdown();
+
+        result
     }
 
     /// Exchange phase transitions, receive stats, and handle goodbye handshake.

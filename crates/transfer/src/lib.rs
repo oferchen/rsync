@@ -117,6 +117,8 @@ pub mod ack_batcher;
 pub mod adaptive_buffer;
 /// Buffer size constants mirroring upstream rsync.
 pub mod constants;
+/// Disk commit thread for decoupled network/disk I/O.
+pub mod disk_commit;
 /// Memory-mapped file abstraction for basis file access.
 pub mod map_file;
 /// Request pipelining for reduced latency in file transfers.
