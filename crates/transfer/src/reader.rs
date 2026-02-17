@@ -82,6 +82,21 @@ impl<R: Read> ServerReader<R> {
     pub const fn is_multiplexed(&self) -> bool {
         matches!(self, Self::Multiplex(_) | Self::Compressed(_))
     }
+
+    /// Attempts to borrow exactly `len` bytes from the internal frame buffer.
+    ///
+    /// Returns `Some(&[u8])` when the multiplexed reader's current frame has
+    /// enough data, avoiding one buffer copy. Returns `None` for plain or
+    /// compressed modes (where no internal frame buffer exists) or when the
+    /// data spans a frame boundary.
+    ///
+    /// Callers should fall back to `Read::read_exact()` when this returns `None`.
+    pub fn try_borrow_exact(&mut self, len: usize) -> io::Result<Option<&[u8]>> {
+        match self {
+            Self::Multiplex(mux) => mux.try_borrow_exact(len),
+            _ => Ok(None),
+        }
+    }
 }
 
 impl<R: Read> Read for ServerReader<R> {
@@ -106,9 +121,10 @@ pub(super) struct MultiplexReader<R> {
 
 /// Default buffer capacity for MultiplexReader.
 ///
-/// 32KB balances memory usage and read throughput across both
-/// local (pipe) and remote (TCP) transfer paths.
-const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 32 * 1024;
+/// 64KB matches the `MultiplexWriter` buffer size and upstream rsync's
+/// `IO_BUFFER_SIZE`. When receiving from an oc-rsync sender, frames can
+/// be up to 64KB — a smaller staging buffer forces extra reads per frame.
+const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 64 * 1024;
 
 impl<R: Read> MultiplexReader<R> {
     fn new(inner: R) -> Self {
@@ -117,6 +133,64 @@ impl<R: Read> MultiplexReader<R> {
             // Pre-allocate buffer to avoid repeated allocations during transfer
             buffer: Vec::with_capacity(MULTIPLEX_READER_BUFFER_CAPACITY),
             pos: 0,
+        }
+    }
+}
+
+impl<R: Read> MultiplexReader<R> {
+    /// Attempts to borrow exactly `len` bytes from the internal frame buffer.
+    ///
+    /// Returns `Some(&[u8])` if the current frame buffer has at least `len` bytes
+    /// available, avoiding a copy into an intermediate buffer. If the buffer is
+    /// empty, reads the next MSG_DATA frame first. Returns `None` when the
+    /// requested data spans frame boundaries — the caller should fall back to
+    /// `Read::read_exact()` with a separate buffer.
+    ///
+    /// # Zero-copy optimization
+    ///
+    /// This eliminates one buffer copy for literal delta tokens that fit within
+    /// a single MSG_DATA frame (the common case for tokens up to 32–64KB).
+    fn try_borrow_exact(&mut self, len: usize) -> io::Result<Option<&[u8]>> {
+        // If buffer exhausted, read next MSG_DATA frame
+        if self.pos >= self.buffer.len() {
+            loop {
+                self.buffer.clear();
+                self.pos = 0;
+
+                let code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
+
+                match code {
+                    protocol::MessageCode::Data => break,
+                    protocol::MessageCode::Info
+                    | protocol::MessageCode::Warning
+                    | protocol::MessageCode::Log
+                    | protocol::MessageCode::Client => {
+                        if let Ok(msg) = std::str::from_utf8(&self.buffer) {
+                            eprint!("{msg}");
+                        }
+                    }
+                    protocol::MessageCode::Error
+                    | protocol::MessageCode::ErrorXfer
+                    | protocol::MessageCode::ErrorSocket
+                    | protocol::MessageCode::ErrorUtf8
+                    | protocol::MessageCode::ErrorExit => {
+                        if let Ok(msg) = std::str::from_utf8(&self.buffer) {
+                            eprint!("{msg}");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let available = self.buffer.len() - self.pos;
+        if available >= len {
+            let start = self.pos;
+            self.pos += len;
+            Ok(Some(&self.buffer[start..start + len]))
+        } else {
+            // Token spans frame boundary — caller must use read_exact fallback
+            Ok(None)
         }
     }
 }
