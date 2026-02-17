@@ -212,6 +212,20 @@ impl ChecksumVerifier {
         }
     }
 
+    /// Returns the checksum algorithm used by this verifier.
+    #[inline]
+    #[must_use]
+    pub const fn algorithm(&self) -> ChecksumAlgorithm {
+        match self {
+            Self::Md4(_) => ChecksumAlgorithm::MD4,
+            Self::Md5(_) => ChecksumAlgorithm::MD5,
+            Self::Sha1(_) => ChecksumAlgorithm::SHA1,
+            Self::Xxh64(_) => ChecksumAlgorithm::XXH64,
+            Self::Xxh3(_) => ChecksumAlgorithm::XXH3,
+            Self::Xxh128(_) => ChecksumAlgorithm::XXH128,
+        }
+    }
+
     /// Updates the hasher with data.
     #[inline]
     pub fn update(&mut self, data: &[u8]) {
