@@ -70,6 +70,7 @@ fn invalid_data(message: &str) -> io::Error {
 /// | `1111_0xxx` | 4 | 5 | any i32 |
 ///
 /// Returns (byte_count, bytes_array) where bytes_array[0..byte_count] is the encoded data.
+#[inline]
 fn encode_bytes(value: i32) -> (usize, [u8; 5]) {
     let mut bytes = [0u8; 5];
     // Store value in little-endian at bytes[1..5], leaving bytes[0] for the header
@@ -112,6 +113,7 @@ fn encode_bytes(value: i32) -> (usize, [u8; 5]) {
 /// producing values 0-6 indicating extra bytes needed.
 ///
 /// Returns (decoded_value, bytes_consumed) on success.
+#[inline]
 fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
     if bytes.is_empty() {
         return Err(io::Error::new(
@@ -161,6 +163,7 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
 /// # Errors
 ///
 /// Propagates any error returned by `writer` while writing the encoded bytes.
+#[inline]
 pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()> {
     let (len, bytes) = encode_bytes(value);
     writer.write_all(&bytes[..len])
@@ -177,6 +180,7 @@ pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result
 /// * `writer` - Destination for the encoded bytes
 /// * `value` - The 64-bit value to encode
 /// * `min_bytes` - Minimum number of bytes to use (typically 3 or 4 for file sizes/times)
+#[inline]
 pub fn write_varlong<W: Write + ?Sized>(
     writer: &mut W,
     value: i64,
@@ -223,6 +227,7 @@ pub fn write_varlong<W: Write + ?Sized>(
 ///
 /// * `reader` - Source of the encoded bytes
 /// * `min_bytes` - Minimum number of bytes used in encoding (must match the write call)
+#[inline]
 pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
     // Read leading byte
     let mut leading_buf = [0u8; 1];
@@ -329,6 +334,7 @@ pub fn read_varlong30<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Re
 /// Writes a 32-bit integer using rsync's fixed 4-byte little-endian format.
 ///
 /// This mirrors upstream's `write_int()` from io.c. Used for protocol versions < 30.
+#[inline]
 pub fn write_int<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
 }
@@ -336,6 +342,7 @@ pub fn write_int<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()
 /// Reads a 32-bit integer using rsync's fixed 4-byte little-endian format.
 ///
 /// This mirrors upstream's `read_int()` from io.c. Used for protocol versions < 30.
+#[inline]
 pub fn read_int<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     let mut buf = [0u8; 4];
     reader.read_exact(&mut buf)?;
@@ -392,6 +399,7 @@ pub fn read_varint30_int<R: Read + ?Sized>(
 /// caller-provided [`Vec`], making it convenient for fixtures and golden tests
 /// that need the serialized representation without going through a [`Write`]
 /// adapter.
+#[inline]
 pub fn encode_varint_to_vec(value: i32, out: &mut Vec<u8>) {
     let (len, bytes) = encode_bytes(value);
     out.extend_from_slice(&bytes[..len]);
@@ -408,6 +416,7 @@ pub fn encode_varint_to_vec(value: i32, out: &mut Vec<u8>) {
 /// Returns [`io::ErrorKind::UnexpectedEof`] when the reader does not provide the
 /// required bytes and [`io::ErrorKind::InvalidData`] if the encoded value would
 /// overflow the 32-bit range supported by upstream rsync.
+#[inline]
 pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     let mut first = [0u8; 1];
     reader.read_exact(&mut first)?;
@@ -435,6 +444,7 @@ pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
 ///
 /// This is the slice-based equivalent of [`read_varint`], useful when the caller
 /// already captured the serialized data in memory.
+#[inline]
 pub fn decode_varint(bytes: &[u8]) -> io::Result<(i32, &[u8])> {
     let (value, consumed) = decode_bytes(bytes)?;
     Ok((value, &bytes[consumed..]))

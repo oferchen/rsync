@@ -282,28 +282,29 @@ pub fn process_file_response<R: Read>(
         let token = i32::from_le_bytes(token_buf);
 
         if token == 0 {
-            // End of file - verify checksum using stack buffer (max 32 bytes for SHA-256)
+            // End of file - verify checksum using stack buffers.
+            // Mirrors upstream sum_end(char *sum) which writes into caller-provided buffer.
             let checksum_len = checksum_verifier.digest_len();
-            let mut checksum_stack = [0u8; 32];
-            let file_checksum = &mut checksum_stack[..checksum_len];
-            reader.read_exact(file_checksum)?;
+            let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+            reader.read_exact(&mut expected[..checksum_len])?;
 
-            let computed = checksum_verifier.finalize();
-            if computed.len() != file_checksum.len() {
+            let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+            let computed_len = checksum_verifier.finalize_into(&mut computed);
+            if computed_len != checksum_len {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "checksum length mismatch for {file_path:?}: expected {}, got {}",
-                        checksum_len,
-                        computed.len()
+                        "checksum length mismatch for {file_path:?}: expected {checksum_len}, got {computed_len}",
                     ),
                 ));
             }
-            if computed != *file_checksum {
+            if computed[..computed_len] != expected[..checksum_len] {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "checksum verification failed for {file_path:?}: expected {file_checksum:02x?}, got {computed:02x?}"
+                        "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
+                        &expected[..checksum_len],
+                        &computed[..computed_len]
                     ),
                 ));
             }

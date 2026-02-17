@@ -874,30 +874,31 @@ impl ReceiverContext {
                     // Read file checksum from sender - upstream receiver.c:408
                     // The sender sends xfer_sum_len bytes after all delta tokens.
                     // Use digest_len() from ChecksumVerifier to get the correct length.
+                    // Read expected checksum into stack buffer — mirrors upstream
+                    // sum_end(char *sum) which writes into caller-provided buffer.
                     let checksum_len = checksum_verifier.digest_len();
-                    let mut file_checksum = vec![0u8; checksum_len];
-                    reader.read_exact(&mut file_checksum)?;
+                    let mut file_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                    reader.read_exact(&mut file_checksum[..checksum_len])?;
 
                     // Verify checksum matches computed hash
                     // Upstream receiver.c:440-457 - verification after delta application
-                    let computed = checksum_verifier.finalize();
-                    // Require exact length match for security - truncated checksums are invalid
-                    if computed.len() != file_checksum.len() {
+                    let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                    let computed_len = checksum_verifier.finalize_into(&mut computed);
+                    if computed_len != checksum_len {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!(
-                                "checksum length mismatch for {:?}: expected {} bytes, got {} bytes",
-                                file_path,
-                                checksum_len,
-                                computed.len()
+                                "checksum length mismatch for {file_path:?}: expected {checksum_len} bytes, got {computed_len} bytes",
                             ),
                         ));
                     }
-                    if computed != file_checksum {
+                    if computed[..computed_len] != file_checksum[..checksum_len] {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!(
-                                "checksum verification failed for {file_path:?}: expected {file_checksum:02x?}, got {computed:02x?}"
+                                "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
+                                &file_checksum[..checksum_len],
+                                &computed[..computed_len]
                             ),
                         ));
                     }
@@ -2643,10 +2644,10 @@ mod tests {
         let mut verifier = ChecksumVerifier::new(None, protocol, 0, None);
 
         verifier.update(b"test data");
-        let digest = verifier.finalize();
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
 
         // MD4 produces 16 bytes
-        assert_eq!(digest.len(), 16);
+        assert_eq!(verifier.finalize_into(&mut buf), 16);
     }
 
     #[test]
@@ -2656,10 +2657,10 @@ mod tests {
         let mut verifier = ChecksumVerifier::new(None, protocol, 12345, None);
 
         verifier.update(b"test data");
-        let digest = verifier.finalize();
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
 
         // MD5 produces 16 bytes
-        assert_eq!(digest.len(), 16);
+        assert_eq!(verifier.finalize_into(&mut buf), 16);
     }
 
     #[test]
@@ -2675,10 +2676,10 @@ mod tests {
         let mut verifier = ChecksumVerifier::new(Some(&negotiated), protocol, 9999, None);
 
         verifier.update(b"test data");
-        let digest = verifier.finalize();
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
 
         // XXH3 produces 8 bytes (64-bit)
-        assert_eq!(digest.len(), 8);
+        assert_eq!(verifier.finalize_into(&mut buf), 8);
     }
 
     #[test]
@@ -2694,10 +2695,10 @@ mod tests {
         let mut verifier = ChecksumVerifier::new(Some(&negotiated), protocol, 0, None);
 
         verifier.update(b"test data");
-        let digest = verifier.finalize();
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
 
         // SHA1 produces 20 bytes
-        assert_eq!(digest.len(), 20);
+        assert_eq!(verifier.finalize_into(&mut buf), 20);
     }
 
     #[test]
@@ -2708,13 +2709,15 @@ mod tests {
         let mut verifier1 = ChecksumVerifier::new(None, protocol, 0, None);
         verifier1.update(b"hello ");
         verifier1.update(b"world");
-        let digest1 = verifier1.finalize();
+        let mut buf1 = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let len1 = verifier1.finalize_into(&mut buf1);
 
         let mut verifier2 = ChecksumVerifier::new(None, protocol, 0, None);
         verifier2.update(b"hello world");
-        let digest2 = verifier2.finalize();
+        let mut buf2 = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let len2 = verifier2.finalize_into(&mut buf2);
 
-        assert_eq!(digest1, digest2);
+        assert_eq!(buf1[..len1], buf2[..len2]);
     }
 
     #[test]
@@ -3462,10 +3465,10 @@ mod tests {
         let verifier = ChecksumVerifier::new(None, protocol, 0, None);
 
         // No updates, just finalize
-        let digest = verifier.finalize();
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
 
         // MD4 produces 16 bytes even for empty input
-        assert_eq!(digest.len(), 16);
+        assert_eq!(verifier.finalize_into(&mut buf), 16);
     }
 
     #[test]

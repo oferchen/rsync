@@ -239,19 +239,6 @@ impl ChecksumVerifier {
         }
     }
 
-    /// Finalizes and returns the digest as bytes.
-    #[must_use]
-    pub fn finalize(self) -> Vec<u8> {
-        match self {
-            Self::Md4(h) => h.finalize().as_ref().to_vec(),
-            Self::Md5(h) => h.finalize().as_ref().to_vec(),
-            Self::Sha1(h) => h.finalize().as_ref().to_vec(),
-            Self::Xxh64(h) => h.finalize().as_ref().to_vec(),
-            Self::Xxh3(h) => h.finalize().as_ref().to_vec(),
-            Self::Xxh128(h) => h.finalize().as_ref().to_vec(),
-        }
-    }
-
     /// Finalizes the digest into a caller-provided stack buffer.
     ///
     /// Returns the number of bytes written (equals `digest_len()`).
@@ -538,29 +525,31 @@ impl<'a> DeltaApplicator<'a> {
         // Note: We don't call sync_all() by default, matching upstream rsync behavior.
         // Upstream rsync only fsyncs when --fsync flag is explicitly set.
 
+        // Read expected checksum into stack buffer — mirrors upstream sum_end(char *sum)
+        // which writes into a caller-provided buffer, never allocating.
         let expected_len = self.checksum_verifier.digest_len();
-        let mut expected = vec![0u8; expected_len];
-        reader.read_exact(&mut expected)?;
+        let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        reader.read_exact(&mut expected[..expected_len])?;
 
-        let computed = self.checksum_verifier.finalize();
-        let cmp_len = computed.len().min(expected.len());
+        let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let computed_len = self.checksum_verifier.finalize_into(&mut computed);
 
         // DEBUG_DELTASUM level 3: Log checksum verification details
         debug_log!(
             Deltasum,
             3,
             "recv checksum verify expected={:02x?} computed={:02x?}",
-            &expected[..cmp_len.min(4)], // Show first 4 bytes
-            &computed[..cmp_len.min(4)]
+            &expected[..computed_len.min(4)],
+            &computed[..computed_len.min(4)]
         );
 
-        if computed[..cmp_len] != expected[..cmp_len] {
+        if computed[..computed_len] != expected[..expected_len] {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "checksum verification failed: expected {:02x?}, got {:02x?}",
-                    &expected[..cmp_len],
-                    &computed[..cmp_len]
+                    &expected[..expected_len],
+                    &computed[..computed_len]
                 ),
             ));
         }
@@ -688,7 +677,8 @@ mod tests {
         let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
         v.update(b"hello");
         v.update(b" world");
-        assert_eq!(v.finalize().len(), 16);
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        assert_eq!(v.finalize_into(&mut buf), 16);
     }
 
     #[test]
@@ -756,41 +746,41 @@ mod tests {
     fn verifier_update_empty_data() {
         let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
         v.update(&[]);
-        let digest = v.finalize();
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         // Should still produce valid MD5 (of empty string)
-        assert_eq!(digest.len(), 16);
+        assert_eq!(v.finalize_into(&mut buf), 16);
     }
 
     #[test]
     fn verifier_xxh64_produces_correct_length() {
         let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH64);
         v.update(b"test");
-        let digest = v.finalize();
-        assert_eq!(digest.len(), 8);
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        assert_eq!(v.finalize_into(&mut buf), 8);
     }
 
     #[test]
     fn verifier_xxh3_produces_correct_length() {
         let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH3);
         v.update(b"test");
-        let digest = v.finalize();
-        assert_eq!(digest.len(), 8);
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        assert_eq!(v.finalize_into(&mut buf), 8);
     }
 
     #[test]
     fn verifier_xxh128_produces_correct_length() {
         let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH128);
         v.update(b"test");
-        let digest = v.finalize();
-        assert_eq!(digest.len(), 16);
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        assert_eq!(v.finalize_into(&mut buf), 16);
     }
 
     #[test]
     fn verifier_sha1_produces_correct_length() {
         let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::SHA1);
         v.update(b"test");
-        let digest = v.finalize();
-        assert_eq!(digest.len(), 20);
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        assert_eq!(v.finalize_into(&mut buf), 20);
     }
 
     #[test]

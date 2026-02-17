@@ -43,15 +43,16 @@ fn empty_file_checksum_verification_md5() {
     verifier.update(&[]);
 
     // Finalize should produce valid MD5 of empty string
-    let digest = verifier.finalize();
-    assert_eq!(digest.len(), 16);
+    let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len = verifier.finalize_into(&mut buf);
+    assert_eq!(len, 16);
 
     // MD5 of empty string is d41d8cd98f00b204e9800998ecf8427e
     let expected_md5_empty: [u8; 16] = [
         0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42,
         0x7e,
     ];
-    assert_eq!(digest, expected_md5_empty);
+    assert_eq!(buf[..len], expected_md5_empty);
 }
 
 #[test]
@@ -62,8 +63,8 @@ fn empty_file_checksum_verification_xxh64() {
     verifier.update(&[]);
 
     // Finalize should produce valid XXH64 of empty input
-    let digest = verifier.finalize();
-    assert_eq!(digest.len(), 8);
+    let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    assert_eq!(verifier.finalize_into(&mut buf), 8);
 }
 
 #[test]
@@ -73,8 +74,8 @@ fn empty_file_checksum_verification_xxh3() {
     // Update with empty data
     verifier.update(&[]);
 
-    let digest = verifier.finalize();
-    assert_eq!(digest.len(), 8);
+    let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    assert_eq!(verifier.finalize_into(&mut buf), 8);
 }
 
 #[test]
@@ -84,15 +85,16 @@ fn empty_file_checksum_verification_sha1() {
     // Update with empty data
     verifier.update(&[]);
 
-    let digest = verifier.finalize();
-    assert_eq!(digest.len(), 20);
+    let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len = verifier.finalize_into(&mut buf);
+    assert_eq!(len, 20);
 
     // SHA1 of empty string is da39a3ee5e6b4b0d3255bfef95601890afd80709
     let expected_sha1_empty: [u8; 20] = [
         0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d, 0x32, 0x55, 0xbf, 0xef, 0x95, 0x60, 0x18,
         0x90, 0xaf, 0xd8, 0x07, 0x09,
     ];
-    assert_eq!(digest, expected_sha1_empty);
+    assert_eq!(buf[..len], expected_sha1_empty);
 }
 
 // ============================================================================
@@ -185,10 +187,10 @@ fn empty_file_checksum_matches_known_value() {
     for (algorithm, expected_len) in algorithms {
         let mut verifier = ChecksumVerifier::for_algorithm(algorithm);
         verifier.update(&[]);
-        let digest = verifier.finalize();
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = verifier.finalize_into(&mut buf);
         assert_eq!(
-            digest.len(),
-            expected_len,
+            len, expected_len,
             "algorithm {algorithm:?} should produce {expected_len} byte digest"
         );
     }
@@ -203,15 +205,16 @@ fn empty_file_checksum_multiple_updates_with_empty() {
     verifier.update(&[]);
     verifier.update(&[]);
 
-    let digest = verifier.finalize();
-    assert_eq!(digest.len(), 16);
+    let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len = verifier.finalize_into(&mut buf);
+    assert_eq!(len, 16);
 
     // Should still be MD5 of empty string
     let expected_md5_empty: [u8; 16] = [
         0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42,
         0x7e,
     ];
-    assert_eq!(digest, expected_md5_empty);
+    assert_eq!(buf[..len], expected_md5_empty);
 }
 
 // ============================================================================
@@ -448,10 +451,16 @@ fn empty_file_checksum_consistency_across_calls() {
     v1.update(&[]);
     v2.update(&[]);
 
-    let d1 = v1.finalize();
-    let d2 = v2.finalize();
+    let mut buf1 = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let mut buf2 = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len1 = v1.finalize_into(&mut buf1);
+    let len2 = v2.finalize_into(&mut buf2);
 
-    assert_eq!(d1, d2, "empty file checksums should be consistent");
+    assert_eq!(
+        buf1[..len1],
+        buf2[..len2],
+        "empty file checksums should be consistent"
+    );
 }
 
 #[test]
@@ -463,11 +472,14 @@ fn empty_vs_zero_byte_checksum() {
     v_empty.update(&[]);
     v_zero.update(&[0u8]);
 
-    let d_empty = v_empty.finalize();
-    let d_zero = v_zero.finalize();
+    let mut buf_empty = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let mut buf_zero = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len_empty = v_empty.finalize_into(&mut buf_empty);
+    let len_zero = v_zero.finalize_into(&mut buf_zero);
 
     assert_ne!(
-        d_empty, d_zero,
+        buf_empty[..len_empty],
+        buf_zero[..len_zero],
         "empty file and single zero byte should have different checksums"
     );
 }
