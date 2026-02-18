@@ -254,6 +254,7 @@ mod tests {
                 use_sparse: false,
                 direct_write: true,
                 checksum_verifier: None,
+                file_entry: None,
             })))
             .unwrap();
 
