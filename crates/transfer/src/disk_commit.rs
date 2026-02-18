@@ -20,13 +20,10 @@
 //! A `Shutdown` message terminates the thread after draining in-progress work.
 
 use std::fs;
-use std::io::{self, Write};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::io::{self, Seek, Write};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
-use fast_io::FileWriter;
-
-use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::SparseWriteState;
 use crate::pipeline::messages::{BeginMessage, CommitResult, FileMessage};
 use crate::temp_guard::{TempFileGuard, open_tmpfile};
@@ -35,6 +32,81 @@ use crate::temp_guard::{TempFileGuard, open_tmpfile};
 ///
 /// 32 slots × ~32 KB average chunk ≈ 1 MB peak memory from buffered messages.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 32;
+
+/// Fixed write buffer size matching upstream's `wf_writeBufSize = WRITE_SIZE * 8`
+/// (fileio.c:161). Upstream always uses 256 KB regardless of file size.
+const WRITE_BUF_SIZE: usize = 256 * 1024;
+
+/// Minimum file size to pre-allocate with `set_len()`.
+/// Matches upstream rsync's `preallocate_files` threshold — small files are not
+/// worth the extra syscall.
+const PREALLOC_THRESHOLD: u64 = 64 * 1024;
+
+/// Buffered writer that reuses an externally-owned `Vec<u8>`, avoiding
+/// per-file allocation. The buffer is allocated once in `disk_thread_main`
+/// and cleared between files — matching upstream rsync's static `wf_writeBuf`
+/// (fileio.c:161).
+struct ReusableBufWriter<'a> {
+    file: fs::File,
+    buf: &'a mut Vec<u8>,
+}
+
+impl<'a> ReusableBufWriter<'a> {
+    fn new(file: fs::File, buf: &'a mut Vec<u8>) -> Self {
+        buf.clear();
+        Self { file, buf }
+    }
+
+    fn sync(&mut self) -> io::Result<()> {
+        self.flush()?;
+        self.file.sync_all()
+    }
+}
+
+impl Write for ReusableBufWriter<'_> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        if self.buf.len() + data.len() <= self.buf.capacity() {
+            self.buf.extend_from_slice(data);
+            Ok(data.len())
+        } else {
+            self.file.write_all(self.buf)?;
+            self.buf.clear();
+            if data.len() >= self.buf.capacity() {
+                self.file.write_all(data)?;
+            } else {
+                self.buf.extend_from_slice(data);
+            }
+            Ok(data.len())
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if !self.buf.is_empty() {
+            self.file.write_all(self.buf)?;
+            self.buf.clear();
+        }
+        Ok(())
+    }
+}
+
+impl Seek for ReusableBufWriter<'_> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.flush()?;
+        self.file.seek(pos)
+    }
+}
+
+/// Channels and handle returned by [`spawn_disk_thread`].
+pub struct DiskThreadHandle {
+    /// Send [`FileMessage`] items to the disk thread.
+    pub file_tx: SyncSender<FileMessage>,
+    /// Receive [`CommitResult`] (one per committed file).
+    pub result_rx: Receiver<io::Result<CommitResult>>,
+    /// Receive recycled `Vec<u8>` buffers from the disk thread.
+    pub buf_return_rx: Receiver<Vec<u8>>,
+    /// Join handle for the disk commit thread.
+    pub join_handle: JoinHandle<()>,
+}
 
 /// Configuration for the disk commit thread.
 #[derive(Debug, Clone)]
@@ -54,48 +126,52 @@ impl Default for DiskCommitConfig {
     }
 }
 
-/// Spawns the disk commit thread and returns the communication channels.
+/// Spawns the disk commit thread and returns channels + join handle.
 ///
-/// - `file_tx`: send [`FileMessage`] items to the disk thread.
-/// - `result_rx`: receive [`CommitResult`] (one per committed file).
-/// - `JoinHandle`: join the thread after sending `Shutdown`.
-pub fn spawn_disk_thread(
-    config: DiskCommitConfig,
-) -> (
-    SyncSender<FileMessage>,
-    Receiver<io::Result<CommitResult>>,
-    JoinHandle<()>,
-) {
+/// Buffer recycling mirrors upstream rsync's `simple_recv_token` (token.c:284)
+/// which uses a single static buffer that is never freed. Here, the disk thread
+/// sends used `Vec<u8>` buffers back through `buf_return_rx` for reuse by the
+/// network thread, eliminating per-chunk malloc/free overhead.
+pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
     let (file_tx, file_rx) = sync_channel::<FileMessage>(config.channel_capacity);
     let (result_tx, result_rx) = std::sync::mpsc::channel::<io::Result<CommitResult>>();
+    let (buf_return_tx, buf_return_rx) = std::sync::mpsc::channel::<Vec<u8>>();
 
-    let handle = thread::Builder::new()
+    let join_handle = thread::Builder::new()
         .name("disk-commit".into())
-        .spawn(move || disk_thread_main(file_rx, result_tx, config))
+        .spawn(move || disk_thread_main(file_rx, result_tx, buf_return_tx, config))
         .expect("failed to spawn disk-commit thread");
 
-    (file_tx, result_rx, handle)
+    DiskThreadHandle {
+        file_tx,
+        result_rx,
+        buf_return_rx,
+        join_handle,
+    }
 }
 
 /// Main loop of the disk commit thread.
+///
+/// Allocates a single 256KB write buffer reused across all files, matching
+/// upstream rsync's static `wf_writeBuf` (fileio.c:161).
 fn disk_thread_main(
     file_rx: Receiver<FileMessage>,
-    result_tx: std::sync::mpsc::Sender<io::Result<CommitResult>>,
+    result_tx: Sender<io::Result<CommitResult>>,
+    buf_return_tx: Sender<Vec<u8>>,
     config: DiskCommitConfig,
 ) {
+    let mut write_buf = Vec::with_capacity(WRITE_BUF_SIZE);
+
     while let Ok(msg) = file_rx.recv() {
         match msg {
             FileMessage::Shutdown => break,
             FileMessage::Begin(begin) => {
-                let result = process_file(&file_rx, &config, begin);
-                // If the result channel is disconnected, exit silently —
-                // the network thread has already dropped its receiver.
+                let result = process_file(&file_rx, &buf_return_tx, &config, begin, &mut write_buf);
                 if result_tx.send(result).is_err() {
                     break;
                 }
             }
             FileMessage::Chunk(_) | FileMessage::Commit | FileMessage::Abort { .. } => {
-                // Orphaned message without a preceding Begin — protocol error.
                 let err = io::Error::new(
                     io::ErrorKind::InvalidData,
                     "disk thread received message without preceding Begin",
@@ -109,15 +185,27 @@ fn disk_thread_main(
 }
 
 /// Processes a single file: open, write chunks, commit or abort.
+///
+/// After writing each chunk, the owned `Vec<u8>` is returned through
+/// `buf_return_tx` for reuse by the network thread.
 fn process_file(
     file_rx: &Receiver<FileMessage>,
+    buf_return_tx: &Sender<Vec<u8>>,
     config: &DiskCommitConfig,
     begin: BeginMessage,
+    write_buf: &mut Vec<u8>,
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin)?;
 
-    let writer_capacity = adaptive_writer_capacity(begin.target_size);
-    let mut output = fast_io::writer_from_file(file, writer_capacity);
+    // Pre-allocate disk space for new files above the threshold.
+    // Mirrors upstream receiver.c:254-258 `do_fallocate(fd, 0, total_size)`.
+    if begin.direct_write && begin.target_size >= PREALLOC_THRESHOLD {
+        // set_len pre-allocates on most filesystems. On failure (e.g. ENOSPC),
+        // we continue — writes will fail later with a clearer error.
+        let _ = file.set_len(begin.target_size);
+    }
+
+    let mut output = ReusableBufWriter::new(file, write_buf);
 
     let mut sparse_state = if begin.use_sparse {
         Some(SparseWriteState::default())
@@ -144,6 +232,9 @@ fn process_file(
                     output.write_all(&data)?;
                 }
                 bytes_written += data.len() as u64;
+                // Return the buffer for reuse. Ignore errors — the network
+                // thread may have moved on (e.g. after an error).
+                let _ = buf_return_tx.send(data);
             }
             FileMessage::Commit => {
                 // Finalize sparse writing.
@@ -179,13 +270,11 @@ fn process_file(
                 });
             }
             FileMessage::Abort { reason } => {
-                // Drop output and guard — guard's Drop removes the temp file.
                 drop(output);
                 drop(cleanup_guard);
                 return Err(io::Error::other(reason));
             }
             FileMessage::Shutdown => {
-                // Unexpected shutdown mid-file — clean up and exit.
                 drop(output);
                 drop(cleanup_guard);
                 return Err(io::Error::new(
@@ -194,7 +283,6 @@ fn process_file(
                 ));
             }
             FileMessage::Begin(_) => {
-                // Nested Begin without a preceding Commit/Abort — protocol violation.
                 drop(output);
                 drop(cleanup_guard);
                 return Err(io::Error::new(
@@ -247,9 +335,9 @@ mod tests {
 
     #[test]
     fn spawn_and_shutdown() {
-        let (tx, _rx, handle) = spawn_disk_thread(DiskCommitConfig::default());
-        tx.send(FileMessage::Shutdown).unwrap();
-        handle.join().unwrap();
+        let h = spawn_disk_thread(DiskCommitConfig::default());
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        h.join_handle.join().unwrap();
     }
 
     #[test]
@@ -257,30 +345,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("output.dat");
 
-        let (tx, rx, handle) = spawn_disk_thread(DiskCommitConfig::default());
+        let h = spawn_disk_thread(DiskCommitConfig::default());
 
-        tx.send(FileMessage::Begin(BeginMessage {
-            file_path: file_path.clone(),
-            target_size: 1024,
-            file_entry_index: 0,
-            use_sparse: false,
-            direct_write: true,
-        }))
-        .unwrap();
-
-        tx.send(FileMessage::Chunk(b"hello world".to_vec()))
+        h.file_tx
+            .send(FileMessage::Begin(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 1024,
+                file_entry_index: 0,
+                use_sparse: false,
+                direct_write: true,
+            }))
             .unwrap();
-        tx.send(FileMessage::Commit).unwrap();
 
-        let result = rx.recv().unwrap().unwrap();
+        h.file_tx
+            .send(FileMessage::Chunk(b"hello world".to_vec()))
+            .unwrap();
+        h.file_tx.send(FileMessage::Commit).unwrap();
+
+        let result = h.result_rx.recv().unwrap().unwrap();
         assert_eq!(result.bytes_written, 11);
         assert_eq!(result.file_entry_index, 0);
         assert!(result.metadata_error.is_none());
 
         assert_eq!(fs::read(&file_path).unwrap(), b"hello world");
 
-        tx.send(FileMessage::Shutdown).unwrap();
-        handle.join().unwrap();
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        h.join_handle.join().unwrap();
     }
 
     #[test]
@@ -288,74 +378,80 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("aborted.dat");
 
-        let (tx, rx, handle) = spawn_disk_thread(DiskCommitConfig::default());
+        let h = spawn_disk_thread(DiskCommitConfig::default());
 
-        // Use non-direct write so a temp file is created.
-        tx.send(FileMessage::Begin(BeginMessage {
-            file_path: file_path.clone(),
-            target_size: 100,
-            file_entry_index: 1,
-            use_sparse: false,
-            direct_write: false,
-        }))
-        .unwrap();
+        h.file_tx
+            .send(FileMessage::Begin(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 100,
+                file_entry_index: 1,
+                use_sparse: false,
+                direct_write: false,
+            }))
+            .unwrap();
 
-        tx.send(FileMessage::Chunk(b"partial".to_vec())).unwrap();
-        tx.send(FileMessage::Abort {
-            reason: "test abort".into(),
-        })
-        .unwrap();
+        h.file_tx
+            .send(FileMessage::Chunk(b"partial".to_vec()))
+            .unwrap();
+        h.file_tx
+            .send(FileMessage::Abort {
+                reason: "test abort".into(),
+            })
+            .unwrap();
 
-        let result = rx.recv().unwrap();
+        let result = h.result_rx.recv().unwrap();
         assert!(result.is_err());
 
-        // Destination should not exist.
         assert!(!file_path.exists());
 
-        tx.send(FileMessage::Shutdown).unwrap();
-        handle.join().unwrap();
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        h.join_handle.join().unwrap();
     }
 
     #[test]
     fn multiple_files_sequential() {
         let dir = tempfile::tempdir().unwrap();
-        let (tx, rx, handle) = spawn_disk_thread(DiskCommitConfig::default());
+        let h = spawn_disk_thread(DiskCommitConfig::default());
 
         for i in 0..3 {
             let path = dir.path().join(format!("file{i}.dat"));
             let data = format!("content-{i}");
 
-            tx.send(FileMessage::Begin(BeginMessage {
-                file_path: path.clone(),
-                target_size: data.len() as u64,
-                file_entry_index: i,
-                use_sparse: false,
-                direct_write: true,
-            }))
-            .unwrap();
+            h.file_tx
+                .send(FileMessage::Begin(BeginMessage {
+                    file_path: path.clone(),
+                    target_size: data.len() as u64,
+                    file_entry_index: i,
+                    use_sparse: false,
+                    direct_write: true,
+                }))
+                .unwrap();
 
-            tx.send(FileMessage::Chunk(data.into_bytes())).unwrap();
-            tx.send(FileMessage::Commit).unwrap();
+            h.file_tx
+                .send(FileMessage::Chunk(data.into_bytes()))
+                .unwrap();
+            h.file_tx.send(FileMessage::Commit).unwrap();
 
-            let result = rx.recv().unwrap().unwrap();
+            let result = h.result_rx.recv().unwrap().unwrap();
             assert_eq!(result.file_entry_index, i);
             assert_eq!(fs::read_to_string(&path).unwrap(), format!("content-{i}"));
         }
 
-        tx.send(FileMessage::Shutdown).unwrap();
-        handle.join().unwrap();
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        h.join_handle.join().unwrap();
     }
 
     #[test]
     fn channel_disconnect_stops_thread() {
-        let (tx, rx, handle) = spawn_disk_thread(DiskCommitConfig::default());
-        drop(tx);
+        let h = spawn_disk_thread(DiskCommitConfig::default());
+        drop(h.file_tx);
 
-        // Thread exits because channel disconnected.
-        handle.join().unwrap();
+        h.join_handle.join().unwrap();
 
-        // No results should be pending.
-        assert!(matches!(rx.try_recv(), Err(TryRecvError::Disconnected)));
+        assert!(matches!(
+            h.result_rx.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
     }
 
     #[test]
@@ -363,27 +459,66 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("multi_chunk.dat");
 
-        let (tx, rx, handle) = spawn_disk_thread(DiskCommitConfig::default());
+        let h = spawn_disk_thread(DiskCommitConfig::default());
 
-        tx.send(FileMessage::Begin(BeginMessage {
-            file_path: file_path.clone(),
-            target_size: 300,
-            file_entry_index: 0,
-            use_sparse: false,
-            direct_write: true,
-        }))
-        .unwrap();
+        h.file_tx
+            .send(FileMessage::Begin(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 300,
+                file_entry_index: 0,
+                use_sparse: false,
+                direct_write: true,
+            }))
+            .unwrap();
 
-        tx.send(FileMessage::Chunk(b"aaa".to_vec())).unwrap();
-        tx.send(FileMessage::Chunk(b"bbb".to_vec())).unwrap();
-        tx.send(FileMessage::Chunk(b"ccc".to_vec())).unwrap();
-        tx.send(FileMessage::Commit).unwrap();
+        h.file_tx.send(FileMessage::Chunk(b"aaa".to_vec())).unwrap();
+        h.file_tx.send(FileMessage::Chunk(b"bbb".to_vec())).unwrap();
+        h.file_tx.send(FileMessage::Chunk(b"ccc".to_vec())).unwrap();
+        h.file_tx.send(FileMessage::Commit).unwrap();
 
-        let result = rx.recv().unwrap().unwrap();
+        let result = h.result_rx.recv().unwrap().unwrap();
         assert_eq!(result.bytes_written, 9);
         assert_eq!(fs::read(&file_path).unwrap(), b"aaabbbccc");
 
-        tx.send(FileMessage::Shutdown).unwrap();
-        handle.join().unwrap();
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        h.join_handle.join().unwrap();
+    }
+
+    #[test]
+    fn buffer_recycling() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("recycle.dat");
+
+        let h = spawn_disk_thread(DiskCommitConfig::default());
+
+        h.file_tx
+            .send(FileMessage::Begin(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 100,
+                file_entry_index: 0,
+                use_sparse: false,
+                direct_write: true,
+            }))
+            .unwrap();
+
+        h.file_tx
+            .send(FileMessage::Chunk(b"hello".to_vec()))
+            .unwrap();
+        h.file_tx
+            .send(FileMessage::Chunk(b" world".to_vec()))
+            .unwrap();
+        h.file_tx.send(FileMessage::Commit).unwrap();
+
+        let result = h.result_rx.recv().unwrap().unwrap();
+        assert_eq!(result.bytes_written, 11);
+
+        // Disk thread should have returned 2 buffers for recycling.
+        let recycled1 = h.buf_return_rx.recv().unwrap();
+        let recycled2 = h.buf_return_rx.recv().unwrap();
+        assert!(recycled1.capacity() >= 5);
+        assert!(recycled2.capacity() >= 6);
+
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        h.join_handle.join().unwrap();
     }
 }

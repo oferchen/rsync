@@ -1515,6 +1515,7 @@ impl ReceiverContext {
                     &mut checksum_verifier,
                     &mut token_buffer,
                     pipelined_receiver.file_sender(),
+                    pipelined_receiver.buf_return_rx(),
                     0, // file_entry_index (metadata applied below)
                 )?;
 

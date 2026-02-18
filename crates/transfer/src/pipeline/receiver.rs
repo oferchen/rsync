@@ -14,6 +14,14 @@ use crate::pipeline::messages::{CommitResult, FileMessage};
 /// Mediator that coordinates the network ingest thread with the disk
 /// commit thread via bounded channels.
 ///
+/// # Buffer Recycling
+///
+/// Mirrors upstream rsync's `simple_recv_token` (token.c:284) which uses a
+/// single static buffer for all tokens. Here, the disk thread returns used
+/// `Vec<u8>` buffers through a return channel. The network thread calls
+/// `try_recycle_buffer()` to reuse a buffer before allocating a new one,
+/// eliminating per-chunk malloc/free overhead.
+///
 /// # Lifecycle
 ///
 /// 1. `PipelinedReceiver::new()` spawns the disk thread.
@@ -27,6 +35,8 @@ use crate::pipeline::messages::{CommitResult, FileMessage};
 pub struct PipelinedReceiver {
     file_tx: SyncSender<FileMessage>,
     result_rx: Receiver<io::Result<CommitResult>>,
+    /// Return channel for buffer recycling from the disk thread.
+    buf_return_rx: Receiver<Vec<u8>>,
     disk_thread: Option<JoinHandle<()>>,
     /// Number of commits sent but not yet collected.
     pending_commits: usize,
@@ -35,11 +45,12 @@ pub struct PipelinedReceiver {
 impl PipelinedReceiver {
     /// Spawns the disk commit thread and returns a new mediator.
     pub fn new(config: DiskCommitConfig) -> Self {
-        let (file_tx, result_rx, handle) = spawn_disk_thread(config);
+        let h = spawn_disk_thread(config);
         Self {
-            file_tx,
-            result_rx,
-            disk_thread: Some(handle),
+            file_tx: h.file_tx,
+            result_rx: h.result_rx,
+            buf_return_rx: h.buf_return_rx,
+            disk_thread: Some(h.join_handle),
             pending_commits: 0,
         }
     }
@@ -50,6 +61,15 @@ impl PipelinedReceiver {
     #[inline]
     pub fn file_sender(&self) -> &SyncSender<FileMessage> {
         &self.file_tx
+    }
+
+    /// Returns a reference to the buffer return receiver.
+    ///
+    /// Pass this to [`crate::transfer_ops::process_file_response_streaming`]
+    /// so it can reuse buffers returned by the disk thread.
+    #[inline]
+    pub fn buf_return_rx(&self) -> &Receiver<Vec<u8>> {
+        &self.buf_return_rx
     }
 
     /// Increments the pending-commit counter.

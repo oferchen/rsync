@@ -39,7 +39,7 @@ use engine::signature::FileSignature;
 use protocol::ProtocolVersion;
 use protocol::codec::NdxCodec;
 
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::{Receiver, SyncSender};
 
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
@@ -416,6 +416,23 @@ pub fn process_file_response<R: Read>(
     Ok(total_bytes)
 }
 
+/// Try to reuse a buffer returned by the disk thread, or allocate a new one.
+///
+/// Mirrors upstream rsync's `simple_recv_token` (token.c:284) which uses a
+/// single static buffer. Here we recycle buffers through a return channel.
+#[inline]
+fn recycle_or_alloc(buf_return_rx: &Receiver<Vec<u8>>, capacity: usize) -> Vec<u8> {
+    if let Ok(mut buf) = buf_return_rx.try_recv() {
+        buf.clear();
+        if buf.capacity() < capacity {
+            buf.reserve(capacity - buf.capacity());
+        }
+        buf
+    } else {
+        Vec::with_capacity(capacity)
+    }
+}
+
 /// Processes a file transfer response, streaming chunks to the disk thread.
 ///
 /// Like [`process_file_response`], reads echoed attributes, delta tokens, and
@@ -434,6 +451,7 @@ pub fn process_file_response<R: Read>(
 /// * `checksum_verifier` - Reusable checksum verifier (reset per call)
 /// * `token_buffer` - Reusable token buffer for cross-frame literal tokens
 /// * `file_tx` - Channel sender to the disk commit thread
+/// * `buf_return_rx` - Return channel for recycled buffers from the disk thread
 /// * `file_entry_index` - Index into the file list for metadata application
 #[allow(clippy::too_many_arguments)]
 pub fn process_file_response_streaming<R: Read>(
@@ -444,6 +462,7 @@ pub fn process_file_response_streaming<R: Read>(
     checksum_verifier: &mut ChecksumVerifier,
     token_buffer: &mut TokenBuffer,
     file_tx: &SyncSender<FileMessage>,
+    buf_return_rx: &Receiver<Vec<u8>>,
     file_entry_index: usize,
 ) -> io::Result<u64> {
     let expected_ndx = pending.ndx();
@@ -540,20 +559,21 @@ pub fn process_file_response_streaming<R: Read>(
 
             break;
         } else if token > 0 {
-            // Literal data
+            // Literal data — try to reuse a buffer returned by the disk thread.
             let len = token as usize;
+            let mut buf = recycle_or_alloc(buf_return_rx, len);
 
-            let data = if let Some(borrowed) = reader.try_borrow_exact(len)? {
+            if let Some(borrowed) = reader.try_borrow_exact(len)? {
                 checksum_verifier.update(borrowed);
-                borrowed.to_vec()
+                buf.extend_from_slice(borrowed);
             } else {
                 token_buffer.resize_for(len);
                 reader.read_exact(token_buffer.as_mut_slice())?;
                 checksum_verifier.update(token_buffer.as_slice());
-                token_buffer.as_slice().to_vec()
+                buf.extend_from_slice(token_buffer.as_slice());
             };
 
-            file_tx.send(FileMessage::Chunk(data)).map_err(|_| {
+            file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
                     "disk commit thread disconnected during chunk send",
@@ -592,14 +612,14 @@ pub fn process_file_response_streaming<R: Read>(
                 let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
                 checksum_verifier.update(block_data);
 
-                file_tx
-                    .send(FileMessage::Chunk(block_data.to_vec()))
-                    .map_err(|_| {
-                        io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            "disk commit thread disconnected during block send",
-                        )
-                    })?;
+                let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
+                buf.extend_from_slice(block_data);
+                file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "disk commit thread disconnected during block send",
+                    )
+                })?;
                 total_bytes += bytes_to_copy as u64;
             } else {
                 let msg = format!("block reference {block_idx} without basis file");
