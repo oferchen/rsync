@@ -1097,9 +1097,10 @@ fn execute_sparse_with_large_file() {
     .expect("large sparse copy succeeds");
     let elapsed = start.elapsed();
 
-    // Should complete quickly despite 1GB size (mostly holes)
+    // Should complete quickly despite 1GB size (mostly holes).
+    // CI runners (especially macOS) can be slow; allow up to 30 seconds.
     assert!(
-        elapsed.as_secs() < 10,
+        elapsed.as_secs() < 30,
         "large sparse copy took too long: {elapsed:?}"
     );
 

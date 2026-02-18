@@ -4,7 +4,7 @@ fn run_daemon_writes_and_removes_pid_file() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let temp = tempdir().expect("pid dir");
     let pid_path = temp.path().join("rsyncd.pid");
@@ -21,6 +21,7 @@ fn run_daemon_writes_and_removes_pid_file() {
         .build();
 
     let pid_clone = pid_path.clone();
+    drop(held_listener);
     let handle = thread::spawn(move || run_daemon(config));
 
     let start = Instant::now();
