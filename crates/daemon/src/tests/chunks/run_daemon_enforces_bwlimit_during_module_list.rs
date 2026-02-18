@@ -7,7 +7,7 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     let mut recorder = bandwidth::recorded_sleep_session();
     recorder.clear();
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let comment = "x".repeat(4096);
     let config = DaemonConfig::builder()
@@ -25,7 +25,7 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let expected_greeting = legacy_daemon_greeting();
