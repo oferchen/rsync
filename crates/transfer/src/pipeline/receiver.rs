@@ -3,35 +3,30 @@
 //! Owns the channels and the disk commit thread, coordinating lifecycle,
 //! error collection, and graceful shutdown.
 
+use std::collections::VecDeque;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::thread::JoinHandle;
 
+use crate::delta_apply::ChecksumVerifier;
 use crate::disk_commit::{DiskCommitConfig, spawn_disk_thread};
 use crate::pipeline::messages::{CommitResult, FileMessage};
 
+/// Expected checksum for a pending file, used for deferred verification.
+///
+/// Stored in a FIFO queue by `PipelinedReceiver`. When the disk thread
+/// returns a `CommitResult` with a computed checksum, it is compared
+/// against the next `PendingChecksum` in the queue.
+struct PendingChecksum {
+    expected: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+    len: usize,
+    file_path: PathBuf,
+}
+
 /// Mediator that coordinates the network ingest thread with the disk
-/// commit thread via bounded channels.
-///
-/// # Buffer Recycling
-///
-/// Mirrors upstream rsync's `simple_recv_token` (token.c:284) which uses a
-/// single static buffer for all tokens. Here, the disk thread returns used
-/// `Vec<u8>` buffers through a return channel. The network thread calls
-/// `try_recycle_buffer()` to reuse a buffer before allocating a new one,
-/// eliminating per-chunk malloc/free overhead.
-///
-/// # Lifecycle
-///
-/// 1. `PipelinedReceiver::new()` spawns the disk thread.
-/// 2. The network thread calls `file_sender()` to get the channel sender
-///    and passes it to `process_file_response_streaming()`.
-/// 3. After each response, `drain_ready_results()` non-blockingly checks
-///    for completed disk writes and early errors.
-/// 4. After all files are processed, `drain_all_results()` blocks until
-///    every committed file has been written.
-/// 5. `shutdown()` (or `Drop`) sends `Shutdown` and joins the thread.
+/// commit thread via bounded channels, including deferred checksum
+/// verification.
 pub struct PipelinedReceiver {
     file_tx: SyncSender<FileMessage>,
     result_rx: Receiver<io::Result<CommitResult>>,
@@ -40,6 +35,10 @@ pub struct PipelinedReceiver {
     disk_thread: Option<JoinHandle<()>>,
     /// Number of commits sent but not yet collected.
     pending_commits: usize,
+    /// Queue of expected checksums for deferred verification.
+    /// Consumed FIFO when collecting `CommitResult`s, since the disk thread
+    /// processes files in the same order they are submitted.
+    expected_checksums: VecDeque<PendingChecksum>,
 }
 
 impl PipelinedReceiver {
@@ -52,6 +51,7 @@ impl PipelinedReceiver {
             buf_return_rx: h.buf_return_rx,
             disk_thread: Some(h.join_handle),
             pending_commits: 0,
+            expected_checksums: VecDeque::new(),
         }
     }
 
@@ -72,19 +72,30 @@ impl PipelinedReceiver {
         &self.buf_return_rx
     }
 
-    /// Increments the pending-commit counter.
+    /// Increments the pending-commit counter and records the expected checksum
+    /// for deferred verification.
     ///
     /// Call this after `process_file_response_streaming` successfully returns
     /// (meaning it sent `Commit` through the channel).
-    #[inline]
-    pub fn note_commit_sent(&mut self) {
+    pub fn note_commit_sent(
+        &mut self,
+        expected_checksum: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+        checksum_len: usize,
+        file_path: PathBuf,
+    ) {
         self.pending_commits += 1;
+        self.expected_checksums.push_back(PendingChecksum {
+            expected: expected_checksum,
+            len: checksum_len,
+            file_path,
+        });
     }
 
     /// Non-blockingly drains all available commit results.
     ///
     /// Returns accumulated (bytes_written, metadata_errors).
-    /// Propagates the first disk error encountered.
+    /// Propagates the first disk error encountered. Verifies per-file
+    /// checksums when the disk thread returns a computed digest.
     pub fn drain_ready_results(&mut self) -> io::Result<(u64, Vec<(PathBuf, String)>)> {
         let mut bytes = 0u64;
         let mut meta_errors = Vec::new();
@@ -92,6 +103,7 @@ impl PipelinedReceiver {
         loop {
             match self.result_rx.try_recv() {
                 Ok(Ok(result)) => {
+                    self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     if let Some(err) = result.metadata_error {
                         meta_errors.push(err);
@@ -100,6 +112,8 @@ impl PipelinedReceiver {
                 }
                 Ok(Err(e)) => {
                     self.pending_commits = self.pending_commits.saturating_sub(1);
+                    // Consume the corresponding expected checksum on error.
+                    let _ = self.expected_checksums.pop_front();
                     return Err(e);
                 }
                 Err(TryRecvError::Empty) => break,
@@ -121,7 +135,8 @@ impl PipelinedReceiver {
     /// Blocks until all pending commits have been collected.
     ///
     /// Returns accumulated (bytes_written, metadata_errors).
-    /// Propagates the first disk error encountered.
+    /// Propagates the first disk error encountered. Verifies per-file
+    /// checksums when the disk thread returns a computed digest.
     pub fn drain_all_results(&mut self) -> io::Result<(u64, Vec<(PathBuf, String)>)> {
         let mut bytes = 0u64;
         let mut meta_errors = Vec::new();
@@ -129,6 +144,7 @@ impl PipelinedReceiver {
         while self.pending_commits > 0 {
             match self.result_rx.recv() {
                 Ok(Ok(result)) => {
+                    self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     if let Some(err) = result.metadata_error {
                         meta_errors.push(err);
@@ -137,6 +153,7 @@ impl PipelinedReceiver {
                 }
                 Ok(Err(e)) => {
                     self.pending_commits -= 1;
+                    let _ = self.expected_checksums.pop_front();
                     return Err(e);
                 }
                 Err(_) => {
@@ -149,6 +166,36 @@ impl PipelinedReceiver {
         }
 
         Ok((bytes, meta_errors))
+    }
+
+    /// Verifies a commit result's computed checksum against the expected value.
+    ///
+    /// Pops the next expected checksum from the FIFO queue (files are processed
+    /// in submission order). Returns `Err` on mismatch — mirrors upstream
+    /// `receiver.c:315` which aborts on checksum failure.
+    fn verify_checksum(&mut self, result: &CommitResult) -> io::Result<()> {
+        let pending = match self.expected_checksums.pop_front() {
+            Some(p) => p,
+            None => return Ok(()), // No expected checksum (legacy/test path).
+        };
+
+        if let Some(ref computed) = result.computed_checksum {
+            if computed.len != pending.len
+                || computed.bytes[..computed.len] != pending.expected[..pending.len]
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "checksum verification failed for {:?}: expected {:02x?}, got {:02x?}",
+                        pending.file_path,
+                        &pending.expected[..pending.len],
+                        &computed.bytes[..computed.len]
+                    ),
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Sends `Shutdown` and joins the disk thread.
@@ -200,13 +247,14 @@ mod tests {
         let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
 
         pr.file_sender()
-            .send(FileMessage::Begin(BeginMessage {
+            .send(FileMessage::Begin(Box::new(BeginMessage {
                 file_path: file_path.clone(),
                 target_size: 100,
                 file_entry_index: 0,
                 use_sparse: false,
                 direct_write: true,
-            }))
+                checksum_verifier: None,
+            })))
             .unwrap();
 
         pr.file_sender()
@@ -214,7 +262,11 @@ mod tests {
             .unwrap();
 
         pr.file_sender().send(FileMessage::Commit).unwrap();
-        pr.note_commit_sent();
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.clone(),
+        );
 
         let (bytes, errors) = pr.drain_all_results().unwrap();
         assert_eq!(bytes, 9);
