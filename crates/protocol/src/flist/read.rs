@@ -1091,9 +1091,9 @@ impl FileListReader {
         debug_log!(
             Flist,
             3,
-            "read_name: total_len={} name={:?}",
+            "read_name: total_len={} name_bytes={:?}",
             name.len(),
-            String::from_utf8_lossy(&name)
+            &name[..name.len().min(64)]
         );
 
         // Update state
@@ -1148,7 +1148,10 @@ fn read_owner_id<R: Read + ?Sized>(
         if len > 0 {
             let mut name_bytes = vec![0u8; len];
             reader.read_exact(&mut name_bytes)?;
-            Some(String::from_utf8_lossy(&name_bytes).into_owned())
+            Some(match String::from_utf8(name_bytes) {
+                Ok(s) => s,
+                Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+            })
         } else {
             None
         }
