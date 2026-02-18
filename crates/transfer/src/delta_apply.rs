@@ -165,6 +165,9 @@ impl SparseWriteState {
 /// Uses enum dispatch for zero-allocation runtime algorithm selection.
 /// Mirrors upstream rsync's checksum verification in `receiver.c`.
 pub enum ChecksumVerifier {
+    /// No checksum — `CSUM_NONE` negotiated. 1-byte placeholder digest
+    /// matching upstream `receiver.c` behaviour.
+    None,
     /// MD4 checksum (legacy, protocol < 30).
     Md4(Md4),
     /// MD5 checksum (protocol 30+ default).
@@ -203,7 +206,8 @@ impl ChecksumVerifier {
     #[must_use]
     pub fn for_algorithm(algorithm: ChecksumAlgorithm) -> Self {
         match algorithm {
-            ChecksumAlgorithm::None | ChecksumAlgorithm::MD4 => Self::Md4(Md4::new()),
+            ChecksumAlgorithm::None => Self::None,
+            ChecksumAlgorithm::MD4 => Self::Md4(Md4::new()),
             ChecksumAlgorithm::MD5 => Self::Md5(Md5::new()),
             ChecksumAlgorithm::SHA1 => Self::Sha1(Sha1::new()),
             ChecksumAlgorithm::XXH64 => Self::Xxh64(Xxh64::with_seed(0)),
@@ -217,6 +221,7 @@ impl ChecksumVerifier {
     #[must_use]
     pub const fn algorithm(&self) -> ChecksumAlgorithm {
         match self {
+            Self::None => ChecksumAlgorithm::None,
             Self::Md4(_) => ChecksumAlgorithm::MD4,
             Self::Md5(_) => ChecksumAlgorithm::MD5,
             Self::Sha1(_) => ChecksumAlgorithm::SHA1,
@@ -230,6 +235,7 @@ impl ChecksumVerifier {
     #[inline]
     pub fn update(&mut self, data: &[u8]) {
         match self {
+            Self::None => {}
             Self::Md4(h) => h.update(data),
             Self::Md5(h) => h.update(data),
             Self::Sha1(h) => h.update(data),
@@ -247,6 +253,7 @@ impl ChecksumVerifier {
     #[must_use]
     pub const fn digest_len(&self) -> usize {
         match self {
+            Self::None => 1,
             Self::Md4(_) | Self::Md5(_) | Self::Xxh128(_) => 16,
             Self::Sha1(_) => 20,
             Self::Xxh64(_) | Self::Xxh3(_) => 8,
@@ -261,6 +268,7 @@ impl ChecksumVerifier {
     pub fn finalize_into(self, buf: &mut [u8; Self::MAX_DIGEST_LEN]) -> usize {
         let len = self.digest_len();
         match self {
+            Self::None => buf[0] = 0,
             Self::Md4(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
             Self::Md5(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
             Self::Sha1(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
@@ -751,9 +759,14 @@ mod tests {
     }
 
     #[test]
-    fn verifier_for_algorithm_none_defaults_to_md4() {
+    fn verifier_for_algorithm_none_is_noop() {
         let v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::None);
-        assert_eq!(v.digest_len(), 16); // MD4 length
+        assert_eq!(v.algorithm(), ChecksumAlgorithm::None);
+        assert_eq!(v.digest_len(), 1); // 1-byte placeholder per upstream
+        let mut buf = [0xFFu8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = v.finalize_into(&mut buf);
+        assert_eq!(len, 1);
+        assert_eq!(buf[0], 0);
     }
 
     #[test]
