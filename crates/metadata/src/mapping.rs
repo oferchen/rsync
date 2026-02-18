@@ -201,10 +201,18 @@ impl NameMapping {
 
     fn lookup_name(&self, identifier: u32) -> io::Result<Option<String>> {
         match self.kind {
-            MappingKind::User => lookup_user_name(identifier as RawUid)
-                .map(|opt| opt.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())),
-            MappingKind::Group => lookup_group_name(identifier as RawGid)
-                .map(|opt| opt.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())),
+            MappingKind::User => lookup_user_name(identifier as RawUid).map(|opt| {
+                opt.map(|bytes| match String::from_utf8(bytes) {
+                    Ok(s) => s,
+                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+                })
+            }),
+            MappingKind::Group => lookup_group_name(identifier as RawGid).map(|opt| {
+                opt.map(|bytes| match String::from_utf8(bytes) {
+                    Ok(s) => s,
+                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+                })
+            }),
         }
     }
 
