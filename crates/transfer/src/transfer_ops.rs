@@ -496,8 +496,7 @@ pub fn process_file_response_streaming<R: Read>(
     // Move the checksum verifier to the disk thread so hashing overlaps with
     // I/O and the network thread can focus solely on reading the wire.
     let algo = checksum_verifier.algorithm();
-    let disk_verifier =
-        std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
+    let disk_verifier = std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
 
     // Tell the disk thread to open the file.
     let direct_write = basis_path.is_none() && ctx.config.direct_write;
