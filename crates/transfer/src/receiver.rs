@@ -1512,11 +1512,6 @@ impl ReceiverContext {
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
 
-        // Deferred metadata: applied after disk thread confirms commit,
-        // ensuring the file exists at its final path. Mirrors upstream
-        // finish_transfer() which sets attrs after rename.
-        let mut deferred_metadata: Vec<(PathBuf, &FileEntry)> = Vec::new();
-
         // Reusable per-file resources
         let mut checksum_verifier = ChecksumVerifier::new(
             self.negotiated_algorithms.as_ref(),
@@ -1524,9 +1519,12 @@ impl ReceiverContext {
             self.checksum_seed,
             self.compat_flags.as_ref(),
         );
-        // Spawn the disk commit thread.
+        // Spawn the disk commit thread with metadata options so it applies
+        // mtime/perms/ownership immediately after rename — mirroring upstream
+        // finish_transfer() → set_file_attrs() in receiver.c.
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.fsync,
+            metadata_opts: Some(setup.metadata_opts.clone()),
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);
@@ -1599,7 +1597,8 @@ impl ReceiverContext {
                     &mut checksum_verifier,
                     pipelined_receiver.file_sender(),
                     pipelined_receiver.buf_return_rx(),
-                    0, // file_entry_index (metadata applied below)
+                    0,
+                    Some(file_entry.clone()),
                 )?;
 
                 pipelined_receiver.note_commit_sent(
@@ -1613,30 +1612,15 @@ impl ReceiverContext {
                 bytes_received += disk_bytes;
                 metadata_errors.extend(disk_meta_errors);
 
-                // Defer metadata until after disk thread confirms the commit
-                // (file must exist at final path before we can set attrs).
-                deferred_metadata.push((file_path, file_entry));
-
                 bytes_received += result.total_bytes;
                 files_transferred += 1;
             }
 
             // Drain all remaining disk results — blocks until every file is
-            // committed (flushed + renamed to final path).
+            // committed (flushed + renamed + metadata applied).
             let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
             bytes_received += disk_bytes;
             metadata_errors.extend(disk_meta_errors);
-
-            // Apply metadata now that all files are at their final paths.
-            // Mirrors upstream finish_transfer() → set_file_attrs() which
-            // runs after do_rename(fnametmp, fname) in receiver.c.
-            for (file_path, file_entry) in &deferred_metadata {
-                if let Err(meta_err) =
-                    apply_metadata_from_file_entry(file_path, file_entry, &setup.metadata_opts)
-                {
-                    metadata_errors.push((file_path.clone(), meta_err.to_string()));
-                }
-            }
 
             Ok((files_transferred, bytes_received))
         })();
