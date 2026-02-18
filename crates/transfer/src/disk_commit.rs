@@ -37,6 +37,17 @@ pub const DEFAULT_CHANNEL_CAPACITY: usize = 32;
 /// (fileio.c:161). Upstream always uses 256 KB regardless of file size.
 const WRITE_BUF_SIZE: usize = 256 * 1024;
 
+/// Minimum chunk size for direct-to-file writes, bypassing the buffer.
+///
+/// Chunks at or above this size are written directly to the file descriptor,
+/// eliminating one `memcpy` from the hot path. Smaller chunks are still
+/// buffered to amortize syscall overhead for tiny delta tokens.
+///
+/// 8 KB balances syscall cost (~100-200 ns) against copy cost (~200-400 ns
+/// for 8 KB in L1/L2 cache). Most rsync literal tokens are 32 KB+, so this
+/// threshold catches the common case.
+const DIRECT_WRITE_THRESHOLD: usize = 8 * 1024;
+
 /// Minimum file size to pre-allocate with `set_len()`.
 /// Matches upstream rsync's `preallocate_files` threshold — small files are not
 /// worth the extra syscall.
@@ -65,19 +76,26 @@ impl<'a> ReusableBufWriter<'a> {
 
 impl Write for ReusableBufWriter<'_> {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        // Large chunks: write directly to file, bypassing the buffer copy.
+        // Eliminates one memcpy for typical rsync token sizes (8 KB–64 KB).
+        if data.len() >= DIRECT_WRITE_THRESHOLD {
+            if !self.buf.is_empty() {
+                self.file.write_all(self.buf)?;
+                self.buf.clear();
+            }
+            self.file.write_all(data)?;
+            return Ok(data.len());
+        }
+
+        // Small chunks: buffer to batch into fewer syscalls.
         if self.buf.len() + data.len() <= self.buf.capacity() {
             self.buf.extend_from_slice(data);
-            Ok(data.len())
         } else {
             self.file.write_all(self.buf)?;
             self.buf.clear();
-            if data.len() >= self.buf.capacity() {
-                self.file.write_all(data)?;
-            } else {
-                self.buf.extend_from_slice(data);
-            }
-            Ok(data.len())
+            self.buf.extend_from_slice(data);
         }
+        Ok(data.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
