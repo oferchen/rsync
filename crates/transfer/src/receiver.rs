@@ -783,6 +783,7 @@ impl ReceiverContext {
                 protocol: self.protocol,
                 checksum_length,
                 checksum_algorithm,
+                whole_file: self.config.flags.whole_file,
             };
             let basis_result = find_basis_file_with_config(&basis_config);
             let signature_opt = basis_result.signature;
@@ -1335,6 +1336,7 @@ impl ReceiverContext {
                         protocol: self.protocol,
                         checksum_length: setup.checksum_length,
                         checksum_algorithm: setup.checksum_algorithm,
+                        whole_file: self.config.flags.whole_file,
                     };
                     let basis_result = find_basis_file_with_config(&basis_config);
 
@@ -1472,6 +1474,7 @@ impl ReceiverContext {
                             protocol: self.protocol,
                             checksum_length: setup.checksum_length,
                             checksum_algorithm: setup.checksum_algorithm,
+                            whole_file: self.config.flags.whole_file,
                         };
                         let basis_result = find_basis_file_with_config(&basis_config);
 
@@ -2262,6 +2265,8 @@ pub struct BasisFileConfig<'a> {
     pub checksum_length: NonZeroU8,
     /// Algorithm for strong checksums.
     pub checksum_algorithm: engine::signature::SignatureAlgorithm,
+    /// When true, skip basis file search entirely (upstream `--whole-file`).
+    pub whole_file: bool,
 }
 
 /// Tries to find a basis file in the reference directories.
@@ -2388,6 +2393,12 @@ fn generate_basis_signature(
 /// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
 /// - `generator.c:1400` - Reference directory checking
 pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileResult {
+    // Upstream `generator.c:1949`: when `whole_file` is set, no basis file
+    // is used — the entire file is sent as literals.
+    if config.whole_file {
+        return BasisFileResult::EMPTY;
+    }
+
     // Try sources in priority order: exact match → reference dirs → fuzzy
     let basis = try_open_file(config.file_path)
         .or_else(|| try_reference_directories(config.relative_path, config.reference_directories))
