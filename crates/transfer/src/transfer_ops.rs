@@ -460,7 +460,6 @@ pub struct StreamingResult {
 /// * `pending` - The pending transfer to process
 /// * `ctx` - Response processing context
 /// * `checksum_verifier` - Reusable checksum verifier (reset per call)
-/// * `token_buffer` - Reusable token buffer for cross-frame literal tokens
 /// * `file_tx` - Channel sender to the disk commit thread
 /// * `buf_return_rx` - Return channel for recycled buffers from the disk thread
 /// * `file_entry_index` - Index into the file list for metadata application
@@ -471,7 +470,6 @@ pub fn process_file_response_streaming<R: Read>(
     pending: PendingTransfer,
     ctx: &ResponseContext<'_>,
     checksum_verifier: &mut ChecksumVerifier,
-    token_buffer: &mut TokenBuffer,
     file_tx: &SyncSender<FileMessage>,
     buf_return_rx: &Receiver<Vec<u8>>,
     file_entry_index: usize,
@@ -574,9 +572,11 @@ pub fn process_file_response_streaming<R: Read>(
             if let Some(borrowed) = reader.try_borrow_exact(len)? {
                 buf.extend_from_slice(borrowed);
             } else {
-                token_buffer.resize_for(len);
-                reader.read_exact(token_buffer.as_mut_slice())?;
-                buf.extend_from_slice(token_buffer.as_slice());
+                // Cross-frame token: read directly into the Vec to avoid an
+                // extra copy through TokenBuffer.
+                let start = buf.len();
+                buf.resize(start + len, 0);
+                reader.read_exact(&mut buf[start..])?;
             };
 
             file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
