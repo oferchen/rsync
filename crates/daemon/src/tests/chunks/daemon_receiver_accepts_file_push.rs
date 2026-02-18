@@ -35,7 +35,7 @@ fn daemon_receiver_accepts_file_push() {
     );
     fs::write(&config_file, config_content).expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -48,7 +48,7 @@ fn daemon_receiver_accepts_file_push() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read daemon greeting

@@ -4,7 +4,7 @@ fn run_daemon_lists_modules_with_motd_lines() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let dir = tempdir().expect("motd dir");
     let motd_path = dir.path().join("motd.txt");
@@ -29,7 +29,7 @@ fn run_daemon_lists_modules_with_motd_lines() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let expected_greeting = legacy_daemon_greeting();

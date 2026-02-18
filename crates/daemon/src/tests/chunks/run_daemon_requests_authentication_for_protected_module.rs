@@ -28,7 +28,7 @@ fn run_daemon_requests_authentication_for_protected_module() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -41,7 +41,7 @@ fn run_daemon_requests_authentication_for_protected_module() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let expected_greeting = legacy_daemon_greeting();
