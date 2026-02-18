@@ -4,7 +4,7 @@ fn run_daemon_records_log_file_entries() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let temp = tempdir().expect("log dir");
     let log_path = temp.path().join("rsyncd.log");
@@ -22,7 +22,7 @@ fn run_daemon_records_log_file_entries() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let expected_greeting = legacy_daemon_greeting();

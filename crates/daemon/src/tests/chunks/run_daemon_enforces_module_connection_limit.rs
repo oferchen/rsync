@@ -26,7 +26,7 @@ fn run_daemon_enforces_module_connection_limit() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -40,7 +40,7 @@ fn run_daemon_enforces_module_connection_limit() {
         ])
         .build();
 
-    let (mut first_stream, handle) = start_daemon(config, port);
+    let (mut first_stream, handle) = start_daemon(config, port, held_listener);
     let mut first_reader = BufReader::new(first_stream.try_clone().expect("clone stream"));
 
     let expected_greeting = legacy_daemon_greeting();
