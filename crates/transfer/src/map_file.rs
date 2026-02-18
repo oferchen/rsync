@@ -151,32 +151,62 @@ impl BufferedMap {
             && offset.saturating_add(len as u64) <= self.window_start + self.window_len as u64
     }
 
-    /// Loads a new window starting at the aligned offset.
+    /// Loads a new window, reusing overlapping bytes from the current window
+    /// when the slide is forward (sequential access pattern).
+    ///
+    /// Mirrors upstream rsync's `map_ptr()` (fileio.c:268-279) which uses
+    /// `memmove()` to retain bytes that overlap between the old and new window
+    /// positions, avoiding redundant disk reads.
     fn load_window(&mut self, offset: u64, min_len: usize) -> io::Result<()> {
-        // Align the read position down to ALIGN_BOUNDARY
         let aligned_start = align_down(offset);
 
-        // Calculate how much to read (up to max_window, but not past EOF)
         let remaining = self.size.saturating_sub(aligned_start);
-        let read_size = (self.max_window as u64).min(remaining) as usize;
+        let window_size = (self.max_window as u64).min(remaining) as usize;
 
-        // Ensure we read at least min_len bytes from the requested offset
         let offset_in_window = (offset - aligned_start) as usize;
         let required_size = offset_in_window + min_len;
-        if read_size < required_size {
+        if window_size < required_size {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "requested range extends past end of file",
             ));
         }
 
-        // Seek and read
-        self.file.seek(SeekFrom::Start(aligned_start))?;
-        self.buffer.resize(read_size, 0);
-        self.file.read_exact(&mut self.buffer[..read_size])?;
+        // Upstream rsync (fileio.c:268-279): reuse overlapping bytes when
+        // sliding forward. The new window starts at `aligned_start`; if the
+        // old window overlaps the beginning of the new window AND the new
+        // window extends past the old window's end, shift the overlap via
+        // copy_within and only read the new portion from disk.
+        let old_end = self.window_start + self.window_len as u64;
+        let (read_start, read_offset) = if self.window_len > 0
+            && aligned_start >= self.window_start
+            && aligned_start < old_end
+            && aligned_start + window_size as u64 >= old_end
+        {
+            // Overlapping forward slide: reuse [aligned_start..old_end)
+            let reuse_len = (old_end - aligned_start) as usize;
+            let src_offset = (aligned_start - self.window_start) as usize;
+
+            self.buffer.resize(window_size, 0);
+            self.buffer
+                .copy_within(src_offset..src_offset + reuse_len, 0);
+
+            (old_end, reuse_len)
+        } else {
+            // No overlap or backward slide: reload entirely
+            self.buffer.resize(window_size, 0);
+            (aligned_start, 0)
+        };
+
+        let read_size = window_size - read_offset;
+        if read_size > 0 {
+            self.file.seek(SeekFrom::Start(read_start))?;
+            self.file
+                .read_exact(&mut self.buffer[read_offset..window_size])?;
+        }
 
         self.window_start = aligned_start;
-        self.window_len = read_size;
+        self.window_len = window_size;
 
         Ok(())
     }
@@ -993,6 +1023,33 @@ mod tests {
         // Window should have moved
         assert!(map.window_start > 0);
         assert!(map.window_start <= far_offset);
+    }
+
+    #[test]
+    fn window_slide_forward_reuses_overlap() {
+        // Create file large enough for multiple windows.
+        // Use a small window so we can verify the overlap behavior.
+        let size = 8192;
+        let temp = create_test_file(size);
+        let mut map = BufferedMap::open_with_window(temp.path(), 4096).unwrap();
+
+        // Load initial window at offset 0
+        let _ = map.map_ptr(0, 100).unwrap();
+        assert_eq!(map.window_start, 0);
+        assert!(map.window_len > 0);
+
+        // Read at an offset that's within the second half of current window
+        // but requires sliding forward. With a 4096 window starting at 0,
+        // request at offset 3000 with len 2000 => needs window to cover [3000, 5000)
+        // which exceeds current window [0, 4096). The new window should
+        // retain bytes from [aligned_start..4096) via memmove instead of
+        // re-reading them from disk.
+        let data = map.map_ptr(3000, 2000).unwrap();
+        let expected: Vec<u8> = (3000..5000).map(|i| (i % 256) as u8).collect();
+        assert_eq!(data, &expected[..]);
+
+        // Data correctness is the key invariant — the memmove optimization
+        // is transparent to callers.
     }
 
     #[test]
