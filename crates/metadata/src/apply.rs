@@ -624,9 +624,21 @@ pub fn apply_metadata_from_file_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
-    // Cache a single stat call for all three sub-functions to avoid redundant syscalls.
     let cached_meta = fs::metadata(destination).ok();
+    apply_metadata_with_cached_stat(destination, entry, options, cached_meta)
+}
 
+/// Applies metadata using a pre-cached `stat` result.
+///
+/// Same as [`apply_metadata_from_file_entry`] but avoids an extra `stat`
+/// syscall when the caller already has the destination's metadata (e.g.
+/// from a quick-check comparison).
+pub fn apply_metadata_with_cached_stat(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: Option<fs::Metadata>,
+) -> Result<(), MetadataError> {
     // Step 1: Apply ownership (if requested)
     apply_ownership_from_entry(destination, entry, options, cached_meta.as_ref())?;
 
