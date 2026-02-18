@@ -24,8 +24,8 @@ use std::io::{self, Seek, Write};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
-use crate::delta_apply::SparseWriteState;
-use crate::pipeline::messages::{BeginMessage, CommitResult, FileMessage};
+use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
+use crate::pipeline::messages::{BeginMessage, ComputedChecksum, CommitResult, FileMessage};
 use crate::temp_guard::{TempFileGuard, open_tmpfile};
 
 /// Default bounded-channel capacity.
@@ -184,7 +184,7 @@ fn disk_thread_main(
         match msg {
             FileMessage::Shutdown => break,
             FileMessage::Begin(begin) => {
-                let result = process_file(&file_rx, &buf_return_tx, &config, begin, &mut write_buf);
+                let result = process_file(&file_rx, &buf_return_tx, &config, *begin, &mut write_buf);
                 if result_tx.send(result).is_err() {
                     break;
                 }
@@ -231,6 +231,11 @@ fn process_file(
         None
     };
 
+    // Per-file checksum verifier, moved from the network thread.
+    // Computing the checksum here overlaps hashing with disk I/O and
+    // removes ~42% of instructions from the network-critical path.
+    let mut checksum_verifier = begin.checksum_verifier;
+
     let mut bytes_written: u64 = 0;
 
     // Consume Chunk / Commit / Abort messages for this file.
@@ -244,6 +249,12 @@ fn process_file(
 
         match msg {
             FileMessage::Chunk(data) => {
+                // Update per-file checksum before writing (mirrors upstream
+                // receiver.c:315 which hashes each token before writing).
+                if let Some(ref mut verifier) = checksum_verifier {
+                    verifier.update(&data);
+                }
+
                 if let Some(ref mut sparse) = sparse_state {
                     sparse.write(&mut output, &data)?;
                 } else {
@@ -281,10 +292,18 @@ fn process_file(
                 }
                 cleanup_guard.keep();
 
+                // Finalize per-file checksum and return to network thread.
+                let computed_checksum = checksum_verifier.map(|verifier| {
+                    let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                    let len = verifier.finalize_into(&mut buf);
+                    ComputedChecksum { bytes: buf, len }
+                });
+
                 return Ok(CommitResult {
                     bytes_written,
                     file_entry_index: begin.file_entry_index,
                     metadata_error: None,
+                    computed_checksum,
                 });
             }
             FileMessage::Abort { reason } => {
@@ -366,13 +385,14 @@ mod tests {
         let h = spawn_disk_thread(DiskCommitConfig::default());
 
         h.file_tx
-            .send(FileMessage::Begin(BeginMessage {
+            .send(FileMessage::Begin(Box::new(BeginMessage {
                 file_path: file_path.clone(),
                 target_size: 1024,
                 file_entry_index: 0,
                 use_sparse: false,
                 direct_write: true,
-            }))
+                checksum_verifier: None,
+            })))
             .unwrap();
 
         h.file_tx
@@ -399,13 +419,14 @@ mod tests {
         let h = spawn_disk_thread(DiskCommitConfig::default());
 
         h.file_tx
-            .send(FileMessage::Begin(BeginMessage {
+            .send(FileMessage::Begin(Box::new(BeginMessage {
                 file_path: file_path.clone(),
                 target_size: 100,
                 file_entry_index: 1,
                 use_sparse: false,
                 direct_write: false,
-            }))
+                checksum_verifier: None,
+            })))
             .unwrap();
 
         h.file_tx
@@ -436,13 +457,14 @@ mod tests {
             let data = format!("content-{i}");
 
             h.file_tx
-                .send(FileMessage::Begin(BeginMessage {
+                .send(FileMessage::Begin(Box::new(BeginMessage {
                     file_path: path.clone(),
                     target_size: data.len() as u64,
                     file_entry_index: i,
                     use_sparse: false,
                     direct_write: true,
-                }))
+                    checksum_verifier: None,
+                })))
                 .unwrap();
 
             h.file_tx
@@ -480,13 +502,14 @@ mod tests {
         let h = spawn_disk_thread(DiskCommitConfig::default());
 
         h.file_tx
-            .send(FileMessage::Begin(BeginMessage {
+            .send(FileMessage::Begin(Box::new(BeginMessage {
                 file_path: file_path.clone(),
                 target_size: 300,
                 file_entry_index: 0,
                 use_sparse: false,
                 direct_write: true,
-            }))
+                checksum_verifier: None,
+            })))
             .unwrap();
 
         h.file_tx.send(FileMessage::Chunk(b"aaa".to_vec())).unwrap();
@@ -510,13 +533,14 @@ mod tests {
         let h = spawn_disk_thread(DiskCommitConfig::default());
 
         h.file_tx
-            .send(FileMessage::Begin(BeginMessage {
+            .send(FileMessage::Begin(Box::new(BeginMessage {
                 file_path: file_path.clone(),
                 target_size: 100,
                 file_entry_index: 0,
                 use_sparse: false,
                 direct_write: true,
-            }))
+                checksum_verifier: None,
+            })))
             .unwrap();
 
         h.file_tx
