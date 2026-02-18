@@ -15,8 +15,7 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use protocol::ProtocolVersion;
-use protocol::filters::{FilterRuleWireFormat, RuleType, write_filter_list};
+use protocol::filters::{FilterRuleWireFormat, RuleType};
 use rsync_io::ssh::{SshCommand, SshConnection, parse_ssh_operand};
 
 use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
@@ -226,19 +225,18 @@ fn build_ssh_connection(
 /// acts as the sender/generator. We reuse the server receiver infrastructure.
 fn run_pull_transfer(
     config: &ClientConfig,
-    mut connection: SshConnection,
+    connection: SshConnection,
     local_paths: &[String],
     _observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
-    // Send filter list to remote generator before starting the transfer
-    // Use protocol v32 for filter format (backward compatible)
-    let protocol = ProtocolVersion::try_from(32u8)
-        .map_err(|e| invalid_argument_error(&format!("invalid protocol version: {e}"), 1))?;
-    send_filter_list_to_server(&mut connection, config, protocol)?;
-
-    // Build server config for receiver role
-    // In a pull, we receive files from remote, so we're the receiver
-    let server_config = build_server_config_for_receiver(config, local_paths)?;
+    // Build server config for receiver role with client_mode enabled.
+    // client_mode = true tells the server flow to send the filter list at the
+    // correct point in the protocol (after handshake + compat exchange), matching
+    // upstream main.c:1258 where recv_filter_list() is called inside the server.
+    let mut server_config = build_server_config_for_receiver(config, local_paths)?;
+    server_config.client_mode = true;
+    server_config.filter_rules = build_wire_format_rules(config.filter_rules())
+        .map_err(|e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12))?;
 
     // Split connection into separate read/write halves and run server, tracking elapsed time
     let start = Instant::now();
@@ -259,9 +257,13 @@ fn run_push_transfer(
     local_paths: &[String],
     _observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
-    // Build server config for generator (sender) role
-    // In a push, we send files to remote, so we're the generator
-    let server_config = build_server_config_for_generator(config, local_paths)?;
+    // Build server config for generator (sender) role with client_mode enabled.
+    // client_mode = true ensures the filter list is sent at the correct point
+    // in the protocol flow (after handshake + compat exchange).
+    let mut server_config = build_server_config_for_generator(config, local_paths)?;
+    server_config.client_mode = true;
+    server_config.filter_rules = build_wire_format_rules(config.filter_rules())
+        .map_err(|e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12))?;
 
     // Split connection into separate read/write halves and run server, tracking elapsed time
     let start = Instant::now();
@@ -533,29 +535,6 @@ fn build_server_flag_string(config: &ClientConfig) -> String {
     }
 
     flags
-}
-
-/// Sends filter list to remote server over SSH connection.
-///
-/// This is called by the local receiver before starting the transfer to send
-/// filter rules to the remote generator. The remote generator will read this
-/// filter list and apply it during file list generation.
-fn send_filter_list_to_server(
-    connection: &mut SshConnection,
-    config: &ClientConfig,
-    protocol: ProtocolVersion,
-) -> Result<(), ClientError> {
-    // Convert ClientConfig filter rules to wire format
-    let wire_rules = build_wire_format_rules(config.filter_rules())?;
-
-    // Send using protocol wire format
-    write_filter_list(connection, &wire_rules, protocol)
-        .map_err(|e| invalid_argument_error(&format!("failed to send filter list: {e}"), 12))?;
-
-    #[cfg(feature = "tracing")]
-    tracing::debug!(count = wire_rules.len(), "Sent filter rules to remote");
-
-    Ok(())
 }
 
 /// Converts client filter rules to wire format.
