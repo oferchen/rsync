@@ -1439,8 +1439,6 @@ impl ReceiverContext {
             self.checksum_seed,
             self.compat_flags.as_ref(),
         );
-        let mut token_buffer = TokenBuffer::with_default_capacity();
-
         // Spawn the disk commit thread.
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.fsync,
@@ -1513,7 +1511,6 @@ impl ReceiverContext {
                     pending,
                     &response_ctx,
                     &mut checksum_verifier,
-                    &mut token_buffer,
                     pipelined_receiver.file_sender(),
                     pipelined_receiver.buf_return_rx(),
                     0, // file_entry_index (metadata applied below)
