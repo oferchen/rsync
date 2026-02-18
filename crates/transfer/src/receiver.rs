@@ -72,7 +72,7 @@ use super::transfer_ops::{
     send_file_request,
 };
 
-use metadata::{MetadataOptions, apply_metadata_from_file_entry};
+use metadata::{MetadataOptions, apply_metadata_from_file_entry, apply_metadata_with_cached_stat};
 
 /// Context for the receiver role during a transfer.
 ///
@@ -417,6 +417,58 @@ impl ReceiverContext {
         }
 
         Ok(metadata_errors)
+    }
+
+    /// Quick-check: compares destination file size + mtime against source.
+    ///
+    /// Returns `Some(metadata)` when the destination already matches and the
+    /// file can be skipped from the delta pipeline, along with the cached stat
+    /// result for reuse by metadata application.  Returns `None` when the file
+    /// needs transfer.
+    ///
+    /// Mirrors upstream `generator.c:617 quick_check_ok()` for `FT_REG`:
+    ///
+    /// - `--times` must be active (otherwise mtime isn't preserved, so
+    ///   comparison is meaningless).
+    /// - Default: both size AND mtime must match.
+    fn quick_check_ok(
+        &self,
+        entry: &FileEntry,
+        dest_dir: &std::path::Path,
+    ) -> Option<fs::Metadata> {
+        // Quick-check only works when --times is set (mtime is preserved).
+        // Without it, destination mtimes are arbitrary and cannot be compared.
+        if !self.config.flags.times {
+            return None;
+        }
+
+        let file_path = dest_dir.join(entry.path());
+        let dest_meta = fs::metadata(&file_path).ok()?;
+
+        // Size must always match.
+        if dest_meta.len() != entry.size() {
+            return None;
+        }
+
+        // Compare mtime (platform-specific access).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if dest_meta.mtime() == entry.mtime() {
+                Some(dest_meta)
+            } else {
+                None
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let mtime_matches = dest_meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(false, |d| d.as_secs() as i64 == entry.mtime());
+            if mtime_matches { Some(dest_meta) } else { None }
+        }
     }
 
     /// Creates a single directory during incremental processing.
@@ -1065,13 +1117,26 @@ impl ReceiverContext {
         // Batch directory creation
         let mut metadata_errors = self.create_directories(&setup.dest_dir, &setup.metadata_opts)?;
 
-        // Build list of files to transfer (filter out non-regular files)
-        let files_to_transfer: Vec<(usize, &FileEntry)> = self
-            .file_list
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.is_file())
-            .collect();
+        // Build list of files to transfer, applying quick-check to skip
+        // unchanged files. Mirrors upstream generator.c:1809 quick_check_ok().
+        let mut files_to_transfer: Vec<(usize, &FileEntry)> = Vec::new();
+        for (idx, entry) in self.file_list.iter().enumerate() {
+            if entry.is_file() {
+                if let Some(cached_meta) = self.quick_check_ok(entry, &setup.dest_dir) {
+                    let file_path = setup.dest_dir.join(entry.path());
+                    if let Err(e) = apply_metadata_with_cached_stat(
+                        &file_path,
+                        entry,
+                        &setup.metadata_opts,
+                        Some(cached_meta),
+                    ) {
+                        metadata_errors.push((file_path, e.to_string()));
+                    }
+                } else {
+                    files_to_transfer.push((idx, entry));
+                }
+            }
+        }
 
         // Run pipelined transfer with decoupled network/disk I/O
         let (files_transferred, bytes_received) = self.run_pipeline_loop_decoupled(
@@ -1163,7 +1228,9 @@ impl ReceiverContext {
             }
         }
 
-        // Build file transfer list, skipping children of failed dirs
+        // Build file transfer list, skipping children of failed dirs and
+        // files that pass the quick-check (size + mtime match destination).
+        // Mirrors upstream generator.c:1809 quick_check_ok() for FT_REG.
         let mut files_to_transfer: Vec<(usize, &FileEntry)> = Vec::new();
         for (idx, entry) in self.file_list.iter().enumerate() {
             if entry.is_file() {
@@ -1176,6 +1243,17 @@ impl ReceiverContext {
                         );
                     }
                     stats.files_skipped += 1;
+                } else if let Some(cached_meta) = self.quick_check_ok(entry, &setup.dest_dir) {
+                    // File unchanged — apply metadata only (upstream: set_file_attrs).
+                    let file_path = setup.dest_dir.join(entry.path());
+                    if let Err(e) = apply_metadata_with_cached_stat(
+                        &file_path,
+                        entry,
+                        &setup.metadata_opts,
+                        Some(cached_meta),
+                    ) {
+                        metadata_errors.push((file_path, e.to_string()));
+                    }
                 } else {
                     files_to_transfer.push((idx, entry));
                 }
