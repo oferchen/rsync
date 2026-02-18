@@ -39,10 +39,13 @@ use engine::signature::FileSignature;
 use protocol::ProtocolVersion;
 use protocol::codec::NdxCodec;
 
+use std::sync::mpsc::{Receiver, SyncSender};
+
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
 use crate::pipeline::PendingTransfer;
+use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::reader::ServerReader;
 use crate::receiver::{SenderAttrs, SumHead, write_signature_blocks};
 use crate::temp_guard::{TempFileGuard, open_tmpfile};
@@ -409,6 +412,222 @@ pub fn process_file_response<R: Read>(
         fs::rename(cleanup_guard.path(), &file_path)?;
     }
     cleanup_guard.keep();
+
+    Ok(total_bytes)
+}
+
+/// Try to reuse a buffer returned by the disk thread, or allocate a new one.
+///
+/// Mirrors upstream rsync's `simple_recv_token` (token.c:284) which uses a
+/// single static buffer. Here we recycle buffers through a return channel.
+#[inline]
+fn recycle_or_alloc(buf_return_rx: &Receiver<Vec<u8>>, capacity: usize) -> Vec<u8> {
+    if let Ok(mut buf) = buf_return_rx.try_recv() {
+        buf.clear();
+        if buf.capacity() < capacity {
+            buf.reserve(capacity - buf.capacity());
+        }
+        buf
+    } else {
+        Vec::with_capacity(capacity)
+    }
+}
+
+/// Processes a file transfer response, streaming chunks to the disk thread.
+///
+/// Like [`process_file_response`], reads echoed attributes, delta tokens, and
+/// verifies the checksum — but instead of writing to disk directly, sends
+/// `FileMessage::Chunk` items through `file_tx` for the disk commit thread.
+///
+/// Checksum verification happens on this (network) thread so invalid data
+/// never touches disk.
+///
+/// # Arguments
+///
+/// * `reader` - Input stream from sender
+/// * `ndx_codec` - NDX decoder (maintains delta decoding state)
+/// * `pending` - The pending transfer to process
+/// * `ctx` - Response processing context
+/// * `checksum_verifier` - Reusable checksum verifier (reset per call)
+/// * `token_buffer` - Reusable token buffer for cross-frame literal tokens
+/// * `file_tx` - Channel sender to the disk commit thread
+/// * `buf_return_rx` - Return channel for recycled buffers from the disk thread
+/// * `file_entry_index` - Index into the file list for metadata application
+#[allow(clippy::too_many_arguments)]
+pub fn process_file_response_streaming<R: Read>(
+    reader: &mut ServerReader<R>,
+    ndx_codec: &mut impl NdxCodec,
+    pending: PendingTransfer,
+    ctx: &ResponseContext<'_>,
+    checksum_verifier: &mut ChecksumVerifier,
+    token_buffer: &mut TokenBuffer,
+    file_tx: &SyncSender<FileMessage>,
+    buf_return_rx: &Receiver<Vec<u8>>,
+    file_entry_index: usize,
+) -> io::Result<u64> {
+    let expected_ndx = pending.ndx();
+
+    // Read sender attributes (echoed NDX + iflags)
+    let (echoed_ndx, _sender_attrs) = SenderAttrs::read_with_codec(reader, ndx_codec)?;
+
+    if echoed_ndx != expected_ndx {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "sender echoed NDX {echoed_ndx} but expected {expected_ndx} - protocol violation"
+            ),
+        ));
+    }
+
+    // Consume echoed sum_head
+    let _echoed_sum_head = SumHead::read(reader)?;
+
+    let (file_path, basis_path, signature, target_size) = pending.into_parts();
+
+    // Tell the disk thread to open the file.
+    let direct_write = basis_path.is_none() && ctx.config.direct_write;
+    file_tx
+        .send(FileMessage::Begin(BeginMessage {
+            file_path: file_path.clone(),
+            target_size,
+            file_entry_index,
+            use_sparse: ctx.config.use_sparse,
+            direct_write,
+        }))
+        .map_err(|_| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
+        })?;
+
+    // Open basis file for block references
+    let mut basis_map = if let Some(ref path) = basis_path {
+        Some(MapFile::open(path).map_err(|e| {
+            io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
+        })?)
+    } else {
+        None
+    };
+
+    let mut total_bytes: u64 = 0;
+
+    // Helper: send abort on error and propagate.
+    let send_abort = |tx: &SyncSender<FileMessage>, reason: String| {
+        let _ = tx.send(FileMessage::Abort { reason });
+    };
+
+    // Read and process delta tokens
+    loop {
+        let mut token_buf = [0u8; 4];
+        if let Err(e) = reader.read_exact(&mut token_buf) {
+            send_abort(file_tx, format!("network read error: {e}"));
+            return Err(e);
+        }
+        let token = i32::from_le_bytes(token_buf);
+
+        if token == 0 {
+            // End of file — verify checksum before committing.
+            let checksum_len = checksum_verifier.digest_len();
+            let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+            if let Err(e) = reader.read_exact(&mut expected[..checksum_len]) {
+                send_abort(file_tx, format!("failed to read checksum: {e}"));
+                return Err(e);
+            }
+
+            let algo = checksum_verifier.algorithm();
+            let old_verifier =
+                std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
+            let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+            let computed_len = old_verifier.finalize_into(&mut computed);
+
+            if computed_len != checksum_len || computed[..computed_len] != expected[..checksum_len]
+            {
+                let msg = format!(
+                    "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
+                    &expected[..checksum_len],
+                    &computed[..computed_len]
+                );
+                send_abort(file_tx, msg.clone());
+                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+            }
+
+            // Checksum OK — tell disk thread to commit.
+            file_tx.send(FileMessage::Commit).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "disk commit thread disconnected during commit",
+                )
+            })?;
+
+            break;
+        } else if token > 0 {
+            // Literal data — try to reuse a buffer returned by the disk thread.
+            let len = token as usize;
+            let mut buf = recycle_or_alloc(buf_return_rx, len);
+
+            if let Some(borrowed) = reader.try_borrow_exact(len)? {
+                checksum_verifier.update(borrowed);
+                buf.extend_from_slice(borrowed);
+            } else {
+                token_buffer.resize_for(len);
+                reader.read_exact(token_buffer.as_mut_slice())?;
+                checksum_verifier.update(token_buffer.as_slice());
+                buf.extend_from_slice(token_buffer.as_slice());
+            };
+
+            file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "disk commit thread disconnected during chunk send",
+                )
+            })?;
+            total_bytes += len as u64;
+        } else {
+            // Block reference — resolve from basis file, send as chunk.
+            let block_idx = -(token + 1) as usize;
+            if let (Some(sig), Some(basis_map)) = (&signature, basis_map.as_mut()) {
+                let layout = sig.layout();
+                let block_count = layout.block_count() as usize;
+
+                if block_idx >= block_count {
+                    let msg = format!(
+                        "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                    );
+                    send_abort(file_tx, msg.clone());
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+                }
+
+                let block_len = layout.block_length().get() as u64;
+                let offset = block_idx as u64 * block_len;
+
+                let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
+                    let remainder = layout.remainder();
+                    if remainder > 0 {
+                        remainder as usize
+                    } else {
+                        block_len as usize
+                    }
+                } else {
+                    block_len as usize
+                };
+
+                let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+                checksum_verifier.update(block_data);
+
+                let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
+                buf.extend_from_slice(block_data);
+                file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "disk commit thread disconnected during block send",
+                    )
+                })?;
+                total_bytes += bytes_to_copy as u64;
+            } else {
+                let msg = format!("block reference {block_idx} without basis file");
+                send_abort(file_tx, msg.clone());
+                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+            }
+        }
+    }
 
     Ok(total_bytes)
 }
