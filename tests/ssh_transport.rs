@@ -263,7 +263,7 @@ fn test_remote_invocation_builder() {
         remote::{RemoteInvocationBuilder, RemoteRole},
     };
 
-    // Test sender (push) invocation
+    // Test sender (push) invocation — no --sender flag (upstream options.c:2598)
     let config = ClientConfig::builder()
         .recursive(true)
         .times(true)
@@ -275,10 +275,9 @@ fn test_remote_invocation_builder() {
 
     assert_eq!(args[0].to_string_lossy(), "rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");
-    assert_eq!(args[2].to_string_lossy(), "--sender");
 
-    // Flag string should contain r (recursive), t (times), p (permissions)
-    let flag_string = args[3].to_string_lossy();
+    // Push: no --sender flag, flags come right after --server
+    let flag_string = args[2].to_string_lossy();
     assert!(flag_string.starts_with('-'));
     assert!(
         flag_string.contains('r'),
@@ -293,18 +292,16 @@ fn test_remote_invocation_builder() {
     assert_eq!(args[args.len() - 2].to_string_lossy(), ".");
     assert_eq!(args[args.len() - 1].to_string_lossy(), "/remote/path");
 
-    // Test receiver (pull) invocation - should NOT have --sender flag
+    // Test receiver (pull) invocation — SHOULD have --sender flag
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
 
     assert_eq!(args[0].to_string_lossy(), "rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");
+    assert_eq!(args[2].to_string_lossy(), "--sender");
 
-    // Should NOT have --sender
-    assert_ne!(args[2].to_string_lossy(), "--sender");
-
-    // Flag string comes right after --server for receiver
-    let flag_string = args[2].to_string_lossy();
+    // Flag string comes after --sender for pull
+    let flag_string = args[3].to_string_lossy();
     assert!(flag_string.starts_with('-'));
 }
 
@@ -353,14 +350,15 @@ fn test_remote_invocation_with_custom_rsync_path() {
         .set_rsync_path("/usr/local/bin/rsync")
         .build();
 
-    // Build invocation for sender role
+    // Build invocation for sender (push) role — no --sender flag
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/remote/path");
 
     // First argument should be the custom rsync path, not "rsync"
     assert_eq!(args[0].to_string_lossy(), "/usr/local/bin/rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");
-    assert_eq!(args[2].to_string_lossy(), "--sender");
+    // No --sender for push; flags come next
+    assert!(args[2].to_string_lossy().starts_with('-'));
 }
 
 #[test]
@@ -566,8 +564,9 @@ fn test_remote_invocation_with_multiple_paths() {
 
     assert_eq!(args[0].to_string_lossy(), "rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");
-    // No --sender for receiver role, so flags come next
-    let flags_idx = 2;
+    // Receiver (pull) → --sender flag present
+    assert_eq!(args[2].to_string_lossy(), "--sender");
+    let flags_idx = 3;
     assert!(args[flags_idx].to_string_lossy().starts_with('-'));
     let dot_idx = flags_idx + 1;
     assert_eq!(args[dot_idx].to_string_lossy(), ".");

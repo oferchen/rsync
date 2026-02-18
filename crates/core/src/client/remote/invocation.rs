@@ -155,12 +155,12 @@ impl TransferSpec {
 ///
 /// # Format
 ///
-/// **Sender (pull from remote):**
+/// **Pull (local=receiver, remote=sender):**
 /// ```text
 /// rsync --server --sender -flags . /remote/path
 /// ```
 ///
-/// **Receiver (push to remote):**
+/// **Push (local=sender, remote=receiver):**
 /// ```text
 /// rsync --server -flags . /remote/path
 /// ```
@@ -201,8 +201,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
         args.push(OsString::from("--server"));
 
-        // Add --sender for sender role (remote is receiver)
-        if self.role == RemoteRole::Sender {
+        // Mirror upstream options.c:2598-2599: `if (!am_sender) args[ac++] = "--sender";`
+        // When the local side is the receiver (pull), the remote must act as sender.
+        if self.role == RemoteRole::Receiver {
             args.push(OsString::from("--sender"));
         }
 
@@ -550,16 +551,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builds_sender_invocation_minimal() {
+    fn builds_receiver_invocation_with_sender_flag() {
+        // Pull: local is receiver → remote needs --sender (upstream options.c:2598)
         let config = ClientConfig::builder().build();
-        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
         let args = builder.build("/remote/path");
 
         assert_eq!(args[0], "rsync");
         assert_eq!(args[1], "--server");
         assert_eq!(args[2], "--sender");
-        // Default flags from ClientConfig::builder().build()
-        // The builder has some defaults (recursive=true, whole_file=true)
         let flags = args[3].to_string_lossy();
         assert!(flags.starts_with('-'), "flags should start with -: {flags}");
         assert_eq!(args[4], ".");
@@ -567,14 +567,15 @@ mod tests {
     }
 
     #[test]
-    fn builds_receiver_invocation_no_sender_flag() {
+    fn builds_sender_invocation_no_sender_flag() {
+        // Push: local is sender → remote is receiver, no --sender flag
         let config = ClientConfig::builder().build();
-        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
         let args = builder.build("/remote/path");
 
         assert_eq!(args[0], "rsync");
         assert_eq!(args[1], "--server");
-        // No --sender flag for receiver - flags come next
+        // No --sender flag for push - flags come next
         let flags = args[2].to_string_lossy();
         assert!(flags.starts_with('-'), "flags should start with -: {flags}");
         assert_eq!(args[3], ".");
@@ -587,7 +588,8 @@ mod tests {
         let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
         let args = builder.build("/path");
 
-        let flags = args[3].to_string_lossy();
+        // Sender (push): rsync --server -flags . /path — flags at index 2
+        let flags = args[2].to_string_lossy();
         assert!(flags.contains('r'), "expected 'r' in flags: {flags}");
     }
 
@@ -603,7 +605,8 @@ mod tests {
         let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
         let args = builder.build("/path");
 
-        let flags = args[3].to_string_lossy();
+        // Sender (push): rsync --server -flags . /path — flags at index 2
+        let flags = args[2].to_string_lossy();
         assert!(flags.contains('t'), "expected 't' in flags: {flags}");
         assert!(flags.contains('p'), "expected 'p' in flags: {flags}");
         assert!(flags.contains('o'), "expected 'o' in flags: {flags}");
@@ -616,7 +619,8 @@ mod tests {
         let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
         let args = builder.build("/path");
 
-        let flags = args[3].to_string_lossy();
+        // Sender (push): rsync --server -flags . /path — flags at index 2
+        let flags = args[2].to_string_lossy();
         assert!(flags.contains('z'), "expected 'z' in flags: {flags}");
     }
 
@@ -769,7 +773,7 @@ mod tests {
         let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
         let args = builder.build("/path");
 
-        // --ignore-errors should appear after --server and --sender
+        // --ignore-errors should appear after --server
         assert!(
             args.iter().any(|a| a == "--ignore-errors"),
             "expected --ignore-errors in args: {args:?}"
