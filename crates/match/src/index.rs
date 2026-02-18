@@ -77,6 +77,42 @@ impl DeltaSignatureIndex {
         })
     }
 
+    /// Rebuilds the index in-place from a new signature, reusing the
+    /// existing `FxHashMap` allocation.
+    ///
+    /// Mirrors upstream rsync's hash table reuse pattern (match.c):
+    /// the table is cleared and repopulated rather than freed and
+    /// re-allocated, avoiding per-file malloc/free overhead.
+    ///
+    /// Returns `false` if the signature has no full blocks (caller
+    /// should discard the index).
+    pub fn rebuild(&mut self, signature: &FileSignature, algorithm: SignatureAlgorithm) -> bool {
+        let block_length = signature.layout().block_length().get() as usize;
+        let strong_length = usize::from(signature.layout().strong_sum_length().get());
+
+        self.block_length = block_length;
+        self.strong_length = strong_length;
+        self.algorithm = algorithm;
+        self.blocks.clear();
+        self.blocks.extend_from_slice(signature.blocks());
+        self.lookup.clear();
+
+        let mut has_full_blocks = false;
+        for (index, block) in self.blocks.iter().enumerate() {
+            if block.len() != block_length {
+                continue;
+            }
+            has_full_blocks = true;
+            let digest = block.rolling();
+            self.lookup
+                .entry((digest.sum1(), digest.sum2()))
+                .or_default()
+                .push(index);
+        }
+
+        has_full_blocks
+    }
+
     /// Returns the canonical block length expressed in bytes.
     #[must_use]
     pub const fn block_length(&self) -> usize {
@@ -472,6 +508,61 @@ mod tests {
         assert!(
             no_match.is_none(),
             "wrong content should not match despite same digest key"
+        );
+    }
+
+    #[test]
+    fn rebuild_reuses_allocation() {
+        // Build an index from a first signature.
+        let data1 = vec![b'a'; 2048];
+        let params1 = SignatureLayoutParams::new(
+            data1.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout1 = calculate_signature_layout(params1).expect("layout1");
+        let sig1 = generate_file_signature(data1.as_slice(), layout1, SignatureAlgorithm::Md4)
+            .expect("sig1");
+        let mut index =
+            DeltaSignatureIndex::from_signature(&sig1, SignatureAlgorithm::Md4).expect("index");
+
+        let capacity_before = index.lookup.capacity();
+
+        // Build a second, different signature.
+        let data2 = vec![b'b'; 3000];
+        let params2 = SignatureLayoutParams::new(
+            data2.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout2 = calculate_signature_layout(params2).expect("layout2");
+        let sig2 = generate_file_signature(data2.as_slice(), layout2, SignatureAlgorithm::Md4)
+            .expect("sig2");
+
+        // Rebuild the index in-place.
+        let has_full = index.rebuild(&sig2, SignatureAlgorithm::Md4);
+        assert!(has_full, "second signature should have full blocks");
+
+        // The lookup table allocation must not have shrunk.
+        assert!(
+            index.lookup.capacity() >= capacity_before,
+            "capacity should be preserved across rebuild"
+        );
+
+        // Verify the lookup is correct: a match against the second data must work.
+        let digest = index.block(0).rolling();
+        let window = vec![b'b'; index.block_length()];
+        let found = index.find_match_bytes(digest, &window);
+        assert!(found.is_some(), "should find a match after rebuild");
+
+        // And the old data must no longer match.
+        let old_window = vec![b'a'; index.block_length()];
+        let old_found = index.find_match_bytes(digest, &old_window);
+        assert!(
+            old_found.is_none(),
+            "old data should not match after rebuild"
         );
     }
 }
