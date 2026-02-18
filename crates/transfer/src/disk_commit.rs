@@ -25,7 +25,7 @@ use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
-use crate::pipeline::messages::{BeginMessage, ComputedChecksum, CommitResult, FileMessage};
+use crate::pipeline::messages::{BeginMessage, CommitResult, ComputedChecksum, FileMessage};
 use crate::temp_guard::{TempFileGuard, open_tmpfile};
 
 /// Default bounded-channel capacity.
@@ -184,7 +184,8 @@ fn disk_thread_main(
         match msg {
             FileMessage::Shutdown => break,
             FileMessage::Begin(begin) => {
-                let result = process_file(&file_rx, &buf_return_tx, &config, *begin, &mut write_buf);
+                let result =
+                    process_file(&file_rx, &buf_return_tx, &config, *begin, &mut write_buf);
                 if result_tx.send(result).is_err() {
                     break;
                 }
