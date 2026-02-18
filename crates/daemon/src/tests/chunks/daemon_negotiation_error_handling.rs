@@ -10,7 +10,7 @@ fn daemon_negotiation_error_unknown_module() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -21,7 +21,7 @@ fn daemon_negotiation_error_unknown_module() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -65,7 +65,7 @@ fn daemon_negotiation_error_empty_module_request() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -76,7 +76,7 @@ fn daemon_negotiation_error_empty_module_request() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -127,7 +127,7 @@ fn daemon_negotiation_error_host_denied() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -140,7 +140,7 @@ fn daemon_negotiation_error_host_denied() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -194,7 +194,7 @@ fn daemon_negotiation_error_refused_options() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -207,7 +207,7 @@ fn daemon_negotiation_error_refused_options() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -278,7 +278,7 @@ fn daemon_negotiation_error_max_connections_exceeded() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     // Run daemon with multiple allowed sessions
     let config = DaemonConfig::builder()
@@ -293,7 +293,7 @@ fn daemon_negotiation_error_max_connections_exceeded() {
         ])
         .build();
 
-    let (mut stream1, handle) = start_daemon(config, port);
+    let (mut stream1, handle) = start_daemon(config, port, held_listener);
 
     // First connection should succeed (up to the OK)
     let mut reader1 = BufReader::new(stream1.try_clone().expect("clone"));
@@ -357,7 +357,7 @@ fn daemon_negotiation_error_sanitizes_module_name_in_response() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -368,7 +368,7 @@ fn daemon_negotiation_error_sanitizes_module_name_in_response() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -409,7 +409,7 @@ fn daemon_negotiation_error_sends_exit_after_error() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -420,7 +420,7 @@ fn daemon_negotiation_error_sends_exit_after_error() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -462,7 +462,7 @@ fn daemon_negotiation_error_connection_closed_early() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -473,7 +473,7 @@ fn daemon_negotiation_error_connection_closed_early() {
         ])
         .build();
 
-    let (stream, handle) = start_daemon(config, port);
+    let (stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -497,7 +497,7 @@ fn daemon_negotiation_error_invalid_greeting_response() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -508,7 +508,7 @@ fn daemon_negotiation_error_invalid_greeting_response() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting

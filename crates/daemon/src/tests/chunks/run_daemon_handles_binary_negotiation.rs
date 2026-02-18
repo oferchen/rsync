@@ -8,7 +8,7 @@ fn run_daemon_handles_binary_negotiation() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -19,7 +19,7 @@ fn run_daemon_handles_binary_negotiation() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
