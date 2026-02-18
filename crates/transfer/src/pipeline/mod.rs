@@ -60,7 +60,9 @@
 //! This is configured via [`PipelineConfig::ack_batch_size`].
 
 pub mod async_signature;
+pub mod messages;
 mod pending;
+pub mod receiver;
 mod state;
 
 pub use pending::PendingTransfer;
