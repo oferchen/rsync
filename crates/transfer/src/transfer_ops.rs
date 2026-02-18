@@ -433,14 +433,25 @@ fn recycle_or_alloc(buf_return_rx: &Receiver<Vec<u8>>, capacity: usize) -> Vec<u
     }
 }
 
+/// Result of streaming a file response to the disk thread.
+pub struct StreamingResult {
+    /// Total bytes of file data read from the wire.
+    pub total_bytes: u64,
+    /// Expected whole-file checksum read from the sender (for deferred verification).
+    pub expected_checksum: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+    /// Number of valid bytes in `expected_checksum`.
+    pub checksum_len: usize,
+}
+
 /// Processes a file transfer response, streaming chunks to the disk thread.
 ///
-/// Like [`process_file_response`], reads echoed attributes, delta tokens, and
-/// verifies the checksum — but instead of writing to disk directly, sends
-/// `FileMessage::Chunk` items through `file_tx` for the disk commit thread.
+/// Like [`process_file_response`], reads echoed attributes and delta tokens —
+/// but instead of writing to disk directly, sends `FileMessage::Chunk` items
+/// through `file_tx` for the disk commit thread.
 ///
-/// Checksum verification happens on this (network) thread so invalid data
-/// never touches disk.
+/// Checksum computation is deferred to the disk thread. The expected checksum
+/// read from the wire is returned in [`StreamingResult`] for the caller to
+/// pass to [`crate::pipeline::receiver::PipelinedReceiver::note_commit_sent`].
 ///
 /// # Arguments
 ///
@@ -464,7 +475,7 @@ pub fn process_file_response_streaming<R: Read>(
     file_tx: &SyncSender<FileMessage>,
     buf_return_rx: &Receiver<Vec<u8>>,
     file_entry_index: usize,
-) -> io::Result<u64> {
+) -> io::Result<StreamingResult> {
     let expected_ndx = pending.ndx();
 
     // Read sender attributes (echoed NDX + iflags)
@@ -484,16 +495,23 @@ pub fn process_file_response_streaming<R: Read>(
 
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
+    // Move the checksum verifier to the disk thread so hashing overlaps with
+    // I/O and the network thread can focus solely on reading the wire.
+    let algo = checksum_verifier.algorithm();
+    let disk_verifier =
+        std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
+
     // Tell the disk thread to open the file.
     let direct_write = basis_path.is_none() && ctx.config.direct_write;
     file_tx
-        .send(FileMessage::Begin(BeginMessage {
+        .send(FileMessage::Begin(Box::new(BeginMessage {
             file_path: file_path.clone(),
             target_size,
             file_entry_index,
             use_sparse: ctx.config.use_sparse,
             direct_write,
-        }))
+            checksum_verifier: Some(disk_verifier),
+        })))
         .map_err(|_| {
             io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
         })?;
@@ -524,32 +542,17 @@ pub fn process_file_response_streaming<R: Read>(
         let token = i32::from_le_bytes(token_buf);
 
         if token == 0 {
-            // End of file — verify checksum before committing.
+            // End of file — read expected checksum from the wire.
+            // The actual verification is deferred: the disk thread computes
+            // the digest as it writes chunks and returns it in CommitResult.
             let checksum_len = checksum_verifier.digest_len();
-            let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-            if let Err(e) = reader.read_exact(&mut expected[..checksum_len]) {
+            let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+            if let Err(e) = reader.read_exact(&mut expected_checksum[..checksum_len]) {
                 send_abort(file_tx, format!("failed to read checksum: {e}"));
                 return Err(e);
             }
 
-            let algo = checksum_verifier.algorithm();
-            let old_verifier =
-                std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
-            let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-            let computed_len = old_verifier.finalize_into(&mut computed);
-
-            if computed_len != checksum_len || computed[..computed_len] != expected[..checksum_len]
-            {
-                let msg = format!(
-                    "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
-                    &expected[..checksum_len],
-                    &computed[..computed_len]
-                );
-                send_abort(file_tx, msg.clone());
-                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
-            }
-
-            // Checksum OK — tell disk thread to commit.
+            // Tell disk thread to commit (it will finalize the checksum).
             file_tx.send(FileMessage::Commit).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -557,19 +560,22 @@ pub fn process_file_response_streaming<R: Read>(
                 )
             })?;
 
-            break;
+            return Ok(StreamingResult {
+                total_bytes,
+                expected_checksum,
+                checksum_len,
+            });
         } else if token > 0 {
             // Literal data — try to reuse a buffer returned by the disk thread.
+            // Checksum is computed by the disk thread as it processes chunks.
             let len = token as usize;
             let mut buf = recycle_or_alloc(buf_return_rx, len);
 
             if let Some(borrowed) = reader.try_borrow_exact(len)? {
-                checksum_verifier.update(borrowed);
                 buf.extend_from_slice(borrowed);
             } else {
                 token_buffer.resize_for(len);
                 reader.read_exact(token_buffer.as_mut_slice())?;
-                checksum_verifier.update(token_buffer.as_slice());
                 buf.extend_from_slice(token_buffer.as_slice());
             };
 
@@ -610,7 +616,6 @@ pub fn process_file_response_streaming<R: Read>(
                 };
 
                 let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
-                checksum_verifier.update(block_data);
 
                 let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
                 buf.extend_from_slice(block_data);
@@ -628,8 +633,6 @@ pub fn process_file_response_streaming<R: Read>(
             }
         }
     }
-
-    Ok(total_bytes)
 }
 
 #[cfg(test)]

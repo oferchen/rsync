@@ -1507,7 +1507,7 @@ impl ReceiverContext {
                     config: &request_config,
                 };
 
-                let total_bytes = process_file_response_streaming(
+                let result = process_file_response_streaming(
                     reader,
                     &mut ndx_read_codec,
                     pending,
@@ -1519,7 +1519,11 @@ impl ReceiverContext {
                     0, // file_entry_index (metadata applied below)
                 )?;
 
-                pipelined_receiver.note_commit_sent();
+                pipelined_receiver.note_commit_sent(
+                    result.expected_checksum,
+                    result.checksum_len,
+                    file_path.clone(),
+                );
 
                 // Non-blocking: collect any ready disk results to detect early errors.
                 let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_ready_results()?;
@@ -1533,7 +1537,7 @@ impl ReceiverContext {
                     metadata_errors.push((file_path, meta_err.to_string()));
                 }
 
-                bytes_received += total_bytes;
+                bytes_received += result.total_bytes;
                 files_transferred += 1;
             }
 
