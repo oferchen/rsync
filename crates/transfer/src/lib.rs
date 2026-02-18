@@ -63,7 +63,7 @@
 //! For a comprehensive guide to how the delta transfer algorithm works, see the
 //! [`delta_transfer`] module documentation.
 
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -232,11 +232,11 @@ pub fn run_server_with_handshake<W: Write>(
     // This mirrors upstream's setup_protocol() which skips the exchange when
     // remote_protocol != 0 (already set by @RSYNCD).
 
-    // Extract buffered data before calling setup_protocol
-    // This is critical for daemon mode where the BufReader may have read ahead
+    // Extract buffered data before calling setup_protocol.
+    // This is critical for daemon mode where the handshake reader may have read ahead.
     let buffered_data = std::mem::take(&mut handshake.buffered);
 
-    // IMPORTANT: In daemon mode, the buffered data from BufReader may contain
+    // IMPORTANT: In daemon mode, the buffered data from the handshake may contain
     // garbage or premature binary data that was read ahead during argument parsing.
     // This data is NOT meant for setup_protocol - it should be discarded.
     //
@@ -333,11 +333,12 @@ pub fn run_server_with_handshake<W: Write>(
     // - Filter list is sent through PLAIN output (not multiplexed)
     // - The remote daemon (server) will have OUTPUT multiplex active and send us multiplexed data
     //
-    // Performance optimization: Wrap streams in buffered I/O to reduce syscalls.
-    // Without buffering, each read_exact/write_all becomes a syscall, causing
-    // significant per-file overhead in daemon transfers.
-    let buffered_stdin = BufReader::with_capacity(64 * 1024, chained_stdin);
-    let reader = reader::ServerReader::new_plain(buffered_stdin);
+    // No BufReader: MultiplexReader provides all buffering (64KB, matching upstream
+    // rsync's iobuf_in). Removing BufReader eliminates one memcpy layer — data goes
+    // from the socket directly to MultiplexReader's buffer. The brief plain-mode
+    // phase (compat flags, negotiation) uses small reads where BufReader overhead
+    // is negligible.
+    let reader = reader::ServerReader::new_plain(chained_stdin);
     // No BufWriter: MultiplexWriter provides all buffering (64KB, matching upstream
     // rsync's iobuf_out). Removing BufWriter eliminates one memcpy layer — data
     // goes from MultiplexWriter's buffer directly to the socket via writev().

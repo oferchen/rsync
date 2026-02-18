@@ -9,13 +9,15 @@
 
 use std::path::PathBuf;
 
+use crate::delta_apply::ChecksumVerifier;
+
 /// Messages from the network thread to the disk commit thread.
 ///
 /// Follows a per-file protocol: `Begin -> Chunk* -> Commit | Abort`.
 /// The `Shutdown` variant terminates the disk thread.
 pub enum FileMessage {
     /// Start writing a new file.
-    Begin(BeginMessage),
+    Begin(Box<BeginMessage>),
     /// A chunk of file data to write.
     Chunk(Vec<u8>),
     /// Finalize the current file (flush, fsync, rename).
@@ -41,6 +43,19 @@ pub struct BeginMessage {
     pub use_sparse: bool,
     /// Whether to attempt direct write (skip temp+rename for new files).
     pub direct_write: bool,
+    /// Checksum verifier for computing per-file integrity digest on the disk
+    /// thread. When `Some`, the disk thread hashes every chunk it writes and
+    /// returns the final digest in [`CommitResult::computed_checksum`].
+    /// When `None`, no checksum is computed (legacy path).
+    pub checksum_verifier: Option<ChecksumVerifier>,
+}
+
+/// Computed checksum digest returned by the disk thread.
+pub struct ComputedChecksum {
+    /// Digest bytes (only `len` bytes are valid).
+    pub bytes: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+    /// Number of valid bytes in `bytes`.
+    pub len: usize,
 }
 
 /// Result of committing a file to disk, sent back from the disk thread.
@@ -51,4 +66,6 @@ pub struct CommitResult {
     pub file_entry_index: usize,
     /// Non-fatal metadata error, if any (path, description).
     pub metadata_error: Option<(PathBuf, String)>,
+    /// Computed per-file checksum, if verification was deferred to the disk thread.
+    pub computed_checksum: Option<ComputedChecksum>,
 }
