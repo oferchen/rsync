@@ -38,7 +38,7 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
     let mut challenges = Vec::new();
 
     for _ in 0..2 {
-        let port = allocate_test_port();
+        let (port, held_listener) = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .disable_default_paths()
@@ -51,7 +51,7 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
             ])
             .build();
 
-        let (mut stream, handle) = start_daemon(config, port);
+        let (mut stream, handle) = start_daemon(config, port, held_listener);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
         // Read greeting
@@ -126,7 +126,7 @@ fn daemon_negotiation_auth_denies_wrong_password() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -139,7 +139,7 @@ fn daemon_negotiation_auth_denies_wrong_password() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -220,7 +220,7 @@ fn daemon_negotiation_auth_denies_unknown_user() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -233,7 +233,7 @@ fn daemon_negotiation_auth_denies_unknown_user() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -301,7 +301,7 @@ fn daemon_negotiation_auth_skipped_for_unprotected_module() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -314,7 +314,7 @@ fn daemon_negotiation_auth_skipped_for_unprotected_module() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -375,7 +375,7 @@ fn daemon_negotiation_auth_denies_empty_credentials() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -388,7 +388,7 @@ fn daemon_negotiation_auth_denies_empty_credentials() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -460,7 +460,7 @@ fn daemon_negotiation_auth_successful_sends_ok() {
     )
     .expect("write config");
 
-    let port = allocate_test_port();
+    let (port, held_listener) = allocate_test_port();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -473,7 +473,7 @@ fn daemon_negotiation_auth_successful_sends_ok() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon(config, port);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting

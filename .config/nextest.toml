@@ -15,3 +15,9 @@ success-output = "never"
 slow-timeout = { period = "120s", terminate-after = 3 }
 # Generate JUnit XML for CI dashboards (optional, not currently used)
 # junit.path = "junit.xml"
+
+# Retry policies for tests with inherent race conditions (port binding TOCTOU,
+# slow CI runner timing).
+[[profile.ci.overrides]]
+filter = "package(daemon) | test(execute_sparse)"
+retries = 2

@@ -3,8 +3,6 @@ use super::*;
 use std::ffi::OsString;
 #[cfg(unix)]
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::path::Path;
@@ -21,7 +19,6 @@ use crate::daemon::{
 };
 pub(super) use crate::test_env::{ENV_LOCK, EnvGuard};
 use core::branding;
-use fs2::FileExt;
 
 pub(super) const RSYNCD: &str = branding::daemon_program_name();
 pub(super) const OC_RSYNC_D: &str = branding::oc_daemon_program_name();
@@ -119,56 +116,17 @@ where
     })
 }
 
-pub(super) fn allocate_test_port() -> u16 {
-    const START: u16 = 40_000;
-    const RANGE: u32 = 20_000;
-    const STATE_SIZE: u64 = 4;
-
-    let mut path = std::env::temp_dir();
-    path.push("daemon-test-port.lock");
-
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .expect("open port allocator state");
-
-    file.lock_exclusive().expect("lock port allocator state");
-    file.seek(SeekFrom::Start(0))
-        .expect("rewind port allocator state");
-
-    let mut counter_bytes = [0u8; STATE_SIZE as usize];
-    let read = file
-        .read(&mut counter_bytes)
-        .expect("read port allocator state");
-    let mut counter = if read == counter_bytes.len() {
-        u32::from_le_bytes(counter_bytes)
-    } else {
-        0
-    };
-
-    for _ in 0..RANGE {
-        let offset = (counter % RANGE) as u16;
-        counter = counter.wrapping_add(1);
-
-        file.seek(SeekFrom::Start(0))
-            .expect("rewind port allocator state");
-        file.write_all(&counter.to_le_bytes())
-            .expect("persist port allocator state");
-        file.set_len(STATE_SIZE)
-            .expect("truncate port allocator state");
-        file.flush().expect("flush port allocator state");
-
-        let candidate = START + offset;
-        if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, candidate)) {
-            drop(listener);
-            return candidate;
-        }
-    }
-
-    panic!("failed to allocate a free test port");
+/// Allocates a free TCP port for daemon tests.
+///
+/// Binds to port 0 (OS-assigned ephemeral port) to guarantee no collision
+/// at allocation time. The listener is kept alive and returned alongside the
+/// port so the caller can hold it until the daemon is ready to bind,
+/// minimizing the TOCTOU window between release and daemon bind.
+pub(super) fn allocate_test_port() -> (u16, TcpListener) {
+    let listener =
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind ephemeral port for test");
+    let port = listener.local_addr().expect("local addr").port();
+    (port, listener)
 }
 
 pub(super) fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
@@ -200,10 +158,14 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
 pub(super) fn start_daemon(
     config: crate::DaemonConfig,
     port: u16,
+    held_listener: TcpListener,
 ) -> (
     TcpStream,
     thread::JoinHandle<Result<(), crate::DaemonError>>,
 ) {
+    // Release the port reservation right before spawning the daemon thread
+    // to minimize the TOCTOU window between release and the daemon's bind.
+    drop(held_listener);
     let handle = thread::spawn(move || run_daemon(config));
     let stream = connect_to_daemon(port, Some(&handle));
     (stream, handle)
