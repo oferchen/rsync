@@ -9,6 +9,8 @@
 
 use std::path::PathBuf;
 
+use protocol::flist::FileEntry;
+
 use crate::delta_apply::ChecksumVerifier;
 
 /// Messages from the network thread to the disk commit thread.
@@ -48,6 +50,11 @@ pub struct BeginMessage {
     /// returns the final digest in [`CommitResult::computed_checksum`].
     /// When `None`, no checksum is computed (legacy path).
     pub checksum_verifier: Option<ChecksumVerifier>,
+    /// File entry from the file list, used for metadata application after
+    /// commit. When `Some`, the disk thread applies metadata (mtime, perms,
+    /// ownership) immediately after rename — mirroring upstream
+    /// `finish_transfer()` → `set_file_attrs()` in receiver.c.
+    pub file_entry: Option<FileEntry>,
 }
 
 /// Computed checksum digest returned by the disk thread.

@@ -24,6 +24,8 @@ use std::io::{self, Seek, Write};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
+use metadata::MetadataOptions;
+
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::pipeline::messages::{BeginMessage, CommitResult, ComputedChecksum, FileMessage};
 use crate::temp_guard::{TempFileGuard, open_tmpfile};
@@ -133,6 +135,11 @@ pub struct DiskCommitConfig {
     pub do_fsync: bool,
     /// Bounded channel capacity (back-pressure threshold).
     pub channel_capacity: usize,
+    /// Metadata options for applying file attributes after commit.
+    /// When `Some`, the disk thread applies metadata (mtime, perms, ownership)
+    /// immediately after rename — mirroring upstream `finish_transfer()` →
+    /// `set_file_attrs()` in receiver.c.
+    pub metadata_opts: Option<MetadataOptions>,
 }
 
 impl Default for DiskCommitConfig {
@@ -140,6 +147,7 @@ impl Default for DiskCommitConfig {
         Self {
             do_fsync: false,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
+            metadata_opts: None,
         }
     }
 }
@@ -293,6 +301,22 @@ fn process_file(
                 }
                 cleanup_guard.keep();
 
+                // Apply metadata immediately after rename — mirrors upstream
+                // finish_transfer() → set_file_attrs() in receiver.c.
+                let metadata_error = match (&config.metadata_opts, &begin.file_entry) {
+                    (Some(opts), Some(entry)) => {
+                        match metadata::apply_metadata_from_file_entry(
+                            &begin.file_path,
+                            entry,
+                            opts,
+                        ) {
+                            Ok(()) => None,
+                            Err(e) => Some((begin.file_path.clone(), e.to_string())),
+                        }
+                    }
+                    _ => None,
+                };
+
                 // Finalize per-file checksum and return to network thread.
                 let computed_checksum = checksum_verifier.map(|verifier| {
                     let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -303,7 +327,7 @@ fn process_file(
                 return Ok(CommitResult {
                     bytes_written,
                     file_entry_index: begin.file_entry_index,
-                    metadata_error: None,
+                    metadata_error,
                     computed_checksum,
                 });
             }
@@ -393,6 +417,7 @@ mod tests {
                 use_sparse: false,
                 direct_write: true,
                 checksum_verifier: None,
+                file_entry: None,
             })))
             .unwrap();
 
@@ -427,6 +452,7 @@ mod tests {
                 use_sparse: false,
                 direct_write: false,
                 checksum_verifier: None,
+                file_entry: None,
             })))
             .unwrap();
 
@@ -465,6 +491,7 @@ mod tests {
                     use_sparse: false,
                     direct_write: true,
                     checksum_verifier: None,
+                    file_entry: None,
                 })))
                 .unwrap();
 
@@ -510,6 +537,7 @@ mod tests {
                 use_sparse: false,
                 direct_write: true,
                 checksum_verifier: None,
+                file_entry: None,
             })))
             .unwrap();
 
@@ -541,6 +569,7 @@ mod tests {
                 use_sparse: false,
                 direct_write: true,
                 checksum_verifier: None,
+                file_entry: None,
             })))
             .unwrap();
 

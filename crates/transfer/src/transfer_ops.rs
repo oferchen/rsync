@@ -44,6 +44,8 @@ use std::sync::mpsc::{Receiver, SyncSender};
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
+use protocol::flist::FileEntry;
+
 use crate::pipeline::PendingTransfer;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::reader::ServerReader;
@@ -463,6 +465,7 @@ pub struct StreamingResult {
 /// * `file_tx` - Channel sender to the disk commit thread
 /// * `buf_return_rx` - Return channel for recycled buffers from the disk thread
 /// * `file_entry_index` - Index into the file list for metadata application
+/// * `file_entry` - File entry for metadata application on the disk thread
 #[allow(clippy::too_many_arguments)]
 pub fn process_file_response_streaming<R: Read>(
     reader: &mut ServerReader<R>,
@@ -473,6 +476,7 @@ pub fn process_file_response_streaming<R: Read>(
     file_tx: &SyncSender<FileMessage>,
     buf_return_rx: &Receiver<Vec<u8>>,
     file_entry_index: usize,
+    file_entry: Option<FileEntry>,
 ) -> io::Result<StreamingResult> {
     let expected_ndx = pending.ndx();
 
@@ -508,6 +512,7 @@ pub fn process_file_response_streaming<R: Read>(
             use_sparse: ctx.config.use_sparse,
             direct_write,
             checksum_verifier: Some(disk_verifier),
+            file_entry,
         })))
         .map_err(|_| {
             io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
