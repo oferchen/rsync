@@ -1562,12 +1562,7 @@ fn stream_whole_file_transfer<W: Write>(
         );
     }
 
-    let is_none_checksum = matches!(checksum_algorithm, ChecksumAlgorithm::None);
-    let mut verifier = if is_none_checksum {
-        None
-    } else {
-        Some(ChecksumVerifier::for_algorithm(checksum_algorithm))
-    };
+    let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
 
     let use_compression = matches!(
         compression,
@@ -1588,9 +1583,7 @@ fn stream_whole_file_transfer<W: Write>(
         while remaining > 0 {
             let to_read = buf.len().min(remaining as usize);
             source.read_exact(&mut buf[..to_read])?;
-            if let Some(ref mut v) = verifier {
-                v.update(&buf[..to_read]);
-            }
+            verifier.update(&buf[..to_read]);
             encoder.send_literal(writer, &buf[..to_read])?;
             total_bytes += to_read as u64;
             remaining -= to_read as u64;
@@ -1607,9 +1600,7 @@ fn stream_whole_file_transfer<W: Write>(
         while remaining > 0 {
             let to_read = (buf.len() - 4).min(remaining as usize);
             source.read_exact(&mut buf[4..4 + to_read])?;
-            if let Some(ref mut v) = verifier {
-                v.update(&buf[4..4 + to_read]);
-            }
+            verifier.update(&buf[4..4 + to_read]);
             // Write wire chunks with combined [length_prefix + data].
             // For offset 0, the prefix uses the reserved buf[0..4].
             // For subsequent offsets, the prefix overwrites already-sent bytes.
@@ -1627,10 +1618,7 @@ fn stream_whole_file_transfer<W: Write>(
     }
 
     let mut checksum_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-    let checksum_len = match verifier {
-        Some(v) => v.finalize_into(&mut checksum_buf),
-        None => 1, // 1-byte zero placeholder for None algorithm
-    };
+    let checksum_len = verifier.finalize_into(&mut checksum_buf);
 
     Ok(StreamResult {
         total_bytes,
@@ -1659,12 +1647,6 @@ fn compute_file_checksum(
     _seed: i32,
     _compat_flags: Option<&CompatibilityFlags>,
 ) -> ([u8; ChecksumVerifier::MAX_DIGEST_LEN], usize) {
-    // Special case: None uses a 1-byte placeholder
-    if matches!(algorithm, ChecksumAlgorithm::None) {
-        return ([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 1);
-    }
-
-    // Use ChecksumVerifier for all other algorithms (uses trait delegation internally)
     let mut verifier = ChecksumVerifier::for_algorithm(algorithm);
 
     // Feed all literal bytes from the script to the verifier
