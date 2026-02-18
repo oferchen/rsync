@@ -1512,6 +1512,11 @@ impl ReceiverContext {
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
 
+        // Deferred metadata: applied after disk thread confirms commit,
+        // ensuring the file exists at its final path. Mirrors upstream
+        // finish_transfer() which sets attrs after rename.
+        let mut deferred_metadata: Vec<(PathBuf, &FileEntry)> = Vec::new();
+
         // Reusable per-file resources
         let mut checksum_verifier = ChecksumVerifier::new(
             self.negotiated_algorithms.as_ref(),
@@ -1608,21 +1613,30 @@ impl ReceiverContext {
                 bytes_received += disk_bytes;
                 metadata_errors.extend(disk_meta_errors);
 
-                // Apply metadata on the network thread (file_path is available here).
-                if let Err(meta_err) =
-                    apply_metadata_from_file_entry(&file_path, file_entry, &setup.metadata_opts)
-                {
-                    metadata_errors.push((file_path, meta_err.to_string()));
-                }
+                // Defer metadata until after disk thread confirms the commit
+                // (file must exist at final path before we can set attrs).
+                deferred_metadata.push((file_path, file_entry));
 
                 bytes_received += result.total_bytes;
                 files_transferred += 1;
             }
 
-            // Drain all remaining disk results.
+            // Drain all remaining disk results — blocks until every file is
+            // committed (flushed + renamed to final path).
             let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
             bytes_received += disk_bytes;
             metadata_errors.extend(disk_meta_errors);
+
+            // Apply metadata now that all files are at their final paths.
+            // Mirrors upstream finish_transfer() → set_file_attrs() which
+            // runs after do_rename(fnametmp, fname) in receiver.c.
+            for (file_path, file_entry) in &deferred_metadata {
+                if let Err(meta_err) =
+                    apply_metadata_from_file_entry(file_path, file_entry, &setup.metadata_opts)
+                {
+                    metadata_errors.push((file_path.clone(), meta_err.to_string()));
+                }
+            }
 
             Ok((files_transferred, bytes_received))
         })();
