@@ -18,21 +18,7 @@ Core transfer, delta algorithm, daemon mode, and SSH transport are complete. Int
 
 ### Performance
 
-vs upstream rsync 3.4.1 — CI benchmark on Linux x86_64 (110 MB, 1110 files):
-
-| Mode | Test | oc-rsync | upstream | Ratio |
-|------|------|----------|----------|-------|
-| **Local** | Initial sync | 42 ms | 129 ms | **3.1x faster** |
-| | No-change sync | 14 ms | 51 ms | **3.6x faster** |
-| | Checksum sync (-c) | 157 ms | 435 ms | **2.8x faster** |
-| **SSH Pull** | Initial sync | 372 ms | 436 ms | **1.2x faster** |
-| | No-change sync | 265 ms | 281 ms | 1.1x faster |
-| **SSH Push** | Initial sync | 404 ms | 413 ms | ~same |
-| | No-change sync | 286 ms | 302 ms | ~same |
-| **Daemon Pull** | Initial sync | 129 ms | 234 ms | **1.8x faster** |
-| | No-change sync | 54 ms | 152 ms | **2.8x faster** |
-| **Daemon Push** | Initial sync | 100 ms | 176 ms | **1.8x faster** |
-| | No-change sync | 12 ms | 93 ms | **7.8x faster** |
+![Benchmark: oc-rsync vs upstream rsync](docs/assets/benchmark.svg)
 
 Single-process architecture eliminates fork overhead: 22% fewer syscalls, 36 context switches vs upstream's 92 per transfer.
 
