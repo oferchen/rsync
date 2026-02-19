@@ -20,7 +20,7 @@
 //! A `Shutdown` message terminates the thread after draining in-progress work.
 
 use std::fs;
-use std::io::{self, Seek, Write};
+use std::io::{self, IoSlice, Seek, Write};
 use std::thread::{self, JoinHandle};
 
 use flume::{Receiver, Sender};
@@ -56,6 +56,42 @@ const DIRECT_WRITE_THRESHOLD: usize = 8 * 1024;
 /// worth the extra syscall.
 const PREALLOC_THRESHOLD: u64 = 64 * 1024;
 
+/// Writes two buffers as a single `writev` syscall, falling back to
+/// sequential `write_all` if vectored I/O is unsupported.
+fn write_all_vectored(file: &mut fs::File, first: &[u8], second: &[u8]) -> io::Result<()> {
+    let total = first.len() + second.len();
+    let mut written = 0usize;
+
+    // First attempt: vectored write combining both slices.
+    while written < first.len() {
+        let bufs = [IoSlice::new(&first[written..]), IoSlice::new(second)];
+        match file.write_vectored(&bufs) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "write_vectored returned 0",
+                ));
+            }
+            Ok(n) => written += n,
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    // Second part: remaining bytes from `second`.
+    let second_offset = written - first.len();
+    if second_offset < second.len() {
+        file.write_all(&second[second_offset..])?;
+    }
+
+    debug_assert_eq!(
+        first.len() + second.len(),
+        total,
+        "write_all_vectored size mismatch"
+    );
+    Ok(())
+}
+
 /// Buffered writer that reuses an externally-owned `Vec<u8>`, avoiding
 /// per-file allocation. The buffer is allocated once in `disk_thread_main`
 /// and cleared between files — matching upstream rsync's static `wf_writeBuf`
@@ -83,10 +119,14 @@ impl Write for ReusableBufWriter<'_> {
         // Eliminates one memcpy for typical rsync token sizes (8 KB–64 KB).
         if data.len() >= DIRECT_WRITE_THRESHOLD {
             if !self.buf.is_empty() {
-                self.file.write_all(self.buf)?;
+                // Combine buffered data and new chunk in a single writev
+                // syscall, halving the write count for the common case of
+                // small buffered data followed by a large literal token.
+                write_all_vectored(&mut self.file, self.buf, data)?;
                 self.buf.clear();
+            } else {
+                self.file.write_all(data)?;
             }
-            self.file.write_all(data)?;
             return Ok(data.len());
         }
 
@@ -195,6 +235,13 @@ fn disk_thread_main(
             FileMessage::Begin(begin) => {
                 let result =
                     process_file(&file_rx, &buf_return_tx, &config, *begin, &mut write_buf);
+                if result_tx.send(result).is_err() {
+                    break;
+                }
+            }
+            FileMessage::WholeFile { begin, data } => {
+                let result =
+                    process_whole_file(&buf_return_tx, &config, *begin, data, &mut write_buf);
                 if result_tx.send(result).is_err() {
                     break;
                 }
@@ -345,7 +392,7 @@ fn process_file(
                     "disk thread: shutdown received while processing file",
                 ));
             }
-            FileMessage::Begin(_) => {
+            FileMessage::Begin(_) | FileMessage::WholeFile { .. } => {
                 drop(output);
                 drop(cleanup_guard);
                 return Err(io::Error::new(
@@ -355,6 +402,88 @@ fn process_file(
             }
         }
     }
+}
+
+/// Processes a single-chunk file in one shot (coalesced Begin+Chunk+Commit).
+///
+/// Avoids the per-message channel recv loop of [`process_file`], reducing
+/// futex overhead from 3+ sends/recvs to 1 for small files.
+fn process_whole_file(
+    buf_return_tx: &Sender<Vec<u8>>,
+    config: &DiskCommitConfig,
+    begin: BeginMessage,
+    data: Vec<u8>,
+    write_buf: &mut Vec<u8>,
+) -> io::Result<CommitResult> {
+    let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin)?;
+
+    if begin.direct_write && begin.target_size >= PREALLOC_THRESHOLD {
+        let _ = file.set_len(begin.target_size);
+    }
+
+    let mut output = ReusableBufWriter::new(file, write_buf);
+    let bytes_written = data.len() as u64;
+
+    // Update checksum and write data.
+    let mut checksum_verifier = begin.checksum_verifier;
+    if let Some(ref mut verifier) = checksum_verifier {
+        verifier.update(&data);
+    }
+
+    if begin.use_sparse {
+        let mut sparse = SparseWriteState::default();
+        sparse.write(&mut output, &data)?;
+        let _final_pos = sparse.finish(&mut output)?;
+    } else {
+        output.write_all(&data)?;
+    }
+
+    // Return buffer for reuse.
+    let _ = buf_return_tx.send(data);
+
+    // Flush / fsync.
+    if config.do_fsync {
+        output.sync().map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("fsync failed for {:?}: {e}", begin.file_path),
+            )
+        })?;
+    } else {
+        output.flush().map_err(|e| {
+            io::Error::other(format!("flush failed for {:?}: {e}", begin.file_path))
+        })?;
+    }
+    drop(output);
+
+    if needs_rename {
+        fs::rename(cleanup_guard.path(), &begin.file_path)?;
+    }
+    cleanup_guard.keep();
+
+    // Apply metadata — mirrors upstream finish_transfer() → set_file_attrs().
+    let metadata_error = match (&config.metadata_opts, &begin.file_entry) {
+        (Some(opts), Some(entry)) => {
+            match metadata::apply_metadata_from_file_entry(&begin.file_path, entry, opts) {
+                Ok(()) => None,
+                Err(e) => Some((begin.file_path.clone(), e.to_string())),
+            }
+        }
+        _ => None,
+    };
+
+    let computed_checksum = checksum_verifier.map(|verifier| {
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = verifier.finalize_into(&mut buf);
+        ComputedChecksum { bytes: buf, len }
+    });
+
+    Ok(CommitResult {
+        bytes_written,
+        file_entry_index: begin.file_entry_index,
+        metadata_error,
+        computed_checksum,
+    })
 }
 
 /// Opens the output file using direct write or temp+rename strategy.
@@ -590,6 +719,42 @@ mod tests {
         let recycled2 = h.buf_return_rx.recv().unwrap();
         assert!(recycled1.capacity() >= 5);
         assert!(recycled2.capacity() >= 6);
+
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        h.join_handle.join().unwrap();
+    }
+
+    #[test]
+    fn whole_file_coalesced() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("whole.dat");
+
+        let h = spawn_disk_thread(DiskCommitConfig::default());
+
+        h.file_tx
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 9,
+                    file_entry_index: 0,
+                    use_sparse: false,
+                    direct_write: true,
+                    checksum_verifier: None,
+                    file_entry: None,
+                }),
+                data: b"whole dat".to_vec(),
+            })
+            .unwrap();
+
+        let result = h.result_rx.recv().unwrap().unwrap();
+        assert_eq!(result.bytes_written, 9);
+        assert_eq!(result.file_entry_index, 0);
+        assert!(result.metadata_error.is_none());
+        assert_eq!(fs::read(&file_path).unwrap(), b"whole dat");
+
+        // Buffer should be returned for recycling.
+        let recycled = h.buf_return_rx.recv().unwrap();
+        assert!(recycled.capacity() >= 9);
 
         h.file_tx.send(FileMessage::Shutdown).unwrap();
         h.join_handle.join().unwrap();
