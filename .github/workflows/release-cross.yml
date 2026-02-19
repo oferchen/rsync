@@ -327,11 +327,11 @@ jobs:
           shared-key: release-linux-musl-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
           key: ${{ matrix.arch }}
 
-      - name: Build static musl binary
+      - name: Build static musl binary (pure Rust)
         run: |
           set -euo pipefail
 
-          printf 'Building %s static binary with full features...\n' "${{ matrix.target }}"
+          printf 'Building %s static binary (pure Rust)...\n' "${{ matrix.target }}"
 
           # Custom Dockerfiles in docker/ directory provide musl-compatible
           # libacl and libattr from Alpine packages for full feature parity
@@ -339,7 +339,25 @@ jobs:
             --profile dist \
             --target ${{ matrix.target }}
 
-      - name: Create tarball
+      - name: Build static musl binary (OpenSSL vendored)
+        run: |
+          set -euo pipefail
+
+          printf 'Building %s static binary (OpenSSL vendored)...\n' "${{ matrix.target }}"
+
+          # Save pure-Rust binary before rebuilding with OpenSSL
+          cp "target/${{ matrix.target }}/dist/oc-rsync" "/tmp/oc-rsync-pure"
+
+          cross build \
+            --profile dist \
+            --target ${{ matrix.target }} \
+            --features openssl-vendored
+
+          # Move OpenSSL binary aside, restore pure-Rust binary
+          cp "target/${{ matrix.target }}/dist/oc-rsync" "/tmp/oc-rsync-openssl"
+          cp "/tmp/oc-rsync-pure" "target/${{ matrix.target }}/dist/oc-rsync"
+
+      - name: Create tarballs
         run: |
           set -euo pipefail
 
@@ -348,24 +366,35 @@ jobs:
           ARCH="${{ matrix.arch }}"
           TOOLCHAIN="${{ matrix.toolchain }}"
 
-          # Stable keeps original naming, beta/nightly get suffix
+          mkdir -p target/dist
+
+          # Pure Rust tarball
           if [ "${TOOLCHAIN}" = "stable" ]; then
             TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl.tar.gz"
           else
             TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl-${TOOLCHAIN}.tar.gz"
           fi
 
-          mkdir -p target/dist
           mkdir -p staging/bin
-
-          # Copy binary
           cp "target/${TARGET}/dist/oc-rsync" staging/bin/
-
-          # Create tarball
           tar -czf "target/dist/${TARBALL_NAME}" -C staging bin
-
           printf 'Created tarball: %s\n' "${TARBALL_NAME}"
-          ls -la "target/dist/${TARBALL_NAME}"
+          rm -rf staging
+
+          # OpenSSL tarball
+          if [ "${TOOLCHAIN}" = "stable" ]; then
+            SSL_TARBALL="oc-rsync-${VERSION}-linux-${ARCH}-musl-openssl.tar.gz"
+          else
+            SSL_TARBALL="oc-rsync-${VERSION}-linux-${ARCH}-musl-openssl-${TOOLCHAIN}.tar.gz"
+          fi
+
+          mkdir -p staging/bin
+          cp /tmp/oc-rsync-openssl staging/bin/oc-rsync
+          tar -czf "target/dist/${SSL_TARBALL}" -C staging bin
+          printf 'Created tarball: %s\n' "${SSL_TARBALL}"
+          rm -rf staging
+
+          ls -la target/dist/oc-rsync-*-linux-${ARCH}-musl*.tar.gz
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
