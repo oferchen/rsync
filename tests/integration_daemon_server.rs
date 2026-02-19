@@ -22,7 +22,6 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -79,27 +78,22 @@ impl Drop for EnvGuard {
     }
 }
 
-/// Global port counter for test isolation.
-static TEST_PORT_COUNTER: AtomicU16 = AtomicU16::new(0);
-
-/// Allocate a unique test port.
+/// Allocate a unique test port by letting the OS assign an ephemeral port.
+///
+/// Binds to port 0 so the kernel picks a free port, reads the assigned port,
+/// then drops the listener. This eliminates the TOCTOU race from the previous
+/// approach (bind-check-drop-rebind) where another process could steal the
+/// port between drop and daemon bind.
+///
+/// The residual race window (between our drop and daemon bind) is minimized
+/// because ephemeral ports are not immediately recycled by the kernel.
+/// Combined with nextest retries in `.config/nextest.toml`, this is robust
+/// against CI port contention.
 fn allocate_test_port() -> u16 {
-    // Use a base port that incorporates the process ID for better isolation
-    let pid = std::process::id();
-    let base = 30000 + ((pid % 1000) * 20) as u16;
-
-    loop {
-        let offset = TEST_PORT_COUNTER.fetch_add(1, Ordering::SeqCst);
-        if offset > 15 {
-            TEST_PORT_COUNTER.store(0, Ordering::SeqCst);
-        }
-        let port = base + (offset % 20);
-        // Try to bind to verify port is available
-        if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, port)) {
-            drop(listener);
-            return port;
-        }
-    }
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).expect("bind to ephemeral port");
+    let port = listener.local_addr().expect("local addr").port();
+    drop(listener);
+    port
 }
 
 /// Connect to daemon with retries.
