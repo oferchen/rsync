@@ -36,10 +36,6 @@ use super::file_entry::{
     XMIT_USER_NAME_FOLLOWS,
 };
 
-// ============================================================================
-// Flag Decoding
-// ============================================================================
-
 /// Decodes transmission flags from the wire format.
 ///
 /// The decoding varies by protocol version and compatibility flags:
@@ -197,10 +193,6 @@ pub fn decode_end_marker<R: Read>(
     }
 }
 
-// ============================================================================
-// Name Decoding
-// ============================================================================
-
 /// Decodes a file name with prefix decompression.
 ///
 /// The rsync protocol compresses file names by sharing common prefixes with
@@ -289,10 +281,6 @@ pub fn decode_name<R: Read>(
     Ok(name)
 }
 
-// ============================================================================
-// Size Decoding
-// ============================================================================
-
 /// Decodes file size from the wire format.
 ///
 /// # Arguments
@@ -330,10 +318,6 @@ pub fn decode_size<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<
         read_longint(reader)
     }
 }
-
-// ============================================================================
-// Time Decoding
-// ============================================================================
 
 /// Decodes modification time from the wire format.
 ///
@@ -473,10 +457,6 @@ pub fn decode_crtime<R: Read>(reader: &mut R, flags: u32, mtime: i64) -> io::Res
     }
 }
 
-// ============================================================================
-// Mode Decoding
-// ============================================================================
-
 /// Decodes Unix mode bits from the wire format.
 ///
 /// Mode is always encoded as a fixed 4-byte little-endian integer.
@@ -518,10 +498,6 @@ pub fn decode_mode<R: Read>(reader: &mut R, flags: u32, prev_mode: u32) -> io::R
         Ok(Some(mode))
     }
 }
-
-// ============================================================================
-// UID/GID Decoding
-// ============================================================================
 
 /// Decodes a user ID from the wire format.
 ///
@@ -662,10 +638,6 @@ fn decode_owner_name<R: Read>(reader: &mut R) -> io::Result<String> {
     })
 }
 
-// ============================================================================
-// Device Number Decoding
-// ============================================================================
-
 /// Decodes device numbers for block/character devices.
 ///
 /// # Arguments
@@ -731,10 +703,6 @@ pub fn decode_rdev<R: Read>(
     Ok((major, minor))
 }
 
-// ============================================================================
-// Symlink Target Decoding
-// ============================================================================
-
 /// Decodes symlink target path.
 ///
 /// # Arguments
@@ -755,10 +723,6 @@ pub fn decode_symlink_target<R: Read>(reader: &mut R, protocol_version: u8) -> i
     reader.read_exact(&mut target)?;
     Ok(target)
 }
-
-// ============================================================================
-// Hardlink Decoding
-// ============================================================================
 
 /// Decodes hardlink index (protocol 30+).
 ///
@@ -832,10 +796,6 @@ pub fn decode_hardlink_dev_ino<R: Read>(
     Ok((dev, ino))
 }
 
-// ============================================================================
-// Checksum Decoding
-// ============================================================================
-
 /// Decodes file checksum (for --checksum mode).
 ///
 /// # Arguments
@@ -857,10 +817,6 @@ pub fn decode_checksum<R: Read>(reader: &mut R, checksum_len: usize) -> io::Resu
     Ok(checksum)
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -871,10 +827,6 @@ mod tests {
         encode_uid,
     };
     use std::io::Cursor;
-
-    // ------------------------------------------------------------------------
-    // Flag Decoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn decode_flags_single_byte() {
@@ -932,10 +884,6 @@ mod tests {
         assert!(is_end);
     }
 
-    // ------------------------------------------------------------------------
-    // End Marker Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn roundtrip_end_marker_simple() {
         let mut buf = Vec::new();
@@ -984,10 +932,6 @@ mod tests {
         assert_eq!(error, Some(42));
     }
 
-    // ------------------------------------------------------------------------
-    // Name Decoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn roundtrip_name_no_compression() {
         let mut buf = Vec::new();
@@ -1030,10 +974,6 @@ mod tests {
         assert_eq!(name, long_name);
     }
 
-    // ------------------------------------------------------------------------
-    // Size Decoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn roundtrip_size_modern() {
         let mut buf = Vec::new();
@@ -1064,10 +1004,6 @@ mod tests {
         let size = decode_size(&mut cursor, 29).unwrap();
         assert_eq!(size, large as i64);
     }
-
-    // ------------------------------------------------------------------------
-    // Time Decoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn roundtrip_mtime_modern() {
@@ -1143,10 +1079,6 @@ mod tests {
         assert_eq!(crtime, Some(1700000000));
     }
 
-    // ------------------------------------------------------------------------
-    // Mode Decoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn roundtrip_mode_regular_file() {
         let mut buf = Vec::new();
@@ -1163,10 +1095,6 @@ mod tests {
         let mode = decode_mode(&mut cursor, XMIT_SAME_MODE as u32, 0o100755).unwrap();
         assert_eq!(mode, Some(0o100755));
     }
-
-    // ------------------------------------------------------------------------
-    // UID/GID Decoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn roundtrip_uid_modern() {
@@ -1229,10 +1157,6 @@ mod tests {
         assert_eq!(result, Some((500, Some("testgroup".to_string()))));
     }
 
-    // ------------------------------------------------------------------------
-    // Device Number Decoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn roundtrip_rdev_protocol_30() {
         let mut buf = Vec::new();
@@ -1267,10 +1191,6 @@ mod tests {
         assert_eq!(major, 8);
         assert_eq!(minor, 5);
     }
-
-    // ------------------------------------------------------------------------
-    // Symlink Target Decoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn roundtrip_symlink_target() {
@@ -1403,10 +1323,6 @@ mod tests {
         assert_eq!(target, b"tgt");
     }
 
-    // ------------------------------------------------------------------------
-    // Hardlink Decoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn roundtrip_hardlink_idx_follower() {
         let mut buf = Vec::new();
@@ -1448,10 +1364,6 @@ mod tests {
         assert_eq!(dev, 100);
         assert_eq!(ino, 12345);
     }
-
-    // ------------------------------------------------------------------------
-    // Checksum Decoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn roundtrip_checksum() {

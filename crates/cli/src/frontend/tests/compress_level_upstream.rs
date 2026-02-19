@@ -1,10 +1,6 @@
 use super::common::*;
 use super::*;
 
-// =============================================================================
-// CLI parsing: --compress-level accepts all valid levels 0-9
-// =============================================================================
-
 #[test]
 fn parse_args_compress_level_0_records_value() {
     let parsed = parse_args([
@@ -151,10 +147,6 @@ fn parse_args_compress_level_9_enables_compression() {
     assert!(parsed.compress);
 }
 
-// =============================================================================
-// --compress-level implies --compress (without explicit -z)
-// =============================================================================
-
 #[test]
 fn compress_level_without_z_flag_enables_compression() {
     // Upstream rsync: --compress-level=N (where N > 0) implies --compress
@@ -173,10 +165,6 @@ fn compress_level_without_z_flag_enables_compression() {
         );
     }
 }
-
-// =============================================================================
-// Invalid level rejection
-// =============================================================================
 
 #[test]
 fn compress_level_negative_reports_error() {
@@ -255,10 +243,6 @@ fn compress_level_non_numeric_reports_error() {
     );
 }
 
-// =============================================================================
-// --compress-level=0 effectively disables compression (even with -z)
-// =============================================================================
-
 #[test]
 fn compress_level_zero_overrides_z_flag() {
     // Upstream: --compress-level=0 disables compression even if -z is present
@@ -278,10 +262,6 @@ fn compress_level_zero_overrides_z_flag() {
     assert_eq!(parsed.compress_level, Some(OsString::from("0")));
 }
 
-// =============================================================================
-// --compress-level overrides --no-compress
-// =============================================================================
-
 #[test]
 fn compress_level_nonzero_overrides_no_compress() {
     let parsed = parse_args([
@@ -299,10 +279,6 @@ fn compress_level_nonzero_overrides_no_compress() {
     );
     assert_eq!(parsed.compress_level, Some(OsString::from("6")));
 }
-
-// =============================================================================
-// Default compression level
-// =============================================================================
 
 #[test]
 fn no_compress_level_specified_defaults_to_none() {
@@ -339,10 +315,6 @@ fn compress_flag_alone_uses_default_level() {
         "-z without --compress-level should leave compress_level as None (default level 6)"
     );
 }
-
-// =============================================================================
-// parse_compress_level_argument function tests
-// =============================================================================
 
 #[test]
 fn parse_compress_level_argument_accepts_all_valid_levels() {
@@ -417,10 +389,6 @@ fn parse_compress_level_argument_trims_whitespace() {
     assert!(setting.is_enabled());
 }
 
-// =============================================================================
-// CompressionSetting::try_from_numeric verification
-// =============================================================================
-
 #[test]
 fn compression_setting_try_from_numeric_matches_upstream_levels() {
     use core::client::CompressionSetting;
@@ -440,10 +408,6 @@ fn compression_setting_try_from_numeric_matches_upstream_levels() {
     assert!(CompressionSetting::try_from_numeric(100).is_err());
     assert!(CompressionSetting::try_from_numeric(u32::MAX).is_err());
 }
-
-// =============================================================================
-// End-to-end: local copies with various compression levels
-// =============================================================================
 
 #[test]
 fn local_copy_with_all_valid_compress_levels() {

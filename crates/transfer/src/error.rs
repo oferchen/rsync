@@ -182,10 +182,6 @@ pub fn categorize_io_error(
     }
 }
 
-// =============================================================================
-// Retry Utilities for Transient Errors
-// =============================================================================
-
 /// Reads exactly `buf.len()` bytes, retrying on EINTR (interrupted system call).
 ///
 /// This matches upstream rsync's behavior in `util1.c:315-317` where reads are
@@ -402,10 +398,6 @@ mod tests {
         assert!(s.contains("open"));
         assert!(s.contains("/tmp/test.txt"));
     }
-
-    // =========================================================================
-    // Retry Utility Tests
-    // =========================================================================
 
     #[test]
     fn read_exact_retry_succeeds_on_normal_read() {

@@ -45,10 +45,6 @@ use signature::{
 use std::io::Cursor;
 use std::num::{NonZeroU8, NonZeroU32};
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
-
 /// Creates layout params with common defaults for testing.
 fn layout_params(file_len: u64, checksum_len: u8) -> SignatureLayoutParams {
     SignatureLayoutParams::new(
@@ -91,10 +87,6 @@ fn layout_params_with_protocol(
 fn generate_test_data(size: usize) -> Vec<u8> {
     (0..size).map(|i| ((i * 17 + 31) % 256) as u8).collect()
 }
-
-// ============================================================================
-// Block Size Selection Based on File Size
-// ============================================================================
 
 mod block_size_selection {
     //! Tests for automatic block size selection heuristics.
@@ -276,10 +268,6 @@ mod block_size_selection {
     }
 }
 
-// ============================================================================
-// Minimum and Maximum Block Sizes
-// ============================================================================
-
 mod block_size_limits {
     //! Tests for block size boundaries and constraints.
 
@@ -436,10 +424,6 @@ mod block_size_limits {
         );
     }
 }
-
-// ============================================================================
-// Block Size Affects Signature Accuracy
-// ============================================================================
 
 mod signature_accuracy {
     //! Tests demonstrating how block size affects change detection accuracy.
@@ -678,10 +662,6 @@ mod signature_accuracy {
         }
     }
 }
-
-// ============================================================================
-// Round-Trip with Different Block Sizes
-// ============================================================================
 
 mod round_trip {
     //! Tests verifying signature generation and reconstruction with various block sizes.

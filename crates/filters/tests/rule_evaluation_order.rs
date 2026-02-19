@@ -16,10 +16,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// =============================================================================
-// First-Match-Wins Fundamental Behavior
-// =============================================================================
-
 /// Verifies that the first matching rule wins, not the most specific or last.
 #[test]
 fn first_match_wins_exclude_then_include() {
@@ -64,10 +60,6 @@ fn position_determines_outcome_for_overlapping_patterns() {
     let set2 = FilterSet::from_rules(rules_include_first).unwrap();
     assert!(set2.allows(Path::new("test.txt"), false));
 }
-
-// =============================================================================
-// Order-Sensitive Exception Patterns
-// =============================================================================
 
 /// Classic rsync pattern: include specific, exclude general.
 #[test]
@@ -136,10 +128,6 @@ fn exception_order_among_exceptions() {
     assert!(!set.allows(Path::new("image.png"), false));
 }
 
-// =============================================================================
-// Sequential Evaluation Tests
-// =============================================================================
-
 /// Verifies that evaluation stops at first match.
 #[test]
 fn evaluation_stops_at_first_match() {
@@ -195,10 +183,6 @@ fn linear_search_through_rules() {
     assert!(set.allows(Path::new("d"), false));
 }
 
-// =============================================================================
-// No Match Default Behavior
-// =============================================================================
-
 /// Verifies that no matching rule defaults to include.
 #[test]
 fn no_match_defaults_to_include() {
@@ -234,10 +218,6 @@ fn all_exclude_rules_non_matching_allowed() {
     assert!(set.allows(Path::new("source.rs"), false));
     assert!(set.allows(Path::new("config.toml"), false));
 }
-
-// =============================================================================
-// Protect/Risk Order Evaluation
-// =============================================================================
 
 /// Verifies protect rules follow first-match-wins.
 #[test]
@@ -277,10 +257,6 @@ fn protect_exception_pattern() {
     assert!(!set.allows_deletion(Path::new("archive/important.dat"), false));
 }
 
-// =============================================================================
-// Include/Exclude Separate from Protect/Risk
-// =============================================================================
-
 /// Verifies include/exclude and protect/risk are evaluated independently.
 #[test]
 fn include_exclude_independent_from_protect_risk() {
@@ -315,10 +291,6 @@ fn order_matters_per_category() {
     assert!(!set.allows_deletion(Path::new("keep.tmp"), false));
     assert!(!set.allows_deletion(Path::new("other.tmp"), false));
 }
-
-// =============================================================================
-// Wildcard Pattern Order
-// =============================================================================
 
 /// Verifies order matters for overlapping wildcard patterns.
 #[test]
@@ -356,10 +328,6 @@ fn double_star_pattern_order() {
     assert!(!set.allows(Path::new("vendor/test/data.txt"), false));
 }
 
-// =============================================================================
-// Directory Pattern Order
-// =============================================================================
-
 /// Verifies directory-only patterns follow order semantics.
 #[test]
 fn directory_only_pattern_order() {
@@ -391,10 +359,6 @@ fn directory_only_vs_file_order() {
     assert!(set.allows(Path::new("cache"), false));
 }
 
-// =============================================================================
-// Anchored Pattern Order
-// =============================================================================
-
 /// Verifies anchored patterns follow order with unanchored.
 #[test]
 fn anchored_and_unanchored_order() {
@@ -423,10 +387,6 @@ fn anchored_root_only_order() {
     // temp elsewhere: anchored doesn't match, unanchored include matches
     assert!(set.allows(Path::new("dir/temp"), false));
 }
-
-// =============================================================================
-// Sender/Receiver Side Order
-// =============================================================================
 
 /// Verifies sender-only rules follow order for allows().
 #[test]
@@ -476,10 +436,6 @@ fn mixed_sides_order() {
     assert!(!set.allows_deletion(Path::new("app.log"), false));
 }
 
-// =============================================================================
-// Perishable Rules Order
-// =============================================================================
-
 /// Verifies perishable rules are skipped in deletion context.
 #[test]
 fn perishable_order_in_deletion() {
@@ -515,10 +471,6 @@ fn perishable_after_non_perishable() {
     // For deletion, perishable skipped, include matches
     assert!(set.allows_deletion(Path::new("other.tmp"), false));
 }
-
-// =============================================================================
-// Clear Rule Order Effects
-// =============================================================================
 
 /// Verifies clear removes all previous rules.
 #[test]
@@ -575,10 +527,6 @@ fn multiple_clears_order() {
     // Last chain: exclude("c") first, include("c") second
     assert!(!set.allows(Path::new("c"), false));
 }
-
-// =============================================================================
-// Complex Order Scenarios
-// =============================================================================
 
 /// Real-world scenario: backup with exceptions.
 #[test]
@@ -661,10 +609,6 @@ fn nested_directory_order() {
     // other files included
     assert!(set.allows(Path::new("build.rs"), false));
 }
-
-// =============================================================================
-// Edge Cases
-// =============================================================================
 
 /// Same pattern with different actions - first wins.
 #[test]

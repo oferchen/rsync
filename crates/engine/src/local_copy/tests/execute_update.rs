@@ -11,10 +11,6 @@
 // 5. Directory recursive behavior with --update
 // 6. Edge cases: subsecond precision, boundary times
 
-// ============================================================================
-// Basic --update Flag Tests
-// ============================================================================
-
 #[test]
 fn update_skips_file_when_destination_is_newer() {
     let temp = tempdir().expect("tempdir");
@@ -167,10 +163,6 @@ fn update_skips_file_when_mtime_is_equal() {
     );
 }
 
-// ============================================================================
-// Directory Recursive Tests
-// ============================================================================
-
 #[test]
 fn update_recursive_mixed_timestamps() {
     let temp = tempdir().expect("tempdir");
@@ -302,10 +294,6 @@ fn update_nested_directories_selective_copy() {
         b"l2 new"
     );
 }
-
-// ============================================================================
-// Edge Cases and Boundary Conditions
-// ============================================================================
 
 #[test]
 fn update_handles_subsecond_precision() {
@@ -442,10 +430,6 @@ fn update_one_second_difference_copies_when_source_newer() {
     assert_eq!(fs::read(&destination).expect("read"), b"newer");
 }
 
-// ============================================================================
-// Combined Options Tests
-// ============================================================================
-
 #[test]
 fn update_combined_with_times_preserves_mtime() {
     let temp = tempdir().expect("tempdir");
@@ -548,10 +532,6 @@ fn update_without_flag_copies_even_when_dest_newer() {
     assert_eq!(fs::read(&destination).expect("read"), b"source");
 }
 
-// ============================================================================
-// Dry Run Tests
-// ============================================================================
-
 #[test]
 fn update_dry_run_reports_but_preserves_files() {
     let temp = tempdir().expect("tempdir");
@@ -619,10 +599,6 @@ fn update_dry_run_reports_skipped_files() {
     assert_eq!(fs::read(&destination).expect("read"), b"newer dest");
 }
 
-// ============================================================================
-// Empty File Tests
-// ============================================================================
-
 #[test]
 fn update_handles_empty_source_file() {
     let temp = tempdir().expect("tempdir");
@@ -687,10 +663,6 @@ fn update_handles_empty_dest_file() {
     assert_eq!(summary.regular_files_skipped_newer(), 1);
     assert_eq!(fs::read(&destination).expect("read"), b"");
 }
-
-// ============================================================================
-// Upstream rsync Behavior Comparison
-// ============================================================================
 
 /// This test documents upstream rsync's --update behavior.
 ///

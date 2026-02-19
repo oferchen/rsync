@@ -30,10 +30,6 @@ use std::collections::HashSet;
 use std::io::Cursor;
 use std::num::NonZeroU8;
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
-
 /// Creates a signature index from the provided data.
 fn build_index(data: &[u8]) -> Option<DeltaSignatureIndex> {
     let params = SignatureLayoutParams::new(
@@ -72,10 +68,6 @@ fn apply_and_reconstruct(
     apply_delta(&mut basis_cursor, &mut output, index, script).expect("apply_delta should succeed");
     output
 }
-
-// ============================================================================
-// 1. Block Matching Finds Correct Matches
-// ============================================================================
 
 /// Verifies that exact block matches are found at the correct positions.
 ///
@@ -272,10 +264,6 @@ fn block_matches_at_different_alignments() {
     }
 }
 
-// ============================================================================
-// 2. Rolling Checksum Produces Consistent Results
-// ============================================================================
-
 /// Verifies that the rolling checksum is consistent when recomputed.
 ///
 /// The rolling checksum for a given window should be identical whether
@@ -409,10 +397,6 @@ fn rolling_checksum_distinguishes_different_windows() {
         unique_ratio * 100.0
     );
 }
-
-// ============================================================================
-// 3. Strong Checksum Verification Works
-// ============================================================================
 
 /// Verifies that strong checksums correctly distinguish different blocks.
 ///
@@ -551,10 +535,6 @@ fn strong_checksum_algorithm_md4_correctness() {
         different_data.len()
     );
 }
-
-// ============================================================================
-// 4. False Positive Rate is Acceptable
-// ============================================================================
 
 /// Measures and validates the false positive rate of block matching.
 ///
@@ -710,10 +690,6 @@ fn accidental_weak_matches_rejected_by_strong_checksum() {
     );
 }
 
-// ============================================================================
-// Edge Cases and Boundary Conditions
-// ============================================================================
-
 /// Verifies matching behavior at exact block boundaries.
 #[test]
 fn matching_at_exact_block_boundaries() {
@@ -835,10 +811,6 @@ fn matching_with_large_block_size() {
 
     assert_eq!(copy_count, 1, "should have one copy token for large block");
 }
-
-// ============================================================================
-// Statistical Accuracy Tests
-// ============================================================================
 
 /// Verifies matching accuracy across many random scenarios.
 #[test]

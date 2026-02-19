@@ -15,17 +15,9 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// Maximum filename length in bytes for most POSIX filesystems.
 /// This is NAME_MAX, not PATH_MAX (which is typically 4096).
 const MAX_FILENAME_BYTES: usize = 255;
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
@@ -62,10 +54,6 @@ fn try_create_file(dir: &Path, name: &str, content: &[u8]) -> bool {
 fn try_create_dir(dir: &Path, name: &str) -> bool {
     fs::create_dir(dir.join(name)).is_ok()
 }
-
-// ============================================================================
-// 1. Maximum Filename Length Tests
-// ============================================================================
 
 /// Verifies handling of a file with exactly 255-byte filename.
 #[test]
@@ -232,10 +220,6 @@ fn metadata_access_max_length_filename() {
     }
 }
 
-// ============================================================================
-// 2. Maximum Directory Name Length Tests
-// ============================================================================
-
 /// Verifies handling of a directory with exactly 255-byte name.
 #[test]
 fn directory_with_255_byte_name() {
@@ -349,10 +333,6 @@ fn nested_directories_with_max_length_parent() {
         assert!(paths.contains(&PathBuf::from(format!("{parent_dirname}/child/file.txt"))));
     }
 }
-
-// ============================================================================
-// 3. Path Combining and Limits Tests
-// ============================================================================
 
 /// Verifies file with max-length name inside directory with max-length name.
 #[test]
@@ -501,10 +481,6 @@ fn relative_path_with_max_length_names() {
         }
     }
 }
-
-// ============================================================================
-// 4. Edge Cases and Boundary Conditions
-// ============================================================================
 
 /// Verifies sorting with max-length filenames.
 #[test]
@@ -666,10 +642,6 @@ fn hidden_file_with_max_length_name() {
     }
 }
 
-// ============================================================================
-// 5. UTF-8 Filenames at Maximum Byte Length
-// ============================================================================
-
 /// Verifies max-length filename using multi-byte UTF-8 characters.
 #[test]
 fn max_length_utf8_filename() {
@@ -757,10 +729,6 @@ fn max_length_mixed_utf8_filename() {
         assert_eq!(paths[0], PathBuf::from(&filename));
     }
 }
-
-// ============================================================================
-// 6. Special Characters with Max Length
-// ============================================================================
 
 /// Verifies max-length filename with spaces.
 #[test]

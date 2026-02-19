@@ -8,10 +8,6 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
-// =============================================================================
-// Dir-Merge Rule Construction Tests
-// =============================================================================
-
 #[test]
 fn dir_merge_basic_construction() {
     let rule = FilterRule::dir_merge(".rsync-filter");
@@ -58,10 +54,6 @@ fn dir_merge_with_no_inherit() {
     assert!(rule.is_no_inherit());
 }
 
-// =============================================================================
-// Merge Rule Construction Tests (for comparison)
-// =============================================================================
-
 #[test]
 fn merge_basic_construction() {
     let rule = FilterRule::merge("/etc/rsync/global.rules");
@@ -85,10 +77,6 @@ fn merge_default_modifiers() {
     assert!(!rule.is_no_inherit());
 }
 
-// =============================================================================
-// Dir-Merge vs Merge Distinction Tests
-// =============================================================================
-
 #[test]
 fn dir_merge_and_merge_are_distinct_actions() {
     let dir_merge_rule = FilterRule::dir_merge(".rsync-filter");
@@ -109,10 +97,6 @@ fn dir_merge_typical_use_case() {
     let rule2 = FilterRule::merge("/home/user/.rsync/global.rules");
     assert!(rule2.pattern().starts_with('/'));
 }
-
-// =============================================================================
-// FilterSet Integration Tests
-// =============================================================================
 
 #[test]
 fn filter_set_with_dir_merge_rule() {
@@ -153,10 +137,6 @@ fn filter_set_dir_merge_with_other_rules() {
     let set = FilterSet::from_rules(rules);
     assert!(set.is_ok());
 }
-
-// =============================================================================
-// Merge File Parsing Tests
-// =============================================================================
 
 #[test]
 fn parse_dir_merge_short_form() {
@@ -209,10 +189,6 @@ fn parse_merge_long_form() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Merge);
 }
-
-// =============================================================================
-// Recursive Expansion Tests
-// =============================================================================
 
 #[test]
 fn recursive_expansion_preserves_dir_merge() {
@@ -276,10 +252,6 @@ fn multiple_dir_merge_rules_preserved() {
     assert_eq!(rules[2].pattern(), ".project-rules");
 }
 
-// =============================================================================
-// Dir-Merge Rule Modifiers Tests
-// =============================================================================
-
 #[test]
 fn dir_merge_with_modifiers_via_parsing() {
     let dir = TempDir::new().unwrap();
@@ -300,10 +272,6 @@ fn dir_merge_side_specific() {
     assert!(rule.applies_to_sender());
     assert!(!rule.applies_to_receiver());
 }
-
-// =============================================================================
-// Edge Cases
-// =============================================================================
 
 #[test]
 fn dir_merge_empty_pattern() {
@@ -356,10 +324,6 @@ fn dir_merge_debug() {
     assert!(debug.contains("DirMerge"));
     assert!(debug.contains(".rsync-filter"));
 }
-
-// =============================================================================
-// Complex Scenarios
-// =============================================================================
 
 #[test]
 fn mixed_merge_and_dir_merge_ordering() {

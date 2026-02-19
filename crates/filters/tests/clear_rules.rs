@@ -9,10 +9,6 @@
 use filters::{FilterAction, FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Basic Clear Rule Tests
-// ============================================================================
-
 /// Verifies clear rule removes all previous rules.
 #[test]
 fn clear_removes_all_previous_rules() {
@@ -49,10 +45,6 @@ fn clear_rule_properties() {
     assert!(rule.applies_to_sender());
     assert!(rule.applies_to_receiver());
 }
-
-// ============================================================================
-// Rules After Clear Tests
-// ============================================================================
 
 /// Verifies rules added after clear work normally.
 #[test]
@@ -102,10 +94,6 @@ fn clear_at_end() {
 
     assert!(set.is_empty());
 }
-
-// ============================================================================
-// Side-Specific Clear Tests
-// ============================================================================
 
 /// Verifies clear with sender-only flag only clears sender rules.
 #[test]
@@ -165,10 +153,6 @@ fn clear_no_sides_has_no_effect() {
     assert!(!set.allows(Path::new("file.tmp"), false));
     assert!(!set.allows(Path::new("file.bak"), false));
 }
-
-// ============================================================================
-// Clear with Mixed Rule Types
-// ============================================================================
 
 /// Verifies clear affects both include/exclude and protect/risk.
 #[test]
@@ -234,10 +218,6 @@ fn complex_clear_scenario() {
     assert!(set.allows_deletion_when_excluded_removed(Path::new("important.tmp"), false));
 }
 
-// ============================================================================
-// Clear with Show/Hide Rules
-// ============================================================================
-
 /// Verifies clear removes show rules.
 #[test]
 fn clear_removes_show_rules() {
@@ -269,10 +249,6 @@ fn sender_clear_removes_show_hide() {
     // Show/hide are sender-only, so sender clear removes them
     assert!(set.is_empty());
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Verifies clear on empty filter set.
 #[test]

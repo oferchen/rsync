@@ -8,10 +8,6 @@
 
 use super::*;
 
-// ============================================================================
-// Format Specifier Tests - Basic Placeholders
-// ============================================================================
-
 #[test]
 fn out_format_filename_placeholder_renders_basename() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -270,10 +266,6 @@ fn out_format_process_id_placeholder_shows_pid() {
     assert!(pid > 0);
 }
 
-// ============================================================================
-// Escape Sequences Tests
-// ============================================================================
-
 #[test]
 fn out_format_escaped_percent_renders_literal_percent() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -357,10 +349,6 @@ fn out_format_multiple_escaped_percent_signs() {
 
     assert_eq!(String::from_utf8(output).expect("utf8"), "% % %\n");
 }
-
-// ============================================================================
-// Combined Format Tests
-// ============================================================================
 
 #[test]
 fn out_format_combines_multiple_placeholders() {
@@ -451,10 +439,6 @@ fn out_format_mixes_literals_and_placeholders() {
     assert!(rendered.starts_with("Transferred: mixed.log"));
     assert!(rendered.contains("bytes)"));
 }
-
-// ============================================================================
-// Width and Alignment Tests
-// ============================================================================
 
 #[test]
 fn out_format_respects_width_specifier() {
@@ -553,10 +537,6 @@ fn out_format_respects_left_alignment() {
         "Expected 20 characters with padding, got: {without_newline:?}"
     );
 }
-
-// ============================================================================
-// Humanization Tests
-// ============================================================================
 
 #[test]
 fn out_format_humanizes_with_separator() {
@@ -690,10 +670,6 @@ fn out_format_humanizes_with_binary_units() {
     assert_eq!(rendered, "2.00K\n");
 }
 
-// ============================================================================
-// Invalid Format Tests
-// ============================================================================
-
 #[test]
 fn out_format_rejects_empty_format_string() {
     let error = parse_out_format(OsStr::new("")).unwrap_err();
@@ -728,10 +704,6 @@ fn out_format_rejects_invalid_placeholders() {
         );
     }
 }
-
-// ============================================================================
-// Compatibility Tests - Matching Upstream rsync
-// ============================================================================
 
 #[test]
 fn out_format_all_supported_placeholders_parse_successfully() {
@@ -797,10 +769,6 @@ fn out_format_complex_realistic_format() {
     assert!(rendered.contains('['));
     assert!(rendered.contains(']'));
 }
-
-// ============================================================================
-// Directory Handling Tests
-// ============================================================================
 
 #[test]
 fn out_format_directory_names_include_trailing_slash() {

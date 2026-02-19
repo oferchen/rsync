@@ -376,10 +376,6 @@ fn info_name2_reports_unchanged_entries() {
     assert!(rendered.contains("unchanged.txt"));
 }
 
-// ============================================================================
-// End-to-end tests: --info flag via CLI argument parsing
-// ============================================================================
-
 #[test]
 fn info_flag_captured_in_parsed_args() {
     let parsed = crate::frontend::arguments::parse_args(
@@ -426,10 +422,6 @@ fn debug_flag_captured_in_parsed_args() {
     assert!(!parsed.debug.is_empty());
 }
 
-// ============================================================================
-// End-to-end tests: error handling via full CLI pipeline
-// ============================================================================
-
 #[test]
 fn info_unknown_flag_exit_code_1() {
     let (code, _stdout, stderr) = run_with_args([OsStr::new(RSYNC), OsStr::new("--info=notaflag")]);
@@ -447,10 +439,6 @@ fn debug_rejects_unknown_flag() {
     let rendered = String::from_utf8(stderr).expect("stderr utf8");
     assert!(rendered.contains("invalid --debug flag"));
 }
-
-// ============================================================================
-// End-to-end tests: info flag interaction with verbose levels
-// ============================================================================
 
 #[test]
 fn info_stats0_suppresses_verbose_stats() {
@@ -524,10 +512,6 @@ fn info_none_suppresses_verbose_name_output() {
     // --info=none should suppress filename output that -v normally enables
     assert!(!rendered.contains("none.txt"));
 }
-
-// ============================================================================
-// Comprehensive unit tests for all --info flag keywords
-// ============================================================================
 
 #[test]
 fn info_all_upstream_keywords_are_accepted() {
@@ -625,10 +609,6 @@ fn info_all_upstream_keywords_with_dash_negation() {
         );
     }
 }
-
-// ============================================================================
-// Upstream rsync specific patterns
-// ============================================================================
 
 #[test]
 fn info_typical_rsync_quiet_pattern() {

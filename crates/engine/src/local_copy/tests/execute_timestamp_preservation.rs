@@ -12,10 +12,6 @@
 // Note: ctime (change time) is not user-settable on most Unix systems, so it
 // is not covered in preservation tests.
 
-// ============================================================================
-// Basic mtime Preservation Tests
-// ============================================================================
-
 #[test]
 fn times_flag_preserves_mtime_on_copied_file() {
     let temp = tempdir().expect("tempdir");
@@ -134,10 +130,6 @@ fn times_flag_preserves_mtime_on_multiple_files() {
     assert_eq!(dest_mtime3, mtime3, "file3 mtime should be preserved");
 }
 
-// ============================================================================
-// atime (Access Time) Handling Tests
-// ============================================================================
-
 #[test]
 fn times_flag_preserves_atime_on_copied_file() {
     let temp = tempdir().expect("tempdir");
@@ -210,10 +202,6 @@ fn atime_and_mtime_can_differ() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved as distinct value");
     assert_ne!(dest_atime, dest_mtime, "atime and mtime should remain different");
 }
-
-// ============================================================================
-// Subsecond Precision Tests
-// ============================================================================
 
 // Windows NTFS truncates nanoseconds to 100ns intervals.
 #[cfg(not(target_os = "windows"))]
@@ -344,10 +332,6 @@ fn subsecond_precision_round_trip() {
     );
 }
 
-// ============================================================================
-// --times Flag Behavior Tests
-// ============================================================================
-
 #[test]
 fn times_flag_with_archive_mode() {
     let temp = tempdir().expect("tempdir");
@@ -445,10 +429,6 @@ fn times_flag_on_symlink() {
     assert_eq!(dest_atime, link_atime, "symlink atime should be preserved");
     assert_eq!(dest_mtime, link_mtime, "symlink mtime should be preserved");
 }
-
-// ============================================================================
-// Timestamp Comparison for Skip Decisions
-// ============================================================================
 
 #[test]
 fn skip_file_when_timestamps_match() {
@@ -589,10 +569,6 @@ fn modify_window_tolerates_small_differences() {
     // File should be skipped because 0.5s difference is within 1s window
     assert_eq!(summary.files_copied(), 0, "file should be skipped with modify_window tolerance");
 }
-
-// ============================================================================
-// Edge Cases and Special Scenarios
-// ============================================================================
 
 #[test]
 fn unix_epoch_timestamp_preserved() {
@@ -767,10 +743,6 @@ fn large_file_timestamp_preserved() {
     assert_eq!(dest_mtime, mtime, "large file timestamp should be preserved");
 }
 
-// ============================================================================
-// Timestamp Interaction with Other Flags
-// ============================================================================
-
 #[test]
 fn times_with_checksum_and_matching_timestamps() {
     let temp = tempdir().expect("tempdir");
@@ -881,10 +853,6 @@ fn times_flag_in_dry_run_mode() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"original");
 }
 
-// ============================================================================
-// Nested Directory Timestamp Tests
-// ============================================================================
-
 #[test]
 fn nested_directory_timestamps_preserved() {
     let temp = tempdir().expect("tempdir");
@@ -924,10 +892,6 @@ fn nested_directory_timestamps_preserved() {
     assert_eq!(dest_level1_mtime, level1_mtime, "level1 directory mtime should be preserved");
     assert_eq!(dest_level2_mtime, level2_mtime, "level2 directory mtime should be preserved");
 }
-
-// ============================================================================
-// Incremental Sync Timestamp Behavior
-// ============================================================================
 
 #[test]
 fn incremental_sync_skips_unchanged_files() {

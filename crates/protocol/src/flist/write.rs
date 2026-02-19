@@ -2761,10 +2761,6 @@ mod tests {
         assert_eq!(read2.name(), "no_content");
         assert!(!read2.content_dir(), "second dir should not have content");
     }
-
-    // ========================================================================
-    // Extended Flags Encoding Tests (Task #74)
-    // ========================================================================
     // These tests verify the wire format encoding for XMIT_EXTENDED_FLAGS
     // across different protocol versions and flag combinations.
 
@@ -3228,10 +3224,6 @@ mod tests {
             assert_eq!(read.mtime_nsec(), 500000000);
         }
     }
-
-    // ========================================================================
-    // Large file size encoding tests (>2GB, >4GB)
-    // ========================================================================
 
     /// Test encoding and decoding a 3GB file (above 2^31 = 2GB boundary).
     /// This verifies that the varlong encoding correctly handles file sizes

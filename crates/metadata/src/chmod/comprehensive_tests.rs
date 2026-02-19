@@ -11,16 +11,8 @@
 
 use super::ChmodModifiers;
 
-// =============================================================================
-// Section 1: Basic Symbolic Chmod Syntax Tests
-// =============================================================================
-
 mod basic_symbolic_syntax {
     use super::*;
-
-    // -------------------------------------------------------------------------
-    // User permissions (u)
-    // -------------------------------------------------------------------------
 
     #[test]
     fn user_add_execute() {
@@ -70,10 +62,6 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // -------------------------------------------------------------------------
-    // Group permissions (g)
-    // -------------------------------------------------------------------------
-
     #[test]
     fn group_add_write() {
         let modifiers = ChmodModifiers::parse("g+w").expect("parse g+w");
@@ -91,10 +79,6 @@ mod basic_symbolic_syntax {
         let modifiers = ChmodModifiers::parse("g=rx").expect("parse g=rx");
         assert!(!modifiers.is_empty());
     }
-
-    // -------------------------------------------------------------------------
-    // Other permissions (o)
-    // -------------------------------------------------------------------------
 
     #[test]
     fn other_add_read() {
@@ -114,10 +98,6 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // -------------------------------------------------------------------------
-    // All permissions (a)
-    // -------------------------------------------------------------------------
-
     #[test]
     fn all_add_execute() {
         let modifiers = ChmodModifiers::parse("a+x").expect("parse a+x");
@@ -135,10 +115,6 @@ mod basic_symbolic_syntax {
         let modifiers = ChmodModifiers::parse("a=r").expect("parse a=r");
         assert!(!modifiers.is_empty());
     }
-
-    // -------------------------------------------------------------------------
-    // Combined who specifiers (ug, go, uo, ugo)
-    // -------------------------------------------------------------------------
 
     #[test]
     fn user_and_group_add_read() {
@@ -158,10 +134,6 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // -------------------------------------------------------------------------
-    // No who specifier defaults to all
-    // -------------------------------------------------------------------------
-
     #[test]
     fn no_who_add_execute_defaults_to_all() {
         let modifiers = ChmodModifiers::parse("+x").expect("parse +x");
@@ -180,10 +152,6 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // -------------------------------------------------------------------------
-    // Conditional execute (X)
-    // -------------------------------------------------------------------------
-
     #[test]
     fn conditional_execute_uppercase_x() {
         let modifiers = ChmodModifiers::parse("a+X").expect("parse a+X");
@@ -195,10 +163,6 @@ mod basic_symbolic_syntax {
         let modifiers = ChmodModifiers::parse("ugo+X").expect("parse ugo+X");
         assert!(!modifiers.is_empty());
     }
-
-    // -------------------------------------------------------------------------
-    // Special bits (setuid, setgid, sticky)
-    // -------------------------------------------------------------------------
 
     #[test]
     fn add_setuid_setgid() {
@@ -218,10 +182,6 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // -------------------------------------------------------------------------
-    // Copy permissions (g=u, o=g, etc.)
-    // -------------------------------------------------------------------------
-
     #[test]
     fn copy_user_to_group() {
         let modifiers = ChmodModifiers::parse("g=u").expect("parse g=u");
@@ -240,10 +200,6 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // -------------------------------------------------------------------------
-    // Case insensitivity
-    // -------------------------------------------------------------------------
-
     #[test]
     fn uppercase_who_specifiers() {
         let modifiers = ChmodModifiers::parse("U+R").expect("parse U+R");
@@ -256,10 +212,6 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 }
-
-// =============================================================================
-// Section 2: Numeric Mode Tests
-// =============================================================================
 
 mod numeric_mode {
     use super::*;
@@ -357,10 +309,6 @@ mod numeric_mode {
     }
 }
 
-// =============================================================================
-// Section 3: Directory-Specific Permissions (D prefix)
-// =============================================================================
-
 mod directory_specific {
     use super::*;
 
@@ -407,10 +355,6 @@ mod directory_specific {
     }
 }
 
-// =============================================================================
-// Section 4: File-Specific Permissions (F prefix)
-// =============================================================================
-
 mod file_specific {
     use super::*;
 
@@ -456,10 +400,6 @@ mod file_specific {
         assert!(!modifiers.is_empty());
     }
 }
-
-// =============================================================================
-// Section 5: Multiple Chmod Rules
-// =============================================================================
 
 mod multiple_rules {
     use super::*;
@@ -522,10 +462,6 @@ mod multiple_rules {
     }
 }
 
-// =============================================================================
-// Section 6: Apply Mode Tests (Unix-only)
-// =============================================================================
-
 #[cfg(unix)]
 mod apply_mode {
     use super::*;
@@ -536,10 +472,6 @@ mod apply_mode {
             .expect("metadata")
             .file_type()
     }
-
-    // -------------------------------------------------------------------------
-    // Numeric mode application
-    // -------------------------------------------------------------------------
 
     #[test]
     fn apply_numeric_755_to_file() {
@@ -567,10 +499,6 @@ mod apply_mode {
         let result = modifiers.apply(0o777, file_type);
         assert_eq!(result & 0o777, 0o644);
     }
-
-    // -------------------------------------------------------------------------
-    // Symbolic mode application
-    // -------------------------------------------------------------------------
 
     #[test]
     fn apply_user_add_execute() {
@@ -623,10 +551,6 @@ mod apply_mode {
         let result = modifiers.apply(0o777, file_type);
         assert_eq!(result & 0o777, 0o555);
     }
-
-    // -------------------------------------------------------------------------
-    // Directory vs File target selector
-    // -------------------------------------------------------------------------
 
     #[test]
     fn d_prefix_applies_to_directory_not_file() {
@@ -689,10 +613,6 @@ mod apply_mode {
         assert_eq!(dir_result & 0o777, 0o755);
     }
 
-    // -------------------------------------------------------------------------
-    // Conditional execute (X)
-    // -------------------------------------------------------------------------
-
     #[test]
     fn conditional_x_on_directory() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -735,10 +655,6 @@ mod apply_mode {
         assert_eq!(result & 0o111, 0o111);
     }
 
-    // -------------------------------------------------------------------------
-    // Copy permissions
-    // -------------------------------------------------------------------------
-
     #[test]
     fn copy_user_to_group_and_other() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -764,10 +680,6 @@ mod apply_mode {
         let result = modifiers.apply(0o750, file_type);
         assert_eq!(result & 0o007, 0o005);
     }
-
-    // -------------------------------------------------------------------------
-    // Special bits
-    // -------------------------------------------------------------------------
 
     #[test]
     fn apply_numeric_setuid() {
@@ -834,10 +746,6 @@ mod apply_mode {
         assert_eq!(result & 0o1000, 0o1000);
     }
 
-    // -------------------------------------------------------------------------
-    // Multiple rules applied in order
-    // -------------------------------------------------------------------------
-
     #[test]
     fn rules_applied_left_to_right() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -866,10 +774,6 @@ mod apply_mode {
         assert_eq!(result & 0o777, 0o755);
     }
 }
-
-// =============================================================================
-// Section 7: Error Cases
-// =============================================================================
 
 mod error_cases {
     use super::*;
@@ -918,10 +822,6 @@ mod error_cases {
         assert!(result.is_err());
     }
 }
-
-// =============================================================================
-// Section 8: Upstream rsync Behavior Compatibility
-// =============================================================================
 
 mod upstream_compatibility {
     use super::*;

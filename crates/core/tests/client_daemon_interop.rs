@@ -30,10 +30,6 @@ use std::time::Duration;
 use core::client::{ClientConfig, run_client};
 use tempfile::{TempDir, tempdir};
 
-// ============================================================================
-// Test Infrastructure
-// ============================================================================
-
 const UPSTREAM_3_0_9: &str = "target/interop/upstream-install/3.0.9/bin/rsync";
 const UPSTREAM_3_1_3: &str = "target/interop/upstream-install/3.1.3/bin/rsync";
 const UPSTREAM_3_4_1: &str = "target/interop/upstream-install/3.4.1/bin/rsync";
@@ -180,10 +176,6 @@ fn require_upstream(binary_path: &str) {
         panic!("upstream binary required for this test");
     }
 }
-
-// ============================================================================
-// Basic File Transfer Tests
-// ============================================================================
 
 /// Test pulling a single file from upstream daemon.
 #[test]
@@ -483,10 +475,6 @@ fn test_client_push_directory_to_daemon() {
     assert!(summary.files_copied() >= 2);
 }
 
-// ============================================================================
-// Protocol Version Compatibility Tests
-// ============================================================================
-
 /// Test client compatibility with rsync 3.0.9 daemon (protocol 30).
 #[test]
 #[ignore = "requires upstream rsync 3.0.9 binary"]
@@ -648,10 +636,6 @@ fn test_protocol_version_negotiation() {
     // Further handshake verification would require full implementation
 }
 
-// ============================================================================
-// Filter and Exclude Tests
-// ============================================================================
-
 /// Test pulling with filter rules (--exclude).
 #[test]
 #[ignore = "requires upstream rsync binary"]
@@ -735,10 +719,6 @@ fn test_client_pull_with_include_exclude() {
 
     assert!(summary.files_copied() >= 2);
 }
-
-// ============================================================================
-// Incremental Transfer Tests
-// ============================================================================
 
 /// Test incremental transfer (only update changed files).
 #[test]
@@ -835,10 +815,6 @@ fn test_client_incremental_size_only() {
     // This depends on implementation details - we just verify transfer completes
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 /// Test error when connecting to non-existent daemon.
 #[test]
 fn test_error_connection_refused() {
@@ -933,10 +909,6 @@ fn test_error_unexpected_disconnect() {
     // Attempting to use dropped connection should fail
 }
 
-// ============================================================================
-// Metadata Preservation Tests
-// ============================================================================
-
 /// Test that file permissions are preserved during transfer.
 #[test]
 #[ignore = "requires upstream rsync binary"]
@@ -1028,10 +1000,6 @@ fn test_metadata_preservation_times() {
     );
     assert!(summary.files_copied() >= 1);
 }
-
-// ============================================================================
-// Stress and Edge Case Tests
-// ============================================================================
 
 /// Test transferring many small files.
 #[test]

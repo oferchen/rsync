@@ -26,10 +26,6 @@ use std::time::{Duration, Instant};
 /// Target name for tracing events, matching rsync's debug category.
 const FLIST_TARGET: &str = "rsync::flist";
 
-// ============================================================================
-// Tracing functions (feature-gated)
-// ============================================================================
-
 /// Traces the start of a file list send operation.
 ///
 /// Emits a tracing span that tracks the duration of sending the file list.
@@ -176,10 +172,6 @@ pub fn trace_recv_file_list_end(count: usize, total_size: u64, elapsed: Duration
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_recv_file_list_end(_count: usize, _total_size: u64, _elapsed: Duration) {}
-
-// ============================================================================
-// FlistTracer - stateful tracer for aggregating file list statistics
-// ============================================================================
 
 /// Aggregates statistics during file list operations.
 ///
@@ -331,10 +323,6 @@ impl FlistTracer {
         self.start_time = None;
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -227,10 +227,6 @@ impl Default for ChecksumFactory {
 mod tests {
     use super::*;
 
-    // ------------------------------------------------------------------------
-    // Construction tests
-    // ------------------------------------------------------------------------
-
     fn protocol(version: u8) -> ProtocolVersion {
         ProtocolVersion::try_from(version).unwrap()
     }
@@ -298,10 +294,6 @@ mod tests {
         assert_eq!(factory.seed(), 0);
         assert!(!factory.uses_proper_seed_order());
     }
-
-    // ------------------------------------------------------------------------
-    // Signature algorithm conversion tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn signature_algorithm_none_returns_md4() {
@@ -392,10 +384,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Digest length tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn digest_length_none() {
         let factory = ChecksumFactory::new(ChecksumAlgorithm::None, 0, false);
@@ -438,10 +426,6 @@ mod tests {
         assert_eq!(factory.digest_length(), 16);
     }
 
-    // ------------------------------------------------------------------------
-    // MD5 seed configuration tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn legacy_md5_seed_returns_legacy_config() {
         let factory = ChecksumFactory::new(ChecksumAlgorithm::MD5, 555, false);
@@ -469,10 +453,6 @@ mod tests {
         let seed = factory.md5_seed();
         assert!(seed.proper_order);
     }
-
-    // ------------------------------------------------------------------------
-    // Integration tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn factory_clone_preserves_values() {

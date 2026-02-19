@@ -23,10 +23,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -68,10 +64,6 @@ fn create_standard_tree() -> (tempfile::TempDir, PathBuf) {
 
     (temp, root)
 }
-
-// ============================================================================
-// Streaming / Entry-by-Entry Consumption Tests
-// ============================================================================
 
 /// Verifies that the walker can be consumed one entry at a time in a streaming
 /// fashion, processing each entry before requesting the next.
@@ -213,10 +205,6 @@ fn streaming_matches_batch_collection() {
 
     assert_eq!(batch_paths, stream_paths);
 }
-
-// ============================================================================
-// File Metadata Preservation Tests
-// ============================================================================
 
 /// Verifies that file size is correctly reported in each yielded entry.
 #[test]
@@ -367,10 +355,6 @@ fn metadata_depth_matches_path_components() {
     }
 }
 
-// ============================================================================
-// Directory vs File Entry Handling
-// ============================================================================
-
 /// Verifies that the root entry for a directory is correctly tagged.
 #[test]
 fn directory_root_entry_is_dir() {
@@ -462,10 +446,6 @@ fn files_only_tree() {
     assert!(all_are_files, "all entries should be files");
     assert_eq!(count, 5);
 }
-
-// ============================================================================
-// Symlink Entry Handling Tests
-// ============================================================================
 
 /// Verifies that symlink entries are yielded with symlink metadata when not
 /// following symlinks.
@@ -571,10 +551,6 @@ fn symlink_to_dir_followed_yields_children() {
     );
 }
 
-// ============================================================================
-// Entry Ordering and Sorting Tests
-// ============================================================================
-
 /// Verifies that entries within the same directory are always yielded in
 /// sorted (lexicographic) order during incremental consumption.
 #[test]
@@ -654,10 +630,6 @@ fn incremental_deterministic_across_runs() {
         assert_eq!(&results[0], result, "run {i} differs from first run");
     }
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Verifies that an empty directory yields only the root entry during
 /// incremental processing.
@@ -797,10 +769,6 @@ fn edge_case_varying_file_sizes() {
     assert_eq!(found_sizes, expected);
 }
 
-// ============================================================================
-// Large File List Incremental Processing
-// ============================================================================
-
 /// Verifies that incremental processing works correctly with hundreds of files.
 #[test]
 fn large_list_incremental_processing() {
@@ -884,10 +852,6 @@ fn large_list_wide_and_deep() {
     assert_eq!(dirs_count, 30, "should have 30 directories");
     assert_eq!(files_count, 50, "should have 50 files");
 }
-
-// ============================================================================
-// LazyFileListEntry Incremental Processing
-// ============================================================================
 
 /// Verifies that LazyFileListEntry can be created without fetching metadata
 /// (deferred stat pattern used in incremental processing).
@@ -1012,10 +976,6 @@ fn lazy_entry_root_identification() {
     assert_eq!(root_entry.depth(), 0);
 }
 
-// ============================================================================
-// Incremental Processing with Builder Options
-// ============================================================================
-
 /// Verifies that include_root=false skips the root entry during streaming.
 #[test]
 fn builder_include_root_false_streaming() {
@@ -1073,10 +1033,6 @@ fn builder_include_root_count_difference() {
         "include_root should add exactly one entry"
     );
 }
-
-// ============================================================================
-// Incremental Processing Ordering Across Directory Boundaries
-// ============================================================================
 
 /// Verifies that when incrementally consuming entries, a directory's full
 /// subtree is yielded before moving to the next sibling directory.
@@ -1146,10 +1102,6 @@ fn incremental_hidden_files_sorted() {
     );
 }
 
-// ============================================================================
-// Incremental Processing with Interleaved Operations
-// ============================================================================
-
 /// Verifies that entries can be processed with interleaved filesystem
 /// operations (simulating a real incremental transfer where files are created
 /// between reading entries).
@@ -1210,10 +1162,6 @@ fn incremental_concurrent_walkers_identical() {
         }
     }
 }
-
-// ============================================================================
-// Batch-to-Incremental Conversion Tests
-// ============================================================================
 
 /// Verifies that collecting entries into a Vec preserves the streaming order.
 #[test]
@@ -1296,10 +1244,6 @@ fn iterator_count_consumes_all() {
     assert_eq!(count, 8);
 }
 
-// ============================================================================
-// Deeply Nested Incremental Processing
-// ============================================================================
-
 /// Verifies that deeply nested structures are processed correctly in
 /// incremental order with monotonically increasing then decreasing depth.
 #[test]
@@ -1371,10 +1315,6 @@ fn deep_nesting_uniform_tree() {
     assert_eq!(count, 11);
 }
 
-// ============================================================================
-// Permission Metadata Tests
-// ============================================================================
-
 /// Verifies that file permissions are reflected in metadata during
 /// incremental processing (Unix only).
 #[cfg(unix)]
@@ -1411,10 +1351,6 @@ fn metadata_permissions_preserved() {
         }
     }
 }
-
-// ============================================================================
-// File Content Independence Tests
-// ============================================================================
 
 /// Verifies that file content does not affect the walker's incremental
 /// behavior -- only metadata matters.
@@ -1514,10 +1450,6 @@ fn lazy_metadata_filter_then_resolve_workflow() {
     }
 }
 
-// ============================================================================
-// Incremental Processing with Special Filenames
-// ============================================================================
-
 /// Verifies that files with spaces, dashes, and underscores are correctly
 /// handled during incremental processing.
 #[test]
@@ -1580,10 +1512,6 @@ fn incremental_unicode_filenames() {
 
     assert_eq!(count, names.len());
 }
-
-// ============================================================================
-// Regression: Walker State After Error
-// ============================================================================
 
 /// Verifies that the walker transitions to finished state after encountering
 /// an error, and subsequent calls return None.

@@ -18,10 +18,6 @@ use checksums::strong::{
 use checksums::{RollingChecksum, RollingDigest, RollingError, RollingSliceError};
 use std::io::{Cursor, IoSlice};
 
-// ============================================================================
-// 1. Rolling Checksum Edge Cases
-// ============================================================================
-
 mod rolling_edge_cases {
     use super::*;
 
@@ -296,10 +292,6 @@ mod rolling_edge_cases {
     }
 }
 
-// ============================================================================
-// 2. Strong Checksum Truncation Tests
-// ============================================================================
-
 mod strong_truncation {
     use super::*;
 
@@ -423,10 +415,6 @@ mod strong_truncation {
         assert_eq!(to_hex(&digest[..8]), "a9993e364706816a");
     }
 }
-
-// ============================================================================
-// 3. Checksum Seed Handling Tests
-// ============================================================================
 
 mod seed_handling {
     use super::*;
@@ -652,10 +640,6 @@ mod seed_handling {
         assert_eq!(result.len(), Xxh64::DIGEST_LEN);
     }
 }
-
-// ============================================================================
-// 4. Pipelined Checksum Operations Tests
-// ============================================================================
 
 mod pipelined_operations {
     use super::*;
@@ -944,10 +928,6 @@ mod pipelined_operations {
         assert_eq!(checksums.len(), 10);
     }
 }
-
-// ============================================================================
-// 5. All Supported Algorithms Tests
-// ============================================================================
 
 mod all_algorithms {
     use super::*;
@@ -1384,10 +1364,6 @@ mod all_algorithms {
     }
 }
 
-// ============================================================================
-// Additional Integration Tests
-// ============================================================================
-
 mod integration {
     use super::*;
 
@@ -1531,10 +1507,6 @@ mod integration {
         assert_eq!(digest, recovered);
     }
 }
-
-// ============================================================================
-// Property-Based Tests (if proptest is available)
-// ============================================================================
 
 #[cfg(test)]
 mod property_tests {

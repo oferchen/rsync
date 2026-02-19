@@ -9,10 +9,6 @@
 use std::io::{self, Read, Seek, SeekFrom};
 use std::time::Duration;
 
-// =============================================================================
-// Constants for Large File Testing
-// =============================================================================
-
 /// 4GB boundary - the critical threshold for 32-bit overflow
 const FOUR_GB: u64 = 4 * 1024 * 1024 * 1024;
 
@@ -27,10 +23,6 @@ const ONE_TB: u64 = 1024 * 1024 * 1024 * 1024;
 
 /// 100TB - tests multi-petabyte edge cases
 const HUNDRED_TB: u64 = 100 * ONE_TB;
-
-// =============================================================================
-// Simulated Large File Implementation
-// =============================================================================
 
 /// Simulated large file for testing without actual disk allocation.
 struct SimulatedLargeFile {
@@ -93,10 +85,6 @@ impl Seek for SimulatedLargeFile {
         Ok(self.position)
     }
 }
-
-// =============================================================================
-// Simulated Large File Tests
-// =============================================================================
 
 mod simulated_file {
     use super::*;
@@ -163,10 +151,6 @@ mod simulated_file {
         assert_eq!(pos, FOUR_GB / 2 + 1024 * 1024 * 1024);
     }
 }
-
-// =============================================================================
-// Sparse File State Tests
-// =============================================================================
 
 mod sparse_file_state {
     use super::*;
@@ -315,10 +299,6 @@ mod sparse_file_state {
     }
 }
 
-// =============================================================================
-// Progress Reporting Tests
-// =============================================================================
-
 mod progress_reporting {
     use super::*;
 
@@ -419,10 +399,6 @@ mod progress_reporting {
     }
 }
 
-// =============================================================================
-// Buffer Sizing Tests
-// =============================================================================
-
 mod buffer_sizing {
     use super::*;
 
@@ -473,10 +449,6 @@ mod buffer_sizing {
     }
 }
 
-// =============================================================================
-// Checksum Position Tests
-// =============================================================================
-
 mod checksum_positions {
     use super::*;
 
@@ -523,10 +495,6 @@ mod checksum_positions {
         }
     }
 }
-
-// =============================================================================
-// File Copy Position Tests
-// =============================================================================
 
 mod file_copy_positions {
     use super::*;

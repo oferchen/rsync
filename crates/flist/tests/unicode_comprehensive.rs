@@ -22,10 +22,6 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -67,10 +63,6 @@ fn create_file(dir: &Path, name: &str, content: &[u8]) {
 fn create_dir(dir: &Path, name: &str) {
     fs::create_dir(dir.join(name)).expect("create dir");
 }
-
-// ============================================================================
-// 1. Unicode Normalization Handling
-// ============================================================================
 
 /// Tests that NFC and NFD forms are preserved distinctly.
 ///
@@ -170,10 +162,6 @@ fn korean_hangul_composition() {
     assert!(!paths.is_empty());
 }
 
-// ============================================================================
-// 2. Zero-width and Invisible Characters
-// ============================================================================
-
 /// Tests invisible Unicode characters.
 #[test]
 fn invisible_unicode_characters() {
@@ -235,10 +223,6 @@ fn invisible_at_positions() {
         assert_eq!(paths.len(), created_count);
     }
 }
-
-// ============================================================================
-// 3. Unicode Sorting Edge Cases
-// ============================================================================
 
 /// Tests sorting of visually similar characters from different scripts.
 #[test]
@@ -331,10 +315,6 @@ fn sorting_supplementary_plane() {
     }
 }
 
-// ============================================================================
-// 4. Very Long Unicode Paths
-// ============================================================================
-
 /// Tests near-maximum filename length with multi-byte characters.
 #[test]
 fn maximum_length_multibyte() {
@@ -418,10 +398,6 @@ fn deeply_nested_unicode_path() {
     );
 }
 
-// ============================================================================
-// 5. Unicode in Various Path Positions
-// ============================================================================
-
 /// Tests Unicode at the start of filename.
 #[test]
 fn unicode_at_start() {
@@ -493,10 +469,6 @@ fn unicode_in_extension() {
     assert!(!paths.is_empty());
 }
 
-// ============================================================================
-// 6. Unicode Private Use Areas
-// ============================================================================
-
 /// Tests Private Use Area characters.
 #[test]
 fn private_use_area() {
@@ -525,10 +497,6 @@ fn private_use_area() {
         assert_eq!(paths.len(), created_count);
     }
 }
-
-// ============================================================================
-// 7. Unicode Boundary Conditions
-// ============================================================================
 
 /// Tests Unicode boundary code points.
 #[test]
@@ -578,10 +546,6 @@ fn replacement_character() {
     }
 }
 
-// ============================================================================
-// 8. Unicode Whitespace Variants
-// ============================================================================
-
 /// Tests various Unicode whitespace characters.
 #[test]
 fn unicode_whitespace_variants() {
@@ -621,10 +585,6 @@ fn unicode_whitespace_variants() {
     }
 }
 
-// ============================================================================
-// 9. Unicode Direction Control Characters
-// ============================================================================
-
 /// Tests Unicode bidirectional control characters.
 #[test]
 fn bidirectional_control_characters() {
@@ -659,10 +619,6 @@ fn bidirectional_control_characters() {
         assert_eq!(paths.len(), created_count);
     }
 }
-
-// ============================================================================
-// 10. Unicode Scripts Not Yet Covered
-// ============================================================================
 
 /// Tests Thai script with tone marks.
 #[test]
@@ -771,10 +727,6 @@ fn armenian_script() {
     assert!(!paths.is_empty());
 }
 
-// ============================================================================
-// 11. Invalid UTF-8 Sequences (Unix-specific)
-// ============================================================================
-
 /// Tests invalid UTF-8 sequences.
 #[cfg(unix)]
 #[test]
@@ -847,10 +799,6 @@ fn mixed_valid_invalid_utf8() {
     // Should find whatever files were created
     assert!(paths.len() <= 3);
 }
-
-// ============================================================================
-// 12. Stress Tests
-// ============================================================================
 
 /// Stress test with many Unicode files.
 #[test]

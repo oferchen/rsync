@@ -64,10 +64,6 @@ pub trait MapStrategy: Send {
     fn file_size(&self) -> u64;
 }
 
-// ============================================================================
-// BufferedMap - Sliding window buffer for sequential access
-// ============================================================================
-
 /// Buffered file mapper with sliding window cache.
 ///
 /// Maintains a buffer of up to `MAX_MAP_SIZE` bytes and slides the window
@@ -248,10 +244,6 @@ impl MapStrategy for BufferedMap {
     }
 }
 
-// ============================================================================
-// MmapStrategy - Memory-mapped file access using fast_io::MmapReader
-// ============================================================================
-
 /// Memory-mapped file mapper for efficient large file access.
 ///
 /// Uses `fast_io::MmapReader` to map the entire file into memory, providing
@@ -323,10 +315,6 @@ impl MapStrategy for MmapStrategy {
         self.mmap.size()
     }
 }
-
-// ============================================================================
-// AdaptiveMapStrategy - Automatically selects mmap or buffered based on size
-// ============================================================================
 
 /// Adaptive file mapper that selects the optimal strategy based on file size.
 ///
@@ -412,10 +400,6 @@ impl MapStrategy for AdaptiveMapStrategy {
         }
     }
 }
-
-// ============================================================================
-// MapFile - High-level wrapper for file mapping strategies
-// ============================================================================
 
 /// High-level file mapper that wraps a strategy.
 ///
@@ -548,10 +532,6 @@ mod tests {
         file
     }
 
-    // ========================================================================
-    // BufferedMap tests (existing)
-    // ========================================================================
-
     #[test]
     fn open_file() {
         let temp = create_test_file(1000);
@@ -658,10 +638,6 @@ mod tests {
         assert_eq!(map.window_start, 1024);
     }
 
-    // ========================================================================
-    // MmapStrategy tests
-    // ========================================================================
-
     #[test]
     fn mmap_strategy_open_and_read() {
         let temp = create_test_file(1000);
@@ -731,10 +707,6 @@ mod tests {
         let data = map.map_ptr(0, 10).unwrap();
         assert_eq!(data, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
-
-    // ========================================================================
-    // AdaptiveMapStrategy tests
-    // ========================================================================
 
     #[test]
     fn adaptive_strategy_uses_buffered_for_small_files() {
@@ -828,10 +800,6 @@ mod tests {
         assert!(strategy.is_buffered());
     }
 
-    // =========================================================================
-    // Empty File Tests
-    // =========================================================================
-
     #[test]
     fn empty_file_open_buffered() {
         let temp = create_test_file(0);
@@ -895,10 +863,6 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
     }
-
-    // =========================================================================
-    // Large File Tests
-    // =========================================================================
 
     #[test]
     fn large_file_exceeds_single_window_buffered() {
@@ -1002,10 +966,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Window Sliding Tests
-    // =========================================================================
-
     #[test]
     fn window_slides_forward_correctly() {
         let size = MAX_MAP_SIZE * 2;
@@ -1100,10 +1060,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Cache Behavior Tests
-    // =========================================================================
-
     #[test]
     fn cache_hit_within_window() {
         let temp = create_test_file(10000);
@@ -1138,10 +1094,6 @@ mod tests {
         // Window should have moved
         assert!(map.window_start > 0);
     }
-
-    // =========================================================================
-    // Custom Window Size Tests
-    // =========================================================================
 
     #[test]
     fn small_custom_window_size() {
@@ -1188,10 +1140,6 @@ mod tests {
         assert_eq!(map.window_size(), 2048);
         assert_eq!(map.file_size(), 10000);
     }
-
-    // =========================================================================
-    // Error Handling Tests
-    // =========================================================================
 
     #[test]
     fn file_not_found_error_buffered() {
@@ -1327,10 +1275,6 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
     }
 
-    // =========================================================================
-    // Edge Case Tests
-    // =========================================================================
-
     #[test]
     fn single_byte_file_buffered() {
         let mut file = NamedTempFile::new().unwrap();
@@ -1407,10 +1351,6 @@ mod tests {
         assert_eq!(&data1[25..75], &data3[..]);
     }
 
-    // =========================================================================
-    // Binary Data Tests
-    // =========================================================================
-
     #[test]
     fn binary_data_with_null_bytes() {
         let mut file = NamedTempFile::new().unwrap();
@@ -1447,10 +1387,6 @@ mod tests {
         assert_eq!(read_data, &data[..]);
     }
 
-    // =========================================================================
-    // MapStrategy Trait Tests
-    // =========================================================================
-
     #[test]
     fn map_strategy_file_size_buffered() {
         let temp = create_test_file(5000);
@@ -1464,10 +1400,6 @@ mod tests {
         let map = BufferedMap::open(temp.path()).unwrap();
         assert_eq!(map.window_size(), MAX_MAP_SIZE);
     }
-
-    // =========================================================================
-    // MapFile with Custom Strategy Tests
-    // =========================================================================
 
     #[test]
     fn map_file_with_strategy_buffered() {
@@ -1490,10 +1422,6 @@ mod tests {
         let data = map.map_ptr(0, 10).unwrap();
         assert_eq!(data, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
-
-    // =========================================================================
-    // Stress Tests
-    // =========================================================================
 
     #[test]
     fn stress_alternating_start_end_reads_buffered() {
@@ -1545,10 +1473,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Threshold Boundary Tests
-    // =========================================================================
-
     #[test]
     fn threshold_boundary_one_below() {
         let threshold = 1000u64;
@@ -1580,10 +1504,6 @@ mod tests {
     fn default_threshold_value() {
         assert_eq!(MMAP_THRESHOLD, 1024 * 1024);
     }
-
-    // =========================================================================
-    // Large File Mmap Tests (Multi-MB files, but < 10MB)
-    // =========================================================================
 
     #[test]
     fn large_file_2mb_mmap_sequential_access() {
@@ -1690,10 +1610,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Concurrent Access Tests
-    // =========================================================================
-
     #[test]
     fn mmap_send_trait() {
         // Verify MmapStrategy implements Send (required for thread safety)
@@ -1759,10 +1675,6 @@ mod tests {
         assert_eq!(d2[0], ((size / 2) % 256) as u8);
     }
 
-    // =========================================================================
-    // Memory Safety Tests
-    // =========================================================================
-
     #[test]
     fn mmap_borrowed_slice_lifetime() {
         // Ensure borrowed slices are properly bound to reader lifetime
@@ -1820,10 +1732,6 @@ mod tests {
         assert!(map.map_ptr(500, 501).is_err());
     }
 
-    // =========================================================================
-    // Performance Characteristic Tests
-    // =========================================================================
-
     #[test]
     fn mmap_no_window_sliding_overhead() {
         // Mmap should not have window sliding overhead
@@ -1876,10 +1784,6 @@ mod tests {
         assert!(map_at.is_mmap());
         assert!(map_above.is_mmap());
     }
-
-    // =========================================================================
-    // Integration Tests with Different File Patterns
-    // =========================================================================
 
     #[test]
     fn sparse_access_pattern_mmap() {
@@ -1939,10 +1843,6 @@ mod tests {
             assert_eq!(data2[0], (far_offset % 256) as u8);
         }
     }
-
-    // =========================================================================
-    // Edge Cases with Large Files
-    // =========================================================================
 
     #[test]
     fn large_file_exact_page_boundaries() {
@@ -2004,10 +1904,6 @@ mod tests {
         assert_eq!(data[size - 1], ((size - 1) % 256) as u8);
     }
 
-    // =========================================================================
-    // Strategy Conversion Tests
-    // =========================================================================
-
     #[test]
     fn map_file_strategy_type_safety() {
         // Verify that different strategy types are distinct
@@ -2032,10 +1928,6 @@ mod tests {
         let data = map.map_ptr(0, 100).unwrap();
         assert_eq!(data[0], 0);
     }
-
-    // =========================================================================
-    // Error Recovery Tests
-    // =========================================================================
 
     #[test]
     fn mmap_after_error_recovery() {
@@ -2078,10 +1970,6 @@ mod tests {
         let data = map.map_ptr(0, 100).unwrap();
         assert_eq!(data[0], 0);
     }
-
-    // =========================================================================
-    // Adaptive Map Strategy Selection Tests
-    // =========================================================================
 
     #[test]
     fn adaptive_strategy_selection_small_file_uses_buffered() {
@@ -2329,10 +2217,6 @@ mod tests {
             );
         }
     }
-
-    // =========================================================================
-    // MmapStrategy::as_slice() Tests
-    // =========================================================================
 
     #[test]
     fn mmap_as_slice_full_file() {

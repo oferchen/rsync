@@ -16,10 +16,6 @@ use compress::strategy::ZstdStrategy;
 #[cfg(feature = "lz4")]
 use compress::strategy::Lz4Strategy;
 
-// ============================================================================
-// Test Data
-// ============================================================================
-
 const EMPTY_DATA: &[u8] = b"";
 const SMALL_DATA: &[u8] = b"Hello, World!";
 const MEDIUM_DATA: &[u8] = b"The quick brown fox jumps over the lazy dog. \
@@ -31,10 +27,6 @@ const COMPRESSIBLE_DATA: &[u8] = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
                                     dddddddddddddddddddddddddddddddddddddd";
 const INCOMPRESSIBLE_DATA: &[u8] = b"\x12\x34\x56\x78\x9a\xbc\xde\xf0\
                                       \x23\x45\x67\x89\xab\xcd\xef\x01";
-
-// ============================================================================
-// CompressionAlgorithmKind Tests
-// ============================================================================
 
 #[test]
 fn algorithm_kind_names_are_canonical() {
@@ -160,10 +152,6 @@ fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
     }
 }
 
-// ============================================================================
-// NoCompressionStrategy Tests
-// ============================================================================
-
 #[test]
 fn no_compression_passthrough() {
     let strategy = NoCompressionStrategy::new();
@@ -195,10 +183,6 @@ fn no_compression_empty_input() {
     assert_eq!(bytes, 0);
     assert!(output.is_empty());
 }
-
-// ============================================================================
-// ZlibStrategy Tests
-// ============================================================================
 
 #[test]
 fn zlib_strategy_compress_and_decompress() {
@@ -296,10 +280,6 @@ fn zlib_strategy_incompressible_data() {
     assert!(compressed.len() >= INCOMPRESSIBLE_DATA.len() - 5); // Allow some tolerance
 }
 
-// ============================================================================
-// ZstdStrategy Tests
-// ============================================================================
-
 #[cfg(feature = "zstd")]
 #[test]
 fn zstd_strategy_compress_and_decompress() {
@@ -360,10 +340,6 @@ fn zstd_strategy_empty_input() {
     assert_eq!(&decompressed, EMPTY_DATA);
 }
 
-// ============================================================================
-// Lz4Strategy Tests
-// ============================================================================
-
 #[cfg(feature = "lz4")]
 #[test]
 fn lz4_strategy_compress_and_decompress() {
@@ -391,10 +367,6 @@ fn lz4_strategy_empty_input() {
 
     assert_eq!(&decompressed, EMPTY_DATA);
 }
-
-// ============================================================================
-// CompressionStrategySelector Tests
-// ============================================================================
 
 #[test]
 fn selector_for_protocol_version_creates_correct_strategy() {
@@ -573,10 +545,6 @@ fn selector_concrete_factories_work() {
     }
 }
 
-// ============================================================================
-// Cross-Algorithm Compatibility Tests
-// ============================================================================
-
 #[test]
 fn all_strategies_handle_empty_input() {
     let strategies: Vec<Box<dyn CompressionStrategy>> = vec![
@@ -658,10 +626,6 @@ fn all_strategies_produce_deterministic_output() {
     }
 }
 
-// ============================================================================
-// Trait Object Tests
-// ============================================================================
-
 #[test]
 fn strategies_work_as_trait_objects() {
     let strategies: Vec<Box<dyn CompressionStrategy>> = vec![
@@ -709,10 +673,6 @@ fn strategies_are_send_and_sync() {
         assert_sync::<Lz4Strategy>();
     }
 }
-
-// ============================================================================
-// Integration with Protocol Simulation Tests
-// ============================================================================
 
 #[test]
 fn protocol_version_roundtrip_simulation() {

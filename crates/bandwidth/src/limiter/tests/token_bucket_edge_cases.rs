@@ -10,10 +10,6 @@ fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
 }
 
-// ========================================================================
-// Token bucket edge cases: debt accumulation and forgiveness
-// ========================================================================
-
 #[test]
 fn token_bucket_debt_ceiling_at_u128_max() {
     // Even with extremely large writes, debt shouldn't panic or wrap around
@@ -100,10 +96,6 @@ fn token_bucket_burst_boundary_one_byte() {
     assert!(limiter.accumulated_debt_for_testing() <= 1);
 }
 
-// ========================================================================
-// Rate limiting accuracy tests
-// ========================================================================
-
 #[test]
 fn rate_limiting_accuracy_simple_doubling() {
     let mut session = recorded_sleep_session();
@@ -181,10 +173,6 @@ fn rate_limiting_accuracy_just_below_minimum_threshold() {
     assert!(sleep.is_noop());
 }
 
-// ========================================================================
-// Burst handling comprehensive tests
-// ========================================================================
-
 #[test]
 fn burst_handling_multiple_registers_stay_clamped() {
     let mut session = recorded_sleep_session();
@@ -245,10 +233,6 @@ fn burst_handling_u64_max_burst_no_clamping() {
     // Additional 1000 bytes at 1000 B/s = 1 second (accumulated with previous)
     assert!(sleep.requested() >= Duration::from_secs(1));
 }
-
-// ========================================================================
-// Configuration update edge cases
-// ========================================================================
 
 #[test]
 fn config_update_during_large_debt() {
@@ -317,10 +301,6 @@ fn reset_clears_last_instant() {
     assert_eq!(sleep.requested(), Duration::from_millis(100));
 }
 
-// ========================================================================
-// Write max calculation edge cases
-// ========================================================================
-
 #[test]
 fn write_max_saturating_multiplication() {
     // Test that calculate_write_max doesn't overflow with large limits
@@ -371,10 +351,6 @@ fn write_max_burst_below_min_uses_min() {
     assert_eq!(limiter.write_max_bytes(), MIN_WRITE_MAX);
 }
 
-// ========================================================================
-// Recommended read size edge cases
-// ========================================================================
-
 #[test]
 fn recommended_read_size_zero_buffer() {
     let limiter = BandwidthLimiter::new(nz(1024));
@@ -407,10 +383,6 @@ fn recommended_read_size_usize_max_buffer() {
     let result = limiter.recommended_read_size(usize::MAX);
     assert_eq!(result, limiter.write_max_bytes());
 }
-
-// ========================================================================
-// Timing and elapsed time edge cases
-// ========================================================================
 
 #[test]
 fn elapsed_time_u64_max_clamping() {
@@ -455,10 +427,6 @@ fn sleep_calculation_division_precision() {
     assert_eq!(sleep.requested(), Duration::from_millis(333));
 }
 
-// ========================================================================
-// Edge cases with zero writes
-// ========================================================================
-
 #[test]
 fn multiple_zero_writes_are_noops() {
     let mut session = recorded_sleep_session();
@@ -491,10 +459,6 @@ fn zero_write_between_normal_writes() {
     // Zero write shouldn't affect timing
 }
 
-// ========================================================================
-// Clone and copy semantics
-// ========================================================================
-
 #[test]
 fn clone_creates_independent_limiter() {
     let mut session = recorded_sleep_session();
@@ -523,10 +487,6 @@ fn debug_output_contains_relevant_info() {
     // Should contain limit and burst values
     assert!(debug.contains("12345") || debug.contains("limit"));
 }
-
-// ========================================================================
-// Stress tests for robustness
-// ========================================================================
 
 #[test]
 fn stress_alternating_large_small_writes() {
@@ -569,10 +529,6 @@ fn stress_burst_changes() {
         let _ = limiter.register(1000);
     }
 }
-
-// ========================================================================
-// Boundary value tests
-// ========================================================================
 
 #[test]
 fn boundary_min_write_max_exact() {

@@ -10,10 +10,6 @@
 use filters::{FilterRule, FilterSet, cvs_default_patterns, cvs_exclusion_rules};
 use std::path::Path;
 
-// ============================================================================
-// Default CVS Pattern Tests
-// ============================================================================
-
 /// Verifies all expected VCS directories are in the default patterns.
 #[test]
 fn default_patterns_include_vcs_directories() {
@@ -118,10 +114,6 @@ fn default_patterns_count() {
     assert!(count <= 50, "Expected at most 50 patterns, got {count}");
 }
 
-// ============================================================================
-// CVS Exclusion Rule Generation Tests
-// ============================================================================
-
 /// Verifies cvs_exclusion_rules generates exclude rules.
 #[test]
 fn cvs_exclusion_rules_generates_excludes() {
@@ -159,10 +151,6 @@ fn cvs_exclusion_rules_count_matches_patterns() {
 
     assert_eq!(pattern_count, rule_count);
 }
-
-// ============================================================================
-// FilterSet with CVS Exclusion Tests
-// ============================================================================
 
 /// Verifies from_rules_with_cvs excludes VCS directories.
 #[test]
@@ -251,10 +239,6 @@ fn filter_set_cvs_allows_normal_files() {
     assert!(set.allows(Path::new("config.yaml"), false));
 }
 
-// ============================================================================
-// Explicit Rules Override CVS Patterns
-// ============================================================================
-
 /// Verifies explicit include rules override CVS exclusions.
 #[test]
 fn explicit_include_overrides_cvs() {
@@ -316,10 +300,6 @@ fn complex_explicit_rules_with_cvs() {
     assert!(!set.allows(Path::new(".git/config"), false));
 }
 
-// ============================================================================
-// Perishable CVS Rules Tests
-// ============================================================================
-
 /// Verifies perishable CVS rules affect transfer but not deletion.
 #[test]
 fn perishable_cvs_rules_transfer_vs_deletion() {
@@ -359,10 +339,6 @@ fn perishable_cvs_with_protect() {
     assert!(!set.allows_deletion(Path::new("important.o"), false));
 }
 
-// ============================================================================
-// CVS Patterns in Subdirectories
-// ============================================================================
-
 /// Verifies CVS patterns match at any depth.
 #[test]
 fn cvs_patterns_match_at_any_depth() {
@@ -398,10 +374,6 @@ fn vcs_directory_contents_excluded() {
     assert!(!set.allows(Path::new(".svn/wc.db"), false));
     assert!(!set.allows(Path::new(".svn/pristine/ab/abcd.svn-base"), false));
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Verifies case sensitivity of CVS patterns.
 #[test]

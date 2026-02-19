@@ -27,10 +27,6 @@ fn to_hex(bytes: &[u8]) -> String {
     }
     out
 }
-
-// ============================================================================
-// Section 1: RFC/NIST Test Vectors via Strategy Pattern
-// ============================================================================
 // These verify that the Strategy pattern produces the same results as
 // direct algorithm calls, ensuring no data corruption in the abstraction layer.
 
@@ -242,10 +238,6 @@ fn strategy_xxh3_128_reference_vectors() {
         }
     }
 }
-
-// ============================================================================
-// Section 2: Protocol Version -> Algorithm Mapping
-// ============================================================================
 // Upstream rsync uses MD4 for protocol < 30, MD5 for >= 30. Protocol 31+
 // can negotiate XXH3/XXH128 via capability negotiation, but the default
 // (without negotiation) is still MD5.
@@ -308,10 +300,6 @@ fn protocol_version_255_uses_md5() {
     let strategy = ChecksumStrategySelector::for_protocol_version(255, 0);
     assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md5);
 }
-
-// ============================================================================
-// Section 3: Algorithm Name Parsing (matching upstream wire protocol names)
-// ============================================================================
 // Upstream rsync uses these names in capability negotiation:
 // xxh128, xxh3, xxh64, md5, md4, sha1, none (from SUPPORTED_CHECKSUMS)
 
@@ -420,10 +408,6 @@ fn algorithm_kind_display_matches_name() {
         );
     }
 }
-
-// ============================================================================
-// Section 4: Checksum Seed Handling (CHECKSUM_SEED_FIX)
-// ============================================================================
 // Upstream rsync's CHECKSUM_SEED_FIX (bit 5 of compat flags) controls
 // whether the MD5 seed is hashed before or after the data:
 // - proper_order=true: hash(seed || data) -- protocol 30+ with fix
@@ -575,10 +559,6 @@ fn xxhash_seed_applied_through_strategy() {
         "Strategy seed should match direct API seed"
     );
 }
-
-// ============================================================================
-// Section 5: Direct API vs Strategy Consistency
-// ============================================================================
 // Verify that using the algorithm directly produces the same result as
 // using it through the Strategy pattern.
 
@@ -682,10 +662,6 @@ fn for_algorithm_factory_matches_concrete_factories() {
     }
 }
 
-// ============================================================================
-// Section 6: Digest Length Consistency
-// ============================================================================
-
 #[test]
 fn digest_len_matches_actual_output_all_algorithms() {
     let data = b"digest length verification";
@@ -732,10 +708,6 @@ fn digest_lengths_match_upstream_rsync() {
     assert_eq!(ChecksumAlgorithmKind::Xxh3.digest_len(), 8);
     assert_eq!(ChecksumAlgorithmKind::Xxh3_128.digest_len(), 16);
 }
-
-// ============================================================================
-// Section 7: Cryptographic vs Non-Cryptographic Classification
-// ============================================================================
 // This matters for upstream rsync's --checksum-choice validation.
 
 #[test]
@@ -752,10 +724,6 @@ fn is_cryptographic_classification_matches_upstream() {
     assert!(!ChecksumAlgorithmKind::Xxh3.is_cryptographic());
     assert!(!ChecksumAlgorithmKind::Xxh3_128.is_cryptographic());
 }
-
-// ============================================================================
-// Section 8: Streaming vs One-Shot Consistency
-// ============================================================================
 // rsync uses both streaming (for large files read in blocks) and one-shot
 // (for small files/blocks). They must produce identical results.
 
@@ -885,10 +853,6 @@ fn streaming_byte_by_byte_matches_oneshot_all_algorithms() {
         assert_eq!(streaming_result, reference, "XXH3 byte-by-byte mismatch");
     }
 }
-
-// ============================================================================
-// Section 9: Seeded MD5 with Streaming (rsync block checksum pattern)
-// ============================================================================
 // rsync computes seeded MD5 checksums on file blocks. The seed is applied
 // once at construction, and then data is fed incrementally.
 
@@ -920,10 +884,6 @@ fn seeded_md5_streaming_pattern() {
     }
 }
 
-// ============================================================================
-// Section 10: compute_into consistency
-// ============================================================================
-
 #[test]
 fn compute_into_matches_compute_all_algorithms() {
     let data = b"compute_into verification";
@@ -942,10 +902,6 @@ fn compute_into_matches_compute_all_algorithms() {
         );
     }
 }
-
-// ============================================================================
-// Section 11: Upstream preference order verification
-// ============================================================================
 // Upstream rsync 3.4.1 preference order: xxh128 xxh3 xxh64 md5 md4 sha1 none
 // We verify that our algorithm enumeration covers all of these.
 
@@ -971,10 +927,6 @@ fn algorithm_kind_all_contains_eight_variants() {
         "Should have 8 algorithm variants"
     );
 }
-
-// ============================================================================
-// Section 12: Negative seed handling (i32 -> u64 conversion)
-// ============================================================================
 // rsync's checksum_seed is an i32. When passed to XXHash (which takes u64),
 // it must be correctly sign-extended or zero-extended.
 
@@ -1016,10 +968,6 @@ fn seed_i32_min_and_max_produce_valid_output() {
         }
     }
 }
-
-// ============================================================================
-// Section 13: Empty input handling for all algorithms
-// ============================================================================
 // rsync may compute checksums on empty blocks (e.g., empty files).
 
 #[test]
@@ -1062,10 +1010,6 @@ fn empty_input_known_values() {
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     );
 }
-
-// ============================================================================
-// Section 14: Checksum Seed Determinism (task #99)
-// ============================================================================
 // Verify that the same seed always produces the same checksum for the same data.
 // This is critical for --checksum-seed reproducibility across rsync runs.
 
@@ -1157,10 +1101,6 @@ fn different_seeds_produce_different_xxhash_digests() {
         }
     }
 }
-
-// ============================================================================
-// Section 15: Seed Zero vs No Seed for All Seeded Algorithms (task #99)
-// ============================================================================
 // Upstream rsync: seed=0 is a valid seed value that differs from "no seed".
 // For MD5, seed=0 hashes 4 zero bytes before/after data, producing a different
 // result than hashing data alone.
@@ -1218,10 +1158,6 @@ fn md5_seed_boundary_values_produce_valid_and_distinct_digests() {
         }
     }
 }
-
-// ============================================================================
-// Section 16: Strategy Selector Determinism with Fixed Seeds (task #99)
-// ============================================================================
 // Verify that ChecksumStrategySelector produces deterministic results
 // with the same seed, matching the --checksum-seed=NUM use case.
 
@@ -1270,10 +1206,6 @@ fn strategy_selector_different_seeds_different_results_for_seeded_algorithms() {
         );
     }
 }
-
-// ============================================================================
-// Section 17: MD5 Seed with Empty Data (task #99)
-// ============================================================================
 // rsync may compute seeded checksums on empty files. Verify this edge case.
 
 #[test]

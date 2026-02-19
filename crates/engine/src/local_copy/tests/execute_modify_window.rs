@@ -13,10 +13,6 @@
 // 6. Subsecond precision handling
 // 7. Window applies symmetrically (source older or newer)
 
-// ============================================================================
-// Basic Modify Window Tests
-// ============================================================================
-
 #[test]
 fn modify_window_skips_files_within_one_second_window() {
     let temp = tempdir().expect("tempdir");
@@ -203,10 +199,6 @@ fn modify_window_sixty_seconds_copies_when_outside() {
     );
 }
 
-// ============================================================================
-// Default Window (Zero) Tests
-// ============================================================================
-
 #[test]
 fn modify_window_default_zero_requires_exact_match() {
     let temp = tempdir().expect("tempdir");
@@ -267,10 +259,6 @@ fn modify_window_default_zero_skips_exact_match() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(fs::read(&destination).expect("read dest"), b"content");
 }
-
-// ============================================================================
-// Symmetric Window Application (Source Older or Newer)
-// ============================================================================
 
 #[test]
 fn modify_window_applies_symmetrically_source_older() {
@@ -369,10 +357,6 @@ fn modify_window_symmetry_boundary_at_exact_limit() {
 
     assert_eq!(summary.files_copied(), 0);
 }
-
-// ============================================================================
-// Interaction with --update Flag
-// ============================================================================
 
 #[test]
 fn modify_window_with_update_skips_when_dest_newer_outside_window() {
@@ -541,10 +525,6 @@ fn modify_window_with_update_copies_when_source_definitively_newer() {
     );
 }
 
-// ============================================================================
-// Recursive Directory Tests
-// ============================================================================
-
 #[test]
 fn modify_window_recursive_mixed_timestamps() {
     let temp = tempdir().expect("tempdir");
@@ -606,10 +586,6 @@ fn modify_window_recursive_mixed_timestamps() {
         b"new file"  // Should be created
     );
 }
-
-// ============================================================================
-// Subsecond Precision Tests
-// ============================================================================
 
 #[test]
 fn modify_window_subsecond_precision_within_window() {
@@ -678,10 +654,6 @@ fn modify_window_subsecond_precision_outside_window() {
         b"new content"
     );
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[test]
 fn modify_window_with_different_file_sizes_always_copies() {
@@ -787,10 +759,6 @@ fn modify_window_with_size_only_ignores_timestamps() {
     assert_eq!(summary.files_copied(), 0);
 }
 
-// ============================================================================
-// Dry Run Tests
-// ============================================================================
-
 #[test]
 fn modify_window_dry_run_reports_correctly() {
     let temp = tempdir().expect("tempdir");
@@ -827,10 +795,6 @@ fn modify_window_dry_run_reports_correctly() {
         b"old content"
     );
 }
-
-// ============================================================================
-// Documentation Test - Upstream rsync Behavior
-// ============================================================================
 
 /// This test documents the behavior of --modify-window matching upstream rsync.
 ///

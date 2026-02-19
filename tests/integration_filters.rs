@@ -7,10 +7,6 @@ mod integration;
 use integration::helpers::*;
 use std::fs;
 
-// ============================================================================
-// Basic Exclude/Include Tests
-// ============================================================================
-
 #[test]
 fn exclude_pattern_filters_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -124,10 +120,6 @@ fn exclude_directory_pattern() {
     );
 }
 
-// ============================================================================
-// Filter File Tests
-// ============================================================================
-
 #[test]
 fn exclude_from_file() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -187,10 +179,6 @@ fn include_from_file() {
     assert!(!dest_dir.join("other.txt").exists());
 }
 
-// ============================================================================
-// CVS Exclude Tests
-// ============================================================================
-
 #[test]
 fn cvs_exclude_ignores_common_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -215,10 +203,6 @@ fn cvs_exclude_ignores_common_files() {
     // CVS and core files should be excluded with -C
     // Note: actual CVS behavior depends on implementation
 }
-
-// ============================================================================
-// Complex Filter Scenarios
-// ============================================================================
 
 #[test]
 fn nested_directory_exclude() {
@@ -295,10 +279,6 @@ fn later_filter_rule_wins() {
     );
     assert!(dest_dir.join("file.txt").exists());
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[test]
 fn empty_exclude_file_excludes_nothing() {

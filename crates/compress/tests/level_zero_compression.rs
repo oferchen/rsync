@@ -91,10 +91,6 @@ mod test_data {
     }
 }
 
-// =============================================================================
-// SECTION 1: Basic Level 0 Functionality Tests (Zlib)
-// =============================================================================
-
 #[test]
 fn zlib_level_zero_basic_round_trip() {
     let data = test_data::english_text(10_000);
@@ -146,10 +142,6 @@ fn zlib_level_zero_all_byte_values() {
     assert_eq!(decompressed, data, "all byte values should round-trip");
 }
 
-// =============================================================================
-// SECTION 2: Data Type Coverage (Zlib)
-// =============================================================================
-
 #[test]
 fn zlib_level_zero_various_data_types() {
     let test_cases = [
@@ -185,10 +177,6 @@ fn zlib_level_zero_boundary_sizes() {
         assert_eq!(decompressed, data, "size {size}: level 0 round-trip failed");
     }
 }
-
-// =============================================================================
-// SECTION 3: Streaming Encoder/Decoder Tests (Zlib)
-// =============================================================================
 
 #[test]
 fn zlib_level_zero_streaming_encoder() {
@@ -277,10 +265,6 @@ fn zlib_level_zero_streaming_decoder_chunked_reads() {
     assert_eq!(decoder.bytes_read(), data.len() as u64);
 }
 
-// =============================================================================
-// SECTION 4: Comparison with Higher Compression Levels (Zlib)
-// =============================================================================
-
 #[test]
 fn zlib_level_zero_produces_larger_output_for_compressible_data() {
     let data = test_data::repetitive_text(10_000);
@@ -366,10 +350,6 @@ fn zlib_level_zero_may_inflate_small_data() {
         "level 0 tiny data round-trip failed"
     );
 }
-
-// =============================================================================
-// SECTION 5: LZ4 Level 0 Tests
-// =============================================================================
 
 #[cfg(feature = "lz4")]
 #[test]
@@ -514,10 +494,6 @@ fn lz4_level_zero_produces_larger_output_for_compressible_data() {
         "lz4 default round-trip failed"
     );
 }
-
-// =============================================================================
-// SECTION 6: Zstd Level 0 Tests
-// =============================================================================
 
 #[cfg(feature = "zstd")]
 #[test]
@@ -680,10 +656,6 @@ fn zstd_level_zero_boundary_sizes() {
     }
 }
 
-// =============================================================================
-// SECTION 7: Cross-Algorithm Consistency Tests
-// =============================================================================
-
 #[test]
 fn all_algorithms_handle_level_zero_consistently() {
     let data = test_data::english_text(5000);
@@ -794,10 +766,6 @@ fn all_algorithms_level_zero_all_byte_values() {
         assert_eq!(zstd_decompressed, data, "zstd level 0 all bytes failed");
     }
 }
-
-// =============================================================================
-// SECTION 8: Large Data Tests
-// =============================================================================
 
 #[test]
 fn zlib_level_zero_large_data() {

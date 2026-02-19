@@ -14,19 +14,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossbeam_queue::ArrayQueue;
 
-// ---------------------------------------------------------------------------
-// Shared state
-// ---------------------------------------------------------------------------
-
 struct Shared<T> {
     queue: ArrayQueue<T>,
     producer_alive: AtomicBool,
     consumer_alive: AtomicBool,
 }
-
-// ---------------------------------------------------------------------------
-// Error types (mirror flume's API shape for easy migration)
-// ---------------------------------------------------------------------------
 
 /// Error returned by [`Sender::send`] when the receiver has been dropped.
 pub struct SendError<T>(pub T);
@@ -72,10 +64,6 @@ impl fmt::Display for TryRecvError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Sender
-// ---------------------------------------------------------------------------
-
 /// Sending half of the SPSC channel.
 pub struct Sender<T>(Arc<Shared<T>>);
 
@@ -110,10 +98,6 @@ impl<T> Drop for Sender<T> {
         self.0.producer_alive.store(false, Ordering::Release);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Receiver
-// ---------------------------------------------------------------------------
 
 /// Receiving half of the SPSC channel.
 pub struct Receiver<T>(Arc<Shared<T>>);
@@ -158,10 +142,6 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Constructor
-// ---------------------------------------------------------------------------
-
 /// Creates a bounded SPSC channel backed by a lock-free ring buffer.
 ///
 /// `capacity` is the maximum number of items the channel can hold.
@@ -175,10 +155,6 @@ pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     });
     (Sender(Arc::clone(&shared)), Receiver(shared))
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
