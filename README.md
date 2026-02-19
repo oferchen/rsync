@@ -20,7 +20,7 @@ Core transfer, delta algorithm, daemon mode, and SSH transport are complete. Int
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Single-process architecture eliminates fork overhead: 22% fewer syscalls, 36 context switches vs upstream's 92 per transfer.
+Threaded architecture replaces upstream's fork-based pipeline for local transfers, reducing syscall overhead and context switches.
 
 ---
 
@@ -39,19 +39,18 @@ Download from the [Releases](https://github.com/oferchen/rsync/releases) page:
 
 | Platform | Formats |
 |----------|---------|
-| Linux (x86_64, aarch64) | `.deb`, `.rpm`, static musl `.tar.gz` |
+| Linux (x86_64, aarch64) | `.deb`, `.rpm` (with OpenSSL), static musl `.tar.gz` |
 | macOS (x86_64, aarch64) | `.tar.gz` |
 | Windows (x86_64) | `.tar.gz`, `.zip` |
 
-Each release includes three build variants:
+Linux static tarballs are available in two checksum variants:
 
-| Variant | Description |
-|---------|-------------|
-| **stable** (recommended) | Built with Rust stable. No filename suffix. |
-| **beta** | Built with Rust beta. Filename includes `-beta`. |
-| **nightly** | Built with Rust nightly. Filename includes `-nightly`. |
+| Variant | Filename | Description |
+|---------|----------|-------------|
+| **Pure Rust** (recommended) | `*-musl.tar.gz` | Pure-Rust checksums, zero system dependencies |
+| **OpenSSL** | `*-musl-openssl.tar.gz` | OpenSSL-accelerated MD4/MD5 checksums (vendored, statically linked) |
 
-Most users should download the **stable** variant.
+Each release also includes three toolchain variants: **stable** (recommended, no suffix), **beta** (`-beta`), and **nightly** (`-nightly`).
 
 ### Build from source
 
