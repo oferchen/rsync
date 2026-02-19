@@ -46,10 +46,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential autoconf automake libtool \
             libacl1-dev libattr1-dev zlib1g-dev libxxhash-dev libzstd-dev liblz4-dev \
-            openssh-server
+            openssh-server libssl-dev
 
       - name: Build oc-rsync (release)
         run: cargo build --release --workspace
+
+      - name: Build oc-rsync with OpenSSL (release)
+        run: |
+          cargo build --release --features openssl
+          cp target/release/oc-rsync target/release/oc-rsync-openssl
 
       - name: Cache upstream rsync
         id: cache-rsync
@@ -105,6 +110,8 @@ jobs:
 
       - name: Run benchmark
         id: benchmark
+        env:
+          OC_RSYNC_OPENSSL: target/release/oc-rsync-openssl
         run: |
           set -euo pipefail
           python3 .github/scripts/benchmark.py > benchmark_results.json

@@ -81,6 +81,15 @@ io_uring = ["transfer/io_uring", "fast_io/io_uring"]
 copy_file_range = ["fast_io/copy_file_range"]
 
 # ============================================================================
+# OpenSSL Features
+# ============================================================================
+
+# OpenSSL-accelerated checksums (MD4, MD5) — links to system libssl
+openssl = ["checksums/openssl"]
+# Vendored OpenSSL — statically compiled, no system dependency
+openssl-vendored = ["checksums/openssl-vendored"]
+
+# ============================================================================
 # Runtime and Debugging Features
 # ============================================================================
 
