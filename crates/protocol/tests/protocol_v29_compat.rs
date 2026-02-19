@@ -44,10 +44,6 @@ impl ProtocolVersionAdvertisement for TestVersion {
     }
 }
 
-// ============================================================================
-// 1. Protocol Version 29 Handshake Tests
-// ============================================================================
-
 mod handshake {
     use super::*;
 
@@ -236,10 +232,6 @@ mod handshake {
     }
 }
 
-// ============================================================================
-// 2. Compatibility Flags Negotiation Tests
-// ============================================================================
-
 mod compatibility_flags {
     use super::*;
 
@@ -389,16 +381,8 @@ mod compatibility_flags {
     }
 }
 
-// ============================================================================
-// 3. Wire Format Tests
-// ============================================================================
-
 mod wire_format {
     use super::*;
-
-    // ------------------------------------------------------------------------
-    // Encoding Style Tests
-    // ------------------------------------------------------------------------
 
     /// Test that protocol 29 uses fixed encoding, not varint.
     #[test]
@@ -420,10 +404,6 @@ mod wire_format {
         assert!(codec.is_legacy(), "v29 codec must be legacy");
         assert_eq!(codec.protocol_version(), 29);
     }
-
-    // ------------------------------------------------------------------------
-    // File Size Encoding Tests
-    // ------------------------------------------------------------------------
 
     /// Test protocol 29 small file size encoding (4-byte fixed).
     #[test]
@@ -508,10 +488,6 @@ mod wire_format {
         assert_eq!(buf, vec![0x78, 0x56, 0x34, 0x12]);
     }
 
-    // ------------------------------------------------------------------------
-    // NDX (File Index) Encoding Tests
-    // ------------------------------------------------------------------------
-
     /// Test protocol 29 NDX uses legacy 4-byte encoding.
     #[test]
     fn v29_ndx_encoding() {
@@ -593,10 +569,6 @@ mod wire_format {
             assert_eq!(decoded, expected);
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Wire Format Boundary Tests
-    // ------------------------------------------------------------------------
 
     /// Test protocol 29 vs 28 wire format (should be same).
     #[test]
@@ -708,10 +680,6 @@ mod wire_format {
         assert_eq!(buf1, buf2, "Encoding must be deterministic");
     }
 }
-
-// ============================================================================
-// Integration Tests
-// ============================================================================
 
 mod integration {
     use super::*;

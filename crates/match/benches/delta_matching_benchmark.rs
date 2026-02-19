@@ -24,10 +24,6 @@ use signature::{
     SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
 };
 
-// ============================================================================
-// Test Data Generation
-// ============================================================================
-
 /// Creates test data with specified change percentage.
 ///
 /// The basis file is generated with a deterministic pattern.
@@ -85,10 +81,6 @@ fn build_signature_index(data: &[u8], block_size: Option<u32>) -> DeltaSignature
     DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index")
 }
 
-// ============================================================================
-// Signature Generation Benchmarks
-// ============================================================================
-
 fn bench_signature_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("signature_generation");
 
@@ -144,10 +136,6 @@ fn bench_signature_generation(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Block Matching Benchmarks
-// ============================================================================
-
 fn bench_block_matching(c: &mut Criterion) {
     let mut group = c.benchmark_group("block_matching");
 
@@ -196,10 +184,6 @@ fn bench_block_matching(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Hash Table Lookup Benchmarks
-// ============================================================================
-
 fn bench_hash_table_lookup(c: &mut Criterion) {
     let mut group = c.benchmark_group("hash_table_lookup");
 
@@ -240,10 +224,6 @@ fn bench_hash_table_lookup(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Rolling Checksum Performance
-// ============================================================================
 
 fn bench_rolling_checksum(c: &mut Criterion) {
     let mut group = c.benchmark_group("rolling_checksum");
@@ -287,10 +267,6 @@ fn bench_rolling_checksum(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Strong Checksum Performance
-// ============================================================================
-
 fn bench_strong_checksum(c: &mut Criterion) {
     use checksums::strong::{Md4, Xxh3};
 
@@ -328,10 +304,6 @@ fn bench_strong_checksum(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Memory Allocation Analysis
-// ============================================================================
 
 fn bench_memory_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_patterns");
@@ -382,10 +354,6 @@ fn bench_memory_patterns(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Criterion Groups
-// ============================================================================
 
 criterion_group!(
     name = benches;

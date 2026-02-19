@@ -23,10 +23,6 @@
 use crate::error::NegotiationError;
 use crate::version::{ProtocolVersion, select_highest_mutual};
 
-// ============================================================================
-// Protocol 31 Handshake and Negotiation Tests
-// ============================================================================
-
 /// Verifies protocol 31 can be successfully negotiated when offered by peer.
 #[test]
 fn v31_handshake_succeeds_when_peer_offers_v31() {
@@ -93,10 +89,6 @@ fn v31_handshake_handles_duplicate_peer_versions() {
     let result = select_highest_mutual([31, 31, 31, 30]).unwrap();
     assert_eq!(result, ProtocolVersion::V31);
 }
-
-// ============================================================================
-// Protocol 31 Feature Tests
-// ============================================================================
 
 /// Verifies protocol 31 uses binary negotiation.
 #[test]
@@ -224,10 +216,6 @@ fn v31_complete_feature_profile() {
     assert!(!v.uses_fixed_encoding());
 }
 
-// ============================================================================
-// Backward Compatibility Tests (v31 with older versions)
-// ============================================================================
-
 /// Verifies v31 can downgrade to v30 when peer only supports v30.
 #[test]
 fn v31_downgrades_to_v30_for_older_peer() {
@@ -352,10 +340,6 @@ fn v31_backward_compat_prefers_newest_mutual() {
     assert_eq!(result, ProtocolVersion::V31);
 }
 
-// ============================================================================
-// Forward Compatibility Tests (v31 with newer versions)
-// ============================================================================
-
 /// Verifies v31 upgrades to v32 when peer supports v32.
 #[test]
 fn v31_upgrades_to_v32_when_peer_supports_it() {
@@ -428,10 +412,6 @@ fn v31_rejects_versions_beyond_maximum() {
     }
 }
 
-// ============================================================================
-// Protocol 31 Ordering and Comparison Tests
-// ============================================================================
-
 /// Verifies v31 ordering relative to other versions.
 #[test]
 fn v31_ordering() {
@@ -488,10 +468,6 @@ fn v31_next_older() {
     );
 }
 
-// ============================================================================
-// Protocol 31 Conversion Tests
-// ============================================================================
-
 /// Verifies v31 converts to u8.
 #[test]
 fn v31_to_u8_conversion() {
@@ -531,10 +507,6 @@ fn v31_debug_format() {
     let debug = format!("{:?}", ProtocolVersion::V31);
     assert!(debug.contains("31"));
 }
-
-// ============================================================================
-// Protocol 31 Consistency Tests
-// ============================================================================
 
 /// Verifies v31 appears in supported versions list.
 #[test]
@@ -579,10 +551,6 @@ fn v31_from_supported_index() {
     assert_eq!(version, Some(ProtocolVersion::V31));
 }
 
-// ============================================================================
-// Protocol 31 Error Handling Tests
-// ============================================================================
-
 /// Verifies appropriate error when v31 is not available.
 #[test]
 fn v31_error_when_peer_too_old() {
@@ -607,10 +575,6 @@ fn v31_error_on_empty_peer_list() {
         _ => panic!("expected NoMutualProtocol error"),
     }
 }
-
-// ============================================================================
-// Protocol 31 Real-World Scenarios
-// ============================================================================
 
 /// Simulates typical v31 client connecting to v31 server.
 #[test]

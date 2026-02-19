@@ -2,10 +2,6 @@
 use super::super::{BandwidthParseError, parse_bandwidth_argument, parse_bandwidth_limit};
 use std::num::NonZeroU64;
 
-// ========================================================================
-// Negative Number Tests
-// ========================================================================
-
 #[test]
 fn parse_negative_number_is_invalid() {
     let result = parse_bandwidth_argument("-1024");
@@ -36,10 +32,6 @@ fn parse_negative_with_exponent() {
     assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
 
-// ========================================================================
-// Overflow Tests
-// ========================================================================
-
 #[test]
 fn parse_extremely_large_number_overflows() {
     // Number larger than u128::MAX
@@ -66,10 +58,6 @@ fn parse_u64_max_plus_one() {
     let result = parse_bandwidth_argument("18446744073709551616b"); // u64::MAX + 1 in bytes
     assert!(result.is_err());
 }
-
-// ========================================================================
-// Special Character Tests
-// ========================================================================
 
 #[test]
 fn parse_with_special_chars_is_invalid() {
@@ -115,10 +103,6 @@ fn parse_with_newline_is_invalid() {
     assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
 
-// ========================================================================
-// Empty and Whitespace Tests
-// ========================================================================
-
 #[test]
 fn parse_empty_string_is_invalid() {
     let result = parse_bandwidth_argument("");
@@ -152,10 +136,6 @@ fn parse_only_minus_is_invalid() {
     let result = parse_bandwidth_argument("-");
     assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
-
-// ========================================================================
-// Decimal Point Tests
-// ========================================================================
 
 #[test]
 fn parse_only_decimal_point_is_invalid() {
@@ -194,10 +174,6 @@ fn parse_trailing_decimal_point() {
     assert!(result.is_ok());
 }
 
-// ========================================================================
-// Exponent Tests
-// ========================================================================
-
 #[test]
 fn parse_exponent_without_digits() {
     let result = parse_bandwidth_argument("5e");
@@ -234,10 +210,6 @@ fn parse_mixed_case_exponent() {
     let result = parse_bandwidth_argument("1e3");
     assert!(result.is_ok());
 }
-
-// ========================================================================
-// Suffix Tests
-// ========================================================================
 
 #[test]
 fn parse_invalid_suffix() {
@@ -322,10 +294,6 @@ fn parse_pb_decimal() {
     );
 }
 
-// ========================================================================
-// Adjust (+1/-1) Tests
-// ========================================================================
-
 #[test]
 fn parse_with_plus_one_adjust() {
     // 1K+1 = 1024 + 1 = 1025 bytes (rounded to nearest 1024)
@@ -362,10 +330,6 @@ fn parse_adjust_without_suffix() {
     assert!(result.is_some());
 }
 
-// ========================================================================
-// Below Minimum Tests
-// ========================================================================
-
 #[test]
 fn parse_below_minimum_512_bytes() {
     let result = parse_bandwidth_argument("511B");
@@ -391,10 +355,6 @@ fn parse_fractional_below_minimum() {
     assert_eq!(result, Err(BandwidthParseError::TooSmall));
 }
 
-// ========================================================================
-// Zero Value Tests
-// ========================================================================
-
 #[test]
 fn parse_zero_returns_none() {
     let result = parse_bandwidth_argument("0").unwrap();
@@ -419,10 +379,6 @@ fn parse_plus_zero() {
     assert_eq!(result, None);
 }
 
-// ========================================================================
-// Rounding Tests
-// ========================================================================
-
 #[test]
 fn parse_rounds_to_kilobyte_boundary() {
     // Default alignment is 1024
@@ -438,10 +394,6 @@ fn parse_decimal_suffix_rounds_to_1000() {
     let result = parse_bandwidth_argument("1500B").unwrap();
     assert!(result.is_some());
 }
-
-// ========================================================================
-// Burst Limit Tests
-// ========================================================================
 
 #[test]
 fn parse_limit_with_burst() {
@@ -488,10 +440,6 @@ fn parse_limit_multiple_colons() {
     assert!(result.is_err());
 }
 
-// ========================================================================
-// Unicode and Non-ASCII Tests
-// ========================================================================
-
 #[test]
 fn parse_with_unicode_is_invalid() {
     let result = parse_bandwidth_argument("100０"); // Full-width 0
@@ -503,10 +451,6 @@ fn parse_with_emoji_is_invalid() {
     let result = parse_bandwidth_argument("100📊");
     assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
-
-// ========================================================================
-// Case Sensitivity Tests
-// ========================================================================
 
 #[test]
 fn parse_lowercase_suffixes() {
@@ -532,10 +476,6 @@ fn parse_mixed_case_suffix() {
     assert!(parse_bandwidth_argument("1Kb").is_ok());
 }
 
-// ========================================================================
-// Very Long Input Tests
-// ========================================================================
-
 #[test]
 fn parse_very_long_numeric_string() {
     let long = "1".repeat(100);
@@ -551,10 +491,6 @@ fn parse_very_long_decimal_fraction() {
     assert!(result.is_err() || result.is_ok());
 }
 
-// ========================================================================
-// Leading Zeros Tests
-// ========================================================================
-
 #[test]
 fn parse_leading_zeros() {
     let result = parse_bandwidth_argument("001024").unwrap();
@@ -566,10 +502,6 @@ fn parse_only_zeros() {
     let result = parse_bandwidth_argument("0000").unwrap();
     assert_eq!(result, None);
 }
-
-// ========================================================================
-// Fractional Part Tests
-// ========================================================================
 
 #[test]
 fn parse_tiny_fraction() {
@@ -592,10 +524,6 @@ fn parse_fraction_just_below_boundary() {
     assert!(result.is_err() || result.is_ok());
 }
 
-// ========================================================================
-// Comma Decimal Separator Tests
-// ========================================================================
-
 #[test]
 fn parse_comma_as_decimal() {
     let result = parse_bandwidth_argument("1,5K").unwrap();
@@ -609,10 +537,6 @@ fn parse_comma_and_exponent() {
     // 1.5 * 100 = 150K
     assert!(result.is_some());
 }
-
-// ========================================================================
-// Default Unit Tests
-// ========================================================================
 
 #[test]
 fn parse_no_suffix_defaults_to_k() {

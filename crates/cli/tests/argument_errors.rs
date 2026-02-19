@@ -9,10 +9,6 @@
 use clap::error::ErrorKind;
 use cli::test_utils::parse_args;
 
-// ============================================================================
-// Conflicting Delete Modes
-// ============================================================================
-
 #[test]
 fn test_delete_before_and_after_conflict() {
     let result = parse_args([
@@ -101,10 +97,6 @@ fn test_delete_after_and_delay_conflict() {
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
 }
 
-// ============================================================================
-// Duplicate Options (ArgumentConflict)
-// ============================================================================
-
 #[test]
 fn test_multiple_usermap_conflict() {
     let result = parse_args(["oc-rsync", "--usermap=a:b", "--usermap=c:d", "src", "dest"]);
@@ -143,10 +135,6 @@ fn test_temp_dir_and_tmp_dir_conflict() {
     let err = result.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
 }
-
-// ============================================================================
-// Error Message Content Validation
-// ============================================================================
 
 #[test]
 fn test_delete_conflict_error_message() {
@@ -196,10 +184,6 @@ fn test_groupmap_conflict_error_message() {
         "Error message should mention groupmap or conflict: {err_msg}"
     );
 }
-
-// ============================================================================
-// Valid Cases That Should NOT Error
-// ============================================================================
 
 #[test]
 fn test_single_delete_mode_valid() {

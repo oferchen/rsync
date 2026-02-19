@@ -13,10 +13,6 @@
 // 3. Works correctly with other comparison flags (--checksum, --size-only)
 // 4. Delta transfer still works efficiently (doesn't force whole-file)
 
-// ============================================================================
-// Basic --ignore-times Flag Tests
-// ============================================================================
-
 #[test]
 fn ignore_times_transfers_file_with_matching_timestamps() {
     let temp = tempdir().expect("tempdir");
@@ -126,10 +122,6 @@ fn ignore_times_updates_newer_destination() {
         b"source content"
     );
 }
-
-// ============================================================================
-// Combination with --checksum
-// ============================================================================
 
 #[test]
 fn ignore_times_with_checksum_skips_identical_content() {
@@ -270,10 +262,6 @@ fn ignore_times_with_checksum_handles_multiple_files() {
     );
 }
 
-// ============================================================================
-// Combination with --size-only
-// ============================================================================
-
 #[test]
 fn ignore_times_with_size_only_still_transfers_same_size() {
     let temp = tempdir().expect("tempdir");
@@ -355,10 +343,6 @@ fn ignore_times_overrides_size_only_skip() {
     assert_eq!(summary_with.files_copied(), 1);
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
-
-// ============================================================================
-// Delta Transfer Tests
-// ============================================================================
 
 #[test]
 fn ignore_times_allows_delta_transfer() {
@@ -508,10 +492,6 @@ fn ignore_times_whole_file_mode_transfers_entirely() {
     assert_eq!(fs::read(&destination).expect("read dest"), content_source);
 }
 
-// ============================================================================
-// Combination with --update
-// ============================================================================
-
 #[test]
 fn ignore_times_overrides_update_skip() {
     let temp = tempdir().expect("tempdir");
@@ -556,10 +536,6 @@ fn ignore_times_overrides_update_skip() {
         b"dest content"  // preserved
     );
 }
-
-// ============================================================================
-// Directory Recursive Tests
-// ============================================================================
 
 #[test]
 fn ignore_times_recursive_transfers_all_files() {
@@ -688,10 +664,6 @@ fn ignore_times_with_nested_directories() {
         b"level2 source"
     );
 }
-
-// ============================================================================
-// Edge Cases and Special Scenarios
-// ============================================================================
 
 #[test]
 fn ignore_times_with_empty_files() {

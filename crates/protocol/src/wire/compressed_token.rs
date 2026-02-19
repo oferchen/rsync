@@ -1081,10 +1081,6 @@ mod tests {
         assert!(combined.starts_with(literal_data));
     }
 
-    // =========================================================================
-    // Protocol Version Behavior Tests
-    // =========================================================================
-
     #[test]
     fn encoder_protocol_version_31_advances_offset() {
         // Protocol >= 31 properly advances through data in see_token
@@ -1151,10 +1147,6 @@ mod tests {
         assert!(!output_30.is_empty());
         assert!(!output_31.is_empty());
     }
-
-    // =========================================================================
-    // Encoder Reset Tests
-    // =========================================================================
 
     #[test]
     fn encoder_reset_clears_state() {
@@ -1229,10 +1221,6 @@ mod tests {
         assert_eq!(blocks2, vec![0]);
     }
 
-    // =========================================================================
-    // Decoder Reset Tests
-    // =========================================================================
-
     #[test]
     fn decoder_reset_clears_state() {
         let mut decoder = CompressedTokenDecoder::new();
@@ -1274,10 +1262,6 @@ mod tests {
         assert_eq!(decoded1, b"file one");
         assert_eq!(decoded2, b"file two");
     }
-
-    // =========================================================================
-    // Token Run Encoding Tests
-    // =========================================================================
 
     #[test]
     fn encode_consecutive_blocks_as_run() {
@@ -1360,10 +1344,6 @@ mod tests {
         assert_eq!(blocks, vec![100, 101]);
     }
 
-    // =========================================================================
-    // Compression Level Tests
-    // =========================================================================
-
     #[test]
     fn encoder_fast_compression() {
         let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Fast, 31);
@@ -1441,10 +1421,6 @@ mod tests {
         assert_eq!(decoded, data);
     }
 
-    // =========================================================================
-    // Default Trait Tests
-    // =========================================================================
-
     #[test]
     fn encoder_default_uses_default_compression_and_protocol_31() {
         let encoder = CompressedTokenEncoder::default();
@@ -1463,10 +1439,6 @@ mod tests {
         let decoder = CompressedTokenDecoder::default();
         assert!(!decoder.initialized);
     }
-
-    // =========================================================================
-    // Edge Cases
-    // =========================================================================
 
     #[test]
     fn encode_empty_literal() {
@@ -1615,10 +1587,6 @@ mod tests {
 
         assert_eq!(original, cloned);
     }
-
-    // =========================================================================
-    // Error Path Tests
-    // =========================================================================
 
     #[test]
     fn recv_token_eof_reading_flag_byte() {

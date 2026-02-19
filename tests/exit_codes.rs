@@ -34,10 +34,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-// ============================================================================
-// Test Infrastructure
-// ============================================================================
-
 /// Runs oc-rsync with given arguments and returns the output.
 fn run_rsync(args: &[&str]) -> Output {
     let _cmd = RsyncCommand::new();
@@ -106,10 +102,6 @@ fn locate_binary(name: &str) -> Option<PathBuf> {
     None
 }
 
-// ============================================================================
-// Exit Code 0: Success
-// ============================================================================
-
 /// Tests that successful operations return exit code 0.
 mod exit_code_0_success {
     use super::*;
@@ -156,10 +148,6 @@ mod exit_code_0_success {
     }
 }
 
-// ============================================================================
-// Exit Code 1: Syntax/Usage Error (RERR_SYNTAX)
-// ============================================================================
-
 /// Tests that syntax and usage errors return exit code 1.
 mod exit_code_1_syntax {
     use super::*;
@@ -202,10 +190,6 @@ mod exit_code_1_syntax {
     }
 }
 
-// ============================================================================
-// Exit Code 2: Protocol Incompatibility (RERR_PROTOCOL)
-// ============================================================================
-
 /// Tests that protocol incompatibility returns exit code 2.
 mod exit_code_2_protocol {
     use super::*;
@@ -226,10 +210,6 @@ mod exit_code_2_protocol {
         assert_exit_code(&output, ExitCode::Protocol, "unsupported protocol version");
     }
 }
-
-// ============================================================================
-// Exit Code 3: File Selection Error (RERR_FILESELECT)
-// ============================================================================
 
 /// Tests that file selection errors return exit code 3.
 mod exit_code_3_file_select {
@@ -277,10 +257,6 @@ mod exit_code_3_file_select {
     }
 }
 
-// ============================================================================
-// Exit Code 4: Unsupported Action (RERR_UNSUPPORTED)
-// ============================================================================
-
 /// Tests that unsupported actions return exit code 4.
 mod exit_code_4_unsupported {
 
@@ -295,10 +271,6 @@ mod exit_code_4_unsupported {
         // Keeping as a placeholder for documentation
     }
 }
-
-// ============================================================================
-// Exit Code 5: Connection Refused/Failed (RERR_STARTCLIENT)
-// ============================================================================
 
 /// Tests that connection failures return exit code 5.
 mod exit_code_5_start_client {
@@ -332,10 +304,6 @@ mod exit_code_5_start_client {
     }
 }
 
-// ============================================================================
-// Exit Code 10: Socket I/O Error (RERR_SOCKETIO)
-// ============================================================================
-
 /// Tests that socket I/O errors return exit code 10.
 mod exit_code_10_socket_io {
     use super::*;
@@ -357,10 +325,6 @@ mod exit_code_10_socket_io {
         );
     }
 }
-
-// ============================================================================
-// Exit Code 11: File I/O Error (RERR_FILEIO)
-// ============================================================================
 
 /// Tests that file I/O errors return exit code 11.
 #[cfg(unix)]
@@ -396,10 +360,6 @@ mod exit_code_11_file_io {
     }
 }
 
-// ============================================================================
-// Exit Code 12: Data Stream Error (RERR_STREAMIO)
-// ============================================================================
-
 /// Tests that data stream errors return exit code 12.
 mod exit_code_12_stream_io {
     // Note: Data stream errors require protocol-level corruption which is
@@ -414,10 +374,6 @@ mod exit_code_12_stream_io {
     }
 }
 
-// ============================================================================
-// Exit Code 13: Diagnostics Error (RERR_MESSAGEIO)
-// ============================================================================
-
 /// Tests that diagnostic errors return exit code 13.
 mod exit_code_13_message_io {
     // Note: Message I/O errors occur when diagnostic message handling fails.
@@ -429,10 +385,6 @@ mod exit_code_13_message_io {
         // Would require --log-file to an unwritable location
     }
 }
-
-// ============================================================================
-// Exit Code 14: IPC Error (RERR_IPC)
-// ============================================================================
 
 /// Tests that IPC errors return exit code 14.
 mod exit_code_14_ipc {
@@ -446,10 +398,6 @@ mod exit_code_14_ipc {
     }
 }
 
-// ============================================================================
-// Exit Code 20: SIGUSR1/SIGINT Received (RERR_SIGNAL)
-// ============================================================================
-
 /// Tests that signal handling returns exit code 20.
 #[cfg(unix)]
 mod exit_code_20_signal {
@@ -461,10 +409,6 @@ mod exit_code_20_signal {
         // and verify the exit code
     }
 }
-
-// ============================================================================
-// Exit Code 23: Partial Transfer (RERR_PARTIAL)
-// ============================================================================
 
 /// Tests that partial transfers return exit code 23.
 #[cfg(unix)]
@@ -521,10 +465,6 @@ mod exit_code_23_partial_transfer {
     }
 }
 
-// ============================================================================
-// Exit Code 24: Vanished Source (RERR_VANISHED)
-// ============================================================================
-
 /// Tests that vanished source files return exit code 24.
 mod exit_code_24_vanished {
     // Note: This exit code requires files to disappear between file list
@@ -537,10 +477,6 @@ mod exit_code_24_vanished {
         // Would need to delete files during an active transfer
     }
 }
-
-// ============================================================================
-// Exit Code 25: Max Delete Limit (RERR_DEL_LIMIT)
-// ============================================================================
 
 /// Tests that exceeding --max-delete limit returns exit code 25.
 mod exit_code_25_delete_limit {
@@ -576,10 +512,6 @@ mod exit_code_25_delete_limit {
     }
 }
 
-// ============================================================================
-// Exit Code 30: Timeout (RERR_TIMEOUT)
-// ============================================================================
-
 /// Tests that timeout conditions return exit code 30.
 mod exit_code_30_timeout {
     // Note: Timeout testing requires either a slow transfer or a
@@ -591,10 +523,6 @@ mod exit_code_30_timeout {
         // Would need to stall data transfer long enough to trigger timeout
     }
 }
-
-// ============================================================================
-// Exit Code Enum Verification
-// ============================================================================
 
 /// Tests that the ExitCode enum values match upstream rsync's errcode.h.
 mod exit_code_enum_values {
@@ -889,10 +817,6 @@ mod exit_code_enum_values {
     }
 }
 
-// ============================================================================
-// Exit Code Consistency Tests
-// ============================================================================
-
 /// Tests that verify exit code handling consistency across error types.
 mod exit_code_consistency {
     use core::exit_code::ExitCode;
@@ -987,18 +911,10 @@ mod exit_code_consistency {
     }
 }
 
-// ============================================================================
-// Binary Behavioral Exit Code Tests
-// ============================================================================
-
 /// Tests that verify the actual binary returns correct exit codes.
 /// These tests run the oc-rsync binary and verify the exit status.
 mod binary_exit_codes {
     use super::*;
-
-    // ------------------------------------------------------------------------
-    // Exit Code 0: Success scenarios
-    // ------------------------------------------------------------------------
 
     #[test]
     fn local_directory_sync_returns_success() {
@@ -1073,10 +989,6 @@ mod binary_exit_codes {
         assert_exit_code(&output, ExitCode::Ok, "verbose mode");
     }
 
-    // ------------------------------------------------------------------------
-    // Exit Code 1: Syntax/Usage errors
-    // ------------------------------------------------------------------------
-
     #[test]
     fn no_arguments_returns_syntax_error() {
         // Running with no arguments at all
@@ -1141,10 +1053,6 @@ mod binary_exit_codes {
         assert_exit_code(&output, ExitCode::Syntax, "invalid bwlimit value");
     }
 
-    // ------------------------------------------------------------------------
-    // Exit Code 2: Protocol incompatibility
-    // ------------------------------------------------------------------------
-
     #[test]
     fn protocol_version_too_high_returns_protocol_error() {
         let test_dir = TestDir::new().expect("create test dir");
@@ -1178,10 +1086,6 @@ mod binary_exit_codes {
 
         assert_exit_code(&output, ExitCode::Protocol, "protocol version 1 too low");
     }
-
-    // ------------------------------------------------------------------------
-    // Exit Code 3: File selection errors
-    // ------------------------------------------------------------------------
 
     #[test]
     fn nonexistent_source_file_returns_error() {
@@ -1242,10 +1146,6 @@ mod binary_exit_codes {
         assert_exit_code(&output, ExitCode::FileSelect, "inaccessible destination");
     }
 
-    // ------------------------------------------------------------------------
-    // Exit Code 23: Partial transfer
-    // ------------------------------------------------------------------------
-
     #[cfg(unix)]
     #[test]
     fn some_files_unreadable_returns_partial_transfer() {
@@ -1282,10 +1182,6 @@ mod binary_exit_codes {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // Exit Code 25: Delete limit exceeded
-    // ------------------------------------------------------------------------
-
     #[test]
     fn max_delete_limit_exceeded_returns_delete_limit_error() {
         let test_dir = TestDir::new().expect("create test dir");
@@ -1315,10 +1211,6 @@ mod binary_exit_codes {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // Exit Code 127: Command not found
-    // ------------------------------------------------------------------------
-
     #[test]
     fn nonexistent_remote_shell_returns_error() {
         let output = run_rsync(&[
@@ -1337,10 +1229,6 @@ mod binary_exit_codes {
         );
     }
 }
-
-// ============================================================================
-// Comprehensive Exit Code Coverage Tests
-// ============================================================================
 
 /// Tests that document which exit codes are reachable in the current implementation.
 mod exit_code_coverage {
@@ -1462,10 +1350,6 @@ mod exit_code_coverage {
         }
     }
 }
-
-// ============================================================================
-// Edge Case and Boundary Tests
-// ============================================================================
 
 /// Tests for edge cases in exit code handling.
 mod exit_code_edge_cases {

@@ -9,10 +9,6 @@
 // 5. Combination with regular timeout
 // 6. Transfers work with contimeout set
 
-// =============================================================================
-// Default Value Tests
-// =============================================================================
-
 #[test]
 fn contimeout_defaults_to_none() {
     let opts = LocalCopyOptions::new();
@@ -24,10 +20,6 @@ fn contimeout_default_trait_returns_none() {
     let opts = LocalCopyOptions::default();
     assert!(opts.contimeout().is_none());
 }
-
-// =============================================================================
-// Setting Various Durations
-// =============================================================================
 
 #[test]
 fn contimeout_one_second() {
@@ -68,10 +60,6 @@ fn contimeout_subsecond_precision() {
     assert_eq!(opts.contimeout(), Some(duration));
 }
 
-// =============================================================================
-// Round-Trip Tests
-// =============================================================================
-
 #[test]
 fn contimeout_round_trip_set_and_get() {
     let duration = Duration::from_secs(45);
@@ -95,10 +83,6 @@ fn contimeout_last_write_wins() {
         .with_contimeout(Some(Duration::from_secs(60)));
     assert_eq!(opts.contimeout(), Some(Duration::from_secs(60)));
 }
-
-// =============================================================================
-// Builder Support Tests
-// =============================================================================
 
 #[test]
 fn builder_contimeout_defaults_to_none() {
@@ -153,10 +137,6 @@ fn builder_unchecked_contimeout_sets_value() {
         .build_unchecked();
     assert_eq!(opts.contimeout(), Some(duration));
 }
-
-// =============================================================================
-// Combination with Regular Timeout Tests
-// =============================================================================
 
 #[test]
 fn contimeout_independent_of_timeout() {
@@ -218,10 +198,6 @@ fn builder_both_timeouts_coexist() {
     assert_eq!(opts.timeout(), Some(timeout));
 }
 
-// =============================================================================
-// Transfer with Contimeout Tests
-// =============================================================================
-
 #[test]
 fn transfer_works_with_contimeout_set() {
     let ctx = test_helpers::setup_copy_test();
@@ -279,10 +255,6 @@ fn transfer_works_with_zero_contimeout() {
     assert_eq!(ctx.read_dest("file.txt"), b"zero contimeout");
     assert!(summary.files_copied() >= 1);
 }
-
-// =============================================================================
-// Connection Timeout Exit Code Tests
-// =============================================================================
 
 #[test]
 fn connection_timeout_exit_code_is_35() {

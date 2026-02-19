@@ -6,10 +6,6 @@
 mod strong_checksum_tests {
     use crate::strong::{Md4, Md5, Md5Seed, Sha1, Sha256, Sha512, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
-    // ========================================================================
-    // MD4 Tests
-    // ========================================================================
-
     #[test]
     fn md4_default_equals_new() {
         let new = Md4::new();
@@ -102,10 +98,6 @@ mod strong_checksum_tests {
         let d2 = h4.finalize();
         assert_eq!(d1, d2);
     }
-
-    // ========================================================================
-    // MD5 Tests
-    // ========================================================================
 
     #[test]
     fn md5_default_equals_new() {
@@ -251,10 +243,6 @@ mod strong_checksum_tests {
         assert_eq!(d1, d2);
     }
 
-    // ========================================================================
-    // SHA-1 Tests
-    // ========================================================================
-
     #[test]
     fn sha1_default_equals_new() {
         let new = Sha1::new();
@@ -322,10 +310,6 @@ mod strong_checksum_tests {
         let d = h.finalize();
         assert_eq!(d, Sha1::digest(b"test"));
     }
-
-    // ========================================================================
-    // SHA-256 Tests
-    // ========================================================================
 
     #[test]
     fn sha256_default_equals_new() {
@@ -395,10 +379,6 @@ mod strong_checksum_tests {
         assert_eq!(d, Sha256::digest(b"test"));
     }
 
-    // ========================================================================
-    // SHA-512 Tests
-    // ========================================================================
-
     #[test]
     fn sha512_default_equals_new() {
         let new = Sha512::new();
@@ -466,10 +446,6 @@ mod strong_checksum_tests {
         let d = h.finalize();
         assert_eq!(d, Sha512::digest(b"test"));
     }
-
-    // ========================================================================
-    // XXH64 Tests
-    // ========================================================================
 
     #[test]
     fn xxh64_empty_input() {
@@ -543,10 +519,6 @@ mod strong_checksum_tests {
         assert_eq!(d1, d2);
     }
 
-    // ========================================================================
-    // XXH3-64 Tests
-    // ========================================================================
-
     #[test]
     fn xxh3_empty_input() {
         let digest = Xxh3::digest(0, b"");
@@ -599,10 +571,6 @@ mod strong_checksum_tests {
         assert_eq!(d, expected);
     }
 
-    // ========================================================================
-    // XXH3-128 Tests
-    // ========================================================================
-
     #[test]
     fn xxh3_128_empty_input() {
         let digest = Xxh3_128::digest(0, b"");
@@ -652,10 +620,6 @@ mod strong_checksum_tests {
         let expected = xxhash_rust::xxh3::xxh3_128_with_seed(b"trait test", 888).to_le_bytes();
         assert_eq!(d, expected);
     }
-
-    // ========================================================================
-    // XXHash Additional Coverage Tests
-    // ========================================================================
 
     #[test]
     fn xxh3_streaming_empty() {
@@ -732,10 +696,6 @@ mod strong_checksum_tests {
         assert_eq!(d, expected);
     }
 
-    // ========================================================================
-    // Algorithm Selection and Capability Tests
-    // ========================================================================
-
     #[test]
     fn xxh3_simd_availability_returns_expected_value() {
         // xxh3 crate is always compiled in, so this always returns true
@@ -757,10 +717,6 @@ mod strong_checksum_tests {
         let _available = crate::simd_acceleration_available();
         // Just verify it runs without panic
     }
-
-    // ========================================================================
-    // Generic StrongDigest Tests
-    // ========================================================================
 
     fn compute_generic<D: StrongDigest>(data: &[u8]) -> D::Digest
     where
@@ -804,10 +760,6 @@ mod strong_checksum_tests {
 mod rolling_checksum_tests {
     use crate::{RollingChecksum, RollingDigest, RollingError, RollingSliceError};
     use std::io::IoSlice;
-
-    // ========================================================================
-    // Edge Cases for Rolling Checksum
-    // ========================================================================
 
     #[test]
     fn update_byte_single() {
@@ -879,10 +831,6 @@ mod rolling_checksum_tests {
         assert_eq!(checksum.len(), 1000);
     }
 
-    // ========================================================================
-    // Vectored I/O Edge Cases
-    // ========================================================================
-
     #[test]
     fn update_vectored_many_small_slices() {
         let slices: Vec<Vec<u8>> = (0..50).map(|i| vec![(i % 256) as u8; 3]).collect();
@@ -928,10 +876,6 @@ mod rolling_checksum_tests {
         assert_eq!(checksum.value(), expected.value());
     }
 
-    // ========================================================================
-    // Rolling Digest Edge Cases
-    // ========================================================================
-
     #[test]
     fn rolling_digest_max_values() {
         let digest = RollingDigest::new(u16::MAX, u16::MAX, usize::MAX);
@@ -948,10 +892,6 @@ mod rolling_checksum_tests {
         let reconstructed = RollingDigest::from_value(packed, 12345);
         assert_eq!(original, reconstructed);
     }
-
-    // ========================================================================
-    // Error Type Edge Cases
-    // ========================================================================
 
     #[test]
     fn rolling_error_empty_window_display() {
@@ -1037,10 +977,6 @@ mod pipelined_tests {
     use crate::RollingDigest;
     use std::io::Cursor;
 
-    // ========================================================================
-    // PipelineConfig Tests
-    // ========================================================================
-
     #[test]
     fn pipeline_config_default_values() {
         let config = PipelineConfig::default();
@@ -1074,10 +1010,6 @@ mod pipelined_tests {
         let cloned = config;
         assert_eq!(config.block_size, cloned.block_size);
     }
-
-    // ========================================================================
-    // DoubleBufferedReader Tests
-    // ========================================================================
 
     #[test]
     fn double_buffered_reader_block_size() {
@@ -1148,10 +1080,6 @@ mod pipelined_tests {
         assert!(reader.next_block().unwrap().is_none());
     }
 
-    // ========================================================================
-    // BlockChecksums Tests
-    // ========================================================================
-
     #[test]
     fn block_checksums_debug() {
         let cs = BlockChecksums {
@@ -1175,10 +1103,6 @@ mod pipelined_tests {
         assert_eq!(cs.strong, cloned.strong);
         assert_eq!(cs.len, cloned.len);
     }
-
-    // ========================================================================
-    // compute_checksums_pipelined Tests
-    // ========================================================================
 
     #[test]
     fn compute_checksums_pipelined_single_block() {
@@ -1228,10 +1152,6 @@ mod pipelined_tests {
             assert_eq!(cs.len, 32 * 1024);
         }
     }
-
-    // ========================================================================
-    // PipelinedChecksumIterator Tests
-    // ========================================================================
 
     #[test]
     fn pipelined_iterator_creation() {
@@ -1408,10 +1328,6 @@ mod parallel_tests {
     }
 }
 
-// ========================================================================
-// Error Path Tests for Pipelined I/O
-// ========================================================================
-
 #[cfg(test)]
 mod pipelined_error_tests {
     use crate::pipelined::{compute_checksums_pipelined, DoubleBufferedReader, PipelineConfig};
@@ -1530,10 +1446,6 @@ mod pipelined_error_tests {
         assert!(!buffered.is_pipelined() || buffered.next_block().is_err());
     }
 }
-
-// ========================================================================
-// Batch Digest Tests
-// ========================================================================
 
 #[cfg(test)]
 mod batch_digest_tests {

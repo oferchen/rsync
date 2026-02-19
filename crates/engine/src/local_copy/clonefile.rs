@@ -120,10 +120,6 @@ pub fn copy_file_standard(src: &Path, dst: &Path) -> io::Result<u64> {
     std::fs::copy(src, dst)
 }
 
-// ---------------------------------------------------------------------------
-// Platform-specific implementations
-// ---------------------------------------------------------------------------
-
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 fn try_clonefile_impl(src: &Path, dst: &Path) -> io::Result<()> {
@@ -160,10 +156,6 @@ fn try_clonefile_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
         "clonefile not available on this platform",
     ))
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

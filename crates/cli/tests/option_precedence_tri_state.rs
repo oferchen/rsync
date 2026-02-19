@@ -5,10 +5,6 @@
 
 use cli::test_utils::parse_args;
 
-// ============================================================================
-// Owner/Group Preservation Precedence
-// ============================================================================
-
 #[test]
 fn test_owner_last_wins_positive() {
     let args = parse_args(["oc-rsync", "--no-owner", "--owner", "src", "dest"]).unwrap();
@@ -48,10 +44,6 @@ fn test_group_last_wins_negative() {
         "Last --no-group should override --group"
     );
 }
-
-// ============================================================================
-// Permission/Time Preservation Precedence
-// ============================================================================
 
 #[test]
 fn test_perms_last_wins_positive() {
@@ -103,10 +95,6 @@ fn test_times_last_wins_negative() {
 // Link Preservation Precedence
 // Note: --hard-links/--no-hard-links and --links/--no-links are configured
 // as mutually exclusive in Clap, not as overridable tri-state flags
-// ============================================================================
-
-// ============================================================================
-// Extended Attributes Precedence
 // ============================================================================
 
 #[test]
@@ -194,10 +182,6 @@ fn test_whole_file_last_wins_negative() {
         "Last --no-whole-file should override --whole-file"
     );
 }
-
-// ============================================================================
-// Multiple Alternations
-// ============================================================================
 
 #[test]
 fn test_multiple_owner_alternations() {

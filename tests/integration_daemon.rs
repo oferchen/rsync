@@ -22,10 +22,6 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-// ============================================================================
-// Test Infrastructure
-// ============================================================================
-
 /// Global mutex for environment variable isolation between tests.
 #[allow(dead_code)]
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -156,10 +152,6 @@ fn request_module_list(stream: &mut TcpStream) -> Result<Vec<String>, String> {
     Ok(modules)
 }
 
-// ============================================================================
-// Module Listing Tests
-// ============================================================================
-
 #[test]
 fn daemon_list_modules_via_cli() {
     let port = allocate_test_port();
@@ -192,10 +184,6 @@ fn daemon_list_modules_via_cli() {
     // A real daemon would need to be started via the daemon crate
 }
 
-// ============================================================================
-// Protocol Version Tests (via raw socket)
-// ============================================================================
-
 #[test]
 fn protocol_version_greeting_format() {
     // This test documents the expected protocol greeting format
@@ -217,10 +205,6 @@ fn protocol_version_greeting_format() {
     assert!(parts[0].parse::<u32>().is_ok(), "major should be numeric");
     assert!(parts[1].parse::<u32>().is_ok(), "minor should be numeric");
 }
-
-// ============================================================================
-// Error Handling Tests (documentation)
-// ============================================================================
 
 #[test]
 fn error_unknown_module_format() {
@@ -247,10 +231,6 @@ fn error_access_denied_format() {
     assert!(example_error.contains("access denied"));
     assert!(example_error.contains("module"));
 }
-
-// ============================================================================
-// File Transfer Tests (via CLI)
-// ============================================================================
 
 #[test]
 fn transfer_via_rsync_url_format() {
@@ -309,10 +289,6 @@ fn transfer_directory_recursive_format() {
     let _result = cmd.run();
 }
 
-// ============================================================================
-// Checksum Verification Tests (structure)
-// ============================================================================
-
 #[test]
 fn checksum_flag_usage() {
     // Test that --checksum flag is properly passed
@@ -329,10 +305,6 @@ fn checksum_flag_usage() {
     // Command structure is valid even if connection fails
     let _result = cmd.run();
 }
-
-// ============================================================================
-// Authentication Format Tests
-// ============================================================================
 
 #[test]
 fn auth_url_with_username_format() {
@@ -365,10 +337,6 @@ fn auth_challenge_response_format() {
     assert!(example_challenge.split_whitespace().count() == 3);
 }
 
-// ============================================================================
-// Max Connections Test (structure)
-// ============================================================================
-
 #[test]
 fn max_connections_config_format() {
     // Document the max connections configuration
@@ -384,10 +352,6 @@ max connections = 5
     assert!(config_example.contains("lock file"));
 }
 
-// ============================================================================
-// Module Comment Test (structure)
-// ============================================================================
-
 #[test]
 fn module_listing_with_comments_format() {
     // Document the module listing format with comments
@@ -402,10 +366,6 @@ fn module_listing_with_comments_format() {
     assert_eq!(parts[1], "Documentation files");
 }
 
-// ============================================================================
-// Host Allow/Deny Test (structure)
-// ============================================================================
-
 #[test]
 fn host_restrictions_config_format() {
     // Document the hosts allow/deny configuration format
@@ -419,10 +379,6 @@ hosts deny = *
     assert!(config_example.contains("hosts allow"));
     assert!(config_example.contains("hosts deny"));
 }
-
-// ============================================================================
-// Integration Test Using External rsync (when available)
-// ============================================================================
 
 #[test]
 #[ignore = "requires rsync binary for interop testing"]
@@ -446,10 +402,6 @@ fn interop_with_system_rsync() {
     // 2. Use system rsync to connect and transfer files
     // 3. Verify the transfer was successful
 }
-
-// ============================================================================
-// Protocol Negotiation Tests (structure)
-// ============================================================================
 
 #[test]
 fn protocol_version_negotiation_sequence() {
@@ -488,10 +440,6 @@ fn protocol_older_version_compatibility() {
         assert!(parsed[1].parse::<u32>().is_ok(), "minor should be numeric");
     }
 }
-
-// ============================================================================
-// Configuration File Format Tests
-// ============================================================================
 
 #[test]
 fn config_file_structure() {
@@ -540,10 +488,6 @@ alice:secretpass
     }
 }
 
-// ============================================================================
-// Exit Code Tests
-// ============================================================================
-
 #[test]
 fn daemon_exit_codes() {
     // Document expected exit codes for daemon operations
@@ -560,10 +504,6 @@ fn daemon_exit_codes() {
     assert!(socket_error > 0);
 }
 
-// ============================================================================
-// Refuse Options Tests (structure)
-// ============================================================================
-
 #[test]
 fn refuse_options_config_format() {
     // Document the refuse options configuration
@@ -575,10 +515,6 @@ refuse options = delete checksum
 
     assert!(config.contains("refuse options"));
 }
-
-// ============================================================================
-// Bandwidth Limit Tests (structure)
-// ============================================================================
 
 #[test]
 fn bandwidth_limit_config_format() {
@@ -597,10 +533,6 @@ fn bandwidth_limit_config_format() {
     }
 }
 
-// ============================================================================
-// Timeout Configuration Tests
-// ============================================================================
-
 #[test]
 fn timeout_config_format() {
     // Document the timeout configuration
@@ -613,10 +545,6 @@ timeout = 300
     assert!(timeout > 0);
 }
 
-// ============================================================================
-// Module Path Resolution Tests
-// ============================================================================
-
 #[test]
 fn module_path_formats() {
     // Document valid module path formats
@@ -626,10 +554,6 @@ fn module_path_formats() {
         assert!(path.starts_with('/'), "module paths should be absolute");
     }
 }
-
-// ============================================================================
-// MOTD (Message of the Day) Tests
-// ============================================================================
 
 #[test]
 fn motd_format() {

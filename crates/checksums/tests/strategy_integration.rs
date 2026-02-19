@@ -8,10 +8,6 @@ use checksums::{
     Md5SeedConfig, Md5Strategy, SeedConfig, Sha256Strategy, Xxh3Strategy,
 };
 
-// ============================================================================
-// Protocol Version Selection Tests
-// ============================================================================
-
 #[test]
 fn protocol_28_uses_md4() {
     let strategy = ChecksumStrategySelector::for_protocol_version(28, 0);
@@ -41,10 +37,6 @@ fn protocol_32_uses_md5() {
     let strategy = ChecksumStrategySelector::for_protocol_version(32, 0);
     assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md5);
 }
-
-// ============================================================================
-// Seed Ordering Tests (CHECKSUM_SEED_FIX compatibility)
-// ============================================================================
 
 #[test]
 fn md5_proper_seed_order_matches_manual() {
@@ -90,10 +82,6 @@ fn proper_and_legacy_seed_orders_differ() {
 
     assert_ne!(proper.compute(data), legacy.compute(data));
 }
-
-// ============================================================================
-// Algorithm Consistency Tests
-// ============================================================================
 
 #[test]
 fn all_algorithms_produce_expected_digest_lengths() {
@@ -176,10 +164,6 @@ fn different_seeds_produce_different_digests_for_seeded_algorithms() {
     assert_ne!(md5_s1.compute(data), md5_s2.compute(data));
 }
 
-// ============================================================================
-// Digest Manipulation Tests
-// ============================================================================
-
 #[test]
 fn digest_truncation_works() {
     let strategy = Sha256Strategy::new();
@@ -207,10 +191,6 @@ fn digest_display_formatting() {
     let formatted = format!("{digest}");
     assert_eq!(formatted, "deadbeef");
 }
-
-// ============================================================================
-// Trait Object / Dynamic Dispatch Tests
-// ============================================================================
 
 #[test]
 fn boxed_strategies_work_polymorphically() {
@@ -259,10 +239,6 @@ fn strategies_are_send_and_sync() {
     assert_send_sync::<Sha256Strategy>();
     assert_send_sync::<Xxh3Strategy>();
 }
-
-// ============================================================================
-// Edge Case Tests
-// ============================================================================
 
 #[test]
 fn empty_input_produces_valid_digest() {
@@ -313,10 +289,6 @@ fn negative_seed_handled_correctly() {
     assert_ne!(digest, zero_seed_strategy.compute(data));
 }
 
-// ============================================================================
-// Algorithm Kind Tests
-// ============================================================================
-
 #[test]
 fn algorithm_kind_from_name_case_insensitive() {
     assert_eq!(
@@ -365,10 +337,6 @@ fn cryptographic_vs_non_cryptographic() {
     assert!(!ChecksumAlgorithmKind::Xxh3_128.is_cryptographic());
 }
 
-// ============================================================================
-// Concrete Factory Tests
-// ============================================================================
-
 #[test]
 fn concrete_factories_produce_correct_strategies() {
     let md4 = ChecksumStrategySelector::md4();
@@ -395,10 +363,6 @@ fn concrete_factories_produce_correct_strategies() {
     let xxh3_128 = ChecksumStrategySelector::xxh3_128(0);
     assert_eq!(xxh3_128.algorithm_kind(), ChecksumAlgorithmKind::Xxh3_128);
 }
-
-// ============================================================================
-// Interoperability Tests (verify against known values)
-// ============================================================================
 
 #[test]
 fn md5_matches_rfc_test_vector() {

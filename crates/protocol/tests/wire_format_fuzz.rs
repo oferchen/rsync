@@ -18,10 +18,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 
-// ============================================================================
-// Test Utilities: Pseudo-random byte generation
-// ============================================================================
-
 /// Generates a deterministic sequence of pseudo-random bytes for reproducible testing.
 fn generate_random_bytes(seed: u64, count: usize) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(count);
@@ -82,10 +78,6 @@ fn edge_case_byte_patterns() -> Vec<Vec<u8>> {
         vec![0xFF, 0xFE, 0x00, 0x00],       // Modern NDX negative extended
     ]
 }
-
-// ============================================================================
-// Module: Varint Decoder Fuzz Tests
-// ============================================================================
 
 mod varint_fuzz {
     use super::*;
@@ -174,10 +166,6 @@ mod varint_fuzz {
     }
 }
 
-// ============================================================================
-// Module: Varlong Decoder Fuzz Tests
-// ============================================================================
-
 mod varlong_fuzz {
     use super::*;
 
@@ -226,10 +214,6 @@ mod varlong_fuzz {
         }
     }
 }
-
-// ============================================================================
-// Module: NDX Decoder Fuzz Tests
-// ============================================================================
 
 mod ndx_fuzz {
     use super::*;
@@ -381,10 +365,6 @@ mod ndx_fuzz {
     }
 }
 
-// ============================================================================
-// Module: Message Frame Parser Fuzz Tests
-// ============================================================================
-
 mod message_frame_fuzz {
     use super::*;
 
@@ -490,10 +470,6 @@ mod message_frame_fuzz {
         }
     }
 }
-
-// ============================================================================
-// Module: Delta/Token Parser Fuzz Tests
-// ============================================================================
 
 mod delta_fuzz {
     use super::*;
@@ -605,10 +581,6 @@ mod delta_fuzz {
         }
     }
 }
-
-// ============================================================================
-// Module: Protocol Codec Fuzz Tests
-// ============================================================================
 
 mod protocol_codec_fuzz {
     use super::*;
@@ -741,10 +713,6 @@ mod protocol_codec_fuzz {
     }
 }
 
-// ============================================================================
-// Module: File Entry Decoder Fuzz Tests (flags parsing)
-// ============================================================================
-
 mod file_entry_fuzz {
     use super::*;
 
@@ -786,10 +754,6 @@ mod file_entry_fuzz {
         }
     }
 }
-
-// ============================================================================
-// Module: Combined Stress Tests
-// ============================================================================
 
 mod stress_tests {
     use super::*;
@@ -900,10 +864,6 @@ mod stress_tests {
         }
     }
 }
-
-// ============================================================================
-// Module: Error Type Verification
-// ============================================================================
 
 mod error_verification {
     use super::*;

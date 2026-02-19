@@ -40,10 +40,6 @@ macro_rules! read_golden_or_skip {
     }};
 }
 
-// ============================================================================
-// Protocol 32 Binary Negotiation Tests
-// ============================================================================
-
 #[test]
 fn test_protocol_32_client_hello_golden() {
     let golden = read_golden_or_skip!("protocol_32_binary", "client_hello.bin");
@@ -87,10 +83,6 @@ fn test_protocol_32_compatibility_exchange_golden() {
     );
 }
 
-// ============================================================================
-// Protocol 31 Binary Negotiation Tests
-// ============================================================================
-
 #[test]
 fn test_protocol_31_client_hello_golden() {
     let golden = read_golden_or_skip!("protocol_31_binary", "client_hello.bin");
@@ -113,10 +105,6 @@ fn test_protocol_31_server_response_golden() {
     );
 }
 
-// ============================================================================
-// Protocol 30 Binary Negotiation Tests
-// ============================================================================
-
 #[test]
 fn test_protocol_30_client_hello_golden() {
     let golden = read_golden_or_skip!("protocol_30_binary", "client_hello.bin");
@@ -138,10 +126,6 @@ fn test_protocol_30_server_response_golden() {
         golden.len()
     );
 }
-
-// ============================================================================
-// Protocol 29 Legacy ASCII Negotiation Tests
-// ============================================================================
 
 #[test]
 fn test_protocol_29_client_greeting_golden() {
@@ -191,10 +175,6 @@ fn test_protocol_29_server_response_golden() {
     );
 }
 
-// ============================================================================
-// Protocol 28 Legacy ASCII Negotiation Tests
-// ============================================================================
-
 #[test]
 fn test_protocol_28_client_greeting_golden() {
     let golden = read_golden_or_skip!("protocol_28_legacy", "client_greeting.txt");
@@ -240,10 +220,6 @@ fn test_protocol_28_server_response_golden() {
         response.trim()
     );
 }
-
-// ============================================================================
-// Diagnostic Tests
-// ============================================================================
 
 #[test]
 fn test_golden_files_inventory() {

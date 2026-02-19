@@ -13,10 +13,6 @@
 use protocol::{ProtocolVersion, negotiate_capabilities};
 use std::io::{Read, Write};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Writes a vstring (variable-length string) using upstream rsync's format.
 fn write_vstring(writer: &mut impl Write, s: &str) -> std::io::Result<()> {
     let bytes = s.as_bytes();
@@ -72,10 +68,6 @@ fn generate_peer_data(send_compression: bool) -> Vec<u8> {
     }
     data
 }
-
-// ============================================================================
-// Bidirectional Negotiation Flow Tests
-// ============================================================================
 
 #[test]
 fn test_bidirectional_negotiation_exchange() {
@@ -212,10 +204,6 @@ fn test_negotiation_without_compression() {
     assert!(!stdout.is_empty());
 }
 
-// ============================================================================
-// SSH Mode Bidirectional Flow Tests
-// ============================================================================
-
 #[test]
 fn test_ssh_mode_bidirectional_exchange() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
@@ -257,10 +245,6 @@ fn test_ssh_mode_bidirectional_exchange() {
     // Result should select from remote's list
     assert_eq!(result.checksum.as_str(), "xxh128");
 }
-
-// ============================================================================
-// Protocol Version Edge Cases
-// ============================================================================
 
 #[test]
 fn test_protocol_29_no_negotiation() {
@@ -310,10 +294,6 @@ fn test_do_negotiation_false_uses_defaults() {
     assert!(stdout.is_empty());
 }
 
-// ============================================================================
-// Vstring Format Tests
-// ============================================================================
-
 #[test]
 fn test_vstring_roundtrip_short() {
     let original = "md5 md4 sha1";
@@ -345,10 +325,6 @@ fn test_vstring_roundtrip_long() {
     let decoded = read_vstring(&mut reader).unwrap();
     assert_eq!(decoded, original);
 }
-
-// ============================================================================
-// End-to-End Negotiation Tests
-// ============================================================================
 
 /// Tests full round-trip negotiation with compression enabled.
 #[test]

@@ -460,10 +460,6 @@ mod tests {
         assert_eq!(result, ProtocolVersion::V31);
     }
 
-    // ========================================================================
-    // Protocol Version Negotiation v27-v32 Tests
-    // ========================================================================
-
     #[test]
     fn select_negotiates_v28_as_oldest_supported() {
         // Version 28 is the oldest supported version
@@ -526,10 +522,6 @@ mod tests {
         let result = select_highest_mutual([28_u8, 31]).unwrap();
         assert_eq!(result.as_u8(), 31);
     }
-
-    // ========================================================================
-    // Version Selection Edge Cases
-    // ========================================================================
 
     #[test]
     fn select_highest_when_multiple_duplicates() {
@@ -607,10 +599,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Interop Tests - Upstream Protocol Compatibility
-    // ========================================================================
-
     #[test]
     fn interop_upstream_rsync_34_offers_32() {
         // rsync 3.4.x offers protocol 32 as newest
@@ -660,10 +648,6 @@ mod tests {
         assert!(!v30.uses_legacy_ascii_negotiation());
         assert!(v30.uses_binary_negotiation());
     }
-
-    // ========================================================================
-    // Protocol Feature Checks After Selection
-    // ========================================================================
 
     #[test]
     fn selected_v28_has_correct_features() {

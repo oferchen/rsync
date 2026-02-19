@@ -212,10 +212,6 @@ impl GeneratorContext {
         self.full_paths.clear();
     }
 
-    // =========================================================================
-    // Helper Methods - Extracted from run() for modularity and testability
-    // =========================================================================
-
     /// Determines if input multiplex should be activated based on mode and protocol.
     ///
     /// The activation threshold differs by mode:
@@ -1201,10 +1197,6 @@ pub struct GeneratorStats {
     pub flist_xfertime_ms: u64,
 }
 
-// ============================================================================
-// ItemFlags - Encapsulates item flags parsing from receiver
-// ============================================================================
-
 /// Item flags received from the receiver indicating transfer requirements.
 ///
 /// The generator reads these flags to determine how to handle each file request.
@@ -1336,10 +1328,6 @@ impl ItemFlags {
     }
 }
 
-// ============================================================================
-// Signature Block Reading - Encapsulates reading checksum blocks from receiver
-// ============================================================================
-
 /// Reads signature blocks from the receiver.
 ///
 /// After reading sum_head, this reads the rolling and strong checksums for each block.
@@ -1379,10 +1367,6 @@ pub fn read_signature_blocks<R: Read>(
 
     Ok(blocks)
 }
-
-// ============================================================================
-// Timing Helpers - Statistics calculation utilities
-// ============================================================================
 
 /// Calculates duration in milliseconds between two optional timestamps.
 ///
@@ -1776,10 +1760,6 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
 
-    // ========================================================================
-    // Test Helpers
-    // ========================================================================
-
     /// Creates a default `ServerConfig` for testing.
     fn test_config() -> ServerConfig {
         ServerConfig {
@@ -1931,20 +1911,12 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // GeneratorContext Creation Tests
-    // ========================================================================
-
     #[test]
     fn generator_context_creation() {
         let (_handshake, ctx) = test_generator();
         assert_eq!(ctx.protocol().as_u8(), 32);
         assert!(ctx.file_list().is_empty());
     }
-
-    // ========================================================================
-    // File List Send Tests
-    // ========================================================================
 
     #[test]
     fn send_empty_file_list() {
@@ -2007,10 +1979,6 @@ mod tests {
         assert_eq!(receiver.file_list()[1].name(), "file2.txt");
     }
 
-    // ========================================================================
-    // Filter Parsing Tests
-    // ========================================================================
-
     #[test]
     fn parse_received_filters_empty() {
         let (_handshake, ctx) = test_generator();
@@ -2071,10 +2039,6 @@ mod tests {
         // Clear rule should have removed previous rules
         assert!(!filter_set.is_empty()); // Only the include rule remains
     }
-
-    // ========================================================================
-    // Filter Application Tests
-    // ========================================================================
 
     #[test]
     fn filter_application_excludes_files() {
@@ -2177,10 +2141,6 @@ mod tests {
         assert_eq!(count, 3);
         assert_eq!(ctx.file_list().len(), 3);
     }
-
-    // ========================================================================
-    // Delta Script Tests
-    // ========================================================================
 
     #[test]
     fn script_to_wire_delta_converts_literals() {
@@ -2416,10 +2376,6 @@ mod tests {
         assert_eq!(LARGE_FILE_WARNING_THRESHOLD, 8 * 1024 * 1024 * 1024);
     }
 
-    // ========================================================================
-    // ItemFlags Tests
-    // ========================================================================
-
     #[test]
     fn item_flags_from_raw() {
         let flags = ItemFlags::from_raw(0x8000);
@@ -2528,10 +2484,6 @@ mod tests {
         assert_eq!(ItemFlags::ITEM_REPORT_OWNER, 0x0080);
         assert_eq!(ItemFlags::ITEM_REPORT_GROUP, 0x0040);
     }
-
-    // ========================================================================
-    // read_signature_blocks Tests
-    // ========================================================================
 
     #[test]
     fn read_signature_blocks_empty() {
@@ -2658,10 +2610,6 @@ mod tests {
         assert!(SumHead::new(0, 0, 0, 0).is_empty());
         assert!(!SumHead::new(1, 1024, 16, 0).is_empty());
     }
-
-    // ========================================================================
-    // Helper Method Tests - Tests for extracted helper methods
-    // ========================================================================
 
     #[test]
     fn should_activate_input_multiplex_client_mode_protocol_28() {

@@ -1663,9 +1663,6 @@ struct PipelineSetup {
 }
 
 // ============================================================================
-// ============================================================================
-// Failed Directory Tracking
-// ============================================================================
 
 /// Tracks directories that failed to create.
 ///
@@ -1713,10 +1710,6 @@ impl FailedDirectories {
         self.paths.len()
     }
 }
-
-// ============================================================================
-// Incremental File List Receiver
-// ============================================================================
 
 /// Streaming file list receiver that yields entries as they arrive from the wire.
 ///
@@ -1986,10 +1979,6 @@ pub struct SenderStats {
     pub flist_xfertime_ms: Option<u64>,
 }
 
-// ============================================================================
-// Signature Header (SumHead) - Encapsulates rsync's sum_head structure
-// ============================================================================
-
 /// Signature header for delta transfer.
 ///
 /// Represents the `sum_head` structure from upstream rsync's rsync.h.
@@ -2086,10 +2075,6 @@ impl SumHead {
         })
     }
 }
-
-// ============================================================================
-// Sender Attributes - Encapsulates attributes echoed back by the sender
-// ============================================================================
 
 /// Attributes echoed back by the sender after receiving a file request.
 ///
@@ -2284,10 +2269,6 @@ impl SenderAttrs {
         })
     }
 }
-
-// ============================================================================
-// Basis File Finder - Encapsulates exact match and fuzzy matching logic
-// ============================================================================
 
 /// Result of searching for a basis file via [`find_basis_file_with_config`].
 ///
@@ -3059,10 +3040,6 @@ mod tests {
         assert_eq!(sparse.pending(), 150);
     }
 
-    // ============================================================================
-    // SumHead tests
-    // ============================================================================
-
     #[test]
     fn sum_head_new_creates_with_correct_values() {
         let sum_head = SumHead::new(100, 1024, 16, 512);
@@ -3157,10 +3134,6 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
     }
-
-    // ============================================================================
-    // SenderAttrs tests
-    // ============================================================================
 
     #[test]
     fn sender_attrs_read_protocol_28_returns_default_iflags() {
@@ -3351,10 +3324,6 @@ mod tests {
         assert_eq!(ndx, large_index);
         assert_eq!(attrs.iflags, 0x8000);
     }
-
-    // ============================================================================
-    // BasisFileResult tests
-    // ============================================================================
 
     #[test]
     fn basis_file_result_is_empty_when_no_signature() {
@@ -3584,10 +3553,6 @@ mod tests {
         assert_eq!(cursor.position(), 0);
     }
 
-    // ============================================================================
-    // Delta apply edge case tests
-    // ============================================================================
-
     #[test]
     fn apply_whole_file_delta_handles_empty_literals() {
         use tempfile::TempDir;
@@ -3791,10 +3756,6 @@ mod tests {
         assert!(result.iter().all(|&b| b == 0));
     }
 
-    // ============================================================================
-    // IncrementalFileListReceiver tests
-    // ============================================================================
-
     #[test]
     fn incremental_receiver_reads_entries() {
         // Create test data with a simple file list
@@ -3980,10 +3941,6 @@ mod tests {
             ctx.incremental_file_list_receiver(Cursor::new(data))
         }
 
-        // -----------------------------------------------------------------
-        // try_read_one: basic contract
-        // -----------------------------------------------------------------
-
         #[test]
         fn try_read_one_returns_false_when_finished() {
             // Create a receiver that's already marked as finished
@@ -4087,10 +4044,6 @@ mod tests {
             assert!(receiver.is_finished_reading());
         }
 
-        // -----------------------------------------------------------------
-        // try_read_one: interaction with dependency tracking
-        // -----------------------------------------------------------------
-
         #[test]
         fn try_read_one_child_before_parent_stays_pending() {
             // Child file arrives before its parent directory.
@@ -4166,10 +4119,6 @@ mod tests {
             assert_eq!(receiver.pending_count(), 0);
         }
 
-        // -----------------------------------------------------------------
-        // try_read_one: interleaving with next_ready / drain_ready
-        // -----------------------------------------------------------------
-
         #[test]
         fn try_read_one_interleaved_with_next_ready() {
             let entries = vec![
@@ -4224,10 +4173,6 @@ mod tests {
             assert!(!receiver.try_read_one().unwrap());
         }
 
-        // -----------------------------------------------------------------
-        // try_read_one: directory entries
-        // -----------------------------------------------------------------
-
         #[test]
         fn try_read_one_directory_and_children() {
             let entries = vec![
@@ -4256,10 +4201,6 @@ mod tests {
             assert_eq!(names, vec!["mydir", "mydir/alpha.txt", "mydir/beta.txt"]);
         }
 
-        // -----------------------------------------------------------------
-        // try_read_one: is_empty semantics
-        // -----------------------------------------------------------------
-
         #[test]
         fn try_read_one_is_empty_tracks_state_correctly() {
             let entries = vec![FileEntry::new_file("f.txt".into(), 1, 0o644)];
@@ -4285,10 +4226,6 @@ mod tests {
             assert!(receiver.is_empty());
         }
 
-        // -----------------------------------------------------------------
-        // try_read_one: symlink entries
-        // -----------------------------------------------------------------
-
         #[test]
         fn try_read_one_reads_symlink_entry() {
             let handshake = test_handshake();
@@ -4313,10 +4250,6 @@ mod tests {
             assert!(entry.is_symlink());
             assert_eq!(entry.name(), "link.txt");
         }
-
-        // -----------------------------------------------------------------
-        // try_read_one: entries_read counter
-        // -----------------------------------------------------------------
 
         #[test]
         fn try_read_one_increments_entries_read() {
@@ -4344,10 +4277,6 @@ mod tests {
             assert_eq!(receiver.entries_read(), 3);
         }
 
-        // -----------------------------------------------------------------
-        // try_read_one: mixed with collect_sorted
-        // -----------------------------------------------------------------
-
         #[test]
         fn try_read_one_partial_then_collect_sorted() {
             let entries = vec![
@@ -4372,10 +4301,6 @@ mod tests {
             assert_eq!(sorted[1].name(), "m.txt");
         }
 
-        // -----------------------------------------------------------------
-        // try_read_one: mark_finished
-        // -----------------------------------------------------------------
-
         #[test]
         fn mark_finished_prevents_further_reads() {
             let entries = vec![
@@ -4397,10 +4322,6 @@ mod tests {
             assert!(receiver.is_finished_reading());
             assert_eq!(receiver.entries_read(), 1);
         }
-
-        // -----------------------------------------------------------------
-        // try_read_one: stats accessor
-        // -----------------------------------------------------------------
 
         #[test]
         fn try_read_one_stats_are_accessible() {
