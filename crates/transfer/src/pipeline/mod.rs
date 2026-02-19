@@ -63,6 +63,7 @@ pub mod async_signature;
 pub mod messages;
 mod pending;
 pub mod receiver;
+pub mod spsc;
 mod state;
 
 pub use pending::PendingTransfer;
