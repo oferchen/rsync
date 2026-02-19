@@ -39,7 +39,7 @@ use engine::signature::FileSignature;
 use protocol::ProtocolVersion;
 use protocol::codec::NdxCodec;
 
-use std::sync::mpsc::{Receiver, SyncSender};
+use flume::{Receiver, Sender};
 
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
@@ -473,7 +473,7 @@ pub fn process_file_response_streaming<R: Read>(
     pending: PendingTransfer,
     ctx: &ResponseContext<'_>,
     checksum_verifier: &mut ChecksumVerifier,
-    file_tx: &SyncSender<FileMessage>,
+    file_tx: &Sender<FileMessage>,
     buf_return_rx: &Receiver<Vec<u8>>,
     file_entry_index: usize,
     file_entry: Option<FileEntry>,
@@ -530,7 +530,7 @@ pub fn process_file_response_streaming<R: Read>(
     let mut total_bytes: u64 = 0;
 
     // Helper: send abort on error and propagate.
-    let send_abort = |tx: &SyncSender<FileMessage>, reason: String| {
+    let send_abort = |tx: &Sender<FileMessage>, reason: String| {
         let _ = tx.send(FileMessage::Abort { reason });
     };
 
