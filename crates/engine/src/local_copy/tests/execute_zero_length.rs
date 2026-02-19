@@ -12,10 +12,6 @@
 // that handle file content, so it's critical to ensure metadata operations
 // and file creation still work correctly.
 
-// ============================================================================
-// Basic Empty File Transfer Tests
-// ============================================================================
-
 #[test]
 fn execute_empty_file_basic_transfer() {
     let temp = tempdir().expect("tempdir");
@@ -85,10 +81,6 @@ fn execute_empty_file_dry_run_does_not_create_file() {
     assert_eq!(summary.files_copied(), 1, "dry run should report file would be copied");
     assert!(!destination.exists(), "dry run should not create destination");
 }
-
-// ============================================================================
-// Metadata Preservation Tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -203,10 +195,6 @@ fn execute_empty_file_preserves_both_permissions_and_timestamp() {
     );
 }
 
-// ============================================================================
-// Delta Transfer Tests
-// ============================================================================
-
 #[test]
 fn execute_empty_file_delta_transfer_from_empty() {
     let temp = tempdir().expect("tempdir");
@@ -299,10 +287,6 @@ fn execute_empty_file_delta_transfer_to_nonempty() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"new content");
     assert_eq!(summary.bytes_copied(), 11);
 }
-
-// ============================================================================
-// Multiple Empty Files Tests
-// ============================================================================
 
 #[test]
 fn execute_multiple_empty_files_recursive() {
@@ -411,10 +395,6 @@ fn execute_nested_directories_with_empty_files() {
     assert_eq!(fs::read(dest_root.join("level1/l1_empty.txt")).expect("read"), b"");
     assert_eq!(fs::read(dest_root.join("level1/level2/l2_empty.txt")).expect("read"), b"");
 }
-
-// ============================================================================
-// Interaction with Other Options
-// ============================================================================
 
 #[test]
 fn execute_empty_file_with_checksum_mode() {
@@ -610,10 +590,6 @@ fn execute_empty_file_preserves_permissions_with_chmod() {
     // Should have 0o640 from source + execute bits added
     assert_eq!(dest_mode, 0o751, "chmod should be applied to empty file permissions");
 }
-
-// ============================================================================
-// Edge Cases and Boundary Conditions
-// ============================================================================
 
 #[test]
 fn execute_empty_file_with_bytes_transferred_counter() {

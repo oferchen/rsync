@@ -746,10 +746,6 @@ mod tests {
         parse_args(iter)
     }
 
-    // ========================================================================
-    // Delete Mode Conflict Tests
-    // ========================================================================
-
     #[test]
     fn delete_modes_are_mutually_exclusive_two_flags() {
         // --delete-before and --delete-after conflict
@@ -818,10 +814,6 @@ mod tests {
         assert!(parsed.delete_mode.is_enabled());
     }
 
-    // ========================================================================
-    // Tri-State Flag Tests (--perms/--no-perms pattern)
-    // ========================================================================
-
     #[test]
     fn perms_flag_only() {
         let result = parse_test_args(["--perms", "src/", "dst/"]);
@@ -881,10 +873,6 @@ mod tests {
         assert_eq!(parsed.perms, Some(true));
     }
 
-    // ========================================================================
-    // Negative-First Tri-State Flags (--prune-empty-dirs pattern)
-    // ========================================================================
-
     #[test]
     fn prune_empty_dirs_flag() {
         let result = parse_test_args(["--prune-empty-dirs", "src/", "dst/"]);
@@ -909,10 +897,6 @@ mod tests {
         assert_eq!(parsed.omit_link_times, Some(true));
     }
 
-    // ========================================================================
-    // List-Only Implies Dry-Run
-    // ========================================================================
-
     #[test]
     fn list_only_enables_dry_run() {
         let result = parse_test_args(["--list-only", "src/", "dst/"]);
@@ -930,10 +914,6 @@ mod tests {
         assert!(parsed.dry_run);
         assert!(!parsed.list_only);
     }
-
-    // ========================================================================
-    // Archive Mode Tests
-    // ========================================================================
 
     #[test]
     fn archive_mode_sets_recursive() {
@@ -953,10 +933,6 @@ mod tests {
         // The actual behavior depends on implementation
     }
 
-    // ========================================================================
-    // Backup Flag Tests
-    // ========================================================================
-
     #[test]
     fn backup_dir_implies_backup() {
         let result = parse_test_args(["--backup-dir=/tmp/backup", "src/", "dst/"]);
@@ -972,10 +948,6 @@ mod tests {
         let parsed = result.unwrap();
         assert!(parsed.backup);
     }
-
-    // ========================================================================
-    // Single-Occurrence Rules
-    // ========================================================================
 
     #[test]
     fn usermap_twice_fails() {
@@ -993,10 +965,6 @@ mod tests {
         assert!(err.to_string().contains("groupmap"));
     }
 
-    // ========================================================================
-    // Empty Value Handling
-    // ========================================================================
-
     #[test]
     fn empty_rsh_uses_env() {
         // Empty --rsh should be filtered out
@@ -1006,10 +974,6 @@ mod tests {
         // Should fall back to RSYNC_RSH env or None
         // (exact behavior depends on env)
     }
-
-    // ========================================================================
-    // Verbosity Flag Tests
-    // ========================================================================
 
     #[test]
     fn verbose_flag() {
@@ -1036,10 +1000,6 @@ mod tests {
         assert_eq!(parsed.verbosity, 0);
     }
 
-    // ========================================================================
-    // Compression Tests
-    // ========================================================================
-
     #[test]
     fn compress_flag() {
         let result = parse_test_args(["-z", "src/", "dst/"]);
@@ -1055,10 +1015,6 @@ mod tests {
         let parsed = result.unwrap();
         assert!(parsed.no_compress);
     }
-
-    // ========================================================================
-    // Port Validation
-    // ========================================================================
 
     #[test]
     fn valid_port() {
@@ -1076,10 +1032,6 @@ mod tests {
         assert_eq!(parsed.daemon_port, Some(65535));
     }
 
-    // ========================================================================
-    // Help and Version
-    // ========================================================================
-
     #[test]
     fn help_flag() {
         let result = parse_test_args(["--help"]);
@@ -1096,10 +1048,6 @@ mod tests {
         assert!(parsed.show_version);
     }
 
-    // ========================================================================
-    // Checksum Tests
-    // ========================================================================
-
     #[test]
     fn checksum_flag() {
         let result = parse_test_args(["-c", "src/", "dst/"]);
@@ -1107,10 +1055,6 @@ mod tests {
         let parsed = result.unwrap();
         assert_eq!(parsed.checksum, Some(true));
     }
-
-    // ========================================================================
-    // Times Tests
-    // ========================================================================
 
     #[test]
     fn times_flag() {

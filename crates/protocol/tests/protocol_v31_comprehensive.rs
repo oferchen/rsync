@@ -30,10 +30,6 @@ use protocol::{
 };
 use std::io::Cursor;
 
-// ============================================================================
-// 1. Wire Format Tests - Protocol 31 Specific Encoding
-// ============================================================================
-
 mod wire_format {
     use super::*;
 
@@ -161,10 +157,6 @@ mod wire_format {
         );
     }
 }
-
-// ============================================================================
-// 2. Compatibility Flags Tests - v31 Specific Flags
-// ============================================================================
 
 mod compatibility_flags {
     use super::*;
@@ -311,10 +303,6 @@ mod compatibility_flags {
     }
 }
 
-// ============================================================================
-// 3. Handshake Scenario Tests - v31 Peer Interactions
-// ============================================================================
-
 mod handshake_scenarios {
     use super::*;
 
@@ -426,10 +414,6 @@ mod handshake_scenarios {
     }
 }
 
-// ============================================================================
-// 4. Incremental Recursion Tests - CF_INC_RECURSE with v31
-// ============================================================================
-
 mod incremental_recursion {
     use super::*;
 
@@ -500,10 +484,6 @@ mod incremental_recursion {
         assert_eq!(flag, CompatibilityFlags::INC_RECURSE);
     }
 }
-
-// ============================================================================
-// 5. Feature Boundary Tests - v31 at Protocol Version Boundaries
-// ============================================================================
 
 mod feature_boundaries {
     use super::*;
@@ -610,10 +590,6 @@ mod feature_boundaries {
     }
 }
 
-// ============================================================================
-// 6. Interoperability Tests - v31 with Various Peers
-// ============================================================================
-
 mod interoperability {
     use super::*;
 
@@ -702,10 +678,6 @@ mod interoperability {
     }
 }
 
-// ============================================================================
-// 7. Error Handling Tests
-// ============================================================================
-
 mod error_handling {
     use super::*;
 
@@ -759,10 +731,6 @@ mod error_handling {
         }
     }
 }
-
-// ============================================================================
-// 8. Comparison and Ordering Tests
-// ============================================================================
 
 mod comparison_ordering {
     use super::*;
@@ -837,10 +805,6 @@ mod comparison_ordering {
     }
 }
 
-// ============================================================================
-// 9. Supported Versions Tests
-// ============================================================================
-
 mod supported_versions {
     use super::*;
 
@@ -880,10 +844,6 @@ mod supported_versions {
         assert!(31 <= newest);
     }
 }
-
-// ============================================================================
-// 10. Consistency and Invariant Tests
-// ============================================================================
 
 mod consistency {
     use super::*;

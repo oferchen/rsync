@@ -10,10 +10,6 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
-// =============================================================================
-// Constants for Large File Testing
-// =============================================================================
-
 /// 4GB boundary - the critical threshold for 32-bit overflow
 const FOUR_GB: u64 = 4 * 1024 * 1024 * 1024;
 
@@ -31,10 +27,6 @@ const ONE_TB: u64 = 1024 * 1024 * 1024 * 1024;
 
 /// 100TB - tests multi-petabyte edge cases
 const HUNDRED_TB: u64 = 100 * ONE_TB;
-
-// =============================================================================
-// File Size Representation Tests
-// =============================================================================
 
 mod file_size_representation {
     use super::*;
@@ -129,10 +121,6 @@ mod file_size_representation {
         }
     }
 }
-
-// =============================================================================
-// Varint/Varlong Encoding Tests for Large File Sizes
-// =============================================================================
 
 mod varint_large_files {
     use super::*;
@@ -264,10 +252,6 @@ mod varint_large_files {
     }
 }
 
-// =============================================================================
-// Delta Wire Format Tests for Large Files
-// =============================================================================
-
 mod delta_wire_format_large_files {
     use super::*;
     use protocol::wire::{CHUNK_SIZE, DeltaOp, write_token_literal, write_token_stream};
@@ -391,10 +375,6 @@ mod delta_wire_format_large_files {
     }
 }
 
-// =============================================================================
-// File List Entry Tests for Large Files
-// =============================================================================
-
 mod file_list_large_files {
     use super::*;
     use protocol::flist::FileEntry;
@@ -445,10 +425,6 @@ mod file_list_large_files {
         }
     }
 }
-
-// =============================================================================
-// Statistics Accumulation Tests
-// =============================================================================
 
 mod statistics_large_files {
     use super::*;
@@ -508,10 +484,6 @@ mod statistics_large_files {
         assert!(total_bytes < u64::MAX / 2);
     }
 }
-
-// =============================================================================
-// Unsigned File Size Tests
-// =============================================================================
 
 mod unsigned_file_sizes {
     use super::*;

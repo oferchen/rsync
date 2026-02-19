@@ -11,10 +11,6 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
-// =============================================================================
-// Dir-Merge Modifier Combination Tests
-// =============================================================================
-
 #[test]
 fn dir_merge_multiple_modifiers() {
     let dir = TempDir::new().unwrap();
@@ -116,10 +112,6 @@ fn dir_merge_no_separator() {
     assert_eq!(rules[0].pattern(), ".rsync-filter");
 }
 
-// =============================================================================
-// Merge Rule Modifier Tests (for comparison)
-// =============================================================================
-
 #[test]
 fn merge_with_modifiers_ignored() {
     let dir = TempDir::new().unwrap();
@@ -160,10 +152,6 @@ fn merge_relative_path_with_subdirs() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].pattern(), "config/filters/rules.txt");
 }
-
-// =============================================================================
-// Error Handling and Edge Cases
-// =============================================================================
 
 #[test]
 fn dir_merge_empty_filename() {
@@ -269,10 +257,6 @@ fn dir_merge_pattern_with_path_separator() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].pattern(), "subdir/.rsync-filter");
 }
-
-// =============================================================================
-// Integration with Other Rule Types
-// =============================================================================
 
 #[test]
 fn dir_merge_between_include_exclude() {
@@ -385,10 +369,6 @@ fn dir_merge_after_clear() {
     assert_eq!(rules[3].action(), FilterAction::Include);
 }
 
-// =============================================================================
-// Modifier Order Independence Tests
-// =============================================================================
-
 #[test]
 fn dir_merge_modifiers_different_order_same_result() {
     let dir = TempDir::new().unwrap();
@@ -421,10 +401,6 @@ fn dir_merge_modifiers_different_order_same_result() {
         assert!(rules[0].is_no_inherit(), "Failed for pattern: {pattern}");
     }
 }
-
-// =============================================================================
-// FilterSet Compilation with Dir-Merge Tests
-// =============================================================================
 
 #[test]
 fn filter_set_skips_dir_merge_during_compilation() {
@@ -480,10 +456,6 @@ fn filter_set_dir_merge_with_cvs_patterns() {
     assert!(set.allows(Path::new("readme.txt"), false));
 }
 
-// =============================================================================
-// Pattern Preservation Tests
-// =============================================================================
-
 #[test]
 fn dir_merge_preserves_pattern_case() {
     let dir = TempDir::new().unwrap();
@@ -507,10 +479,6 @@ fn dir_merge_preserves_special_chars() {
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules[0].pattern(), ".rsync-filter_v2.0");
 }
-
-// =============================================================================
-// Comments and Whitespace Tests
-// =============================================================================
 
 #[test]
 fn dir_merge_with_inline_comment() {

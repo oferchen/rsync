@@ -1,10 +1,6 @@
 use super::common::*;
 use super::*;
 
-// =============================================================================
-// Basic timeout argument parsing tests
-// =============================================================================
-
 #[test]
 fn timeout_argument_zero_disables_timeout() {
     let timeout = parse_timeout_argument(OsStr::new("0")).expect("parse timeout");
@@ -22,10 +18,6 @@ fn timeout_argument_negative_reports_error() {
     let error = parse_timeout_argument(OsStr::new("-1")).unwrap_err();
     assert!(error.to_string().contains("timeout must be non-negative"));
 }
-
-// =============================================================================
-// Comprehensive timeout argument parsing tests
-// =============================================================================
 
 #[test]
 fn timeout_argument_one_second() {
@@ -94,10 +86,6 @@ fn timeout_argument_with_surrounding_whitespace() {
     let timeout = parse_timeout_argument(OsStr::new("   30   ")).expect("parse timeout");
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(30));
 }
-
-// =============================================================================
-// Error case tests for timeout argument parsing
-// =============================================================================
 
 #[test]
 fn timeout_argument_empty_reports_error() {
@@ -173,10 +161,6 @@ fn timeout_argument_special_characters_report_error() {
         );
     }
 }
-
-// =============================================================================
-// TransferTimeout enum behavior tests
-// =============================================================================
 
 #[test]
 fn transfer_timeout_default_returns_default_duration() {
@@ -255,10 +239,6 @@ fn transfer_timeout_clone_and_copy() {
     assert_eq!(original, copied);
 }
 
-// =============================================================================
-// CLI argument integration tests for --timeout
-// =============================================================================
-
 #[test]
 fn cli_timeout_with_equals_syntax() {
     let parsed = parse_args(["rsync", "--timeout=30", "src/", "dst/"]).expect("parse");
@@ -304,10 +284,6 @@ fn cli_timeout_default_is_none() {
     let parsed = parse_args(["rsync", "src/", "dst/"]).expect("parse");
     assert_eq!(parsed.timeout, None);
 }
-
-// =============================================================================
-// CLI argument integration tests for --contimeout
-// =============================================================================
 
 #[test]
 fn cli_contimeout_with_equals_syntax() {
@@ -359,10 +335,6 @@ fn cli_contimeout_default_is_none() {
     assert_eq!(parsed.contimeout, None);
 }
 
-// =============================================================================
-// Combined timeout and contimeout tests
-// =============================================================================
-
 #[test]
 fn cli_both_timeout_and_contimeout() {
     let parsed =
@@ -384,10 +356,6 @@ fn cli_contimeout_without_timeout() {
     assert_eq!(parsed.timeout, None);
     assert_eq!(parsed.contimeout, Some(OsString::from("10")));
 }
-
-// =============================================================================
-// Edge cases for timeout values
-// =============================================================================
 
 #[test]
 fn timeout_argument_boundary_one() {
@@ -424,10 +392,6 @@ fn timeout_argument_week_boundary() {
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(604800));
 }
 
-// =============================================================================
-// Duration conversion tests
-// =============================================================================
-
 #[test]
 fn transfer_timeout_effective_with_various_defaults() {
     let timeout = TransferTimeout::Default;
@@ -459,10 +423,6 @@ fn transfer_timeout_disabled_ignores_default() {
     }
 }
 
-// =============================================================================
-// Error message quality tests
-// =============================================================================
-
 #[test]
 fn timeout_error_includes_invalid_value_in_message() {
     let error = parse_timeout_argument(OsStr::new("invalid")).unwrap_err();
@@ -492,10 +452,6 @@ fn timeout_overflow_error_is_descriptive() {
         "error should mention overflow: {message}"
     );
 }
-
-// =============================================================================
-// Exit code tests
-// =============================================================================
 
 #[test]
 fn timeout_parse_error_has_exit_code_1() {

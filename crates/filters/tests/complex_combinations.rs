@@ -9,10 +9,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Multi-Level Pattern Hierarchies
-// ============================================================================
-
 /// Verifies deeply nested include/exclude patterns work correctly.
 #[test]
 fn deeply_nested_include_exclude_hierarchy() {
@@ -93,10 +89,6 @@ fn same_pattern_different_actions() {
     assert!(set.allows(Path::new("app.log"), false));
 }
 
-// ============================================================================
-// Combined Include/Exclude/Protect/Risk
-// ============================================================================
-
 /// Verifies all four rule types work together correctly.
 #[test]
 fn all_rule_types_combined() {
@@ -170,10 +162,6 @@ fn included_but_at_risk() {
     assert!(!set.allows_deletion(Path::new("important.txt"), false));
 }
 
-// ============================================================================
-// Clear Rule Interactions
-// ============================================================================
-
 /// Verifies clear properly resets complex rule sets.
 #[test]
 fn clear_resets_complex_rules() {
@@ -241,10 +229,6 @@ fn multiple_clears_with_intervening_rules() {
     assert!(!set.allows(Path::new("file.c"), false));
 }
 
-// ============================================================================
-// Side-Specific Rule Combinations
-// ============================================================================
-
 /// Verifies complex sender/receiver rule interactions.
 #[test]
 fn complex_sender_receiver_interactions() {
@@ -296,10 +280,6 @@ fn show_hide_receiver_independence() {
     assert!(!set.allows_deletion(Path::new("data.public"), false));
 }
 
-// ============================================================================
-// Perishable Rule Combinations
-// ============================================================================
-
 /// Verifies perishable rules in complex combinations.
 #[test]
 fn perishable_in_complex_combinations() {
@@ -349,10 +329,6 @@ fn perishable_exclude_with_protect() {
     // temp/keep: protected, not deletable
     assert!(!set.allows_deletion(Path::new("temp/keep/important.txt"), false));
 }
-
-// ============================================================================
-// Pattern Interaction Tests
-// ============================================================================
 
 /// Verifies anchored and unanchored patterns interact correctly.
 #[test]
@@ -411,10 +387,6 @@ fn directory_file_pattern_interaction() {
     // logs non-tmp files also included by rule 3
     assert!(set.allows(Path::new("logs/app.log"), false));
 }
-
-// ============================================================================
-// Real-World Complex Scenarios
-// ============================================================================
 
 /// Verifies Rust project filter pattern.
 #[test]
@@ -561,10 +533,6 @@ fn monorepo_filter() {
     // For dist exclusion to work, it must come before package includes
     assert!(set.allows(Path::new("packages/utils/dist/index.js"), false));
 }
-
-// ============================================================================
-// Stress Tests
-// ============================================================================
 
 /// Verifies handling of many rules.
 #[test]

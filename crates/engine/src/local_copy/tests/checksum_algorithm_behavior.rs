@@ -11,10 +11,6 @@
 // - Protocol >= 30: MD5 by default, XXH64/XXH3 when negotiated
 // - Protocol >= 31: XXH3 preferred when both peers support it
 
-// ============================================================================
-// Checksum Algorithm Tests - All Supported Hash Types
-// ============================================================================
-
 /// Tests that MD4 algorithm correctly identifies identical files.
 #[test]
 fn checksum_md4_skips_identical_files() {
@@ -552,10 +548,6 @@ fn checksum_xxh3_128_transfers_different_files() {
     );
 }
 
-// ============================================================================
-// Checksum vs Mtime Comparison Tests
-// ============================================================================
-
 /// Tests that checksum mode ignores mtime for identical content.
 #[test]
 fn checksum_ignores_mtime_when_content_matches() {
@@ -684,10 +676,6 @@ fn without_checksum_mtime_match_skips_even_with_different_content() {
     );
 }
 
-// ============================================================================
-// Checksum Verification of Transferred Files
-// ============================================================================
-
 /// Tests that after transfer, content is verified correct.
 #[test]
 fn checksum_transfer_produces_correct_content() {
@@ -793,10 +781,6 @@ fn checksum_large_file_differ_at_end() {
     );
 }
 
-// ============================================================================
-// Empty File Tests
-// ============================================================================
-
 /// Tests that checksum comparison handles empty files correctly.
 #[test]
 fn checksum_empty_files_are_identical() {
@@ -880,10 +864,6 @@ fn checksum_all_algorithms_agree_on_empty_files() {
     }
 }
 
-// ============================================================================
-// Directory Recursive Tests with Checksum
-// ============================================================================
-
 /// Tests checksum mode with recursive directory copy.
 #[test]
 fn checksum_recursive_directory_mixed_files() {
@@ -941,10 +921,6 @@ fn checksum_recursive_directory_mixed_files() {
         b"brand new"
     );
 }
-
-// ============================================================================
-// Checksum with Other Flags
-// ============================================================================
 
 /// Tests checksum with --ignore-times flag.
 #[test]
@@ -1018,10 +994,6 @@ fn no_checksum_falls_back_to_mtime() {
         b"bbbbbbb"
     );
 }
-
-// ============================================================================
-// Algorithm Consistency Tests
-// ============================================================================
 
 /// Tests that all algorithms produce consistent skip/copy decisions.
 #[test]

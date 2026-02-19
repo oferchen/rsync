@@ -34,10 +34,6 @@ fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
-// ============================================================================
-// Protocol Version Selection Tests
-// ============================================================================
-
 #[test]
 fn protocol_27_selects_md4() {
     let strategy = ChecksumStrategySelector::for_protocol_version(27, 0);
@@ -77,10 +73,6 @@ fn explicit_md4_selection() {
     assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md4);
     assert_eq!(strategy.digest_len(), 16);
 }
-
-// ============================================================================
-// RFC 1320 Compliance Tests
-// ============================================================================
 // These tests verify that our MD4 implementation matches the official
 // RFC 1320 specification, ensuring compatibility with upstream rsync.
 
@@ -168,10 +160,6 @@ fn rfc1320_numeric_repeated() {
     );
 }
 
-// ============================================================================
-// Strategy Pattern Integration Tests
-// ============================================================================
-
 #[test]
 fn strategy_produces_correct_digest_length() {
     let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
@@ -221,10 +209,6 @@ fn strategy_different_inputs_different_outputs() {
 
     assert_ne!(d1, d2, "Different inputs should produce different digests");
 }
-
-// ============================================================================
-// Streaming vs One-Shot Consistency Tests
-// ============================================================================
 
 #[test]
 fn streaming_matches_oneshot_empty() {
@@ -294,10 +278,6 @@ fn streaming_various_chunk_sizes() {
     }
 }
 
-// ============================================================================
-// Protocol Version Boundary Tests
-// ============================================================================
-
 #[test]
 fn protocol_version_boundary_at_30() {
     let v29 = ChecksumStrategySelector::for_protocol_version(29, 0);
@@ -341,10 +321,6 @@ fn all_protocols_30_and_above_use_md5() {
         );
     }
 }
-
-// ============================================================================
-// rsync Block Checksum Simulation Tests
-// ============================================================================
 // These tests simulate how rsync uses MD4 for block checksums in protocol < 30
 
 #[test]
@@ -421,10 +397,6 @@ fn simulate_incremental_block_generation() {
     );
 }
 
-// ============================================================================
-// Edge Cases and Correctness Tests
-// ============================================================================
-
 #[test]
 fn md4_digest_length_constant() {
     assert_eq!(Md4::DIGEST_LEN, 16, "MD4::DIGEST_LEN should be 16");
@@ -470,10 +442,6 @@ fn md4_large_input() {
     assert_eq!(Md4::digest(&data), digest);
 }
 
-// ============================================================================
-// Comparison Tests (MD4 vs MD5)
-// ============================================================================
-
 #[test]
 fn md4_differs_from_md5() {
     use checksums::strong::Md5;
@@ -494,10 +462,6 @@ fn md4_differs_from_md5() {
         "MD4 and MD5 should produce different digests for the same input"
     );
 }
-
-// ============================================================================
-// StrongDigest Trait Compliance Tests
-// ============================================================================
 
 #[test]
 fn md4_implements_strong_digest_trait() {
@@ -525,10 +489,6 @@ fn md4_digest_len_constant_matches_trait() {
     let digest = Md4::digest(b"test");
     assert_eq!(digest.as_ref().len(), Md4::DIGEST_LEN);
 }
-
-// ============================================================================
-// Protocol Compatibility Summary Test
-// ============================================================================
 
 #[test]
 fn protocol_compatibility_summary() {

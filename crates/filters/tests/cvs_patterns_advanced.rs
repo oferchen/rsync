@@ -9,10 +9,6 @@
 use filters::{FilterAction, FilterRule, FilterSet, cvs_default_patterns, cvs_exclusion_rules};
 use std::path::Path;
 
-// =============================================================================
-// CVS Pattern List Validation
-// =============================================================================
-
 #[test]
 fn cvs_patterns_no_duplicates() {
     let patterns: Vec<&str> = cvs_default_patterns().collect();
@@ -62,10 +58,6 @@ fn cvs_patterns_specific_vcs_coverage() {
     assert!(has_hg, "Missing Mercurial patterns");
     assert!(has_cvs, "Missing CVS patterns");
 }
-
-// =============================================================================
-// CVS Rules Generation Tests
-// =============================================================================
 
 #[test]
 fn cvs_rules_all_apply_to_both_sides_by_default() {
@@ -117,10 +109,6 @@ fn cvs_rules_perishable_consistency() {
         assert!(!np.is_perishable());
     }
 }
-
-// =============================================================================
-// CVS Pattern Matching Specifics
-// =============================================================================
 
 #[test]
 fn cvs_wildcard_patterns_match_correctly() {
@@ -189,10 +177,6 @@ fn cvs_suffix_patterns() {
     assert!(set.allows(Path::new("~file"), false));
     assert!(set.allows(Path::new("fi~le"), false));
 }
-
-// =============================================================================
-// CVS Interaction with Explicit Rules
-// =============================================================================
 
 #[test]
 fn explicit_include_overrides_cvs_all_patterns() {
@@ -268,10 +252,6 @@ fn cvs_with_wildcard_exclude() {
     assert!(!set.allows(Path::new("README.md"), false));
 }
 
-// =============================================================================
-// Perishable CVS Patterns Tests
-// =============================================================================
-
 #[test]
 fn perishable_cvs_ignored_for_deletion_context() {
     let set = FilterSet::from_rules_with_cvs(vec![], true).unwrap();
@@ -333,10 +313,6 @@ fn perishable_cvs_delete_excluded_behavior() {
     assert!(set.allows_deletion_when_excluded_removed(Path::new("main.o"), false));
 }
 
-// =============================================================================
-// CVS with Other Filter Actions
-// =============================================================================
-
 #[test]
 fn cvs_with_show_hide_rules() {
     let rules = vec![
@@ -380,10 +356,6 @@ fn cvs_after_clear_resets_to_cvs_only() {
     assert!(!set.allows(Path::new("main.o"), false));
     assert!(set.allows(Path::new("main.rs"), false));
 }
-
-// =============================================================================
-// Complex Nested Directory Tests
-// =============================================================================
 
 #[test]
 fn cvs_nested_vcs_directories() {
@@ -442,10 +414,6 @@ fn cvs_backup_files_various_extensions() {
     assert!(!set.allows(Path::new("merge.rej"), false));
 }
 
-// =============================================================================
-// CVS Pattern Edge Cases
-// =============================================================================
-
 #[test]
 fn cvs_core_file_vs_core_prefix() {
     let set = FilterSet::from_rules_with_cvs(vec![], false).unwrap();
@@ -498,10 +466,6 @@ fn cvs_compressed_files() {
     assert!(set.allows(Path::new("archive.xz"), false));
 }
 
-// =============================================================================
-// CVS Integration with FilterSet Methods
-// =============================================================================
-
 #[test]
 fn cvs_allows_deletion_respects_patterns() {
     let set = FilterSet::from_rules_with_cvs(vec![], false).unwrap();
@@ -530,10 +494,6 @@ fn cvs_empty_set_behavior() {
     // Set should not be empty (has CVS rules)
     assert!(!set.is_empty());
 }
-
-// =============================================================================
-// Multiple CVS Pattern Application
-// =============================================================================
 
 #[test]
 fn file_matching_multiple_cvs_patterns() {

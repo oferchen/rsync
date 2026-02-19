@@ -21,10 +21,6 @@ use protocol::flist::{
     sort_and_clean_file_list, sort_file_list,
 };
 
-// ============================================================================
-// Test Data Generation Utilities
-// ============================================================================
-
 /// Generates mock file entries with realistic path structures.
 ///
 /// Creates entries without touching the filesystem - all data is synthetic.
@@ -100,10 +96,6 @@ fn generate_varied_types(count: usize) -> Vec<FileEntry> {
         })
         .collect()
 }
-
-// ============================================================================
-// 10K Entry Tests
-// ============================================================================
 
 /// Tests encoding and decoding of 10K entries.
 #[test]
@@ -275,10 +267,6 @@ fn stress_10k_sort_and_clean_with_duplicates() {
     }
 }
 
-// ============================================================================
-// 100K Entry Tests
-// ============================================================================
-
 /// Tests encoding and decoding of 100K entries.
 #[test]
 fn stress_100k_encode_decode_roundtrip() {
@@ -380,10 +368,6 @@ fn stress_100k_memory_characteristics() {
     );
 }
 
-// ============================================================================
-// Protocol Version Compatibility Tests
-// ============================================================================
-
 /// Tests that large file lists work correctly across protocol versions.
 #[test]
 fn stress_10k_protocol_version_compatibility() {
@@ -424,10 +408,6 @@ fn stress_10k_protocol_version_compatibility() {
         );
     }
 }
-
-// ============================================================================
-// Mixed Content Tests
-// ============================================================================
 
 /// Tests large mixed directory tree (dirs + files + symlinks).
 #[test]
@@ -519,10 +499,6 @@ fn stress_varied_types_10k() {
     assert_eq!(fifos, 2000);
     assert_eq!(sockets, 2000);
 }
-
-// ============================================================================
-// Edge Case Tests at Scale
-// ============================================================================
 
 /// Tests entries with maximum path lengths.
 #[test]
@@ -640,10 +616,6 @@ fn stress_chunked_processing_10k() {
     assert!(!total_encoded.is_empty());
 }
 
-// ============================================================================
-// Comparison Function Tests at Scale
-// ============================================================================
-
 /// Tests comparison stability with 10K entries.
 #[test]
 fn stress_comparison_stability_10k() {
@@ -691,10 +663,6 @@ fn stress_comparison_transitivity_10k() {
         }
     }
 }
-
-// ============================================================================
-// Resource Usage Verification
-// ============================================================================
 
 /// Verifies encoding doesn't leak memory on large lists.
 #[test]

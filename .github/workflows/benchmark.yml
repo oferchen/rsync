@@ -27,7 +27,7 @@ jobs:
   benchmark:
     name: Performance Benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -111,6 +111,12 @@ jobs:
           python3 .github/scripts/benchmark_report.py > benchmark_report.md
           cat benchmark_report.md
 
+      - name: Generate benchmark chart
+        run: |
+          pip install cairosvg
+          python3 .github/scripts/benchmark_chart.py --input benchmark_results.json --output benchmark.svg
+          python3 -c "import cairosvg; cairosvg.svg2png(url='benchmark.svg', write_to='benchmark.png', output_width=1600)"
+
       - name: Upload benchmark results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -119,6 +125,8 @@ jobs:
           path: |
             benchmark_results.json
             benchmark_report.md
+            benchmark.svg
+            benchmark.png
             criterion_report.md
             criterion_output.txt
 
@@ -150,6 +158,14 @@ jobs:
 
           # Update release
           gh release edit "$TAG" --notes "$NEW_BODY" || echo "Could not update release notes"
+
+      - name: Upload benchmark chart to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF##*/}"
+          gh release upload "$TAG" benchmark.png --clobber || echo "Could not upload benchmark chart"
 
       - name: Comment on PR (if applicable)
         if: github.event_name == 'pull_request'

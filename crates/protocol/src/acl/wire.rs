@@ -485,10 +485,6 @@ mod wire_tests {
         assert!(matches!(default_result.unwrap(), RecvAclResult::Literal(_)));
     }
 
-    // =========================================================================
-    // Encoding Edge Cases
-    // =========================================================================
-
     #[test]
     fn encode_access_all_permission_bits() {
         // Test all permission combinations
@@ -538,10 +534,6 @@ mod wire_tests {
         // Lower 2 bits should be clear (no flags)
         assert_eq!(encoded & 0x03, 0);
     }
-
-    // =========================================================================
-    // Error Path Tests - EOF Conditions
-    // =========================================================================
 
     #[test]
     fn recv_ida_entries_eof_reading_count() {
@@ -602,10 +594,6 @@ mod wire_tests {
         assert!(result.is_err());
     }
 
-    // =========================================================================
-    // RecvAclResult Tests
-    // =========================================================================
-
     #[test]
     fn recv_acl_result_debug_format() {
         let cache_hit = RecvAclResult::CacheHit(42);
@@ -640,10 +628,6 @@ mod wire_tests {
         assert!(format!("{access:?}").contains("Access"));
         assert!(format!("{default:?}").contains("Default"));
     }
-
-    // =========================================================================
-    // Name Following Tests
-    // =========================================================================
 
     #[test]
     fn recv_ida_entries_with_name_follows() {
@@ -702,10 +686,6 @@ mod wire_tests {
         let result = recv_ida_entries(&mut cursor);
         assert!(result.is_err());
     }
-
-    // =========================================================================
-    // Cache Behavior Tests
-    // =========================================================================
 
     #[test]
     fn separate_caches_for_access_and_default() {

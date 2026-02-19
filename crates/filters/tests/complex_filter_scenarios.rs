@@ -10,10 +10,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// =============================================================================
-// Multi-Layer Filter Combinations
-// =============================================================================
-
 #[test]
 fn three_layer_include_exclude_pattern() {
     // rsync uses first-match-wins: most specific rules first
@@ -79,10 +75,6 @@ fn alternating_include_exclude_chain() {
     // a/b/c/d/: also matched by rule 1 first, so included
     assert!(set.allows(Path::new("a/b/c/d/file.txt"), false));
 }
-
-// =============================================================================
-// Protect and Risk Complex Interactions
-// =============================================================================
 
 #[test]
 fn protect_overrides_exclude_for_deletion() {
@@ -154,10 +146,6 @@ fn protect_with_exclude_and_include() {
     assert!(!set.allows_deletion(Path::new("important.log"), false));
     assert!(!set.allows_deletion(Path::new("debug.log"), false));
 }
-
-// =============================================================================
-// Clear Rule Positioning Tests
-// =============================================================================
 
 #[test]
 fn clear_in_middle_resets() {
@@ -236,10 +224,6 @@ fn clear_affects_protect_rules() {
     assert!(set.allows(Path::new("file.tmp"), false));
 }
 
-// =============================================================================
-// Sender/Receiver Side-Specific Scenarios
-// =============================================================================
-
 #[test]
 fn show_hide_combination() {
     let rules = vec![
@@ -307,10 +291,6 @@ fn protect_risk_sides_interaction() {
     assert!(!set.allows_deletion(Path::new("file.dat"), false));
 }
 
-// =============================================================================
-// Perishable Rule Combinations
-// =============================================================================
-
 #[test]
 fn perishable_exclude_overridden_by_include() {
     // In actual rsync, perishable rules are checked differently
@@ -364,10 +344,6 @@ fn mixed_perishable_non_perishable() {
     // (This depends on implementation details)
 }
 
-// =============================================================================
-// Wildcard and Pattern Precedence
-// =============================================================================
-
 #[test]
 fn specific_pattern_vs_wildcard() {
     let rules = vec![
@@ -412,10 +388,6 @@ fn directory_only_vs_file_pattern() {
     // File named cache included (second rule)
     assert!(set.allows(Path::new("cache"), false));
 }
-
-// =============================================================================
-// Nested Directory Traversal Patterns
-// =============================================================================
 
 #[test]
 fn exclude_parent_include_child() {
@@ -469,10 +441,6 @@ fn deep_nesting_pattern() {
     // Parent directory excluded (second rule matches)
     assert!(!set.allows(Path::new("a/b/c/other.txt"), false));
 }
-
-// =============================================================================
-// Edge Cases in Rule Interaction
-// =============================================================================
 
 #[test]
 fn empty_rules_then_non_empty() {
@@ -539,10 +507,6 @@ fn protect_everything_risk_specific() {
     // For risk to work, it must come before protect
     assert!(!set.allows_deletion(Path::new("temp/cache.dat"), false));
 }
-
-// =============================================================================
-// Complex Real-World Scenarios
-// =============================================================================
 
 #[test]
 fn typical_rust_project_filters() {

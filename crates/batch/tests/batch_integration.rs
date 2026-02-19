@@ -32,10 +32,6 @@ use std::fs::{self, File};
 use std::path::Path;
 use tempfile::TempDir;
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
-
 /// Creates a test batch file with the specified configuration and returns the path.
 fn create_test_batch(temp_dir: &TempDir, name: &str, protocol: i32, seed: i32) -> String {
     let batch_path = temp_dir.path().join(name);
@@ -54,10 +50,6 @@ fn create_test_batch(temp_dir: &TempDir, name: &str, protocol: i32, seed: i32) -
 
     batch_path.to_string_lossy().to_string()
 }
-
-// ============================================================================
-// Batch File Operations Tests
-// ============================================================================
 
 mod batch_file_operations {
     //! Tests for basic batch file read/write operations.
@@ -226,10 +218,6 @@ mod batch_file_operations {
         );
     }
 }
-
-// ============================================================================
-// Round-Trip Encoding/Decoding Tests
-// ============================================================================
 
 mod round_trip_tests {
     //! Tests verifying data survives write-then-read cycles unchanged.
@@ -484,10 +472,6 @@ mod round_trip_tests {
         );
     }
 }
-
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
 
 mod error_handling {
     //! Tests for error conditions and malformed data handling.
@@ -750,10 +734,6 @@ mod error_handling {
     }
 }
 
-// ============================================================================
-// Edge Cases Tests
-// ============================================================================
-
 mod edge_cases {
     //! Tests for boundary conditions and extreme values.
 
@@ -1015,10 +995,6 @@ mod edge_cases {
         assert_eq!(read_data, data_with_nulls);
     }
 }
-
-// ============================================================================
-// File Entry Tests
-// ============================================================================
 
 mod file_entry_tests {
     //! Tests for FileEntry serialization and round-trips.
@@ -1360,10 +1336,6 @@ mod file_entry_tests {
     }
 }
 
-// ============================================================================
-// Batch Flags Tests
-// ============================================================================
-
 mod batch_flags_tests {
     //! Tests for BatchFlags across different protocol versions.
 
@@ -1585,10 +1557,6 @@ mod batch_flags_tests {
     }
 }
 
-// ============================================================================
-// Script Generation Tests
-// ============================================================================
-
 mod script_generation {
     //! Tests for shell script generation functionality.
 
@@ -1761,10 +1729,6 @@ mod script_generation {
     }
 }
 
-// ============================================================================
-// Batch Config Tests
-// ============================================================================
-
 mod batch_config_tests {
     //! Tests for BatchConfig construction and accessors.
 
@@ -1858,10 +1822,6 @@ mod batch_config_tests {
         assert!(debug_only.contains("OnlyWrite"));
     }
 }
-
-// ============================================================================
-// Integration Scenarios
-// ============================================================================
 
 mod integration_scenarios {
     //! End-to-end integration scenarios simulating real-world usage.

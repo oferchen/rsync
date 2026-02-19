@@ -457,10 +457,6 @@ mod tests {
         assert_eq!(limiter.write_max_bytes(), 1_000_000);
     }
 
-    // ========================================================================
-    // Debt Saturation Edge Cases
-    // ========================================================================
-
     #[test]
     fn register_uses_saturating_add_prevents_overflow() {
         // Create limiter with very low rate to maximize debt
@@ -504,10 +500,6 @@ mod tests {
         assert!(limiter.accumulated_debt_for_testing() <= 2000);
     }
 
-    // ========================================================================
-    // Burst Clamping Logic Tests
-    // ========================================================================
-
     #[test]
     fn clamp_debt_to_burst_with_no_burst_is_noop() {
         let mut limiter = BandwidthLimiter::new(nz(100)); // No burst
@@ -543,10 +535,6 @@ mod tests {
         // Debt behavior depends on timing
     }
 
-    // ========================================================================
-    // Write Max Calculation Edge Cases
-    // ========================================================================
-
     #[test]
     fn calculate_write_max_u64_max_limit() {
         // u64::MAX / 1024 still fits in u128
@@ -578,10 +566,6 @@ mod tests {
         let result = calculate_write_max(nz(10000), Some(nz(MIN_WRITE_MAX as u64 + 1)));
         assert_eq!(result, MIN_WRITE_MAX + 1);
     }
-
-    // ========================================================================
-    // Rate Change During Operation
-    // ========================================================================
 
     #[test]
     fn update_limit_clears_accumulated_debt() {
@@ -616,10 +600,6 @@ mod tests {
         assert_eq!(limiter.burst_bytes().map(|b| b.get()), burst_before);
         assert_eq!(limiter.accumulated_debt_for_testing(), 0);
     }
-
-    // ========================================================================
-    // Zero-Byte Write Handling
-    // ========================================================================
 
     #[test]
     fn register_zero_bytes_does_not_affect_debt() {
@@ -758,10 +738,6 @@ mod tests {
         assert_eq!(sleep.requested(), Duration::from_secs(1));
     }
 
-    // ========================================================================
-    // Token bucket behavior tests
-    // ========================================================================
-
     #[test]
     fn register_deterministic_sleep_calculation() {
         use super::super::recorded_sleep_session;
@@ -875,10 +851,6 @@ mod tests {
         assert_eq!(sleep.requested(), Duration::from_millis(200));
     }
 
-    // ========================================================================
-    // Burst clamping detailed tests
-    // ========================================================================
-
     #[test]
     fn burst_clamps_sleep_duration() {
         // With burst, debt is clamped so sleep duration is limited
@@ -916,10 +888,6 @@ mod tests {
         assert_eq!(sleep.requested(), Duration::from_secs(100));
     }
 
-    // ========================================================================
-    // Write max calculation comprehensive tests
-    // ========================================================================
-
     #[test]
     fn write_max_minimum_for_tiny_rate() {
         let limiter = BandwidthLimiter::new(nz(1));
@@ -950,10 +918,6 @@ mod tests {
         assert_eq!(limiter.write_max_bytes(), MIN_WRITE_MAX);
     }
 
-    // ========================================================================
-    // Recommended read size tests
-    // ========================================================================
-
     #[test]
     fn recommended_read_size_exact_write_max() {
         let limiter = BandwidthLimiter::new(nz(1024 * 100)); // write_max = 12800
@@ -977,10 +941,6 @@ mod tests {
         let limiter = BandwidthLimiter::new(nz(1024 * 100));
         assert_eq!(limiter.recommended_read_size(1), 1);
     }
-
-    // ========================================================================
-    // Register with elapsed time simulation tests
-    // ========================================================================
 
     #[test]
     fn register_first_call_has_no_elapsed_time() {
@@ -1015,10 +975,6 @@ mod tests {
         // With such a high rate, should be minimal sleep
         assert!(sleep2.requested() < Duration::from_millis(1));
     }
-
-    // ========================================================================
-    // Configuration update during operation tests
-    // ========================================================================
 
     #[test]
     fn update_limit_mid_operation_resets_state() {
@@ -1080,10 +1036,6 @@ mod tests {
         assert_eq!(limiter.limit_bytes().get(), 100);
     }
 
-    // ========================================================================
-    // LimiterSleep result validation tests
-    // ========================================================================
-
     #[test]
     fn register_returns_correct_limiter_sleep() {
         use super::super::recorded_sleep_session;
@@ -1109,10 +1061,6 @@ mod tests {
         assert_eq!(sleep.requested(), Duration::ZERO);
         assert_eq!(sleep.actual(), Duration::ZERO);
     }
-
-    // ========================================================================
-    // Clone behavior tests
-    // ========================================================================
 
     #[test]
     fn clone_preserves_configuration() {
@@ -1150,10 +1098,6 @@ mod tests {
         assert_eq!(cloned.accumulated_debt_for_testing(), 0);
     }
 
-    // ========================================================================
-    // Edge case: very large writes
-    // ========================================================================
-
     #[test]
     fn register_very_large_write() {
         use super::super::recorded_sleep_session;
@@ -1184,10 +1128,6 @@ mod tests {
         let _sleep = limiter.register(usize::MAX / 1000);
     }
 
-    // ========================================================================
-    // Simulated elapsed time tests
-    // ========================================================================
-
     #[test]
     fn simulated_elapsed_time_reduces_debt() {
         use super::super::recorded_sleep_session;
@@ -1207,10 +1147,6 @@ mod tests {
         // In tests, the actual sleep time is near-zero, but the limiter
         // should track simulated elapsed time for subsequent calls
     }
-
-    // ========================================================================
-    // Boundary condition tests
-    // ========================================================================
 
     #[test]
     fn register_exactly_one_byte() {
@@ -1242,10 +1178,6 @@ mod tests {
         // Debt should be clamped to 1
         assert!(limiter.accumulated_debt_for_testing() <= 1);
     }
-
-    // ========================================================================
-    // Accessor method consistency tests
-    // ========================================================================
 
     #[test]
     fn accessors_consistent_after_construction() {
@@ -1280,10 +1212,6 @@ mod tests {
         // State reset
         assert_eq!(limiter.accumulated_debt_for_testing(), 0);
     }
-
-    // ========================================================================
-    // Integration-style tests
-    // ========================================================================
 
     #[test]
     fn simulated_transfer_scenario() {
@@ -1325,10 +1253,6 @@ mod tests {
         let sleep2 = limiter.register(2000);
         assert!(sleep2.requested() <= Duration::from_millis(500));
     }
-
-    // ========================================================================
-    // Rate change during transfer tests
-    // ========================================================================
 
     #[test]
     fn rate_change_from_slow_to_fast_clears_debt() {
@@ -1402,10 +1326,6 @@ mod tests {
         assert!(limiter.burst_bytes().is_none());
     }
 
-    // ========================================================================
-    // Zero and minimum rate edge cases
-    // ========================================================================
-
     #[test]
     fn minimum_nonzero_rate_behavior() {
         use super::super::recorded_sleep_session;
@@ -1434,10 +1354,6 @@ mod tests {
         let sleep = limiter.register(100);
         assert_eq!(sleep.requested(), Duration::from_secs(100));
     }
-
-    // ========================================================================
-    // Very high rate tests
-    // ========================================================================
 
     #[test]
     fn gigabyte_per_second_rate_handles_large_writes() {
@@ -1468,10 +1384,6 @@ mod tests {
         let sleep = limiter.register(1000);
         assert!(sleep.requested() < Duration::from_nanos(100));
     }
-
-    // ========================================================================
-    // Burst boundary tests
-    // ========================================================================
 
     #[test]
     fn burst_exactly_equals_write_amount() {
@@ -1508,10 +1420,6 @@ mod tests {
         assert_eq!(limiter.write_max_bytes(), 1_000_000);
     }
 
-    // ========================================================================
-    // Clone independence tests
-    // ========================================================================
-
     #[test]
     fn cloned_limiter_has_independent_state() {
         use super::super::recorded_sleep_session;
@@ -1539,10 +1447,6 @@ mod tests {
         assert!(original.accumulated_debt_for_testing() > 0);
     }
 
-    // ========================================================================
-    // Recommended read size comprehensive tests
-    // ========================================================================
-
     #[test]
     fn recommended_read_size_boundary_at_write_max() {
         let limiter = BandwidthLimiter::new(nz(1024 * 100)); // write_max = 12800
@@ -1567,10 +1471,6 @@ mod tests {
         let fast = BandwidthLimiter::new(nz(10 * 1024 * 1024)); // 10 MB/s
         assert!(fast.recommended_read_size(1000) <= fast.write_max_bytes());
     }
-
-    // ========================================================================
-    // LimiterSleep result comprehensive tests
-    // ========================================================================
 
     #[test]
     fn limiter_sleep_tracking_accuracy() {
@@ -1605,10 +1505,6 @@ mod tests {
         // Should sleep for 2 seconds (200 bytes / 100 B/s)
         assert_eq!(sleep.requested(), Duration::from_secs(2));
     }
-
-    // ========================================================================
-    // Integration: realistic transfer scenarios
-    // ========================================================================
 
     #[test]
     fn realistic_file_transfer_small_file() {
@@ -1653,10 +1549,6 @@ mod tests {
         let sleep2 = limiter.register(2048);
         assert!(sleep2.requested() <= Duration::from_secs(2));
     }
-
-    // ========================================================================
-    // Error resilience tests
-    // ========================================================================
 
     #[test]
     fn register_does_not_panic_with_extreme_values() {

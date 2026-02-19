@@ -14,10 +14,6 @@ use compress::skip_compress::{
 };
 use compress::zlib::{CompressionLevel, compress_to_vec, decompress_to_vec};
 
-// =============================================================================
-// Test Data Generators
-// =============================================================================
-
 mod test_data {
     /// Generates cryptographically random-like data using PCG PRNG.
     ///
@@ -139,10 +135,6 @@ mod test_data {
         data
     }
 }
-
-// =============================================================================
-// SECTION 1: Random/Encrypted Data Doesn't Expand Significantly
-// =============================================================================
 
 mod random_data_handling {
     use super::*;
@@ -266,10 +258,6 @@ mod random_data_handling {
         assert_eq!(decompressed, data, "Streaming round-trip failed");
     }
 }
-
-// =============================================================================
-// SECTION 2: Pre-compressed Files Are Handled Correctly
-// =============================================================================
 
 mod precompressed_files {
     use super::*;
@@ -436,10 +424,6 @@ mod precompressed_files {
         assert_eq!(decompressed, data, "Mixed entropy round-trip failed");
     }
 }
-
-// =============================================================================
-// SECTION 3: Compression Falls Back Gracefully
-// =============================================================================
 
 mod graceful_fallback {
     use super::*;
@@ -627,10 +611,6 @@ mod graceful_fallback {
         assert!(!output.is_empty(), "Small file produced output");
     }
 }
-
-// =============================================================================
-// SECTION 4: --skip-compress Works for Specific File Types
-// =============================================================================
 
 mod skip_compress_functionality {
     use super::*;
@@ -966,10 +946,6 @@ mod skip_compress_functionality {
         );
     }
 }
-
-// =============================================================================
-// SECTION 5: Edge Cases and Boundary Conditions
-// =============================================================================
 
 mod edge_cases {
     use super::*;

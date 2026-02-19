@@ -10,10 +10,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Basic Protect Rule Tests
-// ============================================================================
-
 /// Verifies that protect rules block deletion without affecting transfer.
 ///
 /// From rsync man page: "The P is equivalent to -r, which makes the rule
@@ -82,10 +78,6 @@ fn protect_rule_anchored_matches_only_at_root() {
     assert!(set.allows_deletion(Path::new("backup/data"), false));
 }
 
-// ============================================================================
-// Basic Risk Rule Tests
-// ============================================================================
-
 /// Verifies that risk rules undo protection.
 ///
 /// From rsync man page: "The R is equivalent to -r, which makes the rule
@@ -151,10 +143,6 @@ fn multiple_protect_risk_interactions() {
     assert!(!set.allows_deletion(Path::new("temp/keep/important.dat"), false));
 }
 
-// ============================================================================
-// Protect/Risk with Exclude/Include Interactions
-// ============================================================================
-
 /// Verifies protect operates independently of exclude.
 #[test]
 fn protect_independent_of_exclude() {
@@ -208,10 +196,6 @@ fn included_protected_file() {
     assert!(!set.allows_deletion(Path::new("config.yaml"), false));
 }
 
-// ============================================================================
-// Protect/Risk Side Application Tests
-// ============================================================================
-
 /// Verifies protect rules are receiver-side only by default.
 #[test]
 fn protect_rule_receiver_side_only() {
@@ -246,10 +230,6 @@ fn protect_rule_with_sender_side() {
     assert!(rule.applies_to_receiver());
 }
 
-// ============================================================================
-// Protect/Risk with Clear Rule Tests
-// ============================================================================
-
 /// Verifies clear rule removes protect rules.
 #[test]
 fn clear_removes_protect_rules() {
@@ -277,10 +257,6 @@ fn clear_affects_all_rule_types() {
     // Protection is cleared
     assert!(set.allows_deletion(Path::new("important/data"), false));
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Verifies protect with empty filter set.
 #[test]
@@ -368,10 +344,6 @@ fn protect_risk_order_matters() {
     let set2 = FilterSet::from_rules(rules2).unwrap();
     assert!(!set2.allows_deletion(Path::new("file"), false)); // Protected (first wins)
 }
-
-// ============================================================================
-// Delete-Excluded Interaction Tests
-// ============================================================================
 
 /// Verifies allows_deletion_when_excluded_removed behavior.
 #[test]

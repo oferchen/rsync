@@ -12,10 +12,6 @@
 // Reference: upstream rsync log.c, errcode.h (rsync 3.4.1)
 // ============================================================================
 
-// ---------------------------------------------------------------------------
-// 1. Prefix format: "rsync <severity>: " matches upstream
-// ---------------------------------------------------------------------------
-
 #[test]
 fn error_prefix_matches_upstream_format() {
     let msg = Message::error(23, "test message");
@@ -45,10 +41,6 @@ fn info_prefix_matches_upstream_format() {
         "Info messages must start with 'rsync info: ', got: {rendered}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 2. Code suffix format: " (code N)" matches upstream
-// ---------------------------------------------------------------------------
 
 #[test]
 fn error_code_suffix_matches_upstream_format() {
@@ -90,10 +82,6 @@ fn error_without_code_omits_code_suffix() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 3. Source location format: " at <file>:<line>" matches upstream
-// ---------------------------------------------------------------------------
-
 #[test]
 fn source_location_uses_at_separator_matching_upstream() {
     let msg = Message::error(11, "error in file IO").with_source(message_source!());
@@ -108,10 +96,6 @@ fn source_location_uses_at_separator_matching_upstream() {
         "Source location must include colon between file and line, got: {rendered}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 4. Role trailer format: " [<role>=<version>]" matches upstream
-// ---------------------------------------------------------------------------
 
 #[test]
 fn sender_role_trailer_matches_upstream_format() {
@@ -158,10 +142,6 @@ fn all_roles_produce_bracketed_trailers() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// 5. Complete message format for common upstream patterns
-// ---------------------------------------------------------------------------
 
 #[test]
 fn partial_transfer_error_matches_upstream_summary_format() {
@@ -277,10 +257,6 @@ fn max_delete_error_matches_upstream_format() {
     assert!(rendered.contains("(code 25)"));
 }
 
-// ---------------------------------------------------------------------------
-// 6. EXIT_CODE_TABLE text matches upstream rerr_names (log.c)
-// ---------------------------------------------------------------------------
-
 #[test]
 fn exit_code_table_text_matches_upstream_rerr_names() {
     // These strings must match upstream rsync's log.c rerr_names table
@@ -331,10 +307,6 @@ fn exit_code_table_text_matches_upstream_rerr_names() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 7. Severity classification matches upstream
-// ---------------------------------------------------------------------------
-
 #[test]
 fn only_exit_code_24_produces_warning_matching_upstream() {
     // Upstream rsync: only exit code 24 (vanished files) produces a warning.
@@ -357,10 +329,6 @@ fn only_exit_code_24_produces_warning_matching_upstream() {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// 8. Error message format with errno-like context (permission denied, ENOENT)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn permission_denied_error_includes_context_like_upstream() {
@@ -391,10 +359,6 @@ fn file_not_found_error_includes_context_like_upstream() {
     assert!(rendered.contains("No such file or directory (2)"));
     assert!(rendered.contains("(code 23)"));
 }
-
-// ---------------------------------------------------------------------------
-// 9. Segment ordering matches upstream: prefix, text, code, source, trailer
-// ---------------------------------------------------------------------------
 
 #[test]
 fn message_segment_order_matches_upstream() {
@@ -430,10 +394,6 @@ fn message_segment_order_matches_upstream() {
         "Source location must come before trailer"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 10. Exit code error code names match upstream errcode.h constants
-// ---------------------------------------------------------------------------
 
 #[test]
 fn error_code_names_match_upstream_errcode_h() {
@@ -481,10 +441,6 @@ fn error_code_names_match_upstream_errcode_h() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 11. from_exit_code covers all upstream-documented codes
-// ---------------------------------------------------------------------------
-
 #[test]
 fn from_exit_code_covers_all_documented_upstream_codes() {
     // All exit codes documented in the upstream rsync man page
@@ -498,10 +454,6 @@ fn from_exit_code_covers_all_documented_upstream_codes() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// 12. exit_code_message_with_detail format
-// ---------------------------------------------------------------------------
 
 #[test]
 fn exit_code_message_with_detail_preserves_upstream_text_prefix() {
@@ -521,10 +473,6 @@ fn exit_code_message_with_detail_preserves_upstream_text_prefix() {
     );
     assert!(rendered.contains("(code 1)"));
 }
-
-// ---------------------------------------------------------------------------
-// 13. Regex-based format verification for parseable output
-// ---------------------------------------------------------------------------
 
 #[test]
 fn error_message_is_parseable_by_regex() {
@@ -558,10 +506,6 @@ fn warning_message_is_parseable_by_regex() {
     assert!(rendered.ends_with("]"));
 }
 
-// ---------------------------------------------------------------------------
-// 14. Exit code 0 (success) is NOT in the exit code message table
-// ---------------------------------------------------------------------------
-
 #[test]
 fn exit_code_zero_not_in_message_table() {
     // Upstream rsync does not include exit code 0 in rerr_names.
@@ -571,10 +515,6 @@ fn exit_code_zero_not_in_message_table() {
         "Exit code 0 must not be in the message table (upstream has no rerr_names entry for 0)"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 15. Newline handling matches upstream (no trailing newline in Display)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn display_does_not_append_newline_matching_upstream() {
@@ -600,10 +540,6 @@ fn line_rendering_appends_exactly_one_newline() {
         "Line rendering must not have double newline"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 16. All exit code entries rendered as complete messages
-// ---------------------------------------------------------------------------
 
 #[test]
 fn all_exit_code_messages_render_with_correct_prefix_and_code() {

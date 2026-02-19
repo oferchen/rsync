@@ -115,8 +115,6 @@ impl<'a> ReusableBufWriter<'a> {
 
 impl Write for ReusableBufWriter<'_> {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        // Large chunks: write directly to file, bypassing the buffer copy.
-        // Eliminates one memcpy for typical rsync token sizes (8 KB–64 KB).
         if data.len() >= DIRECT_WRITE_THRESHOLD {
             if !self.buf.is_empty() {
                 // Combine buffered data and new chunk in a single writev
@@ -130,7 +128,6 @@ impl Write for ReusableBufWriter<'_> {
             return Ok(data.len());
         }
 
-        // Small chunks: buffer to batch into fewer syscalls.
         if self.buf.len() + data.len() <= self.buf.capacity() {
             self.buf.extend_from_slice(data);
         } else {

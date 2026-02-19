@@ -11,10 +11,6 @@ use std::num::{NonZeroU8, NonZeroU32};
 use protocol::ProtocolVersion;
 use signature::{SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout};
 
-// =============================================================================
-// Constants for Large File Testing
-// =============================================================================
-
 /// 4GB boundary - the critical threshold for 32-bit overflow
 const FOUR_GB: u64 = 4 * 1024 * 1024 * 1024;
 
@@ -29,10 +25,6 @@ const ONE_TB: u64 = 1024 * 1024 * 1024 * 1024;
 
 /// 100TB - tests multi-petabyte edge cases
 const HUNDRED_TB: u64 = 100 * ONE_TB;
-
-// =============================================================================
-// Signature Layout Tests for Large Files
-// =============================================================================
 
 mod signature_layout {
     use super::*;
@@ -162,10 +154,6 @@ mod signature_layout {
     }
 }
 
-// =============================================================================
-// Block Size Heuristics for Large Files
-// =============================================================================
-
 mod block_size_heuristics {
     use super::*;
 
@@ -265,10 +253,6 @@ mod block_size_heuristics {
     }
 }
 
-// =============================================================================
-// Memory Usage Bounds for Large Files
-// =============================================================================
-
 mod memory_bounds {
     use super::*;
 
@@ -324,10 +308,6 @@ mod memory_bounds {
         }
     }
 }
-
-// =============================================================================
-// File Size Reconstruction Tests
-// =============================================================================
 
 mod file_size_reconstruction {
     use super::*;
@@ -392,10 +372,6 @@ mod file_size_reconstruction {
         }
     }
 }
-
-// =============================================================================
-// Edge Case Tests
-// =============================================================================
 
 mod edge_cases {
     use super::*;

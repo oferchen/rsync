@@ -26,10 +26,6 @@ use crate::version::{
     SUPPORTED_PROTOCOL_RANGE, select_highest_mutual,
 };
 
-// ============================================================================
-// Phase 2.15: Version Negotiation Min/Max Tests
-// ============================================================================
-
 /// Verifies MIN_SUPPORTED is protocol version 28.
 #[test]
 fn min_supported_version_is_28() {
@@ -119,10 +115,6 @@ fn mixed_clamped_and_supported_versions() {
     let result = select_highest_mutual([40, 29]).unwrap();
     assert_eq!(result, ProtocolVersion::NEWEST);
 }
-
-// ============================================================================
-// Phase 2.16: Invalid Version Rejection Tests
-// ============================================================================
 
 /// Verifies version 0 is rejected as invalid.
 #[test]
@@ -239,10 +231,6 @@ fn rejects_very_large_versions() {
         _ => panic!("expected UnsupportedVersion error"),
     }
 }
-
-// ============================================================================
-// Version Feature Flag Tests
-// ============================================================================
 
 /// Verifies `uses_varint_encoding` boundary at protocol 30.
 #[test]
@@ -377,10 +365,6 @@ fn safe_file_list_always_enabled_boundary() {
     assert!(ProtocolVersion::V31.safe_file_list_always_enabled());
     assert!(ProtocolVersion::V32.safe_file_list_always_enabled());
 }
-
-// ============================================================================
-// Feature Flag Consistency Tests
-// ============================================================================
 
 /// Verifies feature flags are consistent with negotiation style.
 ///
@@ -594,10 +578,6 @@ fn version_32_feature_profile() {
     );
 }
 
-// ============================================================================
-// Error Message Tests
-// ============================================================================
-
 /// Verifies `UnsupportedVersion` error message includes version range.
 #[test]
 fn unsupported_version_error_includes_range() {
@@ -623,10 +603,6 @@ fn no_mutual_protocol_error_includes_peer_versions() {
         "error should mention our support"
     );
 }
-
-// ============================================================================
-// from_peer_advertisement Tests
-// ============================================================================
 
 /// Verifies `from_peer_advertisement` accepts valid versions.
 #[test]

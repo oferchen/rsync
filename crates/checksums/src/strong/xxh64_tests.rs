@@ -11,10 +11,6 @@
 #[cfg(test)]
 mod tests {
     use crate::strong::{StrongDigest, Xxh64};
-
-    // ========================================================================
-    // Known Test Vectors
-    // ========================================================================
     // These test vectors are derived from the official XXHash specification
     // and verified against the reference C implementation.
 
@@ -131,10 +127,6 @@ mod tests {
         assert_ne!(digest, zeros_digest, "Different inputs should produce different hashes");
     }
 
-    // ========================================================================
-    // Empty Input Tests
-    // ========================================================================
-
     #[test]
     fn empty_input_produces_valid_digest() {
         let digest = Xxh64::digest(0, b"");
@@ -176,10 +168,6 @@ mod tests {
         assert_ne!(digest_0, digest_42);
         assert_ne!(digest_1, digest_42);
     }
-
-    // ========================================================================
-    // Single Byte Tests
-    // ========================================================================
 
     #[test]
     fn single_byte_all_values() {
@@ -226,10 +214,6 @@ mod tests {
         assert_ne!(digest_seed_0, digest_seed_1);
         assert_ne!(digest_seed_0, digest_seed_max);
     }
-
-    // ========================================================================
-    // Various Sizes Tests (up to 1MB)
-    // ========================================================================
 
     #[test]
     fn various_sizes_small() {
@@ -353,10 +337,6 @@ mod tests {
             );
         }
     }
-
-    // ========================================================================
-    // Streaming API Incremental Computation Tests
-    // ========================================================================
 
     #[test]
     fn streaming_byte_by_byte() {
@@ -497,10 +477,6 @@ mod tests {
         assert_eq!(digest1, digest2, "new() and with_seed() should behave identically");
     }
 
-    // ========================================================================
-    // 64-bit Output Verification Tests
-    // ========================================================================
-
     #[test]
     fn verify_64bit_output_length() {
         assert_eq!(Xxh64::DIGEST_LEN, 8, "XXH64 DIGEST_LEN should be 8 bytes");
@@ -597,10 +573,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Seed Tests
-    // ========================================================================
-
     #[test]
     fn seed_zero() {
         let digest = Xxh64::digest(0, b"test");
@@ -652,10 +624,6 @@ mod tests {
 
         assert_eq!(oneshot, streaming);
     }
-
-    // ========================================================================
-    // Edge Cases and Boundary Conditions
-    // ========================================================================
 
     #[test]
     fn boundary_at_internal_block_size() {
@@ -723,10 +691,6 @@ mod tests {
             diff
         );
     }
-
-    // ========================================================================
-    // Regression and Compatibility Tests
-    // ========================================================================
 
     #[test]
     fn regression_known_hash_values() {

@@ -4,10 +4,6 @@
 // when it is to be replaced by a non-directory. This is only relevant if deletions
 // are not active."
 
-// ============================================================================
-// File replaces directory
-// ============================================================================
-
 #[test]
 fn force_file_replaces_non_empty_directory() {
     let temp = tempdir().expect("tempdir");
@@ -100,10 +96,6 @@ fn force_file_replaces_deeply_nested_directory() {
     assert_eq!(fs::read(&destination).expect("read"), b"flat");
 }
 
-// ============================================================================
-// Directory replaces non-directory
-// ============================================================================
-
 #[test]
 fn force_directory_replaces_file() {
     let temp = tempdir().expect("tempdir");
@@ -167,10 +159,6 @@ fn force_disabled_directory_cannot_replace_file() {
     }
     assert!(destination.is_file(), "file should remain");
 }
-
-// ============================================================================
-// Recursive directory copies with conflicts
-// ============================================================================
 
 #[test]
 fn force_replaces_directory_entry_with_file_during_recursive_copy() {
@@ -270,10 +258,6 @@ fn force_disabled_recursive_copy_fails_on_type_conflict() {
     assert!(dest_root.join("item").is_dir());
 }
 
-// ============================================================================
-// Dry-run mode
-// ============================================================================
-
 #[test]
 fn force_dry_run_does_not_modify_directory() {
     let temp = tempdir().expect("tempdir");
@@ -330,10 +314,6 @@ fn force_dry_run_reports_deletion_for_replaced_directory() {
     assert_eq!(summary.items_deleted(), 1, "should report one deletion");
     assert_eq!(summary.files_copied(), 1, "should report one file copy");
 }
-
-// ============================================================================
-// Symlink replaces directory with force (Unix only)
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -419,10 +399,6 @@ fn force_disabled_symlink_cannot_replace_directory_in_recursive_copy() {
     assert!(dest_root.join("link").is_dir(), "directory should remain");
 }
 
-// ============================================================================
-// FIFO replaces directory with force (Unix only)
-// ============================================================================
-
 #[cfg(all(
     unix,
     not(any(
@@ -464,10 +440,6 @@ fn force_fifo_replaces_non_empty_directory() {
         "directory should be replaced by FIFO"
     );
 }
-
-// ============================================================================
-// Multiple type conflicts in a single recursive copy
-// ============================================================================
 
 #[test]
 fn force_handles_multiple_type_conflicts_in_one_copy() {
@@ -520,10 +492,6 @@ fn force_handles_multiple_type_conflicts_in_one_copy() {
     );
 }
 
-// ============================================================================
-// Parent directory force replacement
-// ============================================================================
-
 #[test]
 fn force_replaces_file_in_parent_path_with_directory() {
     let temp = tempdir().expect("tempdir");
@@ -557,10 +525,6 @@ fn force_replaces_file_in_parent_path_with_directory() {
     );
 }
 
-// ============================================================================
-// Summary tracking
-// ============================================================================
-
 #[test]
 fn force_replacement_counts_deletion() {
     let temp = tempdir().expect("tempdir");
@@ -588,10 +552,6 @@ fn force_replacement_counts_deletion() {
     assert!(summary.items_deleted() >= 1, "should count at least one deletion for the replaced directory");
     assert_eq!(summary.files_copied(), 1, "should count the file copy");
 }
-
-// ============================================================================
-// Idempotent behavior: force with no conflict
-// ============================================================================
 
 #[test]
 fn force_with_no_type_conflict_copies_normally() {

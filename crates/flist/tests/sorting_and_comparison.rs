@@ -12,10 +12,6 @@ use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::fs;
 use std::path::PathBuf;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -26,10 +22,6 @@ fn collect_relative_paths(
         .map(|e| e.relative_path().to_path_buf())
         .collect()
 }
-
-// ============================================================================
-// Lexicographic Sorting Tests
-// ============================================================================
 
 /// Verifies files are sorted in lexicographic (ASCII) order.
 ///
@@ -160,10 +152,6 @@ fn numeric_prefix_sorting() {
     );
 }
 
-// ============================================================================
-// Nested Directory Sorting Tests
-// ============================================================================
-
 /// Verifies sorting within nested directories.
 ///
 /// Each directory's contents are sorted independently before traversal.
@@ -253,10 +241,6 @@ fn deeply_nested_sorting() {
     );
 }
 
-// ============================================================================
-// Special Character Sorting Tests
-// ============================================================================
-
 /// Verifies sorting with special characters in filenames.
 #[test]
 fn special_characters_in_names() {
@@ -311,10 +295,6 @@ fn hidden_files_sorting() {
     );
 }
 
-// ============================================================================
-// Determinism Tests
-// ============================================================================
-
 /// Verifies that repeated traversals produce identical results.
 ///
 /// This is critical for rsync's delta algorithm, which depends on
@@ -368,10 +348,6 @@ fn builder_config_consistency() {
 
     assert_eq!(paths1, paths2);
 }
-
-// ============================================================================
-// Sibling Order Tests
-// ============================================================================
 
 /// Verifies that sibling directories are processed in sorted order.
 #[test]
@@ -446,10 +422,6 @@ fn directory_fully_processed_before_sibling() {
     assert!(adir_idx < deep_idx, "adir should come before its content");
 }
 
-// ============================================================================
-// Extension Sorting Tests
-// ============================================================================
-
 /// Verifies sorting of files with different extensions.
 #[test]
 fn extension_sorting() {
@@ -478,10 +450,6 @@ fn extension_sorting() {
         ]
     );
 }
-
-// ============================================================================
-// Empty Name Edge Cases
-// ============================================================================
 
 /// Verifies that walker handles edge cases in directory structure.
 #[test]
@@ -524,10 +492,6 @@ fn complex_structure_sorting() {
     assert!(gitignore_idx < cargo_idx, ".gitignore before Cargo.toml");
     assert!(cargo_idx < readme_idx, "Cargo.toml before README.md");
 }
-
-// ============================================================================
-// Large File List Sorting Tests
-// ============================================================================
 
 /// Verifies sorting maintains order with large number of files.
 ///
@@ -642,10 +606,6 @@ fn large_nested_directory_sorting() {
     }
 }
 
-// ============================================================================
-// Binary/Byte-Level Sorting Tests
-// ============================================================================
-
 /// Verifies sorting is based on byte values, not character interpretation.
 ///
 /// Ensures that sorting works at the byte level, which is important for
@@ -690,10 +650,6 @@ fn binary_byte_sorting() {
         );
     }
 }
-
-// ============================================================================
-// Comprehensive Special Character Sorting Tests
-// ============================================================================
 
 /// Verifies complete ASCII punctuation sorting order.
 ///
@@ -802,10 +758,6 @@ fn mixed_alphanumeric_special_sorting() {
     }
 }
 
-// ============================================================================
-// Case Sensitivity Extended Tests
-// ============================================================================
-
 /// Verifies case-sensitive sorting with extensive examples.
 ///
 /// This test expands on the basic case sensitivity test to verify
@@ -881,10 +833,6 @@ fn case_sensitive_with_numbers() {
     }
 }
 
-// ============================================================================
-// Locale-Independent Sorting Tests
-// ============================================================================
-
 /// Verifies sorting is locale-independent.
 ///
 /// Ensures that the sorting order doesn't change based on system locale
@@ -926,10 +874,6 @@ fn locale_independent_sorting() {
         );
     }
 }
-
-// ============================================================================
-// Stability and Consistency Tests
-// ============================================================================
 
 /// Verifies that sorting produces identical results across multiple runs.
 ///
@@ -1000,10 +944,6 @@ fn prefix_length_sorting() {
         assert_eq!(paths[i], PathBuf::from(expected));
     }
 }
-
-// ============================================================================
-// Sort Algorithm Stress Tests
-// ============================================================================
 
 /// Verifies sorting when files are created in reverse alphabetical order.
 ///

@@ -15,10 +15,6 @@
 // Note: Tests that require root privileges check the effective UID and skip
 // when not running as root.
 
-// ============================================================================
-// Option Round-Trip Tests
-// ============================================================================
-
 #[test]
 fn super_mode_option_default_is_none() {
     let options = LocalCopyOptions::default();
@@ -65,10 +61,6 @@ fn fake_super_option_round_trip() {
     assert!(!options.fake_super_enabled());
 }
 
-// ============================================================================
-// am_root() Semantics Tests
-// ============================================================================
-
 #[test]
 fn am_root_returns_true_when_super_is_true() {
     let options = LocalCopyOptions::default().super_mode(Some(true));
@@ -97,10 +89,6 @@ fn am_root_matches_euid_when_super_mode_none() {
     let expected = rustix::process::geteuid().is_root();
     assert_eq!(options.am_root(), expected);
 }
-
-// ============================================================================
-// Builder Integration Tests
-// ============================================================================
 
 #[test]
 fn builder_super_mode_default_is_none() {
@@ -155,10 +143,6 @@ fn builder_super_mode_and_fake_super_combined() {
     assert!(options.am_root());
 }
 
-// ============================================================================
-// CopyContext MetadataOptions Flow Tests
-// ============================================================================
-
 #[test]
 fn metadata_options_carry_fake_super_setting() {
     let options = LocalCopyOptions::default().fake_super(true);
@@ -179,10 +163,6 @@ fn metadata_options_fake_super_false_when_explicitly_disabled() {
     let context = CopyContext::new(LocalCopyExecution::Apply, options, None, PathBuf::from("."));
     assert!(!context.metadata_options().fake_super_enabled());
 }
-
-// ============================================================================
-// --super Enables Privileged Operations (Integration Tests)
-// ============================================================================
 
 #[test]
 fn super_mode_true_with_owner_preserves_file() {
@@ -287,10 +267,6 @@ fn super_mode_false_still_copies_directory_tree() {
     test_helpers::assert_file_content(&ctx.dest.join("dir/y.txt"), b"yyy");
 }
 
-// ============================================================================
-// --super with Specials and Devices
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn super_mode_true_with_specials_copies_fifo() {
@@ -359,10 +335,6 @@ fn super_mode_false_with_specials_still_copies_fifo() {
     let metadata = fs::symlink_metadata(&dest_fifo).expect("dest fifo metadata");
     assert!(metadata.file_type().is_fifo());
 }
-
-// ============================================================================
-// --fake-super Integration Tests
-// ============================================================================
 
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
@@ -470,10 +442,6 @@ fn fake_super_copies_file_without_xattr_feature() {
     test_helpers::assert_file_content(&ctx.dest.join("file.txt"), b"fake super test");
 }
 
-// ============================================================================
-// Dry Run with --super and --fake-super
-// ============================================================================
-
 #[test]
 fn dry_run_with_super_mode_does_not_create_files() {
     let ctx = test_helpers::setup_copy_test();
@@ -517,10 +485,6 @@ fn dry_run_with_fake_super_does_not_create_files() {
     assert_eq!(summary.files_copied(), 1);
     assert!(!ctx.dest.join("file.txt").exists());
 }
-
-// ============================================================================
-// Interaction with Metadata Preservation Flags
-// ============================================================================
 
 #[test]
 fn super_mode_with_permissions_preserves_perms() {
@@ -619,10 +583,6 @@ fn no_super_with_times_still_preserves_timestamps() {
     assert_eq!(dest_mtime, mtime);
 }
 
-// ============================================================================
-// --super with --owner Root-Only Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn super_true_with_owner_preserves_uid_when_root() {
@@ -714,10 +674,6 @@ fn super_true_with_group_preserves_gid_when_root() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ============================================================================
-// Combined --super and --fake-super Tests
-// ============================================================================
-
 #[test]
 fn super_and_fake_super_both_enabled() {
     // Both flags can be set simultaneously. In upstream rsync, --fake-super
@@ -767,10 +723,6 @@ fn super_true_and_fake_super_copies_files() {
     test_helpers::assert_file_content(&ctx.dest.join("combined.txt"), b"combined test");
 }
 
-// ============================================================================
-// Event Collection with --super
-// ============================================================================
-
 #[test]
 fn super_mode_with_collect_events_records_actions() {
     let ctx = test_helpers::setup_copy_test();
@@ -792,10 +744,6 @@ fn super_mode_with_collect_events_records_actions() {
     // Verify events were recorded
     assert!(!report.records().is_empty());
 }
-
-// ============================================================================
-// --super with Delete Operations
-// ============================================================================
 
 #[test]
 fn super_mode_with_delete_removes_extra_files() {
@@ -844,10 +792,6 @@ fn no_super_with_delete_still_removes_extra_files() {
     assert!(!ctx.dest_exists("extra.txt"));
 }
 
-// ============================================================================
-// --super with Symlinks
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn super_mode_with_links_copies_symlinks() {
@@ -878,10 +822,6 @@ fn super_mode_with_links_copies_symlinks() {
     assert_eq!(dest_target, Path::new("target.txt"));
 }
 
-// ============================================================================
-// --super with Update Semantics
-// ============================================================================
-
 #[test]
 fn super_mode_with_update_skips_newer_destination() {
     let ctx = test_helpers::setup_copy_test_with_dest();
@@ -910,10 +850,6 @@ fn super_mode_with_update_skips_newer_destination() {
     test_helpers::assert_file_content(&ctx.dest.join("file.txt"), b"newer");
 }
 
-// ============================================================================
-// --super with Checksum Mode
-// ============================================================================
-
 #[test]
 fn super_mode_with_checksum_copies_differing_files() {
     let ctx = test_helpers::setup_copy_test_with_dest();
@@ -940,10 +876,6 @@ fn super_mode_with_checksum_copies_differing_files() {
     assert_eq!(summary.files_copied(), 1);
     test_helpers::assert_file_content(&ctx.dest.join("file.txt"), b"source content");
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[test]
 fn super_mode_transitions_between_states() {

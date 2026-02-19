@@ -13,10 +13,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Basic Precedence Tests
-// ============================================================================
-
 /// Verifies first-match-wins: specific includes must come before general excludes.
 ///
 /// From rsync man page: "The include/exclude rules are checked in the
@@ -73,10 +69,6 @@ fn alternating_rules() {
     assert!(!set.allows(Path::new("image.png"), false));
 }
 
-// ============================================================================
-// Specificity Tests
-// ============================================================================
-
 /// Verifies that more specific patterns take precedence when first.
 #[test]
 fn specific_pattern_first() {
@@ -125,10 +117,6 @@ fn directory_vs_file_pattern() {
     // File named build is excluded (first rule doesn't match file, second does)
     assert!(!set.allows(Path::new("build"), false));
 }
-
-// ============================================================================
-// Complex Precedence Scenarios
-// ============================================================================
 
 /// Verifies complex exclude/include chain.
 #[test]
@@ -197,10 +185,6 @@ fn anchored_vs_unanchored() {
     assert!(!set.allows(Path::new("src/build"), false));
 }
 
-// ============================================================================
-// Rule Type Interaction Tests
-// ============================================================================
-
 /// Verifies include/exclude separate from protect/risk.
 #[test]
 fn include_exclude_separate_from_protect_risk() {
@@ -252,10 +236,6 @@ fn risk_overrides_protect() {
     assert!(!set.allows_deletion(Path::new("data/important.dat"), false));
 }
 
-// ============================================================================
-// Side-Specific Precedence
-// ============================================================================
-
 /// Verifies sender-only and receiver-only rules don't interfere.
 #[test]
 fn sender_receiver_independence() {
@@ -295,10 +275,6 @@ fn show_hide_vs_include_exclude() {
     // Other files excluded
     assert!(!set.allows(Path::new("other/file"), false));
 }
-
-// ============================================================================
-// Clear Rule Precedence
-// ============================================================================
 
 /// Verifies clear resets precedence.
 #[test]
@@ -340,10 +316,6 @@ fn new_precedence_after_clear() {
     // Other .bak excluded (second rule after clear)
     assert!(!set.allows(Path::new("backup.bak"), false));
 }
-
-// ============================================================================
-// Duplicate and Overlapping Rules
-// ============================================================================
 
 /// Verifies duplicate rules are handled.
 #[test]
@@ -402,10 +374,6 @@ fn subset_patterns() {
     assert!(!set.allows(Path::new("tests/test.rs"), false));
     assert!(!set.allows(Path::new("main.rs"), false));
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Verifies no matching rule defaults to include.
 #[test]

@@ -16,10 +16,6 @@ use protocol::{
 };
 use std::io::{self, Cursor};
 
-// ===========================================================================
-// VARINT BOUNDARY VALUE TESTS
-// ===========================================================================
-
 /// Tests varint encoding at the 1-byte boundary (0-127).
 #[test]
 fn varint_1byte_boundary_values() {
@@ -129,10 +125,6 @@ fn varint_5byte_boundary_values() {
     }
 }
 
-// ===========================================================================
-// VARINT ROUNDTRIP TESTS
-// ===========================================================================
-
 /// Tests complete roundtrip through all public varint APIs.
 #[test]
 fn varint_complete_api_roundtrip() {
@@ -213,10 +205,6 @@ fn varint_sequential_decoding() {
     assert_eq!(cursor.position() as usize, encoded.len());
 }
 
-// ===========================================================================
-// VARINT ERROR CASES
-// ===========================================================================
-
 /// Tests that empty input produces UnexpectedEof error.
 #[test]
 fn varint_empty_input_error() {
@@ -274,10 +262,6 @@ fn varint_overflow_tag_error() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
-// ===========================================================================
-// FIXED INT (4-BYTE) TESTS
-// ===========================================================================
-
 /// Tests fixed 4-byte integer encoding roundtrip.
 #[test]
 fn fixed_int_roundtrip() {
@@ -314,10 +298,6 @@ fn fixed_int_truncated_error() {
     let err = read_int(&mut cursor).expect_err("truncated input should fail");
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
-
-// ===========================================================================
-// LONGINT (LEGACY 64-BIT) TESTS
-// ===========================================================================
 
 /// Tests longint encoding for values that fit in 4 bytes.
 #[test]
@@ -390,10 +370,6 @@ fn longint_truncated_error() {
     let err = read_longint(&mut cursor).expect_err("truncated should fail");
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
-
-// ===========================================================================
-// VARLONG (64-BIT VARIABLE LENGTH) TESTS
-// ===========================================================================
 
 /// Tests varlong roundtrip with various min_bytes values.
 #[test]
@@ -485,10 +461,6 @@ fn varlong_truncated_error() {
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
-// ===========================================================================
-// VARLONG30 (PROTOCOL 30+ ALIAS) TESTS
-// ===========================================================================
-
 /// Tests that varlong30 is an alias for varlong.
 #[test]
 fn varlong30_is_varlong_alias() {
@@ -507,10 +479,6 @@ fn varlong30_is_varlong_alias() {
     let decoded = read_varlong30(&mut cursor, min_bytes).expect("read_varlong30 should succeed");
     assert_eq!(decoded, value);
 }
-
-// ===========================================================================
-// VARINT30_INT (PROTOCOL VERSION DEPENDENT) TESTS
-// ===========================================================================
 
 /// Tests that protocol < 30 uses fixed 4-byte encoding.
 #[test]
@@ -566,10 +534,6 @@ fn varint30_int_roundtrip() {
         }
     }
 }
-
-// ===========================================================================
-// RSYNC PROTOCOL EDGE CASES
-// ===========================================================================
 
 /// Tests encoding of typical compatibility flag values.
 #[test]
@@ -676,10 +640,6 @@ fn varint_byte_boundary_efficiency() {
     }
 }
 
-// ===========================================================================
-// KNOWN WIRE FORMAT VERIFICATION
-// ===========================================================================
-
 /// Tests encoding against known wire format values from upstream rsync.
 #[test]
 fn varint_known_wire_format() {
@@ -729,10 +689,6 @@ fn longint_marker_wire_format() {
     let decoded_value = i64::from_le_bytes(value_bytes.try_into().unwrap());
     assert_eq!(decoded_value, large_value);
 }
-
-// ===========================================================================
-// STRESS TESTS
-// ===========================================================================
 
 /// Tests encoding/decoding many sequential values.
 #[test]
@@ -795,10 +751,6 @@ fn varint_negative_powers_of_two() {
         assert_eq!(decoded, value, "failed for -(2^{shift})");
     }
 }
-
-// ===========================================================================
-// INTERLEAVED ENCODING TESTS
-// ===========================================================================
 
 /// Tests interleaved varint and fixed int encoding/decoding.
 #[test]

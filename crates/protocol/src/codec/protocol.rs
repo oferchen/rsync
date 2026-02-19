@@ -39,10 +39,6 @@ use std::io::{self, Read, Write};
 
 use crate::varint::{read_varint, read_varlong, write_longint, write_varint, write_varlong};
 
-// ============================================================================
-// Strategy Pattern: ProtocolCodec trait
-// ============================================================================
-
 /// Strategy trait for protocol version-aware encoding/decoding.
 ///
 /// Implementations provide version-specific wire formats for common protocol
@@ -65,10 +61,6 @@ pub trait ProtocolCodec: Send + Sync {
         self.protocol_version() < 30
     }
 
-    // ========================================================================
-    // Integer encoding
-    // ========================================================================
-
     /// Writes a 32-bit integer.
     ///
     /// All protocol versions use 4-byte little-endian for plain integers.
@@ -83,10 +75,6 @@ pub trait ProtocolCodec: Send + Sync {
         Ok(i32::from_le_bytes(buf))
     }
 
-    // ========================================================================
-    // File size encoding (protocol-dependent)
-    // ========================================================================
-
     /// Writes a file size value.
     ///
     /// - Protocol < 30: Uses longint (4 bytes for small values, 12 for large)
@@ -95,10 +83,6 @@ pub trait ProtocolCodec: Send + Sync {
 
     /// Reads a file size value.
     fn read_file_size<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64>;
-
-    // ========================================================================
-    // Modification time encoding (protocol-dependent)
-    // ========================================================================
 
     /// Writes a modification time value.
     ///
@@ -109,10 +93,6 @@ pub trait ProtocolCodec: Send + Sync {
     /// Reads a modification time value.
     fn read_mtime<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64>;
 
-    // ========================================================================
-    // Long name length encoding (protocol-dependent)
-    // ========================================================================
-
     /// Writes a long name suffix length (when XMIT_LONG_NAME is set).
     ///
     /// - Protocol < 30: Uses 4-byte fixed integer
@@ -121,10 +101,6 @@ pub trait ProtocolCodec: Send + Sync {
 
     /// Reads a long name suffix length.
     fn read_long_name_len<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<usize>;
-
-    // ========================================================================
-    // Variable-length integer (always available, but usage differs)
-    // ========================================================================
 
     /// Writes a variable-length integer (varint).
     ///
@@ -139,10 +115,6 @@ pub trait ProtocolCodec: Send + Sync {
     fn read_varint<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i32> {
         read_varint(reader)
     }
-
-    // ========================================================================
-    // Statistics encoding (mirrors write_varlong30 in upstream)
-    // ========================================================================
 
     /// Writes a statistic value (used for transfer stats in handle_stats).
     ///
@@ -160,10 +132,6 @@ pub trait ProtocolCodec: Send + Sync {
     fn read_stat<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64> {
         self.read_file_size(reader)
     }
-
-    // ========================================================================
-    // Filter rule modifier support (protocol-dependent)
-    // ========================================================================
 
     /// Returns `true` if this protocol supports sender/receiver side modifiers (`s`, `r`).
     ///
@@ -202,10 +170,6 @@ pub trait ProtocolCodec: Send + Sync {
         self.protocol_version() < 29
     }
 
-    // ========================================================================
-    // Statistics encoding support (protocol-dependent)
-    // ========================================================================
-
     /// Returns `true` if this protocol supports file list timing statistics.
     ///
     /// - Protocol < 29: Returns `false` (no flist_buildtime/flist_xfertime)
@@ -218,10 +182,6 @@ pub trait ProtocolCodec: Send + Sync {
         self.protocol_version() >= 29
     }
 }
-
-// ============================================================================
-// Legacy codec implementation (Protocol 28-29)
-// ============================================================================
 
 /// Protocol codec for legacy versions (28-29).
 ///
@@ -298,10 +258,6 @@ impl ProtocolCodec for LegacyProtocolCodec {
     }
 }
 
-// ============================================================================
-// Modern codec implementation (Protocol 30+)
-// ============================================================================
-
 /// Protocol codec for modern versions (30+).
 ///
 /// Uses variable-length encoding for bandwidth efficiency:
@@ -359,10 +315,6 @@ impl ProtocolCodec for ModernProtocolCodec {
     }
 }
 
-// ============================================================================
-// Enum wrapper for dynamic dispatch
-// ============================================================================
-
 /// Enum wrapper for dynamic codec dispatch.
 ///
 /// This allows selecting the appropriate codec at runtime based on protocol
@@ -416,10 +368,6 @@ impl ProtocolCodec for ProtocolCodecEnum {
     delegate_codec!(read read_long_name_len -> io::Result<usize>);
 }
 
-// ============================================================================
-// Factory function
-// ============================================================================
-
 /// Creates the appropriate protocol codec for the given version.
 ///
 /// - Protocol 28-29: Returns [`LegacyProtocolCodec`]
@@ -445,19 +393,11 @@ pub fn create_protocol_codec(protocol_version: u8) -> ProtocolCodecEnum {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 #[allow(clippy::uninlined_format_args)]
 mod tests {
     use super::*;
     use std::io::Cursor;
-
-    // ------------------------------------------------------------------------
-    // Factory tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn factory_creates_legacy_for_protocol_28() {
@@ -491,10 +431,6 @@ mod tests {
         assert!(!codec.is_legacy());
     }
 
-    // ------------------------------------------------------------------------
-    // Legacy codec panic tests
-    // ------------------------------------------------------------------------
-
     #[test]
     #[should_panic(expected = "LegacyProtocolCodec requires protocol < 30")]
     fn legacy_codec_panics_for_protocol_30() {
@@ -506,10 +442,6 @@ mod tests {
     fn modern_codec_panics_for_protocol_29() {
         let _ = ModernProtocolCodec::new(29);
     }
-
-    // ------------------------------------------------------------------------
-    // File size encoding tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn legacy_file_size_small_value() {
@@ -568,10 +500,6 @@ mod tests {
         assert_eq!(value, large_value);
     }
 
-    // ------------------------------------------------------------------------
-    // Mtime encoding tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn legacy_mtime_encoding() {
         let codec = create_protocol_codec(29);
@@ -601,10 +529,6 @@ mod tests {
         let value = codec.read_mtime(&mut cursor).unwrap();
         assert_eq!(value, mtime);
     }
-
-    // ------------------------------------------------------------------------
-    // Long name length encoding tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn legacy_long_name_len_encoding() {
@@ -638,10 +562,6 @@ mod tests {
         assert_eq!(value, len);
     }
 
-    // ------------------------------------------------------------------------
-    // Integer encoding tests (same across versions)
-    // ------------------------------------------------------------------------
-
     #[test]
     fn write_int_is_always_4_bytes() {
         for version in [28, 29, 30, 31, 32] {
@@ -665,10 +585,6 @@ mod tests {
             assert_eq!(value, -1);
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Cross-version round-trip tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn file_size_round_trip_all_versions() {
@@ -709,10 +625,6 @@ mod tests {
             }
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Filter modifier support tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn protocol_28_does_not_support_sender_receiver_modifiers() {
@@ -820,10 +732,6 @@ mod tests {
         assert!(codec_30.supports_perishable_modifier());
     }
 
-    // ------------------------------------------------------------------------
-    // Statistics encoding support tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn protocol_28_does_not_support_flist_times() {
         let codec = create_protocol_codec(28);
@@ -925,10 +833,6 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // Protocol Version Range Tests (v27-v32)
-    // ============================================================================
-
     #[test]
     fn version_27_not_supported_use_28_as_minimum() {
         // Protocol 27 is below the supported range; use 28 as minimum
@@ -959,10 +863,6 @@ mod tests {
         modern.write_file_size(&mut modern_buf, 100).unwrap();
         assert!(modern_buf.len() <= 4, "modern version uses varlong");
     }
-
-    // ============================================================================
-    // Interop Tests - Upstream Protocol Byte Patterns
-    // ============================================================================
 
     #[test]
     fn legacy_encoding_matches_upstream_byte_patterns() {
@@ -1037,10 +937,6 @@ mod tests {
         let mut cursor = Cursor::new(&modern_buf);
         assert_eq!(modern.read_mtime(&mut cursor).unwrap(), mtime);
     }
-
-    // ============================================================================
-    // Compatibility Flags Tests
-    // ============================================================================
 
     #[test]
     fn compatibility_flags_progressive_enablement() {
@@ -1160,10 +1056,6 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // Error Handling Tests
-    // ============================================================================
-
     #[test]
     fn read_file_size_handles_truncated_input() {
         let legacy = create_protocol_codec(29);
@@ -1225,10 +1117,6 @@ mod tests {
         assert!(codec.read_long_name_len(&mut cursor).is_err());
     }
 
-    // ============================================================================
-    // Cross-Version Compatibility Tests
-    // ============================================================================
-
     #[test]
     fn write_int_consistent_across_all_versions() {
         // write_int always uses 4-byte LE regardless of version
@@ -1259,10 +1147,6 @@ mod tests {
             assert_eq!(value, 1000);
         }
     }
-
-    // ============================================================================
-    // Extreme Value Tests
-    // ============================================================================
 
     #[test]
     fn file_size_extreme_values_roundtrip() {
@@ -1309,10 +1193,6 @@ mod tests {
             }
         }
     }
-
-    // ============================================================================
-    // I/O Error Propagation Tests
-    // ============================================================================
 
     #[test]
     fn write_file_size_propagates_io_error() {
@@ -1380,10 +1260,6 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
     }
 
-    // ============================================================================
-    // ProtocolCodecEnum Dispatch Tests
-    // ============================================================================
-
     #[test]
     fn codec_enum_dispatches_to_correct_implementation() {
         // Verify that enum correctly dispatches to legacy vs modern
@@ -1423,10 +1299,6 @@ mod tests {
             );
         }
     }
-
-    // ============================================================================
-    // Wire Format Verification Tests
-    // ============================================================================
 
     #[test]
     fn legacy_longint_format_for_large_values() {
@@ -1483,10 +1355,6 @@ mod tests {
         assert_eq!(modern.read_long_name_len(&mut cursor).unwrap(), len);
     }
 
-    // ============================================================================
-    // Property: Encoding Determinism
-    // ============================================================================
-
     #[test]
     fn encoding_is_deterministic() {
         // Same input should always produce same output
@@ -1521,10 +1389,6 @@ mod tests {
             assert_eq!(read, expected);
         }
     }
-
-    // ============================================================================
-    // Boundary Value Tests
-    // ============================================================================
 
     #[test]
     fn boundary_values_at_byte_boundaries() {
@@ -1603,10 +1467,6 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // Debug and Display Tests
-    // ============================================================================
-
     #[test]
     fn codec_debug_format() {
         let legacy = create_protocol_codec(29);
@@ -1619,10 +1479,6 @@ mod tests {
         assert!(legacy_debug.contains("Legacy") || legacy_debug.contains("29"));
         assert!(modern_debug.contains("Modern") || modern_debug.contains("30"));
     }
-
-    // ============================================================================
-    // Varint and Varlong Specific Tests
-    // ============================================================================
 
     #[test]
     fn varint_roundtrip_all_versions() {

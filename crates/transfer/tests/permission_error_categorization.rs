@@ -11,10 +11,6 @@ use transfer::error::{
     DeltaFatalError, DeltaRecoverableError, DeltaTransferError, categorize_io_error,
 };
 
-// =============================================================================
-// Permission Denied Error Categorization
-// =============================================================================
-
 #[test]
 fn categorize_permission_denied_as_recoverable() {
     let err = io::Error::from(io::ErrorKind::PermissionDenied);
@@ -106,10 +102,6 @@ fn categorize_permission_denied_for_readdir_operation() {
     }
 }
 
-// =============================================================================
-// Comparison with Fatal Errors
-// =============================================================================
-
 #[test]
 fn verify_permission_denied_is_not_fatal() {
     let err = io::Error::from(io::ErrorKind::PermissionDenied);
@@ -168,10 +160,6 @@ fn verify_not_found_is_recoverable() {
     }
 }
 
-// =============================================================================
-// Error Display Tests
-// =============================================================================
-
 #[test]
 fn permission_denied_error_displays_operation() {
     let err = DeltaRecoverableError::PermissionDenied {
@@ -204,10 +192,6 @@ fn permission_denied_error_displays_path() {
         "Should include full path"
     );
 }
-
-// =============================================================================
-// Error Variant Verification
-// =============================================================================
 
 #[test]
 fn recoverable_error_from_permission_denied() {
@@ -244,10 +228,6 @@ fn fatal_error_is_distinct_from_recoverable() {
         DeltaTransferError::Recoverable(_)
     ));
 }
-
-// =============================================================================
-// Edge Cases
-// =============================================================================
 
 #[test]
 fn categorize_permission_denied_with_empty_path() {
@@ -299,10 +279,6 @@ fn categorize_permission_denied_with_unicode_path() {
     }
 }
 
-// =============================================================================
-// Multiple Error Type Comparison
-// =============================================================================
-
 #[test]
 fn compare_error_categorization_across_types() {
     let path = Path::new("/test/file.txt");
@@ -342,10 +318,6 @@ fn compare_error_categorization_across_types() {
     }
 }
 
-// =============================================================================
-// Error Source Chain Tests
-// =============================================================================
-
 #[test]
 fn recoverable_io_error_has_source() {
     use std::error::Error;
@@ -370,10 +342,6 @@ fn fatal_io_error_has_source() {
     // The error should have a source
     assert!(err.source().is_some());
 }
-
-// =============================================================================
-// Real-world Scenario Tests
-// =============================================================================
 
 #[test]
 fn scenario_protected_system_file() {

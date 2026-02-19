@@ -8,10 +8,6 @@
 
 use logging::{DebugFlag, InfoFlag, VerbosityConfig, debug_gte, drain_events, info_gte, init};
 
-// ============================================================================
-// Verbose Level 0 (No -v flags)
-// ============================================================================
-
 /// Verifies level 0 enables minimal output (only nonreg).
 /// This matches rsync's behavior with no verbosity flags.
 #[test]
@@ -35,10 +31,6 @@ fn verbose_level_0_minimal_output() {
     assert!(!debug_gte(DebugFlag::Recv, 1));
     assert!(!debug_gte(DebugFlag::Send, 1));
 }
-
-// ============================================================================
-// Verbose Level 1 (-v)
-// ============================================================================
 
 /// Verifies level 1 enables basic file listing output.
 /// This matches rsync -v behavior.
@@ -80,10 +72,6 @@ fn verbose_level_1_name_output() {
     assert!(!info_gte(InfoFlag::Name, 2));
 }
 
-// ============================================================================
-// Verbose Level 2 (-vv)
-// ============================================================================
-
 /// Verifies level 2 enables enhanced info and basic debug output.
 /// This matches rsync -vv behavior.
 #[test]
@@ -121,10 +109,6 @@ fn verbose_level_2_itemize_changes() {
     assert!(info_gte(InfoFlag::Name, 2));
 }
 
-// ============================================================================
-// Verbose Level 3 (-vvv)
-// ============================================================================
-
 /// Verifies level 3 enables detailed debug output.
 /// This matches rsync -vvv behavior.
 #[test]
@@ -151,10 +135,6 @@ fn verbose_level_3_detailed_debug() {
     assert!(debug_gte(DebugFlag::Exit, 1));
 }
 
-// ============================================================================
-// Verbose Level 4 (-vvvv)
-// ============================================================================
-
 /// Verifies level 4 enables highly detailed debug output.
 #[test]
 fn verbose_level_4_highly_detailed() {
@@ -172,10 +152,6 @@ fn verbose_level_4_highly_detailed() {
     assert!(debug_gte(DebugFlag::Exit, 2));
     assert!(debug_gte(DebugFlag::Proto, 1));
 }
-
-// ============================================================================
-// Verbose Level 5+ (-vvvvv or more)
-// ============================================================================
 
 /// Verifies level 5+ enables maximum debug output.
 #[test]
@@ -211,10 +187,6 @@ fn verbose_level_above_5_same_as_5() {
     assert_eq!(config5.debug.flist, config255.debug.flist);
 }
 
-// ============================================================================
-// Progressive Enhancement Tests
-// ============================================================================
-
 /// Verifies each level includes previous level's capabilities.
 #[test]
 fn verbose_levels_are_progressive() {
@@ -241,10 +213,6 @@ fn debug_output_starts_at_level_2() {
     assert_eq!(config1.debug.bind, 0);
     assert!(config2.debug.bind >= 1);
 }
-
-// ============================================================================
-// Specific Flag Mapping Tests
-// ============================================================================
 
 /// Verifies deltasum flag levels match rsync behavior.
 /// Deltasum is used for delta-transfer algorithm debugging.
@@ -279,10 +247,6 @@ fn name_flag_levels() {
     assert_eq!(VerbosityConfig::from_verbose_level(2).info.name, 2);
     assert_eq!(VerbosityConfig::from_verbose_level(3).info.name, 2);
 }
-
-// ============================================================================
-// Config Cloning and Modification
-// ============================================================================
 
 /// Verifies from_verbose_level produces clonable config.
 #[test]

@@ -113,10 +113,6 @@ fn locate_oc_rsync() -> Option<std::path::PathBuf> {
     None
 }
 
-// ============================================================================
-// GNU FTP Server Tests
-// ============================================================================
-
 #[test]
 #[ignore = "requires network access to ftp.gnu.org"]
 fn rsync_protocol_gnu_ftp_small_file() {
@@ -179,10 +175,6 @@ fn rsync_protocol_gnu_ftp_directory() {
     }
 }
 
-// ============================================================================
-// Apache Mirror Tests
-// ============================================================================
-
 #[test]
 #[ignore = "requires network access to rsync.apache.org"]
 fn rsync_protocol_apache_small_file() {
@@ -208,10 +200,6 @@ fn rsync_protocol_apache_small_file() {
     assert!(downloaded.exists(), "README.html should be downloaded");
 }
 
-// ============================================================================
-// Debian Mirror Tests
-// ============================================================================
-
 #[test]
 #[ignore = "requires network access to ftp.debian.org"]
 fn rsync_protocol_debian_readme() {
@@ -236,10 +224,6 @@ fn rsync_protocol_debian_readme() {
     let downloaded = dest_dir.join("README");
     assert!(downloaded.exists(), "README should be downloaded");
 }
-
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
 
 #[test]
 fn rsync_protocol_invalid_server() {
@@ -282,10 +266,6 @@ fn rsync_protocol_invalid_module() {
     assert!(!output.status.success(), "should fail with invalid module");
 }
 
-// ============================================================================
-// Incremental Transfer Tests
-// ============================================================================
-
 #[test]
 #[ignore = "requires network access to ftp.gnu.org"]
 fn rsync_protocol_incremental_sync() {
@@ -315,10 +295,6 @@ fn rsync_protocol_incremental_sync() {
         "incremental sync should skip unchanged file"
     );
 }
-
-// ============================================================================
-// Dry Run Tests
-// ============================================================================
 
 #[test]
 #[ignore = "requires network access to ftp.gnu.org"]

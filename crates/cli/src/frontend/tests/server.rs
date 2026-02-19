@@ -51,10 +51,6 @@ impl Write for Buffer {
     }
 }
 
-// -----------------------------------------------------------------------------
-// daemon_mode_arguments
-// -----------------------------------------------------------------------------
-
 #[test]
 fn daemon_mode_arguments_empty_args_returns_none() {
     let args: Vec<OsString> = Vec::new();
@@ -145,10 +141,6 @@ fn daemon_mode_arguments_ignores_daemon_flag_after_double_dash() {
     assert!(daemon_mode_arguments(&args).is_none());
 }
 
-// -----------------------------------------------------------------------------
-// server_mode_requested
-// -----------------------------------------------------------------------------
-
 #[test]
 fn server_mode_requested_detects_flag_before_double_dash() {
     let args = [
@@ -182,10 +174,6 @@ fn server_mode_requested_is_false_when_flag_absent() {
     ];
     assert!(!server_mode_requested(&args));
 }
-
-// -----------------------------------------------------------------------------
-// ServerInvocation::parse and related helper methods
-// -----------------------------------------------------------------------------
 
 #[test]
 fn parses_receiver_invocation_and_normalises_dot_placeholder() {
@@ -394,10 +382,6 @@ fn server_mode_requires_utf8_flag_string() {
     );
 }
 
-// -----------------------------------------------------------------------------
-// Flag validation helpers
-// -----------------------------------------------------------------------------
-
 #[test]
 fn is_rsync_flag_string_accepts_valid_block() {
     assert!(is_rsync_flag_string("-logDtpre.iLsfxC"));
@@ -424,10 +408,6 @@ fn is_rsync_flag_tail_rejects_invalid_tail() {
     assert!(!is_rsync_flag_tail(""));
     assert!(!is_rsync_flag_tail("with/slash"));
 }
-
-// -----------------------------------------------------------------------------
-// Error reporting and facade behaviour
-// -----------------------------------------------------------------------------
 
 #[test]
 fn run_server_mode_receiver_attempts_handshake_and_flushes_streams() {
@@ -515,10 +495,6 @@ fn run_server_mode_reports_parse_error_for_invalid_invocation() {
         "stderr should mention flag string parse error; got: {text}"
     );
 }
-
-// -----------------------------------------------------------------------------
-// Sanity: touch_server_invocation helper
-// -----------------------------------------------------------------------------
 
 #[test]
 fn touch_server_invocation_is_noop_but_compiles() {

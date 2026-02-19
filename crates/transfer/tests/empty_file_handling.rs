@@ -17,10 +17,6 @@ use transfer::delta_apply::{
     ChecksumVerifier, DeltaApplyConfig, DeltaApplyResult, SparseWriteState,
 };
 
-// ============================================================================
-// Empty File Delta Generation Tests
-// ============================================================================
-
 #[test]
 fn empty_file_sparse_write_produces_zero_position() {
     let mut state = SparseWriteState::new();
@@ -97,10 +93,6 @@ fn empty_file_checksum_verification_sha1() {
     assert_eq!(buf[..len], expected_sha1_empty);
 }
 
-// ============================================================================
-// Sparse Write State with Empty File Content
-// ============================================================================
-
 #[test]
 fn sparse_state_empty_write_then_finish() {
     let mut state = SparseWriteState::new();
@@ -145,10 +137,6 @@ fn sparse_state_empty_then_data_then_empty() {
     let pos = state.finish(&mut cursor).unwrap();
     assert_eq!(pos, 5, "position should be 5 after writing 'hello'");
 }
-
-// ============================================================================
-// Empty File to Real File Tests
-// ============================================================================
 
 #[test]
 fn empty_file_creation_via_sparse_state() {
@@ -217,10 +205,6 @@ fn empty_file_checksum_multiple_updates_with_empty() {
     assert_eq!(buf[..len], expected_md5_empty);
 }
 
-// ============================================================================
-// Delta Apply Config with Empty Files
-// ============================================================================
-
 #[test]
 fn delta_apply_config_default_works_for_empty() {
     let config = DeltaApplyConfig::default();
@@ -242,10 +226,6 @@ fn delta_apply_result_default_zero_values() {
     assert_eq!(result.literal_tokens, 0);
     assert_eq!(result.block_tokens, 0);
 }
-
-// ============================================================================
-// Sparse Write State Edge Cases for Empty Content
-// ============================================================================
 
 #[test]
 fn sparse_state_flush_with_no_pending_zeros() {
@@ -283,10 +263,6 @@ fn sparse_state_accumulate_then_finish_creates_hole() {
     let buffer = cursor.into_inner();
     assert_eq!(buffer[49], 0, "position 49 should be zero");
 }
-
-// ============================================================================
-// Real File Empty Transfer Simulation
-// ============================================================================
 
 #[test]
 fn simulate_empty_file_transfer() {
@@ -367,10 +343,6 @@ fn simulate_nonempty_to_empty_basis_delta() {
     assert_eq!(result, content);
 }
 
-// ============================================================================
-// Multiple Empty Files in Same Directory
-// ============================================================================
-
 #[test]
 fn multiple_empty_files_sequential_creation() {
     let temp = tempdir().expect("tempdir");
@@ -438,10 +410,6 @@ fn mixed_empty_and_nonempty_files() {
     }
 }
 
-// ============================================================================
-// Checksum Consistency Tests
-// ============================================================================
-
 #[test]
 fn empty_file_checksum_consistency_across_calls() {
     // Create two verifiers and check they produce the same result
@@ -484,10 +452,6 @@ fn empty_vs_zero_byte_checksum() {
     );
 }
 
-// ============================================================================
-// Protocol Version Compatibility for Empty Files
-// ============================================================================
-
 #[test]
 fn empty_file_verifier_protocol_29() {
     let verifier = ChecksumVerifier::new(
@@ -523,10 +487,6 @@ fn empty_file_verifier_protocol_31() {
     // Protocol 31 uses MD5 by default
     assert_eq!(verifier.digest_len(), 16);
 }
-
-// ============================================================================
-// Sparse File Edge Cases with Empty Content
-// ============================================================================
 
 #[test]
 fn sparse_state_pending_after_empty_write() {
@@ -571,10 +531,6 @@ fn sparse_state_position_unchanged_after_empty_write() {
     );
 }
 
-// ============================================================================
-// Named Temp File Empty Tests
-// ============================================================================
-
 #[test]
 fn named_temp_file_starts_empty() {
     let temp_file = NamedTempFile::new().expect("temp file");
@@ -608,10 +564,6 @@ fn empty_file_read_back_verification() {
 
     assert!(contents.is_empty(), "read back should be empty");
 }
-
-// ============================================================================
-// Delta Apply Result for Empty Transfers
-// ============================================================================
 
 #[test]
 fn delta_apply_result_empty_transfer_stats() {

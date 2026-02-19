@@ -19,10 +19,6 @@
 // 7. Combining mappings with other metadata preservation flags
 // 8. Error cases and edge conditions
 
-// ============================================================================
-// Basic User Mapping Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn usermap_remaps_numeric_uid() {
@@ -283,10 +279,6 @@ fn usermap_no_match_preserves_original_uid() {
     assert_eq!(dest_metadata.uid(), 5000);
 }
 
-// ============================================================================
-// Basic Group Mapping Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn groupmap_remaps_numeric_gid() {
@@ -522,10 +514,6 @@ fn groupmap_range_mapping() {
     assert_eq!(dest_metadata.gid(), 3000);
 }
 
-// ============================================================================
-// Combined User and Group Mapping Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn usermap_and_groupmap_work_together() {
@@ -636,10 +624,6 @@ fn usermap_and_groupmap_with_wildcards() {
     assert_eq!(dest_metadata.gid(), 9999);
 }
 
-// ============================================================================
-// Mapping Without Preservation Flags
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn usermap_requires_owner_preservation_flag() {
@@ -745,10 +729,6 @@ fn groupmap_requires_group_preservation_flag() {
     let current_gid = rustix::process::getegid().as_raw();
     assert_eq!(dest_metadata.gid(), current_gid);
 }
-
-// ============================================================================
-// Recursive Directory Tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -883,10 +863,6 @@ fn groupmap_applies_to_directory_tree() {
     assert_eq!(fs::metadata(&dest_file2).expect("file2 metadata").gid(), 3000);
     assert_eq!(fs::metadata(&dest_subdir).expect("subdir metadata").gid(), 3000);
 }
-
-// ============================================================================
-// Interaction with Other Options
-// ============================================================================
 
 #[cfg(unix)]
 #[test]

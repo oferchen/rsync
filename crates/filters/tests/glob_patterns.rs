@@ -9,10 +9,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Single Star Wildcard Tests (*)
-// ============================================================================
-
 /// Verifies `*` matches any filename characters.
 #[test]
 fn star_matches_any_filename() {
@@ -71,10 +67,6 @@ fn star_does_not_match_slash() {
     assert!(set.allows(Path::new("src/module/mod.rs"), false));
 }
 
-// ============================================================================
-// Question Mark Wildcard Tests (?)
-// ============================================================================
-
 /// Verifies `?` matches exactly one character.
 #[test]
 fn question_matches_single_char() {
@@ -131,10 +123,6 @@ fn question_does_not_match_slash() {
     assert!(!set.allows(Path::new("aXb"), false));
     assert!(set.allows(Path::new("a/b"), false)); // Slash not matched by ?
 }
-
-// ============================================================================
-// Double Star Wildcard Tests (**)
-// ============================================================================
 
 /// Verifies `**` matches across path separators.
 #[test]
@@ -199,10 +187,6 @@ fn multiple_double_stars() {
     assert!(!set.allows(Path::new("project/src/test"), false));
     assert!(!set.allows(Path::new("project/src/lib/test"), false));
 }
-
-// ============================================================================
-// Character Class Tests ([])
-// ============================================================================
 
 /// Verifies basic character class.
 #[test]
@@ -311,10 +295,6 @@ fn multiple_character_classes() {
     assert!(set.allows(Path::new("aa1"), false)); // Wrong order
 }
 
-// ============================================================================
-// Combined Wildcard Tests
-// ============================================================================
-
 /// Verifies `*` and `?` together.
 #[test]
 fn star_and_question() {
@@ -371,10 +351,6 @@ fn all_wildcards() {
     assert!(set.allows(Path::new("test_12_foo.c"), false)); // Two chars after first _
 }
 
-// ============================================================================
-// Pattern Matching at Different Depths
-// ============================================================================
-
 /// Verifies unanchored pattern matches at any depth.
 #[test]
 fn unanchored_matches_any_depth() {
@@ -408,10 +384,6 @@ fn internal_slash_matches_segment() {
     assert!(set.allows(Path::new("src/output"), false));
 }
 
-// ============================================================================
-// Directory Pattern Tests
-// ============================================================================
-
 /// Verifies directory-only pattern matches only directories.
 #[test]
 fn directory_only_matches_directories() {
@@ -440,10 +412,6 @@ fn nested_directory_patterns() {
     assert!(!set.allows(Path::new("packages/app/node_modules"), true));
     assert!(!set.allows(Path::new("packages/app/node_modules/pkg"), false));
 }
-
-// ============================================================================
-// Complex Real-World Patterns
-// ============================================================================
 
 /// Verifies gitignore-style patterns.
 #[test]

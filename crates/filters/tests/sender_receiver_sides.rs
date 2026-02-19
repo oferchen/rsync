@@ -9,10 +9,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Show Rule Tests (Sender-Side Include)
-// ============================================================================
-
 /// Verifies show rules are sender-only includes.
 ///
 /// From rsync man page: "S is a show prefix, which makes the rule a sender-side
@@ -47,10 +43,6 @@ fn show_rule_wildcard() {
     assert!(set.allows(Path::new("error.log"), false));
     assert!(set.allows(Path::new("system.log"), false));
 }
-
-// ============================================================================
-// Hide Rule Tests (Sender-Side Exclude)
-// ============================================================================
 
 /// Verifies hide rules are sender-only excludes.
 ///
@@ -92,10 +84,6 @@ fn hide_rule_directory_pattern() {
     // Other directories are visible
     assert!(set.allows(Path::new("src"), true));
 }
-
-// ============================================================================
-// Include/Exclude with Side Modifiers
-// ============================================================================
 
 /// Verifies include with sender-only modifier.
 #[test]
@@ -140,10 +128,6 @@ fn receiver_only_exclude_allows_sender_transfer() {
     // Receiver blocks deletion
     assert!(!set.allows_deletion(Path::new("keep.txt"), false));
 }
-
-// ============================================================================
-// Mixed Side Rules Interactions
-// ============================================================================
 
 /// Verifies sender-only and receiver-only rules interact correctly.
 #[test]
@@ -202,10 +186,6 @@ fn sender_only_include_after_sender_only_exclude() {
     assert!(set.allows(Path::new("important.log"), false));
 }
 
-// ============================================================================
-// Show/Hide with Include/Exclude Combinations
-// ============================================================================
-
 /// Verifies show rule interacts with exclude rule.
 ///
 /// With first-match-wins, show must come before exclude.
@@ -243,10 +223,6 @@ fn hide_with_include_interaction() {
     // Other files are still included (include matches)
     assert!(set.allows(Path::new("public/data.txt"), false));
 }
-
-// ============================================================================
-// Clear Rule with Side Modifiers
-// ============================================================================
 
 /// Verifies clear rule clears only sender-side rules when specified.
 #[test]
@@ -296,10 +272,6 @@ fn clear_both_sides() {
     assert!(set.allows_deletion(Path::new("file.txt"), false));
 }
 
-// ============================================================================
-// Receiver-Only Context Handling
-// ============================================================================
-
 /// Verifies receiver context skips sender-only rules.
 #[test]
 fn receiver_context_skips_sender_only_tail_rule() {
@@ -325,10 +297,6 @@ fn sender_only_risk_does_not_clear_receiver_protection() {
     // Still protected on receiver
     assert!(!set.allows_deletion(Path::new("keep/item.txt"), false));
 }
-
-// ============================================================================
-// Complex Multi-Side Scenarios
-// ============================================================================
 
 /// Verifies complex scenario with mixed sender/receiver rules.
 #[test]
@@ -385,10 +353,6 @@ fn protect_risk_no_sender_interference() {
     assert!(set.allows(Path::new("protected.txt"), false));
     assert!(set.allows(Path::new("risked.txt"), false));
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Verifies rule with both sides false is effectively disabled.
 #[test]

@@ -18,10 +18,6 @@ use compress::zstd::{
 use std::io::Read;
 use std::num::NonZeroU8;
 
-// ============================================================================
-// Test Data
-// ============================================================================
-
 const EMPTY_DATA: &[u8] = b"";
 const SINGLE_BYTE: &[u8] = b"x";
 const SMALL_DATA: &[u8] = b"Hello, World!";
@@ -56,10 +52,6 @@ fn generate_already_compressed_data() -> Vec<u8> {
     // Simulate already-compressed data (e.g., JPEG, PNG, ZIP)
     compress_to_vec(&generate_highly_compressible_data(), CompressionLevel::Best).unwrap()
 }
-
-// ============================================================================
-// Roundtrip Tests
-// ============================================================================
 
 #[test]
 fn roundtrip_empty_data() {
@@ -126,10 +118,6 @@ fn roundtrip_already_compressed_data() {
     let decompressed = decompress_to_vec(&compressed).unwrap();
     assert_eq!(decompressed, data);
 }
-
-// ============================================================================
-// Compression Level Tests (0-22)
-// ============================================================================
 
 #[test]
 fn level_0_no_compression() {
@@ -264,10 +252,6 @@ fn compression_ratio_at_different_levels() {
     assert!(best.len() <= fast.len());
 }
 
-// ============================================================================
-// Streaming Compression Tests
-// ============================================================================
-
 #[test]
 fn streaming_encoder_single_write() {
     let data = MEDIUM_DATA;
@@ -376,10 +360,6 @@ fn streaming_encoder_bytes_written_tracking() {
     assert_eq!(bytes_written as usize, output.len());
 }
 
-// ============================================================================
-// Standard Format Compatibility Tests
-// ============================================================================
-
 #[test]
 fn zstd_format_magic_bytes() {
     let data = MEDIUM_DATA;
@@ -413,10 +393,6 @@ fn different_data_produces_different_output() {
 
     assert_ne!(compressed1, compressed2);
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[test]
 fn empty_data_multiple_levels() {
@@ -509,10 +485,6 @@ fn unicode_text() {
     assert_eq!(decompressed, data);
 }
 
-// ============================================================================
-// Mixed Content Scenarios
-// ============================================================================
-
 #[test]
 fn mixed_text_and_binary() {
     let mut data = Vec::new();
@@ -557,10 +529,6 @@ fn multiple_independent_compressions() {
     assert_eq!(decompress_to_vec(&compressed2).unwrap(), data2);
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 #[test]
 fn decompress_invalid_data_returns_error() {
     let invalid_data = b"This is not compressed data";
@@ -590,10 +558,6 @@ fn decompress_corrupted_magic_bytes_returns_error() {
     assert!(result.is_err());
 }
 
-// ============================================================================
-// Performance Characteristics Tests
-// ============================================================================
-
 #[test]
 fn fast_level_is_faster_than_best() {
     let data = generate_large_data();
@@ -620,10 +584,6 @@ fn compression_overhead_for_small_data() {
         "Compression overhead should be reasonable"
     );
 }
-
-// ============================================================================
-// Compatibility with rsync protocol
-// ============================================================================
 
 #[test]
 fn rsync_protocol_36_default_level() {

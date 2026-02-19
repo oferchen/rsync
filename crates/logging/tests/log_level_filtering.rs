@@ -11,10 +11,6 @@ use logging::{
     drain_events, info_gte, info_log, init,
 };
 
-// ============================================================================
-// Level Comparison Tests
-// ============================================================================
-
 /// Verifies info_gte returns true for levels at or below configured.
 #[test]
 fn info_gte_returns_true_for_sufficient_level() {
@@ -66,10 +62,6 @@ fn debug_gte_returns_false_for_insufficient_level() {
     assert!(!debug_gte(DebugFlag::Recv, 255));
 }
 
-// ============================================================================
-// Flag Independence Tests
-// ============================================================================
-
 /// Verifies different info flags have independent levels.
 #[test]
 fn info_flags_have_independent_levels() {
@@ -107,10 +99,6 @@ fn debug_flags_have_independent_levels() {
     assert!(debug_gte(DebugFlag::Flist, 3));
     assert!(!debug_gte(DebugFlag::Flist, 4));
 }
-
-// ============================================================================
-// Runtime Flag Application Tests
-// ============================================================================
 
 /// Verifies apply_info_flag updates configuration.
 #[test]
@@ -183,10 +171,6 @@ fn apply_debug_flag_rejects_unknown() {
     assert!(result.unwrap_err().contains("unknown debug flag"));
 }
 
-// ============================================================================
-// Filtering Effect on Log Output
-// ============================================================================
-
 /// Verifies filtering prevents log emission.
 #[test]
 fn filtering_prevents_log_emission() {
@@ -234,10 +218,6 @@ fn filtering_multiple_flags() {
     assert_eq!(events.len(), 4);
 }
 
-// ============================================================================
-// Level Zero Behavior
-// ============================================================================
-
 /// Verifies level 0 check always passes if flag is at least 0.
 #[test]
 fn level_zero_always_passes() {
@@ -261,10 +241,6 @@ fn level_zero_logs_emit() {
     assert_eq!(events.len(), 2);
 }
 
-// ============================================================================
-// Maximum Level Tests
-// ============================================================================
-
 /// Verifies u8 maximum level is handled correctly.
 #[test]
 fn max_level_handling() {
@@ -287,10 +263,6 @@ fn level_boundary_conditions() {
     assert!(info_gte(InfoFlag::Copy, 254));
     assert!(!info_gte(InfoFlag::Copy, 255));
 }
-
-// ============================================================================
-// Config Modification Tests
-// ============================================================================
 
 /// Verifies multiple flag applications accumulate.
 #[test]

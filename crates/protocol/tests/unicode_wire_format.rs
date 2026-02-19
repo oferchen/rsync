@@ -25,10 +25,6 @@ use std::path::PathBuf;
 use protocol::ProtocolVersion;
 use protocol::flist::{FileEntry, FileListReader, FileListWriter};
 
-// ============================================================================
-// Test Helpers
-// ============================================================================
-
 /// Roundtrip test: encode then decode a single entry.
 fn roundtrip_entry(entry: &FileEntry, protocol: ProtocolVersion) -> FileEntry {
     let mut buf = Vec::new();
@@ -82,10 +78,6 @@ fn test_symlink(name: &str, target: &str) -> FileEntry {
     entry.set_mtime(1700000000, 0);
     entry
 }
-
-// ============================================================================
-// 1. Basic UTF-8 Filenames (Latin Extended)
-// ============================================================================
 
 /// Tests Latin extended characters (accented letters).
 #[test]
@@ -160,10 +152,6 @@ fn wire_format_greek() {
         assert_eq!(decoded.name(), *name);
     }
 }
-
-// ============================================================================
-// 2. CJK Characters
-// ============================================================================
 
 /// Tests Japanese filenames (Hiragana, Katakana, Kanji).
 #[test]
@@ -248,10 +236,6 @@ fn wire_format_cjk_nested_directories() {
     );
 }
 
-// ============================================================================
-// 3. Emoji Characters
-// ============================================================================
-
 /// Tests basic emoji in filenames.
 #[test]
 fn wire_format_emoji_basic() {
@@ -297,10 +281,6 @@ fn wire_format_emoji_complex_sequences() {
         assert_eq!(decoded.name(), *name);
     }
 }
-
-// ============================================================================
-// 4. Right-to-Left Scripts
-// ============================================================================
 
 /// Tests Arabic filenames.
 #[test]
@@ -356,10 +336,6 @@ fn wire_format_bidirectional_text() {
         assert_eq!(decoded.name(), *name);
     }
 }
-
-// ============================================================================
-// 5. Combining Characters and Diacritics
-// ============================================================================
 
 /// Tests combining characters (diacritical marks).
 #[test]
@@ -429,10 +405,6 @@ fn wire_format_extended_grapheme_clusters() {
     }
 }
 
-// ============================================================================
-// 6. Zero-width Characters
-// ============================================================================
-
 /// Tests zero-width characters in filenames.
 #[test]
 fn wire_format_zero_width_characters() {
@@ -452,10 +424,6 @@ fn wire_format_zero_width_characters() {
         assert_eq!(decoded.name(), *name);
     }
 }
-
-// ============================================================================
-// 7. Invalid UTF-8 Sequences (Unix-specific)
-// ============================================================================
 
 /// Tests non-UTF8 byte sequences in filenames (Unix-specific).
 #[cfg(unix)]
@@ -511,10 +479,6 @@ fn wire_format_high_bytes() {
     }
 }
 
-// ============================================================================
-// 8. Mixed Scripts in Single Filename
-// ============================================================================
-
 /// Tests filenames with multiple scripts.
 #[test]
 fn wire_format_mixed_scripts() {
@@ -563,10 +527,6 @@ fn wire_format_mixed_scripts_nested_paths() {
     );
 }
 
-// ============================================================================
-// 9. Unicode Directory Names
-// ============================================================================
-
 /// Tests Unicode directory entries.
 #[test]
 fn wire_format_unicode_directories() {
@@ -606,10 +566,6 @@ fn wire_format_deeply_nested_unicode() {
     );
 }
 
-// ============================================================================
-// 10. Very Long Unicode Filenames
-// ============================================================================
-
 /// Tests maximum-length UTF-8 filenames.
 #[test]
 fn wire_format_maximum_length_unicode() {
@@ -635,10 +591,6 @@ fn wire_format_long_unicode_paths() {
     let decoded = roundtrip_entry(&entry, ProtocolVersion::NEWEST);
     assert_eq!(decoded.name(), path);
 }
-
-// ============================================================================
-// 11. Prefix Compression with Unicode Paths
-// ============================================================================
 
 /// Tests prefix compression with similar Unicode paths.
 #[test]
@@ -692,10 +644,6 @@ fn wire_format_prefix_compression_mixed() {
     }
 }
 
-// ============================================================================
-// 12. Protocol Version Compatibility
-// ============================================================================
-
 /// Tests Unicode across all supported protocol versions.
 #[test]
 fn wire_format_unicode_all_protocol_versions() {
@@ -725,10 +673,6 @@ fn wire_format_unicode_all_protocol_versions() {
     }
 }
 
-// ============================================================================
-// 13. Supplementary Multilingual Plane (SMP) Characters
-// ============================================================================
-
 /// Tests characters from the Supplementary Multilingual Plane (U+10000+).
 #[test]
 fn wire_format_smp_characters() {
@@ -747,10 +691,6 @@ fn wire_format_smp_characters() {
         assert_eq!(decoded.name(), *name);
     }
 }
-
-// ============================================================================
-// 14. Unicode Symlinks
-// ============================================================================
 
 /// Tests symlinks with Unicode names and targets.
 #[test]
@@ -800,10 +740,6 @@ fn wire_format_unicode_symlinks() {
         "\u{76ee}\u{6807}/\u{6587}\u{4ef6}.txt"
     );
 }
-
-// ============================================================================
-// 15. Unicode Stress Tests
-// ============================================================================
 
 /// Stress test: large number of Unicode entries.
 #[test]
@@ -864,10 +800,6 @@ fn wire_format_unicode_stress_diversity() {
     }
 }
 
-// ============================================================================
-// 16. Edge Cases
-// ============================================================================
-
 /// Tests Unicode edge cases.
 #[test]
 fn wire_format_unicode_edge_cases() {
@@ -925,10 +857,6 @@ fn wire_format_visually_similar_distinct() {
         }
     }
 }
-
-// ============================================================================
-// 17. Mathematical and Technical Symbols
-// ============================================================================
 
 /// Tests mathematical and technical symbols.
 #[test]

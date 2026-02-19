@@ -33,10 +33,6 @@ use protocol::{
 };
 use std::io::Cursor;
 
-// ============================================================================
-// Strategy helpers
-// ============================================================================
-
 /// Generates arbitrary byte vectors of bounded length for fuzz testing.
 fn arbitrary_bytes(max_len: usize) -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 0..=max_len)
@@ -46,10 +42,6 @@ fn arbitrary_bytes(max_len: usize) -> impl Strategy<Value = Vec<u8>> {
 fn protocol_version_strategy() -> impl Strategy<Value = u8> {
     prop::sample::select(vec![28u8, 29, 30, 31, 32])
 }
-
-// ============================================================================
-// Module: Varint/Varlong arbitrary-input fuzz
-// ============================================================================
 
 mod varint_arbitrary_input {
     use super::*;
@@ -155,10 +147,6 @@ mod varint_arbitrary_input {
     }
 }
 
-// ============================================================================
-// Module: Envelope / MessageHeader arbitrary-input fuzz
-// ============================================================================
-
 mod envelope_arbitrary_input {
     use super::*;
 
@@ -223,10 +211,6 @@ mod envelope_arbitrary_input {
         }
     }
 }
-
-// ============================================================================
-// Module: File entry decode arbitrary-input fuzz
-// ============================================================================
 
 mod file_entry_decode_arbitrary_input {
     use super::*;
@@ -442,10 +426,6 @@ mod file_entry_decode_arbitrary_input {
     }
 }
 
-// ============================================================================
-// Module: File entry encode-then-decode roundtrip via proptest
-// ============================================================================
-
 mod file_entry_roundtrip {
     use super::*;
     use protocol::wire::file_entry::{encode_flags, encode_mode, encode_name, encode_size};
@@ -550,10 +530,6 @@ mod file_entry_roundtrip {
     }
 }
 
-// ============================================================================
-// Module: Signature wire format arbitrary-input fuzz
-// ============================================================================
-
 mod signature_arbitrary_input {
     use super::*;
 
@@ -622,10 +598,6 @@ mod signature_arbitrary_input {
         }
     }
 }
-
-// ============================================================================
-// Module: Delta wire format arbitrary-input fuzz
-// ============================================================================
 
 mod delta_arbitrary_input {
     use super::*;
@@ -787,10 +759,6 @@ mod delta_arbitrary_input {
     }
 }
 
-// ============================================================================
-// Module: NDX codec arbitrary-input fuzz
-// ============================================================================
-
 mod ndx_arbitrary_input {
     use super::*;
 
@@ -861,10 +829,6 @@ mod ndx_arbitrary_input {
     }
 }
 
-// ============================================================================
-// Module: Protocol version parsing arbitrary-input fuzz
-// ============================================================================
-
 mod protocol_version_arbitrary_input {
     use super::*;
 
@@ -927,10 +891,6 @@ mod protocol_version_arbitrary_input {
         }
     }
 }
-
-// ============================================================================
-// Module: Protocol codec arbitrary-input fuzz
-// ============================================================================
 
 mod protocol_codec_arbitrary_input {
     use super::*;
@@ -1005,10 +965,6 @@ mod protocol_codec_arbitrary_input {
         }
     }
 }
-
-// ============================================================================
-// Module: Combined arbitrary-input stress testing
-// ============================================================================
 
 mod combined_proptest_stress {
     use super::*;
@@ -1134,10 +1090,6 @@ mod combined_proptest_stress {
         }
     }
 }
-
-// ============================================================================
-// Module: Boundary value proptest coverage
-// ============================================================================
 
 mod boundary_values {
     use super::*;

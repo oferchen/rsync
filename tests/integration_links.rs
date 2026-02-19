@@ -11,10 +11,6 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix;
 
-// ============================================================================
-// Symlink Tests
-// ============================================================================
-
 #[test]
 #[cfg(unix)]
 fn symlinks_preserved_with_links_flag() {
@@ -137,10 +133,6 @@ fn dangling_symlink_preserved() {
     assert_eq!(link_target.to_str().unwrap(), "nonexistent.txt");
 }
 
-// ============================================================================
-// Hard Link Tests
-// ============================================================================
-
 #[test]
 #[cfg(unix)]
 fn hard_links_preserved_with_hard_links_flag() {
@@ -221,10 +213,6 @@ fn hard_links_copied_separately_without_flag() {
     );
 }
 
-// ============================================================================
-// Archive Mode Link Handling
-// ============================================================================
-
 #[test]
 #[cfg(unix)]
 fn archive_mode_preserves_symlinks() {
@@ -282,10 +270,6 @@ fn archive_with_hard_links_preserves_both() {
     let hard_meta = fs::metadata(dest_dir.join("hard.txt")).unwrap();
     assert_eq!(orig_meta.ino(), hard_meta.ino());
 }
-
-// ============================================================================
-// Comprehensive Hard Link Preservation Tests
-// ============================================================================
 
 #[test]
 #[cfg(unix)]

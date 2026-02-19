@@ -10,10 +10,6 @@ use protocol::{
     read_varint, recv_msg, recv_msg_into, send_msg, write_varint,
 };
 
-// ============================================================================
-// Error Injection Helpers
-// ============================================================================
-
 /// A reader that returns an error after N bytes.
 struct ErrorAfterNBytes {
     data: Cursor<Vec<u8>>,
@@ -79,10 +75,6 @@ impl Write for ErrorAfterNWrites {
     }
 }
 
-// ============================================================================
-// Connection Reset Tests
-// ============================================================================
-
 #[test]
 fn test_read_connection_reset() {
     // Create some varint data, but inject ConnectionReset partway through
@@ -132,10 +124,6 @@ fn test_recv_msg_connection_reset() {
     assert!(result.is_err(), "Should fail with ConnectionReset");
 }
 
-// ============================================================================
-// Timeout Tests
-// ============================================================================
-
 #[test]
 fn test_read_timeout() {
     // Create varint data but inject timeout
@@ -177,10 +165,6 @@ fn test_recv_msg_timeout() {
         "Should fail with timeout during header read"
     );
 }
-
-// ============================================================================
-// Partial Data Tests
-// ============================================================================
 
 #[test]
 fn test_partial_varint_read() {
@@ -271,10 +255,6 @@ fn test_decode_varint_partial_buffer() {
     );
 }
 
-// ============================================================================
-// Error Recovery Tests
-// ============================================================================
-
 #[test]
 fn test_would_block_handling() {
     // WouldBlock errors should be propagated correctly
@@ -336,10 +316,6 @@ fn test_interrupted_handling() {
     }
 }
 
-// ============================================================================
-// EOF Handling Tests
-// ============================================================================
-
 #[test]
 fn test_unexpected_eof_during_read() {
     // Empty stream - should fail immediately
@@ -382,10 +358,6 @@ fn test_varint_from_empty_stream() {
         "Should report UnexpectedEof"
     );
 }
-
-// ============================================================================
-// Multiplex Error Handling Tests
-// ============================================================================
 
 #[test]
 fn test_mplex_read_with_error_reader() {
@@ -442,10 +414,6 @@ fn test_mplex_flush_error() {
     assert!(result.is_err(), "Should propagate flush error");
 }
 
-// ============================================================================
-// Codec Error Handling
-// ============================================================================
-
 #[test]
 fn test_varint_from_error_stream() {
     // Stream that always errors
@@ -499,10 +467,6 @@ fn test_recv_msg_into_with_error_during_payload() {
         "Should propagate the underlying error"
     );
 }
-
-// ============================================================================
-// Stress Tests
-// ============================================================================
 
 #[test]
 fn test_many_errors_no_panic() {
@@ -586,10 +550,6 @@ fn test_multiple_mplex_errors() {
         let _ = mplex.read(&mut buf); // Ignore result, just ensure no panic
     }
 }
-
-// ============================================================================
-// Edge Case Error Tests
-// ============================================================================
 
 #[test]
 fn test_zero_byte_read_error() {

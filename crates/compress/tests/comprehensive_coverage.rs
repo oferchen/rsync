@@ -22,10 +22,6 @@ use compress::zlib::{
     decompress_to_vec as zlib_decompress,
 };
 
-// =============================================================================
-// SECTION 1: Compression/Decompression Round-trips
-// =============================================================================
-
 mod round_trips {
     use super::*;
 
@@ -176,10 +172,6 @@ mod round_trips {
         }
     }
 }
-
-// =============================================================================
-// SECTION 2: Streaming Compression
-// =============================================================================
 
 mod streaming {
     use super::*;
@@ -363,10 +355,6 @@ mod streaming {
         assert_eq!(decoder.bytes_read(), data.len() as u64);
     }
 }
-
-// =============================================================================
-// SECTION 3: Skip-Compress File Type Detection
-// =============================================================================
 
 mod skip_compress {
     use super::*;
@@ -639,10 +627,6 @@ mod skip_compress {
     }
 }
 
-// =============================================================================
-// SECTION 4: Compression Level Effects
-// =============================================================================
-
 mod compression_levels {
     use super::*;
 
@@ -750,10 +734,6 @@ mod compression_levels {
         );
     }
 }
-
-// =============================================================================
-// SECTION 5: Error Handling for Corrupt Data
-// =============================================================================
 
 mod error_handling {
     use super::*;
@@ -901,10 +881,6 @@ mod error_handling {
     }
 }
 
-// =============================================================================
-// SECTION 6: Adaptive Compressor
-// =============================================================================
-
 mod adaptive_compressor {
     use super::*;
 
@@ -987,10 +963,6 @@ mod adaptive_compressor {
         let _ = compressor.finish().unwrap();
     }
 }
-
-// =============================================================================
-// SECTION 7: Algorithm Module Coverage
-// =============================================================================
 
 mod algorithm {
     use super::*;
@@ -1089,10 +1061,6 @@ mod algorithm {
         assert_eq!(default_algorithm(), CompressionAlgorithm::Zstd);
     }
 }
-
-// =============================================================================
-// SECTION 8: LZ4 Raw Module Comprehensive Coverage
-// =============================================================================
 
 #[cfg(feature = "lz4")]
 mod lz4_raw_comprehensive {
@@ -1195,10 +1163,6 @@ mod lz4_raw_comprehensive {
         assert!(decompressed.is_empty());
     }
 }
-
-// =============================================================================
-// SECTION 9: Zstd Module Comprehensive Coverage
-// =============================================================================
 
 #[cfg(feature = "zstd")]
 mod zstd_comprehensive {
@@ -1305,10 +1269,6 @@ mod zstd_comprehensive {
         }
     }
 }
-
-// =============================================================================
-// SECTION 10: LZ4 Frame Module Comprehensive Coverage
-// =============================================================================
 
 #[cfg(feature = "lz4")]
 mod lz4_frame_comprehensive {

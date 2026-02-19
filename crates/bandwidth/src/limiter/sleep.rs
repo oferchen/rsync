@@ -247,10 +247,6 @@ mod tests {
         assert_eq!(sleep.actual(), Duration::from_millis(950));
     }
 
-    // ========================================================================
-    // Additional sleep_for edge case tests
-    // ========================================================================
-
     #[test]
     fn sleep_for_handles_very_small_duration() {
         // Should not panic with very small duration
@@ -282,10 +278,6 @@ mod tests {
         let large_duration = Duration::from_secs(100);
         sleep_for(large_duration);
     }
-
-    // ========================================================================
-    // duration_from_microseconds additional tests
-    // ========================================================================
 
     #[test]
     fn duration_from_microseconds_boundary_values() {
@@ -357,10 +349,6 @@ mod tests {
         assert_eq!(result.subsec_nanos(), 1_500_000);
     }
 
-    // ========================================================================
-    // LimiterSleep additional edge case tests
-    // ========================================================================
-
     #[test]
     fn limiter_sleep_requested_larger_than_actual() {
         // Common case: limiter requested more sleep than actually occurred
@@ -427,10 +415,6 @@ mod tests {
         let default_sleep = LimiterSleep::default();
         assert!(default_sleep.is_noop());
     }
-
-    // ========================================================================
-    // sleep_for recording tests
-    // ========================================================================
 
     #[test]
     fn sleep_for_records_when_nonzero() {

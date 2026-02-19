@@ -973,10 +973,6 @@ mod tests {
         assert_eq!(pattern, "pattern");
     }
 
-    // =========================================================================
-    // Recursive Depth Limit Tests
-    // =========================================================================
-
     #[test]
     fn read_rules_recursive_depth_zero_no_merge() {
         // Depth 0 should still work if there are no merge directives

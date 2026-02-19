@@ -19,10 +19,6 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-// ============================================================================
-// Basic Preallocate Tests
-// ============================================================================
-
 #[test]
 fn preallocate_flag_copies_file_correctly() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -90,10 +86,6 @@ fn preallocate_flag_copies_small_file() {
     assert_eq!(&dest_content, b"hello world");
 }
 
-// ============================================================================
-// Linux-Specific Block Allocation Tests
-// ============================================================================
-
 #[cfg(target_os = "linux")]
 #[test]
 fn preallocate_allocates_disk_blocks_on_linux() {
@@ -125,10 +117,6 @@ fn preallocate_allocates_disk_blocks_on_linux() {
         dest_meta.blocks()
     );
 }
-
-// ============================================================================
-// Preallocate + Sparse Interaction Tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -178,10 +166,6 @@ fn preallocate_disables_sparse_writes() {
         sparse_meta.blocks()
     );
 }
-
-// ============================================================================
-// Preallocate + Inplace Tests
-// ============================================================================
 
 #[test]
 fn preallocate_with_inplace_copies_correctly() {
@@ -238,10 +222,6 @@ fn preallocate_with_inplace_new_file() {
     assert_eq!(dest_content, content);
 }
 
-// ============================================================================
-// Recursive Directory Tests
-// ============================================================================
-
 #[test]
 fn preallocate_recursive_directory_transfer() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -285,10 +265,6 @@ fn preallocate_recursive_directory_transfer() {
     );
 }
 
-// ============================================================================
-// Preallocate with Update/Delta Tests
-// ============================================================================
-
 #[test]
 fn preallocate_updates_existing_file() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -330,10 +306,6 @@ fn preallocate_updates_existing_file() {
     );
 }
 
-// ============================================================================
-// Preallocate with Verbose Output Tests
-// ============================================================================
-
 #[test]
 fn preallocate_with_verbose_shows_transfer() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -361,10 +333,6 @@ fn preallocate_with_verbose_shows_transfer() {
         "verbose output should mention the transfer"
     );
 }
-
-// ============================================================================
-// Preallocate Only (without --sparse) Tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]

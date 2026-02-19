@@ -353,9 +353,6 @@ unsafe fn process_block_avx512(
     let k_ptr = K.as_ptr();
 
     asm!(
-        // ============================================================
-        // Load state
-        // ============================================================
         "vmovdqu32 zmm0, [{a}]",
         "vmovdqu32 zmm1, [{b}]",
         "vmovdqu32 zmm2, [{c}]",
@@ -384,10 +381,6 @@ unsafe fn process_block_avx512(
         "vmovdqu32 zmm23, [{m} + 960]",
         // Create all-ones for NOT operations
         "vpternlogd zmm26, zmm26, zmm26, 0xff",
-
-        // ============================================================
-        // Rounds 0-15: F = (B & C) | (~B & D), g = i
-        // ============================================================
         // Round 0: m[0]=zmm8, s=7
         "vmovdqa32 zmm24, zmm1",
         "vpternlogd zmm24, zmm2, zmm3, 0xCA",
@@ -580,10 +573,6 @@ unsafe fn process_block_avx512(
         "vmovdqa32 zmm3, zmm2",
         "vmovdqa32 zmm2, zmm1",
         "vpaddd zmm1, zmm1, zmm24",
-
-        // ============================================================
-        // Rounds 16-31: G = (D & B) | (~D & C), g = (5*i+1)%16
-        // ============================================================
         // Round 16: m[1]=zmm9, s=5
         "vmovdqa32 zmm24, zmm3",
         "vpternlogd zmm24, zmm1, zmm2, 0xCA",
@@ -776,10 +765,6 @@ unsafe fn process_block_avx512(
         "vmovdqa32 zmm3, zmm2",
         "vmovdqa32 zmm2, zmm1",
         "vpaddd zmm1, zmm1, zmm24",
-
-        // ============================================================
-        // Rounds 32-47: H = B ^ C ^ D, g = (3*i+5)%16
-        // ============================================================
         // Round 32: m[5]=zmm13, s=4
         "vmovdqa32 zmm24, zmm1",
         "vpxord zmm24, zmm24, zmm2",
@@ -988,10 +973,6 @@ unsafe fn process_block_avx512(
         "vmovdqa32 zmm3, zmm2",
         "vmovdqa32 zmm2, zmm1",
         "vpaddd zmm1, zmm1, zmm24",
-
-        // ============================================================
-        // Rounds 48-63: I = C ^ (B | ~D), g = (7*i)%16
-        // ============================================================
         // Round 48: m[0]=zmm8, s=6
         "vpxord zmm24, zmm3, zmm26",
         "vpord zmm24, zmm1, zmm24",
@@ -1200,10 +1181,6 @@ unsafe fn process_block_avx512(
         "vmovdqa32 zmm3, zmm2",
         "vmovdqa32 zmm2, zmm1",
         "vpaddd zmm1, zmm1, zmm24",
-
-        // ============================================================
-        // Add saved state and apply mask
-        // ============================================================
         "vpaddd zmm27, zmm0, zmm4",
         "vpaddd zmm28, zmm1, zmm5",
         "vpaddd zmm29, zmm2, zmm6",

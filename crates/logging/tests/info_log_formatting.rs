@@ -8,10 +8,6 @@
 
 use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
 
-// ============================================================================
-// Basic Info Log Emission Tests
-// ============================================================================
-
 /// Verifies info_log emits message when flag level is sufficient.
 #[test]
 fn info_log_emits_when_level_sufficient() {
@@ -66,10 +62,6 @@ fn info_log_emits_when_level_exact_match() {
     assert_eq!(events.len(), 1);
 }
 
-// ============================================================================
-// Info Flag Category Tests
-// ============================================================================
-
 /// Verifies each info flag category emits independently.
 #[test]
 fn info_log_flags_are_independent() {
@@ -119,10 +111,6 @@ fn info_log_all_flags() {
     let events = drain_events();
     assert_eq!(events.len(), 13);
 }
-
-// ============================================================================
-// Info Log Formatting Tests
-// ============================================================================
 
 /// Verifies info_log supports format string arguments.
 #[test]
@@ -251,10 +239,6 @@ fn info_log_stats_summary_format() {
     assert_eq!(events.len(), 2);
 }
 
-// ============================================================================
-// Info Level Threshold Tests
-// ============================================================================
-
 /// Verifies info output at level 0 always emits when flag is set.
 #[test]
 fn info_log_level_zero_always_emits() {
@@ -285,10 +269,6 @@ fn info_log_high_level_requires_config() {
     assert_eq!(events.len(), 2);
 }
 
-// ============================================================================
-// Info Event Order Preservation
-// ============================================================================
-
 /// Verifies info events preserve chronological order.
 #[test]
 fn info_log_preserves_order() {
@@ -315,10 +295,6 @@ fn info_log_preserves_order() {
     assert_eq!(messages, vec!["file1.txt", "file2.txt", "file3.txt"]);
 }
 
-// ============================================================================
-// Info Log With Default Configuration
-// ============================================================================
-
 /// Verifies info_log does not emit with default (zero) config.
 #[test]
 fn info_log_default_config_suppresses() {
@@ -332,10 +308,6 @@ fn info_log_default_config_suppresses() {
     let events = drain_events();
     assert_eq!(events.len(), 0);
 }
-
-// ============================================================================
-// Mixed Info and Debug Events
-// ============================================================================
 
 /// Verifies info and debug events can be intermixed.
 #[test]

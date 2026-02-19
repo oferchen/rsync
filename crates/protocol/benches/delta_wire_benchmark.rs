@@ -18,10 +18,6 @@ use protocol::wire::{
     write_whole_file_delta,
 };
 
-// ============================================================================
-// Test Data Generation
-// ============================================================================
-
 /// Generate random-ish data for benchmarking.
 fn generate_data(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 251) as u8).collect()
@@ -45,10 +41,6 @@ fn generate_delta_ops(num_ops: usize, literal_size: usize) -> Vec<DeltaOp> {
         })
         .collect()
 }
-
-// ============================================================================
-// Benchmark: Integer Encoding/Decoding (fundamental operation)
-// ============================================================================
 
 fn bench_int_encoding(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_int_encoding");
@@ -87,10 +79,6 @@ fn bench_int_encoding(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: Token Literal Encoding
-// ============================================================================
-
 fn bench_token_literal(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_token_literal");
 
@@ -112,10 +100,6 @@ fn bench_token_literal(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: Token Block Match Encoding
-// ============================================================================
-
 fn bench_token_block_match(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_token_block_match");
 
@@ -135,10 +119,6 @@ fn bench_token_block_match(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: Whole File Delta (new file transfer)
-// ============================================================================
 
 fn bench_whole_file_delta(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_whole_file");
@@ -168,10 +148,6 @@ fn bench_whole_file_delta(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: Token Stream Encoding (typical delta transfer)
-// ============================================================================
 
 fn bench_token_stream(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_token_stream");
@@ -207,10 +183,6 @@ fn bench_token_stream(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: DeltaOp Encoding/Decoding
-// ============================================================================
 
 fn bench_delta_op_codec(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_op_codec");
@@ -267,10 +239,6 @@ fn bench_delta_op_codec(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: Full Delta Roundtrip
-// ============================================================================
-
 fn bench_delta_roundtrip(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_roundtrip");
 
@@ -319,10 +287,6 @@ fn bench_delta_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: Raw Token Reading (receiver hot path)
-// ============================================================================
-
 fn bench_token_reading(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_token_reading");
 
@@ -358,10 +322,6 @@ fn bench_token_reading(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Criterion Groups
-// ============================================================================
 
 criterion_group!(
     name = delta_wire_benchmarks;
