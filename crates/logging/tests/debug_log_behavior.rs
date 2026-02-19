@@ -8,10 +8,6 @@
 
 use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, debug_log, drain_events, init};
 
-// ============================================================================
-// Basic Debug Log Emission Tests
-// ============================================================================
-
 /// Verifies debug_log emits message when flag level is sufficient.
 #[test]
 fn debug_log_emits_when_level_sufficient() {
@@ -71,10 +67,6 @@ fn debug_log_emits_when_level_exact_match() {
         _ => panic!("expected debug event"),
     }
 }
-
-// ============================================================================
-// Debug Flag Category Tests
-// ============================================================================
 
 /// Verifies each debug flag category emits independently.
 #[test]
@@ -138,10 +130,6 @@ fn debug_log_all_flags() {
     assert_eq!(events.len(), 24);
 }
 
-// ============================================================================
-// Debug Level Threshold Tests
-// ============================================================================
-
 /// Verifies debug output at level 0 always emits when flag is set.
 #[test]
 fn debug_log_level_zero_always_emits() {
@@ -186,10 +174,6 @@ fn debug_log_maximum_level() {
     let events = drain_events();
     assert_eq!(events.len(), 1);
 }
-
-// ============================================================================
-// Debug Log Formatting Tests
-// ============================================================================
 
 /// Verifies debug_log supports format string arguments.
 #[test]
@@ -252,10 +236,6 @@ fn debug_log_complex_format() {
     }
 }
 
-// ============================================================================
-// Debug Event Order Preservation
-// ============================================================================
-
 /// Verifies debug events preserve chronological order.
 #[test]
 fn debug_log_preserves_order() {
@@ -281,10 +261,6 @@ fn debug_log_preserves_order() {
 
     assert_eq!(messages, vec!["first", "second", "third"]);
 }
-
-// ============================================================================
-// Debug Log With Default Configuration
-// ============================================================================
 
 /// Verifies debug_log does not emit with default (zero) config.
 #[test]
@@ -314,10 +290,6 @@ fn debug_log_level_zero_with_default_config() {
     // Level 0 means "always emit if checking", and 0 >= 0 is true
     assert_eq!(events.len(), 1);
 }
-
-// ============================================================================
-// Debug Log Re-initialization
-// ============================================================================
 
 /// Verifies debug config can be changed at runtime.
 #[test]

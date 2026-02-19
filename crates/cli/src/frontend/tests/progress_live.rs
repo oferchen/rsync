@@ -16,10 +16,6 @@ use tempfile::TempDir;
 
 use crate::frontend::progress::{LiveProgress, ProgressMode};
 
-// ============================================================================
-// Helper: run a real transfer with LiveProgress as the observer
-// ============================================================================
-
 /// Runs a transfer of `source_dir/` -> `dest_dir` through `LiveProgress`,
 /// returning the rendered output and the summary.
 fn run_with_live_progress(
@@ -78,10 +74,6 @@ fn setup_multiple_files(files: &[(&str, usize)]) -> (TempDir, std::path::PathBuf
     }
     (tmp, source_dir)
 }
-
-// ============================================================================
-// LiveProgress PerFile mode tests
-// ============================================================================
 
 #[test]
 fn live_progress_per_file_renders_file_path() {
@@ -254,10 +246,6 @@ fn live_progress_per_file_finish_completes_without_error() {
     live.finish().expect("finish should complete without error");
 }
 
-// ============================================================================
-// LiveProgress Overall mode tests
-// ============================================================================
-
 #[test]
 fn live_progress_overall_renders_xfr_and_to_chk() {
     let (tmp, source_dir) = setup_single_file("overall.bin", 256);
@@ -350,10 +338,6 @@ fn live_progress_overall_multiple_files() {
     );
 }
 
-// ============================================================================
-// LiveProgress human-readable mode tests
-// ============================================================================
-
 #[test]
 fn live_progress_human_readable_formats_bytes() {
     let (tmp, source_dir) = setup_single_file("human.bin", 1_536);
@@ -392,10 +376,6 @@ fn live_progress_combined_human_readable_shows_both_formats() {
     );
 }
 
-// ============================================================================
-// LiveProgress rendered() state tests
-// ============================================================================
-
 #[test]
 fn live_progress_rendered_returns_false_before_events() {
     let mut buffer: Vec<u8> = Vec::new();
@@ -428,10 +408,6 @@ fn live_progress_rendered_returns_true_after_transfer() {
         "rendered() should be true after receiving progress events"
     );
 }
-
-// ============================================================================
-// End-to-end: recording observer collects correct fields
-// ============================================================================
 
 #[derive(Default)]
 struct RecordingObserver {
@@ -627,10 +603,6 @@ fn e2e_progress_observer_reports_correct_total() {
     );
 }
 
-// ============================================================================
-// LiveProgress output format matches expected pattern
-// ============================================================================
-
 #[test]
 fn live_progress_output_matches_upstream_format_pattern() {
     let (tmp, source_dir) = setup_single_file("pattern_check.dat", 2048);
@@ -706,10 +678,6 @@ fn live_progress_per_file_prints_filename_before_progress_line() {
     );
 }
 
-// ============================================================================
-// Additional format_progress_bytes tests
-// ============================================================================
-
 #[test]
 fn format_progress_bytes_zero_disabled() {
     assert_eq!(format_progress_bytes(0, HumanReadableMode::Disabled), "0");
@@ -773,10 +741,6 @@ fn format_progress_bytes_giga_human() {
     );
 }
 
-// ============================================================================
-// Additional format_progress_rate tests
-// ============================================================================
-
 #[test]
 fn format_progress_rate_nonzero_bytes_nonzero_elapsed() {
     let rate = format_progress_rate(
@@ -809,10 +773,6 @@ fn format_progress_rate_human_nonzero() {
     );
 }
 
-// ============================================================================
-// Additional format_progress_percent edge case tests
-// ============================================================================
-
 #[test]
 fn format_progress_percent_small_fraction() {
     // 1 byte out of 10000 -> 0%
@@ -832,10 +792,6 @@ fn format_progress_percent_very_large_values() {
 fn format_progress_percent_equal_to_total() {
     assert_eq!(format_progress_percent(42, Some(42)), "100%");
 }
-
-// ============================================================================
-// Additional format_progress_elapsed tests
-// ============================================================================
 
 #[test]
 fn format_progress_elapsed_ten_hours() {

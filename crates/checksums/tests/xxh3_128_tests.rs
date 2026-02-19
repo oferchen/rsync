@@ -11,10 +11,6 @@
 
 use checksums::strong::{StrongDigest, Xxh3_128};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Convert a u128 hash to little-endian bytes for comparison with Xxh3_128::digest output.
 #[allow(dead_code)]
 fn expected_le_bytes(hash: u128) -> [u8; 16] {
@@ -36,10 +32,6 @@ fn to_hex(digest: &[u8; 16]) -> String {
     }
     out
 }
-
-// ============================================================================
-// Section 1: Known Test Vectors from xxHash Reference Implementation
-// ============================================================================
 
 mod known_test_vectors {
     use super::*;
@@ -169,10 +161,6 @@ mod known_test_vectors {
     }
 }
 
-// ============================================================================
-// Section 2: Empty Input Tests
-// ============================================================================
-
 mod empty_input {
     use super::*;
 
@@ -268,10 +256,6 @@ mod empty_input {
         assert_eq!(one_shot, streaming);
     }
 }
-
-// ============================================================================
-// Section 3: Various Input Sizes Tests
-// ============================================================================
 
 mod various_input_sizes {
     use super::*;
@@ -547,10 +531,6 @@ mod various_input_sizes {
     }
 }
 
-// ============================================================================
-// Section 4: Streaming vs One-Shot Tests
-// ============================================================================
-
 mod streaming_vs_oneshot {
     use super::*;
 
@@ -795,10 +775,6 @@ mod streaming_vs_oneshot {
     }
 }
 
-// ============================================================================
-// Section 5: Seed Variations Tests
-// ============================================================================
-
 mod seed_variations {
     use super::*;
 
@@ -941,10 +917,6 @@ mod seed_variations {
         assert_eq!(d2, d3);
     }
 }
-
-// ============================================================================
-// Section 6: Edge Cases and Boundary Conditions
-// ============================================================================
 
 mod edge_cases {
     use super::*;
@@ -1093,10 +1065,6 @@ mod edge_cases {
     }
 }
 
-// ============================================================================
-// Section 7: StrongDigest Trait Tests
-// ============================================================================
-
 mod strong_digest_trait {
     use super::*;
 
@@ -1147,10 +1115,6 @@ mod strong_digest_trait {
         assert_eq!(seeded, direct);
     }
 }
-
-// ============================================================================
-// Section 8: Verification Tests
-// ============================================================================
 
 mod verification {
     use super::*;

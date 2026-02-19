@@ -7,10 +7,6 @@ mod integration;
 use integration::helpers::*;
 use std::fs;
 
-// ============================================================================
-// Delete Mode Tests
-// ============================================================================
-
 #[test]
 fn delete_before_removes_extra_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -162,10 +158,6 @@ fn delete_preserves_files_in_subdirectories() {
     assert!(!dest_dir.join("subdir/remove.txt").exists());
 }
 
-// ============================================================================
-// Delete with Filters Tests
-// ============================================================================
-
 #[test]
 fn delete_excluded_removes_filtered_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -199,10 +191,6 @@ fn delete_excluded_removes_filtered_files() {
         "excluded files should be deleted"
     );
 }
-
-// ============================================================================
-// Max Delete Tests
-// ============================================================================
 
 #[test]
 fn max_delete_limits_deletions() {
@@ -267,10 +255,6 @@ fn max_delete_zero_allows_no_deletions() {
         "max-delete=0 should prevent all deletions"
     );
 }
-
-// ============================================================================
-// Backup Tests
-// ============================================================================
 
 #[test]
 fn backup_creates_backup_with_default_suffix() {
@@ -404,10 +388,6 @@ fn backup_recursive_preserves_directory_structure() {
     assert_eq!(backup, b"old");
 }
 
-// ============================================================================
-// Delete + Backup Interaction Tests
-// ============================================================================
-
 #[test]
 fn delete_with_backup_backs_up_deleted_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -467,10 +447,6 @@ fn delete_with_backup_dir_organizes_deletions() {
     let backup = fs::read(backup_dir.join("b.txt")).unwrap();
     assert_eq!(backup, b"b_delete");
 }
-
-// ============================================================================
-// Additional Edge Cases
-// ============================================================================
 
 #[test]
 fn delete_dry_run_shows_deletions_without_removing() {

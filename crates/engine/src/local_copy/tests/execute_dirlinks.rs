@@ -175,10 +175,6 @@ fn execute_without_keep_dirlinks_rejects_destination_directory_symlink() {
     assert!(!actual_destination.join("src-dir").join("file.txt").exists());
 }
 
-// ============================================================================
-// Test 1: keep_dirlinks preserves symlink-to-dir subdirectory during recursive copy
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn keep_dirlinks_preserves_symlink_subdir_during_recursive_copy() {
@@ -221,10 +217,6 @@ fn keep_dirlinks_preserves_symlink_subdir_during_recursive_copy() {
         b"through-link"
     );
 }
-
-// ============================================================================
-// Test 2: Without -K + --force: symlink-to-dir is replaced with real directory
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -280,10 +272,6 @@ fn without_keep_dirlinks_force_replaces_symlink_subdir_with_real_directory() {
     );
 }
 
-// ============================================================================
-// Test 3: -K with symlink-to-file (not dir): correctly errors
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn keep_dirlinks_with_symlink_to_file_errors() {
@@ -325,10 +313,6 @@ fn keep_dirlinks_with_symlink_to_file_errors() {
     let meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
     assert!(meta.file_type().is_symlink(), "symlink should remain");
 }
-
-// ============================================================================
-// Test 4: -K + --force with symlink-to-file: force-replaces with real directory
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -376,10 +360,6 @@ fn keep_dirlinks_force_replaces_symlink_to_file_with_directory() {
         b"forced"
     );
 }
-
-// ============================================================================
-// Test 5: Deeply nested: parent directory is symlink-to-dir, child files placed correctly
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -429,10 +409,6 @@ fn keep_dirlinks_deeply_nested_parent_symlink_to_dir() {
     );
 }
 
-// ============================================================================
-// Test 6: Dry-run mode: succeeds without error, no filesystem modifications
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn keep_dirlinks_dry_run_no_modifications() {
@@ -475,10 +451,6 @@ fn keep_dirlinks_dry_run_no_modifications() {
         "file should not be created during dry-run"
     );
 }
-
-// ============================================================================
-// Test 7: --delete -K: symlink-to-dir is preserved, extraneous files deleted
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -533,10 +505,6 @@ fn keep_dirlinks_delete_preserves_symlink_removes_extraneous() {
     );
     assert!(summary.items_deleted() >= 1, "should report at least one deletion");
 }
-
-// ============================================================================
-// Test 8: Mixed: some subdirs are symlinks, some are real
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -599,10 +567,6 @@ fn keep_dirlinks_mixed_real_and_symlink_subdirs() {
         b"link-content"
     );
 }
-
-// ============================================================================
-// Test 9: File sender entry where dest has symlink-to-dir: -K does not apply
-// ============================================================================
 
 #[cfg(unix)]
 #[test]

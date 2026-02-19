@@ -839,10 +839,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Integration Tests
-    // ========================================================================
-
     /// Simulates a transfer scenario where multiple files are processed
     /// and ACKs are batched before being sent.
     #[test]
@@ -1070,10 +1066,6 @@ mod tests {
         assert_eq!(batcher.batch_size(), 32);
         assert!(batcher.is_enabled());
     }
-
-    // ========================================================================
-    // Wire Format Tests (Task #67)
-    // ========================================================================
 
     /// Verifies the exact wire format byte layout for AckEntry::write().
     /// Wire format:

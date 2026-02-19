@@ -20,10 +20,6 @@ use std::io::{Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-// ============================================================================
-// Basic Sparse File Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn sparse_flag_copies_file_with_holes() {
@@ -136,10 +132,6 @@ fn sparse_flag_preserves_non_zero_data() {
     );
 }
 
-// ============================================================================
-// Directory Transfer Tests
-// ============================================================================
-
 #[test]
 fn sparse_flag_handles_directory_with_mixed_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -227,10 +219,6 @@ fn sparse_flag_recursive_transfer() {
     assert!(content.iter().all(|&b| b == 0));
 }
 
-// ============================================================================
-// Flag Interaction Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn sparse_with_inplace_writes_dense() {
@@ -312,10 +300,6 @@ fn sparse_without_flag_writes_dense() {
     assert_eq!(sparse_content, dense_content);
 }
 
-// ============================================================================
-// Large File Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn sparse_handles_large_file_with_holes() {
@@ -369,10 +353,6 @@ fn sparse_handles_large_file_with_holes() {
         expected_dense_blocks
     );
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[test]
 fn sparse_handles_empty_file() {
@@ -475,10 +455,6 @@ fn sparse_handles_threshold_boundary_sizes() {
     );
 }
 
-// ============================================================================
-// Linux-specific Hole Detection Tests
-// ============================================================================
-
 #[cfg(target_os = "linux")]
 #[test]
 fn sparse_creates_actual_filesystem_holes() {
@@ -528,10 +504,6 @@ fn sparse_creates_actual_filesystem_holes() {
     }
 }
 
-// ============================================================================
-// Update/Incremental Transfer Tests
-// ============================================================================
-
 #[test]
 fn sparse_works_with_update_flag() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -564,10 +536,6 @@ fn sparse_works_with_update_flag() {
     assert_eq!(content.len(), 64 * 1024);
     assert!(content.iter().all(|&b| b == 0));
 }
-
-// ============================================================================
-// Verbose Output Tests
-// ============================================================================
 
 #[test]
 fn sparse_with_verbose_shows_transfer() {

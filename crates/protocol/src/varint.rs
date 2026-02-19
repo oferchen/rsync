@@ -1097,10 +1097,6 @@ mod tests {
         }
     }
 
-    // ===========================================================================
-    // BOUNDARY CONDITION TESTS
-    // ===========================================================================
-
     // ---- i32 boundary tests ----
 
     #[test]
@@ -1494,10 +1490,6 @@ mod tests {
     }
 }
 
-// ===========================================================================
-// PHASE 2.7: VARINT 1-BYTE ENCODING TESTS (0-127)
-// ===========================================================================
-
 /// Tests for varint 1-byte encoding range (0-127).
 ///
 /// The rsync varint encoding uses a single byte for values 0-127, where the
@@ -1654,10 +1646,6 @@ mod phase2_7_varint_1byte_encoding {
         }
     }
 }
-
-// ===========================================================================
-// PHASE 2.8: VARINT 2-BYTE ENCODING TESTS (128-16383)
-// ===========================================================================
 
 /// Tests for varint 2-byte encoding range (128-16383).
 ///
@@ -1834,10 +1822,6 @@ mod phase2_8_varint_2byte_encoding {
         }
     }
 }
-
-// ===========================================================================
-// PHASE 2.9: VARINT EXTENDED ENCODING TESTS (>16383)
-// ===========================================================================
 
 /// Tests for varint extended encoding (values > 16383).
 ///
@@ -2110,10 +2094,6 @@ mod phase2_9_varint_extended_encoding {
     }
 }
 
-// ===========================================================================
-// PROPERTY-BASED TESTS
-// ===========================================================================
-
 #[cfg(test)]
 #[allow(clippy::uninlined_format_args)]
 mod proptest_tests {
@@ -2216,10 +2196,6 @@ mod proptest_tests {
     }
 }
 
-// ===========================================================================
-// BYTE BOUNDARY TESTS (Task #362)
-// ===========================================================================
-
 /// Tests for varint encoding at exact byte boundaries.
 ///
 /// The rsync varint encoding uses a variable number of bytes based on value magnitude:
@@ -2240,10 +2216,6 @@ mod byte_boundary_tests {
     use super::*;
     use std::io::Cursor;
 
-    // =========================================================================
-    // EXACT BOUNDARY VALUES
-    // =========================================================================
-
     /// The exact boundary values where encoding size changes.
     /// Format: (value, expected_byte_count, description)
     const BYTE_BOUNDARIES: [(i32, usize, &str); 8] = [
@@ -2256,10 +2228,6 @@ mod byte_boundary_tests {
         (268435455, 4, "max 4-byte (28-bit boundary)"),
         (268435456, 5, "min 5-byte (just above 28-bit)"),
     ];
-
-    // =========================================================================
-    // TEST: Encoding produces minimum bytes needed
-    // =========================================================================
 
     /// Verifies that each boundary value encodes to exactly the expected number of bytes.
     #[test]
@@ -2309,10 +2277,6 @@ mod byte_boundary_tests {
             );
         }
     }
-
-    // =========================================================================
-    // TEST: Round-trip consistency for boundary values
-    // =========================================================================
 
     /// Verifies decode_varint round-trips correctly for all boundary values.
     #[test]
@@ -2368,10 +2332,6 @@ mod byte_boundary_tests {
         }
     }
 
-    // =========================================================================
-    // TEST: 7-bit boundary (1-byte to 2-byte transition)
-    // =========================================================================
-
     /// Tests the exact 7-bit boundary: 127 is max 1-byte, 128 is min 2-byte.
     #[test]
     fn boundary_7bit_127_to_128() {
@@ -2406,10 +2366,6 @@ mod byte_boundary_tests {
         assert_eq!(len_128, 2, "128 should be 2 bytes");
         assert_eq!(len_129, 2, "129 should be 2 bytes");
     }
-
-    // =========================================================================
-    // TEST: 14-bit boundary (2-byte to 3-byte transition)
-    // =========================================================================
 
     /// Tests the exact 14-bit boundary: 16383 is max 2-byte, 16384 is min 3-byte.
     #[test]
@@ -2456,10 +2412,6 @@ mod byte_boundary_tests {
         }
     }
 
-    // =========================================================================
-    // TEST: 21-bit boundary (3-byte to 4-byte transition)
-    // =========================================================================
-
     /// Tests the exact 21-bit boundary: 2097151 is max 3-byte, 2097152 is min 4-byte.
     #[test]
     fn boundary_21bit_2097151_to_2097152() {
@@ -2504,10 +2456,6 @@ mod byte_boundary_tests {
             assert!(remainder.is_empty());
         }
     }
-
-    // =========================================================================
-    // TEST: 28-bit boundary (4-byte to 5-byte transition)
-    // =========================================================================
 
     /// Tests the exact 28-bit boundary: 268435455 is max 4-byte, 268435456 is min 5-byte.
     #[test]
@@ -2554,10 +2502,6 @@ mod byte_boundary_tests {
         }
     }
 
-    // =========================================================================
-    // TEST: All boundary transitions in one test
-    // =========================================================================
-
     /// Comprehensive test: verifies all byte boundary transitions occur at exact values.
     #[test]
     fn all_byte_boundary_transitions() {
@@ -2593,10 +2537,6 @@ mod byte_boundary_tests {
             }
         }
     }
-
-    // =========================================================================
-    // TEST: Verify exact wire format at boundaries
-    // =========================================================================
 
     /// Tests the exact wire format for 7-bit boundary values.
     #[test]
@@ -2635,10 +2575,6 @@ mod byte_boundary_tests {
             "16384's first byte should have 110x_xxxx pattern"
         );
     }
-
-    // =========================================================================
-    // TEST: Stream operations at boundaries
-    // =========================================================================
 
     /// Tests streaming multiple boundary values and verifying cursor positions.
     #[test]
@@ -2683,10 +2619,6 @@ mod byte_boundary_tests {
             );
         }
     }
-
-    // =========================================================================
-    // TEST: decode_bytes at boundaries
-    // =========================================================================
 
     /// Tests decode_bytes returns correct consumed byte count at boundaries.
     #[test]

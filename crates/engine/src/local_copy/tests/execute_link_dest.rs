@@ -17,10 +17,6 @@
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-// ============================================================================
-// Basic --link-dest Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_hardlinks_identical_file() {
@@ -168,10 +164,6 @@ fn link_dest_copies_file_not_in_link_dest() {
     assert!(!link_dest_file.exists(), "link-dest should remain unchanged");
 }
 
-// ============================================================================
-// Multiple --link-dest Directories
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_checks_multiple_directories_in_order() {
@@ -284,10 +276,6 @@ fn link_dest_uses_first_matching_directory() {
     assert!(summary.hard_links_created() >= 1);
 }
 
-// ============================================================================
-// Directory Tree Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_works_with_directory_recursion() {
@@ -367,10 +355,6 @@ fn link_dest_works_with_directory_recursion() {
     assert!(summary.hard_links_created() >= 2, "at least 2 hard links should be created");
     assert!(summary.files_copied() >= 1, "at least 1 file should be copied");
 }
-
-// ============================================================================
-// Edge Cases and Interactions
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -556,10 +540,6 @@ fn link_dest_preserves_file_permissions() {
     assert_eq!(dest_meta.permissions().mode() & 0o777, 0o644);
 }
 
-// ============================================================================
-// Zero-length and Empty File Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_hardlinks_empty_file() {
@@ -607,10 +587,6 @@ fn link_dest_hardlinks_empty_file() {
     assert!(summary.hard_links_created() >= 1);
     assert_eq!(summary.files_copied(), 0);
 }
-
-// ============================================================================
-// Link-dest with checksum option
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -713,10 +689,6 @@ fn link_dest_with_checksum_links_identical_content() {
     assert_eq!(summary.files_copied(), 0);
 }
 
-// ============================================================================
-// Link-dest with existing destination file
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_replaces_existing_destination() {
@@ -770,10 +742,6 @@ fn link_dest_replaces_existing_destination() {
     assert!(summary.hard_links_created() >= 1);
 }
 
-// ============================================================================
-// Link-dest with reference directory API (ReferenceDirectoryKind::Link)
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_via_reference_directory_api() {
@@ -823,10 +791,6 @@ fn link_dest_via_reference_directory_api() {
     assert_eq!(summary.files_copied(), 0);
 }
 
-// ============================================================================
-// Link-dest with large file
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_hardlinks_large_file() {
@@ -874,10 +838,6 @@ fn link_dest_hardlinks_large_file() {
     assert!(summary.hard_links_created() >= 1);
     assert_eq!(summary.files_copied(), 0);
 }
-
-// ============================================================================
-// Link-dest with size-only mode
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -927,10 +887,6 @@ fn link_dest_with_size_only_ignores_mtime_difference() {
     assert_eq!(summary.files_copied(), 0);
 }
 
-// ============================================================================
-// Link-dest with symlink in reference (should not link)
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_skips_symlink_in_reference() {
@@ -973,10 +929,6 @@ fn link_dest_skips_symlink_in_reference() {
     // File should be copied, not linked - verify content is correct
     // (files_copied counter may not increment for single-file operands)
 }
-
-// ============================================================================
-// Multiple link-dest directories (up to 20, matching upstream limit)
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -1033,10 +985,6 @@ fn link_dest_supports_many_directories_up_to_upstream_limit() {
     assert!(summary.hard_links_created() >= 1);
     assert_eq!(summary.files_copied(), 0);
 }
-
-// ============================================================================
-// Link-dest with --inplace mode
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -1095,10 +1043,6 @@ fn link_dest_with_inplace_copies_instead_of_linking() {
     assert!(total >= 1, "at least one transfer should occur");
 }
 
-// ============================================================================
-// Link-dest with empty reference directory
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn link_dest_with_empty_reference_directory_falls_back_to_copy() {
@@ -1136,10 +1080,6 @@ fn link_dest_with_empty_reference_directory_falls_back_to_copy() {
     assert_eq!(summary.files_copied(), 1, "file should be copied as normal");
     assert_eq!(summary.hard_links_created(), 0, "no hard links since reference is empty");
 }
-
-// ============================================================================
-// Link-dest with all files in directory having no match (fallback)
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -1187,10 +1127,6 @@ fn link_dest_no_matching_files_copies_all() {
     assert_eq!(summary.hard_links_created(), 0, "no matching files to hardlink");
     assert!(summary.files_copied() >= 2, "all files should be copied");
 }
-
-// ============================================================================
-// Link-dest with permission mismatch prevents linking
-// ============================================================================
 
 #[cfg(unix)]
 #[test]

@@ -15,10 +15,6 @@
 use core::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use std::collections::HashSet;
 
-// ============================================================================
-// Exit Code 0: Success (RERR_OK)
-// ============================================================================
-
 #[test]
 fn exit_code_0_is_ok() {
     assert_eq!(ExitCode::Ok.as_i32(), 0);
@@ -38,10 +34,6 @@ fn exit_code_0_is_success() {
     assert!(!ExitCode::Ok.is_partial());
 }
 
-// ============================================================================
-// Exit Code 1: Syntax Error (RERR_SYNTAX)
-// ============================================================================
-
 #[test]
 fn exit_code_1_is_syntax() {
     assert_eq!(ExitCode::Syntax.as_i32(), 1);
@@ -60,10 +52,6 @@ fn exit_code_1_classification() {
     assert!(!ExitCode::Syntax.is_fatal());
     assert!(!ExitCode::Syntax.is_partial());
 }
-
-// ============================================================================
-// Exit Code 2: Protocol Incompatibility (RERR_PROTOCOL)
-// ============================================================================
 
 #[test]
 fn exit_code_2_is_protocol() {
@@ -87,10 +75,6 @@ fn exit_code_2_is_fatal() {
     assert!(!ExitCode::Protocol.is_partial());
 }
 
-// ============================================================================
-// Exit Code 3: File Selection Error (RERR_FILESELECT)
-// ============================================================================
-
 #[test]
 fn exit_code_3_is_file_select() {
     assert_eq!(ExitCode::FileSelect.as_i32(), 3);
@@ -111,10 +95,6 @@ fn exit_code_3_classification() {
     assert!(!ExitCode::FileSelect.is_fatal());
     assert!(!ExitCode::FileSelect.is_partial());
 }
-
-// ============================================================================
-// Exit Code 4: Unsupported Action (RERR_UNSUPPORTED)
-// ============================================================================
 
 #[test]
 fn exit_code_4_is_unsupported() {
@@ -137,10 +117,6 @@ fn exit_code_4_classification() {
     assert!(!ExitCode::Unsupported.is_partial());
 }
 
-// ============================================================================
-// Exit Code 5: Start Client Error (RERR_STARTCLIENT)
-// ============================================================================
-
 #[test]
 fn exit_code_5_is_start_client() {
     assert_eq!(ExitCode::StartClient.as_i32(), 5);
@@ -161,10 +137,6 @@ fn exit_code_5_is_fatal() {
     assert!(ExitCode::StartClient.is_fatal());
     assert!(!ExitCode::StartClient.is_partial());
 }
-
-// ============================================================================
-// Exit Code 6: Log File Append Error (RERR_LOG_FAILURE)
-// ============================================================================
 
 #[test]
 fn exit_code_6_is_log_file_append() {
@@ -187,10 +159,6 @@ fn exit_code_6_is_fatal() {
     assert!(!ExitCode::LogFileAppend.is_partial());
 }
 
-// ============================================================================
-// Exit Code 10: Socket I/O Error (RERR_SOCKETIO)
-// ============================================================================
-
 #[test]
 fn exit_code_10_is_socket_io() {
     assert_eq!(ExitCode::SocketIo.as_i32(), 10);
@@ -209,10 +177,6 @@ fn exit_code_10_is_fatal() {
     assert!(!ExitCode::SocketIo.is_partial());
 }
 
-// ============================================================================
-// Exit Code 11: File I/O Error (RERR_FILEIO)
-// ============================================================================
-
 #[test]
 fn exit_code_11_is_file_io() {
     assert_eq!(ExitCode::FileIo.as_i32(), 11);
@@ -230,10 +194,6 @@ fn exit_code_11_classification() {
     assert!(!ExitCode::FileIo.is_fatal());
     assert!(!ExitCode::FileIo.is_partial());
 }
-
-// ============================================================================
-// Exit Code 12: Stream I/O Error (RERR_STREAMIO)
-// ============================================================================
 
 #[test]
 fn exit_code_12_is_stream_io() {
@@ -256,10 +216,6 @@ fn exit_code_12_is_fatal() {
     assert!(!ExitCode::StreamIo.is_partial());
 }
 
-// ============================================================================
-// Exit Code 13: Message I/O Error (RERR_MESSAGEIO)
-// ============================================================================
-
 #[test]
 fn exit_code_13_is_message_io() {
     assert_eq!(ExitCode::MessageIo.as_i32(), 13);
@@ -281,10 +237,6 @@ fn exit_code_13_classification() {
     assert!(!ExitCode::MessageIo.is_partial());
 }
 
-// ============================================================================
-// Exit Code 14: IPC Error (RERR_IPC)
-// ============================================================================
-
 #[test]
 fn exit_code_14_is_ipc() {
     assert_eq!(ExitCode::Ipc.as_i32(), 14);
@@ -302,10 +254,6 @@ fn exit_code_14_is_fatal() {
     assert!(ExitCode::Ipc.is_fatal());
     assert!(!ExitCode::Ipc.is_partial());
 }
-
-// ============================================================================
-// Exit Code 15: Crashed (RERR_CRASHED)
-// ============================================================================
 
 #[test]
 fn exit_code_15_is_crashed() {
@@ -328,10 +276,6 @@ fn exit_code_15_is_fatal() {
     assert!(!ExitCode::Crashed.is_partial());
 }
 
-// ============================================================================
-// Exit Code 16: Terminated (RERR_TERMINATED)
-// ============================================================================
-
 #[test]
 fn exit_code_16_is_terminated() {
     assert_eq!(ExitCode::Terminated.as_i32(), 16);
@@ -353,10 +297,6 @@ fn exit_code_16_is_fatal() {
     assert!(!ExitCode::Terminated.is_partial());
 }
 
-// ============================================================================
-// Exit Code 19: Signal1 (RERR_SIGNAL1)
-// ============================================================================
-
 #[test]
 fn exit_code_19_is_signal1() {
     assert_eq!(ExitCode::Signal1.as_i32(), 19);
@@ -374,10 +314,6 @@ fn exit_code_19_classification() {
     assert!(!ExitCode::Signal1.is_fatal());
     assert!(!ExitCode::Signal1.is_partial());
 }
-
-// ============================================================================
-// Exit Code 20: Signal (RERR_SIGNAL)
-// ============================================================================
 
 #[test]
 fn exit_code_20_is_signal() {
@@ -400,10 +336,6 @@ fn exit_code_20_classification() {
     assert!(!ExitCode::Signal.is_partial());
 }
 
-// ============================================================================
-// Exit Code 21: WaitChild (RERR_WAITCHILD)
-// ============================================================================
-
 #[test]
 fn exit_code_21_is_wait_child() {
     assert_eq!(ExitCode::WaitChild.as_i32(), 21);
@@ -421,10 +353,6 @@ fn exit_code_21_classification() {
     assert!(!ExitCode::WaitChild.is_fatal());
     assert!(!ExitCode::WaitChild.is_partial());
 }
-
-// ============================================================================
-// Exit Code 22: Malloc (RERR_MALLOC)
-// ============================================================================
 
 #[test]
 fn exit_code_22_is_malloc() {
@@ -447,10 +375,6 @@ fn exit_code_22_is_fatal() {
     assert!(!ExitCode::Malloc.is_partial());
 }
 
-// ============================================================================
-// Exit Code 23: Partial Transfer (RERR_PARTIAL)
-// ============================================================================
-
 #[test]
 fn exit_code_23_is_partial_transfer() {
     assert_eq!(ExitCode::PartialTransfer.as_i32(), 23);
@@ -468,10 +392,6 @@ fn exit_code_23_is_partial() {
     assert!(!ExitCode::PartialTransfer.is_fatal());
     assert!(ExitCode::PartialTransfer.is_partial());
 }
-
-// ============================================================================
-// Exit Code 24: Vanished (RERR_VANISHED)
-// ============================================================================
 
 #[test]
 fn exit_code_24_is_vanished() {
@@ -494,10 +414,6 @@ fn exit_code_24_is_partial() {
     assert!(ExitCode::Vanished.is_partial());
 }
 
-// ============================================================================
-// Exit Code 25: Delete Limit (RERR_DEL_LIMIT)
-// ============================================================================
-
 #[test]
 fn exit_code_25_is_delete_limit() {
     assert_eq!(ExitCode::DeleteLimit.as_i32(), 25);
@@ -518,10 +434,6 @@ fn exit_code_25_is_partial() {
     assert!(!ExitCode::DeleteLimit.is_fatal());
     assert!(ExitCode::DeleteLimit.is_partial());
 }
-
-// ============================================================================
-// Exit Code 30: Timeout (RERR_TIMEOUT)
-// ============================================================================
 
 #[test]
 fn exit_code_30_is_timeout() {
@@ -544,10 +456,6 @@ fn exit_code_30_is_fatal() {
     assert!(!ExitCode::Timeout.is_partial());
 }
 
-// ============================================================================
-// Exit Code 35: Connection Timeout (RERR_CONTIMEOUT)
-// ============================================================================
-
 #[test]
 fn exit_code_35_is_connection_timeout() {
     assert_eq!(ExitCode::ConnectionTimeout.as_i32(), 35);
@@ -568,10 +476,6 @@ fn exit_code_35_is_fatal() {
     assert!(ExitCode::ConnectionTimeout.is_fatal());
     assert!(!ExitCode::ConnectionTimeout.is_partial());
 }
-
-// ============================================================================
-// Exit Code 124: Command Failed (RERR_CMD_FAILED)
-// ============================================================================
 
 #[test]
 fn exit_code_124_is_command_failed() {
@@ -594,10 +498,6 @@ fn exit_code_124_classification() {
     assert!(!ExitCode::CommandFailed.is_partial());
 }
 
-// ============================================================================
-// Exit Code 125: Command Killed (RERR_CMD_KILLED)
-// ============================================================================
-
 #[test]
 fn exit_code_125_is_command_killed() {
     assert_eq!(ExitCode::CommandKilled.as_i32(), 125);
@@ -618,10 +518,6 @@ fn exit_code_125_classification() {
     assert!(!ExitCode::CommandKilled.is_fatal());
     assert!(!ExitCode::CommandKilled.is_partial());
 }
-
-// ============================================================================
-// Exit Code 126: Command Run (RERR_CMD_RUN)
-// ============================================================================
 
 #[test]
 fn exit_code_126_is_command_run() {
@@ -644,10 +540,6 @@ fn exit_code_126_classification() {
     assert!(!ExitCode::CommandRun.is_partial());
 }
 
-// ============================================================================
-// Exit Code 127: Command Not Found (RERR_CMD_NOTFOUND)
-// ============================================================================
-
 #[test]
 fn exit_code_127_is_command_not_found() {
     assert_eq!(ExitCode::CommandNotFound.as_i32(), 127);
@@ -668,10 +560,6 @@ fn exit_code_127_classification() {
     assert!(!ExitCode::CommandNotFound.is_fatal());
     assert!(!ExitCode::CommandNotFound.is_partial());
 }
-
-// ============================================================================
-// Comprehensive Enumeration Tests
-// ============================================================================
 
 #[test]
 fn all_exit_codes_have_unique_values() {
@@ -818,10 +706,6 @@ fn unknown_exit_codes_return_none() {
     }
 }
 
-// ============================================================================
-// Classification Tests
-// ============================================================================
-
 #[test]
 fn only_ok_is_success() {
     let all_codes = [
@@ -951,10 +835,6 @@ fn partial_errors_are_correct() {
     }
 }
 
-// ============================================================================
-// Trait Implementation Tests
-// ============================================================================
-
 #[test]
 fn exit_code_implements_copy() {
     let code = ExitCode::PartialTransfer;
@@ -1009,10 +889,6 @@ fn exit_code_is_hashable() {
     assert_eq!(map.get(&ExitCode::PartialTransfer), Some(&"partial"));
     assert_eq!(map.get(&ExitCode::Protocol), Some(&"protocol error"));
 }
-
-// ============================================================================
-// ErrorCodification Trait Tests
-// ============================================================================
 
 /// Mock error type for testing ErrorCodification trait
 #[derive(Debug)]
@@ -1118,10 +994,6 @@ fn error_codification_provides_error_code_name() {
     let err = MockError::NetworkError;
     assert_eq!(err.error_code_name(), "error in socket IO");
 }
-
-// ============================================================================
-// Edge Cases and Boundary Tests
-// ============================================================================
 
 #[test]
 fn exit_code_values_match_upstream_exactly() {
@@ -1268,10 +1140,6 @@ fn exit_code_gaps_are_intentional() {
     }
 }
 
-// ============================================================================
-// Upstream rsync errcode.h Compliance Tests
-// ============================================================================
-
 /// Tests that verify exact compliance with upstream rsync's errcode.h
 mod upstream_compliance {
     use super::*;
@@ -1414,10 +1282,6 @@ mod upstream_compliance {
     }
 }
 
-// ============================================================================
-// Process Exit Code Integration Tests
-// ============================================================================
-
 /// Tests for std::process::ExitCode conversion
 mod process_exit_code {
     use super::*;
@@ -1544,10 +1408,6 @@ mod process_exit_code {
         assert_eq!(*max, 127, "Maximum exit code should be 127");
     }
 }
-
-// ============================================================================
-// Exit Code Semantic Tests
-// ============================================================================
 
 /// Tests that verify the semantic meaning of exit codes
 mod exit_code_semantics {
@@ -1697,10 +1557,6 @@ mod exit_code_semantics {
         }
     }
 }
-
-// ============================================================================
-// Display and Debug Format Tests
-// ============================================================================
 
 /// Tests for string formatting of exit codes
 mod exit_code_formatting {

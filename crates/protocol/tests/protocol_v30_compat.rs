@@ -45,10 +45,6 @@ impl ProtocolVersionAdvertisement for TestVersion {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 Handshake and Negotiation
-// ============================================================================
-
 mod protocol_30_handshake {
     use super::*;
 
@@ -137,10 +133,6 @@ mod protocol_30_handshake {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 Binary Negotiation
-// ============================================================================
-
 mod protocol_30_binary_negotiation {
     use super::*;
 
@@ -197,10 +189,6 @@ mod protocol_30_binary_negotiation {
         );
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 30 Feature Flags
-// ============================================================================
 
 mod protocol_30_feature_flags {
     use super::*;
@@ -339,10 +327,6 @@ mod protocol_30_feature_flags {
         assert!(!v30.uses_fixed_encoding());
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 30 Capability Negotiation
-// ============================================================================
 
 mod protocol_30_capability_negotiation {
     use super::*;
@@ -548,10 +532,6 @@ mod protocol_30_capability_negotiation {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 Incremental Recursion
-// ============================================================================
-
 mod protocol_30_incremental_recursion {
     use super::*;
 
@@ -683,10 +663,6 @@ mod protocol_30_incremental_recursion {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 Backward Compatibility
-// ============================================================================
-
 mod protocol_30_backward_compatibility {
     use super::*;
 
@@ -765,10 +741,6 @@ mod protocol_30_backward_compatibility {
         assert_eq!(result.unwrap().as_u8(), 30);
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 30 Edge Cases
-// ============================================================================
 
 mod protocol_30_edge_cases {
     use super::*;
@@ -870,10 +842,6 @@ mod protocol_30_edge_cases {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 Integration Tests
-// ============================================================================
-
 mod protocol_30_integration {
     use super::*;
 
@@ -963,17 +931,9 @@ mod protocol_30_integration {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 Wire Format Tests
-// ============================================================================
-
 mod protocol_30_wire_format {
     use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
     use std::io::Cursor;
-
-    // ------------------------------------------------------------------------
-    // File Size Encoding (varlong min_bytes=3)
-    // ------------------------------------------------------------------------
 
     /// Protocol 30 uses varlong encoding for file sizes with min_bytes=3.
     #[test]
@@ -1052,10 +1012,6 @@ mod protocol_30_wire_format {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // Modification Time Encoding (varlong min_bytes=4)
-    // ------------------------------------------------------------------------
-
     /// Protocol 30 uses varlong encoding for mtimes with min_bytes=4.
     #[test]
     fn version_30_mtime_varlong_encoding() {
@@ -1096,10 +1052,6 @@ mod protocol_30_wire_format {
             assert_eq!(decoded, mtime, "Mtime {mtime} must roundtrip");
         }
     }
-
-    // ------------------------------------------------------------------------
-    // NDX (File Index) Encoding with Delta
-    // ------------------------------------------------------------------------
 
     /// Protocol 30 NDX uses delta encoding for efficiency.
     #[test]
@@ -1208,10 +1160,6 @@ mod protocol_30_wire_format {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Long Name Length Encoding (varint)
-    // ------------------------------------------------------------------------
-
     /// Protocol 30 uses varint for long name lengths.
     #[test]
     fn version_30_long_name_len_varint() {
@@ -1229,10 +1177,6 @@ mod protocol_30_wire_format {
             assert_eq!(decoded, len, "Long name length {len} must roundtrip");
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Codec Capability Methods
-    // ------------------------------------------------------------------------
 
     /// Protocol 30 codec supports all v30 features.
     #[test]
@@ -1255,10 +1199,6 @@ mod protocol_30_wire_format {
         assert!(!codec.is_legacy(), "v30 codec should be modern, not legacy");
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 30 Binary Advertisement
-// ============================================================================
 
 mod protocol_30_binary_advertisement {
     use super::*;
@@ -1317,10 +1257,6 @@ mod protocol_30_binary_advertisement {
         assert_eq!(bytes1, bytes2, "Advertisement must be deterministic");
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 30 MD5 Checksum Default
-// ============================================================================
 
 mod protocol_30_md5_default {
     use super::*;
@@ -1424,10 +1360,6 @@ mod protocol_30_md5_default {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 Vstring Format
-// ============================================================================
-
 mod protocol_30_vstring_format {
     use super::*;
 
@@ -1516,10 +1448,6 @@ mod protocol_30_vstring_format {
         assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 30 Compatibility Flags Comprehensive
-// ============================================================================
 
 mod protocol_30_compatibility_flags_comprehensive {
     use super::*;
@@ -1666,10 +1594,6 @@ mod protocol_30_compatibility_flags_comprehensive {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 Handshake with Peers
-// ============================================================================
-
 mod protocol_30_handshake_with_peers {
     use super::*;
 
@@ -1749,10 +1673,6 @@ mod protocol_30_handshake_with_peers {
         assert_eq!(result.unwrap().as_u8(), 32);
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 30 Feature Detection
-// ============================================================================
 
 mod protocol_30_feature_detection {
     use super::*;
@@ -1857,10 +1777,6 @@ mod protocol_30_feature_detection {
         assert!(ProtocolVersion::V32.supports_extended_flags());
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 30 Varint Encoding Tests
-// ============================================================================
 
 mod protocol_30_varint_encoding {
     use super::CompatibilityFlags;

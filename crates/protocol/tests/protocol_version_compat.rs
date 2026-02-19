@@ -40,10 +40,6 @@ impl ProtocolVersionAdvertisement for TestVersion {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 27 (Unsupported Base Version)
-// ============================================================================
-
 mod protocol_27_unsupported {
     use super::*;
 
@@ -97,16 +93,8 @@ mod protocol_27_unsupported {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 28 (Base Supported Version)
-// ============================================================================
-
 mod protocol_28_base_version {
     use super::*;
-
-    // ------------------------------------------------------------------------
-    // Capability Negotiation Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_28_is_oldest_supported() {
@@ -137,10 +125,6 @@ mod protocol_28_base_version {
         let from_supported = ProtocolVersion::from_supported(28).unwrap();
         assert_eq!(from_supported, ProtocolVersion::V28);
     }
-
-    // ------------------------------------------------------------------------
-    // Wire Format Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_28_uses_legacy_ascii_negotiation() {
@@ -199,10 +183,6 @@ mod protocol_28_base_version {
         assert_eq!(buf, vec![5, 0, 0, 0]);
     }
 
-    // ------------------------------------------------------------------------
-    // Feature Availability Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn version_28_supports_extended_flags() {
         assert!(
@@ -255,10 +235,6 @@ mod protocol_28_base_version {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // Backward Compatibility Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn version_28_compatible_with_newer_versions() {
         // When negotiating with a peer that supports 32, should fall back to 28
@@ -273,16 +249,8 @@ mod protocol_28_base_version {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 29 (Incremental Recursion Foundation)
-// ============================================================================
-
 mod protocol_29_incremental_recursion {
     use super::*;
-
-    // ------------------------------------------------------------------------
-    // Capability Negotiation Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_29_negotiation_succeeds() {
@@ -318,10 +286,6 @@ mod protocol_29_incremental_recursion {
             "Protocol 30 (next) uses binary negotiation"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // Wire Format Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_29_uses_legacy_ascii_negotiation() {
@@ -389,10 +353,6 @@ mod protocol_29_incremental_recursion {
         assert_eq!(buf.len(), 4, "Protocol 29 NDX uses 4-byte LE");
     }
 
-    // ------------------------------------------------------------------------
-    // Feature Availability Tests (Incremental Recursion Foundation)
-    // ------------------------------------------------------------------------
-
     #[test]
     fn version_29_supports_sender_receiver_modifiers() {
         let codec = create_protocol_codec(29);
@@ -445,10 +405,6 @@ mod protocol_29_incremental_recursion {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // Backward Compatibility Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn version_29_with_28_selects_29() {
         let result = select_highest_mutual([TestVersion(29), TestVersion(28)]);
@@ -470,16 +426,8 @@ mod protocol_29_incremental_recursion {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 30 (Binary Negotiation & Extended Features)
-// ============================================================================
-
 mod protocol_30_binary_negotiation {
     use super::*;
-
-    // ------------------------------------------------------------------------
-    // Capability Negotiation Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_30_negotiation_succeeds() {
@@ -504,10 +452,6 @@ mod protocol_30_binary_negotiation {
             "Protocol 30 must be in supported list"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // Wire Format Tests (Binary Negotiation)
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_30_uses_binary_negotiation() {
@@ -585,10 +529,6 @@ mod protocol_30_binary_negotiation {
         assert_eq!(buf, vec![0x00], "NDX_DONE is single byte 0x00");
     }
 
-    // ------------------------------------------------------------------------
-    // Feature Availability Tests (Extended Attributes)
-    // ------------------------------------------------------------------------
-
     #[test]
     fn version_30_supports_compatibility_flags() {
         // Protocol 30 can encode and decode compatibility flags
@@ -639,10 +579,6 @@ mod protocol_30_binary_negotiation {
         assert_eq!(buf, vec![1]);
     }
 
-    // ------------------------------------------------------------------------
-    // Backward Compatibility Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn version_30_boundary_with_29() {
         // This is the critical boundary: ASCII vs binary negotiation
@@ -683,16 +619,8 @@ mod protocol_30_binary_negotiation {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 31 (Safe File List & Checksum Seed Fix)
-// ============================================================================
-
 mod protocol_31_safe_flist {
     use super::*;
-
-    // ------------------------------------------------------------------------
-    // Capability Negotiation Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_31_negotiation_succeeds() {
@@ -714,10 +642,6 @@ mod protocol_31_safe_flist {
         let from_supported = ProtocolVersion::from_supported(31).unwrap();
         assert_eq!(from_supported, ProtocolVersion::V31);
     }
-
-    // ------------------------------------------------------------------------
-    // Wire Format Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_31_uses_binary_negotiation() {
@@ -752,10 +676,6 @@ mod protocol_31_safe_flist {
         assert!(!codec.is_legacy(), "Protocol 31 codec must be modern");
         assert_eq!(codec.protocol_version(), 31);
     }
-
-    // ------------------------------------------------------------------------
-    // Feature Availability Tests (Checksum Seeds, Safe File List)
-    // ------------------------------------------------------------------------
 
     #[test]
     fn version_31_safe_file_list_always_enabled() {
@@ -835,10 +755,6 @@ mod protocol_31_safe_flist {
         assert!(decoded.contains(CompatibilityFlags::ID0_NAMES));
     }
 
-    // ------------------------------------------------------------------------
-    // Backward Compatibility Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn version_31_boundary_with_30() {
         let protocol_30 = ProtocolVersion::V30;
@@ -866,10 +782,6 @@ mod protocol_31_safe_flist {
         assert_eq!(result.unwrap().as_u8(), 31, "Should select highest (31)");
     }
 }
-
-// ============================================================================
-// Cross-Version Compatibility Matrix Tests
-// ============================================================================
 
 mod cross_version_compatibility {
     use super::*;
@@ -1134,10 +1046,6 @@ mod cross_version_compatibility {
     }
 }
 
-// ============================================================================
-// Version-Specific Wire Format Verification Tests
-// ============================================================================
-
 mod wire_format_verification {
     use super::*;
 
@@ -1238,10 +1146,6 @@ mod wire_format_verification {
     }
 }
 
-// ============================================================================
-// Error Handling and Edge Cases
-// ============================================================================
-
 mod error_handling {
     use super::*;
 
@@ -1295,10 +1199,6 @@ mod error_handling {
         assert!(modern.read_file_size(&mut cursor).is_err());
     }
 }
-
-// ============================================================================
-// Protocol Version Iteration and Bounds Tests
-// ============================================================================
 
 mod version_iteration {
     use super::*;

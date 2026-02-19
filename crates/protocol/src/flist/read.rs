@@ -2526,10 +2526,6 @@ mod tests {
         assert_unexpected_eof(result, "truncated protocol 29 device minor (int)");
     }
 
-    // ========================================================================
-    // Large file size encoding tests (>2GB, >4GB)
-    // ========================================================================
-
     /// Test reading a 3GB file entry (above 2^31 = 2GB boundary).
     /// Verifies the reader correctly decodes varlong-encoded large file sizes.
     #[test]

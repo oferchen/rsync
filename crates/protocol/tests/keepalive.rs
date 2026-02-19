@@ -19,10 +19,6 @@ use protocol::{
     recv_msg_into, send_keepalive, send_msg,
 };
 
-// ============================================================================
-// Wire Format Tests
-// ============================================================================
-
 /// Keepalive produces correct 4-byte header with zero-length payload.
 #[test]
 fn keepalive_wire_format_is_4_byte_header_only() {
@@ -102,10 +98,6 @@ fn is_keepalive_identifies_noop_only() {
     }
 }
 
-// ============================================================================
-// Receiving Keepalive Messages
-// ============================================================================
-
 /// recv_msg decodes keepalive as NoOp with empty payload.
 #[test]
 fn recv_msg_decodes_keepalive() {
@@ -133,10 +125,6 @@ fn recv_msg_into_decodes_keepalive_empty_buffer() {
     assert_eq!(code, MessageCode::NoOp);
     assert!(payload_buf.is_empty(), "keepalive must clear the buffer");
 }
-
-// ============================================================================
-// Keepalive Does Not Interfere With Data Transfer
-// ============================================================================
 
 /// Keepalive messages interleaved with data messages are silently consumed by MplexReader.
 #[test]
@@ -256,10 +244,6 @@ fn keepalive_interleaved_with_oob_and_data() {
     assert_eq!(captured[4].0, MessageCode::NoOp);
 }
 
-// ============================================================================
-// Multiple Keepalives in Sequence
-// ============================================================================
-
 /// A burst of keepalives can be sent and received without error.
 #[test]
 fn multiple_keepalives_in_sequence() {
@@ -310,10 +294,6 @@ fn keepalive_burst_then_data() {
 
     assert_eq!(&buf[..n], b"finally!");
 }
-
-// ============================================================================
-// MplexWriter Keepalive Integration
-// ============================================================================
 
 /// MplexWriter::write_keepalive sends a properly formatted MSG_NOOP.
 #[test]
@@ -396,10 +376,6 @@ fn mplex_writer_keepalive_interleaved_with_data() {
     assert_eq!(f6.payload(), b"chunk3");
 }
 
-// ============================================================================
-// MessageFrame Integration
-// ============================================================================
-
 /// A keepalive can be constructed and encoded via MessageFrame.
 #[test]
 fn message_frame_keepalive_roundtrip() {
@@ -429,10 +405,6 @@ fn message_frame_keepalive_matches_send_keepalive() {
 
     assert_eq!(frame_bytes, keepalive_bytes);
 }
-
-// ============================================================================
-// End-to-End Pipeline Test
-// ============================================================================
 
 /// Simulates a transfer pipeline where keepalives are sent during a long operation.
 /// Writer sends keepalives between data chunks; reader extracts data transparently.
@@ -518,10 +490,6 @@ fn end_to_end_keepalive_during_transfer() {
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0], "checksumming...");
 }
-
-// ============================================================================
-// MessageHeader Keepalive Encoding
-// ============================================================================
 
 /// Keepalive MessageHeader encodes and decodes correctly.
 #[test]

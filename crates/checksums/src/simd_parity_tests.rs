@@ -5,10 +5,6 @@
 //! This ensures correctness across different CPU feature levels (SSE2, AVX2,
 //! AVX-512, NEON) and prevents regressions when optimizing SIMD code paths.
 
-// =============================================================================
-// MD5 SIMD Batch vs Scalar Parity
-// =============================================================================
-
 #[cfg(test)]
 mod md5_simd_parity {
     use crate::simd_batch;
@@ -22,10 +18,6 @@ mod md5_simd_parity {
         }
         s
     }
-
-    // ========================================================================
-    // RFC 1321 Test Vectors (MD5)
-    // ========================================================================
 
     /// Verify SIMD batch MD5 produces correct RFC 1321 test vector results.
     #[test]
@@ -87,10 +79,6 @@ mod md5_simd_parity {
         }
     }
 
-    // ========================================================================
-    // SIMD Lane Boundary Tests (MD5)
-    // ========================================================================
-
     /// Test with data sizes at SIMD lane boundaries (16, 32, 64, 128, 256, 512 bytes).
     #[test]
     fn simd_md5_lane_boundary_sizes() {
@@ -129,10 +117,6 @@ mod md5_simd_parity {
             );
         }
     }
-
-    // ========================================================================
-    // Batch Size Tests (MD5) - exercise full and partial SIMD lanes
-    // ========================================================================
 
     /// Test with exactly 4 inputs (SSE2/NEON full lane).
     #[test]
@@ -241,10 +225,6 @@ mod md5_simd_parity {
         assert!(batch_results.is_empty());
     }
 
-    // ========================================================================
-    // Large Data Tests (MD5)
-    // ========================================================================
-
     /// Test with large inputs that span many MD5 blocks.
     #[test]
     fn simd_md5_large_inputs() {
@@ -289,10 +269,6 @@ mod md5_simd_parity {
             );
         }
     }
-
-    // ========================================================================
-    // All-Same and Special Pattern Tests (MD5)
-    // ========================================================================
 
     /// Test with identical inputs in a batch (verifies lane independence).
     #[test]
@@ -347,10 +323,6 @@ mod md5_simd_parity {
         }
     }
 
-    // ========================================================================
-    // Random Data Parity (MD5)
-    // ========================================================================
-
     /// Test with pseudo-random data at various sizes.
     #[test]
     fn simd_md5_random_data_parity() {
@@ -404,10 +376,6 @@ mod md5_simd_parity {
         }
     }
 
-    // ========================================================================
-    // Backend Reporting Tests (MD5)
-    // ========================================================================
-
     /// Verify the active backend reports correctly and produces correct results.
     #[test]
     fn simd_md5_active_backend_produces_correct_results() {
@@ -436,10 +404,6 @@ mod md5_simd_parity {
     }
 }
 
-// =============================================================================
-// MD4 SIMD Batch vs Scalar Parity
-// =============================================================================
-
 #[cfg(test)]
 mod md4_simd_parity {
     use crate::simd_batch::md4;
@@ -453,10 +417,6 @@ mod md4_simd_parity {
         }
         s
     }
-
-    // ========================================================================
-    // RFC 1320 Test Vectors (MD4)
-    // ========================================================================
 
     /// Verify SIMD batch MD4 produces correct RFC 1320 test vector results.
     #[test]
@@ -518,10 +478,6 @@ mod md4_simd_parity {
         }
     }
 
-    // ========================================================================
-    // SIMD Lane Boundary Tests (MD4)
-    // ========================================================================
-
     /// Test with data sizes at SIMD lane boundaries.
     #[test]
     fn simd_md4_lane_boundary_sizes() {
@@ -560,10 +516,6 @@ mod md4_simd_parity {
             );
         }
     }
-
-    // ========================================================================
-    // Batch Size Tests (MD4)
-    // ========================================================================
 
     /// Test with exactly 4 inputs (SSE2/NEON full lane).
     #[test]
@@ -672,10 +624,6 @@ mod md4_simd_parity {
         assert!(batch_results.is_empty());
     }
 
-    // ========================================================================
-    // Large Data Tests (MD4)
-    // ========================================================================
-
     /// Test with large inputs that span many MD4 blocks.
     #[test]
     fn simd_md4_large_inputs() {
@@ -721,10 +669,6 @@ mod md4_simd_parity {
         }
     }
 
-    // ========================================================================
-    // Special Pattern Tests (MD4)
-    // ========================================================================
-
     /// Test with identical inputs in a batch (verifies lane independence).
     #[test]
     fn simd_md4_batch_identical_inputs() {
@@ -758,10 +702,6 @@ mod md4_simd_parity {
             assert_eq!(batch_f[0], Md4::digest(&ones), "MD4 0xFF size {size}");
         }
     }
-
-    // ========================================================================
-    // Random Data Parity (MD4)
-    // ========================================================================
 
     /// Test with pseudo-random data at various sizes.
     #[test]
@@ -815,10 +755,6 @@ mod md4_simd_parity {
         }
     }
 
-    // ========================================================================
-    // MD4 Single Digest via SIMD scalar matches strong::Md4
-    // ========================================================================
-
     /// Verify the single-digest function in the SIMD module matches strong::Md4.
     #[test]
     fn simd_md4_single_digest_matches_strong() {
@@ -845,17 +781,9 @@ mod md4_simd_parity {
     }
 }
 
-// =============================================================================
-// XXH3 SIMD vs Scalar Parity (one-shot SIMD vs streaming scalar)
-// =============================================================================
-
 #[cfg(test)]
 mod xxh3_simd_parity {
     use crate::strong::{Xxh3, Xxh3_128, Xxh64};
-
-    // ========================================================================
-    // XXH3-64: one-shot (potentially SIMD) vs streaming (xxhash-rust scalar)
-    // ========================================================================
 
     /// Verify XXH3-64 one-shot matches streaming for empty input.
     #[test]
@@ -941,10 +869,6 @@ mod xxh3_simd_parity {
         }
     }
 
-    // ========================================================================
-    // XXH3-128: one-shot (potentially SIMD) vs streaming (xxhash-rust scalar)
-    // ========================================================================
-
     /// Verify XXH3-128 one-shot matches streaming for empty input.
     #[test]
     fn simd_xxh3_128_parity_empty() {
@@ -1027,10 +951,6 @@ mod xxh3_simd_parity {
         }
     }
 
-    // ========================================================================
-    // XXH64 Parity (streaming vs one-shot)
-    // ========================================================================
-
     /// Verify XXH64 one-shot matches streaming across various sizes.
     #[test]
     fn simd_xxh64_parity_various_sizes() {
@@ -1052,10 +972,6 @@ mod xxh3_simd_parity {
             }
         }
     }
-
-    // ========================================================================
-    // XXH3 Random Data Parity
-    // ========================================================================
 
     /// Test XXH3-64 with random data at various sizes.
     #[test]
@@ -1105,10 +1021,6 @@ mod xxh3_simd_parity {
         }
     }
 
-    // ========================================================================
-    // XXH3 SIMD Availability Check
-    // ========================================================================
-
     /// Verify SIMD availability query reports true (xxh3 crate always compiled in).
     #[test]
     fn simd_xxh3_availability_consistent() {
@@ -1118,10 +1030,6 @@ mod xxh3_simd_parity {
         );
     }
 }
-
-// =============================================================================
-// Cross-Implementation Consistency: strong:: digest_batch vs strong:: digest
-// =============================================================================
 
 #[cfg(test)]
 mod digest_batch_parity {
@@ -1227,10 +1135,6 @@ mod digest_batch_parity {
         }
     }
 }
-
-// =============================================================================
-// Proptest-Based Parity (MD5 SIMD batch vs scalar)
-// =============================================================================
 
 #[cfg(test)]
 mod proptest_simd_parity {

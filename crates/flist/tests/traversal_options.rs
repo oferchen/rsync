@@ -10,10 +10,6 @@ use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::fs;
 use std::path::PathBuf;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -31,10 +27,6 @@ fn collect_all_entries(
 ) -> Vec<FileListEntry> {
     walker.map(|r| r.expect("entry should succeed")).collect()
 }
-
-// ============================================================================
-// include_root Option Tests
-// ============================================================================
 
 /// Verifies include_root(true) includes the root entry (default behavior).
 #[test]
@@ -155,10 +147,6 @@ fn include_root_false_with_single_file_root() {
     assert!(entries.is_empty());
 }
 
-// ============================================================================
-// follow_symlinks Option Tests (Unix only)
-// ============================================================================
-
 #[cfg(unix)]
 mod symlink_option_tests {
     use super::*;
@@ -263,10 +251,6 @@ mod symlink_option_tests {
     }
 }
 
-// ============================================================================
-// Combined Options Tests
-// ============================================================================
-
 #[cfg(unix)]
 mod combined_option_tests {
     use super::*;
@@ -331,10 +315,6 @@ mod combined_option_tests {
     }
 }
 
-// ============================================================================
-// Builder State Tests
-// ============================================================================
-
 /// Verifies builder preserves its state through cloning.
 #[test]
 fn builder_clone_preserves_options() {
@@ -374,10 +354,6 @@ fn builder_can_be_reused() {
 
     assert_eq!(paths1, paths2);
 }
-
-// ============================================================================
-// Path Input Variations Tests
-// ============================================================================
 
 /// Verifies builder accepts various path types.
 #[test]
@@ -423,10 +399,6 @@ fn builder_absolutizes_relative_paths() {
     }
 }
 
-// ============================================================================
-// Error Handling for Options Tests
-// ============================================================================
-
 /// Verifies build fails with clear error for non-existent path.
 #[test]
 fn build_fails_for_nonexistent_path() {
@@ -459,10 +431,6 @@ fn error_message_is_informative() {
         }
     }
 }
-
-// ============================================================================
-// Option Chaining Tests
-// ============================================================================
 
 /// Verifies all options can be chained fluently.
 #[test]
@@ -498,10 +466,6 @@ fn builder_methods_return_self() {
     let _walker = builder.build();
 }
 
-// ============================================================================
-// Default Builder Behavior Tests
-// ============================================================================
-
 /// Verifies default builder has sensible defaults.
 #[test]
 fn default_builder_behavior() {
@@ -525,10 +489,6 @@ fn default_builder_behavior() {
         .collect();
     assert_eq!(paths, vec![PathBuf::from("file.txt")]);
 }
-
-// ============================================================================
-// Walker Iteration Behavior Tests
-// ============================================================================
 
 /// Verifies walker can be partially consumed.
 #[test]

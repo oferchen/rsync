@@ -42,10 +42,6 @@ impl ProtocolVersionAdvertisement for TestVersion {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 27 Handshake Rejection Tests
-// ============================================================================
-
 mod handshake_rejection {
     use super::*;
 
@@ -117,10 +113,6 @@ mod handshake_rejection {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 27 Compatibility Flags Behavior
-// ============================================================================
-
 mod compatibility_flags {
     use super::*;
 
@@ -153,10 +145,6 @@ mod compatibility_flags {
         // Protocol 27 would be before varint encoding (27 < 30)
     }
 }
-
-// ============================================================================
-// Module: Wire Format Expectations for Protocol Version 27
-// ============================================================================
 
 mod wire_format {
     use super::*;
@@ -242,10 +230,6 @@ mod wire_format {
     }
 }
 
-// ============================================================================
-// Module: Fallback Behavior Tests
-// ============================================================================
-
 mod fallback_behavior {
     use super::*;
 
@@ -319,10 +303,6 @@ mod fallback_behavior {
     }
 }
 
-// ============================================================================
-// Module: Error Messages and Diagnostics
-// ============================================================================
-
 mod error_diagnostics {
     use super::*;
 
@@ -368,10 +348,6 @@ mod error_diagnostics {
         }
     }
 }
-
-// ============================================================================
-// Module: Boundary Condition Tests
-// ============================================================================
 
 mod boundary_conditions {
     use super::*;
@@ -448,10 +424,6 @@ mod boundary_conditions {
     }
 }
 
-// ============================================================================
-// Module: Codec Behavior Tests
-// ============================================================================
-
 mod codec_behavior {
     use super::*;
 
@@ -492,10 +464,6 @@ mod codec_behavior {
         assert!(!buf.is_empty());
     }
 }
-
-// ============================================================================
-// Module: Feature Set Theoretical Tests
-// ============================================================================
 
 mod theoretical_features {
     use super::*;
@@ -551,10 +519,6 @@ mod theoretical_features {
         // So v27 would not have them (27 < 29)
     }
 }
-
-// ============================================================================
-// Module: Integration Tests
-// ============================================================================
 
 mod integration {
     use super::*;
@@ -635,10 +599,6 @@ mod integration {
     }
 }
 
-// ============================================================================
-// Module: Compatibility Matrix Tests
-// ============================================================================
-
 mod compatibility_matrix {
     use super::*;
 
@@ -681,10 +641,6 @@ mod compatibility_matrix {
         assert_eq!(result.unwrap().as_u8(), 32);
     }
 }
-
-// ============================================================================
-// Module: Legacy Greeting Parsing Tests for v27
-// ============================================================================
 
 mod legacy_greeting_parsing {
     use protocol::{parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_details};
@@ -760,10 +716,6 @@ mod legacy_greeting_parsing {
         }
     }
 }
-
-// ============================================================================
-// Module: Protocol Version Helper Methods Tests
-// ============================================================================
 
 mod version_helper_methods {
     use protocol::ProtocolVersion;
@@ -866,10 +818,6 @@ mod version_helper_methods {
     }
 }
 
-// ============================================================================
-// Module: Wire Format Encoding Boundary Tests
-// ============================================================================
-
 mod wire_format_encoding_boundary {
     use super::*;
     use std::io::Cursor;
@@ -945,10 +893,6 @@ mod wire_format_encoding_boundary {
         assert_eq!(buf.len(), 1, "v30 uses delta NDX (1 byte for first index)");
     }
 }
-
-// ============================================================================
-// Module: Feature Detection Tests
-// ============================================================================
 
 mod feature_detection {
     use protocol::ProtocolVersion;
@@ -1040,10 +984,6 @@ mod feature_detection {
     }
 }
 
-// ============================================================================
-// Module: Error Edge Cases Tests
-// ============================================================================
-
 mod error_edge_cases {
     use super::*;
 
@@ -1109,10 +1049,6 @@ mod error_edge_cases {
         assert_eq!(result.unwrap().as_u8(), 28);
     }
 }
-
-// ============================================================================
-// Module: Handshake Simulation Tests
-// ============================================================================
 
 mod handshake_simulation {
     use super::*;
@@ -1202,10 +1138,6 @@ mod handshake_simulation {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version Constants Tests
-// ============================================================================
-
 mod version_constants {
     use protocol::{
         ProtocolVersion, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_BOUNDS,
@@ -1270,10 +1202,6 @@ mod version_constants {
     }
 }
 
-// ============================================================================
-// Module: Upstream Compatibility Tests
-// ============================================================================
-
 mod upstream_compatibility {
     use super::*;
 
@@ -1320,10 +1248,6 @@ mod upstream_compatibility {
         assert_eq!(greeting, "@RSYNCD: 28.0\n");
     }
 }
-
-// ============================================================================
-// Module: Codec Roundtrip Tests for Boundary Versions
-// ============================================================================
 
 mod codec_roundtrip_boundary {
     use super::*;
@@ -1399,10 +1323,6 @@ mod codec_roundtrip_boundary {
         }
     }
 }
-
-// ============================================================================
-// Module: Stress Tests
-// ============================================================================
 
 mod stress_tests {
     use super::*;

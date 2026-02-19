@@ -30,10 +30,6 @@ use protocol::wire::file_entry::{
 };
 use protocol::wire::file_entry_decode::decode_rdev;
 
-// ============================================================================
-// Test Helpers
-// ============================================================================
-
 /// Roundtrip a single device entry through FileListWriter/FileListReader.
 fn roundtrip_device(entry: &FileEntry, protocol: ProtocolVersion) -> FileEntry {
     let mut buf = Vec::new();
@@ -94,10 +90,6 @@ fn make_socket(name: &str) -> FileEntry {
     entry.set_mtime(1700000000, 0);
     entry
 }
-
-// ============================================================================
-// 1. Low-Level Wire Format Tests (encode_rdev / decode_rdev)
-// ============================================================================
 
 /// Tests basic roundtrip of rdev encoding at the wire level for protocol 30+.
 /// Protocol 30+ uses varint30(major) + varint(minor).
@@ -287,10 +279,6 @@ fn wire_level_consecutive_rdev_entries() {
     }
 }
 
-// ============================================================================
-// 2. Device Flag Calculation Tests
-// ============================================================================
-
 /// Tests that calculate_device_flags correctly identifies same major.
 #[test]
 fn device_flags_same_major() {
@@ -364,10 +352,6 @@ fn device_flags_minor_boundary_256() {
     }
 }
 
-// ============================================================================
-// 3. High-Level Block Device Roundtrip Tests
-// ============================================================================
-
 /// Tests high-level roundtrip of a block device (e.g., /dev/sda).
 #[test]
 fn flist_roundtrip_block_device() {
@@ -417,10 +401,6 @@ fn flist_block_device_size_is_zero() {
     let decoded = roundtrip_device(&entry, ProtocolVersion::NEWEST);
     assert_eq!(decoded.size(), 0, "block device file size should be 0");
 }
-
-// ============================================================================
-// 4. High-Level Character Device Roundtrip Tests
-// ============================================================================
 
 /// Tests high-level roundtrip of a character device (e.g., /dev/null).
 #[test]
@@ -474,10 +454,6 @@ fn flist_char_device_mode_preserved() {
     assert_eq!(decoded.mode() & 0o170000, 0o020000, "S_IFCHR must be set");
     assert_eq!(decoded.mode() & 0o7777, 0o666, "permissions must be 0o666");
 }
-
-// ============================================================================
-// 5. Various Major/Minor Number Combinations
-// ============================================================================
 
 /// Tests device encoding with major=0, minor=0.
 #[test]
@@ -558,10 +534,6 @@ fn flist_roundtrip_device_minor_boundary() {
     }
 }
 
-// ============================================================================
-// 6. Multiple Devices with Major Compression
-// ============================================================================
-
 /// Tests that consecutive devices with the same major benefit from compression.
 #[test]
 fn flist_roundtrip_same_major_compression() {
@@ -634,10 +606,6 @@ fn flist_same_major_compression_produces_smaller_encoding() {
     );
 }
 
-// ============================================================================
-// 7. Block vs Character Device Distinction
-// ============================================================================
-
 /// Tests that block and character devices are correctly distinguished after roundtrip.
 #[test]
 fn flist_block_vs_char_device_distinction() {
@@ -693,10 +661,6 @@ fn flist_same_rdev_different_type() {
     assert_ne!(decoded[0].mode() & 0o170000, decoded[1].mode() & 0o170000);
 }
 
-// ============================================================================
-// 8. Special Files (FIFOs and Sockets)
-// ============================================================================
-
 /// Tests that FIFO entries have dummy rdev consumed but not stored in protocol < 31.
 /// Upstream writes dummy rdev (0, 0) for special files in proto < 31, but the reader
 /// consumes the bytes without storing them in the FileEntry (they are meaningless).
@@ -751,10 +715,6 @@ fn flist_socket_no_rdev_proto31() {
     assert_eq!(decoded.rdev_minor(), None);
 }
 
-// ============================================================================
-// 9. preserve_devices=false Behavior
-// ============================================================================
-
 /// Tests that rdev is NOT encoded when preserve_devices is false.
 #[test]
 fn flist_no_rdev_when_preserve_devices_disabled() {
@@ -798,10 +758,6 @@ fn flist_no_rdev_char_device_when_preserve_devices_disabled() {
     assert_eq!(decoded.rdev_major(), None);
     assert_eq!(decoded.rdev_minor(), None);
 }
-
-// ============================================================================
-// 10. Protocol Version Differences
-// ============================================================================
 
 /// Tests device encoding across all supported protocol versions.
 #[test]
@@ -861,10 +817,6 @@ fn flist_roundtrip_device_large_minor_proto29() {
     assert_eq!(decoded.rdev_major(), Some(8));
     assert_eq!(decoded.rdev_minor(), Some(300));
 }
-
-// ============================================================================
-// 11. Mixed Device Types in Sequence
-// ============================================================================
 
 /// Tests a file list containing various device types interleaved with regular files.
 #[test]
@@ -935,10 +887,6 @@ fn flist_roundtrip_devices_with_specials_proto30() {
     assert_eq!(decoded[3].rdev_minor(), None);
 }
 
-// ============================================================================
-// 12. Common Linux Device Number Encoding
-// ============================================================================
-
 /// Tests encoding of well-known Linux device numbers.
 #[test]
 fn flist_roundtrip_linux_common_devices() {
@@ -985,10 +933,6 @@ fn flist_roundtrip_linux_common_devices() {
         );
     }
 }
-
-// ============================================================================
-// 13. Edge Cases
-// ============================================================================
 
 /// Tests device name prefix compression works correctly.
 #[test]

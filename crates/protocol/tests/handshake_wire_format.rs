@@ -30,10 +30,6 @@
 
 use protocol::{LEGACY_DAEMON_PREFIX, ProtocolVersion, format_legacy_daemon_greeting};
 
-// ============================================================================
-// Binary Negotiation Format Tests (Protocols 30-32)
-// ============================================================================
-
 #[test]
 fn protocol_32_advertisement_format() {
     // Protocol 32 should be advertised as 4-byte big-endian u32
@@ -129,10 +125,6 @@ fn binary_advertisement_deterministic() {
         "Advertisement generation must be deterministic"
     );
 }
-
-// ============================================================================
-// Legacy ASCII Negotiation Format Tests (Protocols 28-29)
-// ============================================================================
 
 #[test]
 fn protocol_28_greeting_format() {
@@ -261,10 +253,6 @@ fn legacy_greeting_length() {
     );
 }
 
-// ============================================================================
-// Cross-Protocol Validation Tests
-// ============================================================================
-
 #[test]
 fn all_supported_protocols_have_valid_advertisements() {
     // Validate that all supported protocol versions can generate valid advertisements
@@ -366,10 +354,6 @@ fn handshake_format_matches_protocol_version() {
     }
 }
 
-// ============================================================================
-// Compatibility Flags Tests (Protocol 30+)
-// ============================================================================
-
 #[test]
 fn compatibility_flags_only_for_binary_protocols() {
     // Compatibility flags are only exchanged for protocol 30+
@@ -386,10 +370,6 @@ fn compatibility_flags_only_for_binary_protocols() {
     assert!(ProtocolVersion::V28.uses_legacy_ascii_negotiation());
     assert!(ProtocolVersion::V29.uses_legacy_ascii_negotiation());
 }
-
-// ============================================================================
-// Wire Format Diagnostic Tests
-// ============================================================================
 
 #[test]
 fn binary_protocol_wire_format_diagnostic() {

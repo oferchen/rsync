@@ -90,10 +90,6 @@ use crate::zstd::{self, CountingZstdEncoder};
 #[cfg(feature = "lz4")]
 use crate::lz4::{CountingLz4Encoder, frame};
 
-// ============================================================================
-// CompressionAlgorithmKind - Algorithm enumeration
-// ============================================================================
-
 /// Enumeration of supported compression algorithms.
 ///
 /// This enum identifies the compression algorithm without carrying level/config
@@ -210,10 +206,6 @@ impl From<CompressionAlgorithm> for CompressionAlgorithmKind {
     }
 }
 
-// ============================================================================
-// CompressionStrategy - Core trait
-// ============================================================================
-
 /// Strategy trait for compression operations.
 ///
 /// Implementations provide algorithm-specific compression and decompression
@@ -253,10 +245,6 @@ pub trait CompressionStrategy: Send + Sync {
         self.algorithm_kind().name()
     }
 }
-
-// ============================================================================
-// Concrete Strategy Implementations
-// ============================================================================
 
 /// No compression strategy - passes data through unchanged.
 ///
@@ -446,10 +434,6 @@ impl CompressionStrategy for Lz4Strategy {
     }
 }
 
-// ============================================================================
-// CompressionStrategySelector - Factory for strategy selection
-// ============================================================================
-
 /// Factory for creating compression strategies based on algorithm selection.
 ///
 /// This selector provides the Strategy pattern's context, allowing runtime
@@ -630,10 +614,6 @@ impl CompressionStrategySelector {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -644,10 +624,6 @@ mod tests {
     const COMPRESSIBLE_DATA: &[u8] = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
                                         bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\
                                         cccccccccccccccccccccccccccccccccccccc";
-
-    // ------------------------------------------------------------------------
-    // CompressionAlgorithmKind tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn algorithm_kind_name() {
@@ -724,10 +700,6 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // NoCompressionStrategy tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn no_compression_strategy_roundtrip() {
         let strategy = NoCompressionStrategy::new();
@@ -749,10 +721,6 @@ mod tests {
         assert_eq!(strategy.algorithm_name(), "none");
         assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::None);
     }
-
-    // ------------------------------------------------------------------------
-    // ZlibStrategy tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn zlib_strategy_compress_decompress() {
@@ -800,10 +768,6 @@ mod tests {
         assert_eq!(&best_decompressed, COMPRESSIBLE_DATA);
     }
 
-    // ------------------------------------------------------------------------
-    // ZstdStrategy tests
-    // ------------------------------------------------------------------------
-
     #[cfg(feature = "zstd")]
     #[test]
     fn zstd_strategy_compress_decompress() {
@@ -827,10 +791,6 @@ mod tests {
         assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Zstd);
     }
 
-    // ------------------------------------------------------------------------
-    // Lz4Strategy tests
-    // ------------------------------------------------------------------------
-
     #[cfg(feature = "lz4")]
     #[test]
     fn lz4_strategy_compress_decompress() {
@@ -853,10 +813,6 @@ mod tests {
         assert_eq!(strategy.algorithm_name(), "lz4");
         assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Lz4);
     }
-
-    // ------------------------------------------------------------------------
-    // CompressionStrategySelector tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn selector_for_protocol_version_35() {
@@ -941,10 +897,6 @@ mod tests {
             assert_eq!(lz4.algorithm_name(), "lz4");
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Strategy trait object tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn strategies_are_send_sync() {

@@ -36,10 +36,6 @@ use protocol::codec::{
 };
 use std::io::{self, Cursor, ErrorKind, Write};
 
-// ============================================================================
-// Module: NDX Constants Verification
-// ============================================================================
-
 mod ndx_constants {
     use super::*;
 
@@ -94,10 +90,6 @@ mod ndx_constants {
         }
     }
 }
-
-// ============================================================================
-// Module: Legacy Protocol NDX Codec (Protocol < 30)
-// ============================================================================
 
 mod legacy_codec {
     use super::*;
@@ -259,10 +251,6 @@ mod legacy_codec {
         }
     }
 }
-
-// ============================================================================
-// Module: Modern Protocol NDX Codec (Protocol >= 30)
-// ============================================================================
 
 mod modern_codec {
     use super::*;
@@ -452,10 +440,6 @@ mod modern_codec {
     }
 }
 
-// ============================================================================
-// Module: NdxCodecEnum Factory Tests
-// ============================================================================
-
 mod codec_enum {
     use super::*;
 
@@ -529,10 +513,6 @@ mod codec_enum {
     }
 }
 
-// ============================================================================
-// Module: NdxState Legacy API Tests
-// ============================================================================
-
 mod ndx_state {
     use super::*;
 
@@ -592,10 +572,6 @@ mod ndx_state {
     }
 }
 
-// ============================================================================
-// Module: ProtocolCodecs Container Tests
-// ============================================================================
-
 mod protocol_codecs_container {
     use super::*;
 
@@ -637,10 +613,6 @@ mod protocol_codecs_container {
         assert_eq!(read_codecs.ndx.read_ndx(&mut cursor).unwrap(), NDX_DONE);
     }
 }
-
-// ============================================================================
-// Module: Delta Encoding Boundary Tests
-// ============================================================================
 
 mod delta_encoding_boundaries {
     use super::*;
@@ -730,10 +702,6 @@ mod delta_encoding_boundaries {
         assert_eq!(buf[0], 0xFE, "negative diff should use 0xFE prefix");
     }
 }
-
-// ============================================================================
-// Module: State Tracking Tests
-// ============================================================================
 
 mod state_tracking {
     use super::*;
@@ -838,10 +806,6 @@ mod state_tracking {
     }
 }
 
-// ============================================================================
-// Module: Wire Format Verification Tests
-// ============================================================================
-
 mod wire_format {
     use super::*;
 
@@ -909,10 +873,6 @@ mod wire_format {
     }
 }
 
-// ============================================================================
-// Module: Error Handling Tests
-// ============================================================================
-
 mod error_handling {
     use super::*;
 
@@ -974,10 +934,6 @@ mod error_handling {
         assert_eq!(result.unwrap_err().kind(), ErrorKind::UnexpectedEof);
     }
 }
-
-// ============================================================================
-// Module: Extreme Value Tests
-// ============================================================================
 
 mod extreme_values {
     use super::*;
@@ -1067,10 +1023,6 @@ mod extreme_values {
         }
     }
 }
-
-// ============================================================================
-// Module: Real-World Usage Pattern Tests
-// ============================================================================
 
 mod usage_patterns {
     use super::*;
@@ -1168,10 +1120,6 @@ mod usage_patterns {
     }
 }
 
-// ============================================================================
-// Module: Property-Based Tests
-// ============================================================================
-
 mod property_tests {
     use super::*;
     use std::collections::hash_map::DefaultHasher;
@@ -1257,10 +1205,6 @@ mod property_tests {
         }
     }
 }
-
-// ============================================================================
-// Module: Cross-Version Compatibility Tests
-// ============================================================================
 
 mod cross_version {
     use super::*;

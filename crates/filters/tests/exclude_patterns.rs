@@ -17,10 +17,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// 1. Simple Filename Patterns (*.txt)
-// ============================================================================
-
 mod simple_filename_patterns {
     use super::*;
 
@@ -160,10 +156,6 @@ mod simple_filename_patterns {
     }
 }
 
-// ============================================================================
-// 2. Directory Patterns (dir/)
-// ============================================================================
-
 mod directory_patterns {
     use super::*;
 
@@ -276,10 +268,6 @@ mod directory_patterns {
     }
 }
 
-// ============================================================================
-// 3. Anchored Patterns (/root/file)
-// ============================================================================
-
 mod anchored_patterns {
     use super::*;
 
@@ -378,10 +366,6 @@ mod anchored_patterns {
         assert!(set.allows(Path::new("deps/vendor/pkg"), false));
     }
 }
-
-// ============================================================================
-// 4. Double-Star Patterns (**/deep/file)
-// ============================================================================
 
 mod double_star_patterns {
     use super::*;
@@ -494,10 +478,6 @@ mod double_star_patterns {
         assert!(set.allows(Path::new("packages/scope/app/node_modules"), false));
     }
 }
-
-// ============================================================================
-// 5. Character Classes ([abc])
-// ============================================================================
 
 mod character_classes {
     use super::*;
@@ -667,10 +647,6 @@ mod character_classes {
     }
 }
 
-// ============================================================================
-// 6. Negation Patterns (! modifier)
-// ============================================================================
-
 mod negation_patterns {
     use super::*;
 
@@ -775,10 +751,6 @@ mod negation_patterns {
         assert!(!rule.applies_to_receiver());
     }
 }
-
-// ============================================================================
-// 7. Multiple --exclude Flags
-// ============================================================================
 
 mod multiple_exclude_flags {
     use super::*;
@@ -962,10 +934,6 @@ mod multiple_exclude_flags {
     }
 }
 
-// ============================================================================
-// 8. Case Sensitivity
-// ============================================================================
-
 mod case_sensitivity {
     use super::*;
 
@@ -1083,10 +1051,6 @@ mod case_sensitivity {
         assert!(set.allows(Path::new("CONFIG.INI"), false));
     }
 }
-
-// ============================================================================
-// Additional Edge Cases
-// ============================================================================
 
 mod edge_cases {
     use super::*;

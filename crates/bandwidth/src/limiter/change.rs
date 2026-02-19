@@ -324,10 +324,6 @@ mod tests {
         assert!(debug.contains("Enabled"));
     }
 
-    // ========================================================================
-    // Tests for apply_effective_limit function
-    // ========================================================================
-
     fn nz(value: u64) -> NonZeroU64 {
         NonZeroU64::new(value).expect("non-zero value required")
     }
@@ -526,10 +522,6 @@ mod tests {
         assert_eq!(result, LimiterChange::Unchanged);
         assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
     }
-
-    // ========================================================================
-    // Edge cases for apply_effective_limit
-    // ========================================================================
 
     #[test]
     fn apply_effective_limit_very_small_limit() {

@@ -14,10 +14,6 @@
 // 9. Min/max size filters: Skip files outside the allowed size range.
 // 10. Combined flag interactions and precedence.
 
-// ============================================================================
-// Timestamp Skip Tests (default mtime+size comparison)
-// ============================================================================
-
 #[test]
 fn execute_skips_rewriting_identical_destination() {
     let temp = tempdir().expect("tempdir");
@@ -257,10 +253,6 @@ fn execute_skip_timestamp_directory_mixed_match_and_transfer() {
         b"new file"
     );
 }
-
-// ============================================================================
-// Checksum Skip Tests (--checksum / -c)
-// ============================================================================
 
 #[test]
 fn execute_without_times_skips_with_checksum() {
@@ -593,10 +585,6 @@ fn execute_skip_checksum_dry_run_reports_correctly() {
     assert_eq!(fs::read(dest_root.join("same.txt")).expect("read"), b"identical");
     assert_eq!(fs::read(dest_root.join("diff.txt")).expect("read"), b"dest_vvv");
 }
-
-// ============================================================================
-// Size-Only Skip Tests (--size-only)
-// ============================================================================
 
 #[test]
 fn execute_with_size_only_skips_same_size_different_content() {
@@ -1061,10 +1049,6 @@ fn execute_skip_size_only_new_file_transferred() {
     assert_eq!(fs::read(&destination).expect("read"), b"new content");
 }
 
-// ============================================================================
-// Ignore Times Skip Tests (--ignore-times / -I)
-// ============================================================================
-
 #[test]
 fn execute_with_ignore_times_rewrites_matching_timestamps() {
     let temp = tempdir().expect("tempdir");
@@ -1129,10 +1113,6 @@ fn execute_skip_ignore_times_forces_rewrite_of_identical_file() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
 }
-
-// ============================================================================
-// Update Skip Tests (--update / -u)
-// ============================================================================
 
 #[test]
 fn execute_with_update_skips_newer_destination() {
@@ -1317,10 +1297,6 @@ fn execute_skip_update_directory_mixed_timestamps() {
     );
 }
 
-// ============================================================================
-// Existing-Only Skip Tests (--existing)
-// ============================================================================
-
 #[test]
 fn execute_with_existing_only_skips_missing_entries() {
     let temp = tempdir().expect("tempdir");
@@ -1458,10 +1434,6 @@ fn execute_skip_existing_only_with_update() {
     );
     assert!(!dest_root.join("absent.txt").exists());
 }
-
-// ============================================================================
-// Ignore Existing Skip Tests (--ignore-existing)
-// ============================================================================
 
 #[test]
 fn execute_with_ignore_existing_skips_existing_destination() {
@@ -1640,10 +1612,6 @@ fn execute_skip_ignore_existing_with_records() {
     );
 }
 
-// ============================================================================
-// Combined Existing-Only + Ignore-Existing Tests
-// ============================================================================
-
 /// When both --existing and --ignore-existing are set, no files are transferred.
 #[test]
 fn execute_skip_existing_and_ignore_existing_skips_everything() {
@@ -1683,10 +1651,6 @@ fn execute_skip_existing_and_ignore_existing_skips_everything() {
     );
     assert!(!dest_root.join("absent.txt").exists());
 }
-
-// ============================================================================
-// Min/Max Size Skip Tests
-// ============================================================================
 
 #[test]
 fn execute_skips_files_smaller_than_min_size_limit() {
@@ -1805,10 +1769,6 @@ fn execute_with_min_max_size_filters_correctly() {
     assert!(!dest_root.join("large.txt").exists());
 }
 
-// ============================================================================
-// Modify Window Skip Tests
-// ============================================================================
-
 #[test]
 fn execute_skips_within_modify_window() {
     let temp = tempdir().expect("tempdir");
@@ -1879,10 +1839,6 @@ fn execute_skip_transfers_outside_modify_window() {
     assert_eq!(summary.regular_files_matched(), 0);
 }
 
-// ============================================================================
-// Filter/Exclude Skip Tests
-// ============================================================================
-
 #[test]
 fn execute_with_filter_excludes_matching_files() {
     let temp = tempdir().expect("tempdir");
@@ -1914,10 +1870,6 @@ fn execute_with_filter_excludes_matching_files() {
     assert!(dest_root.join("also_keep.txt").exists());
     assert!(!dest_root.join("skip.bak").exists());
 }
-
-// ============================================================================
-// Missing Args Skip Tests
-// ============================================================================
 
 #[test]
 fn execute_with_ignore_missing_args_skips_absent_sources() {
@@ -1976,10 +1928,6 @@ fn execute_with_delete_missing_args_removes_destination_entries() {
     assert_eq!(summary.items_deleted(), 1);
     assert!(!destination.exists());
 }
-
-// ============================================================================
-// Dry Run Skip Tests
-// ============================================================================
 
 #[test]
 fn execute_dry_run_reports_skipped_files_as_matched() {
@@ -2103,10 +2051,6 @@ fn execute_skip_dry_run_ignore_existing_reports_skipped() {
     // File unchanged
     assert_eq!(fs::read(&destination).expect("read"), b"original");
 }
-
-// ============================================================================
-// Complex Combined Flag Interaction Tests
-// ============================================================================
 
 /// Size-only + checksum: checksum takes priority and detects content difference.
 #[test]
@@ -2287,10 +2231,6 @@ fn execute_skip_update_respects_modify_window() {
     assert_eq!(summary.regular_files_skipped_newer(), 0);
 }
 
-// ============================================================================
-// Bytes Copied Tracking in Skip Scenarios
-// ============================================================================
-
 /// When all files are skipped, bytes_copied should be zero.
 #[test]
 fn execute_skip_all_files_zero_bytes_copied() {
@@ -2361,10 +2301,6 @@ fn execute_skip_partial_skip_correct_bytes_copied() {
     assert_eq!(summary.regular_files_matched(), 1);
     assert_eq!(summary.bytes_copied(), 15); // 10 + 5
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Skip logic with a single byte file.
 #[test]

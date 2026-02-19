@@ -8,10 +8,6 @@
 use protocol::{MessageCode, MessageFrame, recv_msg, recv_msg_into, send_frame, send_msg};
 use std::io::Cursor;
 
-// ============================================================================
-// Message Frame Encoding Tests
-// ============================================================================
-
 #[test]
 fn test_data_message_encoding() {
     let payload = b"file contents";
@@ -121,10 +117,6 @@ fn test_all_message_codes_encoding() {
     }
 }
 
-// ============================================================================
-// Multiplexed Stream Reading Tests
-// ============================================================================
-
 #[test]
 fn test_receive_single_message() {
     let mut buf = Vec::new();
@@ -226,10 +218,6 @@ fn test_demultiplex_mixed_message_types() {
     assert_eq!(log_messages.len(), 3, "must receive 3 log messages");
 }
 
-// ============================================================================
-// Vectored Write Tests
-// ============================================================================
-
 #[test]
 fn test_send_frame_uses_vectored_io() {
     // This test verifies that send_frame works correctly
@@ -291,10 +279,6 @@ fn test_vectored_write_single_syscall_simulation() {
     assert_eq!(writer.write_count, 1, "should use single vectored write");
     assert_eq!(writer.buf.len(), 8, "4-byte header + 4-byte payload");
 }
-
-// ============================================================================
-// All Message Tags Validation
-// ============================================================================
 
 #[test]
 fn test_all_18_message_codes_round_trip() {
@@ -394,10 +378,6 @@ fn test_flush_alias() {
     assert_eq!(MessageCode::FLUSH, MessageCode::Info);
     assert_eq!(MessageCode::FLUSH.as_u8(), 2);
 }
-
-// ============================================================================
-// Edge Cases and Error Handling
-// ============================================================================
 
 #[test]
 fn test_truncated_header_detection() {

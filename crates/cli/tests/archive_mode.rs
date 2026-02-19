@@ -6,10 +6,6 @@
 
 use cli::test_utils::parse_args;
 
-// ============================================================================
-// Archive Mode Flag
-// ============================================================================
-
 #[test]
 fn test_archive_flag_sets_archive_mode() {
     let args = parse_args(["oc-rsync", "-a", "src", "dest"]).unwrap();
@@ -27,10 +23,6 @@ fn test_no_archive_by_default() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     assert!(!args.archive, "Archive should be disabled by default");
 }
-
-// ============================================================================
-// Archive Mode Does NOT Enable Extra Flags at Parse Time
-// ============================================================================
 
 #[test]
 fn test_archive_does_not_enable_acls() {
@@ -57,10 +49,6 @@ fn test_archive_does_not_enable_hard_links() {
         "-a should NOT imply -H (preserve hard links)"
     );
 }
-
-// ============================================================================
-// Override Behavior: Explicit Flags After Archive Override Defaults
-// ============================================================================
 
 #[test]
 fn test_no_perms_overrides_archive() {
@@ -117,10 +105,6 @@ fn test_no_recursive_overrides_archive() {
     assert!(args.archive);
 }
 
-// ============================================================================
-// Explicit Flags Before Archive: Archive Doesn't Override
-// ============================================================================
-
 #[test]
 fn test_no_perms_before_archive_stays_disabled() {
     let args = parse_args(["oc-rsync", "--no-perms", "-a", "src", "dest"]).unwrap();
@@ -155,10 +139,6 @@ fn test_no_group_before_archive_stays_disabled() {
         "--no-group should remain disabled even with -a"
     );
 }
-
-// ============================================================================
-// Archive with Additional Flags
-// ============================================================================
 
 #[test]
 fn test_archive_with_acls() {
@@ -196,10 +176,6 @@ fn test_archive_with_verbose() {
     assert!(args.verbosity > 0, "-v should increase verbosity");
 }
 
-// ============================================================================
-// Archive with Multiple Overrides
-// ============================================================================
-
 #[test]
 fn test_archive_with_multiple_overrides() {
     let args = parse_args(["oc-rsync", "-a", "--no-perms", "--no-owner", "src", "dest"]).unwrap();
@@ -220,10 +196,6 @@ fn test_archive_with_mixed_overrides() {
     );
     assert_eq!(args.acls, Some(true), "-A should enable ACLs");
 }
-
-// ============================================================================
-// Archive Combined with Short Options
-// ============================================================================
 
 #[test]
 fn test_archive_combined_with_v() {

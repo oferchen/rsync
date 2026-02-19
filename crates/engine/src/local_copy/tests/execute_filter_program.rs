@@ -20,10 +20,6 @@
 // - Programs with multiple segments compose correctly.
 // ============================================================================
 
-// ---------------------------------------------------------------------------
-// FilterOutcome unit tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_outcome_default_allows_transfer_and_deletion() {
     let outcome = FilterOutcome::default();
@@ -86,10 +82,6 @@ fn filter_outcome_exclude_does_not_affect_unmatched_paths() {
         "non-matching path must remain allowed"
     );
 }
-
-// ---------------------------------------------------------------------------
-// FilterSegment include pattern tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_segment_include_glob_pattern() {
@@ -160,10 +152,6 @@ fn filter_segment_include_restores_after_exclude() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// FilterSegment exclude pattern tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_segment_exclude_glob_patterns() {
     let mut segment = FilterSegment::default();
@@ -214,10 +202,6 @@ fn filter_segment_exclude_with_subdirectory_path() {
         "unanchored *.bak must match in subdirectories"
     );
 }
-
-// ---------------------------------------------------------------------------
-// First-match-wins semantics
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_segment_first_match_wins_exclude_then_include() {
@@ -270,10 +254,6 @@ fn filter_segment_first_match_wins_include_then_exclude() {
         "important.txt must be allowed because the first matching include rule wins"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Include specific then exclude-all (first-match-wins, issue #88)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_segment_include_specific_then_exclude_all() {
@@ -345,10 +325,6 @@ fn filter_segment_include_glob_then_exclude_all() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// FilterProgram with multiple segments
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_program_multiple_segments_compose() {
@@ -453,10 +429,6 @@ fn filter_program_with_dir_merge_segments_and_rules() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Filter with directory paths and directory-only patterns
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_segment_directory_only_pattern_matches_dirs() {
     let mut segment = FilterSegment::default();
@@ -550,10 +522,6 @@ fn filter_segment_non_directory_pattern_matches_both() {
         "non-directory-only exclude must match a regular file"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Glob pattern tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_segment_glob_star_matches_extension() {
@@ -682,10 +650,6 @@ fn filter_segment_unanchored_pattern_matches_anywhere() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Empty filter program
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_program_empty_allows_everything() {
     let program = FilterProgram::new(std::iter::empty()).expect("empty program");
@@ -714,10 +678,6 @@ fn filter_program_empty_allows_everything() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Protected paths
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_segment_protect_blocks_deletion_but_allows_transfer() {
@@ -816,10 +776,6 @@ fn filter_segment_protect_unmatched_path_still_deletable() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// delete_excluded semantics
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_segment_delete_excluded_flag_set_on_exclude() {
     let mut segment = FilterSegment::default();
@@ -890,10 +846,6 @@ fn filter_segment_delete_excluded_protected_path() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Perishable rules in deletion context
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_segment_perishable_exclude_ignored_in_deletion() {
     let mut segment = FilterSegment::default();
@@ -949,10 +901,6 @@ fn filter_segment_perishable_protect_ignored_in_deletion() {
         "perishable protect must be skipped in deletion context"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Sender-only and receiver-only rules
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_segment_sender_only_rule_does_not_affect_deletion() {
@@ -1010,10 +958,6 @@ fn filter_segment_receiver_only_rule_does_not_affect_transfer() {
         "receiver-only protect must not block transfer"
     );
 }
-
-// ---------------------------------------------------------------------------
-// FilterProgram evaluate with dir-merge layers
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_program_evaluate_with_empty_dir_merge_layers() {
@@ -1088,10 +1032,6 @@ fn filter_program_evaluate_dir_merge_adds_exclusion() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// FilterProgram clear resets accumulated rules
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_program_clear_entry_resets_all_rules() {
     let program = FilterProgram::new([
@@ -1127,10 +1067,6 @@ fn filter_program_clear_entry_resets_all_rules() {
         "*.log rule added after clear must be active"
     );
 }
-
-// ---------------------------------------------------------------------------
-// FilterProgram with ExcludeIfPresent
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_program_exclude_if_present_with_marker() {
@@ -1169,10 +1105,6 @@ fn filter_program_exclude_if_present_without_marker() {
         "directory without marker must not be excluded"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Complex multi-rule scenarios matching upstream rsync patterns
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_program_upstream_typical_pattern() {
@@ -1261,10 +1193,6 @@ fn filter_program_include_only_specific_extensions() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// FilterProgramError handling
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_program_invalid_pattern_returns_error() {
     let result = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude(
@@ -1277,10 +1205,6 @@ fn filter_program_invalid_pattern_returns_error() {
     let err = result.unwrap_err();
     assert_eq!(err.pattern(), "bad[pattern");
 }
-
-// ---------------------------------------------------------------------------
-// FilterSegment is_empty after push_rule
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_segment_empty_after_default() {
@@ -1309,10 +1233,6 @@ fn filter_segment_not_empty_after_protect() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// FilterContext equality
-// ---------------------------------------------------------------------------
-
 #[test]
 fn filter_context_transfer_ne_deletion() {
     assert_ne!(FilterContext::Transfer, FilterContext::Deletion);
@@ -1327,10 +1247,6 @@ fn filter_context_transfer_eq_transfer() {
 fn filter_context_deletion_eq_deletion() {
     assert_eq!(FilterContext::Deletion, FilterContext::Deletion);
 }
-
-// ---------------------------------------------------------------------------
-// Integration: FilterProgram.is_empty after various constructions
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_program_is_empty_true_for_empty_iter() {

@@ -5,10 +5,6 @@
 
 use cli::test_utils::parse_args;
 
-// ============================================================================
-// Long-form Deprecated Aliases
-// ============================================================================
-
 #[test]
 fn test_old_dirs_alias_for_no_mkpath() {
     let args = parse_args(["oc-rsync", "--old-dirs", "src", "dest"]).unwrap();
@@ -109,10 +105,6 @@ fn test_no_i_d_alias_for_no_implied_dirs() {
         "--no-i-d should behave like --no-implied-dirs"
     );
 }
-
-// ============================================================================
-// Short-form Negative Aliases
-// ============================================================================
 
 #[test]
 fn test_no_o_alias_for_no_owner() {
@@ -280,10 +272,6 @@ fn test_no_capital_r_alias_for_no_relative() {
         "--no-R should behave like --no-relative"
     );
 }
-
-// ============================================================================
-// Alias Interaction with Standard Options
-// ============================================================================
 
 #[test]
 fn test_old_dirs_works_with_other_options() {

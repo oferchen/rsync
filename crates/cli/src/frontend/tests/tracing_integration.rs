@@ -1,10 +1,6 @@
 use super::common::*;
 use super::*;
 
-// ===========================================================================
-// Tracing integration: verify verbosity flags produce expected output
-// ===========================================================================
-
 #[test]
 fn verbose_transfer_emits_filename_on_stdout() {
     use std::fs;

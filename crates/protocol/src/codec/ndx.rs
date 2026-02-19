@@ -64,10 +64,6 @@ pub const NDX_DEL_STATS: i32 = -3;
 /// Upstream: `rsync.h:288` - `#define NDX_FLIST_OFFSET -101`
 pub const NDX_FLIST_OFFSET: i32 = -101;
 
-// ============================================================================
-// Strategy Pattern: NdxCodec trait and implementations
-// ============================================================================
-
 /// Strategy trait for NDX encoding/decoding.
 ///
 /// Implementations provide protocol-version-specific wire formats for file
@@ -422,10 +418,6 @@ pub fn create_ndx_codec(protocol_version: u8) -> NdxCodecEnum {
     NdxCodecEnum::new(protocol_version)
 }
 
-// ============================================================================
-// Legacy compatibility: NdxState (kept for backward compatibility)
-// ============================================================================
-
 /// State tracker for NDX delta encoding (protocol 30+).
 ///
 /// This is the original implementation, kept for backward compatibility.
@@ -577,10 +569,6 @@ pub fn write_ndx_done<W: Write>(writer: &mut W) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::io::Cursor;
-
-    // ========================================================================
-    // Strategy Pattern Tests
-    // ========================================================================
 
     #[test]
     fn test_legacy_codec_writes_4_byte_le() {
@@ -734,10 +722,6 @@ mod tests {
         let _ = ModernNdxCodec::new(29);
     }
 
-    // ========================================================================
-    // Legacy NdxState Tests (backward compatibility)
-    // ========================================================================
-
     #[test]
     fn test_ndx_done_encoding() {
         let mut buf = Vec::new();
@@ -865,10 +849,6 @@ mod tests {
         assert_eq!(buf.len(), 5);
     }
 
-    // ========================================================================
-    // Sign Transition Edge Cases
-    // ========================================================================
-
     #[test]
     fn test_sign_transition_positive_to_negative_to_positive() {
         // Test: positive sequence, then negative (NDX_DONE), then positive again
@@ -940,10 +920,6 @@ mod tests {
         assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), NDX_FLIST_OFFSET);
     }
 
-    // ========================================================================
-    // State Isolation Tests
-    // ========================================================================
-
     #[test]
     fn test_codec_instances_have_independent_state() {
         // Test: two codec instances should not share state
@@ -976,10 +952,6 @@ mod tests {
         assert_eq!(read_codec2.read_ndx(&mut cursor2).unwrap(), 100);
         assert_eq!(read_codec2.read_ndx(&mut cursor2).unwrap(), 101);
     }
-
-    // ========================================================================
-    // Encoding Boundary Tests
-    // ========================================================================
 
     #[test]
     fn test_delta_boundary_at_253() {
@@ -1048,10 +1020,6 @@ mod tests {
         assert_eq!(buf.len(), 5, "4-byte format: prefix + 4 bytes");
     }
 
-    // ========================================================================
-    // NDX Constants Edge Cases
-    // ========================================================================
-
     #[test]
     fn test_all_negative_constants() {
         let mut buf = Vec::new();
@@ -1090,10 +1058,6 @@ mod tests {
         assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), NDX_FLIST_OFFSET);
     }
 
-    // ========================================================================
-    // Protocol Version Range Tests (v27-v32)
-    // ========================================================================
-
     #[test]
     fn test_all_versions_create_valid_ndx_codecs() {
         for version in 28..=32 {
@@ -1116,10 +1080,6 @@ mod tests {
         modern.write_ndx(&mut modern_buf, 0).unwrap();
         assert_eq!(modern_buf.len(), 1); // Delta encoding is more compact
     }
-
-    // ========================================================================
-    // Interop Tests - Upstream NDX Byte Patterns
-    // ========================================================================
 
     #[test]
     fn test_legacy_ndx_upstream_byte_patterns() {
@@ -1193,10 +1153,6 @@ mod tests {
         assert_eq!(buf[0], 0xFF);
     }
 
-    // ========================================================================
-    // Error Handling Tests
-    // ========================================================================
-
     #[test]
     fn test_legacy_ndx_read_truncated() {
         let mut codec = LegacyNdxCodec::new(29);
@@ -1237,10 +1193,6 @@ mod tests {
         let mut cursor = Cursor::new(&empty[..]);
         assert!(modern.read_ndx(&mut cursor).is_err());
     }
-
-    // ========================================================================
-    // Cross-Version Compatibility Tests
-    // ========================================================================
 
     #[test]
     fn test_all_versions_roundtrip_ndx_constants() {
@@ -1288,10 +1240,6 @@ mod tests {
             }
         }
     }
-
-    // ========================================================================
-    // Extended Encoding Boundary Tests
-    // ========================================================================
 
     #[test]
     fn test_modern_single_byte_max_diff_253() {
@@ -1348,10 +1296,6 @@ mod tests {
         assert_eq!(buf.len(), 5);
     }
 
-    // ========================================================================
-    // NdxCodecEnum Dispatch Tests
-    // ========================================================================
-
     #[test]
     fn test_ndx_codec_enum_dispatches_correctly() {
         // Legacy via enum
@@ -1386,10 +1330,6 @@ mod tests {
         let direct = NdxCodecEnum::Modern(ModernNdxCodec::new(30));
         assert_eq!(factory.protocol_version(), direct.protocol_version());
     }
-
-    // ========================================================================
-    // NdxState Legacy Compatibility Tests
-    // ========================================================================
 
     #[test]
     fn test_ndx_state_default_equals_new() {
@@ -1445,10 +1385,6 @@ mod tests {
         // Both should produce same output since they have same prev state
         assert_eq!(orig_buf, clone_buf);
     }
-
-    // ========================================================================
-    // Extreme Value Tests
-    // ========================================================================
 
     #[test]
     fn test_ndx_extreme_positive_values() {
@@ -1508,10 +1444,6 @@ mod tests {
             }
         }
     }
-
-    // ========================================================================
-    // I/O Error Handling Tests
-    // ========================================================================
 
     #[test]
     fn test_legacy_ndx_write_io_error() {
@@ -1595,10 +1527,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========================================================================
-    // Delta Encoding Edge Cases
-    // ========================================================================
-
     #[test]
     fn test_modern_ndx_zero_diff() {
         // Writing the same value twice should produce a delta of 0
@@ -1653,10 +1581,6 @@ mod tests {
         assert!(buf.len() >= 3);
     }
 
-    // ========================================================================
-    // State Consistency Tests
-    // ========================================================================
-
     #[test]
     fn test_modern_ndx_state_after_ndx_done() {
         // NDX_DONE should not affect prev_positive
@@ -1706,10 +1630,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // NdxCodecEnum Dispatch Tests
-    // ========================================================================
-
     #[test]
     fn test_ndx_codec_enum_write_ndx_done_legacy() {
         let mut codec = NdxCodecEnum::new(29);
@@ -1725,10 +1645,6 @@ mod tests {
         codec.write_ndx_done(&mut buf).unwrap();
         assert_eq!(buf, [0x00]);
     }
-
-    // ========================================================================
-    // Property-Based Tests
-    // ========================================================================
 
     #[test]
     fn test_ndx_roundtrip_random_sequence() {
@@ -1808,10 +1724,6 @@ mod tests {
             }
         }
     }
-
-    // ========================================================================
-    // Wire Format Verification Tests
-    // ========================================================================
 
     #[test]
     fn test_modern_ndx_wire_format_single_byte() {

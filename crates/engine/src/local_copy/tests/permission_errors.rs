@@ -14,10 +14,6 @@
 
 use std::os::unix::fs::PermissionsExt;
 
-// =========================================================================
-// Helper Functions
-// =========================================================================
-
 /// Returns true if running as root (uid 0), in which case permission tests
 /// should be skipped as root can access everything.
 fn is_root() -> bool {
@@ -53,10 +49,6 @@ fn create_untraversable_dir(parent: &Path, name: &str) -> PathBuf {
 fn restore_permissions(path: &Path, mode: u32) {
     let _ = fs::set_permissions(path, PermissionsExt::from_mode(mode));
 }
-
-// =========================================================================
-// Read Permission Denied Tests
-// =========================================================================
 
 #[test]
 fn permission_read_denied_single_file() {
@@ -199,10 +191,6 @@ fn permission_read_denied_on_directory_blocks_contents() {
     // Success case: directory was skipped, which is also valid behavior
 }
 
-// =========================================================================
-// Write Permission Denied Tests
-// =========================================================================
-
 #[test]
 fn permission_write_denied_destination_directory() {
     if is_root() {
@@ -327,10 +315,6 @@ fn permission_write_denied_overwriting_readonly_file() {
     );
 }
 
-// =========================================================================
-// Directory Traverse Permission Denied Tests
-// =========================================================================
-
 #[test]
 fn permission_traverse_denied_directory() {
     if is_root() {
@@ -397,10 +381,6 @@ fn permission_traverse_denied_deep_hierarchy() {
     let _ = result;
 }
 
-// =========================================================================
-// Exit Code Tests
-// =========================================================================
-
 #[test]
 fn permission_denied_returns_partial_transfer_exit_code() {
     if is_root() {
@@ -438,10 +418,6 @@ fn permission_denied_returns_partial_transfer_exit_code() {
         );
     }
 }
-
-// =========================================================================
-// Dry Run Tests
-// =========================================================================
 
 #[test]
 fn permission_dry_run_detects_unreadable_source() {
@@ -515,10 +491,6 @@ fn permission_dry_run_with_readonly_destination() {
         "dry run should not create files"
     );
 }
-
-// =========================================================================
-// Special Cases
-// =========================================================================
 
 #[test]
 fn permission_sticky_bit_directory_handling() {
@@ -618,10 +590,6 @@ fn permission_immutable_file_handling() {
     let _ = result;
 }
 
-// =========================================================================
-// Error Message Verification
-// =========================================================================
-
 #[test]
 fn permission_denied_error_includes_path() {
     if is_root() {
@@ -692,10 +660,6 @@ fn permission_denied_error_includes_action() {
         }
     }
 }
-
-// =========================================================================
-// Cross-boundary Permission Tests
-// =========================================================================
 
 #[test]
 fn permission_different_user_ownership_handling() {

@@ -17,10 +17,6 @@ use bandwidth::{
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-// ============================================================================
-// Helper functions
-// ============================================================================
-
 fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
 }
@@ -35,10 +31,6 @@ fn assert_duration_within_tolerance(actual: Duration, expected: Duration, tolera
         "Duration {actual:?} not within {tolerance_percent}% of expected {expected:?} (range {min:?} to {max:?})"
     );
 }
-
-// ============================================================================
-// 1. Token Bucket Algorithm Edge Cases
-// ============================================================================
 
 mod token_bucket_edge_cases {
     use super::*;
@@ -185,10 +177,6 @@ mod token_bucket_edge_cases {
     }
 }
 
-// ============================================================================
-// 2. Burst Handling
-// ============================================================================
-
 mod burst_handling {
     use super::*;
 
@@ -321,10 +309,6 @@ mod burst_handling {
         assert!(sleep.requested() <= Duration::from_secs(10));
     }
 }
-
-// ============================================================================
-// 3. Rate Limiting Accuracy
-// ============================================================================
 
 mod rate_limiting_accuracy {
     use super::*;
@@ -462,10 +446,6 @@ mod rate_limiting_accuracy {
         assert_eq!(sleep.requested(), Duration::from_millis(123));
     }
 }
-
-// ============================================================================
-// 4. Limit Updates During Transfer
-// ============================================================================
 
 mod limit_updates_during_transfer {
     use super::*;
@@ -651,10 +631,6 @@ mod limit_updates_during_transfer {
     }
 }
 
-// ============================================================================
-// 5. Zero/Unlimited Bandwidth Cases
-// ============================================================================
-
 mod zero_unlimited_bandwidth {
     use super::*;
 
@@ -804,10 +780,6 @@ mod zero_unlimited_bandwidth {
     }
 }
 
-// ============================================================================
-// Additional Edge Cases and Integration Tests
-// ============================================================================
-
 mod additional_edge_cases {
     use super::*;
 
@@ -926,10 +898,6 @@ mod additional_edge_cases {
     }
 }
 
-// ============================================================================
-// LimiterChange Tests
-// ============================================================================
-
 mod limiter_change_tests {
     use super::*;
 
@@ -1003,10 +971,6 @@ mod limiter_change_tests {
         assert_eq!(result, LimiterChange::Enabled);
     }
 }
-
-// ============================================================================
-// Parsing Tests for Coverage
-// ============================================================================
 
 mod parsing_coverage {
     use super::*;

@@ -8,10 +8,6 @@ fn nz(val: u64) -> NonZeroU64 {
     NonZeroU64::new(val).unwrap()
 }
 
-// ========================================================================
-// Bandwidth argument parsing comprehensive tests
-// ========================================================================
-
 #[test]
 fn parse_bandwidth_argument_simple_integer() {
     // Simple integer defaults to kilobytes
@@ -164,10 +160,6 @@ fn parse_bandwidth_argument_decimal_with_comma() {
     assert_eq!(result, Some(nz(2048)));
 }
 
-// ========================================================================
-// Error cases
-// ========================================================================
-
 #[test]
 fn parse_bandwidth_argument_empty_string() {
     let result = parse_bandwidth_argument("");
@@ -262,10 +254,6 @@ fn parse_bandwidth_argument_trailing_garbage() {
     assert!(result.is_err());
 }
 
-// ========================================================================
-// Bandwidth limit (with burst) parsing tests
-// ========================================================================
-
 #[test]
 fn parse_bandwidth_limit_simple() {
     let result = parse_bandwidth_limit("1000").unwrap();
@@ -327,10 +315,6 @@ fn parse_bandwidth_limit_decimal_values() {
     assert!(result.rate().is_some());
     assert!(result.burst().is_some());
 }
-
-// ========================================================================
-// Error cases for bandwidth limit parsing
-// ========================================================================
 
 #[test]
 fn parse_bandwidth_limit_empty() {
@@ -394,10 +378,6 @@ fn parse_bandwidth_limit_burst_too_small() {
     assert_eq!(result.unwrap_err(), BandwidthParseError::TooSmall);
 }
 
-// ========================================================================
-// Rounding behavior tests
-// ========================================================================
-
 #[test]
 fn rounding_to_kilobyte_boundary() {
     // 1500 bytes with 'b' suffix - no rounding since alignment is 1
@@ -421,10 +401,6 @@ fn rounding_decimal_base() {
     // 1500 * 1000 = 1500000, rounded to nearest 1000
     assert!(result.unwrap().get() % 1000 == 0);
 }
-
-// ========================================================================
-// Boundary value tests
-// ========================================================================
 
 #[test]
 fn boundary_minimum_valid_512_bytes() {
@@ -454,10 +430,6 @@ fn boundary_u64_max_doesnt_overflow() {
     // Depending on rounding, might overflow
     assert!(result.is_ok() || result.unwrap_err() == BandwidthParseError::TooLarge);
 }
-
-// ========================================================================
-// Scientific notation edge cases
-// ========================================================================
 
 #[test]
 fn scientific_notation_positive_small_exponent() {
@@ -493,10 +465,6 @@ fn scientific_notation_negative_exponent_rounds_to_zero() {
     assert_eq!(result.unwrap(), None);
 }
 
-// ========================================================================
-// Complex format combinations
-// ========================================================================
-
 #[test]
 fn complex_decimal_with_exponent() {
     let result = parse_bandwidth_argument("1.5e3").unwrap();
@@ -519,10 +487,6 @@ fn complex_all_features() {
     assert!(result.is_ok() || result.is_err()); // Just check it doesn't panic
 }
 
-// ========================================================================
-// BandwidthLimitComponents integration
-// ========================================================================
-
 #[test]
 fn components_from_str_simple() {
     let components: BandwidthLimitComponents = "1000".parse().unwrap();
@@ -541,10 +505,6 @@ fn components_from_str_error() {
     let result: Result<BandwidthLimitComponents, _> = "invalid".parse();
     assert!(result.is_err());
 }
-
-// ========================================================================
-// Special characters and Unicode
-// ========================================================================
 
 #[test]
 fn parse_with_embedded_null() {
@@ -571,10 +531,6 @@ fn parse_non_ascii_digits() {
     let result = parse_bandwidth_argument("١٠٠"); // Arabic-Indic digits
     assert!(result.is_err());
 }
-
-// ========================================================================
-// Edge cases from fuzzing scenarios
-// ========================================================================
 
 #[test]
 fn fuzz_empty_exponent_component() {

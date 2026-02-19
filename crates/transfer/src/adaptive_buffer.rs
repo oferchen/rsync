@@ -27,10 +27,6 @@
 
 use crate::constants::CHUNK_SIZE;
 
-// ============================================================================
-// Size Thresholds and Buffer Sizes
-// ============================================================================
-
 /// Threshold for small files (64 KB).
 /// Files smaller than this use minimal buffers.
 pub const SMALL_FILE_THRESHOLD: u64 = 64 * 1024;
@@ -50,10 +46,6 @@ pub const MEDIUM_BUFFER_SIZE: usize = 64 * 1024;
 /// Buffer size for large files (256 KB).
 /// Maximizes throughput for large file transfers.
 pub const LARGE_BUFFER_SIZE: usize = 256 * 1024;
-
-// ============================================================================
-// Buffer Size Selection
-// ============================================================================
 
 /// Returns the optimal buffer size for a file of the given size.
 ///
@@ -135,10 +127,6 @@ pub const fn adaptive_token_capacity(file_size: u64) -> usize {
         MEDIUM_BUFFER_SIZE
     }
 }
-
-// ============================================================================
-// Adaptive Token Buffer
-// ============================================================================
 
 /// A reusable buffer for delta token literal data with adaptive initial sizing.
 ///
@@ -256,10 +244,6 @@ impl AdaptiveTokenBuffer {
         &mut self.data[..self.len]
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -392,10 +376,6 @@ mod tests {
         assert!(buffer.is_empty());
         assert_eq!(buffer.capacity(), cap);
     }
-
-    // ========================================================================
-    // Additional comprehensive tests
-    // ========================================================================
 
     #[test]
     fn boundary_conditions_at_thresholds() {

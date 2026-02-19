@@ -36,10 +36,6 @@ use protocol::ProtocolVersion;
 use protocol::flist::{FileEntry, FileListReader, FileListWriter};
 use protocol::wire::{write_token_end, write_token_literal};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Generate random-ish data for benchmarking.
 fn generate_data(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 251) as u8).collect()
@@ -121,10 +117,6 @@ fn assert_max_duration(name: &str, duration: Duration, max_duration: Duration) {
         max_duration.as_secs_f64() * 1000.0
     );
 }
-
-// ============================================================================
-// Performance Tests
-// ============================================================================
 
 #[test]
 fn test_rolling_checksum_throughput() {

@@ -7,10 +7,6 @@ fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
 }
 
-// ========================================================================
-// Token Bucket Algorithm Tests
-// ========================================================================
-
 #[test]
 fn token_bucket_accumulates_debt_gradually() {
     let mut session = recorded_sleep_session();
@@ -83,10 +79,6 @@ fn token_bucket_just_under_minimum_threshold() {
     assert!(sleep.is_noop() || sleep.requested() < Duration::from_micros(100_000));
 }
 
-// ========================================================================
-// Leaky Bucket Behavior Tests
-// ========================================================================
-
 #[test]
 fn leaky_bucket_with_continuous_flow() {
     let mut session = recorded_sleep_session();
@@ -137,10 +129,6 @@ fn leaky_bucket_burst_clamping_prevents_excessive_delay() {
     // Debt clamped to 500, so sleep clamped to 5s (500/100)
     assert!(sleep.requested() <= Duration::from_secs(5));
 }
-
-// ========================================================================
-// Rate Change During Operation Tests
-// ========================================================================
 
 #[test]
 fn rate_change_from_1kb_to_10kb_speeds_up() {
@@ -221,10 +209,6 @@ fn configuration_change_with_burst_removal() {
     assert!(limiter.burst_bytes().is_none());
 }
 
-// ========================================================================
-// Zero and Edge Rate Tests
-// ========================================================================
-
 #[test]
 fn minimum_rate_one_byte_per_second() {
     let mut session = recorded_sleep_session();
@@ -273,10 +257,6 @@ fn zero_byte_write_never_affects_state() {
     assert_eq!(limiter.accumulated_debt_for_testing(), debt_before);
 }
 
-// ========================================================================
-// Timing Precision Tests
-// ========================================================================
-
 #[test]
 fn precise_one_second_sleep() {
     let mut session = recorded_sleep_session();
@@ -314,10 +294,6 @@ fn precise_millisecond_calculation() {
 
     assert_eq!(sleep.requested(), Duration::from_millis(250));
 }
-
-// ========================================================================
-// Burst Behavior Tests
-// ========================================================================
 
 #[test]
 fn burst_allows_initial_large_write() {
@@ -357,10 +333,6 @@ fn burst_larger_than_writes_no_clamping() {
     assert!(debt <= 10000);
 }
 
-// ========================================================================
-// Multiple Register Calls Tests
-// ========================================================================
-
 #[test]
 fn multiple_registers_update_last_instant() {
     let mut limiter = BandwidthLimiter::new(nz(1_000_000_000)); // Very fast
@@ -396,10 +368,6 @@ fn rapid_succession_writes_accumulate() {
     assert!(total >= Duration::from_secs(2));
 }
 
-// ========================================================================
-// Simulated Elapsed Time Tests
-// ========================================================================
-
 #[test]
 fn simulated_elapsed_compensates_for_missed_sleep() {
     let mut session = recorded_sleep_session();
@@ -418,10 +386,6 @@ fn simulated_elapsed_compensates_for_missed_sleep() {
     // Due to simulated elapsed time, sleep2 should be small or zero
     assert!(sleep2.requested() <= Duration::from_millis(200));
 }
-
-// ========================================================================
-// Debt Saturation Tests
-// ========================================================================
 
 #[test]
 fn debt_saturating_add_prevents_overflow() {
@@ -452,10 +416,6 @@ fn debt_with_elapsed_time_reduction() {
     assert!(debt_after_wait <= 10000);
 }
 
-// ========================================================================
-// Write Max Calculation Tests
-// ========================================================================
-
 #[test]
 fn write_max_scales_linearly_with_rate() {
     let limiter1 = BandwidthLimiter::new(nz(1024 * 10)); // 10 KB/s
@@ -480,10 +440,6 @@ fn write_max_respects_min_write_max_constant() {
     assert_eq!(limiter.write_max_bytes(), 512);
 }
 
-// ========================================================================
-// Recommended Read Size Tests
-// ========================================================================
-
 #[test]
 fn recommended_read_size_with_zero_buffer() {
     let limiter = BandwidthLimiter::new(nz(1024));
@@ -505,10 +461,6 @@ fn recommended_read_size_boundary_conditions() {
     // Just over
     assert_eq!(limiter.recommended_read_size(write_max + 1), write_max);
 }
-
-// ========================================================================
-// Integration Tests
-// ========================================================================
 
 #[test]
 fn realistic_large_file_transfer() {

@@ -45,10 +45,6 @@ impl ProtocolVersionAdvertisement for TestVersion {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 32 Handshake and Negotiation
-// ============================================================================
-
 mod protocol_32_handshake {
     use super::*;
 
@@ -141,10 +137,6 @@ mod protocol_32_handshake {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 32 Binary Negotiation
-// ============================================================================
-
 mod protocol_32_binary_negotiation {
     use super::*;
 
@@ -189,10 +181,6 @@ mod protocol_32_binary_negotiation {
         assert!(!codec.is_legacy(), "v32 codec should not be legacy");
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 32 Feature Tests
-// ============================================================================
 
 mod protocol_32_features {
     use super::*;
@@ -275,10 +263,6 @@ mod protocol_32_features {
         assert!(!v.uses_fixed_encoding());
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 32 Capability Flags
-// ============================================================================
 
 mod protocol_32_capability_flags {
     use super::*;
@@ -393,10 +377,6 @@ mod protocol_32_capability_flags {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 32 Algorithm Negotiation
-// ============================================================================
-
 mod protocol_32_algorithms {
     use super::*;
 
@@ -461,10 +441,6 @@ mod protocol_32_algorithms {
         assert!(CompressionAlgorithm::parse("unknown").is_err());
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 32 Wire Format
-// ============================================================================
 
 mod protocol_32_wire_format {
     use super::*;
@@ -586,10 +562,6 @@ mod protocol_32_wire_format {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 32 Backward Compatibility
-// ============================================================================
-
 mod protocol_32_backward_compatibility {
     use super::*;
 
@@ -688,10 +660,6 @@ mod protocol_32_backward_compatibility {
     }
 }
 
-// ============================================================================
-// Module: Protocol Version 32 Future Version Handling
-// ============================================================================
-
 mod protocol_32_future_versions {
     use super::*;
 
@@ -726,10 +694,6 @@ mod protocol_32_future_versions {
         assert!(result.is_err());
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 32 Ordering and Comparison
-// ============================================================================
 
 mod protocol_32_ordering {
     use super::*;
@@ -785,10 +749,6 @@ mod protocol_32_ordering {
         assert_eq!(version, Some(ProtocolVersion::V32));
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 32 Real-World Scenarios
-// ============================================================================
 
 mod protocol_32_scenarios {
     use super::*;
@@ -878,10 +838,6 @@ mod protocol_32_scenarios {
         );
     }
 }
-
-// ============================================================================
-// Module: Protocol Version 32 Edge Cases
-// ============================================================================
 
 mod protocol_32_edge_cases {
     use super::*;

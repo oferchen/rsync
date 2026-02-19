@@ -528,10 +528,6 @@ mod tests {
         assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
     }
 
-    // -----------------------------------------------------------------------
-    // Adaptive buffer sizing tests
-    // -----------------------------------------------------------------------
-
     #[test]
     fn adaptive_size_zero_byte_file() {
         assert_eq!(adaptive_buffer_size(0), ADAPTIVE_BUFFER_TINY);

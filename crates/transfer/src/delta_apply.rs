@@ -45,10 +45,6 @@ type BasisMapStrategy = AdaptiveMapStrategy;
 #[cfg(not(unix))]
 type BasisMapStrategy = BufferedMap;
 
-// ============================================================================
-// Sparse Write State - Tracks pending zeros for hole creation
-// ============================================================================
-
 /// State tracker for sparse file writing.
 ///
 /// Tracks pending runs of zeros that should become holes in the output file
@@ -155,10 +151,6 @@ impl SparseWriteState {
         writer.stream_position()
     }
 }
-
-// ============================================================================
-// Checksum Verifier - Enum-based dispatch (no heap allocation)
-// ============================================================================
 
 /// Checksum verifier for delta transfer integrity verification.
 ///
@@ -279,10 +271,6 @@ impl ChecksumVerifier {
         len
     }
 }
-
-// ============================================================================
-// Delta Application Types
-// ============================================================================
 
 /// Configuration for delta application.
 #[derive(Debug, Clone, Default)]

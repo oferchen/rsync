@@ -76,10 +76,6 @@
 use super::{Md4, Md5, Md5Seed, Sha1, Sha256, Sha512, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use std::fmt;
 
-// ============================================================================
-// ChecksumDigest - Unified digest representation
-// ============================================================================
-
 /// Maximum digest length for any supported algorithm (SHA-512 = 64 bytes).
 pub const MAX_DIGEST_LEN: usize = 64;
 
@@ -195,10 +191,6 @@ impl fmt::Display for ChecksumDigest {
     }
 }
 
-// ============================================================================
-// ChecksumAlgorithmKind - Algorithm enumeration
-// ============================================================================
-
 /// Enumeration of supported checksum algorithms.
 ///
 /// This enum identifies the checksum algorithm without carrying seed/config
@@ -300,10 +292,6 @@ impl fmt::Display for ChecksumAlgorithmKind {
     }
 }
 
-// ============================================================================
-// ChecksumStrategy - Core trait
-// ============================================================================
-
 /// Strategy trait for checksum computation.
 ///
 /// Implementations provide algorithm-specific checksum computation while
@@ -349,10 +337,6 @@ pub trait ChecksumStrategy: Send + Sync {
         self.algorithm_kind().name()
     }
 }
-
-// ============================================================================
-// Concrete Strategy Implementations
-// ============================================================================
 
 /// MD4 checksum strategy.
 ///
@@ -640,10 +624,6 @@ impl ChecksumStrategy for Xxh3_128Strategy {
         ChecksumAlgorithmKind::Xxh3_128
     }
 }
-
-// ============================================================================
-// ChecksumStrategySelector - Factory for strategy selection
-// ============================================================================
 
 /// Configuration for MD5 seed handling.
 #[derive(Clone, Copy, Debug)]
@@ -946,17 +926,9 @@ impl ChecksumStrategySelector {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ------------------------------------------------------------------------
-    // ChecksumDigest tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn digest_from_bytes() {
@@ -1014,10 +986,6 @@ mod tests {
         let digest = ChecksumDigest::new(&[0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(format!("{digest}"), "deadbeef");
     }
-
-    // ------------------------------------------------------------------------
-    // ChecksumAlgorithmKind tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn algorithm_kind_name() {
@@ -1083,10 +1051,6 @@ mod tests {
         assert!(all.contains(&ChecksumAlgorithmKind::Md4));
         assert!(all.contains(&ChecksumAlgorithmKind::Xxh3_128));
     }
-
-    // ------------------------------------------------------------------------
-    // Strategy implementation tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn md4_strategy_compute() {
@@ -1192,10 +1156,6 @@ mod tests {
         assert_eq!(&buffer[..16], digest.as_bytes());
     }
 
-    // ------------------------------------------------------------------------
-    // ChecksumStrategySelector tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn selector_for_protocol_version_28() {
         let strategy = ChecksumStrategySelector::for_protocol_version(28, 0);
@@ -1300,10 +1260,6 @@ mod tests {
         let xxh3_128 = ChecksumStrategySelector::xxh3_128(42);
         assert_eq!(xxh3_128.digest_len(), 16);
     }
-
-    // ------------------------------------------------------------------------
-    // Strategy trait object tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn strategies_are_send_sync() {

@@ -8,10 +8,6 @@
 
 use logging::{DebugFlag, VerbosityConfig, apply_debug_flag, debug_gte, drain_events, init};
 
-// ============================================================================
-// Single Flag Parsing Tests
-// ============================================================================
-
 /// Verifies a single debug flag without level defaults to level 1.
 #[test]
 fn single_flag_defaults_to_level_1() {
@@ -85,10 +81,6 @@ fn single_flag_level_0() {
     assert!(!debug_gte(DebugFlag::Recv, 1));
 }
 
-// ============================================================================
-// Multiple Flag Parsing Tests
-// ============================================================================
-
 /// Verifies multiple debug flags can be set independently.
 #[test]
 fn multiple_flags_independent() {
@@ -138,10 +130,6 @@ fn multiple_flags_dont_interfere() {
     assert!(debug_gte(DebugFlag::Send, 1));
     assert!(!debug_gte(DebugFlag::Flist, 1));
 }
-
-// ============================================================================
-// All Flags Tests
-// ============================================================================
 
 /// Verifies all debug flags can be set individually.
 #[test]
@@ -249,10 +237,6 @@ fn all_debug_flags_support_levels() {
     assert!(debug_gte(DebugFlag::Io, 4));
 }
 
-// ============================================================================
-// Numeric Level Tests (1-4)
-// ============================================================================
-
 /// Verifies numeric level 1 parsing.
 #[test]
 fn numeric_level_1_works() {
@@ -321,10 +305,6 @@ fn numeric_level_high_works() {
     assert!(debug_gte(DebugFlag::Send, 99));
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 /// Verifies unknown debug flag names are rejected.
 #[test]
 fn unknown_flag_rejected() {
@@ -353,10 +333,6 @@ fn empty_flag_rejected() {
     assert!(result.is_err());
 }
 
-// ============================================================================
-// Case Sensitivity Tests
-// ============================================================================
-
 /// Verifies flag names are case-sensitive (lowercase required).
 #[test]
 fn flag_names_case_sensitive() {
@@ -370,10 +346,6 @@ fn flag_names_case_sensitive() {
     let result = apply_debug_flag("RECV");
     assert!(result.is_err());
 }
-
-// ============================================================================
-// Level Boundary Tests
-// ============================================================================
 
 /// Verifies level 0 disables a flag.
 #[test]
@@ -396,10 +368,6 @@ fn level_255_works() {
 
     assert!(debug_gte(DebugFlag::Recv, 255));
 }
-
-// ============================================================================
-// Flag Name Variations Tests
-// ============================================================================
 
 /// Verifies all standard flag name variations parse correctly.
 #[test]
@@ -427,10 +395,6 @@ fn flag_name_variations() {
     assert!(debug_gte(DebugFlag::Connect, 1));
     assert!(debug_gte(DebugFlag::Filter, 1));
 }
-
-// ============================================================================
-// Config Integration Tests
-// ============================================================================
 
 /// Verifies apply_debug_flag works with VerbosityConfig.
 #[test]
@@ -467,10 +431,6 @@ fn config_and_runtime_application() {
     apply_debug_flag("send3").unwrap();
     assert!(debug_gte(DebugFlag::Send, 3));
 }
-
-// ============================================================================
-// Combined Scenario Tests
-// ============================================================================
 
 /// Verifies realistic scenario with multiple flags at different levels.
 #[test]

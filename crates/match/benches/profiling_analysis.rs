@@ -100,10 +100,6 @@ use signature::{
     SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
 };
 
-// ============================================================================
-// Test Data Utilities
-// ============================================================================
-
 /// Creates test data with deterministic patterns
 fn make_test_data(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 251) as u8).collect()
@@ -139,10 +135,6 @@ fn build_index(
     let signature = generate_file_signature(data, layout, algorithm).expect("signature");
     DeltaSignatureIndex::from_signature(&signature, algorithm).expect("index")
 }
-
-// ============================================================================
-// 1. Hash Table Lookup Performance
-// ============================================================================
 
 /// Benchmarks hash table lookup performance under various conditions.
 ///
@@ -291,10 +283,6 @@ fn bench_hash_table_lookup_detailed(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// 2. Rolling Checksum Computation Overhead
-// ============================================================================
-
 /// Benchmarks rolling checksum operations in detail.
 ///
 /// # Analysis
@@ -386,10 +374,6 @@ fn bench_rolling_checksum_detailed(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// 3. Strong Checksum Verification Costs
-// ============================================================================
-
 /// Benchmarks strong checksum computation and comparison.
 ///
 /// # Analysis
@@ -465,10 +449,6 @@ fn bench_strong_checksum_detailed(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// 4. Memory Access Patterns
-// ============================================================================
 
 /// Benchmarks memory access patterns during block matching.
 ///
@@ -564,10 +544,6 @@ fn bench_memory_patterns_detailed(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// 5. End-to-End Bottleneck Analysis
-// ============================================================================
-
 /// Comprehensive end-to-end benchmark for bottleneck identification.
 ///
 /// # Analysis
@@ -641,10 +617,6 @@ fn bench_bottleneck_analysis(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// 6. Algorithm Comparison (MD4 vs XXH3)
-// ============================================================================
-
 /// Compares overall performance between MD4 and XXH3 strong checksums.
 ///
 /// # Analysis
@@ -703,10 +675,6 @@ fn bench_algorithm_comparison(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Criterion Configuration
-// ============================================================================
 
 criterion_group!(
     name = profiling_benches;

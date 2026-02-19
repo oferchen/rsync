@@ -16,10 +16,6 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-// ============================================================================
-// Basic Checksum Flag Parsing
-// ============================================================================
-
 #[test]
 fn checksum_flag_long_form_accepted() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -53,10 +49,6 @@ fn checksum_flag_short_form_accepted() {
 
     assert_eq!(fs::read(&dest_file).unwrap(), b"content");
 }
-
-// ============================================================================
-// Checksum-based Comparison (not mtime/size)
-// ============================================================================
 
 #[test]
 fn checksum_mode_ignores_mtime_for_identical_content() {
@@ -146,10 +138,6 @@ fn checksum_mode_transfers_different_content_same_mtime() {
     assert_eq!(fs::read(&dest_file).unwrap(), b"new content here");
 }
 
-// ============================================================================
-// Unchanged Files (same checksum) are Skipped
-// ============================================================================
-
 #[test]
 fn checksum_skips_identical_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -202,10 +190,6 @@ fn checksum_skips_identical_files_with_verbose() {
     );
 }
 
-// ============================================================================
-// Changed Files (different checksum) are Transferred
-// ============================================================================
-
 #[test]
 fn checksum_transfers_changed_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -246,10 +230,6 @@ fn checksum_transfers_new_files() {
     assert!(dest_file.exists());
     assert_eq!(fs::read(&dest_file).unwrap(), b"new file content");
 }
-
-// ============================================================================
-// Various File Sizes
-// ============================================================================
 
 #[test]
 fn checksum_empty_files() {
@@ -385,10 +365,6 @@ fn checksum_large_files_differ_at_end() {
     );
 }
 
-// ============================================================================
-// Checksum with Directory Operations
-// ============================================================================
-
 #[test]
 fn checksum_recursive_directory() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -487,10 +463,6 @@ fn checksum_recursive_with_some_changes() {
     );
 }
 
-// ============================================================================
-// Checksum with Archive Mode
-// ============================================================================
-
 #[test]
 fn checksum_with_archive_mode() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -523,10 +495,6 @@ fn checksum_with_archive_mode() {
         "Archive+checksum should skip identical files"
     );
 }
-
-// ============================================================================
-// Checksum with Itemize Output
-// ============================================================================
 
 #[test]
 fn checksum_itemize_shows_checksum_indicator() {
@@ -566,10 +534,6 @@ fn checksum_itemize_shows_checksum_indicator() {
     );
 }
 
-// ============================================================================
-// Checksum with --no-checksum
-// ============================================================================
-
 #[test]
 fn no_checksum_disables_checksum_mode() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -598,10 +562,6 @@ fn no_checksum_disables_checksum_mode() {
         "File should not be transferred when --no-checksum is used"
     );
 }
-
-// ============================================================================
-// Comparison with Upstream rsync (if available)
-// ============================================================================
 
 /// Helper to run upstream rsync command
 fn run_upstream_rsync(args: &[&str]) -> Option<std::process::Output> {
@@ -799,10 +759,6 @@ fn upstream_comparison_checksum_with_itemize() {
     );
 }
 
-// ============================================================================
-// Edge Cases
-// ============================================================================
-
 #[test]
 fn checksum_binary_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -894,10 +850,6 @@ fn checksum_dry_run_no_changes() {
         "Dry-run should show what would be transferred"
     );
 }
-
-// ============================================================================
-// Hash Algorithm Behavior Tests
-// ============================================================================
 
 /// Test that checksum mode detects single-byte differences.
 #[test]
@@ -1078,10 +1030,6 @@ fn checksum_alternating_pattern() {
     );
 }
 
-// ============================================================================
-// Checksum Verification Tests
-// ============================================================================
-
 /// Test that transferred file content is byte-for-byte correct.
 #[test]
 fn checksum_transfer_preserves_content_exactly() {
@@ -1152,10 +1100,6 @@ fn checksum_repeated_transfer_is_idempotent() {
     );
     assert_eq!(fs::read(&dest_file).unwrap(), content);
 }
-
-// ============================================================================
-// Protocol Behavior Tests
-// ============================================================================
 
 /// Test that checksum combined with archive mode works correctly.
 /// Note: Archive mode includes --times, so mtime is part of what gets synced.

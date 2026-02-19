@@ -325,10 +325,6 @@ where
         .collect()
 }
 
-// ============================================================================
-// File Hashing Functions
-// ============================================================================
-
 /// Result of hashing a single file.
 #[derive(Debug)]
 pub struct FileHashResult<D> {
@@ -986,10 +982,6 @@ mod tests {
         let expected = Md5::digest(b"single block");
         assert_eq!(digests[0].as_ref(), expected.as_ref());
     }
-
-    // ========================================================================
-    // File Hashing Tests
-    // ========================================================================
 
     fn create_test_files(dir: &TempDir) -> Vec<PathBuf> {
         let files: Vec<(&str, &[u8])> = vec![

@@ -8,10 +8,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// =============================================================================
-// Basic Directory-Only Tests
-// =============================================================================
-
 #[test]
 fn directory_only_pattern_matches_directory() {
     let rules = [FilterRule::exclude("build/"), FilterRule::include("**")];
@@ -39,10 +35,6 @@ fn pattern_without_trailing_slash_matches_both() {
     assert!(!set.allows(Path::new("target"), false));
     assert!(!set.allows(Path::new("target"), true));
 }
-
-// =============================================================================
-// Wildcard Directory-Only Patterns
-// =============================================================================
 
 #[test]
 fn wildcard_directory_only() {
@@ -83,10 +75,6 @@ fn pattern_with_extension_directory_only() {
     assert!(set.allows(Path::new("file.tmp"), false));
 }
 
-// =============================================================================
-// Anchored Directory-Only Patterns
-// =============================================================================
-
 #[test]
 fn anchored_directory_only() {
     let rules = [FilterRule::exclude("/dist/"), FilterRule::include("**")];
@@ -114,10 +102,6 @@ fn unanchored_directory_only() {
     assert!(!set.allows(Path::new("a/b/c/node_modules"), true));
 }
 
-// =============================================================================
-// Directory Contents Exclusion
-// =============================================================================
-
 #[test]
 fn directory_contents_excluded_with_directory() {
     let rules = [FilterRule::exclude("build/"), FilterRule::include("**")];
@@ -143,10 +127,6 @@ fn nested_directory_contents() {
     assert!(!set.allows(Path::new("src/submod/__pycache__"), true));
     assert!(!set.allows(Path::new("src/submod/__pycache__/cache.pyc"), false));
 }
-
-// =============================================================================
-// Multiple Directory-Only Rules
-// =============================================================================
 
 #[test]
 fn multiple_directory_only_patterns() {
@@ -192,10 +172,6 @@ fn directory_only_with_other_patterns() {
     assert!(set.allows(Path::new("src/main.rs"), false));
 }
 
-// =============================================================================
-// Include Directory-Only Patterns
-// =============================================================================
-
 #[test]
 fn include_directory_only() {
     let rules = [FilterRule::include("important/"), FilterRule::exclude("**")];
@@ -232,10 +208,6 @@ fn include_specific_directories_exclude_others() {
     assert!(set.allows(Path::new("README.md"), false));
 }
 
-// =============================================================================
-// Protect/Risk Directory-Only
-// =============================================================================
-
 #[test]
 fn protect_directory_only() {
     let rule = FilterRule::protect("/data/");
@@ -249,10 +221,6 @@ fn risk_directory_only() {
     let rule = FilterRule::risk("/tmp/");
     assert_eq!(rule.pattern(), "/tmp/");
 }
-
-// =============================================================================
-// Edge Cases
-// =============================================================================
 
 #[test]
 fn empty_directory_name_with_slash() {
@@ -302,10 +270,6 @@ fn directory_only_unicode() {
     assert!(!set.allows(Path::new("кэш"), true));
     assert!(set.allows(Path::new("кэш"), false));
 }
-
-// =============================================================================
-// Real-World Scenarios
-// =============================================================================
 
 #[test]
 fn python_project_directories() {
@@ -426,10 +390,6 @@ fn general_build_directories() {
         );
     }
 }
-
-// =============================================================================
-// Interaction with Other Features
-// =============================================================================
 
 #[test]
 fn directory_only_with_negation() {

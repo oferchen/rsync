@@ -26,10 +26,6 @@
 use std::io::{self, Write};
 
 use crate::varint::{write_varint, write_varint30_int, write_varlong};
-
-// ============================================================================
-// XMIT Flag Constants - Match upstream rsync.h
-// ============================================================================
 //
 // These constants define the wire format flags for file entry encoding.
 // They are defined here for use in wire format encoding and are re-exported
@@ -104,10 +100,6 @@ pub const XMIT_SAME_ATIME: u8 = 1 << 6;
 
 /// Extended flag: creation time equals mtime (bit 17).
 pub const XMIT_CRTIME_EQ_MTIME: u8 = 1 << 1;
-
-// ============================================================================
-// Flag Encoding
-// ============================================================================
 
 /// Encodes transmission flags to the wire format.
 ///
@@ -235,10 +227,6 @@ pub fn encode_end_marker<W: Write>(
     writer.write_all(&[0u8])
 }
 
-// ============================================================================
-// Name Encoding
-// ============================================================================
-
 /// Encodes a file name with prefix compression.
 ///
 /// The rsync protocol compresses file names by sharing common prefixes with
@@ -309,10 +297,6 @@ pub fn encode_name<W: Write>(
     writer.write_all(&name[same_len..])
 }
 
-// ============================================================================
-// Size Encoding
-// ============================================================================
-
 /// Encodes file size to the wire format.
 ///
 /// # Arguments
@@ -348,10 +332,6 @@ pub fn encode_size<W: Write>(writer: &mut W, size: u64, protocol_version: u8) ->
         crate::write_longint(writer, size as i64)
     }
 }
-
-// ============================================================================
-// Time Encoding
-// ============================================================================
 
 /// Encodes modification time to the wire format.
 ///
@@ -438,10 +418,6 @@ pub fn encode_crtime<W: Write>(writer: &mut W, crtime: i64) -> io::Result<()> {
     write_varlong(writer, crtime, 4)
 }
 
-// ============================================================================
-// Mode Encoding
-// ============================================================================
-
 /// Encodes Unix mode bits to the wire format.
 ///
 /// Mode is always encoded as a fixed 4-byte little-endian integer.
@@ -471,10 +447,6 @@ pub fn encode_crtime<W: Write>(writer: &mut W, crtime: i64) -> io::Result<()> {
 pub fn encode_mode<W: Write>(writer: &mut W, mode: u32) -> io::Result<()> {
     writer.write_all(&(mode as i32).to_le_bytes())
 }
-
-// ============================================================================
-// UID/GID Encoding
-// ============================================================================
 
 /// Encodes a user ID to the wire format.
 ///
@@ -549,10 +521,6 @@ pub fn encode_owner_name<W: Write>(writer: &mut W, name: &str) -> io::Result<()>
     writer.write_all(&name_bytes[..len as usize])
 }
 
-// ============================================================================
-// Device Number Encoding
-// ============================================================================
-
 /// Encodes device numbers for block/character devices.
 ///
 /// # Arguments
@@ -603,10 +571,6 @@ pub fn encode_rdev<W: Write>(
     Ok(())
 }
 
-// ============================================================================
-// Symlink Target Encoding
-// ============================================================================
-
 /// Encodes symlink target path.
 ///
 /// # Arguments
@@ -630,10 +594,6 @@ pub fn encode_symlink_target<W: Write>(
     write_varint30_int(writer, target.len() as i32, protocol_version)?;
     writer.write_all(target)
 }
-
-// ============================================================================
-// Hardlink Encoding
-// ============================================================================
 
 /// Encodes hardlink index (protocol 30+).
 ///
@@ -687,10 +647,6 @@ pub fn encode_hardlink_dev_ino<W: Write>(
     crate::write_longint(writer, ino)
 }
 
-// ============================================================================
-// Checksum Encoding
-// ============================================================================
-
 /// Encodes file checksum (for --checksum mode).
 ///
 /// # Arguments
@@ -727,10 +683,6 @@ pub fn encode_checksum<W: Write>(
     }
     Ok(())
 }
-
-// ============================================================================
-// Flag Calculation Helpers
-// ============================================================================
 
 /// Calculates the common prefix length between two byte slices.
 ///
@@ -956,18 +908,10 @@ pub fn calculate_time_flags(
     flags
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Cursor, Read};
-
-    // ------------------------------------------------------------------------
-    // Flag Encoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn encode_flags_single_byte() {
@@ -1022,10 +966,6 @@ mod tests {
         assert!(buf.len() == 2 || buf[0] == XMIT_EXTENDED_FLAGS);
     }
 
-    // ------------------------------------------------------------------------
-    // End Marker Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn encode_end_marker_simple() {
         let mut buf = Vec::new();
@@ -1061,10 +1001,6 @@ mod tests {
         let mut cursor = Cursor::new(&buf[2..]);
         assert_eq!(crate::varint::read_varint(&mut cursor).unwrap(), 42);
     }
-
-    // ------------------------------------------------------------------------
-    // Name Encoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn encode_name_no_compression() {
@@ -1109,10 +1045,6 @@ mod tests {
         assert_eq!(len, 300);
     }
 
-    // ------------------------------------------------------------------------
-    // Size Encoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn encode_size_modern() {
         let mut buf = Vec::new();
@@ -1142,10 +1074,6 @@ mod tests {
         assert_eq!(buf.len(), 12);
     }
 
-    // ------------------------------------------------------------------------
-    // Mode Encoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn encode_mode_regular_file() {
         let mut buf = Vec::new();
@@ -1162,10 +1090,6 @@ mod tests {
         let decoded = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
         assert_eq!(decoded as u32, 0o040755);
     }
-
-    // ------------------------------------------------------------------------
-    // UID/GID Encoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn encode_uid_modern() {
@@ -1211,10 +1135,6 @@ mod tests {
         assert_eq!(buf.len(), 256);
     }
 
-    // ------------------------------------------------------------------------
-    // Device Number Encoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn encode_rdev_protocol_30() {
         let mut buf = Vec::new();
@@ -1248,10 +1168,6 @@ mod tests {
         let minor_offset = buf.len() - 1;
         assert_eq!(buf[minor_offset], 5);
     }
-
-    // ------------------------------------------------------------------------
-    // Symlink Target Encoding Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn encode_symlink_target_simple() {
@@ -1342,10 +1258,6 @@ mod tests {
         assert_eq!(&decoded, target);
     }
 
-    // ------------------------------------------------------------------------
-    // Hardlink Encoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn encode_hardlink_idx_simple() {
         let mut buf = Vec::new();
@@ -1377,10 +1289,6 @@ mod tests {
         assert_eq!(ino, 12345);
     }
 
-    // ------------------------------------------------------------------------
-    // Checksum Encoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn encode_checksum_with_data() {
         let mut buf = Vec::new();
@@ -1403,10 +1311,6 @@ mod tests {
         encode_checksum(&mut buf, None, 4).unwrap();
         assert_eq!(buf, vec![0x00, 0x00, 0x00, 0x00]);
     }
-
-    // ------------------------------------------------------------------------
-    // Flag Calculation Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn calculate_name_prefix_len_full_match() {
@@ -1549,10 +1453,6 @@ mod tests {
         assert!(flags & (XMIT_MOD_NSEC as u16) == 0);
     }
 
-    // ------------------------------------------------------------------------
-    // Mtime Encoding Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn encode_mtime_modern() {
         let mut buf = Vec::new();
@@ -1597,10 +1497,6 @@ mod tests {
         let decoded = crate::read_varlong(&mut cursor, 4).unwrap();
         assert_eq!(decoded, 1600000000);
     }
-
-    // ------------------------------------------------------------------------
-    // Round-trip Integration Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn roundtrip_flags_and_name() {

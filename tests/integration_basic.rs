@@ -8,10 +8,6 @@ use filetime::{FileTime, set_file_times};
 use integration::helpers::*;
 use std::fs;
 
-// ============================================================================
-// Single File Operations
-// ============================================================================
-
 #[test]
 fn copy_single_file_to_directory() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -116,10 +112,6 @@ fn skip_unchanged_files_with_checksum() {
     );
 }
 
-// ============================================================================
-// Directory Operations
-// ============================================================================
-
 #[test]
 fn copy_empty_directory_recursive() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -202,10 +194,6 @@ fn recursive_required_for_directory_contents() {
     assert!(!dest_dir.join("subdir/file.txt").exists());
 }
 
-// ============================================================================
-// Update Operations
-// ============================================================================
-
 #[test]
 fn update_flag_skips_newer_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -255,10 +243,6 @@ fn update_flag_transfers_when_source_newer() {
     let content = fs::read(&dest_file).unwrap();
     assert_eq!(content, b"new");
 }
-
-// ============================================================================
-// Metadata Preservation
-// ============================================================================
 
 #[test]
 fn preserve_modification_times_with_times_flag() {
@@ -321,10 +305,6 @@ fn preserve_permissions_with_perms_flag() {
 
     assert_eq!(src_perms, dest_perms, "Permissions should be preserved");
 }
-
-// ============================================================================
-// Archive Mode
-// ============================================================================
 
 #[test]
 #[cfg(unix)]
@@ -392,10 +372,6 @@ fn archive_mode_recursive_by_default() {
     );
 }
 
-// ============================================================================
-// Dry Run Mode
-// ============================================================================
-
 #[test]
 fn dry_run_shows_changes_without_modifying() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -425,10 +401,6 @@ fn dry_run_shows_changes_without_modifying() {
     );
 }
 
-// ============================================================================
-// Error Cases
-// ============================================================================
-
 #[test]
 fn error_on_nonexistent_source() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -452,10 +424,6 @@ fn create_missing_destination_directory() {
 
     assert_eq!(fs::read(&dest_file).unwrap(), b"content");
 }
-
-// ============================================================================
-// Size-based Operations
-// ============================================================================
 
 #[test]
 fn size_only_skips_files_with_same_size() {
@@ -505,10 +473,6 @@ fn size_only_transfers_files_with_different_size() {
     assert_eq!(fs::read(&dest_file).unwrap(), b"longer content");
 }
 
-// ============================================================================
-// Ignore Existing
-// ============================================================================
-
 #[test]
 fn ignore_existing_skips_existing_files() {
     let test_dir = TestDir::new().expect("create test dir");
@@ -544,10 +508,6 @@ fn ignore_existing_transfers_missing_files() {
     // New file should be created
     assert_eq!(fs::read(&dest_file).unwrap(), b"content");
 }
-
-// ============================================================================
-// Verbose Output
-// ============================================================================
 
 #[test]
 fn verbose_shows_transferred_files() {

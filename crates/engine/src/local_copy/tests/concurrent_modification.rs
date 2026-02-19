@@ -16,10 +16,6 @@
 // These tests verify proper IOERR_VANISHED and IOERR_GENERAL flag handling,
 // graceful error recovery, and exit code correctness.
 
-// =========================================================================
-// File Deleted During Transfer Tests
-// =========================================================================
-
 #[test]
 fn file_deleted_before_copy_is_handled_gracefully() {
     // Create source file, then delete it before copy begins
@@ -151,10 +147,6 @@ fn directory_deleted_during_scan_is_handled() {
     }
 }
 
-// =========================================================================
-// File Modified During Read Tests
-// =========================================================================
-
 #[test]
 fn file_size_changed_during_transfer_is_detected() {
     let temp = tempdir().expect("tempdir");
@@ -274,10 +266,6 @@ fn file_content_changed_same_size_during_transfer() {
     }
 }
 
-// =========================================================================
-// File Replaced During Transfer Tests
-// =========================================================================
-
 #[test]
 fn file_replaced_with_directory_during_transfer() {
     let temp = tempdir().expect("tempdir");
@@ -379,10 +367,6 @@ fn file_replaced_with_different_content_during_transfer() {
     }
 }
 
-// =========================================================================
-// Directory Modification During Scan Tests
-// =========================================================================
-
 #[test]
 fn new_file_added_during_scan_may_be_included() {
     let temp = tempdir().expect("tempdir");
@@ -438,10 +422,6 @@ fn nested_directory_removed_during_recursive_scan() {
     // Should not panic
     let _ = result;
 }
-
-// =========================================================================
-// Checksum Mismatch Detection Tests
-// =========================================================================
 
 #[test]
 fn checksum_mode_detects_content_change() {
@@ -580,10 +560,6 @@ fn checksum_mismatch_with_same_size_and_mtime() {
     }
 }
 
-// =========================================================================
-// Error Recovery Tests
-// =========================================================================
-
 #[test]
 fn transfer_continues_after_single_file_error() {
     let temp = tempdir().expect("tempdir");
@@ -697,10 +673,6 @@ fn non_empty_file_becoming_empty_during_transfer() {
     let _ = result;
 }
 
-// =========================================================================
-// Concurrent Access Simulation Tests
-// =========================================================================
-
 #[test]
 fn rapid_file_modifications_are_handled() {
     let temp = tempdir().expect("tempdir");
@@ -770,10 +742,6 @@ fn file_permission_changed_during_transfer() {
         result.expect("should handle permission change");
     }
 }
-
-// =========================================================================
-// Edge Cases
-// =========================================================================
 
 #[test]
 fn file_deleted_and_recreated_during_transfer() {
@@ -882,10 +850,6 @@ fn directory_permissions_changed_during_scan() {
     }
 }
 
-// =========================================================================
-// Binary File Tests
-// =========================================================================
-
 #[test]
 fn binary_file_modified_during_transfer() {
     let temp = tempdir().expect("tempdir");
@@ -919,10 +883,6 @@ fn binary_file_modified_during_transfer() {
         assert!(dest_root.join("binary.bin").exists());
     }
 }
-
-// =========================================================================
-// Mtime Change Detection Tests
-// =========================================================================
 
 #[test]
 fn mtime_changed_during_transfer_detection() {

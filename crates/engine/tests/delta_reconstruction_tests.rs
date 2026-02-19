@@ -19,10 +19,6 @@ use signature::SignatureAlgorithm;
 use std::io::Cursor;
 use std::num::{NonZeroU8, NonZeroU32};
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
-
 /// Creates a signature index from the provided basis data.
 fn create_signature_index(basis: &[u8]) -> DeltaSignatureIndex {
     let params = SignatureLayoutParams::new(
@@ -73,10 +69,6 @@ fn generate_and_verify(basis: &[u8], target: &[u8]) -> DeltaScript {
     );
     script
 }
-
-// ============================================================================
-// Delta Block Application Tests
-// ============================================================================
 
 /// Verifies that a single delta block (copy token) is applied correctly.
 #[test]
@@ -251,10 +243,6 @@ fn partial_delta_block_copy() {
     );
 }
 
-// ============================================================================
-// Literal Data Insertion Tests
-// ============================================================================
-
 /// Verifies that a single literal token is inserted correctly.
 #[test]
 fn single_literal_inserted_correctly() {
@@ -346,10 +334,6 @@ fn empty_literal_tokens() {
         "empty literals should not break reconstruction"
     );
 }
-
-// ============================================================================
-// Mixed Delta/Literal Tests
-// ============================================================================
 
 /// Verifies that alternating delta and literal tokens work correctly.
 #[test]
@@ -481,10 +465,6 @@ fn literal_between_sequential_blocks() {
     );
 }
 
-// ============================================================================
-// File Matching Tests (Source Reconstruction)
-// ============================================================================
-
 /// Verifies that an identical file reconstructs perfectly with all delta blocks.
 #[test]
 fn identical_file_matches_source() {
@@ -598,10 +578,6 @@ fn file_with_reordered_blocks_matches_source() {
     );
 }
 
-// ============================================================================
-// Edge Cases
-// ============================================================================
-
 /// Verifies reconstruction with an empty script produces empty output.
 #[test]
 fn empty_script_produces_empty_output() {
@@ -687,10 +663,6 @@ fn different_block_sizes() {
     let reconstructed_large = reconstruct_file(&basis, &index_large, &script_large);
     assert_eq!(reconstructed_large, target, "large block size failed");
 }
-
-// ============================================================================
-// Real-World Scenario Tests
-// ============================================================================
 
 /// Simulates a text file with a line inserted in the middle.
 /// Uses a larger file to ensure blocks are generated (small files have no full blocks).

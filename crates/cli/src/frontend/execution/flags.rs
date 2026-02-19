@@ -845,10 +845,6 @@ mod tests {
         assert!(!info_flags_include_progress(&flags));
     }
 
-    // ========================================================================
-    // Comprehensive info flag parsing tests
-    // ========================================================================
-
     #[test]
     fn info_flag_progress0_disables() {
         let mut settings = InfoFlagSettings::default();
@@ -1017,10 +1013,6 @@ mod tests {
         assert_eq!(settings.symsafe, Some(1));
     }
 
-    // ========================================================================
-    // Negation prefix tests for all info flags
-    // ========================================================================
-
     #[test]
     fn info_flag_no_prefix_copy() {
         let mut settings = InfoFlagSettings::default();
@@ -1112,10 +1104,6 @@ mod tests {
         assert_eq!(settings.symsafe, Some(0));
     }
 
-    // ========================================================================
-    // Numeric ALL/NONE shorthand tests
-    // ========================================================================
-
     #[test]
     fn info_flag_numeric_1_enables_all() {
         let mut settings = InfoFlagSettings::default();
@@ -1155,10 +1143,6 @@ mod tests {
         assert_eq!(settings.symsafe, Some(0));
     }
 
-    // ========================================================================
-    // Case insensitivity tests for keywords
-    // ========================================================================
-
     #[test]
     fn info_flag_all_case_insensitive() {
         let mut settings = InfoFlagSettings::default();
@@ -1189,10 +1173,6 @@ mod tests {
         settings.apply("HELP", "HELP").unwrap();
         assert!(settings.help_requested);
     }
-
-    // ========================================================================
-    // Multiple value tests (simulating --info=X --info=Y)
-    // ========================================================================
 
     #[test]
     fn parse_info_flags_multiple_values() {
@@ -1247,10 +1227,6 @@ mod tests {
         assert!(result.help_requested);
     }
 
-    // ========================================================================
-    // Error message format tests
-    // ========================================================================
-
     #[test]
     fn info_flag_error_message_contains_flag_name() {
         let mut settings = InfoFlagSettings::default();
@@ -1272,10 +1248,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Default state tests
-    // ========================================================================
-
     #[test]
     fn info_flag_settings_default_is_unset() {
         let settings = InfoFlagSettings::default();
@@ -1295,10 +1267,6 @@ mod tests {
         assert!(!settings.help_requested);
     }
 
-    // ========================================================================
-    // All flags enumeration test (ensure none are missed)
-    // ========================================================================
-
     #[test]
     fn info_flag_all_keywords_accepted() {
         let keywords = [
@@ -1314,10 +1282,6 @@ mod tests {
             );
         }
     }
-
-    // ========================================================================
-    // info_flags_include_progress comprehensive tests
-    // ========================================================================
 
     #[test]
     fn info_flags_include_progress_with_level() {
@@ -1348,10 +1312,6 @@ mod tests {
         let flags = vec![OsString::from("name"), OsString::from("progress")];
         assert!(info_flags_include_progress(&flags));
     }
-
-    // ========================================================================
-    // Debug flag comprehensive tests
-    // ========================================================================
 
     #[test]
     fn debug_flag_all_keywords_accepted() {
@@ -1522,10 +1482,6 @@ mod tests {
         // Other flags remain at 1
         assert_eq!(result.flist, Some(1));
     }
-
-    // ========================================================================
-    // Help text content tests
-    // ========================================================================
 
     #[test]
     fn info_help_text_lists_all_keywords() {
