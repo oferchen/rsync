@@ -18,7 +18,7 @@ Core transfer, delta algorithm, daemon mode, and SSH transport are complete. Int
 
 ### Performance
 
-![Benchmark: oc-rsync vs upstream rsync](docs/assets/benchmark.svg)
+![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
 Single-process architecture eliminates fork overhead: 22% fewer syscalls, 36 context switches vs upstream's 92 per transfer.
 
