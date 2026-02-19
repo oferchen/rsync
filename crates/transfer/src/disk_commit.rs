@@ -23,7 +23,7 @@ use std::fs;
 use std::io::{self, IoSlice, Seek, Write};
 use std::thread::{self, JoinHandle};
 
-use flume::{Receiver, Sender};
+use crate::pipeline::spsc;
 
 use metadata::MetadataOptions;
 
@@ -160,11 +160,11 @@ impl Seek for ReusableBufWriter<'_> {
 /// Channels and handle returned by [`spawn_disk_thread`].
 pub struct DiskThreadHandle {
     /// Send [`FileMessage`] items to the disk thread.
-    pub file_tx: Sender<FileMessage>,
+    pub file_tx: spsc::Sender<FileMessage>,
     /// Receive [`CommitResult`] (one per committed file).
-    pub result_rx: Receiver<io::Result<CommitResult>>,
+    pub result_rx: spsc::Receiver<io::Result<CommitResult>>,
     /// Receive recycled `Vec<u8>` buffers from the disk thread.
-    pub buf_return_rx: Receiver<Vec<u8>>,
+    pub buf_return_rx: spsc::Receiver<Vec<u8>>,
     /// Join handle for the disk commit thread.
     pub join_handle: JoinHandle<()>,
 }
@@ -200,9 +200,10 @@ impl Default for DiskCommitConfig {
 /// sends used `Vec<u8>` buffers back through `buf_return_rx` for reuse by the
 /// network thread, eliminating per-chunk malloc/free overhead.
 pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
-    let (file_tx, file_rx) = flume::bounded::<FileMessage>(config.channel_capacity);
-    let (result_tx, result_rx) = flume::unbounded::<io::Result<CommitResult>>();
-    let (buf_return_tx, buf_return_rx) = flume::unbounded::<Vec<u8>>();
+    let (file_tx, file_rx) = spsc::channel::<FileMessage>(config.channel_capacity);
+    let (result_tx, result_rx) =
+        spsc::channel::<io::Result<CommitResult>>(config.channel_capacity * 2);
+    let (buf_return_tx, buf_return_rx) = spsc::channel::<Vec<u8>>(config.channel_capacity * 2);
 
     let join_handle = thread::Builder::new()
         .name("disk-commit".into())
@@ -222,9 +223,9 @@ pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
 /// Allocates a single 256KB write buffer reused across all files, matching
 /// upstream rsync's static `wf_writeBuf` (fileio.c:161).
 fn disk_thread_main(
-    file_rx: Receiver<FileMessage>,
-    result_tx: Sender<io::Result<CommitResult>>,
-    buf_return_tx: Sender<Vec<u8>>,
+    file_rx: spsc::Receiver<FileMessage>,
+    result_tx: spsc::Sender<io::Result<CommitResult>>,
+    buf_return_tx: spsc::Sender<Vec<u8>>,
     config: DiskCommitConfig,
 ) {
     let mut write_buf = Vec::with_capacity(WRITE_BUF_SIZE);
@@ -264,8 +265,8 @@ fn disk_thread_main(
 /// After writing each chunk, the owned `Vec<u8>` is returned through
 /// `buf_return_tx` for reuse by the network thread.
 fn process_file(
-    file_rx: &Receiver<FileMessage>,
-    buf_return_tx: &Sender<Vec<u8>>,
+    file_rx: &spsc::Receiver<FileMessage>,
+    buf_return_tx: &spsc::Sender<Vec<u8>>,
     config: &DiskCommitConfig,
     begin: BeginMessage,
     write_buf: &mut Vec<u8>,
@@ -409,7 +410,7 @@ fn process_file(
 /// Avoids the per-message channel recv loop of [`process_file`], reducing
 /// futex overhead from 3+ sends/recvs to 1 for small files.
 fn process_whole_file(
-    buf_return_tx: &Sender<Vec<u8>>,
+    buf_return_tx: &spsc::Sender<Vec<u8>>,
     config: &DiskCommitConfig,
     begin: BeginMessage,
     data: Vec<u8>,
@@ -516,7 +517,7 @@ fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flume::TryRecvError;
+    use crate::pipeline::spsc::TryRecvError;
 
     #[test]
     fn default_config() {
