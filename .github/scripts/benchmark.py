@@ -16,6 +16,7 @@ import time
 
 UPSTREAM = "target/interop/upstream-src/rsync-3.4.1/rsync"
 OC_RSYNC = "target/release/oc-rsync"
+OC_RSYNC_OPENSSL = os.environ.get("OC_RSYNC_OPENSSL", "")
 
 TESTS = [
     # Local copy
@@ -98,6 +99,24 @@ TESTS = [
         "name": "No-change sync",
         "mode": "daemon_push",
         "args": "-av --timeout=30 {src}/ rsync://localhost:{port}/dest/",
+        "reset": False,
+    },
+]
+
+# OpenSSL vs pure-Rust checksum comparison (only run if OC_RSYNC_OPENSSL is set)
+OPENSSL_TESTS = [
+    {
+        "id": "openssl_checksum_initial",
+        "name": "Initial checksum sync",
+        "mode": "checksum_openssl",
+        "args": "-avc {src}/ {dst}/",
+        "reset": True,
+    },
+    {
+        "id": "openssl_checksum_nochange",
+        "name": "No-change checksum sync",
+        "mode": "checksum_openssl",
+        "args": "-avc {src}/ {dst}/",
         "reset": False,
     },
 ]
@@ -273,6 +292,57 @@ def main():
                     "oc_rsync": oc_result,
                     "ratio": round(ratio, 2),
                 }
+            )
+
+        # OpenSSL vs pure-Rust comparison
+        if OC_RSYNC_OPENSSL and os.path.isfile(OC_RSYNC_OPENSSL):
+            print("Running OpenSSL vs pure-Rust comparison...", file=sys.stderr)
+            dst_pure = f"{tmpdir}/dst_pure"
+            dst_ssl = f"{tmpdir}/dst_ssl"
+
+            def reset_openssl_dst():
+                shutil.rmtree(dst_pure, ignore_errors=True)
+                shutil.rmtree(dst_ssl, ignore_errors=True)
+                os.makedirs(dst_pure, exist_ok=True)
+                os.makedirs(dst_ssl, exist_ok=True)
+
+            for test in OPENSSL_TESTS:
+                test_id = test["id"]
+                name = test["name"]
+                mode = test["mode"]
+                args_tpl = test["args"]
+
+                print(f"Running: [{mode}] {name}...", file=sys.stderr)
+
+                if test["reset"]:
+                    reset_openssl_dst()
+
+                pure_args = args_tpl.format(src=src, dst=dst_pure, port=port)
+                ssl_args = args_tpl.format(src=src, dst=dst_ssl, port=port)
+
+                pure_result = benchmark(f"{OC_RSYNC} {pure_args}")
+                ssl_result = benchmark(f"{OC_RSYNC_OPENSSL} {ssl_args}")
+
+                ratio = (
+                    ssl_result["mean"] / pure_result["mean"]
+                    if pure_result["mean"] > 0
+                    else 0
+                )
+
+                results["tests"].append(
+                    {
+                        "id": test_id,
+                        "name": name,
+                        "mode": mode,
+                        "upstream": pure_result,
+                        "oc_rsync": ssl_result,
+                        "ratio": round(ratio, 2),
+                    }
+                )
+        elif OC_RSYNC_OPENSSL:
+            print(
+                f"WARNING: OC_RSYNC_OPENSSL={OC_RSYNC_OPENSSL} not found, skipping",
+                file=sys.stderr,
             )
 
         # Calculate summary

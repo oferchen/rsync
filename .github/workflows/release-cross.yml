@@ -224,7 +224,7 @@ jobs:
         run: |
           set -euo pipefail
           printf 'Building %s binary...\n' "${{ matrix.target }}"
-          cargo build --profile dist --target ${{ matrix.target }}
+          cargo build --profile dist --target ${{ matrix.target }} --features openssl
 
       - name: Build .deb package
         shell: bash
