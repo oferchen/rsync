@@ -1,0 +1,26 @@
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+    authors:
+      - github-actions[bot]
+      - oc-rsync-bot
+  categories:
+    - title: Performance
+      labels:
+        - enhancement
+      exclude:
+        labels:
+          - bug
+          - documentation
+    - title: Bug Fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Other Changes
+      labels:
+        - "*"
