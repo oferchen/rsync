@@ -1,0 +1,11 @@
+name: CI skip interop
+
+on:
+  workflow_call:
+
+jobs:
+  interop-with-upstream:
+    name: interop with upstream rsync
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
