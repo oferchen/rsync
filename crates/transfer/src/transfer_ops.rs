@@ -502,21 +502,18 @@ pub fn process_file_response_streaming<R: Read>(
     let algo = checksum_verifier.algorithm();
     let disk_verifier = std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
 
-    // Tell the disk thread to open the file.
+    // Defer sending Begin — allows coalescing single-chunk files into a
+    // single WholeFile message (3 channel sends → 1, reducing futex overhead).
     let direct_write = basis_path.is_none() && ctx.config.direct_write;
-    file_tx
-        .send(FileMessage::Begin(Box::new(BeginMessage {
-            file_path: file_path.clone(),
-            target_size,
-            file_entry_index,
-            use_sparse: ctx.config.use_sparse,
-            direct_write,
-            checksum_verifier: Some(disk_verifier),
-            file_entry,
-        })))
-        .map_err(|_| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
-        })?;
+    let begin_msg = Box::new(BeginMessage {
+        file_path: file_path.clone(),
+        target_size,
+        file_entry_index,
+        use_sparse: ctx.config.use_sparse,
+        direct_write,
+        checksum_verifier: Some(disk_verifier),
+        file_entry,
+    });
 
     // Open basis file for block references
     let mut basis_map = if let Some(ref path) = basis_path {
@@ -529,24 +526,132 @@ pub fn process_file_response_streaming<R: Read>(
 
     let mut total_bytes: u64 = 0;
 
-    // Helper: send abort on error and propagate.
+    // Read the first token to determine if this is a single-chunk file.
+    let mut token_buf = [0u8; 4];
+    reader.read_exact(&mut token_buf)?;
+    let first_token = i32::from_le_bytes(token_buf);
+
+    // Try single-chunk coalescing: if the first token is a literal and the
+    // next token is end-of-file (0), send one WholeFile message instead of
+    // Begin + Chunk + Commit (3 sends → 1).
+    if first_token > 0 && basis_map.is_none() {
+        let len = first_token as usize;
+        let mut buf = recycle_or_alloc(buf_return_rx, len);
+
+        if let Some(borrowed) = reader.try_borrow_exact(len)? {
+            buf.extend_from_slice(borrowed);
+        } else {
+            let start = buf.len();
+            buf.resize(start + len, 0);
+            reader.read_exact(&mut buf[start..])?;
+        }
+
+        // Peek at the next token.
+        reader.read_exact(&mut token_buf)?;
+        let next_token = i32::from_le_bytes(token_buf);
+
+        if next_token == 0 {
+            // Single-chunk file — coalesce into WholeFile.
+            total_bytes = len as u64;
+            let checksum_len = checksum_verifier.digest_len();
+            let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+            reader.read_exact(&mut expected_checksum[..checksum_len])?;
+
+            file_tx
+                .send(FileMessage::WholeFile {
+                    begin: begin_msg,
+                    data: buf,
+                })
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
+                })?;
+
+            return Ok(StreamingResult {
+                total_bytes,
+                expected_checksum,
+                checksum_len,
+            });
+        }
+
+        // Not a single-chunk file — fall through: send Begin + first Chunk,
+        // then continue the regular loop starting with the peeked token.
+        file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
+        })?;
+        file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "disk commit thread disconnected during chunk send",
+            )
+        })?;
+        total_bytes = len as u64;
+
+        // Process the peeked token as the current token in the loop below.
+        // We set `pending_token` so the loop body processes it first.
+        return process_remaining_tokens(
+            reader,
+            file_tx,
+            buf_return_rx,
+            checksum_verifier,
+            &signature,
+            &mut basis_map,
+            total_bytes,
+            Some(next_token),
+        );
+    }
+
+    // First token was not a simple literal — send Begin and process normally.
+    file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
+        io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
+    })?;
+
+    process_remaining_tokens(
+        reader,
+        file_tx,
+        buf_return_rx,
+        checksum_verifier,
+        &signature,
+        &mut basis_map,
+        total_bytes,
+        Some(first_token),
+    )
+}
+
+/// Processes remaining delta tokens after the initial coalescing check.
+///
+/// If `pending_token` is `Some`, it is processed first without reading from
+/// the wire. Then the regular token loop continues until end-of-file (token 0).
+#[allow(clippy::too_many_arguments)]
+fn process_remaining_tokens<R: Read>(
+    reader: &mut ServerReader<R>,
+    file_tx: &Sender<FileMessage>,
+    buf_return_rx: &Receiver<Vec<u8>>,
+    checksum_verifier: &mut ChecksumVerifier,
+    signature: &Option<FileSignature>,
+    basis_map: &mut Option<MapFile>,
+    mut total_bytes: u64,
+    pending_token: Option<i32>,
+) -> io::Result<StreamingResult> {
     let send_abort = |tx: &Sender<FileMessage>, reason: String| {
         let _ = tx.send(FileMessage::Abort { reason });
     };
 
-    // Read and process delta tokens
+    let mut next_token = pending_token;
+
     loop {
-        let mut token_buf = [0u8; 4];
-        if let Err(e) = reader.read_exact(&mut token_buf) {
-            send_abort(file_tx, format!("network read error: {e}"));
-            return Err(e);
-        }
-        let token = i32::from_le_bytes(token_buf);
+        let token = match next_token.take() {
+            Some(t) => t,
+            None => {
+                let mut token_buf = [0u8; 4];
+                if let Err(e) = reader.read_exact(&mut token_buf) {
+                    send_abort(file_tx, format!("network read error: {e}"));
+                    return Err(e);
+                }
+                i32::from_le_bytes(token_buf)
+            }
+        };
 
         if token == 0 {
-            // End of file — read expected checksum from the wire.
-            // The actual verification is deferred: the disk thread computes
-            // the digest as it writes chunks and returns it in CommitResult.
             let checksum_len = checksum_verifier.digest_len();
             let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
             if let Err(e) = reader.read_exact(&mut expected_checksum[..checksum_len]) {
@@ -554,7 +659,6 @@ pub fn process_file_response_streaming<R: Read>(
                 return Err(e);
             }
 
-            // Tell disk thread to commit (it will finalize the checksum).
             file_tx.send(FileMessage::Commit).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -568,16 +672,12 @@ pub fn process_file_response_streaming<R: Read>(
                 checksum_len,
             });
         } else if token > 0 {
-            // Literal data — try to reuse a buffer returned by the disk thread.
-            // Checksum is computed by the disk thread as it processes chunks.
             let len = token as usize;
             let mut buf = recycle_or_alloc(buf_return_rx, len);
 
             if let Some(borrowed) = reader.try_borrow_exact(len)? {
                 buf.extend_from_slice(borrowed);
             } else {
-                // Cross-frame token: read directly into the Vec to avoid an
-                // extra copy through TokenBuffer.
                 let start = buf.len();
                 buf.resize(start + len, 0);
                 reader.read_exact(&mut buf[start..])?;
@@ -591,9 +691,8 @@ pub fn process_file_response_streaming<R: Read>(
             })?;
             total_bytes += len as u64;
         } else {
-            // Block reference — resolve from basis file, send as chunk.
             let block_idx = -(token + 1) as usize;
-            if let (Some(sig), Some(basis_map)) = (&signature, basis_map.as_mut()) {
+            if let (Some(sig), Some(basis_map)) = (signature, basis_map.as_mut()) {
                 let layout = sig.layout();
                 let block_count = layout.block_count() as usize;
 
