@@ -2,17 +2,17 @@ class OcRsyncATNightly < Formula
   desc "Pure-Rust rsync 3.4.1-compatible implementation (nightly toolchain)"
   homepage "https://github.com/oferchen/rsync"
   license "GPL-3.0-or-later"
-  version "0.5.7"
+  version "0.5.8"
 
   on_macos do
     on_intel do
-      url "https://github.com/oferchen/rsync/releases/download/v0.5.7/oc-rsync-0.5.7-darwin-x86_64-nightly.tar.gz"
-      sha256 "a21ff3aaf0a62dd59283bf4678b9f65e757fc90f534370edb30ab54f52a982a1"
+      url "https://github.com/oferchen/rsync/releases/download/v0.5.8/oc-rsync-0.5.8-darwin-x86_64-nightly.tar.gz"
+      sha256 "f006b686e287774eb30fd2649b4a05c17dd348b3866550d496a6031f6ac03f38"
     end
 
     on_arm do
-      url "https://github.com/oferchen/rsync/releases/download/v0.5.7/oc-rsync-0.5.7-darwin-aarch64-nightly.tar.gz"
-      sha256 "c292e4174b25eac47f837f8f8c0a213c4cc4e06375fc460ed397b2145c6fe924"
+      url "https://github.com/oferchen/rsync/releases/download/v0.5.8/oc-rsync-0.5.8-darwin-aarch64-nightly.tar.gz"
+      sha256 "9db654c1d2e0d480c8c6df7760e4764ae3016f46dedc408267a2b21bd71076b0"
     end
   end
 
