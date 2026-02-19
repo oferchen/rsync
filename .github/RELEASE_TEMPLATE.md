@@ -1,10 +1,20 @@
-## What's Changed
+## oc-rsync {{VERSION}}
 
-- [Summarize key changes as bullet points]
-- [Use imperative mood: "Add", "Fix", "Improve", not "Added", "Fixed"]
-- [Group related changes into single bullets]
-- [Highlight breaking changes or new CLI flags]
+Wire-compatible with upstream rsync 3.4.1 (protocol 32).
 
-**Full Changelog**: https://github.com/oferchen/rsync/compare/PREV_TAG...NEW_TAG
+### Install
 
-<!-- CI automatically appends benchmark results and criterion reports below this line -->
+**Homebrew:**
+```bash
+brew install oferchen/rsync/oc-rsync
+```
+
+**Binary:** Download the asset for your platform below.
+
+| Platform | Formats |
+|----------|---------|
+| Linux (x86_64, aarch64) | `.deb`, `.rpm`, static musl `.tar.gz` |
+| macOS (x86_64, aarch64) | `.tar.gz` |
+| Windows (x86_64) | `.tar.gz`, `.zip` |
+
+---
