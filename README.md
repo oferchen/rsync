@@ -12,32 +12,27 @@ Binary name: **`oc-rsync`** — installs alongside system `rsync` without confli
 
 ## Status
 
-**Release:** 0.5.7 (beta)
+**Release:** 0.5.8 (beta)
 
 Core transfer, delta algorithm, daemon mode, and SSH transport are complete. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
 ### Performance
 
-v0.5.7 vs upstream rsync 3.4.1 — push-to-daemon over TCP loopback on Linux aarch64:
+vs upstream rsync 3.4.1 — CI benchmark on Linux x86_64 (110 MB, 1110 files):
 
-| Workload | oc-rsync | upstream | Speedup |
-|----------|----------|----------|---------|
-| 10K × 4KB files (40 MB) | 388 ms | 484 ms | **1.25x** |
-| 1K × 128KB files (128 MB) | 142 ms | 237 ms | **1.68x** |
-| 100 × 1MB files (100 MB) | 90 ms | 180 ms | **1.99x** |
-| Empty directory | 3 ms | 96 ms | **32x** |
-
-Local transfer — Linux x86_64 (110 MB, 1130 files):
-
-| Workload | oc-rsync | upstream | Speedup |
-|----------|----------|----------|---------|
-| Initial sync | 114 ms | 127 ms | 1.1x |
-| No-change sync | 115 ms | 131 ms | 1.1x |
-| Checksum sync (-c) | 229 ms | 566 ms | **2.5x** |
-| Incremental (10% changed) | 115 ms | 129 ms | 1.1x |
-| Large files (100 MB) | 89 ms | 126 ms | 1.4x |
-| Small files (1000 × 1KB) | 112 ms | 129 ms | 1.2x |
-| Compressed (-z) | 113 ms | 127 ms | 1.1x |
+| Mode | Test | oc-rsync | upstream | Ratio |
+|------|------|----------|----------|-------|
+| **Local** | Initial sync | 42 ms | 129 ms | **3.1x faster** |
+| | No-change sync | 14 ms | 51 ms | **3.6x faster** |
+| | Checksum sync (-c) | 157 ms | 435 ms | **2.8x faster** |
+| **SSH Pull** | Initial sync | 372 ms | 436 ms | **1.2x faster** |
+| | No-change sync | 265 ms | 281 ms | 1.1x faster |
+| **SSH Push** | Initial sync | 404 ms | 413 ms | ~same |
+| | No-change sync | 286 ms | 302 ms | ~same |
+| **Daemon Pull** | Initial sync | 129 ms | 234 ms | **1.8x faster** |
+| | No-change sync | 54 ms | 152 ms | **2.8x faster** |
+| **Daemon Push** | Initial sync | 100 ms | 176 ms | **1.8x faster** |
+| | No-change sync | 12 ms | 93 ms | **7.8x faster** |
 
 Single-process architecture eliminates fork overhead: 22% fewer syscalls, 36 context switches vs upstream's 92 per transfer.
 
