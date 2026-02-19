@@ -333,12 +333,14 @@ pub fn run_server_with_handshake<W: Write>(
     // - Filter list is sent through PLAIN output (not multiplexed)
     // - The remote daemon (server) will have OUTPUT multiplex active and send us multiplexed data
     //
-    // No BufReader: MultiplexReader provides all buffering (64KB, matching upstream
-    // rsync's iobuf_in). Removing BufReader eliminates one memcpy layer — data goes
-    // from the socket directly to MultiplexReader's buffer. The brief plain-mode
-    // phase (compat flags, negotiation) uses small reads where BufReader overhead
-    // is negligible.
-    let reader = reader::ServerReader::new_plain(chained_stdin);
+    // Socket-level BufReader batches small reads (4-byte multiplex headers) into
+    // fewer recvfrom syscalls — mirrors upstream rsync's 32KB iobuf.in circular
+    // buffer (io.c). MultiplexReader's 64KB buffer only holds one frame's payload;
+    // without BufReader each recv_msg_into header read hits the raw socket.
+    // BufReader::read_exact bypasses the cache for payloads larger than the
+    // remaining buffer, so large frames don't get double-copied.
+    let reader =
+        reader::ServerReader::new_plain(io::BufReader::with_capacity(64 * 1024, chained_stdin));
     // No BufWriter: MultiplexWriter provides all buffering (64KB, matching upstream
     // rsync's iobuf_out). Removing BufWriter eliminates one memcpy layer — data
     // goes from MultiplexWriter's buffer directly to the socket via writev().
