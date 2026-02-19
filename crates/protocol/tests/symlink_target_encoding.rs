@@ -24,10 +24,6 @@ use protocol::flist::{FileEntry, FileListReader, FileListWriter};
 use protocol::wire::file_entry::encode_symlink_target;
 use protocol::wire::file_entry_decode::decode_symlink_target;
 
-// ============================================================================
-// Test Helpers
-// ============================================================================
-
 /// Roundtrip a single symlink entry through FileListWriter/FileListReader.
 fn roundtrip_symlink(name: &str, target: PathBuf, protocol: ProtocolVersion) -> FileEntry {
     let mut entry = FileEntry::new_symlink(PathBuf::from(name), target);
@@ -92,10 +88,6 @@ fn target_bytes(entry: &FileEntry) -> &[u8] {
         .as_os_str()
         .as_bytes()
 }
-
-// ============================================================================
-// 1. Low-Level Wire Format Tests (encode_symlink_target / decode_symlink_target)
-// ============================================================================
 
 /// Tests basic roundtrip of symlink target encoding at the wire level.
 #[test]
@@ -222,10 +214,6 @@ fn wire_level_length_encoding_correctness() {
     assert_eq!(len, 6);
 }
 
-// ============================================================================
-// 2. High-Level Roundtrip Tests (FileListWriter / FileListReader)
-// ============================================================================
-
 /// Tests high-level roundtrip of a simple absolute symlink target.
 #[test]
 fn flist_roundtrip_absolute_target() {
@@ -331,10 +319,6 @@ fn flist_roundtrip_trailing_slash_target() {
     assert_eq!(decoded.link_target(), Some(&target));
 }
 
-// ============================================================================
-// 3. Special Characters in Symlink Targets
-// ============================================================================
-
 /// Tests symlink targets containing spaces.
 #[test]
 fn flist_roundtrip_target_with_spaces() {
@@ -423,10 +407,6 @@ fn flist_roundtrip_target_with_control_chars() {
         );
     }
 }
-
-// ============================================================================
-// 4. Non-UTF-8 Symlink Targets (Unix-Only)
-// ============================================================================
 
 /// Tests symlink target with invalid UTF-8 bytes.
 /// On Unix, paths are arbitrary byte sequences. Upstream rsync sends raw bytes.
@@ -548,10 +528,6 @@ fn flist_roundtrip_non_utf8_target_all_protocols() {
     }
 }
 
-// ============================================================================
-// 5. Long Symlink Targets
-// ============================================================================
-
 /// Tests symlink target at PATH_MAX boundary (4096 bytes).
 #[test]
 fn flist_roundtrip_path_max_target() {
@@ -641,10 +617,6 @@ fn flist_roundtrip_65535_byte_target() {
     );
 }
 
-// ============================================================================
-// 6. Multiple Symlinks in Sequence
-// ============================================================================
-
 /// Tests multiple symlinks with different target types in the same file list.
 #[test]
 fn flist_roundtrip_multiple_symlinks_mixed_targets() {
@@ -732,10 +704,6 @@ fn flist_roundtrip_same_target_multiple_symlinks() {
     }
 }
 
-// ============================================================================
-// 7. Protocol Version Compatibility
-// ============================================================================
-
 /// Tests symlink target encoding across all supported protocol versions.
 #[test]
 fn flist_roundtrip_all_protocol_versions() {
@@ -784,10 +752,6 @@ fn flist_no_target_when_preserve_links_disabled() {
         "target should be absent when preserve_links is disabled",
     );
 }
-
-// ============================================================================
-// 8. Wire Format Details
-// ============================================================================
 
 /// Tests that the wire format for protocol 29 uses fixed 4-byte int for the length.
 #[test]
@@ -851,10 +815,6 @@ fn wire_format_encode_decode_consistency() {
     }
 }
 
-// ============================================================================
-// 9. Symlink Mode Preservation
-// ============================================================================
-
 /// Tests that symlink mode bits (0o120777) are preserved through the wire format.
 #[test]
 fn flist_symlink_mode_preserved() {
@@ -871,10 +831,6 @@ fn flist_symlink_size_is_zero() {
     let decoded = roundtrip_symlink("link", PathBuf::from("/target"), ProtocolVersion::NEWEST);
     assert_eq!(decoded.size(), 0, "symlink file size should be 0");
 }
-
-// ============================================================================
-// 10. Edge Cases and Boundary Conditions
-// ============================================================================
 
 /// Tests symlink target with very long path components (no slashes).
 #[test]
@@ -1017,10 +973,6 @@ fn flist_roundtrip_varying_target_lengths() {
     }
 }
 
-// ============================================================================
-// 11. Statistics Tracking
-// ============================================================================
-
 /// Tests that symlink statistics are correctly tracked by the writer.
 #[test]
 fn flist_writer_symlink_statistics() {
@@ -1048,10 +1000,6 @@ fn flist_writer_symlink_statistics() {
         "total_size should be sum of target lengths",
     );
 }
-
-// ============================================================================
-// 12. Cross-Protocol Wire Byte Verification
-// ============================================================================
 
 /// Verifies exact wire bytes for a known symlink target in protocol 29 (fixed int length).
 #[test]
@@ -1093,10 +1041,6 @@ fn wire_format_protocol_30_more_compact_than_29() {
         buf29.len(),
     );
 }
-
-// ============================================================================
-// 13. Symlink Chain Encoding
-// ============================================================================
 
 /// Tests that symlink-to-symlink chains are encoded correctly.
 /// Each symlink in the chain has its own target, and the wire protocol encodes
@@ -1218,10 +1162,6 @@ fn flist_roundtrip_circular_symlink_pair() {
         Some("link_a".to_string()),
     );
 }
-
-// ============================================================================
-// 14. Additional Wire Format Edge Cases
-// ============================================================================
 
 /// Tests that backslash in symlink targets is preserved (no path separator conversion).
 #[test]

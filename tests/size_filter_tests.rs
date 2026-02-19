@@ -19,10 +19,6 @@ mod integration;
 use integration::helpers::*;
 use std::fs;
 
-// ============================================================================
-// --max-size Basic Behavior
-// ============================================================================
-
 /// Test that files larger than --max-size are excluded from transfer.
 #[test]
 fn max_size_excludes_files_larger_than_limit() {
@@ -109,10 +105,6 @@ fn max_size_excludes_files_one_byte_over() {
     );
 }
 
-// ============================================================================
-// --min-size Basic Behavior
-// ============================================================================
-
 /// Test that files smaller than --min-size are excluded from transfer.
 #[test]
 fn min_size_excludes_files_smaller_than_limit() {
@@ -198,10 +190,6 @@ fn min_size_excludes_files_one_byte_under() {
         "File one byte under min-size should be excluded"
     );
 }
-
-// ============================================================================
-// Size Units (K, M, G)
-// ============================================================================
 
 /// Test --max-size with kilobyte suffix (K = 1024 bytes).
 #[test]
@@ -465,10 +453,6 @@ fn max_size_fractional_value() {
     );
 }
 
-// ============================================================================
-// Combined --max-size and --min-size
-// ============================================================================
-
 /// Test combined --max-size and --min-size creates a size range.
 #[test]
 fn combined_max_and_min_size_filters() {
@@ -550,10 +534,6 @@ fn combined_filters_with_units() {
         "File over 10K should be excluded"
     );
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Test that empty files (0 bytes) are included with --max-size (always under limit).
 #[test]
@@ -703,10 +683,6 @@ fn max_size_with_dry_run() {
     );
 }
 
-// ============================================================================
-// Size Filter with Other Options
-// ============================================================================
-
 /// Test --max-size with --archive mode.
 #[test]
 fn max_size_with_archive_mode() {
@@ -802,10 +778,6 @@ fn max_size_with_verbose() {
     );
 }
 
-// ============================================================================
-// Decimal Size Suffixes (KB, MB, GB)
-// ============================================================================
-
 /// Test --max-size with decimal kilobyte suffix (KB = 1000 bytes).
 #[test]
 fn max_size_decimal_kilobyte_suffix() {
@@ -870,10 +842,6 @@ fn max_size_explicit_binary_suffix() {
         "File over 1KiB should be excluded"
     );
 }
-
-// ============================================================================
-// Update Behavior with Size Filters
-// ============================================================================
 
 /// Test that existing files in dest are not deleted when source files are filtered out.
 #[test]

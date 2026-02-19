@@ -10,10 +10,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// 1. Simple Filename Patterns (*.txt, *.rs, etc.)
-// ============================================================================
-
 /// Verifies simple extension-based include pattern.
 #[test]
 fn include_simple_extension_pattern() {
@@ -158,10 +154,6 @@ fn include_multiple_extensions() {
     assert!(!set.allows(Path::new("config.json"), false));
 }
 
-// ============================================================================
-// 2. Directory Patterns (dir/)
-// ============================================================================
-
 /// Verifies basic directory include pattern.
 #[test]
 fn include_directory_pattern() {
@@ -244,10 +236,6 @@ fn include_directory_any_depth() {
     assert!(set.allows(Path::new("packages/app/tests/fixtures"), true));
     assert!(set.allows(Path::new("fixtures/data.json"), false));
 }
-
-// ============================================================================
-// 3. Anchored Patterns (/root/file)
-// ============================================================================
 
 /// Verifies anchored include pattern at root.
 #[test]
@@ -335,10 +323,6 @@ fn include_anchor_to_root_method() {
     assert!(set.allows(Path::new("config.json"), false));
     assert!(!set.allows(Path::new("app/config.json"), false));
 }
-
-// ============================================================================
-// 4. Double-Star Patterns (**/deep/file)
-// ============================================================================
 
 /// Verifies leading double-star pattern.
 #[test]
@@ -443,10 +427,6 @@ fn include_double_star_extension() {
     assert!(!set.allows(Path::new("Cargo.toml"), false));
     assert!(!set.allows(Path::new("src/Cargo.toml"), false));
 }
-
-// ============================================================================
-// 5. Interaction with --exclude (include overrides exclude)
-// ============================================================================
 
 /// Verifies include before exclude creates exception (first-match-wins).
 #[test]
@@ -577,10 +557,6 @@ fn complex_include_exclude_interaction() {
     assert!(!set.allows(Path::new("Cargo.toml"), false));
 }
 
-// ============================================================================
-// 6. Order-Dependent Behavior
-// ============================================================================
-
 /// Verifies that rule order matters - first match wins.
 #[test]
 fn order_first_match_wins() {
@@ -699,10 +675,6 @@ fn order_anchored_unanchored() {
     // Nested config.json is excluded (unanchored rule)
     assert!(!set.allows(Path::new("app/config.json"), false));
 }
-
-// ============================================================================
-// 7. Multiple --include Flags
-// ============================================================================
 
 /// Verifies multiple include patterns for different extensions.
 #[test]
@@ -860,10 +832,6 @@ fn multiple_includes_depth_patterns() {
     assert!(set.allows(Path::new("deep/a/b/file.txt"), false));
     assert!(!set.allows(Path::new("other/file.txt"), false));
 }
-
-// ============================================================================
-// Additional Edge Cases
-// ============================================================================
 
 /// Verifies include with hidden files (dot prefix).
 #[test]

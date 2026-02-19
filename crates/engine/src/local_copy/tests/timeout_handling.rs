@@ -12,10 +12,6 @@
 
 use std::time::SystemTime;
 
-// =============================================================================
-// LocalCopyError::timeout Construction Tests
-// =============================================================================
-
 #[test]
 fn timeout_error_construction_with_typical_duration() {
     let error = LocalCopyError::timeout(Duration::from_secs(30));
@@ -45,10 +41,6 @@ fn timeout_error_construction_with_large_duration() {
     let error = LocalCopyError::timeout(Duration::from_secs(86400)); // 24 hours
     assert!(matches!(error.kind(), LocalCopyErrorKind::Timeout { .. }));
 }
-
-// =============================================================================
-// Timeout Exit Code Tests (RERR_TIMEOUT = 30)
-// =============================================================================
 
 #[test]
 fn timeout_error_exit_code_is_30() {
@@ -84,10 +76,6 @@ fn timeout_exit_code_consistent_across_durations() {
     }
 }
 
-// =============================================================================
-// Timeout Error Code Name Tests
-// =============================================================================
-
 #[test]
 fn timeout_code_name_is_rerr_timeout() {
     let error = LocalCopyError::timeout(Duration::from_secs(30));
@@ -107,10 +95,6 @@ fn timeout_code_name_different_from_io_error() {
     assert_eq!(io_error.code_name(), "RERR_PARTIAL");
     assert_ne!(timeout_error.code_name(), io_error.code_name());
 }
-
-// =============================================================================
-// Timeout Error Message Tests
-// =============================================================================
 
 #[test]
 fn timeout_error_message_contains_timed_out() {
@@ -163,10 +147,6 @@ fn timeout_error_message_with_zero_duration() {
     );
 }
 
-// =============================================================================
-// Timeout Kind Extraction Tests
-// =============================================================================
-
 #[test]
 fn timeout_kind_provides_duration_access() {
     let expected_duration = Duration::from_secs(45);
@@ -186,10 +166,6 @@ fn timeout_kind_into_kind_consumes_error() {
     let kind = error.into_kind();
     assert!(matches!(kind, LocalCopyErrorKind::Timeout { .. }));
 }
-
-// =============================================================================
-// Timeout vs Stop-At Comparison Tests
-// =============================================================================
 
 #[test]
 fn timeout_and_stop_at_have_same_exit_code() {
@@ -221,10 +197,6 @@ fn timeout_and_stop_at_are_distinct_kinds() {
     assert!(timeout_kind_match);
     assert!(stop_at_kind_match);
 }
-
-// =============================================================================
-// Timeout vs Other Error Types Tests
-// =============================================================================
 
 #[test]
 fn timeout_exit_code_distinct_from_partial_transfer() {
@@ -263,10 +235,6 @@ fn timeout_exit_code_distinct_from_syntax_error() {
     assert_ne!(timeout_error.exit_code(), syntax_error.exit_code());
 }
 
-// =============================================================================
-// Very Short Timeout Edge Cases
-// =============================================================================
-
 #[test]
 fn one_millisecond_timeout_is_valid() {
     let error = LocalCopyError::timeout(Duration::from_millis(1));
@@ -295,10 +263,6 @@ fn zero_duration_timeout_message_is_sensible() {
     assert!(message.contains("0.000"));
 }
 
-// =============================================================================
-// Connection Timeout Exit Code (RERR_CONTIMEOUT = 35)
-// =============================================================================
-
 /// Connection timeout has a distinct exit code from I/O timeout.
 /// RERR_CONTIMEOUT = 35, RERR_TIMEOUT = 30
 #[test]
@@ -313,10 +277,6 @@ fn connection_timeout_exit_code_documented() {
     let timeout_error = LocalCopyError::timeout(Duration::from_secs(30));
     assert_eq!(timeout_error.exit_code(), RERR_TIMEOUT);
 }
-
-// =============================================================================
-// Timeout Error Debug and Display Tests
-// =============================================================================
 
 #[test]
 fn timeout_error_debug_format() {
@@ -334,10 +294,6 @@ fn timeout_error_is_send_and_sync() {
     assert_send_sync::<LocalCopyError>();
 }
 
-// =============================================================================
-// Timeout Error Chaining Tests
-// =============================================================================
-
 #[test]
 fn timeout_error_source_documented() {
     let error = LocalCopyError::timeout(Duration::from_secs(30));
@@ -346,10 +302,6 @@ fn timeout_error_source_documented() {
     // Just verify the error can be created and has proper exit code
     assert_eq!(error.exit_code(), 30);
 }
-
-// =============================================================================
-// Timeout Duration Range Tests
-// =============================================================================
 
 #[test]
 fn timeout_accepts_duration_max() {
@@ -382,10 +334,6 @@ fn typical_user_timeout_values() {
     }
 }
 
-// =============================================================================
-// Timeout Recovery Tests (Conceptual)
-// =============================================================================
-
 /// After a timeout error, the transfer state should be in a recoverable position.
 /// This is a conceptual test documenting expected behavior.
 #[test]
@@ -403,10 +351,6 @@ fn timeout_error_allows_retry_documentation() {
     // Exit code 30 tells caller "timeout" vs "partial transfer" (23)
     assert_eq!(error.exit_code(), 30);
 }
-
-// =============================================================================
-// Timeout Message Quality Tests
-// =============================================================================
 
 #[test]
 fn timeout_message_is_user_friendly() {
@@ -433,10 +377,6 @@ fn timeout_message_not_empty() {
     assert!(message.len() > 10, "message should be descriptive");
 }
 
-// =============================================================================
-// Timeout Error Equality Tests
-// =============================================================================
-
 #[test]
 fn timeout_errors_with_same_duration_have_same_properties() {
     let error1 = LocalCopyError::timeout(Duration::from_secs(30));
@@ -458,10 +398,6 @@ fn timeout_errors_with_different_durations_have_same_exit_code() {
     assert_ne!(error1.to_string(), error2.to_string());
 }
 
-// =============================================================================
-// File List Exchange Timeout Tests (Conceptual)
-// =============================================================================
-
 /// Timeout during file list exchange should produce the same error type
 /// as timeout during file transfer.
 #[test]
@@ -479,10 +415,6 @@ fn file_list_timeout_same_error_type() {
     assert_eq!(flist_timeout.exit_code(), transfer_timeout.exit_code());
     assert_eq!(flist_timeout.code_name(), transfer_timeout.code_name());
 }
-
-// =============================================================================
-// Timeout with Context Tests
-// =============================================================================
 
 #[test]
 fn timeout_error_preserves_duration_in_kind() {
@@ -503,10 +435,6 @@ fn timeout_kind_as_io_returns_none() {
     assert!(error.kind().as_io().is_none());
 }
 
-// =============================================================================
-// Timeout Constant Validation Tests
-// =============================================================================
-
 #[test]
 fn timeout_exit_code_constant_is_30() {
     assert_eq!(super::filter_program::TIMEOUT_EXIT_CODE, 30);
@@ -518,10 +446,6 @@ fn timeout_exit_code_matches_core_exit_code() {
     // ExitCode::Timeout = 30 (from core/src/exit_code.rs)
     assert_eq!(super::filter_program::TIMEOUT_EXIT_CODE, 30);
 }
-
-// =============================================================================
-// Timeout Option Wiring Tests
-// =============================================================================
 
 /// Verifies that `LocalCopyOptions::with_timeout(Some(...))` correctly stores
 /// the value and `timeout()` returns it.
@@ -592,10 +516,6 @@ fn options_with_zero_duration_timeout() {
     assert_eq!(opts.timeout(), Some(Duration::ZERO));
 }
 
-// =============================================================================
-// Stop-At Option Wiring Tests
-// =============================================================================
-
 /// Verify stop_at option can be set and read back.
 #[test]
 fn options_stop_at_stores_and_retrieves_deadline() {
@@ -621,10 +541,6 @@ fn options_default_has_no_stop_at() {
     assert!(opts.stop_at().is_none());
 }
 
-// =============================================================================
-// Timeout Error `is_io_error()` Method Tests
-// =============================================================================
-
 /// Timeout errors are *not* I/O errors; `is_io_error()` must return false.
 #[test]
 fn timeout_error_is_not_io_error() {
@@ -649,10 +565,6 @@ fn io_error_is_io_error() {
     );
     assert!(error.is_io_error());
 }
-
-// =============================================================================
-// Timeout and Stop-At Interaction Tests
-// =============================================================================
 
 /// Both timeout and stop-at can be configured simultaneously.
 #[test]
@@ -688,10 +600,6 @@ fn options_clearing_stop_at_preserves_timeout() {
     assert_eq!(opts.timeout(), Some(Duration::from_secs(60)));
     assert!(opts.stop_at().is_none());
 }
-
-// =============================================================================
-// Stop-At Error Details Tests
-// =============================================================================
 
 /// Stop-at error message mentions "stopping at requested limit".
 #[test]

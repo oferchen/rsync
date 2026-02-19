@@ -5,10 +5,6 @@
 
 use core::client::ClientConfigBuilder;
 
-// ============================================================================
-// Max-Alloc Configuration Tests
-// ============================================================================
-
 /// Tests that max_alloc configuration is properly stored and retrievable.
 #[test]
 fn max_alloc_config_builder_stores_value() {
@@ -115,10 +111,6 @@ fn max_alloc_config_zero_value() {
     assert_eq!(config.max_alloc(), Some(0));
 }
 
-// ============================================================================
-// Memory Limit Enforcement Simulation
-// ============================================================================
-
 /// Simulates checking an allocation against a max_alloc limit.
 fn check_allocation_limit(requested: u64, max_alloc: Option<u64>) -> bool {
     match max_alloc {
@@ -165,10 +157,6 @@ fn memory_limit_typical_values() {
         assert!(!check_allocation_limit(limit * 2, Some(limit)));
     }
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[test]
 fn memory_limit_boundary_exact_match() {

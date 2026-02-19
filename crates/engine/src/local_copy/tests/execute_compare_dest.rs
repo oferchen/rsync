@@ -581,10 +581,6 @@ fn compare_dest_mixed_with_copy_dest() {
     assert_eq!(summary.regular_files_matched(), 0);
 }
 
-// ============================================================================
-// Compare-dest with empty reference directory
-// ============================================================================
-
 #[test]
 fn compare_dest_empty_reference_directory_transfers_file() {
     let temp = tempdir().expect("tempdir");
@@ -626,10 +622,6 @@ fn compare_dest_empty_reference_directory_transfers_file() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
 }
-
-// ============================================================================
-// Compare-dest with --inplace mode
-// ============================================================================
 
 #[test]
 fn compare_dest_with_inplace_mode() {
@@ -677,10 +669,6 @@ fn compare_dest_with_inplace_mode() {
     assert_eq!(summary.regular_files_matched(), 1);
 }
 
-// ============================================================================
-// Compare-dest with nonexistent directory
-// ============================================================================
-
 #[test]
 fn compare_dest_with_nonexistent_directory() {
     let temp = tempdir().expect("tempdir");
@@ -722,10 +710,6 @@ fn compare_dest_with_nonexistent_directory() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
 }
-
-// ============================================================================
-// Compare-dest with zero-length file
-// ============================================================================
 
 #[test]
 fn compare_dest_skips_identical_empty_file() {

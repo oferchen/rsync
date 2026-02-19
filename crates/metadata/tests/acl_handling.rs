@@ -25,10 +25,6 @@
 use std::fs;
 use tempfile::tempdir;
 
-// ============================================================================
-// NFSv4 ACL Tests (available when xattr feature is enabled)
-// ============================================================================
-
 #[cfg(all(unix, feature = "xattr"))]
 mod nfsv4_acl_tests {
     use super::*;
@@ -36,10 +32,6 @@ mod nfsv4_acl_tests {
         AccessMask, AceFlags, AceType, Nfs4Ace, Nfs4Acl, get_nfsv4_acl, has_nfsv4_acl,
         set_nfsv4_acl, sync_nfsv4_acls,
     };
-
-    // ------------------------------------------------------------------------
-    // Nfs4Acl Structure Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn nfs4_acl_new_is_empty() {
@@ -61,10 +53,6 @@ mod nfsv4_acl_tests {
         assert!(!acl.is_empty());
     }
 
-    // ------------------------------------------------------------------------
-    // ACE Type Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn ace_type_conversion_valid_values() {
         assert_eq!(AceType::try_from(0).unwrap(), AceType::Allow);
@@ -78,10 +66,6 @@ mod nfsv4_acl_tests {
         assert!(AceType::try_from(4).is_err());
         assert!(AceType::try_from(255).is_err());
     }
-
-    // ------------------------------------------------------------------------
-    // ACE Flags Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn ace_flags_from_raw() {
@@ -120,10 +104,6 @@ mod nfsv4_acl_tests {
         assert!(flags.contains(AceFlags::INHERITED));
     }
 
-    // ------------------------------------------------------------------------
-    // Access Mask Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn access_mask_from_raw() {
         let mask = AccessMask::from_raw(AccessMask::READ_DATA | AccessMask::WRITE_DATA);
@@ -154,10 +134,6 @@ mod nfsv4_acl_tests {
         let mask = AccessMask::from_raw(all_perms);
         assert_eq!(mask.as_raw(), all_perms);
     }
-
-    // ------------------------------------------------------------------------
-    // Serialization Round-trip Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn empty_acl_roundtrip() {
@@ -303,10 +279,6 @@ mod nfsv4_acl_tests {
         assert_eq!(parsed.aces[3].ace_type, AceType::Alarm);
     }
 
-    // ------------------------------------------------------------------------
-    // Parse Error Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn parse_truncated_header() {
         // Header needs 16 bytes minimum
@@ -341,10 +313,6 @@ mod nfsv4_acl_tests {
         let result = Nfs4Acl::from_bytes(&data);
         assert!(result.is_err());
     }
-
-    // ------------------------------------------------------------------------
-    // File System Integration Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn get_nfsv4_acl_nonexistent_file() {
@@ -458,10 +426,6 @@ mod nfsv4_acl_tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Directory-Specific Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn sync_nfsv4_acls_on_directories() {
         let temp = tempdir().expect("tempdir");
@@ -479,10 +443,6 @@ mod nfsv4_acl_tests {
             }
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Symlink Tests
-    // ------------------------------------------------------------------------
 
     #[cfg(unix)]
     #[test]
@@ -508,10 +468,6 @@ mod nfsv4_acl_tests {
             }
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Special Principals Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn special_principals_roundtrip() {
@@ -547,10 +503,6 @@ mod nfsv4_acl_tests {
         assert_eq!(parsed.aces[2].who, "EVERYONE@");
     }
 
-    // ------------------------------------------------------------------------
-    // Inheritance Flag Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn inheritance_flags_roundtrip() {
         let acl = Nfs4Acl {
@@ -580,10 +532,6 @@ mod nfsv4_acl_tests {
     }
 }
 
-// ============================================================================
-// POSIX ACL Tests (available when acl feature is enabled)
-// ============================================================================
-
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
@@ -592,10 +540,6 @@ mod posix_acl_tests {
     use super::*;
     use metadata::sync_acls;
     use std::fs::File;
-
-    // ------------------------------------------------------------------------
-    // Basic ACL Sync Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn sync_acls_skips_when_not_following_symlinks() {
@@ -635,10 +579,6 @@ mod posix_acl_tests {
         assert!(result.is_ok());
     }
 
-    // ------------------------------------------------------------------------
-    // Error Handling Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn sync_acls_handles_nonexistent_source() {
         let temp = tempdir().expect("tempdir");
@@ -666,10 +606,6 @@ mod posix_acl_tests {
         assert!(result.is_ok() || result.is_err());
     }
 
-    // ------------------------------------------------------------------------
-    // File Type Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn sync_acls_file_to_file() {
         let temp = tempdir().expect("tempdir");
@@ -693,10 +629,6 @@ mod posix_acl_tests {
         let result = sync_acls(&src_dir, &dst_dir, true);
         assert!(result.is_ok());
     }
-
-    // ------------------------------------------------------------------------
-    // Multiple Sync Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn sync_acls_idempotent() {
@@ -730,10 +662,6 @@ mod posix_acl_tests {
         let result2 = sync_acls(&file2, &file3, true);
         assert!(result2.is_ok());
     }
-
-    // ------------------------------------------------------------------------
-    // Symlink Tests (Unix only)
-    // ------------------------------------------------------------------------
 
     #[cfg(unix)]
     #[test]
@@ -773,10 +701,6 @@ mod posix_acl_tests {
         assert!(result.is_ok());
     }
 
-    // ------------------------------------------------------------------------
-    // Permission Bits Reset Tests
-    // ------------------------------------------------------------------------
-
     #[test]
     fn sync_acls_resets_to_mode_when_no_extended_acl() {
         let temp = tempdir().expect("tempdir");
@@ -790,10 +714,6 @@ mod posix_acl_tests {
         let result = sync_acls(&source, &destination, true);
         assert!(result.is_ok());
     }
-
-    // ------------------------------------------------------------------------
-    // Large Directory Tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn sync_acls_nested_directories() {
@@ -815,10 +735,6 @@ mod posix_acl_tests {
         assert!(result2.is_ok());
     }
 }
-
-// ============================================================================
-// Default ACL Tests (Linux/FreeBSD only)
-// ============================================================================
 
 #[cfg(all(feature = "acl", any(target_os = "linux", target_os = "freebsd")))]
 mod default_acl_tests {
@@ -851,10 +767,6 @@ mod default_acl_tests {
         assert!(result.is_ok());
     }
 }
-
-// ============================================================================
-// Platform-Specific Behavior Tests
-// ============================================================================
 
 #[cfg(all(feature = "acl", target_os = "macos"))]
 mod macos_acl_tests {
@@ -941,10 +853,6 @@ mod linux_acl_tests {
     }
 }
 
-// ============================================================================
-// ACL Stub Tests (iOS/tvOS/watchOS)
-// ============================================================================
-
 #[cfg(all(
     feature = "acl",
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
@@ -984,10 +892,6 @@ mod stub_acl_tests {
     }
 }
 
-// ============================================================================
-// Error Message Tests
-// ============================================================================
-
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
@@ -1026,10 +930,6 @@ mod error_message_tests {
         }
     }
 }
-
-// ============================================================================
-// ACL with Permissions Flag Tests
-// ============================================================================
 
 #[cfg(unix)]
 mod acl_with_perms_tests {
@@ -1088,10 +988,6 @@ mod acl_with_perms_tests {
     }
 }
 
-// ============================================================================
-// Unsupported Error Detection Tests
-// ============================================================================
-
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
@@ -1115,10 +1011,6 @@ mod unsupported_error_tests {
         let _ = metadata::sync_acls(&file, &file, true);
     }
 }
-
-// ============================================================================
-// Concurrent Access Tests
-// ============================================================================
 
 #[cfg(all(
     feature = "acl",

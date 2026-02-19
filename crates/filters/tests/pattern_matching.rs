@@ -11,10 +11,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Basic Wildcard Tests (*, ?)
-// ============================================================================
-
 /// Verifies that `*` matches any sequence of characters except `/`.
 ///
 /// From rsync man page: "a `*` matches any path component, but it stops
@@ -88,10 +84,6 @@ fn multiple_question_marks() {
     assert!(set.allows(Path::new("apps.log"), false));
 }
 
-// ============================================================================
-// Double-Star Wildcard Tests (**)
-// ============================================================================
-
 /// Verifies `**` matches any path including slashes.
 ///
 /// From rsync man page: "a `**` matches anything, including slashes."
@@ -139,10 +131,6 @@ fn leading_double_star_slash() {
     assert!(!set.allows(Path::new("packages/node_modules"), true));
     assert!(!set.allows(Path::new("deep/nested/node_modules"), true));
 }
-
-// ============================================================================
-// Character Class Tests ([])
-// ============================================================================
 
 /// Verifies character classes match any single character in the set.
 #[test]
@@ -201,10 +189,6 @@ fn multiple_character_classes() {
     assert!(set.allows(Path::new("aa.dat"), false));
 }
 
-// ============================================================================
-// Anchored Pattern Tests (leading /)
-// ============================================================================
-
 /// Verifies anchored patterns only match at root.
 ///
 /// From rsync man page: "if the pattern starts with a / then it is
@@ -261,10 +245,6 @@ fn pattern_with_slash_is_implicitly_anchored() {
     assert!(set.allows(Path::new("lib/temp"), false));
 }
 
-// ============================================================================
-// Directory-Only Pattern Tests (trailing /)
-// ============================================================================
-
 /// Verifies directory-only patterns only match directories.
 ///
 /// From rsync man page: "if the pattern ends with a / then it will only
@@ -305,10 +285,6 @@ fn nested_directory_pattern() {
     // Root node_modules not matched
     assert!(set.allows(Path::new("node_modules"), true));
 }
-
-// ============================================================================
-// Rule Ordering and Precedence Tests
-// ============================================================================
 
 /// Verifies that first matching rule wins.
 ///
@@ -375,10 +351,6 @@ fn include_creates_exception_for_excluded_directory() {
     assert!(!set.allows(Path::new("target/release/binary"), false));
 }
 
-// ============================================================================
-// Default Behavior Tests
-// ============================================================================
-
 /// Verifies that paths with no matching rules are included by default.
 #[test]
 fn no_matching_rule_defaults_to_include() {
@@ -398,10 +370,6 @@ fn empty_filter_set_allows_all() {
     assert!(set.allows(Path::new("deep/nested/path"), false));
     assert!(set.allows(Path::new("file.any"), false));
 }
-
-// ============================================================================
-// Edge Cases and Complex Patterns
-// ============================================================================
 
 /// Verifies pattern with multiple wildcards.
 #[test]
@@ -475,10 +443,6 @@ fn pattern_with_optional_content() {
     assert!(set.allows(Path::new("file.txt"), false));
 }
 
-// ============================================================================
-// Path Normalization Tests
-// ============================================================================
-
 /// Verifies paths with trailing slashes are handled.
 #[test]
 fn path_with_trailing_components() {
@@ -501,10 +465,6 @@ fn case_sensitive_matching() {
     assert!(set.allows(Path::new("Readme.md"), false));
     assert!(set.allows(Path::new("README.MD"), false));
 }
-
-// ============================================================================
-// Interaction with Directory Flag Tests
-// ============================================================================
 
 /// Verifies is_dir parameter affects directory-only rules.
 #[test]

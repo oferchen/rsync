@@ -499,10 +499,6 @@ mod tests {
         assert!(detector.is_decided());
     }
 
-    // ========================================================================
-    // Comprehensive Binary Detection Tests
-    // ========================================================================
-
     #[test]
     fn binary_detected_for_all_non_at_bytes() {
         // All byte values except '@' (0x40) should trigger binary detection
@@ -533,10 +529,6 @@ mod tests {
         assert!(detector.is_decided());
         assert!(!detector.requires_more_data());
     }
-
-    // ========================================================================
-    // Comprehensive Legacy Detection Tests
-    // ========================================================================
 
     #[test]
     fn legacy_full_prefix_match() {
@@ -616,10 +608,6 @@ mod tests {
         assert!(detector.legacy_prefix_complete());
     }
 
-    // ========================================================================
-    // State Persistence Tests
-    // ========================================================================
-
     #[test]
     fn decision_sticky_after_binary() {
         let mut detector = NegotiationPrologueDetector::new();
@@ -646,10 +634,6 @@ mod tests {
         assert!(detector.is_legacy());
         assert!(!detector.is_binary());
     }
-
-    // ========================================================================
-    // Reset Tests
-    // ========================================================================
 
     #[test]
     fn reset_after_binary() {
@@ -694,10 +678,6 @@ mod tests {
         assert!(detector.is_legacy());
     }
 
-    // ========================================================================
-    // Copy Prefix Tests
-    // ========================================================================
-
     #[test]
     fn copy_buffered_prefix_exact_size() {
         let mut detector = NegotiationPrologueDetector::new();
@@ -734,10 +714,6 @@ mod tests {
 
         assert_eq!(copied, 0);
     }
-
-    // ========================================================================
-    // Edge Cases
-    // ========================================================================
 
     #[test]
     fn observe_empty_before_any_data() {
@@ -795,10 +771,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Clone Tests
-    // ========================================================================
-
     #[test]
     fn clone_preserves_state() {
         let mut original = NegotiationPrologueDetector::new();
@@ -831,10 +803,6 @@ mod tests {
         assert!(!cloned.legacy_prefix_complete());
         assert_eq!(cloned.buffered_len(), 4);
     }
-
-    // ========================================================================
-    // Debug Trait Tests
-    // ========================================================================
 
     #[test]
     fn debug_format_new() {

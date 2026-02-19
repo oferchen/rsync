@@ -99,10 +99,6 @@ fn log_code_wire_values_match_upstream_rsync_3_4_1() {
     }
 }
 
-// ============================================================================
-// Message Code Categorization Tests
-// ============================================================================
-
 /// Verifies that the is_logging() method correctly identifies message codes
 /// that carry human-readable log output.
 #[test]
@@ -191,10 +187,6 @@ fn message_code_flush_alias_is_info() {
     assert_eq!(MessageCode::FLUSH.name(), "MSG_INFO");
 }
 
-// ============================================================================
-// MessageCode/LogCode Conversion Tests
-// ============================================================================
-
 /// Verifies bidirectional conversion between MessageCode and LogCode for
 /// all logging variants.
 #[test]
@@ -278,10 +270,6 @@ fn message_code_and_log_code_numeric_alignment() {
     }
 }
 
-// ============================================================================
-// Parsing Edge Cases
-// ============================================================================
-
 /// Tests that parsing is case-sensitive and rejects incorrect casing.
 #[test]
 fn message_code_parsing_is_case_sensitive() {
@@ -334,10 +322,6 @@ fn log_code_rejects_empty_string() {
     assert_eq!(err.invalid_name(), Some(""));
 }
 
-// ============================================================================
-// Boundary Value Tests for Numeric Parsing
-// ============================================================================
-
 /// Tests from_u8 at boundaries around valid code ranges.
 #[test]
 fn message_code_from_u8_boundary_values() {
@@ -387,10 +371,6 @@ fn log_code_from_u8_boundary_values() {
         );
     }
 }
-
-// ============================================================================
-// ALL Array Consistency Tests
-// ============================================================================
 
 /// Verifies that MessageCode::ALL contains exactly all variants in ascending
 /// numeric order.
@@ -449,10 +429,6 @@ fn log_code_all_is_complete_and_ordered() {
     }
 }
 
-// ============================================================================
-// Trait Implementation Tests
-// ============================================================================
-
 /// Tests that MessageCode implements Clone correctly.
 #[test]
 fn message_code_clone_preserves_value() {
@@ -505,10 +481,6 @@ fn message_code_hash_works_in_hashmap() {
     }
 }
 
-// ============================================================================
-// Error Type Tests
-// ============================================================================
-
 /// Tests ParseMessageCodeError construction and accessors.
 #[test]
 fn parse_message_code_error_construction() {
@@ -556,10 +528,6 @@ fn log_code_conversion_error_accessors() {
     assert_eq!(no_log_err.message_code(), Some(MessageCode::Data));
 }
 
-// ============================================================================
-// Display/Debug Consistency Tests
-// ============================================================================
-
 /// Verifies Display output uses MSG_* format for all MessageCodes.
 #[test]
 fn message_code_display_uses_msg_prefix() {
@@ -596,10 +564,6 @@ fn message_code_debug_differs_from_display() {
         );
     }
 }
-
-// ============================================================================
-// Semantic Tests for Specific Message Codes
-// ============================================================================
 
 /// MSG_DATA (0) is used for raw file data in the multiplexed stream.
 #[test]
@@ -682,10 +646,6 @@ fn msg_no_send_semantics() {
     assert!(!code.is_logging());
 }
 
-// ============================================================================
-// Integration with MessageHeader
-// ============================================================================
-
 /// Verifies that all message codes can be used in MessageHeader construction.
 #[test]
 fn all_message_codes_work_with_header() {
@@ -710,10 +670,6 @@ fn header_round_trip_preserves_all_message_codes() {
         assert_eq!(decoded.code(), code, "Code mismatch for {code:?}");
     }
 }
-
-// ============================================================================
-// Const Context Tests
-// ============================================================================
 
 /// Verifies that MessageCode methods work in const contexts.
 #[test]
@@ -745,10 +701,6 @@ fn log_code_methods_are_const() {
     assert_eq!(INFO_NAME, "FINFO");
     assert_eq!(PARSED, Some(LogCode::Info));
 }
-
-// ============================================================================
-// Edge Case: Sparse Code Value Range
-// ============================================================================
 
 /// Documents and tests the sparse nature of message code values.
 /// The rsync protocol uses non-contiguous values for historical reasons.

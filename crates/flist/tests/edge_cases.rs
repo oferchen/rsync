@@ -10,10 +10,6 @@ use flist::{FileListBuilder, FileListEntry, FileListError, FileListErrorKind};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -31,10 +27,6 @@ fn collect_all_entries(
 ) -> Vec<FileListEntry> {
     walker.map(|r| r.expect("entry should succeed")).collect()
 }
-
-// ============================================================================
-// Empty Directory Edge Cases
-// ============================================================================
 
 /// Verifies handling of an empty directory.
 #[test]
@@ -97,10 +89,6 @@ fn empty_directories_mixed_with_files() {
         ]
     );
 }
-
-// ============================================================================
-// Deep Nesting Edge Cases
-// ============================================================================
 
 /// Verifies handling of deeply nested directory structures.
 #[test]
@@ -168,10 +156,6 @@ fn depth_tracking_accuracy() {
         }
     }
 }
-
-// ============================================================================
-// Special Character Edge Cases
-// ============================================================================
 
 /// Verifies handling of filenames with spaces.
 #[test]
@@ -283,10 +267,6 @@ fn hidden_files() {
     assert!(paths.contains(&PathBuf::from("visible.txt")));
 }
 
-// ============================================================================
-// Single File Root Edge Cases
-// ============================================================================
-
 /// Verifies handling when root is a single file.
 #[test]
 fn single_file_as_root() {
@@ -320,10 +300,6 @@ fn single_file_no_children() {
         "single file should have no children"
     );
 }
-
-// ============================================================================
-// Error Handling Edge Cases
-// ============================================================================
 
 /// Verifies error for non-existent path.
 #[test]
@@ -387,10 +363,6 @@ fn error_debug_format() {
         }
     }
 }
-
-// ============================================================================
-// Boundary Condition Edge Cases
-// ============================================================================
 
 /// Verifies handling of empty filenames (shouldn't exist but test anyway).
 #[test]
@@ -471,10 +443,6 @@ fn large_directory_tree() {
     assert_eq!(paths.len(), 110);
 }
 
-// ============================================================================
-// File Type Edge Cases
-// ============================================================================
-
 /// Verifies handling of zero-length files.
 #[test]
 fn zero_length_files() {
@@ -515,10 +483,6 @@ fn long_filenames() {
     assert_eq!(paths.len(), 1);
     assert_eq!(paths[0], PathBuf::from(&long_name));
 }
-
-// ============================================================================
-// Collect and Iterator Edge Cases
-// ============================================================================
 
 /// Verifies walker implements standard iterator patterns.
 #[test]
@@ -591,10 +555,6 @@ fn walker_for_each() {
     assert_eq!(count, 4); // root + 3 files
 }
 
-// ============================================================================
-// Concurrent/Parallel Safety Edge Cases
-// ============================================================================
-
 /// Verifies multiple walkers can operate on same directory.
 #[test]
 fn multiple_walkers_same_directory() {
@@ -618,10 +578,6 @@ fn multiple_walkers_same_directory() {
     assert_eq!(paths1, paths2);
     assert_eq!(paths2, paths3);
 }
-
-// ============================================================================
-// Path Normalization Edge Cases
-// ============================================================================
 
 /// Verifies handling of paths with redundant separators.
 #[test]

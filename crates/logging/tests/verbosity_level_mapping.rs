@@ -12,10 +12,6 @@
 
 use logging::{DebugFlag, InfoFlag, VerbosityConfig, debug_log, drain_events, info_log, init};
 
-// ============================================================================
-// Test 1: -v (Verbose Level 1) Mapping
-// ============================================================================
-
 /// Verifies -v (level 1) enables basic info output but not debug output.
 #[test]
 fn verbose_level_1_maps_to_basic_info() {
@@ -92,10 +88,6 @@ fn verbose_level_1_message_filtering() {
     assert_eq!(events.len(), 4);
 }
 
-// ============================================================================
-// Test 2: -vv (Verbose Level 2) Increased Verbosity
-// ============================================================================
-
 /// Verifies -vv (level 2) increases info levels and enables debug output.
 #[test]
 fn verbose_level_2_increases_verbosity() {
@@ -166,10 +158,6 @@ fn verbose_level_2_message_filtering() {
     assert_eq!(events.len(), 6);
 }
 
-// ============================================================================
-// Test 3: -vvv (Verbose Level 3) Further Increased Verbosity
-// ============================================================================
-
 /// Verifies -vvv (level 3) further increases debug levels.
 #[test]
 fn verbose_level_3_increases_debug_verbosity() {
@@ -236,10 +224,6 @@ fn verbose_level_3_message_filtering() {
     // Should have 6 events (all except the level 3 debug)
     assert_eq!(events.len(), 6);
 }
-
-// ============================================================================
-// Test 4: --quiet (Verbose Level 0) Minimal Output
-// ============================================================================
 
 /// Verifies --quiet (level 0) reduces output to minimal.
 #[test]
@@ -310,10 +294,6 @@ fn quiet_level_0_less_than_level_1() {
     assert!(count0 < count1);
 }
 
-// ============================================================================
-// Test 5: Progressive Verbosity Increase
-// ============================================================================
-
 /// Verifies verbosity levels are strictly progressive.
 #[test]
 fn verbosity_levels_are_progressive() {
@@ -375,10 +355,6 @@ fn higher_levels_emit_more_messages() {
     assert!(events1.len() >= events0.len());
     assert!(events2.len() >= events1.len());
 }
-
-// ============================================================================
-// Test 6: Verbosity Affects Message Filtering
-// ============================================================================
 
 /// Verifies same messages are filtered differently at different verbosity levels.
 #[test]

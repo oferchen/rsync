@@ -15,10 +15,6 @@ use super::*;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-// ============================================================================
-// Archive Mode: Permissions Preservation (-p)
-// ============================================================================
-
 /// Test that archive mode preserves file permissions.
 #[cfg(unix)]
 #[test]
@@ -64,10 +60,6 @@ fn archive_preserves_file_permissions() {
     );
 }
 
-// ============================================================================
-// Archive Mode: Timestamp Preservation (-t)
-// ============================================================================
-
 /// Test that archive mode preserves modification times.
 #[test]
 fn archive_preserves_modification_times() {
@@ -110,10 +102,6 @@ fn archive_preserves_modification_times() {
         "modification time should be preserved by archive mode"
     );
 }
-
-// ============================================================================
-// Archive Mode: Recursive Directory Copying (-r)
-// ============================================================================
 
 /// Test that archive mode recursively copies directory contents.
 #[cfg(unix)]
@@ -161,10 +149,6 @@ fn archive_copies_directories_recursively() {
         b"file2"
     );
 }
-
-// ============================================================================
-// Archive Mode: Symlink Preservation (-l)
-// ============================================================================
 
 /// Test that archive mode preserves symbolic links as links.
 #[cfg(unix)]
@@ -222,10 +206,6 @@ fn archive_preserves_symlinks() {
     );
 }
 
-// ============================================================================
-// Archive Mode: Permissions + Times Combined
-// ============================================================================
-
 /// Test that archive mode preserves both permissions and times together.
 #[cfg(unix)]
 #[test]
@@ -264,10 +244,6 @@ fn archive_preserves_permissions_and_times() {
     let dest_mtime = FileTime::from_last_modification_time(&metadata);
     assert_eq!(dest_mtime, mtime, "modification time should be preserved");
 }
-
-// ============================================================================
-// Archive Mode with Overrides
-// ============================================================================
 
 /// Test that --no-perms after -a disables permission preservation.
 #[cfg(unix)]
@@ -351,10 +327,6 @@ fn archive_no_times_skips_time_preservation() {
     );
 }
 
-// ============================================================================
-// Archive Mode: Directory Permissions
-// ============================================================================
-
 /// Test that archive mode preserves directory permissions.
 #[cfg(unix)]
 #[test]
@@ -389,10 +361,6 @@ fn archive_preserves_directory_permissions() {
         "directory permissions should be preserved"
     );
 }
-
-// ============================================================================
-// FIFO (Special File) Test - Requires mkfifo_for_tests helper
-// ============================================================================
 
 /// Test that archive mode can handle FIFO special files.
 /// Note: This test is only run on Unix systems that support mkfifo.

@@ -27,10 +27,6 @@ use std::time::Duration;
 #[cfg(feature = "tracing")]
 const IO_TARGET: &str = "rsync::io";
 
-// ============================================================================
-// Tracing functions (feature-gated)
-// ============================================================================
-
 /// Traces a read operation.
 ///
 /// Emits a tracing event when data is read from the I/O stream.
@@ -203,10 +199,6 @@ pub fn trace_io_summary(total_read: u64, total_written: u64, elapsed: Duration) 
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_io_summary(_total_read: u64, _total_written: u64, _elapsed: Duration) {}
-
-// ============================================================================
-// IoTracer - stateful tracer for aggregating I/O statistics
-// ============================================================================
 
 /// Aggregates statistics during I/O operations.
 ///
@@ -443,10 +435,6 @@ impl IoTracer {
         }
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

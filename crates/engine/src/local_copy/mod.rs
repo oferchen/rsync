@@ -158,10 +158,6 @@ use std::sync::atomic::AtomicUsize;
 
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
 
-// ---------------------------------------------------------------------------
-// Adaptive buffer sizing
-// ---------------------------------------------------------------------------
-
 /// Buffer size for files smaller than 64 KB (8 KB).
 const ADAPTIVE_BUFFER_TINY: usize = 8 * 1024;
 /// Buffer size for files in the 64 KB .. 1 MB range (32 KB).

@@ -16,10 +16,6 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use tempfile::NamedTempFile;
 use transfer::delta_apply::SparseWriteState;
 
-// ============================================================================
-// Basic State Operations
-// ============================================================================
-
 #[test]
 fn sparse_state_initial_pending_is_zero() {
     let state = SparseWriteState::new();
@@ -57,10 +53,6 @@ fn sparse_state_accumulate_large_values() {
     state.accumulate(2_000_000);
     assert_eq!(state.pending(), 3_000_000);
 }
-
-// ============================================================================
-// Flush Operations
-// ============================================================================
 
 #[test]
 fn sparse_state_flush_empty_state_is_noop() {
@@ -106,10 +98,6 @@ fn sparse_state_multiple_flushes() {
     state.flush(&mut cursor).expect("third flush");
     assert_eq!(cursor.position(), 175);
 }
-
-// ============================================================================
-// Write Operations
-// ============================================================================
 
 #[test]
 fn sparse_state_write_empty_data_returns_zero() {
@@ -169,10 +157,6 @@ fn sparse_state_write_mixed_data_surrounded_by_zeros() {
     assert_eq!(result, data.len());
 }
 
-// ============================================================================
-// Finish Operations
-// ============================================================================
-
 #[test]
 fn sparse_state_finish_empty_state() {
     let mut state = SparseWriteState::new();
@@ -204,10 +188,6 @@ fn sparse_state_finish_writes_single_trailing_zero() {
     let buffer = cursor.into_inner();
     assert_eq!(buffer[9], 0);
 }
-
-// ============================================================================
-// Chunk Boundary Tests (CHUNK_SIZE = 32KB)
-// ============================================================================
 
 const CHUNK_SIZE: usize = 32 * 1024;
 
@@ -262,10 +242,6 @@ fn sparse_state_write_data_at_chunk_boundary() {
     assert_eq!(result, CHUNK_SIZE * 2);
 }
 
-// ============================================================================
-// Large Data Tests
-// ============================================================================
-
 #[test]
 fn sparse_state_write_large_zero_run() {
     let mut state = SparseWriteState::new();
@@ -301,10 +277,6 @@ fn sparse_state_interleaved_zeros_and_data() {
     let result = state.write(&mut cursor, &data).expect("write interleaved");
     assert_eq!(result, data.len());
 }
-
-// ============================================================================
-// Real File Tests
-// ============================================================================
 
 #[test]
 fn sparse_state_write_to_real_file() {
@@ -388,10 +360,6 @@ fn sparse_state_creates_actual_hole_on_disk() {
     );
 }
 
-// ============================================================================
-// Edge Cases and Error Handling
-// ============================================================================
-
 #[test]
 fn sparse_state_saturating_accumulate() {
     let mut state = SparseWriteState::new();
@@ -439,10 +407,6 @@ fn sparse_state_nearly_all_zeros_with_single_non_zero() {
     let result = state.write(&mut cursor, &data).expect("nearly all zeros");
     assert_eq!(result, 64 * 1024);
 }
-
-// ============================================================================
-// Integration-style Tests
-// ============================================================================
 
 #[test]
 fn sparse_state_simulates_delta_transfer_pattern() {
@@ -498,10 +462,6 @@ fn sparse_state_sequential_writes_maintain_position() {
     // Total: 1 + 100 + 1 + 200 + 1 = 303
     assert_eq!(final_pos, 303);
 }
-
-// ============================================================================
-// Boundary Alignment Tests
-// ============================================================================
 
 #[test]
 fn sparse_state_16_byte_aligned_zeros() {

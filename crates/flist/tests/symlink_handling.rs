@@ -20,10 +20,6 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -41,10 +37,6 @@ fn collect_all_entries(
 ) -> Vec<FileListEntry> {
     walker.map(|r| r.expect("entry should succeed")).collect()
 }
-
-// ============================================================================
-// Default Symlink Behavior (No Following)
-// ============================================================================
 
 /// Verifies that symlinks are yielded but not followed by default.
 ///
@@ -156,10 +148,6 @@ fn multiple_symlinks_in_directory() {
     );
 }
 
-// ============================================================================
-// Follow Symlinks Behavior
-// ============================================================================
-
 /// Verifies that symlinks are followed when enabled.
 ///
 /// With `follow_symlinks(true)`, the walker descends into symlinked
@@ -259,10 +247,6 @@ fn symlink_preserves_relative_paths_when_following() {
     assert!(file_entry.metadata().is_file());
 }
 
-// ============================================================================
-// Cycle Detection Tests
-// ============================================================================
-
 /// Verifies that symlink cycles are detected and prevented.
 ///
 /// When a symlink points back to an ancestor directory, the walker must
@@ -344,10 +328,6 @@ fn complex_symlink_cycle_detected() {
     assert_eq!(paths, expected);
 }
 
-// ============================================================================
-// Broken Symlink Tests
-// ============================================================================
-
 /// Verifies that broken symlinks (pointing to non-existent targets) are handled.
 ///
 /// A broken symlink still exists as a symlink entry; it just can't be
@@ -387,10 +367,6 @@ fn broken_symlink_metadata_is_symlink() {
 
     assert!(broken_entry.metadata().file_type().is_symlink());
 }
-
-// ============================================================================
-// Root Symlink Tests
-// ============================================================================
 
 /// Verifies behavior when the root itself is a symlink (not followed).
 #[test]
@@ -473,10 +449,6 @@ fn root_symlink_full_paths_use_link_path() {
     assert_eq!(file_entry.full_path(), link.join("file.txt").as_path());
 }
 
-// ============================================================================
-// Symlink Sorting Tests
-// ============================================================================
-
 /// Verifies symlinks are sorted alongside regular files and directories.
 #[test]
 fn symlinks_sorted_with_other_entries() {
@@ -505,10 +477,6 @@ fn symlinks_sorted_with_other_entries() {
         ]
     );
 }
-
-// ============================================================================
-// Relative Symlink Tests
-// ============================================================================
 
 /// Verifies relative symlinks are handled correctly.
 #[test]
@@ -559,10 +527,6 @@ fn parent_relative_symlink() {
     assert!(paths.contains(&PathBuf::from("subdir/link")));
     assert!(paths.contains(&PathBuf::from("subdir/link/file.txt")));
 }
-
-// ============================================================================
-// Symlink to File Tests
-// ============================================================================
 
 /// Verifies symlinks to files are handled when following symlinks.
 #[test]

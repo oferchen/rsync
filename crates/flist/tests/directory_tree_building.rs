@@ -12,10 +12,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -37,10 +33,6 @@ fn collect_all_entries(
 ) -> Vec<FileListEntry> {
     walker.map(|r| r.expect("entry should succeed")).collect()
 }
-
-// ============================================================================
-// Basic Directory Tree Construction Tests
-// ============================================================================
 
 /// Verifies that an empty directory yields only the root entry.
 ///
@@ -219,10 +211,6 @@ fn mixed_files_and_directories_at_multiple_levels() {
     );
 }
 
-// ============================================================================
-// Root Entry Behavior Tests
-// ============================================================================
-
 /// Verifies root entry properties when starting from a directory.
 #[test]
 fn root_entry_properties_for_directory() {
@@ -308,10 +296,6 @@ fn include_root_false_empty_directory_yields_nothing() {
     );
 }
 
-// ============================================================================
-// Entry Metadata Tests
-// ============================================================================
-
 /// Verifies that entry metadata correctly reflects file properties.
 #[test]
 fn entry_metadata_reflects_file_properties() {
@@ -355,10 +339,6 @@ fn directory_entry_metadata() {
         "subdir should be directory"
     );
 }
-
-// ============================================================================
-// Relative Path Construction Tests
-// ============================================================================
 
 /// Verifies relative paths are correctly constructed at various depths.
 #[test]
@@ -428,10 +408,6 @@ fn file_name_returns_basename() {
     assert_eq!(file_entry.file_name(), Some(OsStr::new("file.txt")));
 }
 
-// ============================================================================
-// Full Path Verification Tests
-// ============================================================================
-
 /// Verifies full_path() returns absolute paths.
 #[test]
 fn full_path_is_always_absolute() {
@@ -473,10 +449,6 @@ fn full_path_points_to_correct_location() {
     let content = fs::read(file_entry.full_path()).expect("read file");
     assert_eq!(content, b"specific content");
 }
-
-// ============================================================================
-// Exhaustion and Termination Tests
-// ============================================================================
 
 /// Verifies walker correctly terminates after processing all entries.
 #[test]
@@ -532,10 +504,6 @@ fn walker_works_with_for_loop() {
     assert_eq!(count, 2, "should iterate over root + file");
 }
 
-// ============================================================================
-// Builder Configuration Tests
-// ============================================================================
-
 /// Verifies builder can be cloned and produces equivalent walkers.
 #[test]
 fn builder_clone_produces_equivalent_walker() {
@@ -590,10 +558,6 @@ fn builder_method_chaining() {
         "no root entry should be present"
     );
 }
-
-// ============================================================================
-// Unique Entry Tests (No Duplicates)
-// ============================================================================
 
 /// Verifies that each directory entry is yielded exactly once.
 #[test]
