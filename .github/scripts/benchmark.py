@@ -163,20 +163,20 @@ def main():
         # Create test data
         print("Creating test data...", file=sys.stderr)
 
-        # Small files (1000 x 1KB)
-        for i in range(1000):
+        # Small files (9500 x 1KB = ~9.5 MB)
+        for i in range(9500):
             with open(f"{src}/small/file_{i}.txt", "wb") as f:
                 f.write(os.urandom(1024))
 
-        # Medium files (100 x 100KB)
-        for i in range(100):
+        # Medium files (400 x 100KB = ~40 MB)
+        for i in range(400):
             with open(f"{src}/medium/file_{i}.bin", "wb") as f:
                 f.write(os.urandom(100 * 1024))
 
-        # Large files (10 x 10MB)
-        for i in range(10):
+        # Large files (100 x 1MB = ~100 MB)
+        for i in range(100):
             with open(f"{src}/large/file_{i}.dat", "wb") as f:
-                f.write(os.urandom(10 * 1024 * 1024))
+                f.write(os.urandom(1024 * 1024))
 
         total_size = sum(
             os.path.getsize(os.path.join(dp, f))
