@@ -7,8 +7,9 @@ on:
       - 'docs/**'
       - '*.md'
       - 'LICENSE'
-      - '.github/workflows/ci-skip.yml'
-      - '.github/workflows/_ci-skip-interop.yml'
+      - '.github/**'
+      - 'scripts/**'
+      - 'tools/**'
 
 permissions:
   contents: read
