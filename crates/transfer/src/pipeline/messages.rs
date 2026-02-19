@@ -16,6 +16,7 @@ use crate::delta_apply::ChecksumVerifier;
 /// Messages from the network thread to the disk commit thread.
 ///
 /// Follows a per-file protocol: `Begin -> Chunk* -> Commit | Abort`.
+/// Small single-chunk files may use the coalesced `WholeFile` variant.
 /// The `Shutdown` variant terminates the disk thread.
 pub enum FileMessage {
     /// Start writing a new file.
@@ -24,6 +25,16 @@ pub enum FileMessage {
     Chunk(Vec<u8>),
     /// Finalize the current file (flush, fsync, rename).
     Commit,
+    /// Coalesced message for single-chunk files: combines Begin + one Chunk +
+    /// Commit into a single channel send, reducing futex overhead from 3+
+    /// sends to 1. Used when the sender transmits the entire file as a single
+    /// literal token (common for small files).
+    WholeFile {
+        /// File metadata and configuration.
+        begin: Box<BeginMessage>,
+        /// Complete file data.
+        data: Vec<u8>,
+    },
     /// Abort the current file due to an error.
     Abort {
         /// Human-readable reason for the abort.
