@@ -13,10 +13,6 @@ use transfer::{
     SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD, adaptive_buffer_size, adaptive_token_capacity,
 };
 
-// ============================================================================
-// File List Memory Tests
-// ============================================================================
-
 /// Estimates the memory footprint of a file list entry.
 ///
 /// This approximation accounts for:
@@ -107,10 +103,6 @@ fn file_list_memory_100k_entries() {
         "100K file entries should use less than 50 MB, estimated: {estimated_bytes} bytes"
     );
 }
-
-// ============================================================================
-// Adaptive Buffer Memory Tests
-// ============================================================================
 
 #[test]
 fn adaptive_buffer_small_file_minimal_allocation() {
@@ -225,10 +217,6 @@ fn adaptive_buffer_threshold_boundaries() {
     );
 }
 
-// ============================================================================
-// Streaming Pattern Memory Tests
-// ============================================================================
-
 #[test]
 fn streaming_pattern_bounded_memory() {
     // Verify that streaming processing uses bounded memory
@@ -299,10 +287,6 @@ fn streaming_pattern_monotonic_growth() {
     }
 }
 
-// ============================================================================
-// Peak Memory Tracking Tests
-// ============================================================================
-
 #[test]
 fn peak_memory_single_large_allocation() {
     // Simulate a scenario where we track peak memory
@@ -368,10 +352,6 @@ fn peak_memory_concurrent_buffers() {
     );
 }
 
-// ============================================================================
-// Memory Efficiency Verification Tests
-// ============================================================================
-
 #[test]
 fn memory_efficiency_no_allocation_on_new() {
     // New buffers should not allocate until used
@@ -409,10 +389,6 @@ fn memory_efficiency_slice_reflects_length() {
     buffer.resize_for(50);
     assert_eq!(buffer.as_slice().len(), 50);
 }
-
-// ============================================================================
-// Large-Scale Memory Behavior Tests
-// ============================================================================
 
 #[test]
 fn large_scale_many_small_buffers() {
@@ -480,10 +456,6 @@ fn large_scale_memory_stable_under_iteration() {
     }
 }
 
-// ============================================================================
-// Memory Limit Enforcement Simulation
-// ============================================================================
-
 /// Simulates checking an allocation against a max_alloc limit.
 fn check_allocation_limit(requested: u64, max_alloc: Option<u64>) -> bool {
     match max_alloc {
@@ -530,10 +502,6 @@ fn memory_limit_typical_values() {
         assert!(!check_allocation_limit(limit * 2, Some(limit)));
     }
 }
-
-// ============================================================================
-// Integration: Memory-Efficient File Processing
-// ============================================================================
 
 #[test]
 fn integration_file_processing_bounded_memory() {

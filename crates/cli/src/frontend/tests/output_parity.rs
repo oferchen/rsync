@@ -18,10 +18,6 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-// ---------------------------------------------------------------------------
-// Helper: create a transfer with known file sizes for predictable stats
-// ---------------------------------------------------------------------------
-
 fn create_known_summary(file_contents: &[(&str, &[u8])]) -> (ClientSummary, TempDir) {
     use std::fs;
 
@@ -100,10 +96,6 @@ fn render_itemize(event: &ClientEvent) -> String {
         .expect("render %i %n");
     String::from_utf8(output).expect("utf8")
 }
-
-// ===========================================================================
-// 1. Stats output format parity
-// ===========================================================================
 
 #[test]
 fn parity_stats_output_contains_all_upstream_field_labels() {
@@ -353,10 +345,6 @@ fn parity_stats_includes_totals_after_blank_line() {
     );
 }
 
-// ===========================================================================
-// 2. Totals line format parity
-// ===========================================================================
-
 #[test]
 fn parity_totals_sent_received_line_format() {
     let (summary, _temp) = create_known_summary(&[("total.txt", b"test content")]);
@@ -500,10 +488,6 @@ fn parity_totals_human_readable_mode_uses_units() {
     );
 }
 
-// ===========================================================================
-// 3. Verbose output parity
-// ===========================================================================
-
 #[test]
 fn parity_verbose_lists_filenames_one_per_line() {
     let (summary, _temp) = create_known_summary(&[
@@ -639,10 +623,6 @@ fn parity_verbose_skipped_file_messages_use_upstream_format() {
         "skip message format should match upstream"
     );
 }
-
-// ===========================================================================
-// 4. Itemized changes format parity
-// ===========================================================================
 
 #[test]
 fn parity_itemize_new_file_format_matches_upstream() {
@@ -991,10 +971,6 @@ fn parity_itemize_full_change_pattern() {
     );
 }
 
-// ===========================================================================
-// 5. End-to-end output parity: full transfer with --stats
-// ===========================================================================
-
 #[test]
 fn parity_end_to_end_stats_output_via_run() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -1087,10 +1063,6 @@ fn parity_end_to_end_verbose_output_via_run() {
     );
 }
 
-// ===========================================================================
-// 6. Human-readable format parity
-// ===========================================================================
-
 #[test]
 fn parity_stats_human_readable_disabled_uses_comma_separators() {
     let (summary, _temp) = create_known_summary(&[("comma.txt", &[0u8; 1500])]);
@@ -1133,10 +1105,6 @@ fn parity_stats_human_readable_enabled_uses_unit_suffixes() {
         "human-readable mode should use unit suffixes for large sizes:\n{output}"
     );
 }
-
-// ===========================================================================
-// 7. Dry-run output format parity with itemize changes
-// ===========================================================================
 
 #[test]
 fn parity_dry_run_with_itemize_shows_changes_without_modifying_files() {
@@ -1273,10 +1241,6 @@ fn parity_dry_run_deletion_shows_deleting_prefix() {
         "dry-run must not actually delete files"
     );
 }
-
-// ===========================================================================
-// 8. List-only output format parity (long listing like ls -l)
-// ===========================================================================
 
 #[test]
 fn parity_list_only_format_matches_upstream_structure() {
@@ -1415,10 +1379,6 @@ fn parity_list_only_size_field_is_right_aligned_15_chars() {
     }
 }
 
-// ===========================================================================
-// 9. Error message format parity
-// ===========================================================================
-
 #[test]
 fn parity_error_messages_use_rsync_error_prefix() {
     // Test that error messages follow upstream format: "rsync error: <description>"
@@ -1477,10 +1437,6 @@ fn parity_error_file_not_found_shows_descriptive_message() {
         "error should describe file not found: {error_output}"
     );
 }
-
-// ===========================================================================
-// 9b. Exit code parity for additional error conditions
-// ===========================================================================
 
 #[test]
 fn parity_error_no_args_returns_syntax_error() {
@@ -1590,10 +1546,6 @@ fn parity_error_dry_run_returns_zero_on_success() {
     assert_eq!(code, 0, "dry run should return exit code 0 on success");
 }
 
-// ===========================================================================
-// 10. --info=progress2 overall progress output format
-// ===========================================================================
-
 #[test]
 fn parity_info_progress2_shows_overall_progress_line() {
     use std::fs;
@@ -1685,10 +1637,6 @@ fn parity_info_progress2_shows_to_chk_counter() {
         "progress2 should show to-chk=0/ at completion: {output}"
     );
 }
-
-// ===========================================================================
-// 11. --out-format placeholder parity (%f, %n, %l, etc.)
-// ===========================================================================
 
 #[test]
 fn parity_out_format_f_placeholder_shows_filename() {
@@ -1911,10 +1859,6 @@ fn parity_out_format_literal_text_passthrough() {
         "--out-format should expand %f placeholder: {output}"
     );
 }
-
-// ===========================================================================
-// 11. Verbose level 3+ output parity
-// ===========================================================================
 
 #[test]
 fn parity_verbose_v3_includes_all_v2_info_flags() {
@@ -2196,10 +2140,6 @@ fn parity_verbose_monotonic_debug_levels() {
     }
 }
 
-// ===========================================================================
-// 12. --info flag output parity
-// ===========================================================================
-
 #[test]
 fn parity_info_flag_stats_produces_stats_output() {
     use std::fs;
@@ -2355,10 +2295,6 @@ fn parity_info_flag_copy_shows_copy_messages() {
     assert_eq!(code, 0, "--info=copy should not cause errors");
 }
 
-// ===========================================================================
-// 13. --debug flag output parity
-// ===========================================================================
-
 #[test]
 fn parity_debug_flag_accepted_without_error() {
     use std::fs;
@@ -2479,10 +2415,6 @@ fn parity_debug_flist_produces_file_list_detail() {
     assert_eq!(code, 0, "--debug=flist2 should not fail: {err}");
 }
 
-// ===========================================================================
-// 14. --help format parity
-// ===========================================================================
-
 #[test]
 fn parity_help_exits_successfully() {
     let (code, stdout, _stderr) = run_with_args([OsString::from(RSYNC), OsString::from("--help")]);
@@ -2550,10 +2482,6 @@ fn parity_help_double_dash_only() {
         "--help should list common options:\n{output}"
     );
 }
-
-// ===========================================================================
-// 15. Compression output format parity
-// ===========================================================================
 
 #[test]
 fn parity_compress_flag_accepted_without_error() {

@@ -502,10 +502,6 @@ fn prune_empty_dirs_with_include_exclude_filters() {
     assert!(!ctx.dest.join("code").exists(), "code has no .txt files");
 }
 
-// ========================================================================
-// Additional comprehensive tests
-// ========================================================================
-
 #[test]
 fn prune_empty_dirs_single_file_at_root_no_dirs() {
     // Verify that a source with only a file (no subdirs) works fine with prune

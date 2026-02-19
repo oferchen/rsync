@@ -52,10 +52,6 @@ use signature::{
 use std::io::Cursor;
 use std::num::NonZeroU8;
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
-
 /// Creates a signature index from the provided data.
 fn build_index(data: &[u8]) -> Option<DeltaSignatureIndex> {
     let params = SignatureLayoutParams::new(
@@ -106,10 +102,6 @@ fn verify_round_trip(basis: &[u8], input: &[u8]) -> DeltaScript {
     );
     script
 }
-
-// ============================================================================
-// Data Pattern Tests
-// ============================================================================
 
 /// Verifies delta generation with uniform data (all same bytes).
 ///
@@ -265,10 +257,6 @@ fn text_like_data_pattern() {
         "identical text should be mostly copies: copy={copy_bytes}, literal={literal_bytes}"
     );
 }
-
-// ============================================================================
-// Block Matching Scenarios
-// ============================================================================
 
 /// Verifies that completely different files produce all literal tokens.
 #[test]
@@ -468,10 +456,6 @@ fn block_reordering() {
     );
 }
 
-// ============================================================================
-// Edge Case Tests
-// ============================================================================
-
 /// Verifies delta generation with empty input.
 #[test]
 fn empty_input_produces_empty_script() {
@@ -633,10 +617,6 @@ fn large_file_handling() {
     );
 }
 
-// ============================================================================
-// Block Size Variation Tests
-// ============================================================================
-
 /// Verifies delta generation with small block size.
 #[test]
 fn small_block_size() {
@@ -717,10 +697,6 @@ fn buffer_size_independence() {
     assert_eq!(rec_medium, input);
     assert_eq!(rec_large, input);
 }
-
-// ============================================================================
-// Rolling Checksum Integration Tests
-// ============================================================================
 
 /// Verifies that rolling checksum correctly identifies matching blocks
 /// after sliding past non-matching data.
@@ -808,10 +784,6 @@ fn multiple_scattered_matches() {
     assert_eq!(copy_count, 3, "should find all three scattered blocks");
 }
 
-// ============================================================================
-// Signature Index Tests
-// ============================================================================
-
 /// Verifies that signature index correctly reports block length.
 #[test]
 fn index_block_length_accessor() {
@@ -851,10 +823,6 @@ fn index_returns_none_for_small_data() {
         "small data should not produce index with full blocks"
     );
 }
-
-// ============================================================================
-// Delta Script Structure Tests
-// ============================================================================
 
 /// Verifies DeltaScript byte accounting is accurate.
 #[test]
@@ -933,10 +901,6 @@ fn script_is_empty() {
     assert!(!non_empty.is_empty());
 }
 
-// ============================================================================
-// DeltaGenerator Tests
-// ============================================================================
-
 /// Verifies DeltaGenerator builder pattern.
 #[test]
 fn generator_builder_pattern() {
@@ -1003,10 +967,6 @@ fn generator_default() {
 
     assert_eq!(script1.total_bytes(), script2.total_bytes());
 }
-
-// ============================================================================
-// Apply Delta Tests
-// ============================================================================
 
 /// Verifies apply_delta handles empty script.
 #[test]
@@ -1102,10 +1062,6 @@ fn apply_interleaved_tokens() {
     assert_eq!(reconstructed, expected);
 }
 
-// ============================================================================
-// Hash Collision Resistance Tests
-// ============================================================================
-
 /// Verifies that false positives from rolling checksum are rejected by strong checksum.
 ///
 /// This test creates data designed to have the same weak checksum as a block
@@ -1127,10 +1083,6 @@ fn strong_checksum_rejects_false_positives() {
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, input);
 }
-
-// ============================================================================
-// Stress Tests
-// ============================================================================
 
 /// Stress test with many small modifications throughout the file.
 #[test]
@@ -1189,10 +1141,6 @@ fn alternating_match_regions() {
     );
 }
 
-// ============================================================================
-// Regression Tests
-// ============================================================================
-
 /// Regression test: Ensure basis file position tracking is correct across multiple copies.
 #[test]
 fn regression_basis_position_tracking() {
@@ -1250,10 +1198,6 @@ fn regression_large_literal_then_copy() {
 
     assert_eq!(reconstructed, input);
 }
-
-// ============================================================================
-// Fuzzy Matching Integration Tests
-// ============================================================================
 
 mod fuzzy_matching {
     use matching::{FuzzyMatcher, compute_similarity_score};
@@ -1467,10 +1411,6 @@ mod fuzzy_matching {
     }
 }
 
-// ============================================================================
-// Ring Buffer Specific Tests
-// ============================================================================
-
 mod ring_buffer_behavior {
     use matching::{DeltaGenerator, DeltaSignatureIndex, generate_delta};
     use protocol::ProtocolVersion;
@@ -1547,10 +1487,6 @@ mod ring_buffer_behavior {
         assert!(has_copy, "should find match that spans buffer boundary");
     }
 }
-
-// ============================================================================
-// Algorithm Correctness Tests
-// ============================================================================
 
 mod algorithm_correctness {
     use matching::{DeltaSignatureIndex, DeltaToken, apply_delta, generate_delta};

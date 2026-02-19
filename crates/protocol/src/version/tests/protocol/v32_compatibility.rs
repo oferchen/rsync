@@ -23,10 +23,6 @@
 use crate::error::NegotiationError;
 use crate::version::{ProtocolVersion, select_highest_mutual};
 
-// ============================================================================
-// Protocol 32 Handshake and Negotiation Tests
-// ============================================================================
-
 /// Verifies protocol 32 can be successfully negotiated when offered by peer.
 #[test]
 fn v32_handshake_succeeds_when_peer_offers_v32() {
@@ -91,10 +87,6 @@ fn v32_handshake_handles_duplicate_peer_versions() {
     let result = select_highest_mutual([32, 32, 32, 31]).unwrap();
     assert_eq!(result, ProtocolVersion::V32);
 }
-
-// ============================================================================
-// Protocol 32 Feature Tests
-// ============================================================================
 
 /// Verifies protocol 32 uses binary negotiation.
 #[test]
@@ -222,10 +214,6 @@ fn v32_complete_feature_profile() {
     assert!(!v.uses_fixed_encoding());
 }
 
-// ============================================================================
-// Protocol 32 as NEWEST Tests
-// ============================================================================
-
 /// Verifies v32 is the newest supported protocol.
 #[test]
 fn v32_is_newest_supported() {
@@ -267,10 +255,6 @@ fn v32_rejects_versions_beyond_maximum() {
     let result = ProtocolVersion::from_peer_advertisement(41);
     assert!(result.is_err());
 }
-
-// ============================================================================
-// Backward Compatibility Tests (v32 with older versions)
-// ============================================================================
 
 /// Verifies v32 can downgrade to v31 when peer only supports v31.
 #[test]
@@ -436,10 +420,6 @@ fn v32_backward_compat_prefers_newest_mutual() {
     assert_eq!(result, ProtocolVersion::V32);
 }
 
-// ============================================================================
-// Protocol 32 Ordering and Comparison Tests
-// ============================================================================
-
 /// Verifies v32 ordering relative to other versions.
 #[test]
 fn v32_ordering() {
@@ -493,10 +473,6 @@ fn v32_next_older_navigation() {
     );
 }
 
-// ============================================================================
-// Protocol 32 Conversion Tests
-// ============================================================================
-
 /// Verifies v32 converts to u8.
 #[test]
 fn v32_to_u8_conversion() {
@@ -536,10 +512,6 @@ fn v32_debug_format() {
     let debug = format!("{:?}", ProtocolVersion::V32);
     assert!(debug.contains("32"));
 }
-
-// ============================================================================
-// Protocol 32 Consistency Tests
-// ============================================================================
 
 /// Verifies v32 appears in supported versions list.
 #[test]
@@ -591,10 +563,6 @@ fn v32_is_first_in_supported_list() {
     assert_eq!(versions[0], ProtocolVersion::V32);
 }
 
-// ============================================================================
-// Protocol 32 Error Handling Tests
-// ============================================================================
-
 /// Verifies appropriate error when v32 is not available.
 #[test]
 fn v32_error_when_peer_too_old() {
@@ -626,10 +594,6 @@ fn v32_error_on_only_unsupported_versions() {
     let result = select_highest_mutual([27, 26, 25]);
     assert!(result.is_err());
 }
-
-// ============================================================================
-// Protocol 32 Real-World Scenarios
-// ============================================================================
 
 /// Simulates typical v32 client connecting to v32 server.
 #[test]
@@ -723,10 +687,6 @@ fn v32_future_version_handling() {
     assert_eq!(result, ProtocolVersion::V32);
 }
 
-// ============================================================================
-// Protocol 32 Wire Format Tests
-// ============================================================================
-
 /// Verifies v32 uses modern NDX encoding (delta-based).
 #[test]
 fn v32_uses_modern_ndx_encoding() {
@@ -748,10 +708,6 @@ fn v32_uses_modern_mtime_encoding() {
     // Protocol >= 30 uses varlong encoding for mtime
     assert!(ProtocolVersion::V32.as_u8() >= 30);
 }
-
-// ============================================================================
-// Protocol 32 Capability Flag Tests
-// ============================================================================
 
 /// Verifies v32 supports all known capability flags.
 #[test]
@@ -794,10 +750,6 @@ fn v32_varint_flist_flags_for_negotiation() {
     assert!(!flags.is_empty());
     assert_eq!(flags.bits(), 1 << 7);
 }
-
-// ============================================================================
-// Protocol 32 Algorithm Negotiation Tests
-// ============================================================================
 
 /// Verifies v32 supports XXH128 checksum algorithm.
 #[test]
@@ -882,10 +834,6 @@ fn v32_compression_algorithm_parsing() {
     assert!(CompressionAlgorithm::parse("unknown").is_err());
 }
 
-// ============================================================================
-// Protocol 32 Interoperability Tests
-// ============================================================================
-
 /// Verifies v32 can be used with the protocol codec.
 #[test]
 fn v32_protocol_codec_creation() {
@@ -924,10 +872,6 @@ fn v32_varint_file_list_flags() {
     encode_varint_to_vec(128, &mut buf); // needs 2 bytes
     assert_eq!(buf.len(), 2);
 }
-
-// ============================================================================
-// Protocol 32 Edge Cases and Boundary Tests
-// ============================================================================
 
 /// Verifies v32 handles zero-valued advertisements correctly.
 #[test]

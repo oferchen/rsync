@@ -1,10 +1,6 @@
 use super::common::*;
 use super::*;
 
-// =============================================================================
-// CLI Parsing: -f short option
-// =============================================================================
-
 #[test]
 fn parse_args_recognises_short_f_with_exclude_rule() {
     let parsed = parse_args([
@@ -100,10 +96,6 @@ fn parse_args_recognises_long_filter_separate() {
     assert_eq!(parsed.filters[0], "+ *.rs");
 }
 
-// =============================================================================
-// CLI Parsing: Mixed -f / --filter / -F
-// =============================================================================
-
 #[test]
 fn parse_args_mixes_short_f_and_long_filter() {
     let parsed = parse_args([
@@ -139,10 +131,6 @@ fn parse_args_mixes_short_f_and_filter_equals() {
     assert_eq!(parsed.filters[1], "+ keep.txt");
 }
 
-// =============================================================================
-// CLI Parsing: Multiple rules processed in order
-// =============================================================================
-
 #[test]
 fn parse_args_preserves_filter_rule_order() {
     let parsed = parse_args([
@@ -165,10 +153,6 @@ fn parse_args_preserves_filter_rule_order() {
     assert_eq!(parsed.filters[2], "+ important/");
     assert_eq!(parsed.filters[3], "- *");
 }
-
-// =============================================================================
-// CLI Parsing: --exclude/--include are independent from --filter
-// =============================================================================
 
 #[test]
 fn parse_args_collects_excludes_and_filters_independently() {
@@ -208,10 +192,6 @@ fn parse_args_collects_includes_and_filters_independently() {
     assert_eq!(parsed.filters[0], "- *.log");
 }
 
-// =============================================================================
-// CLI Parsing: Clear rule via -f
-// =============================================================================
-
 #[test]
 fn parse_args_recognises_clear_rule_via_short_f() {
     let parsed = parse_args([
@@ -229,10 +209,6 @@ fn parse_args_recognises_clear_rule_via_short_f() {
     assert_eq!(parsed.filters[0], "- *.bak");
     assert_eq!(parsed.filters[1], "!");
 }
-
-// =============================================================================
-// CLI Parsing: Merge rule via -f
-// =============================================================================
 
 #[test]
 fn parse_args_recognises_merge_rule_via_short_f() {
@@ -264,10 +240,6 @@ fn parse_args_recognises_dot_merge_shorthand_via_short_f() {
     assert_eq!(parsed.filters[0], ". /tmp/rules");
 }
 
-// =============================================================================
-// CLI Parsing: Dir-merge via -f
-// =============================================================================
-
 #[test]
 fn parse_args_recognises_dir_merge_via_short_f() {
     let parsed = parse_args([
@@ -282,10 +254,6 @@ fn parse_args_recognises_dir_merge_via_short_f() {
     assert_eq!(parsed.filters.len(), 1);
     assert_eq!(parsed.filters[0], ": .rsync-filter");
 }
-
-// =============================================================================
-// CLI Parsing: -f with protect/risk/show/hide
-// =============================================================================
 
 #[test]
 fn parse_args_recognises_protect_rule_via_short_f() {
@@ -346,10 +314,6 @@ fn parse_args_recognises_risk_rule_via_short_f() {
     assert_eq!(parsed.filters.len(), 1);
     assert_eq!(parsed.filters[0], "R temp/**");
 }
-
-// =============================================================================
-// Integration: -f excludes files in actual transfers
-// =============================================================================
 
 #[test]
 fn transfer_with_short_f_exclude_skips_matching_files() {
@@ -479,10 +443,6 @@ fn transfer_with_short_f_merge_applies_rules_from_file() {
     assert!(!copied_root.join("skip.tmp").exists());
 }
 
-// =============================================================================
-// Integration: Multiple filter rules processed in order
-// =============================================================================
-
 #[test]
 fn transfer_with_multiple_filters_order_matters() {
     use tempfile::tempdir;
@@ -519,10 +479,6 @@ fn transfer_with_multiple_filters_order_matters() {
     assert!(!copied_root.join("file.bak").exists());
 }
 
-// =============================================================================
-// Integration: --filter=RULE with equals sign
-// =============================================================================
-
 #[test]
 fn transfer_with_filter_equals_excludes_patterns() {
     use tempfile::tempdir;
@@ -550,10 +506,6 @@ fn transfer_with_filter_equals_excludes_patterns() {
     assert!(copied_root.join("keep.txt").exists());
     assert!(!copied_root.join("skip.bak").exists());
 }
-
-// =============================================================================
-// Integration: --exclude is shorthand for --filter='- PATTERN'
-// =============================================================================
 
 #[test]
 fn exclude_and_filter_exclude_produce_same_result() {
@@ -605,10 +557,6 @@ fn exclude_and_filter_exclude_produce_same_result() {
     assert!(!copied2.join("skip.tmp").exists());
 }
 
-// =============================================================================
-// Integration: --include is shorthand for --filter='+ PATTERN'
-// =============================================================================
-
 /// Note: --exclude and --include are processed by `apply_filters` in a fixed
 /// order: include-from, includes, exclude-from, excludes, then --filter rules.
 /// This ensures first-match-wins semantics work correctly when --include and
@@ -648,10 +596,6 @@ fn filter_include_then_exclude_all_via_short_f() {
     assert!(dest_root.join("keep.txt").exists());
     assert!(!dest_root.join("skip.log").exists());
 }
-
-// =============================================================================
-// Integration: --exclude-from is shorthand for --filter='. FILE'
-// =============================================================================
 
 #[test]
 fn exclude_from_and_filter_merge_produce_same_result() {
@@ -716,10 +660,6 @@ fn exclude_from_and_filter_merge_produce_same_result() {
     assert!(copied2.join("keep.txt").exists());
     assert!(!copied2.join("skip.tmp").exists());
 }
-
-// =============================================================================
-// locate_filter_arguments: -f tracking
-// =============================================================================
 
 #[test]
 fn locate_filter_arguments_finds_short_f() {
@@ -796,10 +736,6 @@ fn locate_filter_arguments_interleaves_short_f_and_uppercase_f() {
     assert_eq!(rsync_filter_indices, vec![1, 4]);
 }
 
-// =============================================================================
-// Filter rule parsing: keyword forms via -f
-// =============================================================================
-
 #[test]
 fn parse_filter_directive_include_keyword_via_filter_arg() {
     let result =
@@ -851,10 +787,6 @@ fn parse_filter_directive_colon_dir_merge_shorthand() {
         _ => panic!("expected Rule directive"),
     }
 }
-
-// =============================================================================
-// Integration: Keyword forms work end-to-end
-// =============================================================================
 
 #[test]
 fn transfer_with_filter_keyword_exclude() {
@@ -919,10 +851,6 @@ fn transfer_with_filter_keyword_include_then_exclude_all() {
     assert!(!dest_root.join("skip.log").exists());
 }
 
-// =============================================================================
-// Integration: Short merge shorthand (. FILE) via -f
-// =============================================================================
-
 #[test]
 fn transfer_with_short_f_dot_merge_shorthand() {
     use tempfile::tempdir;
@@ -955,10 +883,6 @@ fn transfer_with_short_f_dot_merge_shorthand() {
     assert!(copied_root.join("keep.txt").exists());
     assert!(!copied_root.join("skip.tmp").exists());
 }
-
-// =============================================================================
-// Integration: Mixed -f and --filter order is preserved
-// =============================================================================
 
 #[test]
 fn transfer_with_mixed_f_and_filter_preserves_order() {
@@ -996,10 +920,6 @@ fn transfer_with_mixed_f_and_filter_preserves_order() {
     assert!(!copied_root.join("c.bak").exists());
 }
 
-// =============================================================================
-// Integration: -f with cluster -avf
-// =============================================================================
-
 #[cfg(unix)]
 #[test]
 fn transfer_with_cluster_avf_excludes_files() {
@@ -1030,10 +950,6 @@ fn transfer_with_cluster_avf_excludes_files() {
     assert!(copied_root.join("keep.txt").exists());
     assert!(!copied_root.join("skip.bak").exists());
 }
-
-// =============================================================================
-// Integration: Multiple wildcard patterns
-// =============================================================================
 
 #[test]
 fn transfer_with_multiple_wildcard_exclude_patterns() {
@@ -1070,10 +986,6 @@ fn transfer_with_multiple_wildcard_exclude_patterns() {
     assert!(!copied_root.join("skip.log").exists());
 }
 
-// =============================================================================
-// Integration: Directory-only patterns (trailing slash)
-// =============================================================================
-
 #[test]
 fn transfer_with_directory_only_exclude_pattern() {
     use tempfile::tempdir;
@@ -1105,10 +1017,6 @@ fn transfer_with_directory_only_exclude_pattern() {
     assert!(copied_root.join("keep.txt").exists());
     assert!(!copied_root.join("skipdir").exists());
 }
-
-// =============================================================================
-// Integration: Anchored patterns (leading slash)
-// =============================================================================
 
 #[test]
 fn transfer_with_anchored_pattern_only_matches_root() {

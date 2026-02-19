@@ -1,10 +1,6 @@
 use super::common::*;
 use super::*;
 
-// ============================================================================
-// Level 0 (default): minimal output, no file listing
-// ============================================================================
-
 /// Verifies that with no verbosity flags, stdout contains no file listing and
 /// no summary totals. Upstream rsync produces no output at verbosity 0 for a
 /// simple file transfer.
@@ -65,10 +61,6 @@ fn level_0_no_summary_totals() {
         "level 0 should not contain 'total size is' line"
     );
 }
-
-// ============================================================================
-// Level 1 (-v): transferred file names shown
-// ============================================================================
 
 /// Verifies that -v produces file names and summary totals.
 #[test]
@@ -231,10 +223,6 @@ fn verbose_transfer_reports_skipped_specials() {
     assert!(rendered.contains("skipping non-regular file \"skip.pipe\""));
 }
 
-// ============================================================================
-// Level 2 (-vv): more detail, descriptor prefix
-// ============================================================================
-
 #[test]
 fn verbose_human_readable_formats_sizes() {
     use tempfile::tempdir;
@@ -361,10 +349,6 @@ fn level_2_includes_summary_totals() {
     );
 }
 
-// ============================================================================
-// Level 3+ (-vvv): maximum detail
-// ============================================================================
-
 /// Verifies that -vvv produces output that is at least as verbose as -vv.
 /// It should still contain the descriptor prefix and totals.
 #[test]
@@ -406,10 +390,6 @@ fn level_3_at_least_as_verbose_as_level_2() {
         "level 3 should show totals, got: {rendered:?}"
     );
 }
-
-// ============================================================================
-// Verbosity with --dry-run: same file listing behavior
-// ============================================================================
 
 /// Verifies that -nv (dry-run + verbose) lists file names on stdout without
 /// modifying the destination, matching upstream behavior.
@@ -479,10 +459,6 @@ fn dry_run_without_verbose_no_file_listing() {
     );
     assert!(!destination.exists());
 }
-
-// ============================================================================
-// Verbosity with --stats: stats always shown at -v or above
-// ============================================================================
 
 /// Verifies that --stats with -v produces both file listings and statistics.
 #[test]
@@ -561,10 +537,6 @@ fn stats_without_verbose_shows_statistics() {
         "--stats should always show Total file size, got: {rendered:?}"
     );
 }
-
-// ============================================================================
-// Verbosity with --delete: deletion messages shown
-// ============================================================================
 
 /// Verifies that -v --delete shows deletion messages for extraneous files.
 #[test]
@@ -651,10 +623,6 @@ fn delete_without_verbose_no_deletion_messages() {
     );
 }
 
-// ============================================================================
-// Short flag (-v) and long flag (--verbose) are equivalent
-// ============================================================================
-
 /// Verifies that --verbose produces the same output shape as -v.
 #[test]
 fn long_verbose_flag_equivalent_to_short() {
@@ -730,10 +698,6 @@ fn parse_args_short_v_equals_long_verbose() {
     assert_eq!(short_parsed.verbosity, 1);
 }
 
-// ============================================================================
-// Multiple -v flags increase level incrementally
-// ============================================================================
-
 /// Verifies that each additional -v increments the verbosity level.
 #[test]
 fn multiple_v_flags_increment_verbosity() {
@@ -803,10 +767,6 @@ fn mixed_verbose_flags_accumulate() {
     assert_eq!(parsed.verbosity, 2);
 }
 
-// ============================================================================
-// --quiet and --no-verbose reset verbosity
-// ============================================================================
-
 /// Verifies that --quiet resets verbosity to 0 regardless of preceding -v flags.
 #[test]
 fn quiet_resets_verbosity_to_zero() {
@@ -863,10 +823,6 @@ fn quiet_flag_produces_no_output() {
     assert_eq!(std::fs::read(destination).expect("read"), b"quiet mode");
 }
 
-// ============================================================================
-// Verbose output content increases across levels
-// ============================================================================
-
 /// Verifies that higher verbosity levels produce progressively more output.
 /// Level 0 < Level 1 < Level 2, measured by stdout byte count.
 #[test]
@@ -922,10 +878,6 @@ fn higher_verbosity_produces_more_output() {
     );
 }
 
-// ============================================================================
-// Verbosity combined with -a (archive)
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn verbose_output_includes_symlink_target() {
@@ -957,10 +909,6 @@ fn verbose_output_includes_symlink_target() {
     assert!(rendered.contains("link.txt -> file.txt"));
 }
 
-// ============================================================================
-// Verbosity default value
-// ============================================================================
-
 /// Verifies that the default parsed verbosity is 0 when no flags are given.
 #[test]
 fn default_verbosity_is_zero() {
@@ -972,10 +920,6 @@ fn default_verbosity_is_zero() {
     .expect("parse no flags");
     assert_eq!(parsed.verbosity, 0);
 }
-
-// ============================================================================
-// Verbose with dry-run + delete
-// ============================================================================
 
 /// Verifies that -nv --delete lists deletion messages without actually deleting.
 #[test]
@@ -1020,10 +964,6 @@ fn verbose_dry_run_with_delete_lists_deletions_without_removing() {
         b"orphan"
     );
 }
-
-// ============================================================================
-// Verbose with --stats and --dry-run
-// ============================================================================
 
 /// Verifies that -nv --stats produces both file listing and statistics block
 /// without modifying the destination.

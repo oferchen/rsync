@@ -39,10 +39,6 @@ use signature::{
 use std::io::Cursor;
 use std::num::{NonZeroU8, NonZeroU32};
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
-
 /// Creates layout params with common defaults for testing.
 fn layout_params(file_len: u64, checksum_len: u8) -> SignatureLayoutParams {
     SignatureLayoutParams::new(
@@ -71,10 +67,6 @@ fn layout_params_with_block(
 fn generate_test_data(size: usize) -> Vec<u8> {
     (0..size).map(|i| ((i * 17 + 31) % 256) as u8).collect()
 }
-
-// ============================================================================
-// Parallel/Sequential Equivalence Tests
-// ============================================================================
 
 mod equivalence {
     //! Tests verifying parallel and sequential produce identical results.
@@ -182,10 +174,6 @@ mod equivalence {
         assert_eq!(parallel.total_bytes(), 0);
     }
 }
-
-// ============================================================================
-// Algorithm Equivalence Tests
-// ============================================================================
 
 mod algorithm_equivalence {
     //! Tests verifying parallel works correctly with all algorithms.
@@ -337,10 +325,6 @@ mod algorithm_equivalence {
     }
 }
 
-// ============================================================================
-// Auto-Selection Tests
-// ============================================================================
-
 mod auto_selection {
     //! Tests for the automatic parallel/sequential selection logic.
 
@@ -437,10 +421,6 @@ mod auto_selection {
     }
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 mod error_handling {
     //! Tests for parallel error handling.
 
@@ -509,10 +489,6 @@ mod error_handling {
         assert!(result.is_err());
     }
 }
-
-// ============================================================================
-// Block Configuration Tests
-// ============================================================================
 
 mod block_configurations {
     //! Tests for various block size configurations.
@@ -595,10 +571,6 @@ mod block_configurations {
     }
 }
 
-// ============================================================================
-// Rolling Checksum Consistency Tests
-// ============================================================================
-
 mod rolling_checksum_consistency {
     //! Tests verifying rolling checksums are computed correctly.
 
@@ -635,10 +607,6 @@ mod rolling_checksum_consistency {
         }
     }
 }
-
-// ============================================================================
-// Performance Tests
-// ============================================================================
 
 mod performance {
     //! Tests for performance characteristics.
@@ -680,10 +648,6 @@ mod performance {
         assert!(PARALLEL_THRESHOLD_BYTES <= 1024 * 1024);
     }
 }
-
-// ============================================================================
-// Determinism Tests
-// ============================================================================
 
 mod determinism {
     //! Tests verifying parallel produces deterministic results.

@@ -14,10 +14,6 @@ use compress::zlib::{
     CompressionLevel, CountingZlibDecoder, CountingZlibEncoder, compress_to_vec, decompress_to_vec,
 };
 
-// =============================================================================
-// SECTION 1: Streaming Compression Edge Cases
-// =============================================================================
-
 #[test]
 fn encoder_flush_behavior() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
@@ -190,10 +186,6 @@ fn encoder_vectored_write_partial_consumption() {
     assert_eq!(decompressed, all_data);
 }
 
-// =============================================================================
-// SECTION 2: Streaming Decompression Edge Cases
-// =============================================================================
-
 #[test]
 fn decoder_small_buffer_reads() {
     let data = b"test data for small buffer reading".repeat(100);
@@ -348,10 +340,6 @@ fn decoder_bytes_read_saturates_at_max() {
     // Bytes read should equal the data length (not saturated)
     assert_eq!(decoder.bytes_read(), data.len() as u64);
 }
-
-// =============================================================================
-// SECTION 3: Error Handling for Corrupted Data
-// =============================================================================
 
 #[test]
 fn decompress_random_garbage() {
@@ -523,10 +511,6 @@ fn decoder_error_recovery() {
     }
 }
 
-// =============================================================================
-// SECTION 4: Boundary and Edge Cases
-// =============================================================================
-
 #[test]
 fn compress_empty_input_all_levels() {
     for level_num in 0..=9 {
@@ -647,10 +631,6 @@ fn compress_ascending_sequence() {
     assert_eq!(decompressed, data);
 }
 
-// =============================================================================
-// SECTION 5: CountingSink Coverage
-// =============================================================================
-
 #[test]
 fn counting_sink_write_returns_exact_length() {
     let mut sink = CountingSink;
@@ -695,10 +675,6 @@ fn counting_sink_with_encoder() {
     assert!(bytes > 0);
     // Data was written to CountingSink (discarded), but bytes were counted
 }
-
-// =============================================================================
-// SECTION 6: Cross-Algorithm Tests (if features enabled)
-// =============================================================================
 
 #[cfg(feature = "lz4")]
 #[test]
@@ -769,10 +745,6 @@ fn zstd_large_data() {
     assert_eq!(decompressed, data);
 }
 
-// =============================================================================
-// SECTION 7: Compression Level Edge Cases
-// =============================================================================
-
 #[test]
 fn compression_level_none_preserves_data_exactly() {
     let test_cases = vec![
@@ -814,10 +786,6 @@ fn compression_level_default_works_correctly() {
     assert_eq!(decompressed, data);
 }
 
-// =============================================================================
-// SECTION 8: Encoder/Decoder Accessor Coverage
-// =============================================================================
-
 #[test]
 fn encoder_get_ref_before_writes() {
     let encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
@@ -855,10 +823,6 @@ fn encoder_bytes_written_before_any_writes() {
     let encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
     assert_eq!(encoder.bytes_written(), 0);
 }
-
-// =============================================================================
-// SECTION 9: Write Trait Implementation Coverage
-// =============================================================================
 
 #[test]
 fn encoder_write_trait_write_method() {

@@ -30,10 +30,6 @@ use protocol::{
     SUPPORTED_PROTOCOLS, select_highest_mutual,
 };
 
-// ============================================================================
-// Test Helper
-// ============================================================================
-
 /// Wrapper to implement ProtocolVersionAdvertisement for testing.
 #[derive(Clone, Copy, Debug)]
 struct VersionAd(u32);
@@ -43,10 +39,6 @@ impl ProtocolVersionAdvertisement for VersionAd {
         self.0
     }
 }
-
-// ============================================================================
-// Protocol Version 27 Tests (Unsupported)
-// ============================================================================
 
 /// Test that protocol 27 is consistently rejected.
 #[test]
@@ -89,10 +81,6 @@ fn multiple_old_versions_reports_oldest() {
         other => panic!("Expected UnsupportedVersion, got: {other:?}"),
     }
 }
-
-// ============================================================================
-// Protocol Version 28 Tests
-// ============================================================================
 
 /// Verify protocol 28 is the oldest supported version.
 #[test]
@@ -149,10 +137,6 @@ fn version_28_capabilities() {
         "v28 lacks always-on safe flist"
     );
 }
-
-// ============================================================================
-// Protocol Version 29 Tests
-// ============================================================================
 
 /// Test negotiation to protocol 29.
 #[test]
@@ -213,10 +197,6 @@ fn version_29_is_last_ascii_negotiation() {
     assert!(!v29.uses_binary_negotiation());
     assert!(!v30.uses_legacy_ascii_negotiation());
 }
-
-// ============================================================================
-// Protocol Version 30 Tests
-// ============================================================================
 
 /// Test negotiation to protocol 30.
 #[test]
@@ -288,10 +268,6 @@ fn version_30_compatibility_flags() {
     assert_eq!(decoded, flags);
 }
 
-// ============================================================================
-// Protocol Version 31 Tests
-// ============================================================================
-
 /// Test negotiation to protocol 31.
 #[test]
 fn version_31_negotiation() {
@@ -323,10 +299,6 @@ fn version_31_safe_file_list_always_enabled() {
     assert!(ProtocolVersion::V31.safe_file_list_always_enabled());
     assert!(ProtocolVersion::V32.safe_file_list_always_enabled());
 }
-
-// ============================================================================
-// Protocol Version 32 Tests
-// ============================================================================
 
 /// Verify protocol 32 is the newest supported version.
 #[test]
@@ -373,10 +345,6 @@ fn version_32_capabilities() {
     assert!(v.supports_flist_times(), "v32 has flist times");
     assert!(!v.uses_old_prefixes(), "v32 uses new prefixes");
 }
-
-// ============================================================================
-// Version Selection Algorithm Tests
-// ============================================================================
 
 /// Test that the highest mutual version is always selected.
 #[test]
@@ -441,10 +409,6 @@ fn handles_sparse_version_sets() {
     assert_eq!(result.as_u8(), 32);
 }
 
-// ============================================================================
-// Future Version Clamping Tests
-// ============================================================================
-
 /// Test that versions 33-40 are clamped to newest supported.
 #[test]
 fn clamps_future_versions_to_newest() {
@@ -487,10 +451,6 @@ fn rejects_versions_above_maximum_advertisement() {
         }
     }
 }
-
-// ============================================================================
-// Backwards Compatibility Tests
-// ============================================================================
 
 /// Simulate negotiation with rsync 2.6.4 (protocol 28).
 #[test]
@@ -543,10 +503,6 @@ fn backwards_compat_downgrade() {
     // Verify we can still communicate using v30 features
     assert!(result.uses_binary_negotiation());
 }
-
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
 
 /// Test empty version list produces NoMutualProtocol error.
 #[test]
@@ -614,10 +570,6 @@ fn error_message_includes_version_range() {
     assert!(msg.contains("28"), "Error should mention min version 28");
     assert!(msg.contains("32"), "Error should mention max version 32");
 }
-
-// ============================================================================
-// Feature Capability Matrix Tests
-// ============================================================================
 
 /// Comprehensive feature matrix test for all supported versions.
 #[test]
@@ -793,10 +745,6 @@ fn all_versions_support_extended_flags() {
     }
 }
 
-// ============================================================================
-// Protocol Version Navigation Tests
-// ============================================================================
-
 /// Test navigation between protocol versions.
 #[test]
 fn version_navigation_next_newer() {
@@ -875,10 +823,6 @@ fn version_offset_roundtrip() {
     }
 }
 
-// ============================================================================
-// Protocol Version Ordering Tests
-// ============================================================================
-
 /// Test that protocol versions are properly ordered.
 #[test]
 fn version_ordering() {
@@ -903,10 +847,6 @@ fn version_equality() {
     assert!(ProtocolVersion::V30 == 30_u8);
     assert!(30_u8 == ProtocolVersion::V30);
 }
-
-// ============================================================================
-// Exhaustive Pairwise Negotiation Tests
-// ============================================================================
 
 /// Test all pairwise combinations of supported versions.
 #[test]
@@ -954,10 +894,6 @@ fn exhaustive_triple_negotiation() {
         }
     }
 }
-
-// ============================================================================
-// Protocol Version Bitmap Tests
-// ============================================================================
 
 /// Test that the supported protocol bitmap is correct.
 #[test]

@@ -18,10 +18,6 @@ use signature::{
     SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
 };
 
-// ============================================================================
-// Test Data Generation
-// ============================================================================
-
 /// Creates test data with specified change percentage.
 ///
 /// The basis file is generated with a deterministic pattern.
@@ -88,10 +84,6 @@ fn build_signature_index(
     let signature = generate_file_signature(data, layout, algorithm).expect("signature");
     DeltaSignatureIndex::from_signature(&signature, algorithm).expect("index")
 }
-
-// ============================================================================
-// Full Delta Pipeline Benchmarks
-// ============================================================================
 
 /// Benchmarks the complete delta transfer pipeline:
 /// signature generation → index construction → delta generation → delta application
@@ -189,10 +181,6 @@ fn bench_full_delta_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Transfer Efficiency Metrics
-// ============================================================================
-
 /// Measures the efficiency of delta encoding by calculating compression ratios.
 ///
 /// This benchmark generates deltas and compares:
@@ -264,10 +252,6 @@ fn bench_transfer_efficiency(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Block Size Impact
-// ============================================================================
-
 /// Benchmarks how different block sizes affect delta generation performance
 /// and compression ratio.
 fn bench_block_size_impact(c: &mut Criterion) {
@@ -323,10 +307,6 @@ fn bench_block_size_impact(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Algorithm Comparison
-// ============================================================================
-
 /// Compares MD4 vs XXH3 signature algorithms for delta generation.
 fn bench_algorithm_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("algorithm_comparison");
@@ -366,10 +346,6 @@ fn bench_algorithm_comparison(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Delta Application Performance
-// ============================================================================
-
 /// Benchmarks the performance of applying deltas to reconstruct files.
 fn bench_delta_application(c: &mut Criterion) {
     let mut group = c.benchmark_group("delta_application");
@@ -402,10 +378,6 @@ fn bench_delta_application(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Memory Usage Benchmarks
-// ============================================================================
 
 /// Benchmarks memory allocation patterns during delta operations.
 fn bench_memory_patterns(c: &mut Criterion) {
@@ -473,10 +445,6 @@ fn bench_memory_patterns(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Criterion Groups
-// ============================================================================
 
 criterion_group!(
     name = benches;

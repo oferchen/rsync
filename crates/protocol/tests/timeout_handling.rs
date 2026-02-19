@@ -10,10 +10,6 @@
 
 use protocol::{MPLEX_BASE, MessageCode, MessageHeader};
 
-// =============================================================================
-// MSG_IO_TIMEOUT Wire Format Tests
-// =============================================================================
-
 /// MSG_IO_TIMEOUT has wire value 33, used by daemon to communicate timeout.
 #[test]
 fn io_timeout_message_code_has_correct_wire_value() {
@@ -51,10 +47,6 @@ fn io_timeout_is_not_logging_message() {
 fn io_timeout_has_no_log_code() {
     assert!(MessageCode::IoTimeout.log_code().is_none());
 }
-
-// =============================================================================
-// Timeout Value Encoding Tests
-// =============================================================================
 
 /// Timeout value of 0 should be encodable (means disable timeout).
 #[test]
@@ -118,10 +110,6 @@ fn timeout_boundary_values() {
     }
 }
 
-// =============================================================================
-// Timeout Message Frame Tests
-// =============================================================================
-
 /// MSG_IO_TIMEOUT should be distinct from MSG_IO_ERROR.
 #[test]
 fn io_timeout_distinct_from_io_error() {
@@ -156,10 +144,6 @@ fn io_timeout_in_sparse_range() {
     }
 }
 
-// =============================================================================
-// Timeout Message Payload Format Tests
-// =============================================================================
-
 /// Timeout payload should be exactly 4 bytes for u32 timeout value.
 #[test]
 fn timeout_payload_is_4_bytes() {
@@ -189,10 +173,6 @@ fn zero_timeout_encodes_as_zeros() {
     assert_eq!(payload, [0, 0, 0, 0]);
 }
 
-// =============================================================================
-// Connection Timeout vs I/O Timeout Distinction
-// =============================================================================
-
 /// Connection timeout and I/O timeout are conceptually distinct.
 /// Connection timeout (--contimeout): affects initial connection establishment
 /// I/O timeout (--timeout): affects ongoing data transfer operations
@@ -209,10 +189,6 @@ fn connection_timeout_vs_io_timeout_semantic_distinction() {
     // not initial connection establishment.
     assert!(io_timeout_code.name().contains("IO"));
 }
-
-// =============================================================================
-// Timeout Range Validity Tests
-// =============================================================================
 
 /// Timeout value 0 means disabled (infinite timeout).
 #[test]
@@ -257,10 +233,6 @@ fn common_timeout_values() {
     }
 }
 
-// =============================================================================
-// Timeout Error Condition Tests
-// =============================================================================
-
 /// Tests for recognizing timeout-related exit code value (30).
 #[test]
 fn timeout_exit_code_is_30() {
@@ -285,10 +257,6 @@ fn timeout_exit_codes_are_distinct() {
     assert_ne!(RERR_TIMEOUT, RERR_CONTIMEOUT);
 }
 
-// =============================================================================
-// MSG_IO_TIMEOUT in Message Code ALL Array
-// =============================================================================
-
 /// MSG_IO_TIMEOUT is included in MessageCode::ALL.
 #[test]
 fn io_timeout_in_all_array() {
@@ -311,10 +279,6 @@ fn io_timeout_array_position() {
     assert!(timeout_pos < noop_pos);
 }
 
-// =============================================================================
-// Timeout Message Display and Debug Tests
-// =============================================================================
-
 /// MSG_IO_TIMEOUT Display format.
 #[test]
 fn io_timeout_display_format() {
@@ -328,10 +292,6 @@ fn io_timeout_debug_format() {
     let debug = format!("{:?}", MessageCode::IoTimeout);
     assert_eq!(debug, "IoTimeout");
 }
-
-// =============================================================================
-// Timeout with Multiplexed Stream Integration
-// =============================================================================
 
 /// MSG_IO_TIMEOUT can be used in multiplexed message headers.
 #[test]
@@ -367,10 +327,6 @@ fn io_timeout_header_round_trip() {
     assert_eq!(decoded.payload_len(), 4);
 }
 
-// =============================================================================
-// Timeout Protocol Version Compatibility
-// =============================================================================
-
 /// MSG_IO_TIMEOUT is available in protocol versions that support multiplexing.
 #[test]
 fn io_timeout_available_in_multiplexed_protocols() {
@@ -382,10 +338,6 @@ fn io_timeout_available_in_multiplexed_protocols() {
     // The code exists and has a valid wire value
     assert!(MessageCode::from_u8(code.as_u8()).is_some());
 }
-
-// =============================================================================
-// Timeout Edge Cases
-// =============================================================================
 
 /// Adjacent wire values to MSG_IO_TIMEOUT are not valid message codes.
 #[test]
@@ -443,10 +395,6 @@ fn io_timeout_as_hashmap_key() {
     assert_eq!(map.get(&MessageCode::IoTimeout), Some(&"timeout"));
 }
 
-// =============================================================================
-// Keepalive and Timeout Interaction Tests
-// =============================================================================
-
 /// Keepalive messages are distinct from timeout messages.
 /// Keepalives maintain connection liveness; timeouts signal protocol-level timeouts.
 #[test]
@@ -468,10 +416,6 @@ fn noop_and_io_timeout_both_valid() {
     assert!(MessageCode::from_u8(42).is_some()); // NoOp
     assert!(MessageCode::from_u8(33).is_some()); // IoTimeout
 }
-
-// =============================================================================
-// Partial Transfer Timeout Handling
-// =============================================================================
 
 /// Timeout during partial transfer should be distinguishable from other errors.
 /// RERR_TIMEOUT (30) is different from RERR_PARTIAL (23).
@@ -496,10 +440,6 @@ fn same_timeout_code_for_flist_and_transfer() {
     let code = MessageCode::IoTimeout;
     assert_eq!(code.as_u8(), 33);
 }
-
-// =============================================================================
-// Timeout Message Sequence Tests
-// =============================================================================
 
 /// MSG_IO_TIMEOUT can appear in a sequence with other messages.
 #[test]
@@ -529,10 +469,6 @@ fn io_timeout_varying_payload_lengths() {
         assert_eq!(header.payload_len(), len);
     }
 }
-
-// =============================================================================
-// Multiplexed Stream send_msg / recv_msg Roundtrip Tests
-// =============================================================================
 
 use protocol::{MessageFrame, MplexReader, MplexWriter, recv_msg, send_msg};
 use std::io::Cursor;
@@ -611,10 +547,6 @@ fn io_timeout_wire_bytes_correct() {
     // Verify payload is the LE-encoded 30
     assert_eq!(&buf[4..], &30u32.to_le_bytes());
 }
-
-// =============================================================================
-// MplexReader Timeout Message Handling Tests
-// =============================================================================
 
 /// MplexReader dispatches MSG_IO_TIMEOUT to the message handler as an OOB message.
 #[test]
@@ -701,10 +633,6 @@ fn mplex_reader_handles_multiple_io_timeouts_interleaved() {
     assert_eq!(*captured, vec![30, 60, 90]);
 }
 
-// =============================================================================
-// MplexWriter Timeout Message Tests
-// =============================================================================
-
 /// MplexWriter can send an IoTimeout message via write_message.
 #[test]
 fn mplex_writer_sends_io_timeout_message() {
@@ -751,10 +679,6 @@ fn mplex_writer_flushes_before_io_timeout() {
     assert_eq!(decoded, 45);
 }
 
-// =============================================================================
-// MessageFrame IoTimeout Tests
-// =============================================================================
-
 /// MessageFrame can carry an IoTimeout with timeout payload.
 #[test]
 fn message_frame_io_timeout_roundtrip() {
@@ -773,10 +697,6 @@ fn message_frame_io_timeout_roundtrip() {
     let timeout_val = u32::from_le_bytes(decoded.payload().try_into().unwrap());
     assert_eq!(timeout_val, 600);
 }
-
-// =============================================================================
-// End-to-End Writer-to-Reader IoTimeout Pipeline
-// =============================================================================
 
 /// Simulates a daemon sending its timeout configuration via MSG_IO_TIMEOUT
 /// and the client receiving it through the MplexReader pipeline.

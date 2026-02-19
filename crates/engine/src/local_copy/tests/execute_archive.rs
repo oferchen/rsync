@@ -16,10 +16,6 @@
 //   4. Functional file transfer with archive mode preserves metadata
 //   5. Builder .archive() and fluent API .archive_options() produce equivalent results
 
-// =============================================================================
-// Section 1: Builder archive() preset enables correct options
-// =============================================================================
-
 #[test]
 fn archive_builder_enables_recursive() {
     let options = LocalCopyOptions::builder()
@@ -132,10 +128,6 @@ fn archive_builder_enables_all_components_together() {
     assert!(options.devices_enabled(), "devices (part of -D)");
     assert!(options.specials_enabled(), "specials (part of -D)");
 }
-
-// =============================================================================
-// Section 2: archive() does NOT enable options outside -rlptgoD
-// =============================================================================
 
 #[test]
 fn archive_does_not_enable_hard_links() {
@@ -294,10 +286,6 @@ fn archive_does_not_enable_acls() {
         "archive must NOT enable ACLs (-A is separate)"
     );
 }
-
-// =============================================================================
-// Section 3: --no-OPTION overrides after archive()
-// =============================================================================
 
 #[test]
 fn archive_then_no_recursive_disables_recursion() {
@@ -467,10 +455,6 @@ fn archive_with_multiple_overrides() {
     assert!(options.specials_enabled());
 }
 
-// =============================================================================
-// Section 4: archive() combined with additional options
-// =============================================================================
-
 #[test]
 fn archive_with_delete_is_sync_mode() {
     let options = LocalCopyOptions::builder()
@@ -539,10 +523,6 @@ fn archive_with_partial() {
     assert!(options.recursive_enabled());
 }
 
-// =============================================================================
-// Section 5: Fluent API archive preset equivalence
-// =============================================================================
-
 #[test]
 fn fluent_archive_options_match_builder_archive() {
     let from_builder = LocalCopyOptions::builder()
@@ -594,10 +574,6 @@ fn fluent_archive_does_not_enable_extras() {
     assert!(!options.compress_enabled());
     assert!(!options.delete_extraneous());
 }
-
-// =============================================================================
-// Section 6: Functional tests -- archive mode file transfers
-// =============================================================================
 
 #[test]
 fn archive_copies_single_file_content() {
@@ -715,10 +691,6 @@ fn archive_preserves_directory_permissions() {
     test_helpers::assert_permissions(&ctx.dest.join("subdir"), 0o750);
 }
 
-// =============================================================================
-// Section 7: Functional tests -- archive mode with overrides
-// =============================================================================
-
 #[test]
 fn archive_no_times_skips_timestamp_preservation() {
     let ctx = test_helpers::setup_copy_test();
@@ -827,10 +799,6 @@ fn archive_no_recursive_disables_recursion_in_options() {
     assert!(options.specials_enabled());
 }
 
-// =============================================================================
-// Section 8: Archive mode summary verification
-// =============================================================================
-
 #[test]
 fn archive_copies_multiple_files_and_reports_summary() {
     let ctx = test_helpers::setup_copy_test();
@@ -879,10 +847,6 @@ fn archive_idempotent_second_run_copies_nothing() {
         .assert();
 }
 
-// =============================================================================
-// Section 9: Builder sync() and backup_preset() verify archive as base
-// =============================================================================
-
 #[test]
 fn sync_preset_includes_all_archive_components() {
     let options = LocalCopyOptions::builder()
@@ -923,10 +887,6 @@ fn backup_preset_includes_all_archive_components() {
     assert!(options.hard_links_enabled());
     assert!(options.partial_enabled());
 }
-
-// =============================================================================
-// Section 10: Edge cases
-// =============================================================================
 
 #[test]
 fn archive_followed_by_archive_is_idempotent() {

@@ -33,10 +33,6 @@ mod tests {
         fs::set_permissions(path, PermissionsExt::from_mode(mode)).expect("set permissions");
     }
 
-    // ========================================================================
-    // Section 1: Basic Permission Tests (rwx)
-    // ========================================================================
-
     #[test]
     fn file_rwx_permissions_preserved_644() {
         let temp = tempdir().expect("tempdir");
@@ -208,10 +204,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Section 2: Special Bits (setuid, setgid, sticky)
-    // ========================================================================
-
     #[test]
     fn setuid_bit_preserved() {
         let temp = tempdir().expect("tempdir");
@@ -374,10 +366,6 @@ mod tests {
         assert_eq!(get_mode(&dest) & 0o7000, 0o0000, "special bits not cleared");
     }
 
-    // ========================================================================
-    // Section 3: Umask Independence
-    // ========================================================================
-
     #[test]
     fn permissions_preserved_regardless_of_umask() {
         use libc::{mode_t, umask};
@@ -486,10 +474,6 @@ mod tests {
         // Special bits should be preserved
         assert_eq!(get_mode(&dest) & 0o7777, 0o6755);
     }
-
-    // ========================================================================
-    // Section 4: Round-trip Preservation
-    // ========================================================================
 
     #[test]
     fn round_trip_preserves_basic_permissions() {
@@ -633,10 +617,6 @@ mod tests {
         assert_eq!(get_mode(&dir2) & 0o7777, mode);
         assert_eq!(get_mode(&dir3) & 0o7777, mode);
     }
-
-    // ========================================================================
-    // Section 5: Edge Cases and Boundary Conditions
-    // ========================================================================
 
     #[test]
     fn permissions_preserved_when_dest_already_correct() {
@@ -820,10 +800,6 @@ mod tests {
             );
         }
     }
-
-    // ========================================================================
-    // Section 6: Integration with MetadataOptions
-    // ========================================================================
 
     #[test]
     fn permissions_with_options_preserve_times_disabled() {

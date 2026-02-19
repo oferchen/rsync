@@ -25,10 +25,6 @@
 #[cfg(feature = "tracing")]
 const FILTER_TARGET: &str = "rsync::filter";
 
-// ============================================================================
-// Tracing functions (feature-gated)
-// ============================================================================
-
 /// Traces a filter rule being added to the filter set.
 ///
 /// Emits a tracing event when a new include/exclude rule is registered.
@@ -176,10 +172,6 @@ pub fn trace_filter_summary(
 ) {
 }
 
-// ============================================================================
-// FilterTracer - stateful tracer for aggregating filter statistics
-// ============================================================================
-
 /// Aggregates statistics during filter operations.
 ///
 /// Tracks rule counts, evaluation statistics, and merge file operations across
@@ -322,10 +314,6 @@ impl FilterTracer {
         }
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -28,10 +28,6 @@ use std::time::{Duration, Instant};
 /// Target name for tracing events, matching rsync's debug category.
 const DEL_TARGET: &str = "rsync::del";
 
-// ============================================================================
-// DeletePhase enum
-// ============================================================================
-
 /// Represents the timing phase of deletion operations.
 ///
 /// Matches rsync's `--delete-before`, `--delete-during`, and `--delete-after`
@@ -55,10 +51,6 @@ impl fmt::Display for DeletePhase {
         }
     }
 }
-
-// ============================================================================
-// Tracing functions (feature-gated)
-// ============================================================================
 
 /// Traces the start of a deletion phase.
 ///
@@ -222,10 +214,6 @@ pub fn trace_delete_summary(
     _elapsed: Duration,
 ) {
 }
-
-// ============================================================================
-// DeleteTracer - stateful tracer for aggregating deletion statistics
-// ============================================================================
 
 /// Aggregates statistics during deletion operations.
 ///
@@ -417,10 +405,6 @@ impl DeleteTracer {
         self.session_start_time = None;
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

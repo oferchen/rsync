@@ -32,10 +32,6 @@ const PATH_MAX: usize = 4096;
 // Leave buffer for filesystem operations
 const SAFE_PATH_LIMIT: usize = PATH_MAX - 256;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Creates a deeply nested directory structure with specified levels and name lengths.
 fn create_deep_structure(root: &Path, levels: usize, dir_name_len: usize) -> PathBuf {
     let mut current = root.to_path_buf();
@@ -53,10 +49,6 @@ fn create_filename_of_length(length: usize, suffix: &str) -> String {
     let padding_len = length - suffix.len();
     format!("{}{}", "a".repeat(padding_len), suffix)
 }
-
-// ============================================================================
-// Basic Long Path Copy Tests
-// ============================================================================
 
 #[test]
 fn execute_copies_file_in_deep_directory() {
@@ -147,10 +139,6 @@ fn execute_copies_directory_with_long_name() {
     );
 }
 
-// ============================================================================
-// Path Approaching PATH_MAX Tests
-// ============================================================================
-
 #[test]
 fn execute_copies_file_near_path_max() {
     let temp = tempdir().expect("tempdir");
@@ -237,10 +225,6 @@ fn execute_copies_combined_long_path_and_long_filename() {
     );
 }
 
-// ============================================================================
-// Multiple Files with Long Paths Tests
-// ============================================================================
-
 #[test]
 fn execute_copies_multiple_files_in_deep_tree() {
     let temp = tempdir().expect("tempdir");
@@ -298,10 +282,6 @@ fn execute_copies_many_files_with_long_names() {
 
     assert_eq!(summary.files_copied(), 10);
 }
-
-// ============================================================================
-// Symlinks with Long Paths Tests (Unix only)
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -409,10 +389,6 @@ fn execute_follows_symlink_to_deep_directory() {
     assert!(!fs::symlink_metadata(&dest_linked).expect("meta").file_type().is_symlink());
 }
 
-// ============================================================================
-// Relative Path Tests
-// ============================================================================
-
 #[test]
 fn execute_with_relative_and_deep_structure() {
     let temp = tempdir().expect("tempdir");
@@ -438,10 +414,6 @@ fn execute_with_relative_and_deep_structure() {
 
     assert!(summary.files_copied() >= 1);
 }
-
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
 
 #[test]
 fn execute_handles_very_deep_structure_gracefully() {
@@ -486,10 +458,6 @@ fn execute_handles_very_deep_structure_gracefully() {
         }
     }
 }
-
-// ============================================================================
-// Metadata Preservation with Long Paths Tests
-// ============================================================================
 
 #[test]
 fn execute_preserves_mtime_for_files_with_long_paths() {
@@ -565,10 +533,6 @@ fn execute_preserves_permissions_for_files_with_long_paths() {
     assert_eq!(dest_perms.mode() & 0o777, 0o640);
 }
 
-// ============================================================================
-// Dry Run with Long Paths Tests
-// ============================================================================
-
 #[test]
 fn execute_dry_run_with_deep_structure() {
     let temp = tempdir().expect("tempdir");
@@ -591,10 +555,6 @@ fn execute_dry_run_with_deep_structure() {
     // Destination should not exist
     assert!(!dest.exists(), "dry run should not create destination");
 }
-
-// ============================================================================
-// Delete with Long Paths Tests
-// ============================================================================
 
 #[test]
 fn execute_delete_removes_deep_structure() {
@@ -628,16 +588,8 @@ fn execute_delete_removes_deep_structure() {
     assert!(dest.join("keep.txt").exists(), "kept file should exist");
 }
 
-// ============================================================================
-// Backup with Long Paths Tests
-// ============================================================================
-
 // Removed complex backup test - backup behavior is thoroughly tested in backups.rs
 // This file focuses on basic long path copying functionality
-
-// ============================================================================
-// Hardlinks with Long Paths Tests (Unix only)
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -682,10 +634,6 @@ fn execute_hardlinks_in_deep_structure() {
     assert_eq!(dst_meta1.ino(), dst_meta2.ino());
 }
 
-// ============================================================================
-// Checksum Mode with Long Paths Tests
-// ============================================================================
-
 #[test]
 fn execute_checksum_mode_works_with_long_paths() {
     let temp = tempdir().expect("tempdir");
@@ -723,10 +671,6 @@ fn execute_checksum_mode_works_with_long_paths() {
     );
 }
 
-// ============================================================================
-// Inplace Mode with Long Paths Tests
-// ============================================================================
-
 #[test]
 fn execute_inplace_with_long_paths() {
     let temp = tempdir().expect("tempdir");
@@ -758,10 +702,6 @@ fn execute_inplace_with_long_paths() {
         b"content for inplace"
     );
 }
-
-// ============================================================================
-// Empty Directories with Long Paths Tests
-// ============================================================================
 
 #[test]
 fn execute_copies_empty_directories_in_deep_structure() {
@@ -798,10 +738,6 @@ fn execute_copies_empty_directories_in_deep_structure() {
         );
     }
 }
-
-// ============================================================================
-// Update Mode with Long Paths Tests
-// ============================================================================
 
 #[test]
 fn execute_update_with_long_paths() {

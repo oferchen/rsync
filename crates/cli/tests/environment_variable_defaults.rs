@@ -45,10 +45,6 @@ impl Drop for EnvGuard {
     }
 }
 
-// ============================================================================
-// RSYNC_PROTECT_ARGS Environment Variable
-// ============================================================================
-
 #[test]
 #[serial]
 fn test_rsync_protect_args_env_enables_protect_args() {
@@ -121,10 +117,6 @@ fn test_no_rsync_protect_args_env() {
     );
 }
 
-// ============================================================================
-// RSYNC_RSH Environment Variable
-// ============================================================================
-
 #[test]
 #[serial]
 fn test_rsync_rsh_env_sets_remote_shell() {
@@ -179,10 +171,6 @@ fn test_no_rsync_rsh_env() {
         "Without RSYNC_RSH, remote_shell should be None"
     );
 }
-
-// ============================================================================
-// RSYNC_PARTIAL_DIR Environment Variable
-// ============================================================================
 
 #[test]
 #[serial]
@@ -252,10 +240,6 @@ fn test_no_rsync_partial_dir_env() {
         "Without RSYNC_PARTIAL_DIR, partial_dir should be None"
     );
 }
-
-// ============================================================================
-// Multiple Environment Variables Interaction
-// ============================================================================
 
 #[test]
 #[serial]

@@ -213,10 +213,6 @@ fn create_test_file(path: &Path, content: &[u8]) {
     fs::write(path, content).expect("write test file");
 }
 
-// ============================================================================
-// Daemon Startup and Basic Connectivity Tests
-// ============================================================================
-
 /// Test that oc-rsync daemon starts successfully and accepts connections.
 ///
 /// This is a smoke test to verify basic daemon functionality before
@@ -308,10 +304,6 @@ fn test_oc_daemon_shutdown_cleanup() {
         "port should be unbound after daemon shutdown"
     );
 }
-
-// ============================================================================
-// Upstream Client Compatibility Tests (Protocol Negotiation)
-// ============================================================================
 
 /// Test upstream rsync 3.4.1 client connecting to oc-rsync daemon.
 ///
@@ -441,10 +433,6 @@ fn test_upstream_3_0_9_client_handshake() {
     let transferred = fs::read(dest_dir.path().join("old.txt")).expect("read transferred file");
     assert_eq!(transferred, b"content for 3.0.9 ancient client");
 }
-
-// ============================================================================
-// File Transfer Tests (Pull from oc-rsync daemon)
-// ============================================================================
 
 /// Test upstream client pulling single file from oc-rsync daemon.
 ///
@@ -652,10 +640,6 @@ fn test_pull_files_with_special_chars_from_oc_daemon() {
     );
 }
 
-// ============================================================================
-// File Transfer Tests (Push to oc-rsync daemon)
-// ============================================================================
-
 /// Test upstream client pushing single file to oc-rsync daemon.
 ///
 /// Verifies reverse transfer direction (client → daemon).
@@ -740,10 +724,6 @@ fn test_push_directory_tree_to_oc_daemon() {
         b"third"
     );
 }
-
-// ============================================================================
-// Metadata Preservation Tests
-// ============================================================================
 
 /// Test that file permissions are preserved during transfer.
 ///
@@ -861,10 +841,6 @@ fn test_pull_preserves_mtime() {
     );
 }
 
-// ============================================================================
-// Protocol-Level Tests
-// ============================================================================
-
 /// Test module listing (#list request) from upstream client.
 ///
 /// Verifies oc-rsync daemon correctly responds to module list requests.
@@ -966,10 +942,6 @@ fn test_manual_protocol_handshake_with_oc_daemon() {
     assert!(got_ok, "should receive @RSYNCD: OK");
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 /// Test error when upstream client requests non-existent module.
 ///
 /// Verifies oc-rsync daemon sends proper @ERROR response.
@@ -1029,10 +1001,6 @@ fn test_error_connection_refused() {
     let result = TcpStream::connect("127.0.0.1:1");
     assert!(result.is_err(), "connection to closed port should fail");
 }
-
-// ============================================================================
-// Compression and Checksum Algorithm Tests
-// ============================================================================
 
 /// Test transfer with compression enabled.
 ///
@@ -1123,10 +1091,6 @@ fn test_pull_with_checksum_algorithm() {
         b"content for checksum test"
     );
 }
-
-// ============================================================================
-// Stress and Edge Case Tests
-// ============================================================================
 
 /// Test transfer of many small files.
 ///

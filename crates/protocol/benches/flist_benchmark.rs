@@ -17,10 +17,6 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use protocol::ProtocolVersion;
 use protocol::flist::{FileEntry, FileListReader, FileListWriter, sort_file_list};
 
-// ============================================================================
-// Test Data Generation
-// ============================================================================
-
 /// Generate realistic file entries with varying path depths and lengths.
 fn generate_file_entries(count: usize) -> Vec<FileEntry> {
     (0..count)
@@ -71,10 +67,6 @@ fn generate_directory_tree(num_dirs: usize, files_per_dir: usize) -> Vec<FileEnt
     entries
 }
 
-// ============================================================================
-// Benchmark: FileEntry Creation
-// ============================================================================
-
 fn bench_file_entry_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("flist_entry_creation");
 
@@ -122,10 +114,6 @@ fn bench_file_entry_creation(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: File List Writing (Encoding)
-// ============================================================================
 
 fn bench_flist_writing(c: &mut Criterion) {
     let mut group = c.benchmark_group("flist_writing");
@@ -181,10 +169,6 @@ fn bench_flist_writing(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: File List Reading (Decoding)
-// ============================================================================
-
 fn bench_flist_reading(c: &mut Criterion) {
     let mut group = c.benchmark_group("flist_reading");
 
@@ -218,10 +202,6 @@ fn bench_flist_reading(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: File List Sorting
-// ============================================================================
-
 fn bench_flist_sorting(c: &mut Criterion) {
     let mut group = c.benchmark_group("flist_sorting");
 
@@ -241,10 +221,6 @@ fn bench_flist_sorting(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: Roundtrip (encode then decode)
-// ============================================================================
 
 fn bench_flist_roundtrip(c: &mut Criterion) {
     let mut group = c.benchmark_group("flist_roundtrip");
@@ -284,10 +260,6 @@ fn bench_flist_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: Protocol Version Comparison
-// ============================================================================
-
 fn bench_protocol_versions(c: &mut Criterion) {
     let mut group = c.benchmark_group("flist_protocol_versions");
 
@@ -317,10 +289,6 @@ fn bench_protocol_versions(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: Compression Efficiency (wire format size)
-// ============================================================================
 
 fn bench_compression_efficiency(c: &mut Criterion) {
     let mut group = c.benchmark_group("flist_compression");
@@ -357,10 +325,6 @@ fn bench_compression_efficiency(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: Large File Lists (stress test)
-// ============================================================================
 
 fn bench_large_file_lists(c: &mut Criterion) {
     let mut group = c.benchmark_group("flist_large");
@@ -411,10 +375,6 @@ fn bench_large_file_lists(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Criterion Groups
-// ============================================================================
 
 criterion_group!(
     name = flist_benchmarks;

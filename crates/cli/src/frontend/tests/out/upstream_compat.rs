@@ -12,10 +12,6 @@
 
 use super::*;
 
-// ============================================================================
-// Upstream %i%n combined format (canonical --itemize-changes format)
-// ============================================================================
-
 #[test]
 fn out_format_itemize_filename_combined_matches_upstream_new_file() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -109,10 +105,6 @@ fn out_format_itemize_space_filename_matches_upstream_output() {
     assert_eq!(output, b">f+++++++++ data.bin\n");
 }
 
-// ============================================================================
-// Upstream %M modification time format
-// ============================================================================
-
 #[test]
 fn out_format_modify_time_follows_upstream_format() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -176,10 +168,6 @@ fn out_format_modify_time_follows_upstream_format() {
     );
 }
 
-// ============================================================================
-// Upstream %t current time format
-// ============================================================================
-
 #[test]
 fn out_format_current_time_follows_upstream_format() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -229,10 +217,6 @@ fn out_format_current_time_follows_upstream_format() {
     assert_eq!(&trimmed[13..14], ":");
     assert_eq!(&trimmed[16..17], ":");
 }
-
-// ============================================================================
-// --out-format suppresses default verbose listing
-// ============================================================================
 
 #[test]
 fn out_format_suppresses_verbose_listing_in_summary() {
@@ -315,10 +299,6 @@ fn out_format_suppresses_verbose_listing_in_summary() {
     );
 }
 
-// ============================================================================
-// Multiple events rendered in order
-// ============================================================================
-
 #[test]
 fn out_format_renders_multiple_files_in_order() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -381,10 +361,6 @@ fn out_format_renders_multiple_files_in_order() {
         );
     }
 }
-
-// ============================================================================
-// Upstream compatibility: complete format with all basic codes
-// ============================================================================
 
 #[test]
 fn out_format_complex_upstream_format_renders_all_fields() {
@@ -459,10 +435,6 @@ fn out_format_complex_upstream_format_renders_all_fields() {
         "should contain 'pid=': {rendered:?}"
     );
 }
-
-// ============================================================================
-// Edge case: literal-only format string
-// ============================================================================
 
 #[test]
 fn out_format_literal_only_string_renders_as_is() {

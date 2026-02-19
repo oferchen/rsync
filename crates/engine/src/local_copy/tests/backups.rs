@@ -1021,10 +1021,6 @@ fn backup_multiple_files_same_directory() {
     }
 }
 
-// ============================================================================
-// Backup with different delete timing variants
-// ============================================================================
-
 #[test]
 fn backup_with_delete_before() {
     let ctx = test_helpers::setup_copy_test();
@@ -1102,10 +1098,6 @@ fn backup_with_delete_delay() {
     assert_eq!(fs::read(dest_root.join("stay.txt")).expect("read dest"), b"stay content");
 }
 
-// ============================================================================
-// Backup with trailing-slash source (copy contents mode)
-// ============================================================================
-
 #[test]
 fn backup_with_trailing_slash_source() {
     let temp = tempdir().expect("tempdir");
@@ -1172,10 +1164,6 @@ fn backup_with_trailing_slash_and_backup_dir() {
     assert_eq!(fs::read(dest.join("report.txt")).expect("read dest"), b"updated report");
 }
 
-// ============================================================================
-// Backup with inplace mode
-// ============================================================================
-
 #[test]
 fn backup_with_inplace_mode() {
     let ctx = test_helpers::setup_copy_test();
@@ -1206,10 +1194,6 @@ fn backup_with_inplace_mode() {
     assert_eq!(fs::read(&backup).expect("read backup"), b"inplace old");
     assert_eq!(fs::read(dest_root.join("file.txt")).expect("read dest"), b"inplace new");
 }
-
-// ============================================================================
-// Backup with --force (directory replaced by file)
-// ============================================================================
 
 #[test]
 fn backup_with_force_directory_replaced_by_file() {
@@ -1243,10 +1227,6 @@ fn backup_with_force_directory_replaced_by_file() {
     assert!(dest_root.join("item").is_file(), "item should be a file now");
     assert_eq!(fs::read(dest_root.join("item")).expect("read dest"), b"file content");
 }
-
-// ============================================================================
-// Backup suffix edge cases
-// ============================================================================
 
 #[test]
 fn backup_suffix_with_dot_prefix() {
@@ -1306,10 +1286,6 @@ fn backup_suffix_with_long_extension() {
     assert_eq!(fs::read(&backup).expect("read backup"), b"old binary");
 }
 
-// ============================================================================
-// Backup interactions with delete + trailing-slash (contents mode)
-// ============================================================================
-
 #[test]
 fn backup_with_delete_and_trailing_slash() {
     let temp = tempdir().expect("tempdir");
@@ -1359,10 +1335,6 @@ fn backup_with_delete_and_trailing_slash() {
     assert_eq!(fs::read(dest.join("remain.txt")).expect("read dest"), b"remain");
 }
 
-// ============================================================================
-// Backup with large file to verify correctness of rename vs copy
-// ============================================================================
-
 #[test]
 fn backup_large_file_preserves_content() {
     let ctx = test_helpers::setup_copy_test();
@@ -1393,10 +1365,6 @@ fn backup_large_file_preserves_content() {
     assert_eq!(fs::read(&backup).expect("read backup"), old_content);
     assert_eq!(fs::read(dest_root.join("large.bin")).expect("read dest"), large_content);
 }
-
-// ============================================================================
-// Backup with multiple directories (recursive mode)
-// ============================================================================
 
 #[test]
 fn backup_recursive_multiple_directories() {
@@ -1450,10 +1418,6 @@ fn backup_recursive_multiple_directories() {
     assert_eq!(fs::read(dest_root.join("dir_a/sub/file_sub.txt")).expect("read"), b"new_sub");
 }
 
-// ============================================================================
-// Backup disabled explicitly after enabling
-// ============================================================================
-
 #[test]
 fn backup_disabled_after_enabling_does_not_create_backups() {
     let ctx = test_helpers::setup_copy_test();
@@ -1483,10 +1447,6 @@ fn backup_disabled_after_enabling_does_not_create_backups() {
     assert!(!backup.exists(), "backup should not exist when backup disabled");
     assert_eq!(fs::read(dest_root.join("file.txt")).expect("read dest"), b"new content here");
 }
-
-// ============================================================================
-// Backup with delete-during (the default delete timing)
-// ============================================================================
 
 #[test]
 fn backup_with_delete_during() {
@@ -1532,10 +1492,6 @@ fn backup_with_delete_during() {
     assert!(!dest_root.join("subdir/remove.txt").exists(), "deleted file should be gone");
     assert_eq!(fs::read(dest_root.join("subdir/keep.txt")).expect("read dest"), b"keep new");
 }
-
-// ============================================================================
-// Backup with empty file
-// ============================================================================
 
 #[test]
 fn backup_empty_file() {
@@ -1595,10 +1551,6 @@ fn backup_to_empty_file() {
     assert_eq!(fs::read(dest_root.join("zeroed.txt")).expect("read dest"), b"");
 }
 
-// ============================================================================
-// Backup-dir with empty suffix (upstream: --backup-dir + --suffix= uses no suffix)
-// ============================================================================
-
 #[test]
 fn backup_dir_with_no_suffix_upstream_behavior() {
     let ctx = test_helpers::setup_copy_test();
@@ -1638,10 +1590,6 @@ fn backup_dir_with_no_suffix_upstream_behavior() {
     assert!(!wrong_backup.exists(), "should not have ~ suffix backup");
 }
 
-// ============================================================================
-// Backup with hidden files (dot-prefixed)
-// ============================================================================
-
 #[test]
 fn backup_hidden_files() {
     let ctx = test_helpers::setup_copy_test();
@@ -1669,10 +1617,6 @@ fn backup_hidden_files() {
     assert_eq!(fs::read(&backup).expect("read backup"), b"old hidden");
     assert_eq!(fs::read(dest_root.join(".hidden")).expect("read dest"), b"new hidden");
 }
-
-// ============================================================================
-// Backup with delete: multiple extraneous files across subdirectories
-// ============================================================================
 
 #[test]
 fn backup_delete_multiple_extraneous_in_subdirs() {
@@ -1726,10 +1670,6 @@ fn backup_delete_multiple_extraneous_in_subdirs() {
     assert_eq!(fs::read(dest_root.join("a/keep.txt")).expect("read"), b"keep");
 }
 
-// ============================================================================
-// Backup with delete: backing up deleted files with suffix only (no backup-dir)
-// ============================================================================
-
 #[test]
 fn backup_delete_with_suffix_only() {
     let ctx = test_helpers::setup_copy_test();
@@ -1773,10 +1713,6 @@ fn backup_delete_with_suffix_only() {
     assert_eq!(fs::read(&backup_extra).expect("read backup"), b"extra");
 }
 
-// ============================================================================
-// Backup: verify no backup created for directory-only changes
-// ============================================================================
-
 #[test]
 fn backup_not_created_for_new_directory() {
     let ctx = test_helpers::setup_copy_test();
@@ -1809,10 +1745,6 @@ fn backup_not_created_for_new_directory() {
     assert!(!backup.exists(), "no backup for newly created files");
 }
 
-// ============================================================================
-// Backup: verify backup-dir uses destination root correctly for relative dirs
-// ============================================================================
-
 #[test]
 fn backup_dir_relative_uses_destination_root() {
     let ctx = test_helpers::setup_copy_test();
@@ -1841,10 +1773,6 @@ fn backup_dir_relative_uses_destination_root() {
     assert!(backup.exists(), "backup missing at {}", backup.display());
     assert_eq!(fs::read(&backup).expect("read backup"), b"old");
 }
-
-// ============================================================================
-// Backup with --checksum mode (forces content comparison)
-// ============================================================================
 
 #[test]
 fn backup_with_checksum_mode() {

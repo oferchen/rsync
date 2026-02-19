@@ -20,10 +20,6 @@ use bandwidth::{
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-// ============================================================================
-// Helper functions
-// ============================================================================
-
 fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
 }
@@ -35,10 +31,6 @@ fn within_tolerance(actual: Duration, expected: Duration, tolerance_percent: f64
     let max = expected.saturating_add(tolerance);
     actual >= min && actual <= max
 }
-
-// ============================================================================
-// 1. Basic Rate Limiting Tests (--bwlimit=100)
-// ============================================================================
 
 mod basic_rate_limiting {
     use super::*;
@@ -117,10 +109,6 @@ mod basic_rate_limiting {
         assert_eq!(sleep.requested(), Duration::from_secs(1));
     }
 }
-
-// ============================================================================
-// 2. Rate with K Suffix (Kilobytes)
-// ============================================================================
 
 mod rate_with_k_suffix {
     use super::*;
@@ -207,10 +195,6 @@ mod rate_with_k_suffix {
         assert_eq!(limit.get(), 2048);
     }
 }
-
-// ============================================================================
-// 3. Rate with M Suffix (Megabytes)
-// ============================================================================
 
 mod rate_with_m_suffix {
     use super::*;
@@ -304,10 +288,6 @@ mod rate_with_m_suffix {
     }
 }
 
-// ============================================================================
-// 4. Rate with G Suffix (Gigabytes)
-// ============================================================================
-
 mod rate_with_g_suffix {
     use super::*;
 
@@ -384,10 +364,6 @@ mod rate_with_g_suffix {
     }
 }
 
-// ============================================================================
-// 5. Rate of 0 (Unlimited)
-// ============================================================================
-
 mod rate_zero_unlimited {
     use super::*;
 
@@ -444,10 +420,6 @@ mod rate_zero_unlimited {
         assert!(limiter.is_none());
     }
 }
-
-// ============================================================================
-// 6. Very Low Rates (e.g., 1 byte/sec)
-// ============================================================================
 
 mod very_low_rates {
     use super::*;
@@ -550,10 +522,6 @@ mod very_low_rates {
     }
 }
 
-// ============================================================================
-// 7. Very High Rates
-// ============================================================================
-
 mod very_high_rates {
     use super::*;
 
@@ -647,10 +615,6 @@ mod very_high_rates {
         assert!(sleep.requested() <= Duration::from_millis(2));
     }
 }
-
-// ============================================================================
-// 8. Rate Changes During Transfer
-// ============================================================================
 
 mod rate_changes_during_transfer {
     use super::*;
@@ -795,10 +759,6 @@ mod rate_changes_during_transfer {
     }
 }
 
-// ============================================================================
-// 9. Burst Behavior
-// ============================================================================
-
 mod burst_behavior {
     use super::*;
 
@@ -916,10 +876,6 @@ mod burst_behavior {
         assert!(limiter.burst_bytes().is_none());
     }
 }
-
-// ============================================================================
-// 10. Rate Limiting with Small Files vs Large Files
-// ============================================================================
 
 mod small_vs_large_files {
     use super::*;
@@ -1040,10 +996,6 @@ mod small_vs_large_files {
         assert!(total >= Duration::from_secs(1));
     }
 }
-
-// ============================================================================
-// 11. Rate Limiting Accuracy Verification
-// ============================================================================
 
 mod rate_limiting_accuracy {
     use super::*;
@@ -1186,10 +1138,6 @@ mod rate_limiting_accuracy {
         assert_eq!(sleep.requested(), Duration::from_secs(10));
     }
 }
-
-// ============================================================================
-// Additional Edge Cases
-// ============================================================================
 
 mod additional_edge_cases {
     use super::*;

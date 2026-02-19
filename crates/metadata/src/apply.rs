@@ -1465,10 +1465,6 @@ mod tests {
         assert_eq!(mode, 0o666);
     }
 
-    // -------------------------------------------------------------------------
-    // Unix Epoch Timestamp Tests
-    // -------------------------------------------------------------------------
-
     #[test]
     fn epoch_timestamp_zero_seconds_is_preserved() {
         let temp = tempdir().expect("tempdir");

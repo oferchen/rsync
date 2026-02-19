@@ -19,10 +19,6 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -51,10 +47,6 @@ fn try_create_file(dir: &Path, name: &str, content: &[u8]) -> bool {
 fn try_create_dir(dir: &Path, name: &str) -> bool {
     fs::create_dir(dir.join(name)).is_ok()
 }
-
-// ============================================================================
-// Basic UTF-8 Characters (Accented Latin Letters)
-// ============================================================================
 
 /// Verifies handling of files with accented Latin characters.
 #[test]
@@ -135,10 +127,6 @@ fn directories_with_accented_names() {
         assert!(paths.contains(&PathBuf::from(format!("{dir_name}/inner.txt"))));
     }
 }
-
-// ============================================================================
-// CJK Characters (Chinese, Japanese, Korean)
-// ============================================================================
 
 /// Verifies handling of Japanese filenames (Hiragana, Katakana, Kanji).
 #[test]
@@ -288,10 +276,6 @@ fn cjk_nested_directories() {
     }
 }
 
-// ============================================================================
-// Emoji Characters
-// ============================================================================
-
 /// Verifies handling of emoji filenames.
 #[test]
 fn emoji_filenames() {
@@ -363,10 +347,6 @@ fn complex_emoji_sequences() {
         assert_eq!(paths.len(), created_count);
     }
 }
-
-// ============================================================================
-// Multi-byte Sequences
-// ============================================================================
 
 /// Verifies handling of various multi-byte UTF-8 sequences.
 #[test]
@@ -441,10 +421,6 @@ fn utf8_byte_length_preservation() {
         assert_eq!(file_name.len(), japanese_name.len());
     }
 }
-
-// ============================================================================
-// Combining Characters
-// ============================================================================
 
 /// Verifies handling of combining characters (diacritical marks).
 #[test]
@@ -533,10 +509,6 @@ fn precomposed_vs_decomposed() {
     );
     assert_eq!(paths.len(), expected_count);
 }
-
-// ============================================================================
-// Right-to-Left Scripts (Arabic, Hebrew)
-// ============================================================================
 
 /// Verifies handling of Arabic filenames.
 #[test]
@@ -649,10 +621,6 @@ fn bidirectional_text() {
     }
 }
 
-// ============================================================================
-// Mixed Scripts in Same Filename
-// ============================================================================
-
 /// Verifies handling of filenames with multiple scripts.
 #[test]
 fn mixed_scripts_single_filename() {
@@ -736,10 +704,6 @@ fn mixed_scripts_nested_paths() {
         ))));
     }
 }
-
-// ============================================================================
-// Edge Cases and Boundary Conditions
-// ============================================================================
 
 /// Verifies handling of maximum-length UTF-8 filenames.
 #[test]
@@ -918,10 +882,6 @@ fn path_methods_utf8() {
     }
 }
 
-// ============================================================================
-// Supplementary Multilingual Plane Characters
-// ============================================================================
-
 /// Verifies handling of characters from the Supplementary Multilingual Plane (SMP).
 #[test]
 fn supplementary_plane_characters() {
@@ -954,10 +914,6 @@ fn supplementary_plane_characters() {
         assert_eq!(paths.len(), created_count);
     }
 }
-
-// ============================================================================
-// Special Unicode Categories
-// ============================================================================
 
 /// Verifies handling of mathematical and technical symbols.
 #[test]

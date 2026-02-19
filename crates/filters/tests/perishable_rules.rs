@@ -10,10 +10,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Basic Perishable Rule Tests
-// ============================================================================
-
 /// Verifies perishable exclude is ignored during deletion checks.
 ///
 /// From rsync man page: "The p is for perishable, which means that this
@@ -51,10 +47,6 @@ fn perishable_flag_tracked() {
     assert!(perishable.is_perishable());
     assert!(!non_perishable.is_perishable());
 }
-
-// ============================================================================
-// Perishable Include Rules
-// ============================================================================
 
 /// Verifies perishable include is ignored during deletion.
 #[test]
@@ -96,10 +88,6 @@ fn perishable_and_non_perishable_includes() {
     assert!(!set.allows_deletion(Path::new("temporary/file.txt"), false));
 }
 
-// ============================================================================
-// Perishable with Delete-Excluded
-// ============================================================================
-
 /// Verifies perishable affects delete-excluded behavior.
 #[test]
 fn perishable_delete_excluded() {
@@ -119,10 +107,6 @@ fn non_perishable_delete_excluded() {
     // For delete-excluded, the excluded file can be deleted
     assert!(set.allows_deletion_when_excluded_removed(Path::new("scratch.tmp"), false));
 }
-
-// ============================================================================
-// Perishable with Rule Ordering
-// ============================================================================
 
 /// Verifies perishable exclude before non-perishable include.
 #[test]
@@ -166,10 +150,6 @@ fn non_perishable_exclude_before_perishable_include() {
     assert!(!set.allows_deletion(Path::new("document.txt"), false));
 }
 
-// ============================================================================
-// Perishable with Directory Patterns
-// ============================================================================
-
 /// Verifies perishable with directory pattern.
 #[test]
 fn perishable_directory_pattern() {
@@ -202,10 +182,6 @@ fn perishable_nested_directory() {
     assert!(set.allows_deletion(Path::new("build/debug/file"), false));
     assert!(!set.allows_deletion(Path::new("build/release/binary"), false));
 }
-
-// ============================================================================
-// Perishable with Protect/Risk
-// ============================================================================
 
 /// Verifies perishable exclude with protect.
 #[test]
@@ -247,10 +223,6 @@ fn perishable_with_risk() {
     assert!(!set.allows_deletion(Path::new("archive/current/file"), false));
 }
 
-// ============================================================================
-// Perishable with Side Modifiers
-// ============================================================================
-
 /// Verifies perishable with sender-only rule.
 #[test]
 fn perishable_sender_only() {
@@ -280,10 +252,6 @@ fn perishable_receiver_only() {
     // Deletion: perishable is ignored, so file is deletable
     assert!(set.allows_deletion(Path::new("file.tmp"), false));
 }
-
-// ============================================================================
-// Perishable with Clear
-// ============================================================================
 
 /// Verifies clear removes perishable rules.
 #[test]
@@ -315,10 +283,6 @@ fn perishable_after_clear() {
     assert!(!set.allows(Path::new("file.tmp"), false));
     assert!(set.allows_deletion(Path::new("file.tmp"), false));
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Verifies perishable with empty filter set.
 #[test]
