@@ -1802,10 +1802,6 @@ mod tests {
         assert_eq!(result.len(), 9, "delete format should be 9 characters");
     }
 
-    // ===========================================================================
-    // End-to-end render tests: parse + render + verify output
-    // ===========================================================================
-
     use super::super::parser::parse_out_format;
 
     fn render_format(format_str: &str, event: &ClientEvent) -> String {

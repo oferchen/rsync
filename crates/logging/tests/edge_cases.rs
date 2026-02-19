@@ -10,10 +10,6 @@ use logging::{
     drain_events, info_log, init,
 };
 
-// ============================================================================
-// Empty Message Tests
-// ============================================================================
-
 /// Verifies empty string messages are handled correctly.
 #[test]
 fn empty_message_info_log() {
@@ -73,10 +69,6 @@ fn whitespace_only_message() {
         _ => panic!("expected info event"),
     }
 }
-
-// ============================================================================
-// Special Character Tests
-// ============================================================================
 
 /// Verifies newlines in messages are preserved.
 #[test]
@@ -201,10 +193,6 @@ fn message_with_quotes() {
     }
 }
 
-// ============================================================================
-// Unicode Tests
-// ============================================================================
-
 /// Verifies UTF-8 unicode characters are preserved.
 #[test]
 fn message_with_unicode() {
@@ -267,10 +255,6 @@ fn message_with_rtl_text() {
     let events = drain_events();
     assert_eq!(events.len(), 1);
 }
-
-// ============================================================================
-// Long Line Tests
-// ============================================================================
 
 /// Verifies very long messages are handled.
 #[test]
@@ -347,10 +331,6 @@ fn single_character_message() {
     }
 }
 
-// ============================================================================
-// Flag Token Edge Cases
-// ============================================================================
-
 /// Verifies empty flag token is rejected.
 #[test]
 fn empty_flag_token_rejected() {
@@ -397,10 +377,6 @@ fn flag_with_leading_zeros() {
     let result = apply_info_flag("copy007");
     assert!(result.is_ok());
 }
-
-// ============================================================================
-// Event Draining Edge Cases
-// ============================================================================
 
 /// Verifies draining empty event queue returns empty vec.
 #[test]
@@ -461,10 +437,6 @@ fn many_events() {
         _ => panic!("expected info event"),
     }
 }
-
-// ============================================================================
-// Diagnostic Event Structure Tests
-// ============================================================================
 
 /// Verifies DiagnosticEvent::Info contains all fields.
 #[test]
@@ -554,10 +526,6 @@ fn diagnostic_event_debug_trait() {
     assert!(debug_str.contains("Io"));
     assert!(debug_str.contains("debug trait test"));
 }
-
-// ============================================================================
-// Configuration Edge Cases
-// ============================================================================
 
 /// Verifies VerbosityConfig implements Default.
 #[test]

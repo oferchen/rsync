@@ -15,10 +15,6 @@ use logging::{
     info_gte, info_log, init,
 };
 
-// ============================================================================
-// Verbose Level 2 Configuration Tests
-// ============================================================================
-
 /// Verifies -vv enables enhanced info flags.
 #[test]
 fn verbose_level_2_enables_enhanced_info_flags() {
@@ -79,10 +75,6 @@ fn verbose_level_2_is_superset_of_level_1() {
     assert!(config2.info.stats >= config1.info.stats);
     assert!(config2.info.symsafe >= config1.info.symsafe);
 }
-
-// ============================================================================
-// Additional Details Output Tests
-// ============================================================================
 
 /// Verifies level 2 outputs additional miscellaneous details.
 #[test]
@@ -237,10 +229,6 @@ fn verbose_level_2_outputs_deltasum_debug_info() {
     assert!(deltasum_debug.contains(&"block size: 700 bytes"));
 }
 
-// ============================================================================
-// Skipped Files Output Tests
-// ============================================================================
-
 /// Verifies level 2 shows skipped files via Skip flag.
 #[test]
 fn verbose_level_2_shows_skipped_files() {
@@ -325,10 +313,6 @@ fn verbose_level_2_shows_skip_reasons() {
         }
     }
 }
-
-// ============================================================================
-// Output Format Matching Tests
-// ============================================================================
 
 /// Verifies mount point messages match rsync format.
 #[test]
@@ -432,10 +416,6 @@ fn verbose_level_2_remove_messages_match_format() {
     assert!(remove_msgs[0].contains("removing") || remove_msgs[0].contains("deleting"));
 }
 
-// ============================================================================
-// -vv Flag Equivalence Tests
-// ============================================================================
-
 /// Verifies that -vv is equivalent to from_verbose_level(2).
 #[test]
 fn vv_flag_equals_verbose_level_2() {
@@ -483,10 +463,6 @@ fn vv_flag_does_not_enable_level_3_features() {
     assert!(!debug_gte(DebugFlag::Recv, 1));
     assert!(!debug_gte(DebugFlag::Send, 1));
 }
-
-// ============================================================================
-// Mixed Output Tests
-// ============================================================================
 
 /// Verifies level 2 produces mixed info and debug output.
 #[test]
@@ -551,10 +527,6 @@ fn verbose_level_2_preserves_chronological_order() {
         _ => panic!("expected info event"),
     }
 }
-
-// ============================================================================
-// Filter Debug Output Tests
-// ============================================================================
 
 /// Verifies level 2 shows filter rule processing.
 #[test]
@@ -622,10 +594,6 @@ fn verbose_level_2_shows_deletion_debug() {
     assert_eq!(del_msgs.len(), 3);
     assert!(del_msgs.iter().all(|m| m.contains("delete")));
 }
-
-// ============================================================================
-// Performance and Practical Tests
-// ============================================================================
 
 /// Verifies level 2 handles large number of events efficiently.
 #[test]

@@ -9,10 +9,6 @@
 use protocol::{CompatibilityFlags, KnownCompatibilityFlag};
 use std::io::Cursor;
 
-// ============================================================================
-// Individual Flag Encoding Tests
-// ============================================================================
-
 #[test]
 #[ignore]
 fn print_all_flag_encodings() {
@@ -153,10 +149,6 @@ fn test_id0_names_flag_encoding() {
     assert_eq!(buf, vec![129, 0], "CF_ID0_NAMES encodes as [129, 0]");
 }
 
-// ============================================================================
-// All Known Flags Validation
-// ============================================================================
-
 #[test]
 fn test_all_known_flags_have_unique_bits() {
     let all_flags = [
@@ -256,10 +248,6 @@ fn test_known_compatibility_flag_enum_all_array() {
     );
 }
 
-// ============================================================================
-// Combined Flags Encoding Tests
-// ============================================================================
-
 #[test]
 fn test_combined_flags_encoding() {
     let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
@@ -309,10 +297,6 @@ fn test_empty_flags_encoding() {
     assert_eq!(decoded, flags, "round-trip must preserve EMPTY");
 }
 
-// ============================================================================
-// Read/Write I/O Tests
-// ============================================================================
-
 #[test]
 fn test_write_to_and_read_from_io() {
     let flags = CompatibilityFlags::SYMLINK_TIMES
@@ -346,10 +330,6 @@ fn test_decode_from_slice_mut() {
     assert_eq!(decoded, flags, "must decode the flags");
     assert_eq!(slice, &[0x42, 0x43], "must advance slice past encoded data");
 }
-
-// ============================================================================
-// Unknown Bits Handling Tests
-// ============================================================================
 
 #[test]
 fn test_unknown_bits_detection() {
@@ -395,10 +375,6 @@ fn test_unknown_bits_round_trip() {
         "unknown bits must survive round-trip"
     );
 }
-
-// ============================================================================
-// Iterator Tests
-// ============================================================================
 
 #[test]
 fn test_iter_known_flags() {
@@ -451,10 +427,6 @@ fn test_from_iterator() {
         "FromIterator must OR all flag bits"
     );
 }
-
-// ============================================================================
-// Bitwise Operations Tests
-// ============================================================================
 
 #[test]
 fn test_union_operation() {
@@ -519,10 +491,6 @@ fn test_contains_operation() {
         "must not contain unset flag"
     );
 }
-
-// ============================================================================
-// Display and Debug Tests
-// ============================================================================
 
 #[test]
 fn test_display_empty_flags() {

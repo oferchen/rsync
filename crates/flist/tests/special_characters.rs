@@ -12,10 +12,6 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -47,10 +43,6 @@ fn create_test_dir(root: &Path, name: &OsStr) -> PathBuf {
     fs::create_dir(&path).expect("create test directory");
     path
 }
-
-// ============================================================================
-// 1. Spaces in Filenames
-// ============================================================================
 
 /// Verifies handling of single space in filename.
 #[test]
@@ -169,10 +161,6 @@ fn directory_with_spaces() {
     assert!(paths.contains(&PathBuf::from("dir with spaces/inner file.txt")));
 }
 
-// ============================================================================
-// 2. Quotes (Single and Double)
-// ============================================================================
-
 /// Verifies handling of single quote in filename.
 #[test]
 fn single_quote_in_filename() {
@@ -276,10 +264,6 @@ fn directory_with_quotes() {
     assert!(paths.contains(&PathBuf::from("dir\"with\"double")));
 }
 
-// ============================================================================
-// 3. Backslashes
-// ============================================================================
-
 /// Verifies handling of backslash in filename.
 #[test]
 fn backslash_in_filename() {
@@ -367,10 +351,6 @@ fn directory_with_backslash() {
     assert!(paths.contains(&PathBuf::from("dir\\with\\backslash/inner.txt")));
 }
 
-// ============================================================================
-// 4. Newlines in Filenames
-// ============================================================================
-
 /// Verifies handling of newline in filename.
 #[test]
 fn newline_in_filename() {
@@ -436,10 +416,6 @@ fn directory_with_newline() {
     assert!(paths.contains(&PathBuf::from("dir\nwith\nnewline")));
     assert!(paths.contains(&PathBuf::from("dir\nwith\nnewline/inner.txt")));
 }
-
-// ============================================================================
-// 5. Tab Characters
-// ============================================================================
 
 /// Verifies handling of tab in filename.
 #[test]
@@ -538,10 +514,6 @@ fn directory_with_tab() {
     assert!(paths.contains(&PathBuf::from("dir\twith\ttab")));
     assert!(paths.contains(&PathBuf::from("dir\twith\ttab/inner.txt")));
 }
-
-// ============================================================================
-// 6. Control Characters
-// ============================================================================
 
 /// Verifies handling of bell character (ASCII 7) in filename.
 #[test]
@@ -692,10 +664,6 @@ fn directory_with_control_characters() {
     assert_eq!(paths.len(), 2);
     assert!(paths.contains(&PathBuf::from(OsStr::from_bytes(b"dir\x07control"))));
 }
-
-// ============================================================================
-// 7. Shell Metacharacters (*, ?, [, ])
-// ============================================================================
 
 /// Verifies handling of asterisk in filename.
 #[test]
@@ -933,10 +901,6 @@ fn directory_with_shell_metacharacters() {
     assert!(paths.contains(&PathBuf::from("dir*?[]/inner.txt")));
 }
 
-// ============================================================================
-// 8. Leading/Trailing Dots
-// ============================================================================
-
 /// Verifies handling of single leading dot (hidden file).
 #[test]
 fn leading_single_dot() {
@@ -1060,10 +1024,6 @@ fn dots_in_middle() {
     assert!(paths.contains(&PathBuf::from("file...name.txt")));
 }
 
-// ============================================================================
-// 9. Leading Dashes
-// ============================================================================
-
 /// Verifies handling of single leading dash.
 #[test]
 fn leading_single_dash() {
@@ -1171,10 +1131,6 @@ fn directory_with_leading_dash() {
     assert!(paths.contains(&PathBuf::from("-dir")));
     assert!(paths.contains(&PathBuf::from("-dir/inner.txt")));
 }
-
-// ============================================================================
-// Combined Tests
-// ============================================================================
 
 /// Tests multiple special character categories in same directory.
 #[test]
@@ -1298,10 +1254,6 @@ fn sorting_with_special_characters() {
     }
 }
 
-// ============================================================================
-// 10. Windows Reserved Names (Valid on Unix)
-// ============================================================================
-
 /// Verifies handling of Windows reserved device names (valid on Unix).
 #[test]
 fn windows_reserved_names() {
@@ -1399,10 +1351,6 @@ fn windows_reserved_names_as_directories() {
     assert!(paths.contains(&PathBuf::from("CON/file.txt")));
 }
 
-// ============================================================================
-// 11. Colon Character (Path Separator on Windows)
-// ============================================================================
-
 /// Verifies handling of colon in filename (valid on Unix, invalid on Windows).
 #[test]
 fn colon_in_filename() {
@@ -1458,10 +1406,6 @@ fn directory_with_colon() {
     assert!(paths.contains(&PathBuf::from("dir:with:colon")));
     assert!(paths.contains(&PathBuf::from("dir:with:colon/inner.txt")));
 }
-
-// ============================================================================
-// 12. Additional Punctuation Characters
-// ============================================================================
 
 /// Verifies handling of hash/pound sign in filename.
 #[test]
@@ -1653,10 +1597,6 @@ fn comma_in_filename() {
     assert!(paths.contains(&PathBuf::from("a,b,c.txt")));
 }
 
-// ============================================================================
-// 13. Non-UTF8 Byte Sequences (Unix-specific)
-// ============================================================================
-
 /// Verifies handling of non-UTF8 byte sequences in filenames.
 /// macOS APFS rejects non-UTF8 filenames with EILSEQ, so this test is
 /// Linux/FreeBSD only.
@@ -1723,16 +1663,8 @@ fn directory_with_non_utf8_name() {
     assert_eq!(paths.len(), 2);
 }
 
-// ============================================================================
-// 14. Null Byte Handling
-// ============================================================================
-
 // Note: Null bytes (0x00) cannot be in Unix filenames - the kernel rejects them.
 // This is a fundamental limitation, not something we need to test.
-
-// ============================================================================
-// 15. All ASCII Printable Characters Combined
-// ============================================================================
 
 /// Verifies handling of all ASCII printable characters in one filename.
 #[test]
@@ -1783,10 +1715,6 @@ fn each_ascii_printable_separately() {
 
     assert_eq!(paths.len(), actual_files);
 }
-
-// ============================================================================
-// 16. Edge Cases with Path Components
-// ============================================================================
 
 /// Verifies handling of filename that looks like current directory.
 #[test]
@@ -1880,10 +1808,6 @@ fn only_special_characters() {
     assert_eq!(paths.len(), 28);
 }
 
-// ============================================================================
-// 17. Mixed Whitespace Characters
-// ============================================================================
-
 /// Verifies handling of various whitespace characters.
 #[test]
 fn various_whitespace_characters() {
@@ -1919,10 +1843,6 @@ fn mixed_whitespace_single_file() {
     assert_eq!(paths.len(), 1);
     assert_eq!(paths[0], PathBuf::from("a b\tc d\te.txt"));
 }
-
-// ============================================================================
-// 18. Comprehensive Shell Injection Prevention
-// ============================================================================
 
 /// Verifies handling of filenames that could cause shell injection.
 #[test]
@@ -1977,10 +1897,6 @@ fn escape_sequence_patterns() {
 
     assert_eq!(paths.len(), 7);
 }
-
-// ============================================================================
-// 19. Unicode Normalization Edge Cases
-// ============================================================================
 
 /// Verifies handling of Unicode look-alikes.
 #[test]

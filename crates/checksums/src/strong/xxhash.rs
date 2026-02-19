@@ -13,10 +13,6 @@
 
 use super::StrongDigest;
 
-// ============================================================================
-// XXH64 - Uses xxhash-rust (no runtime SIMD needed, already very fast)
-// ============================================================================
-
 /// Streaming XXH64 hasher used by rsync when negotiated by newer protocols.
 ///
 /// XXH64 is an extremely fast non-cryptographic hash function that produces
@@ -169,10 +165,6 @@ impl StrongDigest for Xxh64 {
     }
 }
 
-// ============================================================================
-// XXH3-64 with runtime SIMD for one-shot operations
-// ============================================================================
-
 /// Streaming XXH3 hasher that produces 64-bit digests.
 ///
 /// The one-shot [`digest`](Self::digest) method uses the `xxh3` crate with
@@ -309,10 +301,6 @@ impl StrongDigest for Xxh3 {
         self.inner.digest().to_le_bytes()
     }
 }
-
-// ============================================================================
-// XXH3-128 with runtime SIMD for one-shot operations
-// ============================================================================
 
 /// Streaming XXH3 hasher that produces 128-bit digests.
 ///
@@ -456,10 +444,6 @@ impl StrongDigest for Xxh3_128 {
         self.inner.digest128().to_le_bytes()
     }
 }
-
-// ============================================================================
-// Runtime SIMD detection query
-// ============================================================================
 
 /// Returns whether the XXH3 one-shot operations use runtime SIMD detection.
 ///

@@ -16,10 +16,6 @@ use bandwidth::{
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-// ============================================================================
-// Helper functions
-// ============================================================================
-
 fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
 }
@@ -37,10 +33,6 @@ fn within_tolerance(actual: Duration, expected: Duration, tolerance_percent: f64
     let max = expected.saturating_add(tolerance);
     actual >= min && actual <= max
 }
-
-// ============================================================================
-// Unit Parsing Tests
-// ============================================================================
 
 #[test]
 fn bwlimit_unit_bytes_explicit() {
@@ -139,10 +131,6 @@ fn bwlimit_unit_default_is_kilobytes() {
     assert_eq!(limit.get(), 100 * 1024);
 }
 
-// ============================================================================
-// Rate Limiting Verification Tests
-// ============================================================================
-
 #[test]
 fn bwlimit_rate_limiting_1kb_per_second() {
     let mut session = recorded_sleep_session();
@@ -203,10 +191,6 @@ fn bwlimit_rate_limiting_multiple_seconds() {
     assert_eq!(sleep.requested(), Duration::from_secs(5));
 }
 
-// ============================================================================
-// Small File Tests
-// ============================================================================
-
 #[test]
 fn bwlimit_small_file_100_bytes() {
     let mut session = recorded_sleep_session();
@@ -253,10 +237,6 @@ fn bwlimit_small_file_accumulated_debt() {
         "Total sleep {total:?} should be at least 900ms"
     );
 }
-
-// ============================================================================
-// Large File Tests
-// ============================================================================
 
 #[test]
 fn bwlimit_large_file_1mb() {
@@ -308,10 +288,6 @@ fn bwlimit_large_file_100mb_chunked() {
         "Total sleep {total:?} should be close to 10 seconds"
     );
 }
-
-// ============================================================================
-// Accuracy / Tolerance Tests
-// ============================================================================
 
 #[test]
 fn bwlimit_accuracy_exact_rate() {
@@ -383,10 +359,6 @@ fn bwlimit_accuracy_double_rate() {
         rate * 2
     );
 }
-
-// ============================================================================
-// Burst Configuration Tests
-// ============================================================================
 
 #[test]
 fn bwlimit_burst_clamps_debt() {
@@ -461,10 +433,6 @@ fn bwlimit_burst_parsing_without_burst() {
     assert!(components.burst().is_none());
 }
 
-// ============================================================================
-// Write Max / Recommended Read Size Tests
-// ============================================================================
-
 #[test]
 fn bwlimit_write_max_scales_with_rate() {
     // Slow rate - small write max
@@ -504,10 +472,6 @@ fn bwlimit_burst_affects_write_max() {
         "Burst should cap write_max"
     );
 }
-
-// ============================================================================
-// Edge Case Tests
-// ============================================================================
 
 #[test]
 fn bwlimit_minimum_rate_512_bytes() {
@@ -597,10 +561,6 @@ fn bwlimit_update_limit_resets_limiter() {
     assert_eq!(sleep.requested(), Duration::from_secs(1));
 }
 
-// ============================================================================
-// Fractional Value Tests
-// ============================================================================
-
 #[test]
 fn bwlimit_fractional_value_half_megabyte() {
     let limit = parse_bandwidth_argument("0.5M")
@@ -626,10 +586,6 @@ fn bwlimit_fractional_value_with_decimal_suffix() {
     // 1.5 * 1,000,000 = 1,500,000
     assert_eq!(limit.get(), 1_500_000);
 }
-
-// ============================================================================
-// Simulated Transfer Tests
-// ============================================================================
 
 #[test]
 fn bwlimit_simulated_small_file_transfer() {
@@ -685,10 +641,6 @@ fn bwlimit_simulated_large_file_transfer() {
         "Transfer should take about {expected:?}, got {total:?}"
     );
 }
-
-// ============================================================================
-// Comparison with Expected Behavior Tests
-// ============================================================================
 
 #[test]
 fn bwlimit_behavior_matches_upstream_semantics_byte_suffix() {
@@ -754,10 +706,6 @@ fn bwlimit_behavior_matches_upstream_semantics_burst() {
     assert_eq!(components.rate().unwrap().get(), 1024 * 1024);
     assert_eq!(components.burst().unwrap().get(), 32 * 1024);
 }
-
-// ============================================================================
-// Rate Limiting Duration Calculation Tests
-// ============================================================================
 
 #[test]
 fn bwlimit_duration_calculation_precise() {

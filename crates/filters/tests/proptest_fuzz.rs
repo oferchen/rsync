@@ -10,10 +10,6 @@ use std::path::Path;
 use filters::{FilterAction, FilterRule, FilterSet, cvs_exclusion_rules, parse_rules};
 use proptest::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Strategies
-// ---------------------------------------------------------------------------
-
 /// Generates completely arbitrary strings (including null bytes, unicode, etc.)
 fn arbitrary_string() -> impl Strategy<Value = String> {
     prop_oneof![
@@ -135,10 +131,6 @@ fn arb_relative_path() -> impl Strategy<Value = String> {
     proptest::collection::vec(segment, 1..5).prop_map(|segments| segments.join("/"))
 }
 
-// ---------------------------------------------------------------------------
-// Tests: Parsing arbitrary strings must never panic
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2000))]
 
@@ -199,10 +191,6 @@ proptest! {
         prop_assert!(result.unwrap().is_empty());
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests: FilterRule construction with arbitrary patterns must not panic
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2000))]
@@ -280,10 +268,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests: FilterSet::from_rules with arbitrary patterns
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
@@ -324,10 +308,6 @@ proptest! {
         let _ = FilterSet::from_rules(all_rules);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests: FilterSet::allows and allows_deletion with arbitrary paths
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2000))]
@@ -376,10 +356,6 @@ proptest! {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests: Roundtrip parse-format-reparse consistency
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -455,10 +431,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests: CVS exclusion patterns
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
@@ -494,10 +466,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests: Merge file parsing with arbitrary content
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
@@ -517,10 +485,6 @@ proptest! {
         let _ = parse_rules(&content, Path::new("<fuzz>"));
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests: Edge cases
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -619,10 +583,6 @@ proptest! {
         prop_assert!(set.allows(Path::new("file.txt"), false));
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests: Deterministic edge cases (not proptest, but important fuzz targets)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn parse_empty_string() {

@@ -79,10 +79,6 @@ pub const fn align_up(len: usize) -> usize {
 pub const fn aligned_overshoot(offset: u64) -> usize {
     (offset & (ALIGN_BOUNDARY as u64 - 1)) as usize
 }
-
-// ============================================================================
-// Optimized Zero Detection
-// ============================================================================
 //
 // These functions use 128-bit integer comparison for fast zero detection,
 // processing 16 bytes at a time. On x86-64, u128 operations are optimized

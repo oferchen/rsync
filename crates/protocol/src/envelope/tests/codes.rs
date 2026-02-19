@@ -1,10 +1,6 @@
 use super::*;
 use std::collections::HashSet;
 
-// ============================================================================
-// Phase 2.13: Test all 18 message codes parse correctly from u8 values
-// ============================================================================
-
 /// Tests that each of the 18 defined message codes parses correctly from its
 /// corresponding u8 value using `MessageCode::from_u8`.
 ///
@@ -117,10 +113,6 @@ fn message_code_all_array_contains_exactly_18_codes_with_correct_values() {
         );
     }
 }
-
-// ============================================================================
-// Phase 2.14: Test unknown code rejection with appropriate errors
-// ============================================================================
 
 /// Tests that `MessageCode::from_u8` returns `None` for values in gaps between
 /// defined codes.
@@ -237,10 +229,6 @@ fn message_code_unknown_error_displays_invalid_value() {
     );
 }
 
-// ============================================================================
-// Roundtrip conversion tests between MessageCode and u8
-// ============================================================================
-
 /// Tests bidirectional conversion: MessageCode -> u8 -> MessageCode for all codes.
 #[test]
 fn message_code_roundtrip_via_as_u8_and_from_u8() {
@@ -307,10 +295,6 @@ fn message_code_from_u8_agrees_with_try_from_on_failure() {
         assert_eq!(via_try, None, "TryFrom<u8>({value}) should return None");
     }
 }
-
-// ============================================================================
-// Display and Debug trait tests
-// ============================================================================
 
 /// Tests that `Display` outputs the upstream MSG_* identifier for all codes.
 #[test]
@@ -404,10 +388,6 @@ fn message_code_debug_differs_from_display() {
         );
     }
 }
-
-// ============================================================================
-// Additional edge case and property tests
-// ============================================================================
 
 /// Tests that no two message codes share the same numeric value.
 #[test]

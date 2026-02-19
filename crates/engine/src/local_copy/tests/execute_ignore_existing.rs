@@ -11,10 +11,6 @@
 // 4. Interaction with other flags: --checksum, --size-only, etc.
 // 5. Edge cases: empty files, different content, timestamps
 
-// ============================================================================
-// Basic --ignore-existing Flag Tests
-// ============================================================================
-
 #[test]
 fn ignore_existing_skips_file_with_different_content() {
     let temp = tempdir().expect("tempdir");
@@ -152,10 +148,6 @@ fn ignore_existing_skips_identical_files() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
 }
-
-// ============================================================================
-// Directory and Recursive Tests
-// ============================================================================
 
 #[test]
 fn ignore_existing_recursive_mixed_scenarios() {
@@ -332,10 +324,6 @@ fn ignore_existing_handles_directories_correctly() {
     );
 }
 
-// ============================================================================
-// Interaction with --update Flag
-// ============================================================================
-
 #[test]
 fn ignore_existing_with_update_skips_all_existing() {
     let temp = tempdir().expect("tempdir");
@@ -442,10 +430,6 @@ fn ignore_existing_with_update_copies_new_files() {
     );
 }
 
-// ============================================================================
-// Interaction with Other Flags
-// ============================================================================
-
 #[test]
 fn ignore_existing_with_checksum() {
     let temp = tempdir().expect("tempdir");
@@ -546,10 +530,6 @@ fn ignore_existing_with_ignore_times() {
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_ignored_existing(), 1);
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[test]
 fn ignore_existing_empty_files() {
@@ -686,10 +666,6 @@ fn ignore_existing_with_permissions_difference() {
         assert_eq!(dest_perms.mode() & 0o777, 0o644);
     }
 }
-
-// ============================================================================
-// Dry Run Tests
-// ============================================================================
 
 #[test]
 fn ignore_existing_dry_run() {

@@ -189,10 +189,6 @@ impl ProtocolVersion {
     pub const fn uses_legacy_ascii_negotiation(self) -> bool {
         self.as_u8() < Self::BINARY_NEGOTIATION_INTRODUCED.as_u8()
     }
-
-    // ========================================================================
-    // Feature flag methods
-    // ========================================================================
     // These methods provide semantic names for protocol version checks,
     // eliminating the need for scattered magic number comparisons like
     // `protocol.as_u8() >= 29`. They mirror the ProtocolCodec trait methods.
@@ -790,10 +786,6 @@ mod tests {
         assert!(ProtocolVersion::V28.uses_legacy_ascii_negotiation());
         assert!(ProtocolVersion::V29.uses_legacy_ascii_negotiation());
     }
-
-    // ------------------------------------------------------------------------
-    // Feature flag method tests
-    // ------------------------------------------------------------------------
 
     #[test]
     fn uses_varint_encoding_boundary_at_30() {

@@ -8,10 +8,6 @@
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
 
-// =============================================================================
-// Basic Anchoring Tests
-// =============================================================================
-
 #[test]
 fn anchored_pattern_with_leading_slash() {
     let rules = [FilterRule::exclude("/root.txt"), FilterRule::include("**")];
@@ -59,10 +55,6 @@ fn wildcard_unanchored() {
     assert!(!set.allows(Path::new("a/b/c/notes.txt"), false));
 }
 
-// =============================================================================
-// Patterns with Internal Slash (Implicitly Anchored)
-// =============================================================================
-
 #[test]
 fn pattern_with_internal_slash_is_anchored() {
     let rules = [
@@ -103,10 +95,6 @@ fn anchored_directory_pattern() {
     assert!(set.allows(Path::new("project/build"), true));
 }
 
-// =============================================================================
-// anchor_to_root() Method Tests
-// =============================================================================
-
 #[test]
 fn anchor_to_root_adds_leading_slash() {
     let rule = FilterRule::exclude("test.txt").anchor_to_root();
@@ -142,10 +130,6 @@ fn anchor_to_root_with_wildcard() {
     assert!(!set.allows(Path::new("test.bak"), false));
     assert!(set.allows(Path::new("subdir/test.bak"), false));
 }
-
-// =============================================================================
-// Complex Anchoring Scenarios
-// =============================================================================
 
 #[test]
 fn mixed_anchored_and_unanchored() {
@@ -217,10 +201,6 @@ fn double_star_anchored() {
     assert!(set.allows(Path::new("other/src/test.txt"), false));
 }
 
-// =============================================================================
-// Directory-Only Anchoring
-// =============================================================================
-
 #[test]
 fn anchored_directory_only_pattern() {
     let rules = [
@@ -253,10 +233,6 @@ fn unanchored_directory_only_pattern() {
     // Still file-sensitive
     assert!(set.allows(Path::new("__pycache__"), false));
 }
-
-// =============================================================================
-// Edge Cases
-// =============================================================================
 
 #[test]
 fn root_only_pattern() {
@@ -300,10 +276,6 @@ fn multiple_slashes_in_pattern() {
     assert!(!set.allows(Path::new("a/b/c"), true));
     assert!(set.allows(Path::new("x/a/b/c"), true));
 }
-
-// =============================================================================
-// Real-World Scenarios
-// =============================================================================
 
 #[test]
 fn rust_project_anchored_rules() {

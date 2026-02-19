@@ -618,10 +618,6 @@ fn execute_without_hard_links_materialises_independent_files() {
     assert_eq!(summary.hard_links_created(), 0);
 }
 
-// ============================================================================
-// Directory Creation with Various Permissions Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn execute_directory_preserves_mode_777() {
@@ -796,10 +792,6 @@ fn execute_directory_without_preserve_permissions_uses_default() {
     assert!(dest_mode > 0);
 }
 
-// ============================================================================
-// Recursive Directory Handling Tests
-// ============================================================================
-
 #[test]
 fn execute_recursive_copies_deep_hierarchy() {
     let temp = tempdir().expect("tempdir");
@@ -941,10 +933,6 @@ fn execute_recursive_disabled_only_copies_single_level() {
     assert!(!dest_root.join("source").join("root.txt").exists(), "files should not be copied without recursion");
 }
 
-// ============================================================================
-// Error Case Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn execute_directory_fails_on_permission_denied_when_creating() {
@@ -1062,10 +1050,6 @@ fn execute_directory_errors_when_destination_is_file_without_force() {
     }
 }
 
-// ============================================================================
-// Dry-Run Mode Tests
-// ============================================================================
-
 #[test]
 fn execute_dry_run_does_not_create_directory() {
     let temp = tempdir().expect("tempdir");
@@ -1173,10 +1157,6 @@ fn execute_dry_run_with_collect_events_records_directory_creation() {
     assert!(!dest_root.exists());
 }
 
-// ============================================================================
-// Preserve Permissions Behavior Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn execute_directory_preserve_times_sets_mtime() {
@@ -1272,10 +1252,6 @@ fn execute_directory_with_chmod_applies_modifiers() {
     // 0o777 with go-w applied to directories = 0o755
     assert_eq!(dest_metadata.permissions().mode() & 0o777, 0o755);
 }
-
-// ============================================================================
-// Edge Case Tests
-// ============================================================================
 
 #[test]
 fn execute_directory_with_special_characters_in_name() {
@@ -1503,10 +1479,6 @@ fn execute_directory_update_skips_older_files() {
     assert_eq!(summary.files_copied(), 0);
 }
 
-// ============================================================================
-// Combined Options Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn execute_directory_archive_mode_preserves_all() {
@@ -1597,10 +1569,6 @@ fn execute_dry_run_with_delete_and_force_reports_all_actions() {
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.items_deleted(), 1);
 }
-
-// ============================================================================
-// Recursive Directory Creation Tests
-// ============================================================================
 
 #[test]
 fn execute_recursive_creates_mixed_content_hierarchy() {
@@ -1797,10 +1765,6 @@ fn execute_trailing_separator_with_nested_empty_dirs() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ============================================================================
-// --mkpath Behavior Tests
-// ============================================================================
-
 #[test]
 fn execute_mkpath_creates_deeply_nested_missing_parents() {
     let temp = tempdir().expect("tempdir");
@@ -1903,10 +1867,6 @@ fn execute_mkpath_with_existing_parents_succeeds() {
     assert_eq!(fs::read(&destination).expect("read"), b"data");
 }
 
-// ============================================================================
-// --prune-empty-dirs Behavior Tests (directory-specific scenarios)
-// ============================================================================
-
 #[test]
 fn execute_prune_empty_dirs_nested_hierarchy_file_at_bottom() {
     // Deep nesting: only the very deepest directory has a file
@@ -1997,10 +1957,6 @@ fn execute_prune_empty_dirs_preserves_dir_with_only_subdirs_containing_files() {
     );
     assert!(dest_root.join("parent").join("child").join("file.txt").exists());
 }
-
-// ============================================================================
-// --omit-dir-times Behavior Tests (directory-specific scenarios)
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -2112,10 +2068,6 @@ fn execute_omit_dir_times_with_trailing_separator() {
     );
     assert_ne!(dest_sub_dir_mtime, dir_mtime);
 }
-
-// ============================================================================
-// Directory Permission Handling Tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -2257,10 +2209,6 @@ fn execute_directory_permissions_with_dry_run_does_not_set() {
     assert!(summary.directories_created() >= 1);
 }
 
-// ============================================================================
-// Nested Directory Hierarchy Tests
-// ============================================================================
-
 #[test]
 fn execute_nested_hierarchy_with_overlapping_names() {
     // Test directories with similar names at different levels
@@ -2393,10 +2341,6 @@ fn execute_directory_with_many_siblings() {
     assert_eq!(summary.files_copied(), count);
     assert!(summary.directories_created() > count); // source + N dirs
 }
-
-// ============================================================================
-// Combined Directory Options Tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]

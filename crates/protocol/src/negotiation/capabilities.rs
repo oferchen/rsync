@@ -708,10 +708,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Tests for do_negotiation parameter and daemon/SSH mode variations
-    // ========================================================================
-
     #[test]
     fn test_negotiate_do_negotiation_false_uses_defaults_no_io() {
         // When do_negotiation=false, should return defaults without any I/O
@@ -772,10 +768,6 @@ mod tests {
         // We can't easily verify compression wasn't sent without parsing,
         // but the test passing means stdin wasn't over-read
     }
-
-    // ========================================================================
-    // Daemon Mode Tests - Bidirectional Flow (matching upstream negotiate_the_strings)
-    // ========================================================================
 
     /// Helper to generate peer algorithm data for tests.
     fn test_peer_data(send_compression: bool) -> Vec<u8> {
@@ -1051,10 +1043,6 @@ mod tests {
         assert_eq!(result, CompressionAlgorithm::None);
     }
 
-    // ========================================================================
-    // Additional Daemon Mode Edge Case Tests
-    // ========================================================================
-
     #[test]
     fn test_daemon_client_handles_empty_capabilities() {
         // Edge case: server sends empty capability lists (should fall back to defaults)
@@ -1243,10 +1231,6 @@ mod tests {
         assert!(stdout.is_empty(), "no I/O when do_negotiation=false");
     }
 
-    // ========================================================================
-    // Interop Tests - Upstream Protocol Compatibility
-    // ========================================================================
-
     #[test]
     fn test_upstream_checksum_list_format() {
         // Upstream rsync 3.4.1 sends checksums in this format:
@@ -1272,10 +1256,6 @@ mod tests {
         let result = choose_checksum_algorithm(minimal_format).unwrap();
         assert_eq!(result, ChecksumAlgorithm::None);
     }
-
-    // ========================================================================
-    // Algorithm Parsing Edge Cases
-    // ========================================================================
 
     #[test]
     fn test_checksum_case_sensitive() {
@@ -1307,10 +1287,6 @@ mod tests {
         let result = choose_compression_algorithm(list).unwrap();
         assert_eq!(result, CompressionAlgorithm::Zlib);
     }
-
-    // ========================================================================
-    // NegotiationResult Tests
-    // ========================================================================
 
     #[test]
     fn test_negotiation_result_debug() {
@@ -1351,10 +1327,6 @@ mod tests {
         assert_eq!(r1.checksum, r2.checksum);
         assert_eq!(r1.compression, r2.compression);
     }
-
-    // ========================================================================
-    // vstring Encoding Tests
-    // ========================================================================
 
     #[test]
     fn test_vstring_empty_string() {
@@ -1410,10 +1382,6 @@ mod tests {
         let received = read_vstring(&mut reader).unwrap();
         assert_eq!(received, test_str);
     }
-
-    // ========================================================================
-    // Protocol Version Specific Tests
-    // ========================================================================
 
     #[test]
     fn test_all_supported_versions_negotiate() {
@@ -1502,10 +1470,6 @@ mod tests {
         assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
         assert!(!stdout.is_empty()); // Should have sent our lists
     }
-
-    // ========================================================================
-    // PHASE 2.10: VSTRING 1-BYTE LENGTH FORMAT TESTS
-    // ========================================================================
     //
     // The vstring format uses a simple length-prefixed encoding:
     // - For lengths 0-127: single byte = length (high bit clear)
@@ -1652,10 +1616,6 @@ mod tests {
             assert_eq!(received, list);
         }
     }
-
-    // ========================================================================
-    // PHASE 2.11: VSTRING 2-BYTE LENGTH FORMAT TESTS
-    // ========================================================================
     //
     // For lengths 128-32767, vstring uses a 2-byte length format:
     // - First byte: (len >> 8) | 0x80 (high bit indicates 2-byte format)
@@ -1820,10 +1780,6 @@ mod tests {
             assert_eq!(received, *expected);
         }
     }
-
-    // ========================================================================
-    // PHASE 2.12: VSTRING MAXIMUM LENGTH HANDLING TESTS
-    // ========================================================================
     //
     // The vstring format has limits:
     // - Maximum encodable length: 0x7FFF (32767 bytes)
@@ -2025,10 +1981,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // PHASE 3: I/O ERROR HANDLING TESTS
-    // ========================================================================
-
     #[test]
     fn phase3_write_vstring_io_error() {
         struct FailWriter;
@@ -2117,10 +2069,6 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
     }
-
-    // ========================================================================
-    // PHASE 4: ALGORITHM CONVERSION TESTS
-    // ========================================================================
 
     #[test]
     fn phase4_checksum_algorithm_as_str() {
@@ -2230,10 +2178,6 @@ mod tests {
         assert!(err.to_string().contains("Zstd"));
     }
 
-    // ========================================================================
-    // PHASE 5: NEGOTIATION EDGE CASES
-    // ========================================================================
-
     #[test]
     fn phase5_negotiate_only_unsupported_checksums() {
         // If client sends only unsupported checksums, fallback to MD5
@@ -2303,10 +2247,6 @@ mod tests {
         assert_eq!(result, CompressionAlgorithm::ZlibX);
     }
 
-    // ========================================================================
-    // PHASE 6: FULL NEGOTIATION FLOW TESTS
-    // ========================================================================
-
     #[test]
     fn phase6_full_negotiation_all_supported_versions() {
         for version in 28..=32 {
@@ -2373,10 +2313,6 @@ mod tests {
         assert_eq!(result.compression, CompressionAlgorithm::None);
     }
 
-    // ========================================================================
-    // PHASE 7: VSTRING SEQUENTIAL OPERATIONS
-    // ========================================================================
-
     #[test]
     fn phase7_vstring_multiple_sequential() {
         let strings = ["first", "second", "third", "fourth"];
@@ -2414,10 +2350,6 @@ mod tests {
             assert_eq!(received, *expected);
         }
     }
-
-    // ========================================================================
-    // PHASE 8: NEGOTIATION RESULT TESTS
-    // ========================================================================
 
     #[test]
     fn phase8_negotiation_result_copy() {
@@ -2460,10 +2392,6 @@ mod tests {
             }
         }
     }
-
-    // ========================================================================
-    // CAPABILITY NEGOTIATION FALLBACK TESTS - Task #80
-    // ========================================================================
     //
     // These tests verify graceful fallback behavior when:
     // 1. Server doesn't support a requested capability
@@ -2472,10 +2400,6 @@ mod tests {
     //
     // Upstream rsync (compat.c) implements graceful degradation when
     // capabilities cannot be negotiated, falling back to safe defaults.
-
-    // ------------------------------------------------------------------------
-    // FALLBACK: Server doesn't support requested capability
-    // ------------------------------------------------------------------------
 
     /// Tests fallback when server offers only algorithms client doesn't prefer.
     /// Client wants xxh128, but server only offers md5/md4/sha1.
@@ -2530,10 +2454,6 @@ mod tests {
         let result = choose_compression_algorithm(remote_list).unwrap();
         assert_eq!(result, CompressionAlgorithm::None);
     }
-
-    // ------------------------------------------------------------------------
-    // FALLBACK: Unknown capability strings
-    // ------------------------------------------------------------------------
 
     /// Tests handling of completely unknown checksum algorithm names.
     #[test]
@@ -2630,10 +2550,6 @@ mod tests {
         // \u{00A0} is Unicode whitespace, so "md5" is a valid token and matches
         assert_eq!(result, ChecksumAlgorithm::MD5);
     }
-
-    // ------------------------------------------------------------------------
-    // FALLBACK: Graceful feature degradation
-    // ------------------------------------------------------------------------
 
     /// Tests graceful degradation from modern to legacy checksums.
     #[test]
@@ -2783,10 +2699,6 @@ mod tests {
         assert_eq!(result, ChecksumAlgorithm::MD5);
     }
 
-    // ------------------------------------------------------------------------
-    // FALLBACK: Full negotiation flow with fallback scenarios
-    // ------------------------------------------------------------------------
-
     /// Tests full negotiation where remote only supports legacy checksums.
     #[test]
     fn capability_fallback_full_negotiation_legacy_remote() {
@@ -2864,10 +2776,6 @@ mod tests {
         assert_eq!(result.compression, CompressionAlgorithm::None);
     }
 
-    // ------------------------------------------------------------------------
-    // FALLBACK: Edge cases in algorithm parsing
-    // ------------------------------------------------------------------------
-
     /// Tests that ChecksumAlgorithm::parse returns error for unknown names.
     #[test]
     fn capability_fallback_checksum_parse_unknown() {
@@ -2922,10 +2830,6 @@ mod tests {
             assert_eq!(result, ChecksumAlgorithm::MD5);
         }
     }
-
-    // ------------------------------------------------------------------------
-    // FALLBACK: Robustness tests
-    // ------------------------------------------------------------------------
 
     /// Tests behavior with extremely long algorithm lists.
     #[test]

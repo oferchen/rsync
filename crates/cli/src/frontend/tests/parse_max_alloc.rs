@@ -1,10 +1,6 @@
 use super::common::*;
 use super::*;
 
-// ============================================================================
-// CLI Parsing: --max-alloc accepts various size formats
-// ============================================================================
-
 #[test]
 fn parse_max_alloc_bytes() {
     let parsed = parse_args([
@@ -135,10 +131,6 @@ fn parse_max_alloc_fractional() {
     assert_eq!(parsed.max_alloc, Some(OsString::from("1.5G")));
 }
 
-// ============================================================================
-// Size Resolution: --max-alloc values resolve to correct byte counts
-// ============================================================================
-
 #[test]
 fn max_alloc_size_resolution_bytes() {
     let result =
@@ -202,10 +194,6 @@ fn max_alloc_size_resolution_binary_explicit_suffix() {
     assert_eq!(result, 1024);
 }
 
-// ============================================================================
-// Error Handling: invalid --max-alloc values produce clear errors
-// ============================================================================
-
 #[test]
 fn max_alloc_rejects_negative() {
     let error = parse_size_limit_argument(OsStr::new("-1M"), "--max-alloc")
@@ -249,10 +237,6 @@ fn max_alloc_rejects_non_numeric() {
         "expected format error, got: {rendered}"
     );
 }
-
-// ============================================================================
-// Integration: --max-alloc produces correct error on invalid values via run
-// ============================================================================
 
 #[test]
 fn max_alloc_invalid_value_produces_error_exit() {

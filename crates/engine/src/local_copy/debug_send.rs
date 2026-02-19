@@ -27,10 +27,6 @@ use std::time::{Duration, Instant};
 /// Target name for tracing events, matching rsync's debug category.
 const SEND_TARGET: &str = "rsync::send";
 
-// ============================================================================
-// Tracing functions (feature-gated)
-// ============================================================================
-
 /// Traces the start of a file send operation.
 ///
 /// Emits a tracing span that tracks the start of sending a file's data.
@@ -248,10 +244,6 @@ pub fn trace_send_summary(total_files: usize, total_bytes: u64, total_elapsed: D
 #[inline]
 pub fn trace_send_summary(_total_files: usize, _total_bytes: u64, _total_elapsed: Duration) {}
 
-// ============================================================================
-// SendTracer - stateful tracer for aggregating send statistics
-// ============================================================================
-
 /// Aggregates statistics during file send operations.
 ///
 /// Tracks file counts, byte counts, match/literal ratios, and timing information
@@ -436,10 +428,6 @@ impl SendTracer {
         self.session_start = None;
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -30,10 +30,6 @@ use tempfile::tempdir;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-// ============================================================================
-// Test Infrastructure
-// ============================================================================
-
 /// Global mutex for environment variable isolation between tests.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -128,10 +124,6 @@ fn connect_with_retries(port: u16) -> TcpStream {
         }
     }
 }
-
-// ============================================================================
-// Module Listing Tests
-// ============================================================================
 
 #[test]
 fn server_lists_modules_on_request() {
@@ -356,10 +348,6 @@ fn server_filters_unlisted_modules() {
     let _ = handle.join();
 }
 
-// ============================================================================
-// Protocol Version Tests
-// ============================================================================
-
 #[test]
 fn server_sends_protocol_greeting_first() {
     let _lock = ENV_LOCK.lock().expect("env lock");
@@ -534,10 +522,6 @@ fn server_accepts_older_protocol_version() {
     drop(reader);
     let _ = handle.join();
 }
-
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
 
 #[test]
 fn server_returns_error_for_unknown_module() {
@@ -789,10 +773,6 @@ fn server_handles_early_disconnect() {
     let _ = result;
 }
 
-// ============================================================================
-// Authentication Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn server_requests_auth_for_protected_module() {
@@ -859,10 +839,6 @@ fn server_requests_auth_for_protected_module() {
     drop(reader);
     let _ = handle.join();
 }
-
-// ============================================================================
-// Max Connections Tests
-// ============================================================================
 
 #[test]
 fn server_enforces_max_connections() {
@@ -954,10 +930,6 @@ fn server_enforces_max_connections() {
     let _ = handle.join();
 }
 
-// ============================================================================
-// Module With Comments Test
-// ============================================================================
-
 #[test]
 fn server_lists_modules_with_comments() {
     let _lock = ENV_LOCK.lock().expect("env lock");
@@ -1015,10 +987,6 @@ fn server_lists_modules_with_comments() {
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
-
-// ============================================================================
-// Invalid Input Handling Tests
-// ============================================================================
 
 #[test]
 fn server_handles_invalid_greeting_response() {

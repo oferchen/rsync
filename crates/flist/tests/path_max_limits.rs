@@ -31,10 +31,6 @@ fn max_levels_for(root: &Path, dir_name_len: usize) -> usize {
     available / (dir_name_len + 1) // +1 for separator
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Collects relative paths from a walker, skipping the root entry.
 fn collect_relative_paths(
     walker: impl Iterator<Item = Result<FileListEntry, FileListError>>,
@@ -71,10 +67,6 @@ fn create_deep_structure(root: &Path, levels: usize, dir_name_len: usize) -> Pat
 fn calculate_path_length(root: &Path, relative: &Path) -> usize {
     root.join(relative).as_os_str().len()
 }
-
-// ============================================================================
-// Deep Nesting Tests - Basic Functionality
-// ============================================================================
 
 /// Verifies that very deep directory structures can be traversed.
 #[test]
@@ -169,10 +161,6 @@ fn accurate_depth_tracking_in_deep_structures() {
         );
     }
 }
-
-// ============================================================================
-// PATH_MAX Boundary Tests
-// ============================================================================
 
 /// Verifies paths approaching PATH_MAX can be handled successfully.
 #[test]
@@ -299,10 +287,6 @@ fn handle_long_individual_component_names() {
     );
 }
 
-// ============================================================================
-// Mixed Depth Structures
-// ============================================================================
-
 /// Verifies correct traversal of structures with varying depth levels.
 #[test]
 fn mixed_depth_structure_traversal() {
@@ -370,10 +354,6 @@ fn files_at_various_depths_discovered() {
     }
 }
 
-// ============================================================================
-// Include Root Option with Deep Paths
-// ============================================================================
-
 /// Verifies include_root(false) works correctly with deep paths.
 #[test]
 fn include_root_false_with_deep_paths() {
@@ -429,10 +409,6 @@ fn root_entry_with_long_absolute_path() {
     assert_eq!(root_entry.full_path(), root);
 }
 
-// ============================================================================
-// Error Handling for Path Limits
-// ============================================================================
-
 /// Verifies that excessively long paths that might cause issues are handled gracefully.
 /// Note: This test checks that we handle what the OS allows, not that we enforce
 /// arbitrary limits ourselves.
@@ -470,10 +446,6 @@ fn graceful_handling_of_filesystem_path_limits() {
         }
     }
 }
-
-// ============================================================================
-// Real-world Deep Structure Tests
-// ============================================================================
 
 /// Verifies traversal of a realistic deeply nested node_modules-like structure.
 #[test]
@@ -545,10 +517,6 @@ fn deep_tree_with_many_leaf_files() {
     }
 }
 
-// ============================================================================
-// Iterator Behavior with Deep Structures
-// ============================================================================
-
 /// Verifies walker can be partially consumed with deep structures.
 #[test]
 fn partial_consumption_of_deep_walker() {
@@ -617,10 +585,6 @@ fn filter_operations_on_deep_walker() {
         "should include deep file"
     );
 }
-
-// ============================================================================
-// Path Component Validation
-// ============================================================================
 
 /// Verifies that relative paths never contain '..' components even in deep structures.
 #[test]
@@ -700,10 +664,6 @@ fn file_names_correct_in_deep_structures() {
     );
 }
 
-// ============================================================================
-// Performance and Memory Tests (Implicit)
-// ============================================================================
-
 /// Verifies walker doesn't consume excessive memory for deep structures.
 /// This test ensures lazy evaluation by creating a very deep structure
 /// and verifying we can iterate through it without loading everything into memory.
@@ -737,10 +697,6 @@ fn lazy_evaluation_for_very_deep_structures() {
     // memory for all entries. Instead, we only processed 50.
     // This is an implicit test - we're verifying it doesn't panic or OOM.
 }
-
-// ============================================================================
-// Paths at Exactly PATH_MAX Tests
-// ============================================================================
 
 /// Calculates the exact path length needed to reach a target total length.
 #[allow(dead_code)]
@@ -862,10 +818,6 @@ fn long_path_with_long_filename_combination() {
     }
 }
 
-// ============================================================================
-// Paths Exceeding PATH_MAX Tests
-// ============================================================================
-
 /// Verifies graceful handling when filesystem rejects paths exceeding PATH_MAX.
 /// The test attempts to create a structure that would exceed PATH_MAX and verifies
 /// that either the OS rejects it (expected) or we can still traverse what exists.
@@ -959,10 +911,6 @@ fn walk_structure_approaching_limit_from_multiple_branches() {
     }
 }
 
-// ============================================================================
-// Relative Paths That Become Long When Resolved
-// ============================================================================
-
 /// Verifies that relative paths with many '..' components that resolve to
 /// long absolute paths are handled correctly.
 #[test]
@@ -1025,10 +973,6 @@ fn paths_with_current_dir_components_in_deep_structure() {
         }
     }
 }
-
-// ============================================================================
-// Symlinks with Long Targets (Unix only)
-// ============================================================================
 
 #[cfg(unix)]
 mod symlink_long_path_tests {
@@ -1175,10 +1119,6 @@ mod symlink_long_path_tests {
     }
 }
 
-// ============================================================================
-// Error Handling for Paths Too Long
-// ============================================================================
-
 /// Verifies that attempting to traverse with an excessively long base path
 /// produces appropriate behavior.
 #[test]
@@ -1244,10 +1184,6 @@ fn entry_creation_at_path_limits() {
         "should successfully traverse some entries"
     );
 }
-
-// ============================================================================
-// Path Truncation Behavior Tests
-// ============================================================================
 
 /// Verifies that file names are not truncated when stored in entries.
 #[test]
@@ -1342,10 +1278,6 @@ fn no_directory_name_truncation() {
         );
     }
 }
-
-// ============================================================================
-// Combined Edge Cases
-// ============================================================================
 
 /// Tests combination of many factors: deep nesting, long names, symlinks.
 #[cfg(unix)]

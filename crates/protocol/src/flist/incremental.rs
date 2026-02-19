@@ -542,10 +542,6 @@ impl FinalizationResult {
     }
 }
 
-// ============================================================================
-// Ready Entry Processing
-// ============================================================================
-
 /// Action to take for a ready entry during streaming transfer.
 ///
 /// Returned by [`process_ready_entry`] to indicate what the caller should do
@@ -1626,10 +1622,6 @@ mod tests {
         assert!(result.is_complete());
         assert_eq!(result.stats.placeholder_dirs_created, 1);
     }
-
-    // ========================================================================
-    // process_ready_entry tests
-    // ========================================================================
 
     fn make_symlink(name: &str, target: &str) -> FileEntry {
         FileEntry::new_symlink(name.into(), target.into())

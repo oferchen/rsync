@@ -4,10 +4,6 @@ use std::io::{self, Cursor};
 /// Tests for multiplexing correctness covering message framing, type distinction,
 /// large messages, and error message parsing.
 
-// =============================================================================
-// Message Framing Correctness Tests
-// =============================================================================
-
 #[test]
 fn message_framing_single_message_roundtrip() {
     let mut buffer = Vec::new();
@@ -156,10 +152,6 @@ fn message_framing_vectored_send_maintains_frame_boundaries() {
         assert_eq!(frame.payload(), expected_payload);
     }
 }
-
-// =============================================================================
-// Message Type Distinction Tests
-// =============================================================================
 
 #[test]
 fn message_types_all_codes_roundtrip_correctly() {
@@ -322,10 +314,6 @@ fn message_types_flush_alias_equals_info() {
     assert_eq!(buffer1, buffer2);
 }
 
-// =============================================================================
-// Large Message Handling Tests
-// =============================================================================
-
 #[test]
 fn large_messages_32kb_payload_roundtrip() {
     let payload = vec![0xAAu8; 32 * 1024];
@@ -442,10 +430,6 @@ fn large_messages_vectored_send_with_large_payloads() {
         assert_eq!(frame.payload(), expected_payload.as_slice(), "payload {i} mismatch");
     }
 }
-
-// =============================================================================
-// Error Message Parsing Tests
-// =============================================================================
 
 #[test]
 fn error_parsing_all_error_types_parse_correctly() {
@@ -583,10 +567,6 @@ fn error_parsing_unknown_code_rejected() {
     let err = recv_msg(&mut Cursor::new(raw_header)).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
-
-// =============================================================================
-// Cross-Cutting Correctness Tests
-// =============================================================================
 
 #[test]
 fn correctness_interleaved_data_and_control_messages() {

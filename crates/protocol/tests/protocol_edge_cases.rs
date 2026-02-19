@@ -38,10 +38,6 @@ use protocol::{
 };
 use std::str::FromStr;
 
-// ============================================================================
-// Malformed Handshake Tests
-// ============================================================================
-
 #[test]
 fn malformed_zero_length_version_string() {
     let result = ProtocolVersion::from_str("");
@@ -153,10 +149,6 @@ fn malformed_truncated_binary_advertisement() {
         }
     }
 }
-
-// ============================================================================
-// Version Boundary Tests
-// ============================================================================
 
 #[test]
 fn boundary_protocol_zero() {
@@ -321,10 +313,6 @@ fn boundary_from_str_overflow() {
     }
 }
 
-// ============================================================================
-// Protocol Parsing Edge Cases
-// ============================================================================
-
 #[test]
 fn parsing_leading_whitespace() {
     // Should accept and trim leading whitespace
@@ -396,10 +384,6 @@ fn parsing_mixed_whitespace() {
     assert_eq!(protocol.as_u8(), 32);
 }
 
-// ============================================================================
-// Legacy Greeting Edge Cases
-// ============================================================================
-
 #[test]
 fn legacy_greeting_extra_content_after_version() {
     // Upstream rsync includes digest list after version
@@ -453,10 +437,6 @@ fn legacy_greeting_format_generation_stability() {
         );
     }
 }
-
-// ============================================================================
-// Protocol Negotiation Scenarios
-// ============================================================================
 
 #[test]
 fn negotiation_exact_match() {
@@ -521,10 +501,6 @@ fn negotiation_across_binary_boundary() {
     assert!(negotiated.uses_legacy_ascii_negotiation());
 }
 
-// ============================================================================
-// Supported Protocol Range Tests
-// ============================================================================
-
 #[test]
 fn supported_range_consistency() {
     // Validate that supported range is consistent
@@ -563,10 +539,6 @@ fn is_supported_protocol_number_comprehensive() {
     }
 }
 
-// ============================================================================
-// Round-Trip Validation Tests
-// ============================================================================
-
 #[test]
 fn round_trip_all_supported_protocols() {
     // Validate that all supported protocols can round-trip through string parsing
@@ -596,10 +568,6 @@ fn round_trip_peer_advertisement() {
         );
     }
 }
-
-// ============================================================================
-// Compatibility with Unsupported Versions
-// ============================================================================
 
 #[test]
 fn from_str_unsupported_in_range() {

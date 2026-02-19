@@ -9,10 +9,6 @@
 use filters::{FilterAction, FilterRule, FilterSet};
 use std::path::Path;
 
-// =============================================================================
-// Basic Negation Tests
-// =============================================================================
-
 #[test]
 fn negated_exclude_basic() {
     let rules = [
@@ -52,10 +48,6 @@ fn negation_is_pattern_level() {
     // The action is still Exclude, but it applies to non-matching files
 }
 
-// =============================================================================
-// Negation with Different Actions
-// =============================================================================
-
 #[test]
 fn negated_protect() {
     let rule = FilterRule::protect("/important/").with_negate(true);
@@ -85,10 +77,6 @@ fn negated_show() {
     assert!(rule.applies_to_sender());
     assert!(!rule.applies_to_receiver());
 }
-
-// =============================================================================
-// Negation with Wildcards
-// =============================================================================
 
 #[test]
 fn negated_star_wildcard() {
@@ -154,10 +142,6 @@ fn negated_character_class() {
     assert!(!set.allows(Path::new("x.txt"), false));
 }
 
-// =============================================================================
-// Multiple Negated Rules
-// =============================================================================
-
 #[test]
 fn multiple_negated_excludes() {
     let rules = [
@@ -197,10 +181,6 @@ fn negated_and_regular_rules_mixed() {
     assert!(!set.allows(Path::new("file.rs"), false));
 }
 
-// =============================================================================
-// Negation with Anchoring
-// =============================================================================
-
 #[test]
 fn negated_anchored_pattern() {
     let rules = [
@@ -235,10 +215,6 @@ fn negated_unanchored_with_slash() {
     assert!(!set.allows(Path::new("tests/test.rs"), false));
 }
 
-// =============================================================================
-// Negation with Directory-Only Patterns
-// =============================================================================
-
 #[test]
 fn negated_directory_only() {
     let rules = [
@@ -269,10 +245,6 @@ fn negated_anchored_directory_only() {
     // target elsewhere: anchored pattern doesn't match
     assert!(!set.allows(Path::new("crates/foo/target"), true));
 }
-
-// =============================================================================
-// Negation with Modifiers
-// =============================================================================
 
 #[test]
 fn negated_perishable() {
@@ -311,10 +283,6 @@ fn negated_xattr_only() {
     assert!(rule.is_negated());
     assert!(rule.is_xattr_only());
 }
-
-// =============================================================================
-// Edge Cases
-// =============================================================================
 
 #[test]
 fn double_negation_not_supported() {
@@ -374,10 +342,6 @@ fn negated_star_star() {
     assert!(set.allows(Path::new("deep/nested/file.rs"), false));
 }
 
-// =============================================================================
-// Merge File Parsing
-// =============================================================================
-
 #[test]
 fn parse_negated_exclude_short() {
     use std::fs;
@@ -425,10 +389,6 @@ fn parse_negated_with_other_modifiers() {
     assert!(rules[0].applies_to_sender());
     assert!(!rules[0].applies_to_receiver());
 }
-
-// =============================================================================
-// Real-World Scenarios
-// =============================================================================
 
 #[test]
 fn only_include_specific_extensions() {

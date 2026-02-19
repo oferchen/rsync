@@ -147,10 +147,6 @@ fn test_compression_level(data: &[u8], level: u32) -> CompressionResult {
     }
 }
 
-// =============================================================================
-// Test: All levels 1-9 produce valid output
-// =============================================================================
-
 #[test]
 fn all_levels_produce_valid_compressed_output() {
     let data = test_data::english_text(10_000);
@@ -231,10 +227,6 @@ fn all_levels_work_with_streaming_decoder() {
     }
 }
 
-// =============================================================================
-// Test: Compression ratio trends with level
-// =============================================================================
-
 #[test]
 fn higher_levels_achieve_better_or_equal_compression_on_compressible_data() {
     // Use highly compressible data where level differences are most apparent
@@ -312,10 +304,6 @@ fn compression_ratio_varies_by_data_type() {
     }
 }
 
-// =============================================================================
-// Test: Compression/decompression speed characteristics
-// =============================================================================
-
 #[test]
 fn compression_speed_generally_decreases_with_level() {
     let data = test_data::english_text(100_000);
@@ -389,10 +377,6 @@ fn decompression_speed_independent_of_compression_level() {
         "Decompression times unexpectedly different: level 1 = {time_1:?}, level 9 = {time_9:?}"
     );
 }
-
-// =============================================================================
-// Test: Various data types
-// =============================================================================
 
 #[test]
 fn compress_empty_data_all_levels() {
@@ -500,10 +484,6 @@ fn compress_binary_patterns() {
     }
 }
 
-// =============================================================================
-// Test: CompressionLevel API
-// =============================================================================
-
 #[test]
 fn compression_level_from_numeric_valid_range() {
     for level in 1..=9 {
@@ -519,10 +499,6 @@ fn compression_level_from_numeric_valid_range() {
         }
     }
 }
-
-// =============================================================================
-// Test: Level 0 (no compression) behavior
-// =============================================================================
 
 #[test]
 fn level_zero_produces_valid_output() {
@@ -746,10 +722,6 @@ fn compression_level_presets_ordering() {
     );
 }
 
-// =============================================================================
-// Test: Round-trip integrity with various chunk sizes
-// =============================================================================
-
 #[test]
 fn streaming_compression_various_chunk_sizes() {
     let data = test_data::english_text(50_000);
@@ -776,10 +748,6 @@ fn streaming_compression_various_chunk_sizes() {
     }
 }
 
-// =============================================================================
-// Test: Error display
-// =============================================================================
-
 #[test]
 fn compression_level_error_display() {
     let err = CompressionLevel::from_numeric(42).unwrap_err();
@@ -793,10 +761,6 @@ fn compression_level_error_display() {
         "Error message should mention valid range"
     );
 }
-
-// =============================================================================
-// Benchmark-style tests (measure relative performance)
-// =============================================================================
 
 /// Prints a summary table comparing all compression levels.
 /// This test always passes but produces useful diagnostic output.

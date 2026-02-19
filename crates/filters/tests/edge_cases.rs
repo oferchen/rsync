@@ -9,10 +9,6 @@
 use filters::{FilterAction, FilterRule, FilterSet};
 use std::path::Path;
 
-// ============================================================================
-// Empty and Minimal Filter Tests
-// ============================================================================
-
 /// Verifies empty rule set allows everything.
 #[test]
 fn empty_rules_allow_everything() {
@@ -50,10 +46,6 @@ fn single_exclude_rule() {
     assert!(!set.is_empty());
     assert!(!set.allows(Path::new("file.bak"), false));
 }
-
-// ============================================================================
-// Pattern Syntax Edge Cases
-// ============================================================================
 
 /// Verifies pattern with only wildcard.
 #[test]
@@ -131,10 +123,6 @@ fn empty_pattern_in_include() {
     assert!(!set.is_empty());
 }
 
-// ============================================================================
-// Character Class Edge Cases
-// ============================================================================
-
 /// Verifies character class with single character.
 #[test]
 fn character_class_single_char() {
@@ -188,10 +176,6 @@ fn character_class_negation_caret() {
     assert!(set.allows(Path::new("5"), false));
 }
 
-// ============================================================================
-// Escaped Character Tests
-// ============================================================================
-
 /// Verifies escaped asterisk is literal.
 #[test]
 fn escaped_asterisk() {
@@ -237,10 +221,6 @@ fn escaped_backslash() {
     // Literal backslash
     assert!(!set.allows(Path::new("path\\file"), false));
 }
-
-// ============================================================================
-// Path Component Tests
-// ============================================================================
 
 /// Verifies path with multiple dots.
 #[test]
@@ -296,10 +276,6 @@ fn very_long_pattern() {
     assert!(!set.allows(Path::new(&matching), false));
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 /// Verifies invalid pattern reports error.
 #[test]
 fn invalid_pattern_unclosed_bracket() {
@@ -335,10 +311,6 @@ fn valid_rules_compile_before_invalid() {
     assert!(result.is_err());
 }
 
-// ============================================================================
-// Filter Action Tests
-// ============================================================================
-
 /// Verifies all filter actions can be created.
 #[test]
 fn all_filter_actions() {
@@ -364,10 +336,6 @@ fn filter_action_display() {
     assert_eq!(FilterAction::Risk.to_string(), "risk");
     assert_eq!(FilterAction::Clear.to_string(), "clear");
 }
-
-// ============================================================================
-// Clone and Debug Tests
-// ============================================================================
 
 /// Verifies FilterRule can be cloned.
 #[test]
@@ -428,10 +396,6 @@ fn filter_error_access() {
         panic!("Expected error");
     }
 }
-
-// ============================================================================
-// Complex Combination Tests
-// ============================================================================
 
 /// Verifies complex nested patterns.
 #[test]

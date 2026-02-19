@@ -385,10 +385,6 @@ impl<W: Write> Write for MultiplexWriter<W> {
     }
 }
 
-// ============================================================================
-// CountingWriter - Tracks total bytes written
-// ============================================================================
-
 /// A writer wrapper that counts the total bytes written.
 ///
 /// This is used to track bytes sent during transfers for statistics.

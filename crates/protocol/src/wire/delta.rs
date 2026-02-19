@@ -26,10 +26,6 @@ use crate::varint::{read_varint, write_varint};
 /// Maximum chunk size for literal data (matches upstream CHUNK_SIZE).
 pub const CHUNK_SIZE: usize = 32 * 1024;
 
-// ============================================================================
-// Upstream rsync wire format functions
-// ============================================================================
-
 /// Writes a 4-byte signed little-endian integer (upstream `write_int()`).
 ///
 /// This is the fundamental integer encoding used throughout the rsync protocol
@@ -316,10 +312,6 @@ pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
     }
 }
 
-// ============================================================================
-// Internal wire format (opcode-based, for backward compatibility)
-// ============================================================================
-
 /// Delta operation for file reconstruction.
 ///
 /// Represents the internal format for delta operations (not the upstream wire format).
@@ -603,10 +595,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Upstream wire format tests
-    // ========================================================================
-
     #[test]
     fn write_int_roundtrip() {
         let values = [0i32, 1, -1, 127, -128, 1000, -1000, i32::MAX, i32::MIN];
@@ -769,10 +757,6 @@ mod tests {
         // Should be at end
         assert!(cursor.is_empty());
     }
-
-    // ========================================================================
-    // Oversized literal block tests (Task #79)
-    // ========================================================================
 
     /// Helper function to decode a token stream and reconstruct literal data.
     ///
@@ -1176,10 +1160,6 @@ mod tests {
                 .all(|&b| b == 0x33)
         );
     }
-
-    // ========================================================================
-    // Additional CHUNK_SIZE boundary splitting tests
-    // ========================================================================
 
     #[test]
     fn chunk_boundary_exact_double_chunk_size() {

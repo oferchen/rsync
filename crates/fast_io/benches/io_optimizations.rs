@@ -21,10 +21,6 @@ use fast_io::MmapReader;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use fast_io::{IoUringConfig, IoUringReader, IoUringWriter, is_io_uring_available};
 
-// ============================================================================
-// Test Data Generation
-// ============================================================================
-
 fn create_test_file(size: usize) -> NamedTempFile {
     let mut file = NamedTempFile::new().expect("Failed to create temp file");
     let mut data = vec![0u8; size];
@@ -35,10 +31,6 @@ fn create_test_file(size: usize) -> NamedTempFile {
     file.flush().expect("Failed to flush");
     file
 }
-
-// ============================================================================
-// Benchmark: Vectored I/O (writev) vs Sequential Writes
-// ============================================================================
 
 fn bench_vectored_io(c: &mut Criterion) {
     let mut group = c.benchmark_group("vectored_io");
@@ -100,10 +92,6 @@ fn bench_vectored_io(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: Adaptive Buffer Sizing
-// ============================================================================
-
 fn bench_adaptive_buffers(c: &mut Criterion) {
     let mut group = c.benchmark_group("adaptive_buffers");
 
@@ -163,10 +151,6 @@ fn bench_adaptive_buffers(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: io_uring vs Standard I/O
-// ============================================================================
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 fn bench_io_uring(c: &mut Criterion) {
@@ -266,10 +250,6 @@ fn bench_io_uring_writes(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Benchmark: Memory-Mapped I/O vs Standard I/O
-// ============================================================================
-
 #[cfg(all(unix, not(all(target_os = "linux", feature = "io_uring"))))]
 fn bench_mmap_io(c: &mut Criterion) {
     let mut group = c.benchmark_group("mmap_io");
@@ -308,10 +288,6 @@ fn bench_mmap_io(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark: Buffered vs Unbuffered Writes
-// ============================================================================
 
 fn bench_buffered_writes(c: &mut Criterion) {
     let mut group = c.benchmark_group("buffered_writes");
@@ -361,10 +337,6 @@ fn bench_buffered_writes(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ============================================================================
-// Benchmark Groups
-// ============================================================================
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 criterion_group!(

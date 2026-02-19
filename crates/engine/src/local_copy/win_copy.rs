@@ -205,10 +205,6 @@ pub fn copy_file_standard(src: &Path, dst: &Path) -> io::Result<u64> {
     std::fs::copy(src, dst)
 }
 
-// ---------------------------------------------------------------------------
-// Platform-specific implementations
-// ---------------------------------------------------------------------------
-
 /// Minimal FFI wrapper isolating the single unsafe call behind a safe API.
 #[cfg(target_os = "windows")]
 #[allow(unsafe_code)]
@@ -272,10 +268,6 @@ fn try_win_copy_impl(_src: &Path, _dst: &Path, _use_no_buffering: bool) -> io::R
         "CopyFileExW not available on this platform",
     ))
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

@@ -340,10 +340,6 @@ mod tests {
         assert!(!state.can_send());
     }
 
-    // ============================================================================
-    // Error state transition tests (task #66)
-    // ============================================================================
-
     #[test]
     fn pop_on_empty_returns_none() {
         // Test underflow behavior - pop on empty state should return None gracefully

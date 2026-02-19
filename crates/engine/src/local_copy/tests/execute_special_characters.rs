@@ -15,10 +15,6 @@
 //
 // Reference: rsync special character handling in flist.c, io.c
 
-// ============================================================================
-// 1. Spaces in Filenames
-// ============================================================================
-
 #[test]
 fn copy_file_with_single_space_in_name() {
     let temp = tempdir().expect("tempdir");
@@ -171,10 +167,6 @@ fn copy_directory_with_spaces_in_name() {
     assert!(dest_root.join(dirname).join("inner file.txt").exists());
 }
 
-// ============================================================================
-// 2. Quotes (Single and Double)
-// ============================================================================
-
 #[test]
 fn copy_file_with_single_quotes() {
     let temp = tempdir().expect("tempdir");
@@ -270,10 +262,6 @@ fn copy_file_with_consecutive_quotes() {
     assert_eq!(summary.files_copied(), 1);
     assert!(dest_root.join(filename).exists());
 }
-
-// ============================================================================
-// 3. Backslashes
-// ============================================================================
 
 #[test]
 fn copy_file_with_backslash() {
@@ -377,10 +365,6 @@ fn copy_file_with_escape_like_sequences() {
     }
 }
 
-// ============================================================================
-// 4. Glob Characters (Asterisks and Question Marks)
-// ============================================================================
-
 #[test]
 fn copy_file_with_asterisk() {
     let temp = tempdir().expect("tempdir");
@@ -477,10 +461,6 @@ fn copy_file_with_glob_pattern() {
     assert!(dest_root.join(filename).exists());
 }
 
-// ============================================================================
-// 5. Square Brackets
-// ============================================================================
-
 #[test]
 fn copy_file_with_square_brackets() {
     let temp = tempdir().expect("tempdir");
@@ -529,10 +509,6 @@ fn copy_file_with_nested_brackets() {
     assert!(dest_root.join(filename).exists());
 }
 
-// ============================================================================
-// 6. Curly Braces
-// ============================================================================
-
 #[test]
 fn copy_file_with_curly_braces() {
     let temp = tempdir().expect("tempdir");
@@ -580,10 +556,6 @@ fn copy_file_with_nested_curly_braces() {
     assert_eq!(summary.files_copied(), 1);
     assert!(dest_root.join(filename).exists());
 }
-
-// ============================================================================
-// 7. Angle Brackets
-// ============================================================================
 
 #[test]
 fn copy_file_with_angle_brackets() {
@@ -638,10 +610,6 @@ fn copy_file_with_redirection_like_name() {
     }
 }
 
-// ============================================================================
-// 8. Pipe Character
-// ============================================================================
-
 #[test]
 fn copy_file_with_pipe_character() {
     let temp = tempdir().expect("tempdir");
@@ -689,10 +657,6 @@ fn copy_file_with_multiple_pipes() {
     assert_eq!(summary.files_copied(), 1);
     assert!(dest_root.join(filename).exists());
 }
-
-// ============================================================================
-// 9. Semicolon and Colon
-// ============================================================================
 
 #[test]
 fn copy_file_with_semicolon() {
@@ -766,10 +730,6 @@ fn copy_file_with_time_like_colons() {
     assert!(dest_root.join(filename).exists());
 }
 
-// ============================================================================
-// 10. Ampersand
-// ============================================================================
-
 #[test]
 fn copy_file_with_ampersand() {
     let temp = tempdir().expect("tempdir");
@@ -817,10 +777,6 @@ fn copy_file_with_double_ampersand() {
     assert_eq!(summary.files_copied(), 1);
     assert!(dest_root.join(filename).exists());
 }
-
-// ============================================================================
-// 11. Dollar Sign
-// ============================================================================
 
 #[test]
 fn copy_file_with_dollar_sign() {
@@ -874,10 +830,6 @@ fn copy_file_with_variable_like_name() {
         assert!(dest_root.join(filename).exists(), "should copy {filename}");
     }
 }
-
-// ============================================================================
-// 12. Newlines in Filenames
-// ============================================================================
 
 #[test]
 fn copy_file_with_newline_in_name() {
@@ -975,10 +927,6 @@ fn copy_directory_with_newline() {
     assert_eq!(summary.files_copied(), 1);
     assert!(dest_root.join(dirname).join("inner.txt").exists());
 }
-
-// ============================================================================
-// 13. Tab Characters
-// ============================================================================
 
 #[test]
 fn copy_file_with_tab_in_name() {
@@ -1099,10 +1047,6 @@ fn copy_file_with_mixed_tabs_and_spaces() {
     assert_eq!(summary.files_copied(), 1);
     assert!(dest_root.join(filename).exists());
 }
-
-// ============================================================================
-// 14. Control Characters
-// ============================================================================
 
 #[test]
 fn copy_file_with_bell_character() {
@@ -1272,10 +1216,6 @@ fn copy_file_with_del_character() {
     assert!(dest_root.join(filename).exists());
 }
 
-// ============================================================================
-// 15. High ASCII Characters (128-255)
-// ============================================================================
-
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_file_with_high_ascii_128() {
@@ -1381,10 +1321,6 @@ fn copy_file_with_non_utf8_sequence() {
     assert_eq!(summary.files_copied(), 1);
     assert!(dest_root.join(filename).exists());
 }
-
-// ============================================================================
-// 16. Multiple Consecutive Special Characters
-// ============================================================================
 
 #[test]
 fn copy_file_with_all_quotes_consecutive() {
@@ -1494,10 +1430,6 @@ fn copy_file_with_all_glob_characters() {
     assert_eq!(summary.files_copied(), 1);
     assert!(dest_root.join(filename).exists());
 }
-
-// ============================================================================
-// Combined Tests - Complex Scenarios
-// ============================================================================
 
 #[test]
 fn copy_multiple_files_with_various_special_characters() {
@@ -1663,10 +1595,6 @@ fn copy_file_with_special_characters_with_times_preservation() {
     );
     assert_eq!(dest_mtime, past_time);
 }
-
-// ============================================================================
-// Additional Punctuation and Symbols
-// ============================================================================
 
 #[test]
 fn copy_file_with_at_sign() {
@@ -1910,10 +1838,6 @@ fn copy_file_with_comma() {
     assert!(dest_root.join(filename).exists());
 }
 
-// ============================================================================
-// Edge Cases - Leading/Trailing Dots and Dashes
-// ============================================================================
-
 #[test]
 fn copy_file_with_leading_dot() {
     let temp = tempdir().expect("tempdir");
@@ -2016,10 +1940,6 @@ fn copy_file_named_only_dots() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
 }
-
-// ============================================================================
-// Update Operations with Special Characters
-// ============================================================================
 
 #[test]
 fn update_file_with_special_characters() {

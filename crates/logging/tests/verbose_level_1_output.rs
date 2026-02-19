@@ -13,10 +13,6 @@ use logging::{
     info_log, init,
 };
 
-// ============================================================================
-// Basic Verbose Level 1 Configuration Tests
-// ============================================================================
-
 /// Verifies verbose level 1 enables Name flag at level 1.
 #[test]
 fn verbose_1_enables_name_flag() {
@@ -58,10 +54,6 @@ fn verbose_1_no_debug_flags() {
     assert!(!debug_gte(DebugFlag::Flist, 1));
     assert!(!debug_gte(DebugFlag::Deltasum, 1));
 }
-
-// ============================================================================
-// File Name Output Tests
-// ============================================================================
 
 /// Verifies verbose level 1 emits file names during transfer.
 #[test]
@@ -196,10 +188,6 @@ fn verbose_1_handles_unicode_filenames() {
     assert!(messages.contains(&"ファイル.txt"));
 }
 
-// ============================================================================
-// Output Format Compatibility Tests
-// ============================================================================
-
 /// Verifies verbose level 1 does not include itemize-changes format.
 /// Itemize format requires verbose level 2.
 #[test]
@@ -281,10 +269,6 @@ fn verbose_1_includes_statistics() {
     let events = drain_events();
     assert_eq!(events.len(), 5);
 }
-
-// ============================================================================
-// Interaction with Other Output Flags
-// ============================================================================
 
 /// Verifies verbose level 1 works with progress output.
 #[test]
@@ -380,10 +364,6 @@ fn verbose_1_shows_skipped_files() {
     }
 }
 
-// ============================================================================
-// File Selection Tests
-// ============================================================================
-
 /// Verifies verbose level 1 shows only transferred files, not skipped ones.
 #[test]
 fn verbose_1_shows_only_transferred_files() {
@@ -458,10 +438,6 @@ fn verbose_1_shows_directories() {
         }
     }
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 /// Verifies verbose level 1 handles empty filename.
 #[test]
@@ -550,10 +526,6 @@ fn verbose_1_no_files_transferred() {
     assert_eq!(name_events.len(), 0);
 }
 
-// ============================================================================
-// Comparison with Other Verbose Levels
-// ============================================================================
-
 /// Verifies verbose level 1 output is distinct from level 0.
 #[test]
 fn verbose_1_distinct_from_level_0() {
@@ -602,10 +574,6 @@ fn verbose_1_no_debug_unlike_level_2() {
     assert!(debug_gte(DebugFlag::Flist, 1));
     assert!(debug_gte(DebugFlag::Recv, 1));
 }
-
-// ============================================================================
-// Mixed Event Types at Verbose Level 1
-// ============================================================================
 
 /// Verifies verbose level 1 can mix different info event types.
 #[test]

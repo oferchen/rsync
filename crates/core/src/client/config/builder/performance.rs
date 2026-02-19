@@ -313,10 +313,6 @@ mod tests {
         assert!(!config.qsort());
     }
 
-    // =========================================================================
-    // Compression level propagation: all zlib levels 1-9 match upstream
-    // =========================================================================
-
     #[test]
     fn precise_levels_1_through_9_propagate_correctly() {
         use std::num::NonZeroU8;

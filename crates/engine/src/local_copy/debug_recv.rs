@@ -27,10 +27,6 @@ use std::time::{Duration, Instant};
 /// Target name for tracing events, matching rsync's debug category.
 const RECV_TARGET: &str = "rsync::recv";
 
-// ============================================================================
-// Tracing functions (feature-gated)
-// ============================================================================
-
 /// Traces the start of a file receive operation.
 ///
 /// Emits a tracing span that tracks the start of receiving a file's data.
@@ -274,10 +270,6 @@ pub fn trace_recv_summary(total_files: usize, total_bytes: u64, total_elapsed: D
 #[inline]
 pub fn trace_recv_summary(_total_files: usize, _total_bytes: u64, _total_elapsed: Duration) {}
 
-// ============================================================================
-// RecvTracer - stateful tracer for aggregating receive statistics
-// ============================================================================
-
 /// Aggregates statistics during file receive operations.
 ///
 /// Tracks file counts, byte counts, basis selections, checksum verifications,
@@ -517,10 +509,6 @@ impl RecvTracer {
         self.session_start = None;
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

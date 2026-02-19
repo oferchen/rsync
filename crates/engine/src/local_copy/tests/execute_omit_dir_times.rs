@@ -677,10 +677,6 @@ fn omit_dir_times_in_report_mode() {
     assert!(summary.directories_created() >= 2);
 }
 
-// ============================================================================
-// Baseline / control tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn without_omit_dir_times_directory_mtime_is_preserved() {
@@ -763,10 +759,6 @@ fn without_omit_dir_times_nested_dirs_preserve_mtimes() {
     assert_eq!(dest_sub1_mtime, sub1_mtime, "sub1 mtime should be preserved");
     assert_eq!(dest_sub2_mtime, sub2_mtime, "sub2 mtime should be preserved");
 }
-
-// ============================================================================
-// Incremental / second-pass tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -921,10 +913,6 @@ fn omit_dir_times_incremental_with_new_file_preserves_new_file_time() {
     assert_eq!(dest_file2_mtime, file2_mtime, "file2 mtime should be preserved");
 }
 
-// ============================================================================
-// Mixed content tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_mixed_tree_files_have_correct_timestamps() {
@@ -1002,10 +990,6 @@ fn omit_dir_times_mixed_tree_files_have_correct_timestamps() {
     assert_ne!(dest_dir_a_mtime, dir_a_mtime, "dir_a mtime should not be preserved");
     assert_ne!(dest_dir_b_mtime, dir_b_mtime, "dir_b mtime should not be preserved");
 }
-
-// ============================================================================
-// Option interaction tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]

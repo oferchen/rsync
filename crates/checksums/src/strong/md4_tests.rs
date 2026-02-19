@@ -22,10 +22,6 @@ mod tests {
         }
         out
     }
-
-    // ========================================================================
-    // RFC 1320 Test Vectors
-    // ========================================================================
     // Test vectors from RFC 1320 "The MD4 Message-Digest Algorithm"
     // https://www.rfc-editor.org/rfc/rfc1320
 
@@ -111,10 +107,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Empty Input Tests
-    // ========================================================================
-
     #[test]
     fn md4_empty_input_one_shot() {
         let digest = Md4::digest(b"");
@@ -140,10 +132,6 @@ mod tests {
         let digest = hasher.finalize();
         assert_eq!(to_hex(&digest), "31d6cfe0d16ae931b73c59d7e0c089c0");
     }
-
-    // ========================================================================
-    // Single Byte Tests
-    // ========================================================================
 
     #[test]
     fn md4_single_byte_zero() {
@@ -179,10 +167,6 @@ mod tests {
         // All 256 single-byte inputs should produce unique digests
         assert_eq!(digests.len(), 256);
     }
-
-    // ========================================================================
-    // Various Size Tests (up to 1MB)
-    // ========================================================================
 
     #[test]
     fn md4_small_sizes() {
@@ -265,10 +249,6 @@ mod tests {
 
         assert_eq!(oneshot, incremental);
     }
-
-    // ========================================================================
-    // Streaming API Incremental Computation Tests
-    // ========================================================================
 
     #[test]
     fn md4_streaming_byte_by_byte() {
@@ -386,10 +366,6 @@ mod tests {
         assert_eq!(cloned_result, Md4::digest(b"first part different"));
     }
 
-    // ========================================================================
-    // Comparison with Reference Implementation (md4 crate)
-    // ========================================================================
-
     #[test]
     fn md4_matches_reference_impl_empty() {
         let our_digest = Md4::digest(b"");
@@ -472,10 +448,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // StrongDigest Trait Tests
-    // ========================================================================
-
     #[test]
     fn md4_strong_digest_trait_digest_len() {
         assert_eq!(Md4::DIGEST_LEN, 16);
@@ -513,10 +485,6 @@ mod tests {
         assert_eq!(digest, Md4::digest(b"seeded"));
     }
 
-    // ========================================================================
-    // Default and Debug Trait Tests
-    // ========================================================================
-
     #[test]
     fn md4_default_trait() {
         let default_hasher = Md4::default();
@@ -538,10 +506,6 @@ mod tests {
         // Should indicate backend type
         assert!(debug_str.contains("backend"));
     }
-
-    // ========================================================================
-    // Batch Digest Tests
-    // ========================================================================
 
     #[test]
     fn md4_batch_digest_empty_inputs() {
@@ -587,10 +551,6 @@ mod tests {
             assert_eq!(*result, Md4::digest(&inputs[i]), "Mismatch at index {i}");
         }
     }
-
-    // ========================================================================
-    // Edge Cases and Corner Cases
-    // ========================================================================
 
     #[test]
     fn md4_exactly_55_bytes() {

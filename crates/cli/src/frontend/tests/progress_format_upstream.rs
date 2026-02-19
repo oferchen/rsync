@@ -15,10 +15,6 @@
 use super::common::*;
 use super::*;
 
-// ============================================================================
-// Progress line format structure tests (integration)
-// ============================================================================
-
 #[test]
 fn progress_line_contains_upstream_fields() {
     use tempfile::tempdir;
@@ -97,10 +93,6 @@ fn progress_line_bytes_field_uses_thousands_separator() {
     );
 }
 
-// ============================================================================
-// Per-file progress format: percentage calculation
-// ============================================================================
-
 #[test]
 fn format_progress_percent_zero_percent() {
     assert_eq!(format_progress_percent(0, Some(100)), "0%");
@@ -151,10 +143,6 @@ fn format_progress_percent_one_percent() {
 fn format_progress_percent_99_percent() {
     assert_eq!(format_progress_percent(99, Some(100)), "99%");
 }
-
-// ============================================================================
-// Rate formatting (kB/s, MB/s, GB/s)
-// ============================================================================
 
 #[test]
 fn format_progress_rate_decimal_small_rate() {
@@ -240,10 +228,6 @@ fn format_progress_rate_zero_bytes_human_returns_zero() {
     assert_eq!(rate_str, "0.00B/s");
 }
 
-// ============================================================================
-// Elapsed time formatting (H:MM:SS)
-// ============================================================================
-
 #[test]
 fn format_progress_elapsed_zero() {
     assert_eq!(format_progress_elapsed(Duration::ZERO), "0:00:00");
@@ -298,10 +282,6 @@ fn format_progress_elapsed_ignores_subsecond() {
         "0:00:01"
     );
 }
-
-// ============================================================================
-// Transfer count and check count in progress line
-// ============================================================================
 
 #[test]
 fn progress_multiple_files_shows_correct_xfr_and_to_chk() {
@@ -362,10 +342,6 @@ fn progress_multiple_files_shows_correct_xfr_and_to_chk() {
         "last transfer should show to-chk=0/N: {last_xfr_line:?}"
     );
 }
-
-// ============================================================================
-// -P is equivalent to --partial --progress
-// ============================================================================
 
 #[test]
 fn p_short_option_enables_progress_output() {
@@ -433,10 +409,6 @@ fn double_p_short_option_sets_progress_and_partial() {
     assert!(parsed.partial, "-PP should set partial to true");
 }
 
-// ============================================================================
-// --progress with --dry-run
-// ============================================================================
-
 #[test]
 fn progress_with_dry_run_shows_progress_info() {
     use tempfile::tempdir;
@@ -478,10 +450,6 @@ fn progress_with_dry_run_shows_progress_info() {
     );
 }
 
-// ============================================================================
-// Bytes formatting: decimal thousands-separated (upstream default)
-// ============================================================================
-
 #[test]
 fn format_decimal_bytes_zero() {
     assert_eq!(format_decimal_bytes(0), "0");
@@ -520,10 +488,6 @@ fn format_decimal_bytes_u64_max() {
     assert!(!result.is_empty());
 }
 
-// ============================================================================
-// Human-readable bytes formatting
-// ============================================================================
-
 #[test]
 fn format_human_bytes_under_threshold() {
     assert_eq!(format_human_bytes(0), "0");
@@ -557,10 +521,6 @@ fn format_human_bytes_tera_range() {
 fn format_human_bytes_peta_range() {
     assert_eq!(format_human_bytes(1_000_000_000_000_000), "1.00P");
 }
-
-// ============================================================================
-// Progress output field alignment tests
-// ============================================================================
 
 #[test]
 fn progress_bytes_field_is_right_aligned_15_chars() {
@@ -603,10 +563,6 @@ fn progress_percent_field_unknown_is_3_chars_right_padded() {
     assert_eq!(pct, " ??%");
 }
 
-// ============================================================================
-// Human-readable rate display (verbose)
-// ============================================================================
-
 #[test]
 fn format_verbose_rate_human_byte_range() {
     let (value, unit) = format_verbose_rate_human(500.0);
@@ -648,10 +604,6 @@ fn format_verbose_rate_human_peta_range() {
     assert_eq!(value, "2.50");
     assert_eq!(unit, "PB/s");
 }
-
-// ============================================================================
-// Progress line regex pattern validation
-// ============================================================================
 
 #[test]
 fn progress_line_matches_upstream_pattern() {
@@ -713,10 +665,6 @@ fn progress_line_matches_upstream_pattern() {
     );
 }
 
-// ============================================================================
-// --no-progress disables progress
-// ============================================================================
-
 #[test]
 fn no_progress_suppresses_progress_output() {
     use tempfile::tempdir;
@@ -747,10 +695,6 @@ fn no_progress_suppresses_progress_output() {
     );
 }
 
-// ============================================================================
-// --progress --no-progress: last flag wins
-// ============================================================================
-
 #[test]
 fn progress_then_no_progress_disables() {
     use crate::frontend::arguments::parse_args;
@@ -778,10 +722,6 @@ fn no_progress_then_progress_enables() {
         "--no-progress --progress should enable progress"
     );
 }
-
-// ============================================================================
-// --info=progress2 sets Overall mode
-// ============================================================================
 
 #[test]
 fn info_progress2_sets_overall_mode() {
@@ -825,10 +765,6 @@ fn info_progress0_disables_progress() {
     );
 }
 
-// ============================================================================
-// File name is printed before progress line (per-file mode)
-// ============================================================================
-
 #[test]
 fn progress_shows_filename_before_progress_line() {
     use tempfile::tempdir;
@@ -861,10 +797,6 @@ fn progress_shows_filename_before_progress_line() {
         "filename should appear before xfr# line (fname_pos={fname_pos}, xfr_pos={xfr_pos})"
     );
 }
-
-// ============================================================================
-// compute_rate helper tests
-// ============================================================================
 
 #[test]
 fn compute_rate_returns_none_for_zero_duration() {
