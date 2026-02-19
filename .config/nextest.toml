@@ -19,5 +19,5 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 # Retry policies for tests with inherent race conditions (port binding TOCTOU,
 # slow CI runner timing).
 [[profile.ci.overrides]]
-filter = "package(daemon) | test(execute_sparse)"
+filter = "package(daemon) | test(execute_sparse) | binary_id(~integration_daemon)"
 retries = 2
