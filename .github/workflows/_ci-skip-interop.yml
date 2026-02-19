@@ -3,6 +3,9 @@ name: CI skip interop
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   interop-with-upstream:
     name: interop with upstream rsync
