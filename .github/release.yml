@@ -8,16 +8,18 @@ changelog:
       - github-actions[bot]
       - oc-rsync-bot
   categories:
-    - title: Performance
+    - title: Features
       labels:
         - enhancement
-      exclude:
-        labels:
-          - bug
-          - documentation
+    - title: Performance
+      labels:
+        - performance
     - title: Bug Fixes
       labels:
         - bug
+    - title: CI/CD
+      labels:
+        - ci
     - title: Documentation
       labels:
         - documentation
