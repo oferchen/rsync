@@ -80,6 +80,7 @@ pub(super) fn read_payload<R: Read>(reader: &mut R, len: usize) -> io::Result<Ve
     Ok(payload)
 }
 
+#[allow(unsafe_code)]
 pub(super) fn read_payload_into<R: Read>(
     reader: &mut R,
     buffer: &mut Vec<u8>,
@@ -92,7 +93,11 @@ pub(super) fn read_payload_into<R: Read>(
     }
 
     reserve_payload(buffer, len)?;
-    buffer.resize(len, 0);
+    // SAFETY: `reserve_payload` ensures `capacity >= len`. The read loop below
+    // fills `buffer[0..len]` before any byte is exposed. On short read or error,
+    // `buffer.truncate(read_total)` trims to only-written bytes, so no
+    // uninitialized memory escapes this function.
+    unsafe { buffer.set_len(len) };
 
     let mut read_total = 0;
     while read_total < len {
