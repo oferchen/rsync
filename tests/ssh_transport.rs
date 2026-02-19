@@ -568,7 +568,9 @@ fn test_remote_invocation_with_multiple_paths() {
     assert_eq!(args[2].to_string_lossy(), "--sender");
     let flags_idx = 3;
     assert!(args[flags_idx].to_string_lossy().starts_with('-'));
-    let dot_idx = flags_idx + 1;
+    // Capability info string for protocol features (checksum negotiation, etc.)
+    assert_eq!(args[flags_idx + 1].to_string_lossy(), "-e.LsfxCIvu");
+    let dot_idx = flags_idx + 2;
     assert_eq!(args[dot_idx].to_string_lossy(), ".");
     // Paths come after "."
     assert_eq!(args[dot_idx + 1].to_string_lossy(), "/path1");
