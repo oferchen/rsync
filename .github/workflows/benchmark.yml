@@ -45,7 +45,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential autoconf automake libtool \
-            libacl1-dev libattr1-dev zlib1g-dev libxxhash-dev libzstd-dev liblz4-dev
+            libacl1-dev libattr1-dev zlib1g-dev libxxhash-dev libzstd-dev liblz4-dev \
+            openssh-server
 
       - name: Build oc-rsync (release)
         run: cargo build --release --workspace
@@ -73,6 +74,18 @@ jobs:
             ./configure --disable-xxhash --disable-zstd --disable-lz4
             make -j$(nproc)
           fi
+
+      - name: Set up SSH loopback
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Install upstream rsync to PATH
+        run: sudo cp target/interop/upstream-src/rsync-3.4.1/rsync /usr/local/bin/rsync
 
       - name: Run criterion benchmarks
         id: criterion
