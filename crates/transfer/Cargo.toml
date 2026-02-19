@@ -23,7 +23,7 @@ filters = { path = "../filters" }
 compress = { path = "../compress" }
 logging = { path = "../logging" }
 fast_io = { path = "../fast_io", default-features = false }
-flume = "0.11"
+crossbeam-queue = "0.3"
 getrandom = "0.3"
 thiserror = "2.0"
 tracing = { workspace = true, optional = true }
