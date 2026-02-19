@@ -8,7 +8,7 @@ use std::io;
 use std::path::PathBuf;
 use std::thread::JoinHandle;
 
-use flume::{Receiver, Sender, TryRecvError};
+use crate::pipeline::spsc::{self, TryRecvError};
 
 use crate::delta_apply::ChecksumVerifier;
 use crate::disk_commit::{DiskCommitConfig, spawn_disk_thread};
@@ -29,10 +29,10 @@ struct PendingChecksum {
 /// commit thread via bounded channels, including deferred checksum
 /// verification.
 pub struct PipelinedReceiver {
-    file_tx: Sender<FileMessage>,
-    result_rx: Receiver<io::Result<CommitResult>>,
+    file_tx: spsc::Sender<FileMessage>,
+    result_rx: spsc::Receiver<io::Result<CommitResult>>,
     /// Return channel for buffer recycling from the disk thread.
-    buf_return_rx: Receiver<Vec<u8>>,
+    buf_return_rx: spsc::Receiver<Vec<u8>>,
     disk_thread: Option<JoinHandle<()>>,
     /// Number of commits sent but not yet collected.
     pending_commits: usize,
@@ -60,7 +60,7 @@ impl PipelinedReceiver {
     ///
     /// Pass this to [`crate::transfer_ops::process_file_response_streaming`].
     #[inline]
-    pub fn file_sender(&self) -> &Sender<FileMessage> {
+    pub fn file_sender(&self) -> &spsc::Sender<FileMessage> {
         &self.file_tx
     }
 
@@ -69,7 +69,7 @@ impl PipelinedReceiver {
     /// Pass this to [`crate::transfer_ops::process_file_response_streaming`]
     /// so it can reuse buffers returned by the disk thread.
     #[inline]
-    pub fn buf_return_rx(&self) -> &Receiver<Vec<u8>> {
+    pub fn buf_return_rx(&self) -> &spsc::Receiver<Vec<u8>> {
         &self.buf_return_rx
     }
 

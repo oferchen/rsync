@@ -39,7 +39,7 @@ use engine::signature::FileSignature;
 use protocol::ProtocolVersion;
 use protocol::codec::NdxCodec;
 
-use flume::{Receiver, Sender};
+use crate::pipeline::spsc;
 
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
@@ -423,7 +423,7 @@ pub fn process_file_response<R: Read>(
 /// Mirrors upstream rsync's `simple_recv_token` (token.c:284) which uses a
 /// single static buffer. Here we recycle buffers through a return channel.
 #[inline]
-fn recycle_or_alloc(buf_return_rx: &Receiver<Vec<u8>>, capacity: usize) -> Vec<u8> {
+fn recycle_or_alloc(buf_return_rx: &spsc::Receiver<Vec<u8>>, capacity: usize) -> Vec<u8> {
     if let Ok(mut buf) = buf_return_rx.try_recv() {
         buf.clear();
         if buf.capacity() < capacity {
@@ -473,8 +473,8 @@ pub fn process_file_response_streaming<R: Read>(
     pending: PendingTransfer,
     ctx: &ResponseContext<'_>,
     checksum_verifier: &mut ChecksumVerifier,
-    file_tx: &Sender<FileMessage>,
-    buf_return_rx: &Receiver<Vec<u8>>,
+    file_tx: &spsc::Sender<FileMessage>,
+    buf_return_rx: &spsc::Receiver<Vec<u8>>,
     file_entry_index: usize,
     file_entry: Option<FileEntry>,
 ) -> io::Result<StreamingResult> {
@@ -624,15 +624,15 @@ pub fn process_file_response_streaming<R: Read>(
 #[allow(clippy::too_many_arguments)]
 fn process_remaining_tokens<R: Read>(
     reader: &mut ServerReader<R>,
-    file_tx: &Sender<FileMessage>,
-    buf_return_rx: &Receiver<Vec<u8>>,
+    file_tx: &spsc::Sender<FileMessage>,
+    buf_return_rx: &spsc::Receiver<Vec<u8>>,
     checksum_verifier: &mut ChecksumVerifier,
     signature: &Option<FileSignature>,
     basis_map: &mut Option<MapFile>,
     mut total_bytes: u64,
     pending_token: Option<i32>,
 ) -> io::Result<StreamingResult> {
-    let send_abort = |tx: &Sender<FileMessage>, reason: String| {
+    let send_abort = |tx: &spsc::Sender<FileMessage>, reason: String| {
         let _ = tx.send(FileMessage::Abort { reason });
     };
 
