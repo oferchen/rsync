@@ -116,15 +116,19 @@ crates/checksums/       # Rolling and strong checksums (MD4, MD5, XXH3, SIMD)
 crates/filters/         # Include/exclude pattern engine, .rsync-filter
 crates/metadata/        # Permissions, uid/gid, mtime, ACLs, xattrs
 crates/rsync_io/        # SSH stdio, rsync:// TCP transport, handshake
-crates/fast_io/         # Platform I/O (io_uring, copy_file_range)
+crates/fast_io/         # Platform I/O (io_uring, copy_file_range, sendfile)
 crates/compress/        # zstd, lz4, zlib compression codecs
 crates/bandwidth/       # Bandwidth limiting and rate control
 crates/signature/       # Signature layout and block-size calculations
 crates/match/           # Delta matching and block search
 crates/flist/           # File list generation and traversal
 crates/logging/         # Logging macros and verbosity control
+crates/logging-sink/    # Message sink and output formatting
 crates/batch/           # Batch file read/write support
 crates/branding/        # Binary naming and version metadata
+crates/embedding/       # Programmatic entry points for library usage
+crates/apple-fs/        # macOS filesystem operations (clonefile, FSEvents)
+crates/windows-gnu-eh/  # Windows GNU exception handling shims
 ```
 
 See `cargo doc --workspace --no-deps --open` for API documentation.
