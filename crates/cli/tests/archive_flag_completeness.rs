@@ -10,10 +10,6 @@
 
 use cli::test_utils::parse_args;
 
-// ============================================================================
-// Part 1: Verify --archive Enables All Expected Sub-Options at Parse Time
-// ============================================================================
-
 #[test]
 fn archive_flag_sets_archive_boolean() {
     let args = parse_args(["oc-rsync", "-a", "src", "dest"]).unwrap();
@@ -89,10 +85,6 @@ fn archive_long_form_equivalent_to_short() {
     assert_eq!(short.specials, long.specials);
 }
 
-// ============================================================================
-// Part 2: Verify -rlptgoD Individually Set Matches Archive Semantics
-// ============================================================================
-
 #[test]
 fn explicit_rlptgod_flags_set_explicit_values() {
     // When -rlptgoD is specified explicitly (rather than -a), the flags are
@@ -131,10 +123,6 @@ fn archive_without_explicit_flags_leaves_flags_none() {
     assert_eq!(archive_args.links, None);
     assert_eq!(explicit_args.links, Some(true));
 }
-
-// ============================================================================
-// Part 3: Override Behavior - Explicit Flags After Archive
-// ============================================================================
 
 #[test]
 fn no_recursive_after_archive_disables_recursion() {
@@ -242,10 +230,6 @@ fn no_d_after_archive_disables_devices_and_specials() {
     );
 }
 
-// ============================================================================
-// Part 4: Override Behavior - Explicit Flags Before Archive
-// ============================================================================
-
 #[test]
 fn no_perms_before_archive_stays_disabled() {
     let args = parse_args(["oc-rsync", "--no-perms", "-a", "src", "dest"]).unwrap();
@@ -290,10 +274,6 @@ fn no_group_before_archive_stays_disabled() {
         "--no-group before -a should stay disabled"
     );
 }
-
-// ============================================================================
-// Part 5: Archive Does NOT Enable Non-Archive Flags
-// ============================================================================
 
 #[test]
 fn archive_does_not_enable_acls() {
@@ -355,10 +335,6 @@ fn archive_does_not_enable_delete() {
     );
 }
 
-// ============================================================================
-// Part 6: Archive Combined with Additional Flags
-// ============================================================================
-
 #[test]
 fn archive_with_acls() {
     let args = parse_args(["oc-rsync", "-a", "-A", "src", "dest"]).unwrap();
@@ -410,10 +386,6 @@ fn archive_with_progress() {
     );
 }
 
-// ============================================================================
-// Part 7: Combined Short Option Parsing
-// ============================================================================
-
 #[test]
 fn combined_av_flags() {
     let args = parse_args(["oc-rsync", "-av", "src", "dest"]).unwrap();
@@ -460,10 +432,6 @@ fn combined_avzp_flags_with_progress() {
     assert_eq!(args.progress, ProgressSetting::PerFile);
 }
 
-// ============================================================================
-// Part 8: Multiple Override Scenarios
-// ============================================================================
-
 #[test]
 fn archive_with_multiple_disables() {
     let args = parse_args([
@@ -509,10 +477,6 @@ fn archive_with_explicit_enable_after_disable() {
     );
 }
 
-// ============================================================================
-// Part 9: Default State Without Archive
-// ============================================================================
-
 #[test]
 fn no_archive_by_default() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -526,10 +490,6 @@ fn no_archive_by_default() {
     assert_eq!(args.devices, None, "Devices should be None by default");
     assert_eq!(args.specials, None, "Specials should be None by default");
 }
-
-// ============================================================================
-// Part 10: Device and Special File Flag (-D) Behavior
-// ============================================================================
 
 #[test]
 fn d_flag_enables_both_devices_and_specials() {
@@ -590,10 +550,6 @@ fn archive_with_no_d_disables_both() {
     );
 }
 
-// ============================================================================
-// Part 11: Symlink Flag (-l/--links) Behavior
-// ============================================================================
-
 #[test]
 fn links_flag_short() {
     let args = parse_args(["oc-rsync", "-l", "src", "dest"]).unwrap();
@@ -635,10 +591,6 @@ fn archive_symlinks_override() {
     );
 }
 
-// ============================================================================
-// Part 12: Ensure Correct Expansion in Combined Flags
-// ============================================================================
-
 #[test]
 fn combined_rlptgod_equals_full_expansion() {
     let args = parse_args(["oc-rsync", "-rlptgoD", "src", "dest"]).unwrap();
@@ -661,10 +613,6 @@ fn combined_rlptgod_equals_full_expansion() {
         "-D component should enable specials"
     );
 }
-
-// ============================================================================
-// Part 13: Edge Cases and Special Scenarios
-// ============================================================================
 
 /// Note: Multiple -a flags conflict in clap's argument parser, so this test
 /// verifies the expected behavior of rejecting repeated archive flags.

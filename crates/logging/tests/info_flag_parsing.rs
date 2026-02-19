@@ -10,10 +10,6 @@
 
 use logging::{InfoFlag, VerbosityConfig, info_gte, init};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Parse an --info=FLAGS string and apply to config.
 /// Format: "copy,del,name2" or "copy2,del,stats"
 fn parse_info_flags(config: &mut VerbosityConfig, flags_str: &str) -> Result<(), String> {
@@ -42,10 +38,6 @@ fn parse_info_flags(config: &mut VerbosityConfig, flags_str: &str) -> Result<(),
 
     Ok(())
 }
-
-// ============================================================================
-// Single Flag Parsing Tests
-// ============================================================================
 
 /// Verifies single flag without level defaults to level 1.
 #[test]
@@ -94,10 +86,6 @@ fn single_flag_level_0() {
 
     assert_eq!(config.info.copy, 0);
 }
-
-// ============================================================================
-// Multiple Flag Parsing Tests
-// ============================================================================
 
 /// Verifies two flags separated by comma.
 #[test]
@@ -168,10 +156,6 @@ fn duplicate_flag_uses_last_value() {
     assert_eq!(config.info.copy, 3);
 }
 
-// ============================================================================
-// Whitespace Handling Tests
-// ============================================================================
-
 /// Verifies spaces around commas are handled.
 #[test]
 fn flags_with_spaces() {
@@ -223,10 +207,6 @@ fn empty_flags_string() {
     // Config should be unchanged
     assert_eq!(config.info.copy, 2);
 }
-
-// ============================================================================
-// ALL and NONE Keyword Tests
-// ============================================================================
 
 /// Verifies ALL sets all info flags to level 1.
 #[test]
@@ -316,10 +296,6 @@ fn none_keyword_mixed_case() {
     assert_eq!(config.info.copy, 0);
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 /// Verifies unknown flag returns error.
 #[test]
 fn unknown_flag_error() {
@@ -372,10 +348,6 @@ fn malformed_flag_error() {
     assert!(result.is_err());
 }
 
-// ============================================================================
-// Realistic Usage Pattern Tests
-// ============================================================================
-
 /// Verifies typical rsync --info=name,del pattern.
 #[test]
 fn typical_rsync_pattern_1() {
@@ -425,10 +397,6 @@ fn typical_rsync_pattern_verbose() {
     assert!(info_gte(InfoFlag::Misc, 2));
 }
 
-// ============================================================================
-// Integration with Verbose Levels Tests
-// ============================================================================
-
 /// Verifies --info flags can override verbose level settings.
 #[test]
 fn info_flags_override_verbose_level() {
@@ -469,10 +437,6 @@ fn selective_info_override() {
     assert_eq!(config.info.copy, 1);
     assert_eq!(config.info.del, 1);
 }
-
-// ============================================================================
-// Edge Case Tests
-// ============================================================================
 
 /// Verifies consecutive commas are handled.
 #[test]
@@ -526,10 +490,6 @@ fn zero_level_explicit() {
     parse_info_flags(&mut config, "copy0").unwrap();
     assert_eq!(config.info.copy, 0);
 }
-
-// ============================================================================
-// Case Sensitivity Tests (flags are case-sensitive)
-// ============================================================================
 
 /// Verifies flag names are case-sensitive (should fail).
 #[test]

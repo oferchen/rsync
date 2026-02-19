@@ -56,10 +56,6 @@ pub use ndx::{
     NdxCodec, NdxCodecEnum, NdxState, create_ndx_codec, write_ndx_done, write_ndx_flist_eof,
 };
 
-// ============================================================================
-// Unified ProtocolCodecs container
-// ============================================================================
-
 /// Unified container for all protocol version-aware codecs.
 ///
 /// This struct provides a single point of access to both wire encoding
@@ -148,10 +144,6 @@ impl ProtocolCodecs {
         self.wire.is_legacy()
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -278,10 +270,6 @@ mod tests {
         );
         assert_eq!(read_codecs.ndx.read_ndx(&mut cursor).unwrap(), 1);
     }
-
-    // ========================================================================
-    // Protocol Version Feature Tests
-    // ========================================================================
 
     #[test]
     fn protocol_version_feature_gates_sender_receiver_modifiers() {

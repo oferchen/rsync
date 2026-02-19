@@ -532,10 +532,6 @@ fn test_daemon_nonexistent_module_error() {
     );
 }
 
-// ============================================================================
-// Comprehensive Handshake Tests
-// ============================================================================
-
 /// Test full handshake sequence from client perspective with modern protocol.
 ///
 /// This test verifies the complete daemon handshake flow:

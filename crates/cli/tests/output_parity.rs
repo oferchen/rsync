@@ -23,10 +23,6 @@ use cli::{
 };
 use std::time::Duration;
 
-// ============================================================================
-// STATS OUTPUT PARITY TESTS
-// ============================================================================
-
 #[test]
 fn stats_number_formatting_zero() {
     // Upstream rsync formats 0 as "0" without separators
@@ -230,10 +226,6 @@ fn stats_full_output_format() {
     assert!(output.contains("Total bytes sent: 12,345"));
     assert!(output.contains("Total bytes received: 67,890"));
 }
-
-// ============================================================================
-// ITEMIZE OUTPUT PARITY TESTS
-// ============================================================================
 
 #[test]
 fn itemize_new_file_format() {
@@ -566,10 +558,6 @@ fn itemize_length_always_eleven() {
     }
 }
 
-// ============================================================================
-// PROGRESS OUTPUT PARITY TESTS
-// ============================================================================
-
 #[test]
 fn progress_rate_formatting_kilobytes() {
     // Upstream always shows at least kB/s, never B/s
@@ -708,10 +696,6 @@ fn progress_number_formatting() {
     );
 }
 
-// ============================================================================
-// DRY-RUN OUTPUT PARITY TESTS
-// ============================================================================
-
 #[test]
 fn dry_run_marker_present() {
     // Upstream always shows "(DRY RUN)" marker at the end
@@ -827,10 +811,6 @@ fn dry_run_number_formatting() {
     );
 }
 
-// ============================================================================
-// INFO FLAGS PARITY TESTS
-// ============================================================================
-
 #[test]
 fn info_flags_verbosity_zero_silent() {
     // Verbosity 0 (-q) should disable all info output
@@ -932,10 +912,6 @@ fn info_flags_default_level_one() {
     assert_eq!(flags.levels().get(logging::InfoFlag::Del), 1);
 }
 
-// ============================================================================
-// CROSS-MODULE CONSISTENCY TESTS
-// ============================================================================
-
 #[test]
 fn number_formatting_consistency_across_modules() {
     // All modules should use the same number formatting
@@ -979,10 +955,6 @@ fn decimal_formatting_consistency() {
         "speedup should round to 2 decimal places"
     );
 }
-
-// ============================================================================
-// INTENTIONAL DIFFERENCES DOCUMENTATION
-// ============================================================================
 
 /// Documents intentional differences from upstream rsync output format.
 ///

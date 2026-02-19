@@ -13,10 +13,6 @@ use bandwidth::{
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-// ============================================================================
-// Helper functions
-// ============================================================================
-
 fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
 }
@@ -31,10 +27,6 @@ fn within_tolerance(actual: Duration, expected: Duration, tolerance_percent: f64
     let max = expected.saturating_add(tolerance);
     actual >= min && actual <= max
 }
-
-// ============================================================================
-// Simulated File Transfer Scenarios
-// ============================================================================
 
 mod file_transfer_scenarios {
     use super::*;
@@ -216,10 +208,6 @@ mod file_transfer_scenarios {
     }
 }
 
-// ============================================================================
-// Rate Change Scenarios
-// ============================================================================
-
 mod rate_change_scenarios {
     use super::*;
 
@@ -322,10 +310,6 @@ mod rate_change_scenarios {
     }
 }
 
-// ============================================================================
-// Burst Behavior Scenarios
-// ============================================================================
-
 mod burst_scenarios {
     use super::*;
 
@@ -400,10 +384,6 @@ mod burst_scenarios {
         assert_eq!(limiter.burst_bytes().unwrap().get(), 32 * 1024);
     }
 }
-
-// ============================================================================
-// Edge Cases from Real Usage
-// ============================================================================
 
 mod real_usage_edge_cases {
     use super::*;
@@ -514,10 +494,6 @@ mod real_usage_edge_cases {
         );
     }
 }
-
-// ============================================================================
-// Timing Accuracy Tests
-// ============================================================================
 
 mod timing_accuracy {
     use super::*;
@@ -631,10 +607,6 @@ mod timing_accuracy {
     }
 }
 
-// ============================================================================
-// Apply Effective Limit Scenarios
-// ============================================================================
-
 mod apply_effective_limit_scenarios {
     use super::*;
 
@@ -731,10 +703,6 @@ mod apply_effective_limit_scenarios {
     }
 }
 
-// ============================================================================
-// Write Max and Recommended Read Size Tests
-// ============================================================================
-
 mod write_max_scenarios {
     use super::*;
 
@@ -791,10 +759,6 @@ mod write_max_scenarios {
         assert_eq!(limiter.recommended_read_size(usize::MAX), write_max);
     }
 }
-
-// ============================================================================
-// Parsing Edge Cases
-// ============================================================================
 
 mod parsing_edge_cases {
     use super::*;
@@ -879,10 +843,6 @@ mod parsing_edge_cases {
         assert!(zero_burst.burst().is_none());
     }
 }
-
-// ============================================================================
-// Stress Tests
-// ============================================================================
 
 mod stress_tests {
     use super::*;

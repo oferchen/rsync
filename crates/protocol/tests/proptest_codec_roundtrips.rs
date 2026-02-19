@@ -32,10 +32,6 @@ use protocol::{
 };
 use std::io::Cursor;
 
-// ============================================================================
-// Varint Roundtrip Tests (i32)
-// ============================================================================
-
 proptest! {
     /// All i32 values should roundtrip through varint encoding.
     #[test]
@@ -107,10 +103,6 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Fixed Integer (i32) Roundtrip Tests
-// ============================================================================
-
 proptest! {
     /// All i32 values should roundtrip through 4-byte fixed encoding.
     #[test]
@@ -125,10 +117,6 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 }
-
-// ============================================================================
-// Longint (i64) Roundtrip Tests
-// ============================================================================
 
 proptest! {
     /// Non-negative i64 values within longint range should roundtrip.
@@ -166,10 +154,6 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 }
-
-// ============================================================================
-// Varlong (i64) Roundtrip Tests
-// ============================================================================
 
 /// Strategy for generating valid file size values (used with min_bytes=3).
 ///
@@ -226,10 +210,6 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Varint30 Protocol-Dependent Roundtrip Tests
-// ============================================================================
-
 proptest! {
     /// Varint30 encoding should roundtrip for all protocol versions.
     #[test]
@@ -250,10 +230,6 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 }
-
-// ============================================================================
-// NDX Codec Roundtrip Tests
-// ============================================================================
 
 /// Strategy for generating valid NDX values.
 ///
@@ -385,10 +361,6 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Message Frame Roundtrip Tests
-// ============================================================================
-
 /// Strategy for generating arbitrary message payloads.
 fn payload_strategy() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 0..4096)
@@ -469,10 +441,6 @@ proptest! {
         prop_assert!(remaining.is_empty());
     }
 }
-
-// ============================================================================
-// Protocol Codec Roundtrip Tests
-// ============================================================================
 
 proptest! {
     /// File size encoding should roundtrip for all protocol versions.
@@ -577,10 +545,6 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Cross-Protocol Consistency Tests
-// ============================================================================
-
 proptest! {
     /// Different codec instances with the same version should produce identical output.
     #[test]
@@ -637,10 +601,6 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Encoding Size Property Tests
-// ============================================================================
-
 proptest! {
     /// Varint encoding size should be bounded.
     #[test]
@@ -689,10 +649,6 @@ proptest! {
         prop_assert_eq!(encoded.len(), 4);
     }
 }
-
-// ============================================================================
-// Boundary Value Tests
-// ============================================================================
 
 proptest! {
     /// Values at byte boundaries should roundtrip correctly.
@@ -763,10 +719,6 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 }
-
-// ============================================================================
-// Mixed Type Sequence Tests
-// ============================================================================
 
 proptest! {
     /// Interleaved varint and fixed int values should roundtrip correctly.

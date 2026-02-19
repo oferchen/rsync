@@ -12,10 +12,6 @@
 // Note: Most ownership tests require root privileges to actually change
 // file ownership. Tests that require root will skip when not running as root.
 
-// ============================================================================
-// Basic Owner Preservation Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn owner_flag_preserves_source_uid() {
@@ -146,10 +142,6 @@ fn owner_flag_with_root_uid() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ============================================================================
-// Basic Group Preservation Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn group_flag_preserves_source_gid() {
@@ -278,10 +270,6 @@ fn group_flag_with_root_gid() {
     assert_eq!(metadata.gid(), 0, "destination should belong to root group");
     assert_eq!(summary.files_copied(), 1);
 }
-
-// ============================================================================
-// Combined Owner and Group Preservation Tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -420,10 +408,6 @@ fn group_only_preserves_gid_but_not_uid() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ============================================================================
-// Directory Ownership Preservation Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn owner_and_group_preserved_on_directory() {
@@ -540,10 +524,6 @@ fn owner_preserved_recursively_in_directory_tree() {
     assert!(summary.files_copied() >= 2);
 }
 
-// ============================================================================
-// Symlink Ownership Preservation Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn owner_and_group_preserved_on_symlink() {
@@ -600,10 +580,6 @@ fn owner_and_group_preserved_on_symlink() {
     assert_eq!(metadata.gid(), test_gid);
     assert!(summary.symlinks_copied() >= 1);
 }
-
-// ============================================================================
-// Non-Root Behavior Tests
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -747,10 +723,6 @@ fn non_root_can_preserve_own_gid() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ============================================================================
-// Ownership with Other Metadata Options Tests
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn owner_with_permissions_and_times() {
@@ -867,10 +839,6 @@ fn owner_with_archive_options() {
     assert_eq!(metadata.permissions().mode() & 0o777, 0o755);
     assert!(summary.files_copied() >= 1);
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[cfg(unix)]
 #[test]
@@ -1179,10 +1147,6 @@ fn ownership_preserved_with_high_ids() {
     assert_eq!(metadata.gid(), high_gid);
     assert_eq!(summary.files_copied(), 1);
 }
-
-// ============================================================================
-// Interaction with --no-owner and --no-group
-// ============================================================================
 
 #[cfg(unix)]
 #[test]

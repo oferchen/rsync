@@ -5,10 +5,6 @@
 
 use cli::test_utils::parse_args;
 
-// ============================================================================
-// Backup Mode Activation
-// ============================================================================
-
 #[test]
 fn test_backup_flag_alone() {
     let args = parse_args(["oc-rsync", "--backup", "src", "dest"]).unwrap();
@@ -49,10 +45,6 @@ fn test_no_backup_options() {
     assert_eq!(args.backup_dir, None);
     assert_eq!(args.backup_suffix, None);
 }
-
-// ============================================================================
-// Compression Activation and Override
-// ============================================================================
 
 #[test]
 fn test_compress_flag_alone() {
@@ -113,10 +105,6 @@ fn test_no_compression_by_default() {
     assert_eq!(args.compress_level, None);
 }
 
-// ============================================================================
-// Partial Mode Activation
-// ============================================================================
-
 #[test]
 fn test_partial_flag_alone() {
     let args = parse_args(["oc-rsync", "--partial", "src", "dest"]).unwrap();
@@ -163,10 +151,6 @@ fn test_partial_disabled_by_default() {
     assert!(!args.partial, "Partial mode should be disabled by default");
     assert_eq!(args.partial_dir, None);
 }
-
-// ============================================================================
-// Open-noatime Flag Override
-// ============================================================================
 
 #[test]
 fn test_open_noatime_flag_alone() {

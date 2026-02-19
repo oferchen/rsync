@@ -5,10 +5,6 @@
 
 use cli::test_utils::parse_args;
 
-// ============================================================================
-// Delete Mode Mutual Exclusions
-// ============================================================================
-
 #[test]
 fn test_delete_before_and_during_conflict() {
     let result = parse_args([
@@ -142,10 +138,6 @@ fn test_all_delete_modes_conflict() {
     assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
 
-// ============================================================================
-// Multiple Value Rejections (usermap/groupmap)
-// ============================================================================
-
 #[test]
 fn test_single_usermap_accepted() {
     let result = parse_args(["oc-rsync", "--usermap=foo:bar", "src", "dest"]);
@@ -215,10 +207,6 @@ fn test_usermap_and_groupmap_together() {
     assert_eq!(args.usermap, Some("foo:bar".into()));
     assert_eq!(args.groupmap, Some("admin:wheel".into()));
 }
-
-// ============================================================================
-// Error Message Format Validation
-// ============================================================================
 
 #[test]
 fn test_delete_conflict_error_message_contains_options() {

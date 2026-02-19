@@ -13,10 +13,6 @@ use filetime::{FileTime, set_file_times};
 use integration::helpers::*;
 use std::fs;
 
-// ============================================================================
-// Core Size-Only Behavior
-// ============================================================================
-
 /// Test that files with the same size but different content are NOT transferred.
 /// This is the key behavior of --size-only: it only compares file sizes.
 #[test]
@@ -120,10 +116,6 @@ fn size_only_same_size_same_content_no_transfer() {
     );
 }
 
-// ============================================================================
-// Size-Only with Verbose Flag
-// ============================================================================
-
 /// Test --size-only with --verbose shows appropriate output.
 /// When sizes match, no transfer message should appear for that file.
 #[test]
@@ -193,10 +185,6 @@ fn size_only_verbose_transfer_for_different_size() {
         "Verbose output should show transfer activity"
     );
 }
-
-// ============================================================================
-// Size-Only with Other Flags
-// ============================================================================
 
 /// Test --size-only with --dry-run shows what would happen without modifying.
 #[test]
@@ -388,10 +376,6 @@ fn size_only_with_times_flag() {
     );
 }
 
-// ============================================================================
-// Edge Cases
-// ============================================================================
-
 /// Test --size-only with empty files (0 bytes).
 /// Two empty files should be considered the same (size = 0).
 #[test]
@@ -537,10 +521,6 @@ fn size_only_large_files_same_size() {
         "Last byte should be unchanged"
     );
 }
-
-// ============================================================================
-// Size-Only vs Normal Comparison Behavior Contrast
-// ============================================================================
 
 /// Contrast test: Without --size-only, same size but older dest gets updated.
 /// This shows the difference --size-only makes.

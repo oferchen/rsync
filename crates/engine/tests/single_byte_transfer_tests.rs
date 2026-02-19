@@ -44,10 +44,6 @@ use protocol::ProtocolVersion;
 use std::io::Cursor;
 use std::num::NonZeroU8;
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
-
 /// Creates a signature index from the provided data.
 ///
 /// Returns None if the data is too small to produce valid blocks.
@@ -88,10 +84,6 @@ fn verify_round_trip(basis: &[u8], input: &[u8]) -> engine::DeltaScript {
     );
     script
 }
-
-// ============================================================================
-// Signature Generation Tests for Single-Byte Files
-// ============================================================================
 
 /// Verifies that signature generation handles single-byte files correctly.
 ///
@@ -169,10 +161,6 @@ fn single_byte_rolling_checksum() {
         "rolling checksum should match direct computation"
     );
 }
-
-// ============================================================================
-// Delta Generation Tests with Single-Byte Files
-// ============================================================================
 
 /// Verifies delta generation when basis is a single byte and input is identical.
 ///
@@ -301,10 +289,6 @@ fn delta_multi_to_single_byte() {
     assert_eq!(reconstructed, input);
 }
 
-// ============================================================================
-// Block Matching Tests with Single Bytes
-// ============================================================================
-
 /// Verifies that block matching correctly handles single-byte input.
 ///
 /// When the input is a single byte, it cannot form a complete block
@@ -372,10 +356,6 @@ fn no_false_matches_single_byte() {
         assert_eq!(reconstructed, &input[..]);
     }
 }
-
-// ============================================================================
-// Round-Trip Tests for Single-Byte Files
-// ============================================================================
 
 /// Verifies round-trip for all possible single-byte values.
 ///
@@ -449,10 +429,6 @@ fn round_trip_printable_ascii() {
         );
     }
 }
-
-// ============================================================================
-// Edge Case Tests
-// ============================================================================
 
 /// Verifies handling of single byte at end of larger input.
 #[test]
@@ -529,10 +505,6 @@ fn delta_script_accounting_single_byte() {
     );
 }
 
-// ============================================================================
-// Buffer Boundary Tests
-// ============================================================================
-
 /// Verifies single-byte handling with various buffer sizes.
 ///
 /// Tests that different buffer sizes don't affect correctness when
@@ -580,10 +552,6 @@ fn single_byte_zero_buffer_clamped_to_one() {
     assert_eq!(reconstructed, input);
 }
 
-// ============================================================================
-// Stress Tests
-// ============================================================================
-
 /// Stress test: Many sequential single-byte transfers.
 #[test]
 fn stress_many_single_byte_transfers() {
@@ -619,10 +587,6 @@ fn stress_alternating_single_bytes() {
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, input);
 }
-
-// ============================================================================
-// Algorithm Correctness Tests
-// ============================================================================
 
 /// Verifies that single-byte delta generation is deterministic.
 #[test]

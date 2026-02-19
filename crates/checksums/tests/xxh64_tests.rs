@@ -11,10 +11,6 @@
 
 use checksums::strong::{StrongDigest, Xxh64};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Convert a u64 hash to little-endian bytes for comparison with Xxh64::digest output.
 fn expected_le_bytes(hash: u64) -> [u8; 8] {
     hash.to_le_bytes()
@@ -35,10 +31,6 @@ fn to_hex(digest: &[u8; 8]) -> String {
     }
     out
 }
-
-// ============================================================================
-// Section 1: Known Test Vectors from xxHash Documentation
-// ============================================================================
 // These test vectors are derived from the official xxHash specification
 // and verified against the reference C implementation.
 // Reference: https://github.com/Cyan4973/xxHash
@@ -208,10 +200,6 @@ mod known_test_vectors {
     }
 }
 
-// ============================================================================
-// Section 2: Empty Input Tests
-// ============================================================================
-
 mod empty_input {
     use super::*;
 
@@ -294,10 +282,6 @@ mod empty_input {
         assert_eq!(streaming, oneshot);
     }
 }
-
-// ============================================================================
-// Section 3: Various Input Sizes Tests
-// ============================================================================
 
 mod various_input_sizes {
     use super::*;
@@ -635,10 +619,6 @@ mod various_input_sizes {
     }
 }
 
-// ============================================================================
-// Section 4: Seed Variations Tests
-// ============================================================================
-
 mod seed_variations {
     use super::*;
 
@@ -795,10 +775,6 @@ mod seed_variations {
         assert_eq!(d2, d3);
     }
 }
-
-// ============================================================================
-// Section 5: Streaming/Incremental Hashing Tests
-// ============================================================================
 
 mod streaming_incremental {
     use super::*;
@@ -1043,10 +1019,6 @@ mod streaming_incremental {
     }
 }
 
-// ============================================================================
-// Section 6: Additional Verification Tests
-// ============================================================================
-
 mod verification {
     use super::*;
 
@@ -1206,10 +1178,6 @@ mod verification {
     }
 }
 
-// ============================================================================
-// Section 7: Compatibility and Regression Tests
-// ============================================================================
-
 mod compatibility {
     use super::*;
 
@@ -1333,10 +1301,6 @@ mod compatibility {
         }
     }
 }
-
-// ============================================================================
-// Section 8: Edge Cases and Boundary Conditions
-// ============================================================================
 
 mod edge_cases {
     use super::*;

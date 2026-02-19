@@ -28,10 +28,6 @@ use std::time::{Duration, Instant};
 /// Target name for tracing events, matching rsync's debug category.
 const DELTASUM_TARGET: &str = "rsync::deltasum";
 
-// ============================================================================
-// Tracing functions (feature-gated)
-// ============================================================================
-
 /// Traces the start of checksum generation for a file.
 ///
 /// Emits a tracing event when beginning to compute checksums for basis file
@@ -323,10 +319,6 @@ pub fn trace_deltasum_summary(
 ) {
 }
 
-// ============================================================================
-// DeltasumTracer - stateful tracer for aggregating delta/checksum statistics
-// ============================================================================
-
 /// Aggregates statistics during delta matching and checksum operations.
 ///
 /// Tracks hit/miss/false-alarm counts, matched vs. literal byte ratios, and
@@ -617,10 +609,6 @@ impl DeltasumTracer {
         self.current_file_start = None;
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -26,10 +26,6 @@ use std::process::Command;
 
 use tempfile::tempdir;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Creates a temporary directory with test fixtures for symlink tests.
 struct SymlinkTestFixture {
     temp_dir: tempfile::TempDir,
@@ -87,10 +83,6 @@ fn upstream_rsync_available() -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-
-// ============================================================================
-// Test 1: Symlinks Are Preserved As Symlinks
-// ============================================================================
 
 /// Verifies that symlinks are preserved as symlinks when using -l flag.
 ///
@@ -166,10 +158,6 @@ fn symlink_not_dereferenced_with_links_flag() {
     // filesystem entry itself is a symlink)
     assert!(is_symlink(&dest_link));
 }
-
-// ============================================================================
-// Test 2: Relative Symlink Targets
-// ============================================================================
 
 /// Verifies that relative symlink targets are preserved exactly.
 ///
@@ -282,10 +270,6 @@ fn deeply_nested_relative_symlink_preserved() {
     );
 }
 
-// ============================================================================
-// Test 3: Absolute Symlink Targets
-// ============================================================================
-
 /// Verifies that absolute symlink targets are preserved exactly.
 ///
 /// Absolute symlinks should be transferred with their absolute path intact.
@@ -340,10 +324,6 @@ fn absolute_symlink_to_directory_preserved() {
         "absolute symlink to directory should be preserved"
     );
 }
-
-// ============================================================================
-// Test 4: Broken Symlinks
-// ============================================================================
 
 /// Verifies that broken symlinks (pointing to non-existent targets) are preserved.
 ///
@@ -437,10 +417,6 @@ fn symlink_broken_after_target_deleted() {
         Some(PathBuf::from("temporary.txt"))
     );
 }
-
-// ============================================================================
-// Test 5: Symlinks to Directories
-// ============================================================================
 
 /// Verifies that symlinks to directories are preserved as symlinks.
 ///
@@ -543,10 +519,6 @@ fn symlink_to_parent_directory_preserved() {
         "symlink to parent directory should be preserved"
     );
 }
-
-// ============================================================================
-// Test 6: Comparison with Upstream rsync
-// ============================================================================
 
 /// Compares behavior with upstream rsync to ensure compatibility.
 ///
@@ -701,10 +673,6 @@ fn compare_upstream_rsync_copy_links_behavior() {
     let content = fs::read(&dest_link).expect("read dest file");
     assert_eq!(content, b"target content for copy-links test");
 }
-
-// ============================================================================
-// Edge Cases and Additional Tests
-// ============================================================================
 
 /// Verifies handling of symlink chains (symlink to symlink).
 #[test]

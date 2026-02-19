@@ -45,10 +45,6 @@ use signature::{
 use std::io::Cursor;
 use std::num::{NonZeroU8, NonZeroU32};
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
-
 /// Creates layout params with common defaults for testing.
 fn layout_params(file_len: u64, checksum_len: u8) -> SignatureLayoutParams {
     SignatureLayoutParams::new(
@@ -103,10 +99,6 @@ fn generate_signature_from_data(
         .expect("signature generation should succeed");
     (signature, layout)
 }
-
-// ============================================================================
-// Signature Generation - File Size Variations
-// ============================================================================
 
 mod file_size_variations {
     //! Tests for signature generation across different file sizes.
@@ -296,10 +288,6 @@ mod file_size_variations {
     }
 }
 
-// ============================================================================
-// Block Size Variations
-// ============================================================================
-
 mod block_size_variations {
     //! Tests for different block size configurations.
 
@@ -398,10 +386,6 @@ mod block_size_variations {
         assert!(legacy_layout.block_length().get() >= 131072);
     }
 }
-
-// ============================================================================
-// Checksum Algorithm Variations
-// ============================================================================
 
 mod checksum_algorithms {
     //! Tests for all supported checksum algorithms.
@@ -585,10 +569,6 @@ mod checksum_algorithms {
     }
 }
 
-// ============================================================================
-// Round-Trip Verification
-// ============================================================================
-
 mod round_trip {
     //! Tests verifying signature generation consistency and correctness.
 
@@ -697,10 +677,6 @@ mod round_trip {
         }
     }
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 mod edge_cases {
     //! Tests for boundary conditions and unusual scenarios.
@@ -821,10 +797,6 @@ mod edge_cases {
     }
 }
 
-// ============================================================================
-// Protocol Version Compatibility
-// ============================================================================
-
 mod protocol_compatibility {
     //! Tests for protocol version-specific behavior.
 
@@ -879,10 +851,6 @@ mod protocol_compatibility {
         assert_eq!(params.checksum_length().get(), 8);
     }
 }
-
-// ============================================================================
-// Performance Characteristics
-// ============================================================================
 
 mod performance {
     //! Tests verifying performance-related properties.
@@ -965,10 +933,6 @@ mod performance {
     }
 }
 
-// ============================================================================
-// Algorithm Property Tests
-// ============================================================================
-
 mod algorithm_properties {
     //! Tests verifying properties of the SignatureAlgorithm enum.
 
@@ -1035,10 +999,6 @@ mod algorithm_properties {
     }
 }
 
-// ============================================================================
-// Layout Property Tests
-// ============================================================================
-
 mod layout_properties {
     //! Tests verifying properties of SignatureLayout.
 
@@ -1095,10 +1055,6 @@ mod layout_properties {
     }
 }
 
-// ============================================================================
-// FileSignature Property Tests
-// ============================================================================
-
 mod file_signature_properties {
     //! Tests verifying properties of FileSignature.
 
@@ -1136,10 +1092,6 @@ mod file_signature_properties {
         assert!(debug.contains("FileSignature"));
     }
 }
-
-// ============================================================================
-// SignatureBlock Property Tests
-// ============================================================================
 
 mod block_properties {
     //! Tests verifying properties of SignatureBlock.
@@ -1195,10 +1147,6 @@ mod block_properties {
     }
 }
 
-// ============================================================================
-// Error Property Tests
-// ============================================================================
-
 mod error_properties {
     //! Tests verifying error type properties.
 
@@ -1252,10 +1200,6 @@ mod error_properties {
         }
     }
 }
-
-// ============================================================================
-// Upstream rsync Compatibility Tests
-// ============================================================================
 
 mod upstream_compatibility {
     //! Tests ensuring compatibility with upstream rsync behavior.

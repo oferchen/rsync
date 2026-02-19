@@ -13,10 +13,6 @@
 // 6. Handle symlinks and special files
 // 7. Dry run behavior
 
-// ============================================================================
-// Basic --existing Flag Tests
-// ============================================================================
-
 #[test]
 fn existing_skips_file_when_destination_missing() {
     let temp = tempdir().expect("tempdir");
@@ -110,10 +106,6 @@ fn existing_updates_file_even_when_content_identical() {
     // Destination still exists
     assert!(destination.exists());
 }
-
-// ============================================================================
-// Recursive Directory Tests
-// ============================================================================
 
 #[test]
 fn existing_recursive_skips_new_files() {
@@ -251,10 +243,6 @@ fn existing_nested_directories_mixed_states() {
     assert!(!dest_root.join("dir1/new.txt").exists());
     assert!(!dest_root.join("dir1/dir2").exists());
 }
-
-// ============================================================================
-// Combined with Other Flags
-// ============================================================================
 
 #[test]
 fn existing_combined_with_update() {
@@ -408,10 +396,6 @@ fn existing_combined_with_times_preserves_mtime() {
     assert_eq!(dest_mtime.unix_seconds(), source_mtime.unix_seconds());
 }
 
-// ============================================================================
-// Dry Run Tests
-// ============================================================================
-
 #[test]
 fn existing_dry_run_reports_skipped_files() {
     let temp = tempdir().expect("tempdir");
@@ -489,10 +473,6 @@ fn existing_dry_run_with_records() {
     assert!(!destination.exists());
 }
 
-// ============================================================================
-// Multiple Source Files
-// ============================================================================
-
 #[test]
 fn existing_with_multiple_sources() {
     let temp = tempdir().expect("tempdir");
@@ -531,10 +511,6 @@ fn existing_with_multiple_sources() {
     );
     assert!(!dest_root.join("source2.txt").exists());
 }
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
 
 #[test]
 fn existing_handles_empty_files() {
@@ -621,10 +597,6 @@ fn existing_without_flag_copies_new_files() {
     assert_eq!(fs::read(&destination).expect("read"), b"new file");
 }
 
-// ============================================================================
-// Symlinks and Special Files
-// ============================================================================
-
 #[cfg(unix)]
 #[test]
 fn existing_skips_new_symlinks() {
@@ -707,10 +679,6 @@ fn existing_updates_existing_symlinks() {
     assert!(link_target.ends_with("target1.txt"));
 }
 
-// ============================================================================
-// Interaction with Filters
-// ============================================================================
-
 #[test]
 fn existing_respects_filter_rules() {
     use filters::{FilterRule, FilterSet};
@@ -768,10 +736,6 @@ fn existing_respects_filter_rules() {
     );
     assert!(!dest_root.join("new_include.txt").exists());
 }
-
-// ============================================================================
-// Documentation and Behavior Verification
-// ============================================================================
 
 /// This test documents the --existing flag's behavior compared to rsync.
 ///
@@ -843,11 +807,6 @@ fn existing_matches_upstream_rsync_semantics() {
         "new directory should be skipped"
     );
 }
-
-
-// ============================================================================
-// Combined --existing + --ignore-existing Tests
-// ============================================================================
 
 #[test]
 fn existing_combined_with_ignore_existing_skips_all_files() {
