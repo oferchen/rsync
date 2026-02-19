@@ -21,8 +21,9 @@
 
 use std::fs;
 use std::io::{self, Seek, Write};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
+
+use flume::{Receiver, Sender};
 
 use metadata::MetadataOptions;
 
@@ -119,7 +120,7 @@ impl Seek for ReusableBufWriter<'_> {
 /// Channels and handle returned by [`spawn_disk_thread`].
 pub struct DiskThreadHandle {
     /// Send [`FileMessage`] items to the disk thread.
-    pub file_tx: SyncSender<FileMessage>,
+    pub file_tx: Sender<FileMessage>,
     /// Receive [`CommitResult`] (one per committed file).
     pub result_rx: Receiver<io::Result<CommitResult>>,
     /// Receive recycled `Vec<u8>` buffers from the disk thread.
@@ -159,9 +160,9 @@ impl Default for DiskCommitConfig {
 /// sends used `Vec<u8>` buffers back through `buf_return_rx` for reuse by the
 /// network thread, eliminating per-chunk malloc/free overhead.
 pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
-    let (file_tx, file_rx) = sync_channel::<FileMessage>(config.channel_capacity);
-    let (result_tx, result_rx) = std::sync::mpsc::channel::<io::Result<CommitResult>>();
-    let (buf_return_tx, buf_return_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (file_tx, file_rx) = flume::bounded::<FileMessage>(config.channel_capacity);
+    let (result_tx, result_rx) = flume::unbounded::<io::Result<CommitResult>>();
+    let (buf_return_tx, buf_return_rx) = flume::unbounded::<Vec<u8>>();
 
     let join_handle = thread::Builder::new()
         .name("disk-commit".into())
@@ -386,7 +387,7 @@ fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc::TryRecvError;
+    use flume::TryRecvError;
 
     #[test]
     fn default_config() {
