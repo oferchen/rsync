@@ -6,8 +6,9 @@
 use std::collections::VecDeque;
 use std::io;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::thread::JoinHandle;
+
+use flume::{Receiver, Sender, TryRecvError};
 
 use crate::delta_apply::ChecksumVerifier;
 use crate::disk_commit::{DiskCommitConfig, spawn_disk_thread};
@@ -28,7 +29,7 @@ struct PendingChecksum {
 /// commit thread via bounded channels, including deferred checksum
 /// verification.
 pub struct PipelinedReceiver {
-    file_tx: SyncSender<FileMessage>,
+    file_tx: Sender<FileMessage>,
     result_rx: Receiver<io::Result<CommitResult>>,
     /// Return channel for buffer recycling from the disk thread.
     buf_return_rx: Receiver<Vec<u8>>,
@@ -59,7 +60,7 @@ impl PipelinedReceiver {
     ///
     /// Pass this to [`crate::transfer_ops::process_file_response_streaming`].
     #[inline]
-    pub fn file_sender(&self) -> &SyncSender<FileMessage> {
+    pub fn file_sender(&self) -> &Sender<FileMessage> {
         &self.file_tx
     }
 
