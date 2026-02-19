@@ -16,6 +16,10 @@ MODE_LABELS = {
     "daemon_push": "Daemon Push",
 }
 
+OPENSSL_MODES = {
+    "checksum_openssl": "Checksum: OpenSSL vs Pure Rust",
+}
+
 
 def ratio_indicator(ratio):
     if ratio < 0.95:
@@ -56,6 +60,25 @@ def main():
             ratio = t["ratio"]
             ind = ratio_indicator(ratio)
             print(f"| {t['name']} | {up:.3f}s | {oc:.3f}s | {ind} {ratio:.2f}x |")
+
+        print()
+
+    # OpenSSL vs Pure Rust comparison
+    for mode, label in OPENSSL_MODES.items():
+        tests = by_mode.get(mode, [])
+        if not tests:
+            continue
+
+        print(f"### {label}\n")
+        print("| Test | Pure Rust | OpenSSL | Ratio |")
+        print("|------|-----------|---------|-------|")
+
+        for t in tests:
+            pure = t["upstream"]["mean"]
+            ssl = t["oc_rsync"]["mean"]
+            ratio = t["ratio"]
+            ind = ratio_indicator(ratio)
+            print(f"| {t['name']} | {pure:.3f}s | {ssl:.3f}s | {ind} {ratio:.2f}x |")
 
         print()
 
