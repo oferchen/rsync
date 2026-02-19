@@ -228,6 +228,23 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(flags));
         }
 
+        // Capability info string — tells the remote server what protocol
+        // features this client supports. Mirrors upstream server_options()
+        // and daemon_transfer.rs:479. Characters (upstream compat.c:720-760):
+        //   L = symlink timestamps (SYMLINK_TIMES)
+        //   s = symlink iconv (SYMLINK_ICONV)
+        //   f = incremental flist I/O (FLIST_IO)
+        //   x = extra attrs in flist entries (XMIT_EXTRA_ATTRS)
+        //   C = checksum seed order fix (CHECKSUM_SEED_FIX)
+        //   I = inplace_partial behavior (INPLACE_PARTIAL_DIR)
+        //   v = varint for flist flags (VARINT_FLIST_FLAGS) — enables
+        //       checksum algorithm negotiation (XXH3/XXH128 instead of MD5)
+        //   u = include uid 0 & gid 0 names (ID0_NAMES)
+        //
+        // Without 'v', the server doesn't set CF_VARINT_FLIST_FLAGS and
+        // checksum negotiation is skipped, falling back to MD5.
+        args.push(OsString::from("-e.LsfxCIvu"));
+
         // Dummy argument required by upstream
         args.push(OsString::from("."));
 
@@ -562,8 +579,9 @@ mod tests {
         assert_eq!(args[2], "--sender");
         let flags = args[3].to_string_lossy();
         assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-        assert_eq!(args[4], ".");
-        assert_eq!(args[5], "/remote/path");
+        assert_eq!(args[4], "-e.LsfxCIvu");
+        assert_eq!(args[5], ".");
+        assert_eq!(args[6], "/remote/path");
     }
 
     #[test]
@@ -578,8 +596,9 @@ mod tests {
         // No --sender flag for push - flags come next
         let flags = args[2].to_string_lossy();
         assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-        assert_eq!(args[3], ".");
-        assert_eq!(args[4], "/remote/path");
+        assert_eq!(args[3], "-e.LsfxCIvu");
+        assert_eq!(args[4], ".");
+        assert_eq!(args[5], "/remote/path");
     }
 
     #[test]
