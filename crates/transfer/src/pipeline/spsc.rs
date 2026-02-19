@@ -258,15 +258,23 @@ mod tests {
         let (tx, rx) = channel::<i32>(2);
         tx.send(1).unwrap();
         tx.send(2).unwrap();
-        // Queue is full.  Spawn a thread to drain after a moment.
+        // Queue is full.  Spawn a thread to drain all items, keeping rx
+        // alive until after the sender unblocks (avoids race where rx
+        // drops before the spin-waiting send completes).
         let drain = thread::spawn(move || {
             thread::sleep(std::time::Duration::from_millis(10));
-            rx.recv().unwrap()
+            let mut received = Vec::new();
+            // Drain all items: the 2 already queued + the 1 the sender
+            // will push once a slot opens.
+            for _ in 0..3 {
+                received.push(rx.recv().unwrap());
+            }
+            received
         });
         // This send should spin-wait until the drain thread pops.
         tx.send(3).unwrap();
-        let first = drain.join().unwrap();
-        assert_eq!(first, 1);
+        let received = drain.join().unwrap();
+        assert_eq!(received, vec![1, 2, 3]);
     }
 
     #[test]
