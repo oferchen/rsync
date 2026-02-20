@@ -326,7 +326,6 @@ fn itemize_multiple_changes_shows_all_indicators() {
 }
 
 #[test]
-#[ignore = "Directory records are not marked with was_created() - implementation incomplete"]
 fn itemize_new_directory_shows_creation() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source_dir");
@@ -368,7 +367,6 @@ fn itemize_new_directory_shows_creation() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "Symlink records are not marked with was_created() - implementation incomplete"]
 fn itemize_symlink_shows_correct_type() {
     use std::os::unix::fs::symlink;
 
