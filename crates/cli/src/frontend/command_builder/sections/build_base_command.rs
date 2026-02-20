@@ -198,6 +198,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("ipv4")
                     .long("ipv4")
+                    .short('4')
                     .help("Prefer IPv4 when contacting remote hosts.")
                     .action(ArgAction::SetTrue)
                     .conflicts_with("ipv6"),
@@ -205,6 +206,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("ipv6")
                     .long("ipv6")
+                    .short('6')
                     .help("Prefer IPv6 when contacting remote hosts.")
                     .action(ArgAction::SetTrue)
                     .conflicts_with("ipv4"),
