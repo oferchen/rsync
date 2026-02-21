@@ -446,8 +446,13 @@ fn build_server_config_for_receiver(
     // Receiver uses destination path as args
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
-    ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
-        .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))
+    let mut server_config =
+        ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
+            .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
+
+    server_config.trust_sender = config.trust_sender();
+
+    Ok(server_config)
 }
 
 /// Builds server configuration for generator role (push transfer).
@@ -461,8 +466,13 @@ fn build_server_config_for_generator(
     // Generator uses source paths as args
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
-    ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
-        .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))
+    let mut server_config =
+        ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
+            .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
+
+    server_config.trust_sender = config.trust_sender();
+
+    Ok(server_config)
 }
 
 /// Builds the compact server flag string from client configuration.

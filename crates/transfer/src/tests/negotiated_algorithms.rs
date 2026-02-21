@@ -48,6 +48,7 @@ fn test_config() -> ServerConfig {
         is_daemon_connection: false,
         checksum_choice: None,
         write_devices: false,
+        trust_sender: false,
     }
 }
 
@@ -70,6 +71,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         is_daemon_connection: false,
         checksum_choice: None,
         write_devices: false,
+        trust_sender: false,
     }
 }
 
