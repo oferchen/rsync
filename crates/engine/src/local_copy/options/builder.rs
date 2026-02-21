@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use ::metadata::{ChmodModifiers, CopyAsIds, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use filters::FilterSet;
@@ -152,6 +152,7 @@ pub struct LocalCopyOptionsBuilder {
     omit_link_times: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
+    copy_as: Option<CopyAsIds>,
     omit_dir_times: bool,
     #[cfg(all(unix, feature = "acl"))]
     preserve_acls: bool,
@@ -286,6 +287,7 @@ impl LocalCopyOptionsBuilder {
             preserve_atimes: false,
             owner_override: None,
             group_override: None,
+            copy_as: None,
             omit_dir_times: false,
             omit_link_times: false,
             #[cfg(all(unix, feature = "acl"))]
@@ -782,6 +784,17 @@ impl LocalCopyOptionsBuilder {
     #[must_use]
     pub fn group_override(mut self, group: Option<u32>) -> Self {
         self.group_override = group;
+        self
+    }
+
+    /// Sets the resolved `--copy-as` identifiers for privilege switching.
+    ///
+    /// When set, the receiver switches effective UID/GID before file I/O
+    /// operations and restores them afterward.
+    #[must_use]
+    #[doc(alias = "--copy-as")]
+    pub fn copy_as(mut self, ids: Option<CopyAsIds>) -> Self {
+        self.copy_as = ids;
         self
     }
 
@@ -1441,6 +1454,7 @@ impl LocalCopyOptionsBuilder {
             omit_link_times: self.omit_link_times,
             owner_override: self.owner_override,
             group_override: self.group_override,
+            copy_as: self.copy_as,
             omit_dir_times: self.omit_dir_times,
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls: self.preserve_acls,
