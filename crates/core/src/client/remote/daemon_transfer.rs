@@ -190,8 +190,13 @@ pub fn run_daemon_transfer(
     // Step 4: Perform daemon handshake
     // Output MOTD unless --no-motd was specified (upstream defaults to true)
     let output_motd = !config.no_motd();
-    let protocol =
-        perform_daemon_handshake(&mut stream, &request, output_motd, config.daemon_params())?;
+    let protocol = perform_daemon_handshake(
+        &mut stream,
+        &request,
+        output_motd,
+        config.daemon_params(),
+        config.early_input(),
+    )?;
 
     // Step 5: Send arguments to daemon
     // For pull (we receive), the daemon is the sender, so is_sender=true
@@ -296,6 +301,7 @@ fn perform_daemon_handshake(
     request: &DaemonTransferRequest,
     output_motd: bool,
     daemon_params: &[String],
+    early_input: Option<&std::path::Path>,
 ) -> Result<ProtocolVersion, ClientError> {
     let mut reader = BufReader::new(
         stream
@@ -358,7 +364,15 @@ fn perform_daemon_handshake(
         })?;
     }
 
-    // Step 3b: Send module name (upstream clientserver.c:351)
+    // Step 3b: Send early-input data if configured.
+    // upstream: clientserver.c:266-294 — sends `#early_input=<len>\n` followed by
+    // the raw file contents before the module name. The daemon reads this in
+    // rsync_module() and passes it to pre-xfer exec on stdin.
+    if let Some(path) = early_input {
+        send_early_input(stream, path, request)?;
+    }
+
+    // Step 3c: Send module name (upstream clientserver.c:351)
     // This happens BEFORE waiting for @RSYNCD: OK
     let module_request = format!("{}\n", request.module);
     stream.write_all(module_request.as_bytes()).map_err(|e| {
@@ -455,6 +469,84 @@ fn perform_daemon_handshake(
 
     // Success - return negotiated protocol version
     Ok(negotiated)
+}
+
+/// Maximum early-input file size in bytes.
+///
+/// Upstream rsync limits the file to `BIGPATHBUFLEN` (typically 5120 bytes on
+/// systems where `MAXPATHLEN >= 4096`). The manpage documents this as "up to 5K
+/// of data".
+///
+/// upstream: rsync.h — `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` or `4096 + 1024`.
+const EARLY_INPUT_MAX_SIZE: u64 = 5120;
+
+/// Command prefix for the early-input protocol message.
+///
+/// upstream: clientserver.c — `#define EARLY_INPUT_CMD "#early_input="`
+const EARLY_INPUT_CMD: &str = "#early_input=";
+
+/// Reads and sends the early-input file to the daemon before the module name.
+///
+/// The data is sent as `#early_input=<len>\n` followed by the raw file bytes.
+/// The daemon receives this in `rsync_module()` and passes it to the pre-xfer
+/// exec script on stdin.
+///
+/// upstream: clientserver.c:266-294 — `start_inband_exchange()` sends the early
+/// input after `exchange_protocols()` and before the module name.
+fn send_early_input(
+    stream: &mut TcpStream,
+    path: &std::path::Path,
+    request: &DaemonTransferRequest,
+) -> Result<(), ClientError> {
+    use std::fs;
+
+    let metadata = fs::metadata(path).map_err(|e| {
+        daemon_error(
+            format!("failed to open {}: {e}", path.display()),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        )
+    })?;
+
+    let file_len = metadata.len();
+
+    if file_len > EARLY_INPUT_MAX_SIZE {
+        return Err(daemon_error(
+            format!("{} is > {EARLY_INPUT_MAX_SIZE} bytes.", path.display()),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        ));
+    }
+
+    if file_len == 0 {
+        return Ok(());
+    }
+
+    let data = fs::read(path).map_err(|e| {
+        daemon_error(
+            format!("failed to read {}: {e}", path.display()),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        )
+    })?;
+
+    // Send the command header: #early_input=<len>\n
+    let header = format!("{EARLY_INPUT_CMD}{}\n", data.len());
+    stream.write_all(header.as_bytes()).map_err(|e| {
+        socket_error(
+            "send early-input header to",
+            request.address.socket_addr_display(),
+            e,
+        )
+    })?;
+
+    // Send the raw file data
+    stream.write_all(&data).map_err(|e| {
+        socket_error(
+            "send early-input data to",
+            request.address.socket_addr_display(),
+            e,
+        )
+    })?;
+
+    Ok(())
 }
 
 /// Sends daemon-mode arguments to the server.
