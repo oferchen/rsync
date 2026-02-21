@@ -91,6 +91,18 @@ impl ClientConfig {
     pub fn early_input(&self) -> Option<&Path> {
         self.early_input.as_deref()
     }
+
+    /// Returns the AES-GCM cipher preference for SSH connections.
+    ///
+    /// `Some(true)` forces AES-GCM ciphers regardless of hardware detection,
+    /// `Some(false)` disables automatic cipher selection entirely,
+    /// `None` (default) uses runtime hardware detection.
+    #[must_use]
+    #[doc(alias = "--aes")]
+    #[doc(alias = "--no-aes")]
+    pub const fn prefer_aes_gcm(&self) -> Option<bool> {
+        self.prefer_aes_gcm
+    }
 }
 
 #[cfg(test)]
@@ -183,5 +195,12 @@ mod tests {
     fn early_input_default_is_none() {
         let config = default_config();
         assert!(config.early_input().is_none());
+    }
+
+    // Tests for prefer_aes_gcm
+    #[test]
+    fn prefer_aes_gcm_default_is_none() {
+        let config = default_config();
+        assert!(config.prefer_aes_gcm().is_none());
     }
 }

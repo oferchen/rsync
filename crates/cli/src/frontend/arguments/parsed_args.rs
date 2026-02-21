@@ -1472,4 +1472,17 @@ pub struct ParsedArgs {
     ///
     /// Default: `None`
     pub executability: Option<bool>,
+
+    /// Force or disable AES-GCM cipher selection for SSH connections.
+    ///
+    /// Controls whether SSH connections should prefer hardware-accelerated
+    /// AES-GCM ciphers over the default ChaCha20-Poly1305:
+    /// - `Some(true)`: Force AES-GCM (`--aes`).
+    /// - `Some(false)`: Disable automatic cipher selection (`--no-aes`).
+    /// - `None`: Use runtime hardware detection (default).
+    ///
+    /// Corresponds to: `--aes` / `--no-aes`
+    ///
+    /// Default: `None`
+    pub prefer_aes_gcm: Option<bool>,
 }

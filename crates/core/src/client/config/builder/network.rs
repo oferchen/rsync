@@ -35,6 +35,15 @@ impl ClientConfigBuilder {
         #[doc(alias = "--ipv4")]
         #[doc(alias = "--ipv6")]
         address_mode: AddressMode,
+
+        /// Overrides automatic AES-GCM cipher selection for SSH connections.
+        ///
+        /// `Some(true)` forces AES-GCM regardless of hardware detection,
+        /// `Some(false)` disables automatic cipher selection entirely,
+        /// `None` (default) uses runtime hardware detection.
+        #[doc(alias = "--aes")]
+        #[doc(alias = "--no-aes")]
+        prefer_aes_gcm: Option<bool>,
     }
 
     /// Configures the deadline at which the transfer should stop.
@@ -308,5 +317,23 @@ mod tests {
     fn default_timeout_is_default() {
         let config = builder().build();
         assert_eq!(config.timeout(), TransferTimeout::Default);
+    }
+
+    #[test]
+    fn prefer_aes_gcm_sets_some_true() {
+        let config = builder().prefer_aes_gcm(Some(true)).build();
+        assert_eq!(config.prefer_aes_gcm(), Some(true));
+    }
+
+    #[test]
+    fn prefer_aes_gcm_sets_some_false() {
+        let config = builder().prefer_aes_gcm(Some(false)).build();
+        assert_eq!(config.prefer_aes_gcm(), Some(false));
+    }
+
+    #[test]
+    fn prefer_aes_gcm_default_is_none() {
+        let config = builder().prefer_aes_gcm(None).build();
+        assert!(config.prefer_aes_gcm().is_none());
     }
 }
