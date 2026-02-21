@@ -27,29 +27,12 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
     ModuleDefinition {
         name: String::from(name),
         path: PathBuf::from("/srv/module"),
-        comment: None,
-        hosts_allow: Vec::new(),
-        hosts_deny: Vec::new(),
-        auth_users: Vec::new(),
-        secrets_file: None,
-        bandwidth_limit: None,
-        bandwidth_limit_specified: false,
-        bandwidth_burst: None,
-        bandwidth_burst_specified: false,
-        bandwidth_limit_configured: false,
-        refuse_options: Vec::new(),
         read_only: true,
-        write_only: false,
-        numeric_ids: false,
-        uid: None,
-        gid: None,
-        timeout: None,
         listable: true,
         use_chroot: true,
-        max_connections: None,
-        incoming_chmod: None,
-        outgoing_chmod: None,
-        fake_super: false,
+        max_verbosity: 1,
+        forward_lookup: true,
+        ..Default::default()
     }
 }
 
@@ -57,7 +40,6 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
     ModuleDefinition {
         name: String::from("module"),
         path: PathBuf::from("/srv/module"),
-        comment: None,
         hosts_allow: allow
             .iter()
             .map(|pattern| HostPattern::parse(pattern).expect("parse allow pattern"))
@@ -66,26 +48,12 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
             .iter()
             .map(|pattern| HostPattern::parse(pattern).expect("parse deny pattern"))
             .collect(),
-        auth_users: Vec::new(),
-        secrets_file: None,
-        bandwidth_limit: None,
-        bandwidth_limit_specified: false,
-        bandwidth_burst: None,
-        bandwidth_burst_specified: false,
-        bandwidth_limit_configured: false,
-        refuse_options: Vec::new(),
         read_only: true,
-        write_only: false,
-        numeric_ids: false,
-        uid: None,
-        gid: None,
-        timeout: None,
         listable: true,
         use_chroot: true,
-        max_connections: None,
-        incoming_chmod: None,
-        outgoing_chmod: None,
-        fake_super: false,
+        max_verbosity: 1,
+        forward_lookup: true,
+        ..Default::default()
     }
 }
 

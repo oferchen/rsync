@@ -25,6 +25,17 @@ struct ModuleDefinitionBuilder {
     incoming_chmod: Option<Option<String>>,
     outgoing_chmod: Option<Option<String>>,
     fake_super: Option<bool>,
+    max_verbosity: Option<i32>,
+    ignore_errors: Option<bool>,
+    ignore_nonreadable: Option<bool>,
+    transfer_logging: Option<bool>,
+    log_format: Option<Option<String>>,
+    dont_compress: Option<Option<String>>,
+    pre_xfer_exec: Option<Option<String>>,
+    post_xfer_exec: Option<Option<String>>,
+    temp_dir: Option<Option<String>>,
+    charset: Option<Option<String>>,
+    forward_lookup: Option<bool>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -56,6 +67,17 @@ impl ModuleDefinitionBuilder {
             incoming_chmod: None,
             outgoing_chmod: None,
             fake_super: None,
+            max_verbosity: None,
+            ignore_errors: None,
+            ignore_nonreadable: None,
+            transfer_logging: None,
+            log_format: None,
+            dont_compress: None,
+            pre_xfer_exec: None,
+            post_xfer_exec: None,
+            temp_dir: None,
+            charset: None,
+            forward_lookup: None,
         }
     }
 
@@ -459,6 +481,237 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_max_verbosity(
+        &mut self,
+        max_verbosity: i32,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.max_verbosity.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'max verbosity' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.max_verbosity = Some(max_verbosity);
+        Ok(())
+    }
+
+    fn set_ignore_errors(
+        &mut self,
+        ignore_errors: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.ignore_errors.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'ignore errors' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.ignore_errors = Some(ignore_errors);
+        Ok(())
+    }
+
+    fn set_ignore_nonreadable(
+        &mut self,
+        ignore_nonreadable: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.ignore_nonreadable.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'ignore nonreadable' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.ignore_nonreadable = Some(ignore_nonreadable);
+        Ok(())
+    }
+
+    fn set_transfer_logging(
+        &mut self,
+        transfer_logging: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.transfer_logging.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'transfer logging' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.transfer_logging = Some(transfer_logging);
+        Ok(())
+    }
+
+    fn set_log_format(
+        &mut self,
+        log_format: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.log_format.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'log format' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.log_format = Some(log_format);
+        Ok(())
+    }
+
+    fn set_dont_compress(
+        &mut self,
+        dont_compress: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.dont_compress.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'dont compress' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.dont_compress = Some(dont_compress);
+        Ok(())
+    }
+
+    fn set_pre_xfer_exec(
+        &mut self,
+        cmd: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.pre_xfer_exec.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'pre-xfer exec' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.pre_xfer_exec = Some(cmd);
+        Ok(())
+    }
+
+    fn set_post_xfer_exec(
+        &mut self,
+        cmd: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.post_xfer_exec.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'post-xfer exec' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.post_xfer_exec = Some(cmd);
+        Ok(())
+    }
+
+    fn set_temp_dir(
+        &mut self,
+        temp_dir: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.temp_dir.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'temp dir' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.temp_dir = Some(temp_dir);
+        Ok(())
+    }
+
+    fn set_charset(
+        &mut self,
+        charset: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.charset.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'charset' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.charset = Some(charset);
+        Ok(())
+    }
+
+    fn set_forward_lookup(
+        &mut self,
+        forward_lookup: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.forward_lookup.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'forward lookup' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.forward_lookup = Some(forward_lookup);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -549,6 +802,17 @@ impl ModuleDefinitionBuilder {
                 .outgoing_chmod
                 .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
             fake_super: self.fake_super.unwrap_or(false),
+            max_verbosity: self.max_verbosity.unwrap_or(1),
+            ignore_errors: self.ignore_errors.unwrap_or(false),
+            ignore_nonreadable: self.ignore_nonreadable.unwrap_or(false),
+            transfer_logging: self.transfer_logging.unwrap_or(false),
+            log_format: self.log_format.unwrap_or(None),
+            dont_compress: self.dont_compress.unwrap_or(None),
+            pre_xfer_exec: self.pre_xfer_exec.unwrap_or(None),
+            post_xfer_exec: self.post_xfer_exec.unwrap_or(None),
+            temp_dir: self.temp_dir.unwrap_or(None),
+            charset: self.charset.unwrap_or(None),
+            forward_lookup: self.forward_lookup.unwrap_or(true),
         })
     }
 }
@@ -594,6 +858,17 @@ mod module_definition_builder_tests {
         assert!(builder.max_connections.is_none());
         assert!(builder.incoming_chmod.is_none());
         assert!(builder.outgoing_chmod.is_none());
+        assert!(builder.max_verbosity.is_none());
+        assert!(builder.ignore_errors.is_none());
+        assert!(builder.ignore_nonreadable.is_none());
+        assert!(builder.transfer_logging.is_none());
+        assert!(builder.log_format.is_none());
+        assert!(builder.dont_compress.is_none());
+        assert!(builder.pre_xfer_exec.is_none());
+        assert!(builder.post_xfer_exec.is_none());
+        assert!(builder.temp_dir.is_none());
+        assert!(builder.charset.is_none());
+        assert!(builder.forward_lookup.is_none());
     }
 
     // ==================== set_path tests ====================
@@ -1149,6 +1424,17 @@ mod module_definition_builder_tests {
         assert!(!def.bandwidth_limit_specified);
         assert!(!def.bandwidth_limit_configured);
         assert!(!def.fake_super); // default false
+        assert_eq!(def.max_verbosity, 1); // default 1
+        assert!(!def.ignore_errors); // default false
+        assert!(!def.ignore_nonreadable); // default false
+        assert!(!def.transfer_logging); // default false
+        assert!(def.log_format.is_none());
+        assert!(def.dont_compress.is_none());
+        assert!(def.pre_xfer_exec.is_none());
+        assert!(def.post_xfer_exec.is_none());
+        assert!(def.temp_dir.is_none());
+        assert!(def.charset.is_none());
+        assert!(def.forward_lookup); // default true
     }
 
     #[test]
@@ -1161,5 +1447,212 @@ mod module_definition_builder_tests {
         assert!(result.is_ok());
         let def = result.unwrap();
         assert!(def.fake_super);
+    }
+
+    // ==================== New directive setter tests ====================
+
+    #[test]
+    fn set_max_verbosity_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_max_verbosity(3, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.max_verbosity, Some(3));
+    }
+
+    #[test]
+    fn set_max_verbosity_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_max_verbosity(3, &test_config_path(), 5).unwrap();
+        let result = builder.set_max_verbosity(2, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_ignore_errors_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_ignore_errors(true, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.ignore_errors, Some(true));
+    }
+
+    #[test]
+    fn set_ignore_errors_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_ignore_errors(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_ignore_errors(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_ignore_nonreadable_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_ignore_nonreadable(true, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.ignore_nonreadable, Some(true));
+    }
+
+    #[test]
+    fn set_ignore_nonreadable_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_ignore_nonreadable(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_ignore_nonreadable(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_transfer_logging_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_transfer_logging(true, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.transfer_logging, Some(true));
+    }
+
+    #[test]
+    fn set_transfer_logging_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_transfer_logging(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_transfer_logging(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_log_format_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_log_format(Some("%o %h %f".to_owned()), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.log_format, Some(Some("%o %h %f".to_owned())));
+    }
+
+    #[test]
+    fn set_log_format_allows_none() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_log_format(None, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.log_format, Some(None));
+    }
+
+    #[test]
+    fn set_log_format_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_log_format(Some("%o".to_owned()), &test_config_path(), 5).unwrap();
+        let result = builder.set_log_format(Some("%h".to_owned()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_dont_compress_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_dont_compress(Some("*.gz *.bz2".to_owned()), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.dont_compress, Some(Some("*.gz *.bz2".to_owned())));
+    }
+
+    #[test]
+    fn set_dont_compress_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_dont_compress(Some("*.gz".to_owned()), &test_config_path(), 5).unwrap();
+        let result = builder.set_dont_compress(Some("*.bz2".to_owned()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_pre_xfer_exec_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_pre_xfer_exec(Some("/bin/pre.sh".to_owned()), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.pre_xfer_exec, Some(Some("/bin/pre.sh".to_owned())));
+    }
+
+    #[test]
+    fn set_pre_xfer_exec_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_pre_xfer_exec(Some("/a".to_owned()), &test_config_path(), 5).unwrap();
+        let result = builder.set_pre_xfer_exec(Some("/b".to_owned()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_post_xfer_exec_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_post_xfer_exec(Some("/bin/post.sh".to_owned()), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.post_xfer_exec, Some(Some("/bin/post.sh".to_owned())));
+    }
+
+    #[test]
+    fn set_post_xfer_exec_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_post_xfer_exec(Some("/a".to_owned()), &test_config_path(), 5).unwrap();
+        let result = builder.set_post_xfer_exec(Some("/b".to_owned()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_temp_dir_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_temp_dir(Some("/tmp/staging".to_owned()), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.temp_dir, Some(Some("/tmp/staging".to_owned())));
+    }
+
+    #[test]
+    fn set_temp_dir_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_temp_dir(Some("/a".to_owned()), &test_config_path(), 5).unwrap();
+        let result = builder.set_temp_dir(Some("/b".to_owned()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_charset_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_charset(Some("utf-8".to_owned()), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.charset, Some(Some("utf-8".to_owned())));
+    }
+
+    #[test]
+    fn set_charset_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_charset(Some("utf-8".to_owned()), &test_config_path(), 5).unwrap();
+        let result = builder.set_charset(Some("ascii".to_owned()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_forward_lookup_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_forward_lookup(false, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.forward_lookup, Some(false));
+    }
+
+    #[test]
+    fn set_forward_lookup_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_forward_lookup(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_forward_lookup(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn finish_transfers_all_new_directive_values() {
+        let mut builder = ModuleDefinitionBuilder::new("newmod".to_owned(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_max_verbosity(5, &test_config_path(), 3).unwrap();
+        builder.set_ignore_errors(true, &test_config_path(), 4).unwrap();
+        builder.set_ignore_nonreadable(true, &test_config_path(), 5).unwrap();
+        builder.set_transfer_logging(true, &test_config_path(), 6).unwrap();
+        builder.set_log_format(Some("%o %h".to_owned()), &test_config_path(), 7).unwrap();
+        builder.set_dont_compress(Some("*.gz".to_owned()), &test_config_path(), 8).unwrap();
+        builder.set_pre_xfer_exec(Some("/bin/pre".to_owned()), &test_config_path(), 9).unwrap();
+        builder.set_post_xfer_exec(Some("/bin/post".to_owned()), &test_config_path(), 10).unwrap();
+        builder.set_temp_dir(Some("/tmp/stage".to_owned()), &test_config_path(), 11).unwrap();
+        builder.set_charset(Some("utf-8".to_owned()), &test_config_path(), 12).unwrap();
+        builder.set_forward_lookup(false, &test_config_path(), 13).unwrap();
+
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_ok());
+        let def = result.unwrap();
+
+        assert_eq!(def.max_verbosity, 5);
+        assert!(def.ignore_errors);
+        assert!(def.ignore_nonreadable);
+        assert!(def.transfer_logging);
+        assert_eq!(def.log_format.as_deref(), Some("%o %h"));
+        assert_eq!(def.dont_compress.as_deref(), Some("*.gz"));
+        assert_eq!(def.pre_xfer_exec.as_deref(), Some("/bin/pre"));
+        assert_eq!(def.post_xfer_exec.as_deref(), Some("/bin/post"));
+        assert_eq!(def.temp_dir.as_deref(), Some("/tmp/stage"));
+        assert_eq!(def.charset.as_deref(), Some("utf-8"));
+        assert!(!def.forward_lookup);
     }
 }

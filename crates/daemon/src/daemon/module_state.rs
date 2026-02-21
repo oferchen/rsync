@@ -83,6 +83,33 @@ pub(crate) struct ModuleDefinition {
     /// Enables backup/restore operations without root privileges by storing ownership
     /// and special file metadata in the `user.rsync.%stat` extended attribute.
     pub(crate) fake_super: bool,
+    /// Caps the effective verbosity level from the client.
+    ///
+    /// Upstream default is 1. A value of 0 suppresses all verbose output.
+    pub(crate) max_verbosity: i32,
+    /// When true, I/O errors during `--delete` are ignored.
+    pub(crate) ignore_errors: bool,
+    /// When true, files the daemon cannot read are silently skipped.
+    pub(crate) ignore_nonreadable: bool,
+    /// Enables per-file transfer logging to the daemon log.
+    pub(crate) transfer_logging: bool,
+    /// Format string for per-file transfer log entries.
+    ///
+    /// Uses `%o`, `%h`, `%a`, `%m`, `%u`, `%f`, `%l`, etc. placeholders
+    /// matching upstream rsyncd.conf `log format` syntax.
+    pub(crate) log_format: Option<String>,
+    /// Glob patterns of files that should not be compressed during transfer.
+    pub(crate) dont_compress: Option<String>,
+    /// Command executed before the transfer begins.
+    pub(crate) pre_xfer_exec: Option<String>,
+    /// Command executed after the transfer completes.
+    pub(crate) post_xfer_exec: Option<String>,
+    /// Temporary directory for receiving files before final rename.
+    pub(crate) temp_dir: Option<String>,
+    /// Character set for filename conversion (iconv).
+    pub(crate) charset: Option<String>,
+    /// When true, perform DNS forward lookup verification on reverse lookups.
+    pub(crate) forward_lookup: bool,
 }
 
 impl ModuleDefinition {
@@ -229,6 +256,50 @@ impl ModuleDefinition {
 
     pub(super) fn fake_super(&self) -> bool {
         self.fake_super
+    }
+
+    pub(super) fn max_verbosity(&self) -> i32 {
+        self.max_verbosity
+    }
+
+    pub(super) fn ignore_errors(&self) -> bool {
+        self.ignore_errors
+    }
+
+    pub(super) fn ignore_nonreadable(&self) -> bool {
+        self.ignore_nonreadable
+    }
+
+    pub(super) fn transfer_logging(&self) -> bool {
+        self.transfer_logging
+    }
+
+    pub(super) fn log_format(&self) -> Option<&str> {
+        self.log_format.as_deref()
+    }
+
+    pub(super) fn dont_compress(&self) -> Option<&str> {
+        self.dont_compress.as_deref()
+    }
+
+    pub(super) fn pre_xfer_exec(&self) -> Option<&str> {
+        self.pre_xfer_exec.as_deref()
+    }
+
+    pub(super) fn post_xfer_exec(&self) -> Option<&str> {
+        self.post_xfer_exec.as_deref()
+    }
+
+    pub(super) fn temp_dir(&self) -> Option<&str> {
+        self.temp_dir.as_deref()
+    }
+
+    pub(super) fn charset(&self) -> Option<&str> {
+        self.charset.as_deref()
+    }
+
+    pub(super) fn forward_lookup(&self) -> bool {
+        self.forward_lookup
     }
 }
 
