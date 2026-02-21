@@ -25,6 +25,8 @@ struct ModuleDefinitionBuilder {
     incoming_chmod: Option<Option<String>>,
     outgoing_chmod: Option<Option<String>>,
     fake_super: Option<bool>,
+    transfer_logging: Option<bool>,
+    log_format: Option<Option<String>>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -56,6 +58,8 @@ impl ModuleDefinitionBuilder {
             incoming_chmod: None,
             outgoing_chmod: None,
             fake_super: None,
+            transfer_logging: None,
+            log_format: None,
         }
     }
 
@@ -459,6 +463,48 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_transfer_logging(
+        &mut self,
+        enabled: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.transfer_logging.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'transfer logging' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.transfer_logging = Some(enabled);
+        Ok(())
+    }
+
+    fn set_log_format(
+        &mut self,
+        format: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.log_format.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'log format' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.log_format = Some(format);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -549,6 +595,8 @@ impl ModuleDefinitionBuilder {
                 .outgoing_chmod
                 .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
             fake_super: self.fake_super.unwrap_or(false),
+            transfer_logging: self.transfer_logging.unwrap_or(false),
+            log_format: self.log_format.unwrap_or(None),
         })
     }
 }

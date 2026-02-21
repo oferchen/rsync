@@ -600,6 +600,9 @@ fn build_handshake_result(
 }
 
 /// Executes the server transfer and logs the result.
+///
+/// When the module has `transfer_logging` enabled, a log line is emitted after
+/// a successful transfer using the module's configured log format string.
 fn execute_transfer(
     ctx: &ModuleRequestContext<'_>,
     config: ServerConfig,
@@ -608,6 +611,7 @@ fn execute_transfer(
     write_stream: &mut TcpStream,
     role: ServerRole,
     final_protocol: ProtocolVersion,
+    module: &ModuleDefinition,
 ) {
     if let Some(log) = ctx.log_sink {
         let text = format!(
@@ -635,6 +639,32 @@ fn execute_transfer(
                 );
                 let message = rsync_info!(text).with_role(Role::Daemon);
                 log_message(log, &message);
+
+                if module.transfer_logging {
+                    // Generator role means the daemon sends data to the client
+                    let operation = if matches!(role, ServerRole::Generator) {
+                        TransferOperation::Send
+                    } else {
+                        TransferOperation::Recv
+                    };
+                    let timestamp = format_daemon_timestamp();
+                    let log_ctx = LogFormatContext {
+                        operation,
+                        hostname: ctx.effective_host().unwrap_or("undetermined"),
+                        remote_address: ctx.peer_ip,
+                        module_name: ctx.request,
+                        auth_user: "",
+                        filename: ".",
+                        file_length: 0,
+                        daemon_pid: std::process::id(),
+                        module_path: &module.path,
+                        timestamp: &timestamp,
+                        bytes_transferred: 0,
+                        checksum_bytes: 0,
+                        itemize: "",
+                    };
+                    log_transfer(log, module.effective_log_format(), &log_ctx);
+                }
             }
         }
         Err(err) => {
@@ -651,6 +681,39 @@ fn execute_transfer(
             }
         }
     }
+}
+
+/// Formats the current time as a daemon log timestamp.
+///
+/// Produces a string in the format `YYYY/MM/DD HH:MM:SS`, matching upstream
+/// rsync's `timestring()` output used in daemon log entries.
+fn format_daemon_timestamp() -> String {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+
+    // Convert epoch seconds to broken-down UTC time components.
+    // This avoids pulling in the `chrono` crate for a single formatting call.
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Civil date from day count (algorithm from Howard Hinnant)
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!("{y:04}/{m:02}/{d:02} {hours:02}:{minutes:02}:{seconds:02}")
 }
 
 /// Handles an unknown module request.
@@ -770,6 +833,7 @@ fn process_approved_module(
         &mut write_stream,
         role,
         final_protocol,
+        module,
     );
 
     Ok(())

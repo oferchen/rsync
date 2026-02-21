@@ -83,6 +83,18 @@ pub(crate) struct ModuleDefinition {
     /// Enables backup/restore operations without root privileges by storing ownership
     /// and special file metadata in the `user.rsync.%stat` extended attribute.
     pub(crate) fake_super: bool,
+    /// When true, per-file transfer logging is enabled for this module.
+    ///
+    /// Mirrors upstream rsync's `transfer logging` directive from `rsyncd.conf(5)`.
+    /// When enabled, each transferred file produces a log line using the format
+    /// specified by [`Self::log_format`].
+    pub(crate) transfer_logging: bool,
+    /// Format string for per-file transfer log entries.
+    ///
+    /// Mirrors upstream rsync's `log format` directive from `rsyncd.conf(5)`.
+    /// Uses `%`-specifiers expanded by [`expand_log_format`]. When `None`, the
+    /// default format `"%o %h [%a] %m (%u) %f %l"` is used.
+    pub(crate) log_format: Option<String>,
 }
 
 impl ModuleDefinition {
@@ -166,6 +178,15 @@ impl ModuleDefinition {
             self.outgoing_chmod = chmod.map(str::to_string);
         }
     }
+
+    /// Returns the effective log format string for this module.
+    ///
+    /// Falls back to [`DEFAULT_LOG_FORMAT`] when no explicit format is configured.
+    pub(crate) fn effective_log_format(&self) -> &str {
+        self.log_format
+            .as_deref()
+            .unwrap_or(DEFAULT_LOG_FORMAT)
+    }
 }
 
 #[cfg(test)]
@@ -229,6 +250,14 @@ impl ModuleDefinition {
 
     pub(super) fn fake_super(&self) -> bool {
         self.fake_super
+    }
+
+    pub(super) fn transfer_logging(&self) -> bool {
+        self.transfer_logging
+    }
+
+    pub(super) fn log_format(&self) -> Option<&str> {
+        self.log_format.as_deref()
     }
 }
 
