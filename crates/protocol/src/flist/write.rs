@@ -626,7 +626,7 @@ impl FileListWriter {
         xflags: u32,
     ) -> io::Result<()> {
         if xflags & (XMIT_SAME_MODE as u32) == 0 {
-            let wire_mode = entry.mode() as i32;
+            let wire_mode = super::wire_mode::to_wire_mode(entry.mode());
             writer.write_all(&wire_mode.to_le_bytes())?;
         }
         Ok(())
