@@ -171,6 +171,7 @@ fn handle_legacy_session(
     let mut request = None;
     let mut refused_options = Vec::new();
     let mut negotiated_protocol = None;
+    let mut early_input_data: Option<Vec<u8>> = None;
 
     while let Some(line) = read_trimmed_line(&mut reader)? {
         match parse_legacy_daemon_message(&line) {
@@ -199,6 +200,14 @@ fn handle_legacy_session(
                 break;
             }
             Err(_) => {}
+        }
+
+        // upstream: clientserver.c:1357-1368 — the daemon checks if the first
+        // non-@RSYNCD line is `#early_input=<len>`. If so, it reads <len> bytes
+        // of raw data and then reads the next line as the module name.
+        if let Some(data) = read_early_input(&line, &mut reader)? {
+            early_input_data = Some(data);
+            continue;
         }
 
         request = Some(line);
@@ -243,10 +252,59 @@ fn handle_legacy_session(
             reverse_lookup,
             &messages,
             negotiated_protocol,
+            early_input_data,
         )?;
     }
 
     Ok(())
+}
+
+/// Command prefix for the early-input protocol message.
+///
+/// upstream: clientserver.c — `#define EARLY_INPUT_CMD "#early_input="`
+const EARLY_INPUT_CMD: &str = "#early_input=";
+
+/// Maximum early-input data size in bytes.
+///
+/// upstream: rsync.h — `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` (typically 5120).
+const EARLY_INPUT_MAX_SIZE: usize = 5120;
+
+/// Checks whether `line` is an `#early_input=<len>` command and, if so, reads
+/// the specified number of raw bytes from the stream.
+///
+/// Returns `Ok(Some(data))` when the early-input command was recognized and the
+/// data was read successfully, `Ok(None)` when the line is not an early-input
+/// command, or an I/O error if reading fails or the length is invalid.
+///
+/// upstream: clientserver.c:1357-1364 — `rsync_module()` reads early input data
+/// and stores it for later delivery to the pre-xfer exec script.
+fn read_early_input(
+    line: &str,
+    reader: &mut BufReader<TcpStream>,
+) -> io::Result<Option<Vec<u8>>> {
+    let len_str = match line.strip_prefix(EARLY_INPUT_CMD) {
+        Some(rest) => rest,
+        None => return Ok(None),
+    };
+
+    let data_len: usize = len_str.parse().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid early_input length: {len_str}"),
+        )
+    })?;
+
+    if data_len == 0 || data_len > EARLY_INPUT_MAX_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("early_input length {data_len} out of range (1..={EARLY_INPUT_MAX_SIZE})"),
+        ));
+    }
+
+    let mut buf = vec![0u8; data_len];
+    reader.read_exact(&mut buf)?;
+
+    Ok(Some(buf))
 }
 
 fn handle_binary_session(

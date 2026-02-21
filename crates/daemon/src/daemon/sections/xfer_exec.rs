@@ -52,18 +52,41 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
 /// upstream-compatible environment variables. If the command exits non-zero,
 /// returns an error indicating the transfer should be denied.
 ///
-/// Upstream: `clientserver.c` — `pre_exec()` runs the command and checks
-/// its exit status before starting the transfer.
+/// When `early_input` is `Some`, the data is written to the child process's
+/// stdin before closing it. This mirrors upstream `clientserver.c:583-584`
+/// where `write_buf(write_fd, early_input, early_input_len)` pipes client-sent
+/// early-input data to the pre-xfer exec script.
+///
+/// Upstream: `clientserver.c` — `pre_exec()` / `write_pre_exec_args()` runs
+/// the command and pipes early-input data to its stdin.
 fn run_pre_xfer_exec(
     command: &str,
     ctx: &XferExecContext<'_>,
+    early_input: Option<&[u8]>,
 ) -> io::Result<Result<(), String>> {
     let mut cmd = build_xfer_command(command, ctx);
-    cmd.stdin(Stdio::null());
+
+    if early_input.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::null());
+    }
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());
 
-    let output = cmd.output()?;
+    let mut child = cmd.spawn()?;
+
+    // Pipe early-input data to the child's stdin, then close it.
+    // upstream: clientserver.c:583-584 — write_buf(write_fd, early_input, early_input_len)
+    if let Some(data) = early_input {
+        if let Some(mut stdin) = child.stdin.take() {
+            // Best-effort write; ignore broken pipe if the child exits early.
+            let _ = stdin.write_all(data);
+            drop(stdin);
+        }
+    }
+
+    let output = child.wait_with_output()?;
 
     if output.status.success() {
         Ok(Ok(()))
@@ -230,7 +253,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_succeeds_on_zero_exit() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("true", &ctx).expect("command should run");
+        let result = run_pre_xfer_exec("true", &ctx, None).expect("command should run");
         assert!(result.is_ok());
     }
 
@@ -238,7 +261,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_fails_on_nonzero_exit() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("false", &ctx).expect("command should run");
+        let result = run_pre_xfer_exec("false", &ctx, None).expect("command should run");
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("pre-xfer exec command failed"));
@@ -250,7 +273,7 @@ mod xfer_exec_tests {
     fn run_pre_xfer_exec_captures_stderr() {
         let ctx = test_context();
         let result =
-            run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx).expect("command should run");
+            run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx, None).expect("command should run");
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("custom error"));
@@ -262,7 +285,7 @@ mod xfer_exec_tests {
         let ctx = test_context();
         let result = run_pre_xfer_exec(
             "test \"$RSYNC_MODULE_NAME\" = \"testmod\" && test \"$RSYNC_HOST_ADDR\" = \"192.168.1.100\"",
-            &ctx,
+            &ctx, None,
         )
         .expect("command should run");
         assert!(result.is_ok(), "env vars should be set correctly");
@@ -293,7 +316,7 @@ mod xfer_exec_tests {
         let ctx = test_context();
         // sh -c with a non-existent command will still run (sh exists), so
         // the command itself returns non-zero rather than an I/O error.
-        let result = run_pre_xfer_exec("/nonexistent/binary/path", &ctx)
+        let result = run_pre_xfer_exec("/nonexistent/binary/path", &ctx, None)
             .expect("sh -c should run");
         assert!(result.is_err());
     }
