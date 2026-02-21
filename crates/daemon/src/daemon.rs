@@ -179,6 +179,8 @@ include!("daemon/sections/delegation.rs");
 
 include!("daemon/sections/privilege.rs");
 
+include!("daemon/sections/log_format.rs");
+
 include!("daemon/sections/module_access.rs");
 
 include!("daemon/sections/xfer_exec.rs");
