@@ -22,6 +22,8 @@ fn transfer_stats_incremental_fields_exist() {
         bytes_sent: 100,
         total_source_bytes: 5000,
         metadata_errors: vec![],
+        io_error: 0,
+        error_count: 0,
         entries_received: 10,
         directories_created: 3,
         directories_failed: 1,

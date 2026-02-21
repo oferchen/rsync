@@ -136,7 +136,9 @@ pub use self::adaptive_buffer::{
 pub use self::config::{ReferenceDirectory, ReferenceDirectoryKind, ServerConfig};
 pub use self::delta_config::DeltaGeneratorConfig;
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
-pub use self::generator::{GeneratorContext, GeneratorStats, generate_delta_from_signature};
+pub use self::generator::{
+    GeneratorContext, GeneratorStats, generate_delta_from_signature, io_error_flags,
+};
 pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_handshake};
 pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
