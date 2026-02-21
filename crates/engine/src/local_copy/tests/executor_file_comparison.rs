@@ -125,7 +125,9 @@ mod file_comparison_tests {
     }
 
     #[test]
-    fn should_skip_copy_ignore_times_forces_copy() {
+    fn should_skip_copy_size_only_wins_over_ignore_times() {
+        // Upstream: generator.c:unchanged_file() checks size_only before
+        // ignore_times. When both are set and sizes match, size_only wins.
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
         let dest = temp.path().join("dest.txt");
@@ -141,7 +143,7 @@ mod file_comparison_tests {
             source: &source_meta,
             destination_path: &dest,
             destination: &dest_meta,
-            size_only: true, // Even with size_only
+            size_only: true,
             ignore_times: true,
             checksum: false,
             checksum_algorithm: SignatureAlgorithm::Md4,
@@ -149,7 +151,7 @@ mod file_comparison_tests {
             prefetched_match: None,
         };
 
-        assert!(!should_skip_copy(comparison));
+        assert!(should_skip_copy(comparison));
     }
 
     #[test]

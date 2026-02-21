@@ -244,10 +244,16 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
+        // Fast path: skip stat if this parent was already verified as a directory.
+        // With 10K files in one directory, this avoids 9,999 redundant statx calls.
+        if self.verified_parents.contains(parent) {
+            return Ok(());
+        }
+
         let allow_creation = self.implied_dirs_enabled() || self.mkpath_enabled();
         let keep_dirlinks = self.keep_dirlinks_enabled();
 
-        if self.mode.is_dry_run() {
+        let result = if self.mode.is_dry_run() {
             match fs::symlink_metadata(parent) {
                 Ok(existing) => {
                     let ty = existing.file_type();
@@ -335,7 +341,12 @@ impl<'a> CopyContext<'a> {
                     error,
                 )),
             }
+        };
+
+        if result.is_ok() {
+            self.verified_parents.insert(parent.to_path_buf());
         }
+        result
     }
 
     pub(super) const fn remove_source_files_enabled(&self) -> bool {

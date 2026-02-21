@@ -649,6 +649,16 @@ fn process_single_source(
 
     context.record_file_list_generation(metadata_start.elapsed());
 
+    // upstream: flist.c:make_file() — skip files with bogus zero st_mode
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.mode() == 0 {
+            context.record_io_error();
+            return Ok(());
+        }
+    }
+
     let file_type = metadata.file_type();
 
     // Build processing context

@@ -199,28 +199,57 @@ impl DestinationWriteGuard {
     /// - The destination cannot be removed
     /// - Permission is denied
     pub fn commit(mut self) -> Result<(), LocalCopyError> {
-        match fs::rename(&self.temp_path, &self.final_path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                remove_existing_destination(&self.final_path)?;
-                fs::rename(&self.temp_path, &self.final_path).map_err(|rename_error| {
-                    LocalCopyError::io(self.finalise_action(), self.temp_path.clone(), rename_error)
-                })?;
-            }
-            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-                fs::copy(&self.temp_path, &self.final_path).map_err(|copy_error| {
-                    LocalCopyError::io(self.finalise_action(), self.final_path.clone(), copy_error)
-                })?;
-                fs::remove_file(&self.temp_path).map_err(|remove_error| {
-                    LocalCopyError::io(self.finalise_action(), self.temp_path.clone(), remove_error)
-                })?;
-            }
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    self.finalise_action(),
-                    self.temp_path.clone(),
-                    error,
-                ));
+        // upstream: util1.c:robust_rename() — retry up to 4 times on ETXTBSY
+        let mut tries = 4u32;
+        loop {
+            match fs::rename(&self.temp_path, &self.final_path) {
+                Ok(()) => break,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    remove_existing_destination(&self.final_path)?;
+                    fs::rename(&self.temp_path, &self.final_path).map_err(|rename_error| {
+                        LocalCopyError::io(
+                            self.finalise_action(),
+                            self.temp_path.clone(),
+                            rename_error,
+                        )
+                    })?;
+                    break;
+                }
+                Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    tries -= 1;
+                    if tries == 0 {
+                        return Err(LocalCopyError::io(
+                            self.finalise_action(),
+                            self.temp_path.clone(),
+                            error,
+                        ));
+                    }
+                    remove_existing_destination(&self.final_path)?;
+                }
+                Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                    fs::copy(&self.temp_path, &self.final_path).map_err(|copy_error| {
+                        LocalCopyError::io(
+                            self.finalise_action(),
+                            self.final_path.clone(),
+                            copy_error,
+                        )
+                    })?;
+                    fs::remove_file(&self.temp_path).map_err(|remove_error| {
+                        LocalCopyError::io(
+                            self.finalise_action(),
+                            self.temp_path.clone(),
+                            remove_error,
+                        )
+                    })?;
+                    break;
+                }
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        self.finalise_action(),
+                        self.temp_path.clone(),
+                        error,
+                    ));
+                }
             }
         }
         self.committed = true;
@@ -237,11 +266,19 @@ impl DestinationWriteGuard {
     /// Discards the temporary file without committing.
     ///
     /// In normal mode, this removes the temporary file. In partial mode, the file
-    /// is preserved to allow for transfer resumption.
+    /// is preserved to allow for transfer resumption with an ancient mtime so
+    /// that `--update` will not skip it on retry.
     ///
     /// This method consumes the guard, preventing accidental use after discard.
     pub fn discard(mut self) {
         if self.preserve_on_error {
+            // upstream: receiver.c — set mtime to epoch 0 on partial files so
+            // --update won't skip them during a subsequent retry.
+            let epoch = std::time::SystemTime::UNIX_EPOCH;
+            let times = fs::FileTimes::new().set_modified(epoch);
+            if let Ok(file) = fs::File::options().write(true).open(&self.temp_path) {
+                let _ = file.set_times(times);
+            }
             self.committed = true;
             return;
         }
