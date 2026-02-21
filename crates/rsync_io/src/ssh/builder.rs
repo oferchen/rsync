@@ -21,6 +21,7 @@ pub struct SshCommand {
     remote_command: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
     target_override: Option<OsString>,
+    prefer_aes_gcm: Option<bool>,
 }
 
 impl SshCommand {
@@ -37,6 +38,7 @@ impl SshCommand {
             remote_command: Vec::new(),
             envs: Vec::new(),
             target_override: None,
+            prefer_aes_gcm: None,
         }
     }
 
@@ -96,6 +98,21 @@ impl SshCommand {
     /// but can be used to support alternate remote shells.
     pub fn set_target_override<S: Into<OsString>>(&mut self, target: Option<S>) -> &mut Self {
         self.target_override = target.map(Into::into);
+        self
+    }
+
+
+    /// Requests AES-GCM cipher selection for the SSH transport.
+    ///
+    /// When `Some(true)`, injects `-c aes128-gcm@openssh.com,aes256-gcm@openssh.com`
+    /// before the target argument — but only when the program is `ssh` and no
+    /// custom options contain `-c` (which would indicate the caller already
+    /// controls cipher selection).
+    ///
+    /// When `Some(false)`, cipher injection is explicitly suppressed.
+    /// When `None` (the default), no cipher arguments are injected.
+    pub const fn set_prefer_aes_gcm(&mut self, preference: Option<bool>) -> &mut Self {
+        self.prefer_aes_gcm = preference;
         self
     }
 
@@ -202,6 +219,17 @@ impl SshCommand {
 
         args.extend(self.options.iter().cloned());
 
+
+        // Inject AES-GCM ciphers when requested and safe to do so.
+        // upstream: rsync uses the system SSH default; we optionally prefer
+        // hardware-accelerated AES-GCM for throughput on modern CPUs.
+        if self.should_inject_aes_gcm_ciphers() {
+            args.push(OsString::from("-c"));
+            args.push(OsString::from(
+                "aes128-gcm@openssh.com,aes256-gcm@openssh.com",
+            ));
+        }
+
         if let Some(target) = self.target_argument()
             && !target.is_empty()
         {
@@ -237,6 +265,33 @@ impl SshCommand {
         }
 
         Some(target)
+    }
+
+
+    /// Determines whether AES-GCM cipher arguments should be injected.
+    ///
+    /// Returns `true` only when `prefer_aes_gcm` is `Some(true)`, the program
+    /// looks like an SSH client, and no existing option already specifies `-c`.
+    ///
+    /// Returns `false` when `prefer_aes_gcm` is `None` (default — no change),
+    /// `Some(false)` (explicitly disabled), when custom options contain `-c`,
+    /// or when the program is not `ssh`.
+    fn should_inject_aes_gcm_ciphers(&self) -> bool {
+        matches!(self.prefer_aes_gcm, Some(true))
+            && self.is_ssh_program()
+            && !self.options_contain_cipher_flag()
+    }
+
+    /// Checks whether the configured program appears to be an SSH client.
+    fn is_ssh_program(&self) -> bool {
+        let program = self.program.to_string_lossy();
+        let basename = program.rsplit('/').next().unwrap_or(&program);
+        basename == "ssh"
+    }
+
+    /// Checks whether any existing option already specifies the `-c` cipher flag.
+    fn options_contain_cipher_flag(&self) -> bool {
+        self.options.iter().any(|opt| opt == "-c")
     }
 
     #[cfg(test)]
