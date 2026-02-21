@@ -49,6 +49,7 @@ fn test_config() -> ServerConfig {
         checksum_choice: None,
         write_devices: false,
         trust_sender: false,
+        stop_at: None,
     }
 }
 
@@ -72,6 +73,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         checksum_choice: None,
         write_devices: false,
         trust_sender: false,
+        stop_at: None,
     }
 }
 

@@ -239,6 +239,7 @@ fn run_pull_transfer(
     server_config.client_mode = true;
     server_config.filter_rules = build_wire_format_rules(config.filter_rules())
         .map_err(|e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12))?;
+    server_config.stop_at = config.stop_at();
 
     // Split connection into separate read/write halves and run server, tracking elapsed time
     let start = Instant::now();
@@ -266,6 +267,7 @@ fn run_push_transfer(
     server_config.client_mode = true;
     server_config.filter_rules = build_wire_format_rules(config.filter_rules())
         .map_err(|e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12))?;
+    server_config.stop_at = config.stop_at();
 
     // Split connection into separate read/write halves and run server, tracking elapsed time
     let start = Instant::now();

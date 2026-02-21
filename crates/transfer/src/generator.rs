@@ -517,9 +517,13 @@ impl GeneratorContext {
         reader: &mut R,
         writer: &mut W,
     ) -> io::Result<TransferLoopResult> {
+        use super::shared::TransferDeadline;
+
         // Phase handling: upstream sender.c line 210: max_phase = protocol_version >= 29 ? 2 : 1
         let mut phase: i32 = 0;
         let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
+
+        let deadline = TransferDeadline::from_system_time(self.config.stop_at);
 
         let mut files_transferred = 0;
         let mut bytes_sent = 0u64;
@@ -709,6 +713,18 @@ impl GeneratorContext {
                 bytes_sent += result.total_bytes;
             }
             files_transferred += 1;
+
+            // Check deadline at file boundary after sending each file.
+            // Upstream rsync (io.c:825) hard-exits via exit_cleanup(RERR_TIMEOUT).
+            // We return an error to match: the sender cannot gracefully stop because
+            // the receiver has already sent pending file requests that expect responses.
+            // The error propagates up, causing the connection to close and the remote
+            // side to detect the closed pipe and clean up.
+            if let Some(ref dl) = deadline {
+                if dl.is_reached() {
+                    return Err(TransferDeadline::as_io_error());
+                }
+            }
         }
 
         // Send final NDX_DONE
@@ -1809,6 +1825,7 @@ mod tests {
             checksum_choice: None,
             write_devices: false,
             trust_sender: false,
+            stop_at: None,
         }
     }
 
@@ -2959,6 +2976,7 @@ mod tests {
             checksum_choice: None,
             write_devices: false,
             trust_sender: false,
+            stop_at: None,
         }
     }
 
