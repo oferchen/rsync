@@ -206,6 +206,8 @@ fn build_ssh_connection(
         }
     }
 
+    ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
+
     // Set the remote command (rsync --server ...)
     ssh.set_remote_command(invocation_args);
 
