@@ -116,6 +116,25 @@ impl LocalCopyError {
         matches!(self.kind, LocalCopyErrorKind::Io { .. })
     }
 
+    /// Reports whether this error represents a vanished file (NotFound I/O error).
+    ///
+    /// Upstream rsync gracefully skips files that vanish during the transfer
+    /// regardless of whether `--delete` is active, logging a warning and
+    /// continuing with the remaining entries.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c`: vanished files produce a warning, not a fatal error
+    /// - Exit code 24 (`RERR_VANISHED`) when files disappear during transfer
+    #[must_use]
+    pub fn is_vanished_error(&self) -> bool {
+        matches!(
+            &self.kind,
+            LocalCopyErrorKind::Io { source, .. }
+                if source.kind() == io::ErrorKind::NotFound
+        )
+    }
+
     /// Provides access to the underlying error kind.
     #[must_use]
     pub const fn kind(&self) -> &LocalCopyErrorKind {
@@ -412,6 +431,26 @@ mod tests {
         for variant in variants {
             assert!(!variant.message().is_empty());
         }
+    }
+
+    #[test]
+    fn is_vanished_error_returns_true_for_not_found() {
+        let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        let error = LocalCopyError::io("read", PathBuf::from("/vanished"), io_err);
+        assert!(error.is_vanished_error());
+    }
+
+    #[test]
+    fn is_vanished_error_returns_false_for_other_io_errors() {
+        let io_err = io::Error::new(ErrorKind::PermissionDenied, "access denied");
+        let error = LocalCopyError::io("read", PathBuf::from("/denied"), io_err);
+        assert!(!error.is_vanished_error());
+    }
+
+    #[test]
+    fn is_vanished_error_returns_false_for_non_io_errors() {
+        let error = LocalCopyError::missing_operands();
+        assert!(!error.is_vanished_error());
     }
 
     #[test]
