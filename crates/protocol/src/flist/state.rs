@@ -5,14 +5,23 @@
 //! used by both [`FileListReader`] and [`FileListWriter`] to track the
 //! previous entry's values.
 
+/// upstream: rsync.h `MAXPATHLEN` — maximum path length for file list name compression.
+const MAXPATHLEN: usize = 4096;
+
 /// Compression state for sequential file list processing.
 ///
 /// Tracks the previous entry's metadata to enable compression/decompression
 /// of repeated values across consecutive entries.
-#[derive(Debug, Clone, Default)]
+///
+/// The `prev_name` buffer is a fixed `[u8; 4096]` array matching upstream rsync's
+/// `static char lastname[MAXPATHLEN]`, avoiding per-entry heap allocation.
+#[derive(Clone)]
 pub struct FileListCompressionState {
     /// Previous entry's path bytes (for name prefix compression).
-    prev_name: Vec<u8>,
+    /// Fixed-size buffer matching upstream's `static char lastname[MAXPATHLEN]`.
+    prev_name: [u8; MAXPATHLEN],
+    /// Number of valid bytes in `prev_name`.
+    prev_name_len: usize,
     /// Previous entry's file mode.
     prev_mode: u32,
     /// Previous entry's modification time.
@@ -29,6 +38,40 @@ pub struct FileListCompressionState {
     prev_rdev: u64,
     /// Previous hardlink device number (for XMIT_SAME_DEV_pre30, protocols 26-29).
     prev_hardlink_dev: i64,
+}
+
+impl std::fmt::Debug for FileListCompressionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileListCompressionState")
+            .field("prev_name", &self.prev_name())
+            .field("prev_name_len", &self.prev_name_len)
+            .field("prev_mode", &self.prev_mode)
+            .field("prev_mtime", &self.prev_mtime)
+            .field("prev_atime", &self.prev_atime)
+            .field("prev_uid", &self.prev_uid)
+            .field("prev_gid", &self.prev_gid)
+            .field("prev_rdev_major", &self.prev_rdev_major)
+            .field("prev_rdev", &self.prev_rdev)
+            .field("prev_hardlink_dev", &self.prev_hardlink_dev)
+            .finish()
+    }
+}
+
+impl Default for FileListCompressionState {
+    fn default() -> Self {
+        Self {
+            prev_name: [0u8; MAXPATHLEN],
+            prev_name_len: 0,
+            prev_mode: 0,
+            prev_mtime: 0,
+            prev_atime: 0,
+            prev_uid: 0,
+            prev_gid: 0,
+            prev_rdev_major: 0,
+            prev_rdev: 0,
+            prev_hardlink_dev: 0,
+        }
+    }
 }
 
 /// Statistics collected during file list transmission/reception.
@@ -64,7 +107,7 @@ impl FileListCompressionState {
     /// Returns the previous entry's name bytes.
     #[must_use]
     pub fn prev_name(&self) -> &[u8] {
-        &self.prev_name
+        &self.prev_name[..self.prev_name_len]
     }
 
     /// Returns the previous entry's mode.
@@ -121,7 +164,7 @@ impl FileListCompressionState {
     /// (the maximum value that fits in a single byte).
     #[must_use]
     pub fn calculate_name_prefix_len(&self, name: &[u8]) -> usize {
-        self.prev_name
+        self.prev_name[..self.prev_name_len]
             .iter()
             .zip(name.iter())
             .take_while(|(a, b)| a == b)
@@ -129,13 +172,18 @@ impl FileListCompressionState {
             .min(255)
     }
 
+    /// Copies `name` into the fixed-size buffer, truncating to `MAXPATHLEN` if necessary.
+    fn set_prev_name(&mut self, name: &[u8]) {
+        let len = name.len().min(MAXPATHLEN);
+        self.prev_name[..len].copy_from_slice(&name[..len]);
+        self.prev_name_len = len;
+    }
+
     /// Updates the state with values from a new entry.
     ///
     /// Call this after processing each entry to prepare for the next one.
     pub fn update(&mut self, name: &[u8], mode: u32, mtime: i64, uid: u32, gid: u32) {
-        // Reuse existing allocation when possible
-        self.prev_name.clear();
-        self.prev_name.extend_from_slice(name);
+        self.set_prev_name(name);
         self.prev_mode = mode;
         self.prev_mtime = mtime;
         self.prev_uid = uid;
@@ -158,8 +206,7 @@ impl FileListCompressionState {
         rdev: u64,
         hardlink_dev: i64,
     ) {
-        self.prev_name.clear();
-        self.prev_name.extend_from_slice(name);
+        self.set_prev_name(name);
         self.prev_mode = mode;
         self.prev_mtime = mtime;
         self.prev_atime = atime;
@@ -172,9 +219,7 @@ impl FileListCompressionState {
 
     /// Updates only the name portion of the state.
     pub fn update_name(&mut self, name: &[u8]) {
-        // Reuse existing allocation when possible
-        self.prev_name.clear();
-        self.prev_name.extend_from_slice(name);
+        self.set_prev_name(name);
     }
 
     /// Updates only the mode portion of the state.

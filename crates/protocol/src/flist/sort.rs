@@ -18,6 +18,7 @@
 use std::cmp::Ordering;
 
 use logging::debug_log;
+use memchr::memrchr;
 
 use super::FileEntry;
 
@@ -37,6 +38,16 @@ use super::FileEntry;
 ///
 /// This function implements a total order by using a canonical comparison
 /// that is transitive: if a < b and b < c, then a < c.
+///
+/// # Performance
+///
+/// At the divergence point, the comparator must determine whether each entry
+/// still has deeper path components (i.e., a '/' exists at or after position `i`).
+/// Instead of scanning forward from `i` on every divergence (O(remaining_length)),
+/// we precompute the last '/' position via `memrchr` once per call and answer
+/// the query in O(1): `last_slash >= i` means a separator remains.
+/// This matches upstream's approach of avoiding forward scans in `f_name_cmp()`
+/// (upstream: flist.c:3217).
 #[must_use]
 pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     // Use byte comparison directly - rsync protocol uses bytes, not UTF-8
@@ -56,6 +67,11 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     // as having an implicit trailing slash.
     let a_is_dir = a.is_dir();
     let b_is_dir = b.is_dir();
+
+    // Precompute last '/' position for O(1) "has separator remaining?" queries.
+    // memrchr uses SIMD on supported platforms, making this a single fast pass.
+    let last_slash_a = memrchr(b'/', bytes_a);
+    let last_slash_b = memrchr(b'/', bytes_b);
 
     // Compare byte by byte, treating directory names as having implicit '/'
     let mut i = 0;
@@ -85,35 +101,23 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
             return Ordering::Equal;
         }
         if a_done {
-            // a ended, b continues
-            // If b's next char is '/', a is parent of b
-            if ch_b == b'/' {
-                return Ordering::Less;
-            }
-            // Otherwise a sorts before b (0 < any char)
             return Ordering::Less;
         }
         if b_done {
-            // b ended, a continues
-            if ch_a == b'/' {
-                return Ordering::Greater;
-            }
             return Ordering::Greater;
         }
 
         if ch_a != ch_b {
-            // At the divergence point, check if we're comparing at same depth
-            // by looking for '/' in the remaining parts
-            let remaining_a = &bytes_a[i..];
-            let remaining_b = &bytes_b[i..];
+            // At the divergence point, determine if each entry has deeper path
+            // components remaining. A '/' exists at or after position `i` iff the
+            // precomputed last_slash position is >= i.
+            let a_has_sep = last_slash_a.is_some_and(|pos| pos >= i);
+            let b_has_sep = last_slash_b.is_some_and(|pos| pos >= i);
 
-            // Check if there's a separator before any difference in the current component
-            let a_has_sep_next = remaining_a.iter().position(|&c| c == b'/');
-            let b_has_sep_next = remaining_b.iter().position(|&c| c == b'/');
-
-            // Determine if entries are files or directories at this level
-            let a_is_dir_here = a_has_sep_next.is_some() || (a_is_dir && a_has_sep_next.is_none());
-            let b_is_dir_here = b_has_sep_next.is_some() || (b_is_dir && b_has_sep_next.is_none());
+            // Entry is "directory-like at this level" if it has more path components
+            // (separator found ahead) or if it's a directory entry in its final component
+            let a_is_dir_here = a_has_sep || a_is_dir;
+            let b_is_dir_here = b_has_sep || b_is_dir;
 
             // At each level, files sort before directories
             match (a_is_dir_here, b_is_dir_here) {
@@ -132,8 +136,11 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 
 /// Sorts a file list in-place according to rsync's sorting rules.
 ///
-/// Both sender and receiver must call this after building/receiving
-/// the file list to ensure matching NDX indices.
+/// Uses index-based sorting to minimize memory traffic: only 8-byte
+/// indices are shuffled during comparisons, then a single permutation
+/// pass moves the ~160-byte `FileEntry` values into their final positions.
+/// This mirrors upstream rsync's approach of sorting a pointer array
+/// (`sorted[]`) rather than moving `file_struct` data.
 ///
 /// # Upstream Reference
 ///
@@ -141,7 +148,35 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 ///   and `recv_file_list()` to sort entries.
 pub fn sort_file_list(file_list: &mut [FileEntry]) {
     debug_log!(Flist, 2, "sorting {} entries", file_list.len());
-    file_list.sort_by(compare_file_entries);
+    let n = file_list.len();
+    if n <= 1 {
+        return;
+    }
+
+    // Sort indices — only 8-byte values are shuffled during the sort,
+    // reducing memory bandwidth by ~20x vs moving full FileEntry structs.
+    let mut indices: Vec<usize> = (0..n).collect();
+    indices.sort_by(|&a, &b| compare_file_entries(&file_list[a], &file_list[b]));
+
+    // Apply the permutation in-place using cycle chasing.
+    // Each element is moved exactly once.
+    let mut placed = vec![false; n];
+    for i in 0..n {
+        if placed[i] || indices[i] == i {
+            placed[i] = true;
+            continue;
+        }
+        let mut j = i;
+        loop {
+            let target = indices[j];
+            placed[j] = true;
+            if target == i {
+                break;
+            }
+            file_list.swap(j, target);
+            j = target;
+        }
+    }
 }
 
 /// Result of cleaning a file list.
@@ -153,9 +188,10 @@ pub struct CleanResult {
     pub flags_merged: usize,
 }
 
-/// Cleans a sorted file list by removing duplicates and merging directory flags.
+/// Cleans a sorted file list in-place by removing duplicates and merging directory flags.
 ///
-/// This mirrors upstream's duplicate removal logic from `flist_sort_and_clean()`.
+/// This mirrors upstream's `clean_flist()` which operates in-place with zero allocation,
+/// clearing duplicate entries as tombstones rather than building a new list.
 ///
 /// # Duplicate Handling Rules
 ///
@@ -178,68 +214,74 @@ pub struct CleanResult {
 ///
 /// - `flist.c:flist_sort_and_clean()` lines 2979-3069
 #[must_use]
-pub fn flist_clean(file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
-    if file_list.is_empty() {
+pub fn flist_clean(mut file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
+    let len = file_list.len();
+    if len == 0 {
         return (file_list, CleanResult::default());
     }
 
-    let mut result = Vec::with_capacity(file_list.len());
     let mut stats = CleanResult::default();
-    let mut iter = file_list.into_iter().peekable();
 
-    while let Some(mut current) = iter.next() {
-        // Check if next entry is a duplicate
-        while let Some(next) = iter.peek() {
-            if current.name() != next.name() {
-                break;
+    // Write cursor: position where the next kept entry goes.
+    // Read cursor `r` scans ahead. Like upstream's in-place tombstone approach,
+    // but we compact immediately so a single truncate suffices.
+    let mut w: usize = 0;
+    let mut r: usize = 1;
+
+    while r < len {
+        if file_list[w].name() != file_list[r].name() {
+            w += 1;
+            if w != r {
+                file_list.swap(w, r);
             }
+            r += 1;
+            continue;
+        }
 
-            // Duplicate found - decide which to keep
-            let current_is_dir = current.is_dir();
-            let next_is_dir = next.is_dir();
+        // Duplicate found - decide which to keep at position `w`
+        let w_is_dir = file_list[w].is_dir();
+        let r_is_dir = file_list[r].is_dir();
 
-            match (current_is_dir, next_is_dir) {
-                (false, true) => {
-                    // Keep the directory (next), drop current
-                    stats.duplicates_removed += 1;
-                    current = iter.next().expect("peeked entry should exist");
+        match (w_is_dir, r_is_dir) {
+            (false, true) => {
+                // Keep the directory (at r), replace current write position
+                file_list.swap(w, r);
+                stats.duplicates_removed += 1;
+            }
+            (true, false) => {
+                // Keep current (directory at w), drop r
+                stats.duplicates_removed += 1;
+            }
+            (true, true) => {
+                // Both directories - merge flags into w
+                // upstream: flist.c merges FLAG_TOP_DIR, FLAG_CONTENT_DIR
+                if file_list[r].content_dir() {
+                    file_list[w].set_content_dir(true);
                 }
-                (true, false) => {
-                    // Keep current (directory), drop next
-                    stats.duplicates_removed += 1;
-                    let _ = iter.next();
-                }
-                (true, true) => {
-                    // Both are directories - merge flags and keep current
-                    // Upstream merges FLAG_TOP_DIR, FLAG_CONTENT_DIR flags
-                    let next_entry = iter.next().expect("peeked entry should exist");
-                    if next_entry.content_dir() {
-                        current.set_content_dir(true);
-                    }
-                    stats.duplicates_removed += 1;
-                    stats.flags_merged += 1;
-                }
-                (false, false) => {
-                    // Both are files - keep first (current)
-                    stats.duplicates_removed += 1;
-                    let _ = iter.next();
-                }
+                stats.duplicates_removed += 1;
+                stats.flags_merged += 1;
+            }
+            (false, false) => {
+                // Both files - keep first (at w)
+                stats.duplicates_removed += 1;
             }
         }
 
-        result.push(current);
+        r += 1;
     }
+
+    file_list.truncate(w + 1);
 
     debug_log!(
         Flist,
         2,
         "cleaned file list: {} entries, {} duplicates removed, {} flags merged",
-        result.len(),
+        file_list.len(),
         stats.duplicates_removed,
         stats.flags_merged
     );
 
-    (result, stats)
+    (file_list, stats)
 }
 
 /// Sorts and cleans a file list in one operation.
@@ -251,7 +293,7 @@ pub fn flist_clean(file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
 /// - `flist.c:flist_sort_and_clean()` - The combined operation
 #[must_use]
 pub fn sort_and_clean_file_list(mut file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
-    file_list.sort_by(compare_file_entries);
+    sort_file_list(&mut file_list);
     flist_clean(file_list)
 }
 
@@ -437,5 +479,119 @@ mod tests {
         let mut names = Vec::with_capacity(cleaned.len());
         names.extend(cleaned.iter().map(|e| e.name()));
         assert_eq!(names, vec!["a.txt", "z.txt", "a"]);
+    }
+
+    /// Comprehensive edge-case sort order golden test.
+    ///
+    /// Captures the exact expected ordering for tricky cases involving
+    /// deep nesting, shared prefixes, file-vs-directory at same level,
+    /// and implicit trailing slashes. Any change to the comparator that
+    /// alters this ordering would break wire compatibility (NDX mismatch).
+    #[test]
+    fn sort_order_golden_comprehensive() {
+        let mut entries = vec![
+            // Root-level files
+            make_file("a"),
+            make_file("b.txt"),
+            make_file("z"),
+            // Root-level dirs
+            make_dir("a"),
+            make_dir("ab"),
+            make_dir("b"),
+            // Files that share prefix with dirs
+            make_file("ab.txt"),
+            make_file("a/file.txt"),
+            make_file("a/z.txt"),
+            // Nested dirs
+            make_dir("a/sub"),
+            make_file("a/sub/deep.txt"),
+            // Dir with name that is prefix of another dir
+            make_dir("a/sub/deep"),
+            make_file("a/sub/deep/leaf.txt"),
+            // Same-depth file vs dir disambiguation
+            make_file("b/file.txt"),
+            make_dir("b/dir"),
+            make_file("b/dir/inner.txt"),
+            // "." root marker
+            make_dir("."),
+            // Paths with shared multi-component prefixes
+            make_dir("x/y"),
+            make_file("x/y/a.txt"),
+            make_file("x/y/b.txt"),
+            make_dir("x/y/c"),
+            make_file("x/y/c/d.txt"),
+            make_file("x/z.txt"),
+            make_dir("x"),
+        ];
+
+        sort_file_list(&mut entries);
+
+        let names: Vec<&str> = entries.iter().map(|e| e.name()).collect();
+        assert_eq!(
+            names,
+            vec![
+                ".",
+                // Root files before root dirs
+                "a",
+                "ab.txt",
+                "b.txt",
+                "z",
+                // Root dir "a" and its contents
+                "a",          // dir
+                "a/file.txt", // file in a/
+                "a/z.txt",    // file in a/
+                "a/sub",      // dir in a/
+                "a/sub/deep.txt",
+                "a/sub/deep",          // dir
+                "a/sub/deep/leaf.txt", // file in a/sub/deep/
+                // Root dir "ab"
+                "ab",
+                // Root dir "b" and its contents
+                "b",
+                "b/file.txt",
+                "b/dir",
+                "b/dir/inner.txt",
+                // Root dir "x" and its contents
+                "x",
+                "x/z.txt",
+                "x/y",
+                "x/y/a.txt",
+                "x/y/b.txt",
+                "x/y/c",
+                "x/y/c/d.txt",
+            ]
+        );
+    }
+
+    /// Tests that a file named "foo" (non-dir) sorts before dir "foo" at
+    /// the same level, because files sort before directories.
+    #[test]
+    fn file_before_same_name_dir() {
+        let file = make_file("item");
+        let dir = make_dir("item");
+        assert_eq!(compare_file_entries(&file, &dir), Ordering::Less);
+        assert_eq!(compare_file_entries(&dir, &file), Ordering::Greater);
+    }
+
+    /// Tests deeply nested paths with long shared prefixes.
+    #[test]
+    fn deep_nesting_shared_prefix() {
+        let deep_file = make_file("a/b/c/d/e/f/g.txt");
+        let deep_dir = make_dir("a/b/c/d/e/f/g");
+        // File sorts before dir with same name
+        assert_eq!(compare_file_entries(&deep_file, &deep_dir), Ordering::Less);
+
+        let sibling_file = make_file("a/b/c/d/e/f/h.txt");
+        // g.txt < h.txt alphabetically, both are files at same depth
+        assert_eq!(
+            compare_file_entries(&deep_file, &sibling_file),
+            Ordering::Less
+        );
+
+        // Dir g/ sorts after file h.txt (dirs after files at same level)
+        assert_eq!(
+            compare_file_entries(&deep_dir, &sibling_file),
+            Ordering::Greater
+        );
     }
 }
