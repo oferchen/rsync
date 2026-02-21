@@ -1251,63 +1251,78 @@ pub struct GeneratorStats {
 /// Item flags received from the receiver indicating transfer requirements.
 ///
 /// The generator reads these flags to determine how to handle each file request.
-/// Protocol versions >= 29 include these flags with each file index.
+/// Protocol versions >= 29 include these flags with each file index as a 16-bit
+/// wire value. Bits 16-18 are internal-only for log formatting and never sent on wire.
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.h:100-115` - Item flag definitions
+/// - `rsync.h:214-233` - Item flag definitions
 /// - `rsync.c:227` - `read_ndx_and_attrs()` reads iflags
 /// - `sender.c:324` - Sender processes these flags
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemFlags {
-    /// Raw 16-bit flags value.
-    raw: u16,
+    /// Raw flags value. Lower 16 bits are on-wire; bits 16-18 are log-only.
+    raw: u32,
 }
 
 impl ItemFlags {
-    /// Item needs data transfer (file content differs).
-    pub const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
-    /// Item is being reported (itemized output).
-    pub const ITEM_REPORT_ATIME: u16 = 1 << 14; // 0x4000
-    /// Item is being reported for checksum change.
-    pub const ITEM_REPORT_CHECKSUM: u16 = 1 << 13; // 0x2000
-    /// Alternate basis file name follows.
-    pub const ITEM_XNAME_FOLLOWS: u16 = 1 << 12; // 0x1000
-    /// Basis file type follows.
-    pub const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11; // 0x0800
+    // Wire flags (bits 0-15) — upstream rsync.h:214-229
+    /// Item reports access time change.
+    pub const ITEM_REPORT_ATIME: u32 = 1 << 0; // 0x0001
+    /// Item reports generic change (itemized output).
+    pub const ITEM_REPORT_CHANGE: u32 = 1 << 1; // 0x0002
     /// Item reports size change.
-    pub const ITEM_REPORT_SIZE: u16 = 1 << 10; // 0x0400
-    /// Item reports time change.
-    pub const ITEM_REPORT_TIME: u16 = 1 << 9; // 0x0200
-    /// Item reports perms change.
-    pub const ITEM_REPORT_PERMS: u16 = 1 << 8; // 0x0100
+    pub const ITEM_REPORT_SIZE: u32 = 1 << 2; // 0x0004
+    /// Item reports mtime change.
+    pub const ITEM_REPORT_TIME: u32 = 1 << 3; // 0x0008
+    /// Item reports permissions change.
+    pub const ITEM_REPORT_PERMS: u32 = 1 << 4; // 0x0010
     /// Item reports owner change.
-    pub const ITEM_REPORT_OWNER: u16 = 1 << 7; // 0x0080
+    pub const ITEM_REPORT_OWNER: u32 = 1 << 5; // 0x0020
     /// Item reports group change.
-    pub const ITEM_REPORT_GROUP: u16 = 1 << 6; // 0x0040
+    pub const ITEM_REPORT_GROUP: u32 = 1 << 6; // 0x0040
     /// Item reports ACL change.
-    pub const ITEM_REPORT_ACL: u16 = 1 << 5; // 0x0020
+    pub const ITEM_REPORT_ACL: u32 = 1 << 7; // 0x0080
     /// Item reports xattr change.
-    pub const ITEM_REPORT_XATTR: u16 = 1 << 4; // 0x0010
-    /// Item is a directory.
-    pub const ITEM_IS_NEW: u16 = 1 << 3; // 0x0008
-    /// Item's basis matched fuzzy file.
-    pub const ITEM_LOCAL_CHANGE: u16 = 1 << 2; // 0x0004
-    /// Transfer type follows (hardlink, etc).
-    pub const ITEM_TRANSFER_TYPE: u16 = 1 << 1; // 0x0002
-    /// Extended name follows (symlink target, etc).
-    pub const ITEM_REPORT_LINKS: u16 = 1 << 0; // 0x0001
+    pub const ITEM_REPORT_XATTR: u32 = 1 << 8; // 0x0100
+    // bit 9 unused in upstream
+    /// Item reports creation time change.
+    pub const ITEM_REPORT_CRTIME: u32 = 1 << 10; // 0x0400
+    /// Basis file type follows on wire.
+    pub const ITEM_BASIS_TYPE_FOLLOWS: u32 = 1 << 11; // 0x0800
+    /// Alternate basis file name follows on wire.
+    pub const ITEM_XNAME_FOLLOWS: u32 = 1 << 12; // 0x1000
+    /// Item is newly created.
+    pub const ITEM_IS_NEW: u32 = 1 << 13; // 0x2000
+    /// Item has local change (e.g. fuzzy match).
+    pub const ITEM_LOCAL_CHANGE: u32 = 1 << 14; // 0x4000
+    /// Item needs data transfer (file content differs).
+    pub const ITEM_TRANSFER: u32 = 1 << 15; // 0x8000
 
-    /// Creates ItemFlags from raw 16-bit value.
+    // Log-only flags (bits 16-18) — never sent on wire
+    /// Item is missing data (log formatting only).
+    pub const ITEM_MISSING_DATA: u32 = 1 << 16; // 0x1_0000
+    /// Item was deleted (log formatting only).
+    pub const ITEM_DELETED: u32 = 1 << 17; // 0x2_0000
+    /// Item was matched (log formatting only).
+    pub const ITEM_MATCHED: u32 = 1 << 18; // 0x4_0000
+
+    /// Creates ItemFlags from a raw value.
     #[must_use]
-    pub const fn from_raw(raw: u16) -> Self {
+    pub const fn from_raw(raw: u32) -> Self {
         Self { raw }
     }
 
-    /// Returns the raw 16-bit flags value.
+    /// Returns the raw flags value (including log-only upper bits).
     #[must_use]
-    pub const fn raw(&self) -> u16 {
+    pub const fn raw(&self) -> u32 {
         self.raw
+    }
+
+    /// Returns the lower 16 bits suitable for wire transmission.
+    #[must_use]
+    pub const fn wire_bits(&self) -> u16 {
+        self.raw as u16
     }
 
     /// Returns true if the item needs data transfer.
@@ -1330,15 +1345,14 @@ impl ItemFlags {
 
     /// Reads item flags from the wire.
     ///
-    /// For protocol >= 29, reads 2 bytes little-endian.
+    /// For protocol >= 29, reads 2 bytes little-endian (16-bit wire format).
     /// For older protocols, returns ITEM_TRANSFER as default.
     pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
         if protocol_version >= 29 {
             let mut buf = [0u8; 2];
             reader.read_exact(&mut buf)?;
-            Ok(Self::from_raw(u16::from_le_bytes(buf)))
+            Ok(Self::from_raw(u16::from_le_bytes(buf) as u32))
         } else {
-            // Older protocols assume transfer is needed
             Ok(Self::from_raw(Self::ITEM_TRANSFER))
         }
     }
@@ -1350,7 +1364,6 @@ impl ItemFlags {
         &self,
         reader: &mut R,
     ) -> io::Result<(Option<u8>, Option<Vec<u8>>)> {
-        // Read basis file type if ITEM_BASIS_TYPE_FOLLOWS
         let fnamecmp_type = if self.has_basis_type() {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
@@ -1359,12 +1372,10 @@ impl ItemFlags {
             None
         };
 
-        // Read extended name if ITEM_XNAME_FOLLOWS
         let xname = if self.has_xname() {
-            // vstring format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
             let xlen = protocol::read_varint(reader)? as usize;
             if xlen > 0 {
-                let actual_len = xlen.min(4096); // Sanity limit
+                let actual_len = xlen.min(4096);
                 let mut xname_buf = vec![0u8; actual_len];
                 reader.read_exact(&mut xname_buf)?;
                 Some(xname_buf)
@@ -2529,17 +2540,27 @@ mod tests {
 
     #[test]
     fn item_flags_constants() {
-        // Verify constant values match upstream rsync
-        assert_eq!(ItemFlags::ITEM_TRANSFER, 0x8000);
-        assert_eq!(ItemFlags::ITEM_REPORT_ATIME, 0x4000);
-        assert_eq!(ItemFlags::ITEM_REPORT_CHECKSUM, 0x2000);
-        assert_eq!(ItemFlags::ITEM_XNAME_FOLLOWS, 0x1000);
-        assert_eq!(ItemFlags::ITEM_BASIS_TYPE_FOLLOWS, 0x0800);
-        assert_eq!(ItemFlags::ITEM_REPORT_SIZE, 0x0400);
-        assert_eq!(ItemFlags::ITEM_REPORT_TIME, 0x0200);
-        assert_eq!(ItemFlags::ITEM_REPORT_PERMS, 0x0100);
-        assert_eq!(ItemFlags::ITEM_REPORT_OWNER, 0x0080);
+        // Verify constant values match upstream rsync.h:214-233
+        assert_eq!(ItemFlags::ITEM_REPORT_ATIME, 0x0001);
+        assert_eq!(ItemFlags::ITEM_REPORT_CHANGE, 0x0002);
+        assert_eq!(ItemFlags::ITEM_REPORT_SIZE, 0x0004);
+        assert_eq!(ItemFlags::ITEM_REPORT_TIME, 0x0008);
+        assert_eq!(ItemFlags::ITEM_REPORT_PERMS, 0x0010);
+        assert_eq!(ItemFlags::ITEM_REPORT_OWNER, 0x0020);
         assert_eq!(ItemFlags::ITEM_REPORT_GROUP, 0x0040);
+        assert_eq!(ItemFlags::ITEM_REPORT_ACL, 0x0080);
+        assert_eq!(ItemFlags::ITEM_REPORT_XATTR, 0x0100);
+        assert_eq!(ItemFlags::ITEM_REPORT_CRTIME, 0x0400);
+        assert_eq!(ItemFlags::ITEM_BASIS_TYPE_FOLLOWS, 0x0800);
+        assert_eq!(ItemFlags::ITEM_XNAME_FOLLOWS, 0x1000);
+        assert_eq!(ItemFlags::ITEM_IS_NEW, 0x2000);
+        assert_eq!(ItemFlags::ITEM_LOCAL_CHANGE, 0x4000);
+        assert_eq!(ItemFlags::ITEM_TRANSFER, 0x8000);
+
+        // Log-only flags (not sent on wire)
+        assert_eq!(ItemFlags::ITEM_MISSING_DATA, 0x1_0000);
+        assert_eq!(ItemFlags::ITEM_DELETED, 0x2_0000);
+        assert_eq!(ItemFlags::ITEM_MATCHED, 0x4_0000);
     }
 
     #[test]
