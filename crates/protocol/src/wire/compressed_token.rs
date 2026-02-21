@@ -133,8 +133,12 @@ pub struct CompressedTokenEncoder {
     literal_buf: Vec<u8>,
     /// Persistent deflate compressor.
     compressor: Compress,
-    /// Output buffer for compression.
+    /// Output buffer for compression (scratch space for deflate output).
     compress_buf: Vec<u8>,
+    /// Reusable buffer for accumulating compressed output before writing.
+    /// Replaces per-block `Vec::new()` allocation in `flush_chunk`.
+    /// Upstream: static `obuf` in token.c.
+    flush_buf: Vec<u8>,
     /// Last token sent (for run encoding).
     last_token: i32,
     /// Start of current token run.
@@ -186,6 +190,7 @@ impl CompressedTokenEncoder {
             literal_buf: Vec::new(),
             compressor: Compress::new(compression, false), // false = raw deflate (-15 window)
             compress_buf: vec![0u8; CHUNK_SIZE * 2],
+            flush_buf: Vec::with_capacity(CHUNK_SIZE * 2),
             last_token: -1,
             run_start: 0,
             last_run_end: 0,
@@ -201,6 +206,7 @@ impl CompressedTokenEncoder {
     pub fn reset(&mut self) {
         self.literal_buf.clear();
         self.compressor.reset();
+        self.flush_buf.clear();
         self.last_token = -1;
         self.run_start = 0;
         self.last_run_end = 0;
@@ -303,24 +309,23 @@ impl CompressedTokenEncoder {
     /// sync marker (0x00 0x00 0xFF 0xFF) from output. The receiver adds
     /// the marker back before inflating.
     ///
-    /// Reference: token.c:send_deflated_token() lines 449-457
+    /// Reuses `self.flush_buf` across calls to avoid per-block allocation,
+    /// matching upstream's static `obuf` buffer (token.c lines 346-354).
     fn flush_chunk<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         if self.literal_buf.is_empty() {
             return Ok(());
         }
 
         let chunk_len = self.literal_buf.len().min(CHUNK_SIZE);
-        let chunk: Vec<u8> = {
-            let mut v = Vec::with_capacity(chunk_len);
-            v.extend(self.literal_buf.drain(..chunk_len));
-            v
-        };
 
-        let mut compressed = Vec::new();
+        // Reuse flush_buf instead of allocating a new Vec per call
+        self.flush_buf.clear();
 
-        // Feed all input with Z_NO_FLUSH
-        let mut input = &chunk[..];
-        while !input.is_empty() {
+        // Compress directly from literal_buf without copying to an intermediate Vec.
+        // We track how far we've consumed, then drain afterward.
+        let mut consumed_total = 0;
+        while consumed_total < chunk_len {
+            let input = &self.literal_buf[consumed_total..chunk_len];
             let before_in = self.compressor.total_in();
             let before_out = self.compressor.total_out();
 
@@ -331,13 +336,17 @@ impl CompressedTokenEncoder {
             let consumed = (self.compressor.total_in() - before_in) as usize;
             let produced = (self.compressor.total_out() - before_out) as usize;
 
-            compressed.extend_from_slice(&self.compress_buf[..produced]);
-            input = &input[consumed..];
+            self.flush_buf
+                .extend_from_slice(&self.compress_buf[..produced]);
+            consumed_total += consumed;
 
             if consumed == 0 && produced < self.compress_buf.len() {
                 break;
             }
         }
+
+        // Drain the consumed input from literal_buf
+        self.literal_buf.drain(..chunk_len);
 
         // Flush with Z_SYNC_FLUSH
         loop {
@@ -350,7 +359,8 @@ impl CompressedTokenEncoder {
 
             let produced = (self.compressor.total_out() - before_out) as usize;
             if produced > 0 {
-                compressed.extend_from_slice(&self.compress_buf[..produced]);
+                self.flush_buf
+                    .extend_from_slice(&self.compress_buf[..produced]);
             }
 
             // Stop when sync flush is complete
@@ -361,19 +371,19 @@ impl CompressedTokenEncoder {
 
         // Strip the trailing 4-byte sync marker (0x00 0x00 0xFF 0xFF)
         // The receiver will add it back before inflating
-        if compressed.len() >= 4 {
-            let len = compressed.len();
-            if compressed[len - 4..] == [0x00, 0x00, 0xFF, 0xFF] {
-                compressed.truncate(len - 4);
+        if self.flush_buf.len() >= 4 {
+            let len = self.flush_buf.len();
+            if self.flush_buf[len - 4..] == [0x00, 0x00, 0xFF, 0xFF] {
+                self.flush_buf.truncate(len - 4);
             }
         }
 
         // Write in MAX_DATA_COUNT pieces with DEFLATED_DATA headers
         let mut offset = 0;
-        while offset < compressed.len() {
-            let piece_len = (compressed.len() - offset).min(MAX_DATA_COUNT);
+        while offset < self.flush_buf.len() {
+            let piece_len = (self.flush_buf.len() - offset).min(MAX_DATA_COUNT);
             write_deflated_data_header(writer, piece_len)?;
-            writer.write_all(&compressed[offset..offset + piece_len])?;
+            writer.write_all(&self.flush_buf[offset..offset + piece_len])?;
             offset += piece_len;
         }
 
@@ -512,14 +522,18 @@ impl CompressedTokenEncoder {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub struct CompressedTokenDecoder {
-    /// Decompression buffer.
+    /// Decompression buffer for accumulated output.
     decompress_buf: Vec<u8>,
     /// Current position in decompress buffer.
     decompress_pos: usize,
     /// Persistent inflate decompressor.
     decompressor: Decompress,
-    /// Output buffer for decompression.
+    /// Output buffer for decompression (scratch space for inflate output).
     output_buf: Vec<u8>,
+    /// Reusable buffer for compressed input data read from the wire.
+    /// Replaces per-block `vec![0u8; len]` allocation in `recv_token`.
+    /// Upstream: static `cbuf` in token.c (line 493).
+    compressed_input_buf: Vec<u8>,
     /// Current token index.
     rx_token: i32,
     /// Remaining tokens in current run.
@@ -546,6 +560,7 @@ impl CompressedTokenDecoder {
             decompress_pos: 0,
             decompressor: Decompress::new(false), // false = raw deflate (-15 window)
             output_buf: vec![0u8; CHUNK_SIZE * 2],
+            compressed_input_buf: Vec::with_capacity(MAX_DATA_COUNT + 4),
             rx_token: 0,
             rx_run: 0,
             initialized: false,
@@ -560,6 +575,7 @@ impl CompressedTokenDecoder {
         self.decompress_buf.clear();
         self.decompress_pos = 0;
         self.decompressor.reset(false);
+        self.compressed_input_buf.clear();
         self.rx_token = 0;
         self.rx_run = 0;
         self.initialized = false;
@@ -614,16 +630,22 @@ impl CompressedTokenDecoder {
         // Check for DEFLATED_DATA
         if (flag & 0xC0) == DEFLATED_DATA {
             let len = read_deflated_data_length(reader, flag)?;
-            let mut compressed = vec![0u8; len];
-            reader.read_exact(&mut compressed)?;
+
+            // Reuse compressed_input_buf instead of allocating per block.
+            // Upstream: reads into static `cbuf` then appends sync marker
+            // (token.c lines 536-539).
+            self.compressed_input_buf.clear();
+            self.compressed_input_buf.resize(len, 0);
+            reader.read_exact(&mut self.compressed_input_buf[..len])?;
 
             // Add the sync marker back that the encoder stripped
             // (0x00 0x00 0xFF 0xFF)
-            compressed.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
+            self.compressed_input_buf
+                .extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
 
             // Decompress using persistent decompressor with sync flush
             self.decompress_buf.clear();
-            let mut input = &compressed[..];
+            let mut input = &self.compressed_input_buf[..];
 
             loop {
                 let before_in = self.decompressor.total_in();

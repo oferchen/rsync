@@ -195,6 +195,26 @@ impl MessageCode {
         matches!(self, MessageCode::NoOp)
     }
 
+    /// Reports whether this message represents an error condition.
+    ///
+    /// Returns `true` for all error-class message codes: `Error`, `ErrorXfer`,
+    /// `ErrorSocket`, `ErrorUtf8`, and `ErrorExit`. Useful for counting remote
+    /// errors received through the multiplex channel.
+    ///
+    /// upstream: io.c — `FERROR*` codes map to these message types.
+    #[inline]
+    #[must_use]
+    pub const fn is_error(self) -> bool {
+        matches!(
+            self,
+            MessageCode::Error
+                | MessageCode::ErrorXfer
+                | MessageCode::ErrorSocket
+                | MessageCode::ErrorUtf8
+                | MessageCode::ErrorExit
+        )
+    }
+
     /// Reports whether this message carries human-readable logging output.
     #[inline]
     #[must_use]
