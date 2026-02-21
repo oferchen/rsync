@@ -198,6 +198,7 @@ where
         out_format,
         dparam: _,
         no_iconv,
+        prefer_aes_gcm,
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
@@ -655,6 +656,7 @@ where
         remote_shell: parsed.remote_shell.clone(),
         rsync_path: parsed.rsync_path.clone(),
         early_input: early_input.map(PathBuf::from),
+        prefer_aes_gcm,
         batch_config,
         no_motd,
     };

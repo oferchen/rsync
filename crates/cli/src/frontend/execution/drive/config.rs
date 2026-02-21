@@ -133,6 +133,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) remote_shell: Option<OsString>,
     pub(crate) rsync_path: Option<OsString>,
     pub(crate) early_input: Option<PathBuf>,
+    pub(crate) prefer_aes_gcm: Option<bool>,
     pub(crate) batch_config: Option<batch::BatchConfig>,
     pub(crate) no_motd: bool,
 }
@@ -267,6 +268,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
 
     // Configure early-input file if specified
     builder = builder.early_input(inputs.early_input.clone());
+    builder = builder.prefer_aes_gcm(inputs.prefer_aes_gcm);
 
     // Configure batch mode if specified
     if let Some(batch_cfg) = inputs.batch_config {
