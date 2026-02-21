@@ -36,6 +36,9 @@ tokio = { workspace = true, optional = true, features = ["net", "io-util", "sync
 dashmap = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
+
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
 libc = "0.2"
