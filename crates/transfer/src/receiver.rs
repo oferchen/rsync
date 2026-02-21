@@ -32,7 +32,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::num::NonZeroU8;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 /// Default checksum length for delta verification (16 bytes = 128 bits).
 ///
@@ -386,6 +386,74 @@ impl ReceiverContext {
     const fn should_read_filter_list(&self) -> bool {
         let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
         !self.config.client_mode && receiver_wants_list
+    }
+
+    /// Sanitizes the received file list by removing entries with unsafe paths.
+    ///
+    /// When `trust_sender` is false, the receiver validates each entry to prevent
+    /// directory traversal attacks from a malicious sender:
+    ///
+    /// - Entries with absolute paths are rejected (unless `--relative` is active)
+    /// - Entries containing `..` path components are rejected
+    /// - Symlink entries pointing outside the transfer tree are rejected
+    ///
+    /// Rejected entries are removed from the file list and warnings are emitted.
+    /// Returns the number of entries removed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:757`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
+    /// - `options.c:2595`: `trust_sender_args = trust_sender_filter = 1`
+    fn sanitize_file_list(&mut self) -> usize {
+        if self.config.trust_sender {
+            return 0;
+        }
+
+        let relative_paths = self.config.flags.relative;
+        let original_len = self.file_list.len();
+
+        self.file_list.retain(|entry| {
+            let path = entry.path();
+
+            // Check for absolute paths (reject unless --relative is active).
+            // upstream: flist.c:757 `!relative_paths && *thisname == '/'`
+            if !relative_paths && path.has_root() {
+                eprintln!(
+                    "ERROR: rejecting file-list entry with absolute path from sender: {}",
+                    path.display()
+                );
+                return false;
+            }
+
+            // Check for `..` path components (always rejected).
+            // upstream: flist.c:757 `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0`
+            if path_contains_dot_dot(path) {
+                eprintln!(
+                    "ERROR: rejecting file-list entry with \"..\" component from sender: {}",
+                    path.display()
+                );
+                return false;
+            }
+
+            // Check symlink targets for safety (similar to --safe-links).
+            // Reject symlinks that point outside the transfer tree.
+            if entry.is_symlink() {
+                if let Some(target) = entry.link_target() {
+                    if !symlink_target_is_safe_for_transfer(target, path) {
+                        eprintln!(
+                            "ERROR: rejecting symlink with unsafe target from sender: {} -> {}",
+                            path.display(),
+                            target.display()
+                        );
+                        return false;
+                    }
+                }
+            }
+
+            true
+        });
+
+        original_len - self.file_list.len()
     }
 
     /// Creates directories from the file list.
@@ -1315,6 +1383,12 @@ impl ReceiverContext {
         }
 
         let file_count = self.receive_file_list(&mut reader)?;
+
+        // Validate received file list for path safety (--trust-sender enforcement).
+        // Removes entries with absolute paths, `..` components, or unsafe symlink
+        // targets. This runs after sorting so the file list indices are stable.
+        let removed = self.sanitize_file_list();
+        let file_count = file_count - removed;
 
         let checksum_factory = ChecksumFactory::from_negotiation(
             self.negotiated_algorithms.as_ref(),
@@ -2352,6 +2426,70 @@ pub struct BasisFileConfig<'a> {
     pub whole_file: bool,
 }
 
+/// Returns `true` if any component of the path is `..`.
+///
+/// This mirrors upstream rsync's `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
+/// check that rejects paths containing parent-directory references, preventing
+/// directory traversal attacks from a malicious sender.
+///
+/// # Upstream Reference
+///
+/// - `util1.c`: `clean_fname()` with `CFN_REFUSE_DOT_DOT_DIRS`
+fn path_contains_dot_dot(path: &Path) -> bool {
+    path.components().any(|c| matches!(c, Component::ParentDir))
+}
+
+/// Determines whether a symlink target is safe within the transfer tree.
+///
+/// A symlink target is considered unsafe if:
+/// - It is an absolute path
+/// - It is empty
+/// - It would escape the transfer directory via `..` traversal
+///
+/// The safety check evaluates whether the symlink, when resolved relative
+/// to its location in the transfer tree, would point outside the tree root.
+///
+/// # Upstream Reference
+///
+/// - `util1.c`: `unsafe_symlink()` — returns 1 if unsafe, 0 if safe
+fn symlink_target_is_safe_for_transfer(target: &Path, link_path: &Path) -> bool {
+    // Reject empty targets and absolute symlinks.
+    // upstream: util1.c `if (!dest || !*dest || *dest == '/') return 1;`
+    if target.as_os_str().is_empty() || target.has_root() {
+        return false;
+    }
+
+    // Count the directory depth of the link within the transfer tree.
+    // The last component is the symlink name itself, not a directory level.
+    let mut depth: i64 = 0;
+    for component in link_path.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::ParentDir => depth = 0,
+            _ => {}
+        }
+    }
+    // Exclude the symlink filename from the depth budget.
+    depth = (depth - 1).max(0);
+
+    // Walk the target components, tracking whether `..` escapes the tree.
+    for component in target.components() {
+        match component {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+
+    true
+}
+
 /// Tries to find a basis file in the reference directories.
 ///
 /// Iterates through reference directories in order, checking if the relative
@@ -2616,6 +2754,7 @@ mod tests {
             is_daemon_connection: false,
             checksum_choice: None,
             write_devices: false,
+            trust_sender: false,
         }
     }
 
@@ -3507,6 +3646,7 @@ mod tests {
             is_daemon_connection: false,
             checksum_choice: None,
             write_devices: false,
+            trust_sender: false,
         }
     }
 

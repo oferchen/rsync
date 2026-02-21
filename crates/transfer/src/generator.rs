@@ -1808,6 +1808,7 @@ mod tests {
             is_daemon_connection: false,
             checksum_choice: None,
             write_devices: false,
+            trust_sender: false,
         }
     }
 
@@ -2957,6 +2958,7 @@ mod tests {
             is_daemon_connection: false,
             checksum_choice: None,
             write_devices: false,
+            trust_sender: false,
         }
     }
 
