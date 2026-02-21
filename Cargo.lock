@@ -617,6 +617,7 @@ dependencies = [
  "fs2",
  "libc",
  "logging-sink",
+ "metadata",
  "protocol",
  "sd-notify",
  "signal-hook",

@@ -140,6 +140,7 @@ pub struct LocalCopyOptionsBuilder {
     copy_unsafe_links: bool,
     keep_dirlinks: bool,
     safe_links: bool,
+    munge_links: bool,
 
     // Metadata preservation options
     preserve_owner: bool,
@@ -275,6 +276,7 @@ impl LocalCopyOptionsBuilder {
             copy_unsafe_links: false,
             keep_dirlinks: false,
             safe_links: false,
+            munge_links: false,
             preserve_owner: false,
             preserve_group: false,
             preserve_executability: false,
@@ -661,6 +663,13 @@ impl LocalCopyOptionsBuilder {
     #[must_use]
     pub fn safe_links(mut self, enabled: bool) -> Self {
         self.safe_links = enabled;
+        self
+    }
+
+    /// Enables or disables symlink munging for daemon-mode security.
+    #[must_use]
+    pub fn munge_links(mut self, enabled: bool) -> Self {
+        self.munge_links = enabled;
         self
     }
 
@@ -1410,6 +1419,7 @@ impl LocalCopyOptionsBuilder {
             copy_unsafe_links: self.copy_unsafe_links,
             keep_dirlinks: self.keep_dirlinks,
             safe_links: self.safe_links,
+            munge_links: self.munge_links,
             preserve_owner: self.preserve_owner,
             preserve_group: self.preserve_group,
             preserve_executability: self.preserve_executability,

@@ -621,6 +621,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .copy_unsafe_links(config.copy_unsafe_links())
             .keep_dirlinks(config.keep_dirlinks())
             .safe_links(config.safe_links())
+            .munge_links(config.munge_links())
             .devices(config.preserve_devices())
             .specials(config.preserve_specials())
             .with_one_file_system_level(config.one_file_system_level())

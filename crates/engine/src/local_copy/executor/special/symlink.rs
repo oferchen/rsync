@@ -96,6 +96,7 @@ pub(crate) fn copy_symlink(
     context.enforce_timeout()?;
     let mode = context.mode();
     let file_type = metadata.file_type();
+    let munge_links = context.munge_links_enabled();
 
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
@@ -112,8 +113,20 @@ pub(crate) fn copy_symlink(
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_symlink_total();
 
-    let target = fs::read_link(source)
+    let raw_target = fs::read_link(source)
         .map_err(|error| LocalCopyError::io("read symbolic link", source, error))?;
+
+    // upstream: clientserver.c — on the sender side, unmunge already-munged
+    // targets so safety checks and comparisons work on the real path.
+    let target = if munge_links {
+        let raw_str = raw_target.to_string_lossy();
+        match ::metadata::unmunge_symlink(&raw_str) {
+            Some(unmangled) => PathBuf::from(unmangled),
+            None => raw_target,
+        }
+    } else {
+        raw_target
+    };
 
     let mut destination_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
@@ -362,8 +375,15 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // actually create it
-    create_symlink(&target, source, destination)
+    // upstream: clientserver.c — on the receiver side, munge the target so
+    // it cannot resolve outside the module root.
+    let write_target = if munge_links {
+        PathBuf::from(::metadata::munge_symlink(&target.to_string_lossy()))
+    } else {
+        target.clone()
+    };
+
+    create_symlink(&write_target, source, destination)
         .map_err(|error| LocalCopyError::io("create symbolic link", destination, error))?;
 
     context.register_created_path(

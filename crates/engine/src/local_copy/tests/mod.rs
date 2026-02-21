@@ -991,6 +991,7 @@ include!("execute_delta.rs");
 include!("execute_whole_file.rs");
 include!("execute_symlinks.rs");
 include!("execute_symlink_edge_cases.rs");
+include!("execute_munge_links.rs");
 include!("execute_copy_links.rs");
 include!("execute_dirlinks.rs");
 include!("execute_metadata.rs");

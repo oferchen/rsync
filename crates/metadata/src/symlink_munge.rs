@@ -1,11 +1,39 @@
-// Re-export core munge/unmunge functions from the metadata crate.
-// The canonical implementation lives in `metadata::symlink_munge` so that
-// both the daemon and the client-side transfer path share the same logic.
-#[allow(unused_imports)]
-pub(crate) use ::metadata::symlink_munge::{munge_symlink, unmunge_symlink};
+/// Prefix prepended to symlink targets when munging is active.
+///
+/// Upstream rsync uses this exact prefix in `clientserver.c` to prevent
+/// symlinks from escaping the module root when `use chroot = no`.
+pub const SYMLINK_MUNGE_PREFIX: &str = "/rsyncd-munged/";
+
+/// Prepends the munge prefix to a symlink target.
+///
+/// This transforms a symlink target so it cannot resolve to a path outside
+/// the module directory. The prefix is always prepended, even if the target
+/// is relative; upstream rsync behaves identically.
+///
+/// # upstream: `clientserver.c:munge_symlink()`
+#[must_use]
+pub fn munge_symlink(target: &str) -> String {
+    let mut munged = String::with_capacity(SYMLINK_MUNGE_PREFIX.len() + target.len());
+    munged.push_str(SYMLINK_MUNGE_PREFIX);
+    munged.push_str(target);
+    munged
+}
+
+/// Strips the munge prefix from a symlink target if present.
+///
+/// Returns `Some(original)` when the prefix was found and removed, or `None`
+/// if the target was not munged.
+///
+/// # upstream: `clientserver.c:unmunge_symlink()`
+#[must_use]
+pub fn unmunge_symlink(target: &str) -> Option<String> {
+    target
+        .strip_prefix(SYMLINK_MUNGE_PREFIX)
+        .map(str::to_string)
+}
 
 #[cfg(test)]
-mod symlink_munge_tests {
+mod tests {
     use super::*;
 
     // --- munge_symlink tests ---
@@ -110,67 +138,5 @@ mod symlink_munge_tests {
         let munged = munge_symlink(original);
         let restored = unmunge_symlink(&munged);
         assert_eq!(restored, Some(original.to_owned()));
-    }
-
-    // --- effective_munge_symlinks tests ---
-
-    #[test]
-    fn effective_munge_auto_chroot_on() {
-        let def = ModuleDefinition {
-            use_chroot: true,
-            munge_symlinks: None,
-            ..Default::default()
-        };
-        assert!(!def.effective_munge_symlinks());
-    }
-
-    #[test]
-    fn effective_munge_auto_chroot_off() {
-        let def = ModuleDefinition {
-            use_chroot: false,
-            munge_symlinks: None,
-            ..Default::default()
-        };
-        assert!(def.effective_munge_symlinks());
-    }
-
-    #[test]
-    fn effective_munge_explicit_true_overrides_chroot() {
-        let def = ModuleDefinition {
-            use_chroot: true,
-            munge_symlinks: Some(true),
-            ..Default::default()
-        };
-        assert!(def.effective_munge_symlinks());
-    }
-
-    #[test]
-    fn effective_munge_explicit_false_overrides_no_chroot() {
-        let def = ModuleDefinition {
-            use_chroot: false,
-            munge_symlinks: Some(false),
-            ..Default::default()
-        };
-        assert!(!def.effective_munge_symlinks());
-    }
-
-    #[test]
-    fn effective_munge_explicit_true_no_chroot() {
-        let def = ModuleDefinition {
-            use_chroot: false,
-            munge_symlinks: Some(true),
-            ..Default::default()
-        };
-        assert!(def.effective_munge_symlinks());
-    }
-
-    #[test]
-    fn effective_munge_explicit_false_with_chroot() {
-        let def = ModuleDefinition {
-            use_chroot: true,
-            munge_symlinks: Some(false),
-            ..Default::default()
-        };
-        assert!(!def.effective_munge_symlinks());
     }
 }
