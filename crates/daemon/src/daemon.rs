@@ -181,6 +181,8 @@ include!("daemon/sections/privilege.rs");
 
 include!("daemon/sections/module_access.rs");
 
+include!("daemon/sections/xfer_exec.rs");
+
 include!("daemon/sections/symlink_munge.rs");
 
 include!("daemon/sections/auth_helpers.rs");
