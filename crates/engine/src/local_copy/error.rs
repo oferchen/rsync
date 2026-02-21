@@ -434,6 +434,26 @@ mod tests {
     }
 
     #[test]
+    fn is_vanished_error_returns_true_for_not_found() {
+        let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        let error = LocalCopyError::io("read", PathBuf::from("/vanished"), io_err);
+        assert!(error.is_vanished_error());
+    }
+
+    #[test]
+    fn is_vanished_error_returns_false_for_other_io_errors() {
+        let io_err = io::Error::new(ErrorKind::PermissionDenied, "access denied");
+        let error = LocalCopyError::io("read", PathBuf::from("/denied"), io_err);
+        assert!(!error.is_vanished_error());
+    }
+
+    #[test]
+    fn is_vanished_error_returns_false_for_non_io_errors() {
+        let error = LocalCopyError::missing_operands();
+        assert!(!error.is_vanished_error());
+    }
+
+    #[test]
     fn code_name_for_missing_operands() {
         let error = LocalCopyError::missing_operands();
         assert_eq!(error.code_name(), "RERR_SYNTAX");

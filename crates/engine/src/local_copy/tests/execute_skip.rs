@@ -796,12 +796,13 @@ fn execute_with_size_only_and_checksum_skips_same_size() {
 
 #[test]
 fn execute_with_size_only_and_ignore_times_skips_same_size() {
+    // Upstream: generator.c:unchanged_file() checks size_only before
+    // ignore_times. When both are set and sizes match, size_only wins.
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
     // Same size, different content
-    // ignore_times overrides size_only, forcing transfer
     fs::write(&source, b"abc").expect("write source");
     fs::write(&destination, b"xyz").expect("write dest");
 
@@ -820,10 +821,10 @@ fn execute_with_size_only_and_ignore_times_skips_same_size() {
         )
         .expect("copy succeeds");
 
-    // ignore_times overrides size_only - file is transferred
-    assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.regular_files_matched(), 0);
-    assert_eq!(fs::read(&destination).expect("read"), b"abc");
+    // size_only wins over ignore_times - file is NOT transferred (same size)
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"xyz");
 }
 
 #[test]

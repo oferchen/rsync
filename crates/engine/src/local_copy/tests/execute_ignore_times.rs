@@ -263,7 +263,9 @@ fn ignore_times_with_checksum_handles_multiple_files() {
 }
 
 #[test]
-fn ignore_times_with_size_only_still_transfers_same_size() {
+fn ignore_times_with_size_only_skips_same_size() {
+    // Upstream: generator.c:unchanged_file() checks size_only before
+    // ignore_times. When both are set and sizes match, size_only wins.
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
@@ -297,18 +299,19 @@ fn ignore_times_with_size_only_still_transfers_same_size() {
         )
         .expect("copy succeeds");
 
-    // With --ignore-times, should transfer even with --size-only
-    // ignore_times takes precedence
-    assert_eq!(summary.files_copied(), 1);
+    // size_only wins over ignore_times — file is NOT transferred
+    assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(
         fs::read(&destination).expect("read dest"),
-        b"source!"
+        b"dest!!!"
     );
 }
 
 #[test]
-fn ignore_times_overrides_size_only_skip() {
+fn size_only_wins_over_ignore_times_with_same_content() {
+    // Upstream: generator.c:unchanged_file() checks size_only before
+    // ignore_times. When both are set and sizes match, size_only wins.
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
@@ -329,8 +332,6 @@ fn ignore_times_overrides_size_only_skip() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Test removed - size_only behavior is complex and implementation-specific
-    // Just test that ignore_times + size_only transfers the file
     let summary_with = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
@@ -340,7 +341,8 @@ fn ignore_times_overrides_size_only_skip() {
         )
         .expect("copy with ignore_times");
 
-    assert_eq!(summary_with.files_copied(), 1);
+    // size_only wins over ignore_times — file is NOT transferred
+    assert_eq!(summary_with.files_copied(), 0);
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
