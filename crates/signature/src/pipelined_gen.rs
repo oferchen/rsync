@@ -113,9 +113,18 @@ pub fn generate_signature_pipelined<R: Read + Send + 'static>(
     let mut buffered_reader =
         DoubleBufferedReader::with_size_hint(reader, pipeline_config, Some(file_size));
 
+    // Batch size for SIMD strong checksum computation, matching generation.rs.
+    const BATCH_SIZE: usize = 16;
+
     let mut blocks = Vec::with_capacity(expected_blocks_usize);
     let mut total_bytes: u64 = 0;
     let mut block_index: usize = 0;
+
+    // Accumulators for batch strong checksum computation.
+    let batch_cap = BATCH_SIZE.min(expected_blocks_usize).max(1);
+    let mut batch_data: Vec<Vec<u8>> = Vec::with_capacity(batch_cap);
+    let mut batch_rolling: Vec<RollingDigest> = Vec::with_capacity(batch_cap);
+    let mut batch_start_index: usize = 0;
 
     while let Some(chunk) = buffered_reader.next_block().map_err(SignatureError::Io)? {
         if block_index >= expected_blocks_usize {
@@ -151,12 +160,27 @@ pub fn generate_signature_pipelined<R: Read + Send + 'static>(
 
         total_bytes = total_bytes.saturating_add(chunk.len() as u64);
 
-        let rolling = RollingDigest::from_bytes(chunk);
-        let mut strong = algorithm.compute_full(chunk);
-        strong.truncate(strong_len);
-
-        blocks.push(SignatureBlock::new(block_index as u64, rolling, strong));
+        batch_rolling.push(RollingDigest::from_bytes(chunk));
+        batch_data.push(chunk.to_vec());
         block_index += 1;
+
+        // Flush the batch when full or when all blocks have been read
+        if batch_data.len() >= BATCH_SIZE || block_index == expected_blocks_usize {
+            let batch_slices: Vec<&[u8]> = batch_data.iter().map(|v| v.as_slice()).collect();
+            let strong_digests = algorithm.compute_truncated_batch(&batch_slices, strong_len);
+
+            for (i, strong) in strong_digests.into_iter().enumerate() {
+                blocks.push(SignatureBlock::new(
+                    (batch_start_index + i) as u64,
+                    batch_rolling[i],
+                    strong,
+                ));
+            }
+
+            batch_start_index = block_index;
+            batch_data.clear();
+            batch_rolling.clear();
+        }
     }
 
     if block_index < expected_blocks_usize {
