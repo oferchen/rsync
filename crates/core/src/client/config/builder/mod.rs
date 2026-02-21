@@ -214,6 +214,7 @@ pub struct ClientConfigBuilder {
     prefer_aes_gcm: Option<bool>,
     batch_config: Option<engine::batch::BatchConfig>,
     no_motd: bool,
+    prefer_aes_gcm: Option<bool>,
     #[cfg(all(unix, feature = "acl"))]
     preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
@@ -334,6 +335,7 @@ impl ClientConfigBuilder {
             prefer_aes_gcm: self.prefer_aes_gcm,
             batch_config: self.batch_config,
             no_motd: self.no_motd,
+            prefer_aes_gcm: self.prefer_aes_gcm,
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls: self.preserve_acls,
             #[cfg(all(unix, feature = "xattr"))]

@@ -197,6 +197,8 @@ fn spawn_ssh_connection(
         }
     }
 
+    ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
+
     ssh.set_remote_command(invocation_args);
 
     ssh.spawn().map_err(|e| {
