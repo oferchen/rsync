@@ -81,6 +81,18 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that access times be preserved when applying metadata.
+    ///
+    /// When enabled, the source file's access time is preserved on the destination.
+    /// This corresponds to the `-U` / `--atimes` flag in upstream rsync.
+    #[must_use]
+    #[doc(alias = "--atimes")]
+    #[doc(alias = "-U")]
+    pub const fn atimes(mut self, preserve: bool) -> Self {
+        self.preserve_atimes = preserve;
+        self
+    }
+
     /// Skips preserving directory modification times even when [`Self::times`] is enabled.
     #[must_use]
     #[doc(alias = "--omit-dir-times")]
@@ -172,6 +184,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn preserve_times(&self) -> bool {
         self.preserve_times
+    }
+
+    /// Reports whether access times should be preserved.
+    #[must_use]
+    pub const fn preserve_atimes(&self) -> bool {
+        self.preserve_atimes
     }
 
     /// Reports whether directory modification times should be skipped during metadata preservation.
@@ -350,6 +368,18 @@ mod tests {
     fn times_preservation() {
         let options = LocalCopyOptions::new().times(true);
         assert!(options.preserve_times());
+    }
+
+    #[test]
+    fn atimes_preservation() {
+        let options = LocalCopyOptions::new().atimes(true);
+        assert!(options.preserve_atimes());
+    }
+
+    #[test]
+    fn atimes_disabled_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(!options.preserve_atimes());
     }
 
     #[test]

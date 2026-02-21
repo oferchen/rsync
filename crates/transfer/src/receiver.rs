@@ -176,7 +176,8 @@ impl ReceiverContext {
         .with_preserve_devices(self.config.flags.devices)
         .with_preserve_hard_links(self.config.flags.hard_links)
         .with_preserve_acls(self.config.flags.acls)
-        .with_preserve_xattrs(self.config.flags.xattrs);
+        .with_preserve_xattrs(self.config.flags.xattrs)
+        .with_preserve_atimes(self.config.flags.atimes);
 
         // Wire up iconv converter if configured
         if let Some(ref converter) = self.config.iconv {
@@ -244,7 +245,8 @@ impl ReceiverContext {
         .with_preserve_devices(self.config.flags.devices)
         .with_preserve_hard_links(self.config.flags.hard_links)
         .with_preserve_acls(self.config.flags.acls)
-        .with_preserve_xattrs(self.config.flags.xattrs);
+        .with_preserve_xattrs(self.config.flags.xattrs)
+        .with_preserve_atimes(self.config.flags.atimes);
 
         if let Some(ref converter) = self.config.iconv {
             flist_reader = flist_reader.with_iconv(converter.clone());
@@ -1326,6 +1328,7 @@ impl ReceiverContext {
         let metadata_opts = MetadataOptions::new()
             .preserve_permissions(self.config.flags.perms)
             .preserve_times(self.config.flags.times)
+            .preserve_atimes(self.config.flags.atimes)
             .preserve_owner(self.config.flags.owner)
             .preserve_group(self.config.flags.group)
             .numeric_ids(self.config.flags.numeric_ids);
