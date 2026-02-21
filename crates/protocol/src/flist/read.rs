@@ -474,7 +474,7 @@ impl FileListReader {
         } else {
             let mut mode_bytes = [0u8; 4];
             reader.read_exact(&mut mode_bytes)?;
-            let mode = i32::from_le_bytes(mode_bytes) as u32;
+            let mode = super::wire_mode::from_wire_mode(i32::from_le_bytes(mode_bytes));
             self.state.update_mode(mode);
             mode
         };
