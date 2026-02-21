@@ -56,7 +56,18 @@ impl SignatureError {
     }
 }
 
+/// Number of blocks to accumulate before dispatching a SIMD batch strong checksum computation.
+///
+/// Chosen to match the widest SIMD lane count (AVX-512 = 16 lanes for MD5) while keeping
+/// the batch buffer small enough to stay in L1 cache for typical rsync block sizes.
+const BATCH_SIZE: usize = 16;
+
 /// Generates an rsync-compatible file signature using the provided layout and strong checksum.
+///
+/// Reads blocks in batches of up to [`BATCH_SIZE`] and computes strong checksums using
+/// SIMD-accelerated batch hashing when the algorithm supports it (MD4, unseeded MD5).
+/// This amortizes per-block hasher construction overhead and enables multi-lane SIMD
+/// processing of independent block digests.
 ///
 /// The reader must yield exactly the number of bytes implied by `layout`. Trailing data is
 /// reported via [`SignatureError::TrailingData`].
@@ -85,26 +96,65 @@ pub fn generate_file_signature<R: Read>(
         .map_err(|_| SignatureError::TooManyBlocks(expected_blocks))?;
 
     let mut blocks = Vec::with_capacity(expected_blocks_usize);
-    let mut buffer = vec![0u8; block_len.max(1)];
     let mut total_bytes: u64 = 0;
 
-    for index in 0..expected_blocks_usize {
-        let is_last = index + 1 == expected_blocks_usize;
-        let target_len = if is_last && layout.remainder() != 0 {
-            layout.remainder() as usize
-        } else {
-            block_len
-        };
+    // Pre-allocate batch buffers for reading multiple blocks before computing checksums.
+    // Each buffer holds one block's worth of data; we reuse them across batches.
+    let batch_capacity = BATCH_SIZE.min(expected_blocks_usize).max(1);
+    let mut batch_bufs: Vec<Vec<u8>> = (0..batch_capacity)
+        .map(|_| vec![0u8; block_len.max(1)])
+        .collect();
+    // Actual byte lengths of each block in the current batch (may differ for last block).
+    let mut batch_lens: Vec<usize> = Vec::with_capacity(batch_capacity);
+    // Rolling checksums computed during the read phase, paired with batch data for the
+    // strong checksum batch call.
+    let mut batch_rolling: Vec<RollingDigest> = Vec::with_capacity(batch_capacity);
 
-        let chunk = &mut buffer[..target_len];
-        reader.read_exact(chunk)?;
-        let chunk = &chunk[..];
-        total_bytes = total_bytes.saturating_add(target_len as u64);
-        let rolling = RollingDigest::from_bytes(chunk);
-        let mut strong = algorithm.compute_full(chunk);
-        strong.truncate(strong_len);
+    let mut index: usize = 0;
 
-        blocks.push(SignatureBlock::new(index as u64, rolling, strong));
+    while index < expected_blocks_usize {
+        // Fill the batch
+        let batch_end = (index + batch_capacity).min(expected_blocks_usize);
+        let batch_count = batch_end - index;
+        batch_lens.clear();
+        batch_rolling.clear();
+
+        for (i, buf) in batch_bufs.iter_mut().enumerate().take(batch_count) {
+            let block_index = index + i;
+            let is_last = block_index + 1 == expected_blocks_usize;
+            let target_len = if is_last && layout.remainder() != 0 {
+                layout.remainder() as usize
+            } else {
+                block_len
+            };
+
+            let chunk = &mut buf[..target_len];
+            reader.read_exact(chunk)?;
+            total_bytes = total_bytes.saturating_add(target_len as u64);
+
+            batch_rolling.push(RollingDigest::from_bytes(chunk));
+            batch_lens.push(target_len);
+        }
+
+        // Build slice references for the batch strong checksum call
+        let batch_slices: Vec<&[u8]> = batch_bufs
+            .iter()
+            .zip(batch_lens.iter())
+            .take(batch_count)
+            .map(|(buf, &len)| &buf[..len])
+            .collect();
+
+        let strong_digests = algorithm.compute_truncated_batch(&batch_slices, strong_len);
+
+        for (i, (rolling, strong)) in batch_rolling
+            .iter()
+            .zip(strong_digests.into_iter())
+            .enumerate()
+        {
+            blocks.push(SignatureBlock::new((index + i) as u64, *rolling, strong));
+        }
+
+        index = batch_end;
     }
 
     let mut extra = [0u8; 1];
@@ -293,5 +343,110 @@ mod tests {
         let error = SignatureError::TooManyBlocks(999999);
         let display = format!("{error}");
         assert!(display.contains("999999"));
+    }
+
+    /// Verifies batched generation produces correct results with block counts at,
+    /// below, and above the SIMD batch boundary (BATCH_SIZE = 16).
+    #[test]
+    fn batch_boundary_block_counts() {
+        for num_blocks in [1, 2, 15, 16, 17, 32, 33] {
+            let block_size = 100u32;
+            let data_len = (num_blocks * block_size) as usize;
+            let mut data = vec![0u8; data_len];
+            for (i, byte) in data.iter_mut().enumerate() {
+                *byte = ((i * 13 + 7) % 256) as u8;
+            }
+
+            let sig_layout = calculate_signature_layout(SignatureLayoutParams::new(
+                data_len as u64,
+                NonZeroU32::new(block_size),
+                ProtocolVersion::NEWEST,
+                NonZeroU8::new(16).unwrap(),
+            ))
+            .expect("layout");
+
+            let signature = generate_file_signature(
+                Cursor::new(data.clone()),
+                sig_layout,
+                SignatureAlgorithm::Md4,
+            )
+            .expect("signature");
+
+            assert_eq!(
+                signature.blocks().len(),
+                num_blocks as usize,
+                "block count mismatch for {num_blocks} blocks"
+            );
+
+            // Verify each block's rolling checksum against direct computation
+            for (i, block) in signature.blocks().iter().enumerate() {
+                let start = i * block_size as usize;
+                let end = start + block_size as usize;
+                assert_eq!(
+                    block.rolling(),
+                    RollingDigest::from_bytes(&data[start..end]),
+                    "rolling mismatch at block {i} for {num_blocks} blocks"
+                );
+                assert_eq!(
+                    block.strong().len(),
+                    sig_layout.strong_sum_length().get() as usize,
+                    "strong len mismatch at block {i}"
+                );
+            }
+        }
+    }
+
+    /// Verifies that batch generation with a remainder block (last block shorter)
+    /// produces the same result for all algorithms.
+    #[test]
+    fn batch_with_remainder_all_algorithms() {
+        let block_size = 64u32;
+        // 20 full blocks + 37 byte remainder = 1317 bytes total, 21 blocks
+        let data_len = (20 * block_size + 37) as usize;
+        let mut data = vec![0u8; data_len];
+        for (i, byte) in data.iter_mut().enumerate() {
+            *byte = ((i * 23 + 11) % 256) as u8;
+        }
+
+        let algorithms = [
+            SignatureAlgorithm::Md4,
+            SignatureAlgorithm::Md5 {
+                seed_config: Md5Seed::none(),
+            },
+            SignatureAlgorithm::Sha1,
+            SignatureAlgorithm::Xxh3_128 { seed: 42 },
+        ];
+
+        for algo in algorithms {
+            let sig_layout = calculate_signature_layout(SignatureLayoutParams::new(
+                data_len as u64,
+                NonZeroU32::new(block_size),
+                ProtocolVersion::NEWEST,
+                NonZeroU8::new(algo.digest_len().min(16) as u8).unwrap(),
+            ))
+            .expect("layout");
+
+            let signature = generate_file_signature(Cursor::new(data.clone()), sig_layout, algo)
+                .expect("signature");
+
+            assert_eq!(signature.blocks().len(), 21, "block count for {algo:?}");
+            assert_eq!(
+                signature.blocks().last().unwrap().len(),
+                37,
+                "last block len for {algo:?}"
+            );
+
+            // Verify strong checksum of last block matches per-element computation
+            let last_start = 20 * block_size as usize;
+            let expected_strong = algo.compute_truncated(
+                &data[last_start..],
+                sig_layout.strong_sum_length().get() as usize,
+            );
+            assert_eq!(
+                signature.blocks().last().unwrap().strong(),
+                expected_strong.as_slice(),
+                "last block strong mismatch for {algo:?}"
+            );
+        }
     }
 }

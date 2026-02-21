@@ -664,11 +664,8 @@ mod round_trip {
         let (signature, _) = generate_signature_from_data(&data, SignatureAlgorithm::Md4);
 
         for block in signature.blocks() {
-            let reconstructed = SignatureBlock::from_raw_parts(
-                block.index(),
-                block.rolling(),
-                block.strong().to_vec(),
-            );
+            let reconstructed =
+                SignatureBlock::from_raw_parts(block.index(), block.rolling(), block.strong());
 
             assert_eq!(reconstructed.index(), block.index());
             assert_eq!(reconstructed.rolling(), block.rolling());
@@ -1102,31 +1099,31 @@ mod block_properties {
     #[test]
     fn block_equality() {
         let rolling = RollingDigest::from_bytes(b"test");
-        let strong = vec![1u8, 2, 3, 4];
+        let strong: &[u8] = &[1, 2, 3, 4];
 
-        let block1 = SignatureBlock::from_raw_parts(0, rolling, strong.clone());
-        let block2 = SignatureBlock::from_raw_parts(0, rolling, strong.clone());
+        let block1 = SignatureBlock::from_raw_parts(0, rolling, strong);
+        let block2 = SignatureBlock::from_raw_parts(0, rolling, strong);
         let block3 = SignatureBlock::from_raw_parts(1, rolling, strong);
 
         assert_eq!(block1, block2);
         assert_ne!(block1, block3);
     }
 
-    /// SignatureBlock clone works.
+    /// SignatureBlock copy works (now Copy since DigestBuf is stack-allocated).
     #[test]
-    fn block_clone() {
+    fn block_copy() {
         let rolling = RollingDigest::from_bytes(b"test");
-        let block = SignatureBlock::from_raw_parts(0, rolling, vec![1, 2, 3]);
+        let block = SignatureBlock::from_raw_parts(0, rolling, &[1, 2, 3]);
 
-        let cloned = block.clone();
-        assert_eq!(block, cloned);
+        let copied = block;
+        assert_eq!(block, copied);
     }
 
     /// SignatureBlock debug formatting works.
     #[test]
     fn block_debug_format() {
         let rolling = RollingDigest::from_bytes(b"test");
-        let block = SignatureBlock::from_raw_parts(42, rolling, vec![1, 2, 3]);
+        let block = SignatureBlock::from_raw_parts(42, rolling, &[1, 2, 3]);
 
         let debug = format!("{block:?}");
         assert!(debug.contains("SignatureBlock"));
@@ -1136,12 +1133,12 @@ mod block_properties {
     #[test]
     fn block_is_empty() {
         let empty_rolling = RollingDigest::from_bytes(b"");
-        let empty_block = SignatureBlock::from_raw_parts(0, empty_rolling, vec![]);
+        let empty_block = SignatureBlock::from_raw_parts(0, empty_rolling, &[]);
 
         assert!(empty_block.is_empty());
 
         let non_empty_rolling = RollingDigest::from_bytes(b"x");
-        let non_empty_block = SignatureBlock::from_raw_parts(0, non_empty_rolling, vec![1]);
+        let non_empty_block = SignatureBlock::from_raw_parts(0, non_empty_rolling, &[1]);
 
         assert!(!non_empty_block.is_empty());
     }
