@@ -39,6 +39,7 @@ mod read;
 mod sort;
 mod state;
 mod trace;
+mod wire_mode;
 mod write;
 
 pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
@@ -62,4 +63,5 @@ pub use trace::{
     trace_receiving_flist_for_dir, trace_recv_file_list_done, trace_send_file_list_done,
     trace_sort_start, trace_struct_sizes, trace_write_entry,
 };
+pub use wire_mode::{from_wire_mode, to_wire_mode};
 pub use write::{FileListWriter, write_file_entry};
