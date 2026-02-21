@@ -61,6 +61,8 @@ pub struct ParsedServerFlags {
     pub partial: bool,
     /// Update only newer files (`u` flag, `--update`).
     pub update: bool,
+    /// Preserve creation times (`N` flag, `--crtimes`).
+    pub crtimes: bool,
     /// Fuzzy basis file matching (`y` flag, `--fuzzy`).
     pub fuzzy: bool,
     /// Prune empty directories from destination (`m` flag, `--prune-empty-dirs`).
@@ -164,6 +166,7 @@ impl ParsedServerFlags {
             b'R' => self.relative = true,
             b'P' => self.partial = true,
             b'u' => self.update = true,
+            b'N' => self.crtimes = true,
             b'y' => self.fuzzy = true,
             b'm' => self.prune_empty_dirs = true,
             // Unknown flags are ignored to maintain forward compatibility
@@ -315,5 +318,18 @@ mod tests {
     fn one_file_system_not_set_by_default() {
         let flags = ParsedServerFlags::parse("-r").unwrap();
         assert_eq!(flags.one_file_system, 0);
+    }
+
+    #[test]
+    fn parses_crtimes_flag() {
+        let flags = ParsedServerFlags::parse("-tN").unwrap();
+        assert!(flags.times);
+        assert!(flags.crtimes);
+    }
+
+    #[test]
+    fn crtimes_not_set_by_default() {
+        let flags = ParsedServerFlags::parse("-r").unwrap();
+        assert!(!flags.crtimes);
     }
 }
