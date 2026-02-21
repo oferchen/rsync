@@ -261,6 +261,18 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_fake_super(parsed, path, line_number)?;
                     }
+                    "munge symlinks" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'munge symlinks'"
+                                ),
+                            )
+                        })?;
+                        builder.set_munge_symlinks(Some(parsed), path, line_number)?;
+                    }
                     "uid" => {
                         let uid = parse_numeric_identifier(value).ok_or_else(|| {
                             config_parse_error(path, line_number, format!("invalid uid '{value}'"))
@@ -1208,6 +1220,60 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert_eq!(result.modules.len(), 1);
         assert!(!result.modules[0].read_only);
+    }
+
+    // --- Munge symlinks directive tests ---
+
+    #[test]
+    fn parse_module_munge_symlinks_yes() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nmunge symlinks = yes\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].munge_symlinks, Some(true));
+    }
+
+    #[test]
+    fn parse_module_munge_symlinks_no() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nmunge symlinks = no\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].munge_symlinks, Some(false));
+    }
+
+    #[test]
+    fn parse_module_munge_symlinks_default_none() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].munge_symlinks.is_none());
+    }
+
+    #[test]
+    fn parse_module_munge_symlinks_invalid_boolean() {
+        let file = write_config("[mod]\npath = /tmp\nmunge symlinks = maybe\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("invalid boolean"));
+    }
+
+    #[test]
+    fn parse_module_munge_symlinks_duplicate() {
+        let file = write_config(
+            "[mod]\npath = /tmp\nmunge symlinks = yes\nmunge symlinks = no\n",
+        );
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("duplicate"));
     }
 
     // --- Config file not found ---
