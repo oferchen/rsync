@@ -4,17 +4,19 @@
 
 use checksums::RollingDigest;
 
+use crate::algorithm::DigestBuf;
+
 /// Describes a single block within a file signature.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignatureBlock {
     index: u64,
     rolling: RollingDigest,
-    strong: Vec<u8>,
+    strong: DigestBuf,
 }
 
 impl SignatureBlock {
-    /// Creates a new block descriptor.
-    pub(crate) const fn new(index: u64, rolling: RollingDigest, strong: Vec<u8>) -> Self {
+    /// Creates a new block descriptor with a pre-computed [`DigestBuf`].
+    pub(crate) const fn new(index: u64, rolling: RollingDigest, strong: DigestBuf) -> Self {
         Self {
             index,
             rolling,
@@ -22,10 +24,14 @@ impl SignatureBlock {
         }
     }
 
-    /// Creates a block descriptor from raw components (for wire protocol reconstruction).
+    /// Creates a block descriptor from raw components.
+    ///
+    /// The `strong` bytes are copied into a stack-allocated [`DigestBuf`].
+    /// This is the primary constructor for wire protocol reconstruction where
+    /// the strong checksum arrives as a byte slice.
     #[must_use]
-    pub const fn from_raw_parts(index: u64, rolling: RollingDigest, strong: Vec<u8>) -> Self {
-        Self::new(index, rolling, strong)
+    pub fn from_raw_parts(index: u64, rolling: RollingDigest, strong: &[u8]) -> Self {
+        Self::new(index, rolling, DigestBuf::from_slice(strong, strong.len()))
     }
 
     /// Returns the zero-based index of the block within the signature.
@@ -46,7 +52,14 @@ impl SignatureBlock {
     #[inline]
     #[must_use]
     pub fn strong(&self) -> &[u8] {
-        &self.strong
+        self.strong.as_slice()
+    }
+
+    /// Returns the strong checksum as a [`DigestBuf`].
+    #[inline]
+    #[must_use]
+    pub const fn strong_digest(&self) -> DigestBuf {
+        self.strong
     }
 
     /// Returns the number of bytes that contributed to the rolling checksum.
@@ -71,46 +84,46 @@ mod tests {
     #[test]
     fn from_raw_parts() {
         let rolling = RollingDigest::from_bytes(b"test");
-        let strong = vec![1, 2, 3, 4];
-        let block = SignatureBlock::from_raw_parts(42, rolling, strong.clone());
+        let strong = &[1u8, 2, 3, 4];
+        let block = SignatureBlock::from_raw_parts(42, rolling, strong);
         assert_eq!(block.index(), 42);
         assert_eq!(block.rolling(), rolling);
-        assert_eq!(block.strong(), &strong);
+        assert_eq!(block.strong(), strong);
     }
 
     #[test]
     fn len_matches_rolling_digest_len() {
         let rolling = RollingDigest::from_bytes(b"hello world");
-        let block = SignatureBlock::from_raw_parts(0, rolling, vec![]);
+        let block = SignatureBlock::from_raw_parts(0, rolling, &[]);
         assert_eq!(block.len(), 11);
     }
 
     #[test]
     fn is_empty_for_zero_length() {
         let rolling = RollingDigest::from_bytes(b"");
-        let block = SignatureBlock::from_raw_parts(0, rolling, vec![]);
+        let block = SignatureBlock::from_raw_parts(0, rolling, &[]);
         assert!(block.is_empty());
     }
 
     #[test]
     fn is_not_empty_for_non_zero_length() {
         let rolling = RollingDigest::from_bytes(b"data");
-        let block = SignatureBlock::from_raw_parts(0, rolling, vec![]);
+        let block = SignatureBlock::from_raw_parts(0, rolling, &[]);
         assert!(!block.is_empty());
     }
 
     #[test]
-    fn clone_block() {
+    fn copy_block() {
         let rolling = RollingDigest::from_bytes(b"test");
-        let block = SignatureBlock::from_raw_parts(1, rolling, vec![1, 2, 3]);
-        let cloned = block.clone();
-        assert_eq!(block, cloned);
+        let block = SignatureBlock::from_raw_parts(1, rolling, &[1, 2, 3]);
+        let copied = block;
+        assert_eq!(block, copied);
     }
 
     #[test]
     fn debug_block() {
         let rolling = RollingDigest::from_bytes(b"test");
-        let block = SignatureBlock::from_raw_parts(0, rolling, vec![]);
+        let block = SignatureBlock::from_raw_parts(0, rolling, &[]);
         let debug = format!("{block:?}");
         assert!(debug.contains("SignatureBlock"));
     }
