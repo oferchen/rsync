@@ -1489,7 +1489,7 @@ pub fn generate_delta_from_signature<R: Read>(
             SignatureBlock::from_raw_parts(
                 wire_block.index as u64,
                 RollingDigest::from_value(wire_block.rolling_sum, config.block_length as usize),
-                wire_block.strong_sum,
+                &wire_block.strong_sum,
             )
         })
         .collect();
