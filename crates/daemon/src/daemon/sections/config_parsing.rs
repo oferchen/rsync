@@ -333,8 +333,119 @@ fn parse_config_modules_inner(
                             line_number,
                         )?;
                     }
+                    "max verbosity" => {
+                        let parsed: i32 = value.parse().map_err(|_| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!("invalid integer value '{value}' for 'max verbosity'"),
+                            )
+                        })?;
+                        builder.set_max_verbosity(parsed, path, line_number)?;
+                    }
+                    "ignore errors" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'ignore errors'"
+                                ),
+                            )
+                        })?;
+                        builder.set_ignore_errors(parsed, path, line_number)?;
+                    }
+                    "ignore nonreadable" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'ignore nonreadable'"
+                                ),
+                            )
+                        })?;
+                        builder.set_ignore_nonreadable(parsed, path, line_number)?;
+                    }
+                    "transfer logging" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'transfer logging'"
+                                ),
+                            )
+                        })?;
+                        builder.set_transfer_logging(parsed, path, line_number)?;
+                    }
+                    "log format" => {
+                        let format = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_log_format(format, path, line_number)?;
+                    }
+                    "dont compress" => {
+                        let patterns = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_dont_compress(patterns, path, line_number)?;
+                    }
+                    "pre-xfer exec" => {
+                        let cmd = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_pre_xfer_exec(cmd, path, line_number)?;
+                    }
+                    "post-xfer exec" => {
+                        let cmd = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_post_xfer_exec(cmd, path, line_number)?;
+                    }
+                    "temp dir" => {
+                        let dir = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_temp_dir(dir, path, line_number)?;
+                    }
+                    "charset" => {
+                        let cs = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_charset(cs, path, line_number)?;
+                    }
+                    "forward lookup" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'forward lookup'"
+                                ),
+                            )
+                        })?;
+                        builder.set_forward_lookup(parsed, path, line_number)?;
+                    }
                     _ => {
-                        // Unsupported directives are ignored for now.
+                        eprintln!(
+                            "warning: unknown per-module directive '{}' in '{}' line {}",
+                            key,
+                            path.display(),
+                            line_number
+                        );
                     }
                 }
                 continue;
@@ -713,11 +824,12 @@ fn parse_config_modules_inner(
                     }
                 }
                 _ => {
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        "directive outside module section",
-                    ));
+                    eprintln!(
+                        "warning: unknown global directive '{}' in '{}' line {}",
+                        key,
+                        path.display(),
+                        line_number
+                    );
                 }
             }
         }
@@ -916,10 +1028,10 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_directive_outside_module() {
+    fn parse_unknown_global_directive_warns_and_continues() {
         let file = write_config("unknown = value\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("outside module"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds with warning");
+        assert!(result.modules.is_empty());
     }
 
     // --- Global directive tests ---
@@ -1274,6 +1386,261 @@ mod config_parsing_tests {
         );
         let err = parse_config_modules(file.path()).expect_err("should fail");
         assert!(err.to_string().contains("duplicate"));
+    }
+
+    // --- New directive parsing tests ---
+
+    #[test]
+    fn parse_module_max_verbosity() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nmax verbosity = 3\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].max_verbosity, 3);
+    }
+
+    #[test]
+    fn parse_module_max_verbosity_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].max_verbosity, 1);
+    }
+
+    #[test]
+    fn parse_module_max_verbosity_invalid() {
+        let file = write_config("[mod]\npath = /tmp\nmax verbosity = abc\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("invalid integer"));
+    }
+
+    #[test]
+    fn parse_module_ignore_errors() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nignore errors = yes\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].ignore_errors);
+    }
+
+    #[test]
+    fn parse_module_ignore_nonreadable() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nignore nonreadable = true\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].ignore_nonreadable);
+    }
+
+    #[test]
+    fn parse_module_transfer_logging() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\ntransfer logging = yes\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].transfer_logging);
+    }
+
+    #[test]
+    fn parse_module_log_format() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nlog format = %o %h %f %l\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].log_format.as_deref(),
+            Some("%o %h %f %l")
+        );
+    }
+
+    #[test]
+    fn parse_module_dont_compress() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\ndont compress = *.gz *.zip\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].dont_compress.as_deref(),
+            Some("*.gz *.zip")
+        );
+    }
+
+    #[test]
+    fn parse_module_pre_xfer_exec() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\npre-xfer exec = /usr/bin/check\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].pre_xfer_exec.as_deref(),
+            Some("/usr/bin/check")
+        );
+    }
+
+    #[test]
+    fn parse_module_post_xfer_exec() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\npost-xfer exec = /usr/bin/cleanup\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].post_xfer_exec.as_deref(),
+            Some("/usr/bin/cleanup")
+        );
+    }
+
+    #[test]
+    fn parse_module_temp_dir() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\ntemp dir = /tmp/rsync\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].temp_dir.as_deref(),
+            Some("/tmp/rsync")
+        );
+    }
+
+    #[test]
+    fn parse_module_charset() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\ncharset = utf-8\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].charset.as_deref(), Some("utf-8"));
+    }
+
+    #[test]
+    fn parse_module_forward_lookup() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nforward lookup = no\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].forward_lookup);
+    }
+
+    #[test]
+    fn parse_module_forward_lookup_default_true() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].forward_lookup);
+    }
+
+    #[test]
+    fn parse_unknown_per_module_directive_continues() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nunknown directive = value\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds with warning");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "mod");
+    }
+
+    #[test]
+    fn parse_module_all_new_directives() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\n\
+             path = {}\n\
+             max verbosity = 5\n\
+             ignore errors = yes\n\
+             ignore nonreadable = true\n\
+             transfer logging = yes\n\
+             log format = %o %f\n\
+             dont compress = *.gz *.bz2\n\
+             pre-xfer exec = /bin/pre\n\
+             post-xfer exec = /bin/post\n\
+             temp dir = /tmp/staging\n\
+             charset = utf-8\n\
+             forward lookup = no\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let module = &result.modules[0];
+        assert_eq!(module.max_verbosity, 5);
+        assert!(module.ignore_errors);
+        assert!(module.ignore_nonreadable);
+        assert!(module.transfer_logging);
+        assert_eq!(module.log_format.as_deref(), Some("%o %f"));
+        assert_eq!(module.dont_compress.as_deref(), Some("*.gz *.bz2"));
+        assert_eq!(module.pre_xfer_exec.as_deref(), Some("/bin/pre"));
+        assert_eq!(module.post_xfer_exec.as_deref(), Some("/bin/post"));
+        assert_eq!(module.temp_dir.as_deref(), Some("/tmp/staging"));
+        assert_eq!(module.charset.as_deref(), Some("utf-8"));
+        assert!(!module.forward_lookup);
     }
 
     // --- Config file not found ---
