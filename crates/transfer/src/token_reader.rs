@@ -172,6 +172,21 @@ impl TokenReader {
     }
 }
 
+impl std::fmt::Debug for DeltaToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Literal(LiteralData::Pending(len)) => {
+                write!(f, "Literal(Pending({len}))")
+            }
+            Self::Literal(LiteralData::Ready(data)) => {
+                write!(f, "Literal(Ready({} bytes))", data.len())
+            }
+            Self::BlockRef(idx) => write!(f, "BlockRef({idx})"),
+            Self::End => write!(f, "End"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,21 +375,5 @@ mod tests {
         let mut cursor = Cursor::new(Vec::<u8>::new());
         let result = reader.read_token(&mut cursor);
         assert!(result.is_err());
-    }
-}
-
-// Provide Debug for DeltaToken for test assertion messages
-impl std::fmt::Debug for DeltaToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Literal(LiteralData::Pending(len)) => {
-                write!(f, "Literal(Pending({len}))")
-            }
-            Self::Literal(LiteralData::Ready(data)) => {
-                write!(f, "Literal(Ready({} bytes))", data.len())
-            }
-            Self::BlockRef(idx) => write!(f, "BlockRef({idx})"),
-            Self::End => write!(f, "End"),
-        }
     }
 }
