@@ -2,6 +2,7 @@
 //! Server configuration derived from the compact flag string and trailing arguments.
 
 use std::ffi::OsString;
+use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
 use protocol::FilenameConverter;
@@ -153,6 +154,18 @@ pub struct ServerConfig {
     /// - `options.c:797`: `--trust-sender` option definition
     /// - `options.c:2493`: trust_sender logic for args and filter
     pub trust_sender: bool,
+    /// Optional wall-clock deadline for the transfer (`--stop-at` / `--stop-after`).
+    ///
+    /// When set, the transfer stops gracefully at the next file boundary after
+    /// the deadline has passed. The current file finishes before stopping.
+    /// This mirrors upstream rsync's `--stop-at` / `--stop-after` / `--time-limit`
+    /// behavior.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c`: `stop_at_utime` global checked in transfer loop
+    /// - `io.c`: deadline checked during I/O operations
+    pub stop_at: Option<SystemTime>,
 }
 
 impl ServerConfig {
@@ -196,6 +209,7 @@ impl ServerConfig {
             checksum_choice: None,
             write_devices: false,
             trust_sender: false,
+            stop_at: None,
         })
     }
 }
