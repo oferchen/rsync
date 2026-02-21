@@ -26,6 +26,15 @@ use crate::script::{DeltaScript, DeltaToken};
 /// Default buffer size used by [`DeltaGenerator::generate`].
 const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 
+/// Literal flush threshold matching upstream rsync's `CHUNK_SIZE` (32 KiB).
+///
+/// When pending literals accumulate beyond `block_length + CHUNK_SIZE` bytes,
+/// they are flushed early to bound memory usage. Without this, a large
+/// unmatched region would grow `pending_literals` to the entire file size.
+///
+/// upstream: rsync.h:158, match.c:339
+const CHUNK_SIZE: usize = 32 * 1024;
+
 /// Produces rsync-style delta tokens by comparing an input stream against a signature index.
 #[derive(Clone, Debug)]
 pub struct DeltaGenerator {
@@ -90,6 +99,12 @@ impl DeltaGenerator {
         let mut matches = 0u64;
         let mut offset = 0u64;
 
+        // upstream: match.c — want_i tracks expected next block index for
+        // adjacent-match hinting. After a match at block i, the next match
+        // is likely at block i+1. Checking this hint before the hash table
+        // lookup skips the probe entirely when data is sequential.
+        let mut want_i: Option<usize> = Some(0);
+
         let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
@@ -137,6 +152,15 @@ impl DeltaGenerator {
                 // Evicted byte becomes a literal
                 pending_literals.push(outgoing_byte);
                 offset += 1;
+
+                // upstream: match.c:339-340 — flush early to bound memory growth
+                if pending_literals.len() >= block_len + CHUNK_SIZE {
+                    literal_bytes += pending_literals.len() as u64;
+                    total_bytes += pending_literals.len() as u64;
+                    let filled =
+                        std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
+                    tokens.push(DeltaToken::Literal(filled));
+                }
             } else {
                 // Window not yet full: use optimized single-byte update
                 rolling.update_byte(byte);
@@ -159,41 +183,117 @@ impl DeltaGenerator {
                 digest.sum2()
             );
 
-            // Get contiguous slice for matching (O(1) when not wrapped, rare O(n) rotation otherwise)
-            hash_hits += 1;
-            if let Some(block_index) = index.find_match_bytes(digest, window.as_slice()) {
-                matches += 1;
-
-                // DEBUG_DELTASUM level 3: Log potential match details
-                debug_log!(
-                    Deltasum,
-                    3,
-                    "potential match at {} i={} sum={:08x}",
-                    offset,
-                    block_index,
-                    digest.value()
-                );
-
-                // Flush any pending literals before the copy token
-                if !pending_literals.is_empty() {
-                    literal_bytes += pending_literals.len() as u64;
-                    total_bytes += pending_literals.len() as u64;
-                    // Use replace instead of take to preserve capacity for next literals
-                    let filled =
-                        std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
-                    tokens.push(DeltaToken::Literal(filled));
+            // Match using two-slice view to avoid O(block_len) rotation when wrapped.
+            // upstream: match.c:144-190 — try want_i hint before hash probe.
+            let (first, second) = window.as_slices();
+            let matched = if let Some(hint) = want_i {
+                if index.check_block_match_slices(hint, digest, first, second) {
+                    Some(hint)
+                } else {
+                    hash_hits += 1;
+                    index.find_match_slices(digest, first, second)
                 }
+            } else {
+                hash_hits += 1;
+                index.find_match_slices(digest, first, second)
+            };
+            if let Some(mut match_idx) = matched {
+                // upstream: match.c:265-310 — block match with bulk refill.
+                // After each match, refill the window in bulk and compute the
+                // rolling checksum via SIMD-accelerated update() instead of
+                // block_len individual push_back()+update_byte() calls. Chained
+                // adjacent matches stay in this inner loop.
+                loop {
+                    matches += 1;
 
-                let block = index.block(block_index);
-                tokens.push(DeltaToken::Copy {
-                    index: block.index(),
-                    len: block.len(),
-                });
-                total_bytes += block.len() as u64;
+                    debug_log!(
+                        Deltasum,
+                        3,
+                        "potential match at {} i={} sum={:08x}",
+                        offset,
+                        match_idx,
+                        rolling.digest().value()
+                    );
 
-                window.clear();
-                rolling.reset();
-                offset += block_len as u64;
+                    // Flush pending literals before the copy token
+                    if !pending_literals.is_empty() {
+                        literal_bytes += pending_literals.len() as u64;
+                        total_bytes += pending_literals.len() as u64;
+                        let filled = std::mem::replace(
+                            &mut pending_literals,
+                            Vec::with_capacity(block_len),
+                        );
+                        tokens.push(DeltaToken::Literal(filled));
+                    }
+
+                    let block = index.block(match_idx);
+                    tokens.push(DeltaToken::Copy {
+                        index: block.index(),
+                        len: block.len(),
+                    });
+                    total_bytes += block.len() as u64;
+
+                    want_i = if match_idx + 1 < index.block_count() {
+                        Some(match_idx + 1)
+                    } else {
+                        None
+                    };
+
+                    window.clear();
+                    rolling.reset();
+                    offset += block_len as u64;
+
+                    // Bulk refill: gather block_len bytes from I/O buffer + reader.
+                    // upstream: match.c:303-308 — recomputes checksum from scratch
+                    // over the next window via get_checksum1() (SIMD-accelerated).
+                    let mut filled = 0usize;
+                    while filled < block_len {
+                        if buffer_pos == buffer_len {
+                            buffer_len = reader.read(&mut buffer)?;
+                            buffer_pos = 0;
+                            if buffer_len == 0 {
+                                break;
+                            }
+                        }
+                        let take = (buffer_len - buffer_pos).min(block_len - filled);
+                        window.extend_from_slice(&buffer[buffer_pos..buffer_pos + take]);
+                        filled += take;
+                        buffer_pos += take;
+                    }
+
+                    if filled < block_len {
+                        break; // Near EOF — let byte-by-byte loop drain remaining
+                    }
+
+                    // Full window: compute rolling checksum via SIMD bulk update
+                    let (s1, s2) = window.as_slices();
+                    rolling.update(s1);
+                    if !s2.is_empty() {
+                        rolling.update(s2);
+                    }
+
+                    // Check for adjacent match at next block boundary.
+                    // upstream: match.c:144-190 — try want_i hint first.
+                    let adj_digest = rolling.digest();
+                    let (f, s) = window.as_slices();
+                    let adj_match = if let Some(hint) = want_i {
+                        if index.check_block_match_slices(hint, adj_digest, f, s) {
+                            Some(hint)
+                        } else {
+                            hash_hits += 1;
+                            index.find_match_slices(adj_digest, f, s)
+                        }
+                    } else {
+                        hash_hits += 1;
+                        index.find_match_slices(adj_digest, f, s)
+                    };
+                    if let Some(next_idx) = adj_match {
+                        match_idx = next_idx;
+                    } else {
+                        false_alarms += 1;
+                        break;
+                    }
+                }
                 continue;
             } else {
                 false_alarms += 1;
@@ -258,8 +358,8 @@ mod tests {
     use crate::script::apply_delta;
     use protocol::ProtocolVersion;
     use signature::{
-        SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
-        generate_file_signature,
+        calculate_signature_layout, generate_file_signature, SignatureAlgorithm,
+        SignatureLayoutParams,
     };
     use std::io::Cursor;
     use std::num::NonZeroU8;

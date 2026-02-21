@@ -206,6 +206,32 @@ impl RingBuffer {
         }
     }
 
+    /// Bulk-appends bytes from a slice without eviction.
+    ///
+    /// Copies up to `remaining_capacity` bytes from `src` into the buffer.
+    /// Returns the number of bytes written. Does not evict existing data;
+    /// callers must ensure the buffer has sufficient free space.
+    ///
+    /// After [`clear`](Self::clear), the internal layout is contiguous, so
+    /// this reduces to a single `copy_from_slice`.
+    pub fn extend_from_slice(&mut self, src: &[u8]) -> usize {
+        let remaining = self.buffer.len() - self.len;
+        let n = src.len().min(remaining);
+        if n == 0 {
+            return 0;
+        }
+        let write_pos = (self.head + self.len) % self.buffer.len();
+        let to_end = self.buffer.len() - write_pos;
+        if n <= to_end {
+            self.buffer[write_pos..write_pos + n].copy_from_slice(&src[..n]);
+        } else {
+            self.buffer[write_pos..].copy_from_slice(&src[..to_end]);
+            self.buffer[..n - to_end].copy_from_slice(&src[to_end..n]);
+        }
+        self.len += n;
+        n
+    }
+
     /// Copies the buffer contents into a contiguous destination slice.
     ///
     /// # Panics
@@ -457,6 +483,55 @@ mod tests {
     fn capacity_zero_panics() {
         // Edge case: capacity 0 should panic
         let _ = RingBuffer::with_capacity(0);
+    }
+
+    #[test]
+    fn extend_from_slice_fills_empty_buffer() {
+        let mut buf = RingBuffer::with_capacity(5);
+        let written = buf.extend_from_slice(&[1, 2, 3]);
+        assert_eq!(written, 3);
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn extend_from_slice_appends_to_partial() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.extend_from_slice(&[1, 2]);
+        buf.extend_from_slice(&[3, 4, 5]);
+        assert!(buf.is_full());
+        assert_eq!(buf.as_slice(), &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn extend_from_slice_caps_at_capacity() {
+        let mut buf = RingBuffer::with_capacity(3);
+        let written = buf.extend_from_slice(&[1, 2, 3, 4, 5]);
+        assert_eq!(written, 3);
+        assert!(buf.is_full());
+        assert_eq!(buf.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn extend_from_slice_after_clear() {
+        let mut buf = RingBuffer::with_capacity(4);
+        buf.push_back(10);
+        buf.push_back(20);
+        buf.push_back(30);
+        buf.push_back(40);
+        buf.clear();
+        let written = buf.extend_from_slice(&[1, 2, 3, 4]);
+        assert_eq!(written, 4);
+        assert!(buf.is_full());
+        assert_eq!(buf.as_slice(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn extend_from_slice_returns_zero_when_full() {
+        let mut buf = RingBuffer::with_capacity(2);
+        buf.extend_from_slice(&[1, 2]);
+        let written = buf.extend_from_slice(&[3]);
+        assert_eq!(written, 0);
     }
 
     #[test]
