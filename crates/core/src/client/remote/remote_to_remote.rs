@@ -197,6 +197,11 @@ fn spawn_ssh_connection(
         }
     }
 
+    // Forward --address to SSH as -o BindAddress=<addr>.
+    if let Some(bind_addr) = config.bind_address() {
+        ssh.set_bind_address(Some(bind_addr.socket().ip()));
+    }
+
     ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
 
     ssh.set_remote_command(invocation_args);
