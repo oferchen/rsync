@@ -123,6 +123,20 @@ pub struct ServerConfig {
     /// protocol instead of using automatic negotiation. Propagated from
     /// the client configuration to ensure both sides agree on the algorithm.
     pub checksum_choice: Option<protocol::ChecksumAlgorithm>,
+    /// Write file data directly to device files instead of creating them with mknod.
+    ///
+    /// When true, device files (block and character) are opened for writing and
+    /// receive delta data just like regular files. This enables writing disk images
+    /// or raw data to device nodes. Implies inplace behavior for device targets
+    /// (no temp file + rename, since devices cannot be renamed onto).
+    ///
+    /// Default is false.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c`: `--write-devices` implies `inplace = 1`
+    /// - `receiver.c`: `if (write_devices && IS_DEVICE(st.st_mode))` opens device for writing
+    pub write_devices: bool,
 }
 
 impl ServerConfig {
@@ -164,6 +178,7 @@ impl ServerConfig {
             checksum_seed: None,
             is_daemon_connection: false,
             checksum_choice: None,
+            write_devices: false,
         })
     }
 }

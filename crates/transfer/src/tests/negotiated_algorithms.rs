@@ -47,6 +47,7 @@ fn test_config() -> ServerConfig {
         checksum_seed: None,
         is_daemon_connection: false,
         checksum_choice: None,
+        write_devices: false,
     }
 }
 
@@ -68,6 +69,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         checksum_seed: None,
         is_daemon_connection: false,
         checksum_choice: None,
+        write_devices: false,
     }
 }
 

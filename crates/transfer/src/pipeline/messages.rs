@@ -66,6 +66,16 @@ pub struct BeginMessage {
     /// ownership) immediately after rename — mirroring upstream
     /// `finish_transfer()` → `set_file_attrs()` in receiver.c.
     pub file_entry: Option<FileEntry>,
+    /// When true, the target is a device file opened with `O_WRONLY`.
+    ///
+    /// Device files cannot use temp file + rename (you cannot rename onto a
+    /// device node) and should not have permissions/ownership changed after
+    /// writing. Metadata application is skipped for device targets.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)`
+    pub is_device_target: bool,
 }
 
 /// Computed checksum digest returned by the disk thread.
