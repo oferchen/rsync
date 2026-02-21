@@ -1005,6 +1005,9 @@ fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.update() {
         flags.push('u');
     }
+    if config.preserve_crtimes() {
+        flags.push('N');
+    }
     // Note: verbose flag ('v') is not passed to daemon in server flag string.
     // It's a local output option that doesn't affect protocol behavior.
     // The ServerConfig.flags.verbose is set separately from server_flag_string parsing.
