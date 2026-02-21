@@ -92,6 +92,22 @@ pub(crate) struct ModuleDefinition {
     /// Upstream: `clientserver.c` — `munge_symlinks` global; defaults to true when
     /// `use_chroot` is false or when an inside-chroot module is configured.
     pub(crate) munge_symlinks: Option<bool>,
+    /// Shell command to execute before a transfer begins.
+    ///
+    /// Upstream: `rsyncd.conf(5)` `pre-xfer exec` directive. The command is run
+    /// via `sh -c` on Unix or `cmd /C` on Windows. If the command exits non-zero,
+    /// the transfer is denied and the client receives an error message.
+    /// Environment variables `RSYNC_MODULE_NAME`, `RSYNC_MODULE_PATH`,
+    /// `RSYNC_HOST_ADDR`, `RSYNC_HOST_NAME`, `RSYNC_USER_NAME`, and
+    /// `RSYNC_REQUEST` are set before execution.
+    pub(crate) pre_xfer_exec: Option<String>,
+    /// Shell command to execute after a transfer completes (success or failure).
+    ///
+    /// Upstream: `rsyncd.conf(5)` `post-xfer exec` directive. Same environment
+    /// variables as `pre_xfer_exec`, plus `RSYNC_EXIT_STATUS` set to the
+    /// transfer's exit code. Failures are logged but do not change the transfer
+    /// exit status.
+    pub(crate) post_xfer_exec: Option<String>,
 }
 
 impl ModuleDefinition {
@@ -252,6 +268,14 @@ impl ModuleDefinition {
 
     pub(super) fn munge_symlinks(&self) -> Option<bool> {
         self.munge_symlinks
+    }
+
+    pub(super) fn pre_xfer_exec(&self) -> Option<&str> {
+        self.pre_xfer_exec.as_deref()
+    }
+
+    pub(super) fn post_xfer_exec(&self) -> Option<&str> {
+        self.post_xfer_exec.as_deref()
     }
 }
 
@@ -604,6 +628,8 @@ mod module_state_tests {
         assert!(!def.write_only);
         assert!(!def.listable);
         assert!(def.munge_symlinks.is_none());
+        assert!(def.pre_xfer_exec.is_none());
+        assert!(def.post_xfer_exec.is_none());
     }
 
     #[test]

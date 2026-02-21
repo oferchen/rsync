@@ -137,6 +137,8 @@ fn parse_module_definition(
         outgoing_chmod: None,
         fake_super: false,
         munge_symlinks: None,
+        pre_xfer_exec: None,
+        post_xfer_exec: None,
     };
 
     if let Some(options_text) = options_part {

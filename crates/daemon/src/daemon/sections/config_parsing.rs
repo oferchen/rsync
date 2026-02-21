@@ -333,6 +333,26 @@ fn parse_config_modules_inner(
                             line_number,
                         )?;
                     }
+                    "pre-xfer exec" | "pre xfer exec" => {
+                        if value.is_empty() {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                "'pre-xfer exec' directive must not be empty",
+                            ));
+                        }
+                        builder.set_pre_xfer_exec(value.to_owned(), path, line_number)?;
+                    }
+                    "post-xfer exec" | "post xfer exec" => {
+                        if value.is_empty() {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                "'post-xfer exec' directive must not be empty",
+                            ));
+                        }
+                        builder.set_post_xfer_exec(value.to_owned(), path, line_number)?;
+                    }
                     _ => {
                         // Unsupported directives are ignored for now.
                     }

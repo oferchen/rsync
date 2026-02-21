@@ -177,6 +177,8 @@ include!("daemon/sections/session_runtime.rs");
 
 include!("daemon/sections/delegation.rs");
 
+include!("daemon/sections/xfer_exec.rs");
+
 include!("daemon/sections/module_access.rs");
 
 include!("daemon/sections/symlink_munge.rs");

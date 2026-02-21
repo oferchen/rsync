@@ -26,6 +26,8 @@ struct ModuleDefinitionBuilder {
     outgoing_chmod: Option<Option<String>>,
     fake_super: Option<bool>,
     munge_symlinks: Option<Option<bool>>,
+    pre_xfer_exec: Option<String>,
+    post_xfer_exec: Option<String>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -58,6 +60,8 @@ impl ModuleDefinitionBuilder {
             outgoing_chmod: None,
             fake_super: None,
             munge_symlinks: None,
+            pre_xfer_exec: None,
+            post_xfer_exec: None,
         }
     }
 
@@ -482,6 +486,48 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_pre_xfer_exec(
+        &mut self,
+        command: String,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.pre_xfer_exec.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'pre-xfer exec' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.pre_xfer_exec = Some(command);
+        Ok(())
+    }
+
+    fn set_post_xfer_exec(
+        &mut self,
+        command: String,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.post_xfer_exec.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'post-xfer exec' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.post_xfer_exec = Some(command);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -573,6 +619,8 @@ impl ModuleDefinitionBuilder {
                 .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
             fake_super: self.fake_super.unwrap_or(false),
             munge_symlinks: self.munge_symlinks.unwrap_or(None),
+            pre_xfer_exec: self.pre_xfer_exec,
+            post_xfer_exec: self.post_xfer_exec,
         })
     }
 }
@@ -619,6 +667,8 @@ mod module_definition_builder_tests {
         assert!(builder.incoming_chmod.is_none());
         assert!(builder.outgoing_chmod.is_none());
         assert!(builder.munge_symlinks.is_none());
+        assert!(builder.pre_xfer_exec.is_none());
+        assert!(builder.post_xfer_exec.is_none());
     }
 
     // ==================== set_path tests ====================
@@ -1206,6 +1256,8 @@ mod module_definition_builder_tests {
         assert!(!def.bandwidth_limit_configured);
         assert!(!def.fake_super); // default false
         assert!(def.munge_symlinks.is_none()); // default None (auto)
+        assert!(def.pre_xfer_exec.is_none());
+        assert!(def.post_xfer_exec.is_none());
     }
 
     #[test]

@@ -600,6 +600,8 @@ fn build_handshake_result(
 }
 
 /// Executes the server transfer and logs the result.
+///
+/// Returns the transfer exit status: `0` on success, non-zero on failure.
 fn execute_transfer(
     ctx: &ModuleRequestContext<'_>,
     config: ServerConfig,
@@ -608,7 +610,7 @@ fn execute_transfer(
     write_stream: &mut TcpStream,
     role: ServerRole,
     final_protocol: ProtocolVersion,
-) {
+) -> i32 {
     if let Some(log) = ctx.log_sink {
         let text = format!(
             "module '{}' from {} ({}): protocol {}, role: {:?}",
@@ -636,6 +638,7 @@ fn execute_transfer(
                 let message = rsync_info!(text).with_role(Role::Daemon);
                 log_message(log, &message);
             }
+            0
         }
         Err(err) => {
             if let Some(log) = ctx.log_sink {
@@ -649,6 +652,7 @@ fn execute_transfer(
                 let message = rsync_error!(1, text).with_role(Role::Daemon);
                 log_message(log, &message);
             }
+            1
         }
     }
 }
@@ -775,12 +779,70 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
+    // Build XferExecContext for pre/post-xfer exec commands
+    let xfer_ctx = XferExecContext {
+        module_name: &module.name,
+        module_path: &module.path,
+        host_addr: ctx.peer_ip,
+        host_name: ctx.effective_host(),
+        user_name: None,
+        request: ctx.request,
+    };
+
+    // Run pre-xfer exec if configured
+    if let Some(command) = &module.pre_xfer_exec {
+        match run_pre_xfer_exec(command, &xfer_ctx) {
+            Ok(Ok(())) => {
+                if let Some(log) = ctx.log_sink {
+                    let text = format!(
+                        "pre-xfer exec succeeded for module '{}'",
+                        ctx.request
+                    );
+                    let message = rsync_info!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+            }
+            Ok(Err(error_msg)) => {
+                let payload = format!("@ERROR: {error_msg}");
+                send_error_and_exit(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    ctx.messages,
+                    &payload,
+                )?;
+                if let Some(log) = ctx.log_sink {
+                    let message = rsync_error!(1, error_msg).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                return Ok(());
+            }
+            Err(io_err) => {
+                let error_msg = format!(
+                    "failed to run pre-xfer exec command for module '{}': {io_err}",
+                    ctx.request
+                );
+                let payload = format!("@ERROR: {error_msg}");
+                send_error_and_exit(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    ctx.messages,
+                    &payload,
+                )?;
+                if let Some(log) = ctx.log_sink {
+                    let message = rsync_error!(1, error_msg).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                return Ok(());
+            }
+        }
+    }
+
     // Build handshake and execute transfer
     let role = determine_server_role(&client_args);
     let handshake = build_handshake_result(ctx.reader, negotiated_protocol, client_args, module);
     let final_protocol = handshake.protocol;
 
-    execute_transfer(
+    let exit_status = execute_transfer(
         ctx,
         config,
         handshake,
@@ -789,6 +851,11 @@ fn process_approved_module(
         role,
         final_protocol,
     );
+
+    // Run post-xfer exec if configured
+    if let Some(command) = &module.post_xfer_exec {
+        run_post_xfer_exec(command, &xfer_ctx, exit_status, ctx.log_sink);
+    }
 
     Ok(())
 }
