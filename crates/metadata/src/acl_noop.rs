@@ -7,15 +7,31 @@
 
 use crate::MetadataError;
 use std::path::Path;
+use std::sync::Once;
 
-/// No-op ACL synchronisation.
+/// Emits a one-time warning that ACLs are not supported on this platform.
 ///
-/// Silently succeeds on platforms without ACL support, matching the
-/// pattern established by `acl_stub.rs` for Apple mobile platforms.
+/// # Upstream Reference
+///
+/// Matches upstream rsync behavior of informing users when ACL support
+/// is requested but unavailable (options.c:1854).
+fn warn_acl_unsupported() {
+    static WARN_ONCE: Once = Once::new();
+    WARN_ONCE.call_once(|| {
+        eprintln!("warning: ACLs are not supported on this platform; skipping ACL preservation");
+    });
+}
+
+/// No-op ACL synchronisation with a one-time warning.
+///
+/// Emits a warning on first call, then returns `Ok(())` for all
+/// subsequent calls. Matches upstream rsync behavior of informing
+/// the user when ACL preservation is requested but unavailable.
 pub fn sync_acls(
     _source: &Path,
     _destination: &Path,
     _follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
+    warn_acl_unsupported();
     Ok(())
 }
