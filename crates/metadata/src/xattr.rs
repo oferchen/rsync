@@ -4,6 +4,39 @@ use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 
+/// Checks whether an xattr name is permitted for the current privilege level.
+///
+/// Mirrors upstream rsync `xattrs.c:64-68, 254-257`:
+/// - Non-root on Linux: only `user.*` xattrs are accessible.
+/// - Root on Linux: all namespaces except `system.*`.
+/// - On non-Linux Unix (macOS, FreeBSD): no namespace filtering (different model).
+#[cfg(target_os = "linux")]
+fn is_xattr_permitted(name: &str) -> bool {
+    const USER_PREFIX: &str = "user.";
+    const SYSTEM_PREFIX: &str = "system.";
+
+    /// Caches the euid check since it does not change during a transfer.
+    fn is_root() -> bool {
+        use std::sync::OnceLock;
+        static IS_ROOT: OnceLock<bool> = OnceLock::new();
+        *IS_ROOT.get_or_init(|| rustix::process::geteuid().is_root())
+    }
+
+    if is_root() {
+        // upstream: root skips system.* namespace
+        !name.starts_with(SYSTEM_PREFIX)
+    } else {
+        // upstream: non-root only sees user.* namespace
+        name.starts_with(USER_PREFIX)
+    }
+}
+
+/// On non-Linux Unix (macOS, FreeBSD), all xattr names are permitted.
+#[cfg(not(target_os = "linux"))]
+fn is_xattr_permitted(_name: &str) -> bool {
+    true
+}
+
 fn map_xattr_error(context: &'static str, path: &Path, error: io::Error) -> MetadataError {
     MetadataError::new(context, path, error)
 }
@@ -15,7 +48,9 @@ fn list_attributes(path: &Path, follow_symlinks: bool) -> Result<Vec<OsString>, 
         xattr::list(path)
     }
     .map_err(|error| map_xattr_error("list extended attributes", path, error))?;
-    Ok(attrs.collect())
+    Ok(attrs
+        .filter(|name| is_xattr_permitted(&name.to_string_lossy()))
+        .collect())
 }
 
 fn read_attribute(
@@ -314,6 +349,40 @@ mod tests {
                 .expect("read")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn is_xattr_permitted_allows_user_namespace() {
+        // user.* should always be permitted regardless of platform
+        assert!(is_xattr_permitted("user.test"));
+        assert!(is_xattr_permitted("user.rsync.%stat"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn is_xattr_permitted_filters_namespaces_on_linux() {
+        if rustix::process::geteuid().is_root() {
+            // Root: all namespaces except system.*
+            assert!(is_xattr_permitted("user.test"));
+            assert!(is_xattr_permitted("security.selinux"));
+            assert!(is_xattr_permitted("trusted.test"));
+            assert!(!is_xattr_permitted("system.posix_acl_access"));
+        } else {
+            // Non-root: only user.* namespace
+            assert!(is_xattr_permitted("user.test"));
+            assert!(!is_xattr_permitted("security.selinux"));
+            assert!(!is_xattr_permitted("trusted.test"));
+            assert!(!is_xattr_permitted("system.posix_acl_access"));
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn is_xattr_permitted_allows_all_on_non_linux() {
+        assert!(is_xattr_permitted("user.test"));
+        assert!(is_xattr_permitted("com.apple.quarantine"));
+        assert!(is_xattr_permitted("security.selinux"));
+        assert!(is_xattr_permitted("system.posix_acl_access"));
     }
 
     #[test]
