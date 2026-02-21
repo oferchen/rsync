@@ -25,6 +25,7 @@ struct ModuleDefinitionBuilder {
     incoming_chmod: Option<Option<String>>,
     outgoing_chmod: Option<Option<String>>,
     fake_super: Option<bool>,
+    munge_symlinks: Option<Option<bool>>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -56,6 +57,7 @@ impl ModuleDefinitionBuilder {
             incoming_chmod: None,
             outgoing_chmod: None,
             fake_super: None,
+            munge_symlinks: None,
         }
     }
 
@@ -459,6 +461,27 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_munge_symlinks(
+        &mut self,
+        munge_symlinks: Option<bool>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.munge_symlinks.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'munge symlinks' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.munge_symlinks = Some(munge_symlinks);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -549,6 +572,7 @@ impl ModuleDefinitionBuilder {
                 .outgoing_chmod
                 .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
             fake_super: self.fake_super.unwrap_or(false),
+            munge_symlinks: self.munge_symlinks.unwrap_or(None),
         })
     }
 }
@@ -594,6 +618,7 @@ mod module_definition_builder_tests {
         assert!(builder.max_connections.is_none());
         assert!(builder.incoming_chmod.is_none());
         assert!(builder.outgoing_chmod.is_none());
+        assert!(builder.munge_symlinks.is_none());
     }
 
     // ==================== set_path tests ====================
@@ -982,6 +1007,37 @@ mod module_definition_builder_tests {
         assert!(result.is_err());
     }
 
+    // ==================== set_munge_symlinks tests ====================
+
+    #[test]
+    fn set_munge_symlinks_stores_some_true() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_munge_symlinks(Some(true), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.munge_symlinks, Some(Some(true)));
+    }
+
+    #[test]
+    fn set_munge_symlinks_stores_some_false() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_munge_symlinks(Some(false), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.munge_symlinks, Some(Some(false)));
+    }
+
+    #[test]
+    fn set_munge_symlinks_stores_none() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_munge_symlinks(None, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.munge_symlinks, Some(None));
+    }
+
+    #[test]
+    fn set_munge_symlinks_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_munge_symlinks(Some(true), &test_config_path(), 5).unwrap();
+        let result = builder.set_munge_symlinks(Some(false), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
     // ==================== finish() tests ====================
 
     #[test]
@@ -1149,6 +1205,7 @@ mod module_definition_builder_tests {
         assert!(!def.bandwidth_limit_specified);
         assert!(!def.bandwidth_limit_configured);
         assert!(!def.fake_super); // default false
+        assert!(def.munge_symlinks.is_none()); // default None (auto)
     }
 
     #[test]
@@ -1161,5 +1218,34 @@ mod module_definition_builder_tests {
         assert!(result.is_ok());
         let def = result.unwrap();
         assert!(def.fake_super);
+    }
+
+    #[test]
+    fn finish_munge_symlinks_default_none() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+
+        let def = builder.finish(&test_config_path(), None, None, None).unwrap();
+        assert!(def.munge_symlinks.is_none());
+    }
+
+    #[test]
+    fn finish_munge_symlinks_explicit_true() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_munge_symlinks(Some(true), &test_config_path(), 3).unwrap();
+
+        let def = builder.finish(&test_config_path(), None, None, None).unwrap();
+        assert_eq!(def.munge_symlinks, Some(true));
+    }
+
+    #[test]
+    fn finish_munge_symlinks_explicit_false() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_munge_symlinks(Some(false), &test_config_path(), 3).unwrap();
+
+        let def = builder.finish(&test_config_path(), None, None, None).unwrap();
+        assert_eq!(def.munge_symlinks, Some(false));
     }
 }
