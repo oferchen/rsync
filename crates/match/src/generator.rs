@@ -219,10 +219,8 @@ impl DeltaGenerator {
                     if !pending_literals.is_empty() {
                         literal_bytes += pending_literals.len() as u64;
                         total_bytes += pending_literals.len() as u64;
-                        let filled = std::mem::replace(
-                            &mut pending_literals,
-                            Vec::with_capacity(block_len),
-                        );
+                        let filled =
+                            std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
                         tokens.push(DeltaToken::Literal(filled));
                     }
 
@@ -358,8 +356,8 @@ mod tests {
     use crate::script::apply_delta;
     use protocol::ProtocolVersion;
     use signature::{
-        calculate_signature_layout, generate_file_signature, SignatureAlgorithm,
-        SignatureLayoutParams,
+        SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
+        generate_file_signature,
     };
     use std::io::Cursor;
     use std::num::NonZeroU8;

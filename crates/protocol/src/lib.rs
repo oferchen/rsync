@@ -78,8 +78,8 @@ pub use negotiation::{
     NegotiationPrologueDetector, NegotiationPrologueSniffer, NegotiationResult,
     ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind, detect_negotiation_prologue,
     negotiate_capabilities, negotiate_capabilities_with_override,
-    read_and_parse_legacy_daemon_greeting,
-    read_and_parse_legacy_daemon_greeting_details, read_legacy_daemon_line,
+    read_and_parse_legacy_daemon_greeting, read_and_parse_legacy_daemon_greeting_details,
+    read_legacy_daemon_line,
 };
 pub use stats::{DeleteStats, TransferStats};
 pub use varint::{

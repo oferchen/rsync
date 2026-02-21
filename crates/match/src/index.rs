@@ -357,7 +357,7 @@ impl DeltaSignatureIndex {
 mod tests {
     use super::*;
     use protocol::ProtocolVersion;
-    use signature::{calculate_signature_layout, generate_file_signature, SignatureLayoutParams};
+    use signature::{SignatureLayoutParams, calculate_signature_layout, generate_file_signature};
     use std::num::NonZeroU8;
 
     #[test]
@@ -588,9 +588,11 @@ mod tests {
         for _ in 0..index.block_length() - 1 {
             window.push_back(b'a');
         }
-        assert!(index
-            .find_match_window(digest, &window, &mut scratch)
-            .is_none());
+        assert!(
+            index
+                .find_match_window(digest, &window, &mut scratch)
+                .is_none()
+        );
     }
 
     /// Tests that rolling checksum collisions are resolved by strong checksum.
@@ -774,8 +776,10 @@ mod tests {
 
         let digest = index.block(0).rolling();
         let short_window = vec![b'a'; index.block_length() - 1];
-        assert!(index
-            .find_match_slices(digest, &short_window, &[])
-            .is_none());
+        assert!(
+            index
+                .find_match_slices(digest, &short_window, &[])
+                .is_none()
+        );
     }
 }
