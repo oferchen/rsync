@@ -175,8 +175,17 @@ mod short_options {
         assert!(parsed.itemize_changes);
     }
 
-    // Note: -4 and -6 short options are not supported in this implementation
-    // Use --ipv4 and --ipv6 long options instead (tested in long_options module)
+    #[test]
+    fn ipv4_short_flag() {
+        let parsed = parse_test_args(["-4", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.address_mode, AddressMode::Ipv4);
+    }
+
+    #[test]
+    fn ipv6_short_flag() {
+        let parsed = parse_test_args(["-6", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.address_mode, AddressMode::Ipv6);
+    }
 
     #[test]
     fn eight_bit_output_short_flag() {
@@ -184,11 +193,17 @@ mod short_options {
         assert!(parsed.eight_bit_output);
     }
 
-    // Note: -0 (from0) short option is not supported in this implementation
-    // Use --from0 long option instead (tested in long_options module)
+    #[test]
+    fn from0_short_flag() {
+        let parsed = parse_test_args(["-0", "src/", "dst/"]).expect("parse");
+        assert!(parsed.from0);
+    }
 
-    // Note: -I (ignore-times) short option is not supported in this implementation
-    // Use --ignore-times long option instead (tested in long_options module)
+    #[test]
+    fn ignore_times_short_flag() {
+        let parsed = parse_test_args(["-I", "src/", "dst/"]).expect("parse");
+        assert!(parsed.ignore_times);
+    }
 
     #[test]
     fn cvs_exclude_short_flag() {
