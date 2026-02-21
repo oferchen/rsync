@@ -99,6 +99,7 @@ mod acl_noop;
 
 mod apply;
 mod chmod;
+pub mod copy_as;
 mod error;
 
 #[cfg(unix)]
@@ -208,6 +209,8 @@ pub use xattr::sync_xattrs;
 
 #[cfg(not(all(unix, feature = "xattr")))]
 pub use xattr_stub::sync_xattrs;
+
+pub use copy_as::{CopyAsGuard, CopyAsIds, parse_copy_as_spec, switch_effective_ids};
 
 pub use fake_super::{
     FAKE_SUPER_XATTR, FakeSuperStat, load_fake_super, remove_fake_super, store_fake_super,

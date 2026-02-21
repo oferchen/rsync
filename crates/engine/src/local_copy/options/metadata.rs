@@ -1,4 +1,4 @@
-use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use ::metadata::{ChmodModifiers, CopyAsIds, GroupMapping, UserMapping};
 
 use super::types::LocalCopyOptions;
 
@@ -41,6 +41,21 @@ impl LocalCopyOptions {
     #[doc(alias = "--chown")]
     pub const fn with_group_override(mut self, group: Option<u32>) -> Self {
         self.group_override = group;
+        self
+    }
+
+    /// Sets the resolved `--copy-as` identifiers for privilege switching.
+    ///
+    /// When set, the receiver switches effective UID/GID before file I/O
+    /// operations and restores them afterward via an RAII guard.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:do_as_root()` -- bracket around privileged file operations
+    #[must_use]
+    #[doc(alias = "--copy-as")]
+    pub fn with_copy_as(mut self, ids: Option<CopyAsIds>) -> Self {
+        self.copy_as = ids;
         self
     }
 
@@ -148,6 +163,15 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn group_override(&self) -> Option<u32> {
         self.group_override
+    }
+
+    /// Returns the resolved `--copy-as` identifiers, if any.
+    ///
+    /// When present, the receiver should switch effective UID/GID before
+    /// file I/O operations.
+    #[must_use]
+    pub const fn copy_as_ids(&self) -> Option<&CopyAsIds> {
+        self.copy_as.as_ref()
     }
 
     /// Returns the configured chmod modifiers, if any.
@@ -459,5 +483,47 @@ mod tests {
 
         let disabled = options.fake_super(false);
         assert!(!disabled.fake_super_enabled());
+    }
+
+    #[test]
+    fn copy_as_none_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(options.copy_as_ids().is_none());
+    }
+
+    #[test]
+    fn copy_as_round_trip() {
+        let ids = CopyAsIds {
+            uid: 1000,
+            gid: Some(1001),
+        };
+        let options = LocalCopyOptions::new().with_copy_as(Some(ids));
+        let stored = options.copy_as_ids().expect("copy_as_ids should be Some");
+        assert_eq!(stored.uid, 1000);
+        assert_eq!(stored.gid, Some(1001));
+    }
+
+    #[test]
+    fn copy_as_without_group() {
+        let ids = CopyAsIds {
+            uid: 65534,
+            gid: None,
+        };
+        let options = LocalCopyOptions::new().with_copy_as(Some(ids));
+        let stored = options.copy_as_ids().unwrap();
+        assert_eq!(stored.uid, 65534);
+        assert_eq!(stored.gid, None);
+    }
+
+    #[test]
+    fn copy_as_clear() {
+        let ids = CopyAsIds {
+            uid: 1000,
+            gid: Some(1001),
+        };
+        let options = LocalCopyOptions::new()
+            .with_copy_as(Some(ids))
+            .with_copy_as(None);
+        assert!(options.copy_as_ids().is_none());
     }
 }

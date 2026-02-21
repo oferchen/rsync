@@ -770,6 +770,20 @@ pub(crate) fn copy_sources(
     options: LocalCopyOptions,
     handler: Option<&mut dyn LocalCopyRecordHandler>,
 ) -> Result<CopyOutcome, LocalCopyError> {
+    // upstream: rsync.c:do_as_root() -- switch effective UID/GID before receiver
+    // file operations. The RAII guard restores the original identity on drop.
+    let _copy_as_guard = options
+        .copy_as_ids()
+        .map(::metadata::switch_effective_ids)
+        .transpose()
+        .map_err(|err| {
+            LocalCopyError::io(
+                "switch effective identity for --copy-as",
+                plan.destination_spec().path(),
+                err,
+            )
+        })?;
+
     let destination_root = plan.destination_spec().path().to_path_buf();
     let mut context = CopyContext::new(mode, options, handler, destination_root);
     let result = {

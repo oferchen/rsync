@@ -471,9 +471,7 @@ mod tests {
 
     #[test]
     fn munge_links_disables() {
-        let opts = LocalCopyOptions::new()
-            .munge_links(true)
-            .munge_links(false);
+        let opts = LocalCopyOptions::new().munge_links(true).munge_links(false);
         assert!(!opts.munge_links_enabled());
     }
 

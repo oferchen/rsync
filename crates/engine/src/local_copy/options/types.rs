@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use ::metadata::{ChmodModifiers, CopyAsIds, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use filters::FilterSet;
@@ -119,6 +119,7 @@ pub struct LocalCopyOptions {
     pub(super) omit_link_times: bool,
     pub(super) owner_override: Option<u32>,
     pub(super) group_override: Option<u32>,
+    pub(super) copy_as: Option<CopyAsIds>,
     pub(super) omit_dir_times: bool,
     #[cfg(all(unix, feature = "acl"))]
     pub(super) preserve_acls: bool,
@@ -231,6 +232,7 @@ impl LocalCopyOptions {
             preserve_atimes: false,
             owner_override: None,
             group_override: None,
+            copy_as: None,
             omit_dir_times: false,
             omit_link_times: false,
             #[cfg(all(unix, feature = "acl"))]
