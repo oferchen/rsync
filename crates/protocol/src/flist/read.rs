@@ -437,10 +437,12 @@ impl FileListReader {
         flags: FileFlags,
     ) -> io::Result<MetadataResult> {
         // 1. Read mtime
+        // upstream: flist.c:828-839 — proto >= 30 uses read_varlong(f, 4),
+        // proto < 30 uses read_uint(f) (fixed 4-byte unsigned)
         let mtime = if flags.same_time() {
             self.state.prev_mtime()
         } else {
-            let mtime = crate::read_varlong(reader, 4)?;
+            let mtime = self.codec.read_mtime(reader)?;
             self.state.update_mtime(mtime);
             mtime
         };
