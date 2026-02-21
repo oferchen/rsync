@@ -1,5 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
+use std::net::IpAddr;
 use std::process::{Command, Stdio};
 
 use super::connection::SshConnection;
@@ -17,6 +18,7 @@ pub struct SshCommand {
     host: OsString,
     port: Option<u16>,
     batch_mode: bool,
+    bind_address: Option<IpAddr>,
     options: Vec<OsString>,
     remote_command: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
@@ -34,6 +36,7 @@ impl SshCommand {
             host: host.into(),
             port: None,
             batch_mode: true,
+            bind_address: None,
             options: Vec::new(),
             remote_command: Vec::new(),
             envs: Vec::new(),
@@ -57,6 +60,19 @@ impl SshCommand {
     /// Specifies the TCP port used when connecting to the remote host.
     pub const fn set_port(&mut self, port: u16) -> &mut Self {
         self.port = Some(port);
+        self
+    }
+
+    /// Sets the local bind address passed to SSH via `-o BindAddress=<addr>`.
+    ///
+    /// When specified, SSH will bind its outgoing connection to this address
+    /// before connecting to the remote host. This mirrors upstream rsync's
+    /// `--address` handling for SSH transports.
+    ///
+    /// upstream: clientserver.c — `--address` is forwarded to SSH as
+    /// `-o BindAddress=<addr>`.
+    pub const fn set_bind_address(&mut self, addr: Option<IpAddr>) -> &mut Self {
+        self.bind_address = addr;
         self
     }
 
@@ -214,6 +230,12 @@ impl SshCommand {
         if let Some(port) = self.port {
             args.push(OsString::from("-p"));
             args.push(OsString::from(port.to_string()));
+        }
+
+        // Inject bind address before user options so that `-e` overrides work.
+        // upstream: rsync passes `--address` to SSH as `-o BindAddress=<addr>`.
+        if let Some(addr) = &self.bind_address {
+            args.push(OsString::from(format!("-oBindAddress={addr}")));
         }
 
         args.extend(self.options.iter().cloned());
