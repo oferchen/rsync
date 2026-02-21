@@ -895,6 +895,7 @@ fn build_server_config_for_receiver(
     server_config.fsync = config.fsync();
     server_config.direct_write = config.direct_write();
     server_config.checksum_choice = config.checksum_protocol_override();
+    server_config.trust_sender = config.trust_sender();
 
     Ok(server_config)
 }
@@ -929,6 +930,7 @@ fn build_server_config_for_generator(
     server_config.fsync = config.fsync();
     server_config.direct_write = config.direct_write();
     server_config.checksum_choice = config.checksum_protocol_override();
+    server_config.trust_sender = config.trust_sender();
 
     Ok(server_config)
 }
