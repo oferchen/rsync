@@ -137,6 +137,17 @@ fn parse_module_definition(
         outgoing_chmod: None,
         fake_super: false,
         munge_symlinks: None,
+        max_verbosity: 1,
+        ignore_errors: false,
+        ignore_nonreadable: false,
+        transfer_logging: false,
+        log_format: Some("%o %h [%a] %m (%u) %f %l".to_owned()),
+        dont_compress: None,
+        pre_xfer_exec: None,
+        post_xfer_exec: None,
+        temp_dir: None,
+        charset: None,
+        forward_lookup: true,
     };
 
     if let Some(options_text) = options_part {
