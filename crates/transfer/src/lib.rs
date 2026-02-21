@@ -125,6 +125,8 @@ pub mod map_file;
 pub mod pipeline;
 /// Reusable buffer for delta token data.
 pub mod token_buffer;
+/// Strategy-based reader for plain and compressed delta token formats.
+pub mod token_reader;
 /// Transfer operation helpers for pipelined requests.
 pub mod transfer_ops;
 
