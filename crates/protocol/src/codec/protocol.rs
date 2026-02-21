@@ -237,14 +237,15 @@ impl ProtocolCodec for LegacyProtocolCodec {
     }
 
     fn write_mtime<W: Write + ?Sized>(&self, writer: &mut W, mtime: i64) -> io::Result<()> {
-        // Truncate to 32-bit for legacy protocol
-        writer.write_all(&(mtime as i32).to_le_bytes())
+        // upstream: flist.c uses write_uint() for proto < 30 (unsigned 32-bit)
+        writer.write_all(&(mtime as u32).to_le_bytes())
     }
 
     fn read_mtime<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64> {
+        // upstream: flist.c uses read_uint() for proto < 30 (unsigned 32-bit)
         let mut buf = [0u8; 4];
         reader.read_exact(&mut buf)?;
-        Ok(i64::from(i32::from_le_bytes(buf)))
+        Ok(i64::from(u32::from_le_bytes(buf)))
     }
 
     fn write_long_name_len<W: Write + ?Sized>(&self, writer: &mut W, len: usize) -> io::Result<()> {
@@ -608,7 +609,7 @@ mod tests {
 
     #[test]
     fn mtime_round_trip_all_versions() {
-        let test_mtimes = [0i64, 1, 1700000000, 0x7FFF_FFFF];
+        let test_mtimes = [0i64, 1, 1700000000, 0x7FFF_FFFF, 0xFFFF_FFFF];
 
         for version in [28, 29, 30, 31, 32] {
             let codec = create_protocol_codec(version);
@@ -1425,12 +1426,15 @@ mod tests {
 
     #[test]
     fn mtime_boundary_values() {
-        // Values that fit in 32-bit (work with legacy)
+        // Values that fit in unsigned 32-bit (work with all versions)
+        // upstream: proto < 30 uses read_uint/write_uint (unsigned u32)
         let legacy_mtimes = [
             0i64,
             1,
-            1700000000,      // Recent timestamp
-            i32::MAX as i64, // 2038 problem boundary
+            1700000000,          // Recent timestamp
+            i32::MAX as i64,     // 2038 problem boundary
+            i32::MAX as i64 + 1, // Post-2038 (fits in u32 since read_uint is unsigned)
+            u32::MAX as i64,     // Maximum u32 value
         ];
 
         for version in [28, 29, 30, 31, 32] {
@@ -1448,9 +1452,9 @@ mod tests {
 
     #[test]
     fn mtime_large_values_modern_only() {
-        // Large values that exceed 32-bit (only work with modern varlong encoding)
+        // Large values that exceed unsigned 32-bit (only work with modern varlong encoding)
         let large_mtimes = [
-            i32::MAX as i64 + 1, // Post-2038
+            u32::MAX as i64 + 1, // Exceeds u32 range
             0x1_0000_0000i64,    // 64-bit value
         ];
 
