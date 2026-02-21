@@ -124,6 +124,20 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .overrides_with("open-noatime"),
         )
         .arg(
+            Arg::new("aes")
+                .long("aes")
+                .help("Force AES-GCM ciphers for SSH (hardware-accelerated on AES-NI/ARMv8).")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-aes"),
+        )
+        .arg(
+            Arg::new("no-aes")
+                .long("no-aes")
+                .help("Disable automatic AES-GCM cipher selection for SSH.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("aes"),
+        )
+        .arg(
             Arg::new("iconv")
                 .long("iconv")
                 .value_name("CONVERT_SPEC")
