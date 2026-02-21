@@ -189,6 +189,24 @@ impl StrongChecksumAlgorithm {
             StrongChecksumAlgorithm::Xxh128 => "xxh128",
         }
     }
+
+    /// Converts to the protocol-layer [`ChecksumAlgorithm`](protocol::ChecksumAlgorithm)
+    /// for negotiation override.
+    ///
+    /// Returns `None` for [`Auto`](Self::Auto) since automatic negotiation should not
+    /// be overridden.
+    #[must_use]
+    pub const fn to_protocol_algorithm(self) -> Option<protocol::ChecksumAlgorithm> {
+        match self {
+            StrongChecksumAlgorithm::Auto => None,
+            StrongChecksumAlgorithm::Md4 => Some(protocol::ChecksumAlgorithm::MD4),
+            StrongChecksumAlgorithm::Md5 => Some(protocol::ChecksumAlgorithm::MD5),
+            StrongChecksumAlgorithm::Sha1 => Some(protocol::ChecksumAlgorithm::SHA1),
+            StrongChecksumAlgorithm::Xxh64 => Some(protocol::ChecksumAlgorithm::XXH64),
+            StrongChecksumAlgorithm::Xxh3 => Some(protocol::ChecksumAlgorithm::XXH3),
+            StrongChecksumAlgorithm::Xxh128 => Some(protocol::ChecksumAlgorithm::XXH128),
+        }
+    }
 }
 
 /// Resolved checksum-choice configuration.
@@ -272,6 +290,16 @@ impl StrongChecksumChoice {
         } else {
             format!("{transfer},{file}")
         }
+    }
+
+    /// Returns the transfer algorithm as a protocol-layer override for negotiation.
+    ///
+    /// When the transfer algorithm is [`Auto`](StrongChecksumAlgorithm::Auto), returns
+    /// `None` to allow automatic negotiation. Otherwise returns the corresponding
+    /// [`ChecksumAlgorithm`](protocol::ChecksumAlgorithm) to force during negotiation.
+    #[must_use]
+    pub const fn transfer_protocol_override(self) -> Option<protocol::ChecksumAlgorithm> {
+        self.transfer.to_protocol_algorithm()
     }
 }
 

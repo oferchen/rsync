@@ -54,3 +54,5 @@ pub(super) use connect::{
 pub(super) use errors::map_daemon_handshake_error;
 #[allow(unused_imports)]
 pub(super) use parsing::parse_host_port;
+#[allow(unused_imports)]
+pub(super) use socket_options::apply_socket_options;

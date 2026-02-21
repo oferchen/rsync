@@ -109,6 +109,20 @@ pub struct ServerConfig {
     /// - `options.c:835`: `--checksum-seed=NUM`
     /// - `compat.c:750`: `checksum_seed = (int32)time(NULL);` (default)
     pub checksum_seed: Option<u32>,
+    /// Indicates the transfer is over a daemon (rsync://) connection.
+    ///
+    /// When true, certain protocol behaviors are adjusted:
+    /// - Capability negotiation is unidirectional (server sends, client reads)
+    /// - The `--checksum-choice` argument is forwarded to the daemon
+    ///
+    /// Default is false (SSH or local transfer).
+    pub is_daemon_connection: bool,
+    /// Optional checksum algorithm override from `--checksum-choice`.
+    ///
+    /// When set, forces the negotiated checksum algorithm for the transfer
+    /// protocol instead of using automatic negotiation. Propagated from
+    /// the client configuration to ensure both sides agree on the algorithm.
+    pub checksum_choice: Option<protocol::ChecksumAlgorithm>,
 }
 
 impl ServerConfig {
@@ -148,6 +162,8 @@ impl ServerConfig {
             fsync: false,
             direct_write: true,
             checksum_seed: None,
+            is_daemon_connection: false,
+            checksum_choice: None,
         })
     }
 }
