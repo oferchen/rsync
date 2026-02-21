@@ -267,19 +267,19 @@ options:
     short: U
     category: metadata
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-atimes
     short: 
     category: metadata
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-U
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --open-noatime
     short: 
@@ -297,19 +297,19 @@ options:
     short: N
     category: metadata
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-crtimes
     short: 
     category: metadata
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-N
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --omit-dir-times
     short: O
@@ -369,7 +369,7 @@ options:
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --owner
     short: o
@@ -501,13 +501,13 @@ options:
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-munge-links
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --copy-dirlinks
     short: k
@@ -633,7 +633,7 @@ options:
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --ignore-existing
     short: 
@@ -897,7 +897,7 @@ options:
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --block-size
     short: B
@@ -927,19 +927,19 @@ options:
     short: y
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-fuzzy
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-y
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --compress
     short: z
@@ -951,13 +951,13 @@ options:
     short: 
     category: transfer
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --new-compress
     short: 
     category: transfer
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-compress
     short: 
@@ -975,13 +975,13 @@ options:
     short: 
     category: transfer
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --zc
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --skip-compress
     short: 
@@ -999,7 +999,7 @@ options:
     short: 
     category: general
     upstream_default: enabled by default (CLVL_NOT_SPECIFIED)
-    status: missing
+    status: implemented
     notes: ""
   - option: -P (short-only)
     short: P
@@ -1089,7 +1089,7 @@ options:
     short: 
     category: transfer
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --itemize-changes
     short: i
@@ -1155,19 +1155,19 @@ options:
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --write-batch
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --only-write-batch
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --files-from
     short: 
@@ -1191,13 +1191,13 @@ options:
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-old-args
     short: 
     category: general
     upstream_default: enabled by default (-1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --secluded-args
     short: s
@@ -1227,13 +1227,13 @@ options:
     short: 
     category: general
     upstream_default: enabled by default (-1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --trust-sender
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --numeric-ids
     short: 
@@ -1299,19 +1299,19 @@ options:
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --time-limit
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --stop-at
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --rsh
     short: e
@@ -1359,19 +1359,19 @@ options:
     short: 8
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-8-bit-output
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-8
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --mkpath
     short: 
@@ -1389,19 +1389,19 @@ options:
     short: 
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --copy-as
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --address
     short: 
     category: connection
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --port
     short: 
@@ -1425,7 +1425,7 @@ options:
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --blocking-io
     short: 
@@ -1467,19 +1467,19 @@ options:
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --sender
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --config
     short: 
     category: daemon
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --daemon
     short: 
@@ -1491,19 +1491,19 @@ options:
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --detach
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-detach
     short: 
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
 oc_only_options:
   - option: --connect-program
