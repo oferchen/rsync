@@ -343,6 +343,11 @@ struct ModuleRequestContext<'a> {
     request: &'a str,
     log_sink: Option<&'a SharedLogSink>,
     messages: &'a LegacyMessageCache,
+    /// Early-input data sent by the client before the module name.
+    ///
+    /// upstream: clientserver.c:583-584 — the daemon writes `early_input` to
+    /// the pre-xfer exec script's stdin.
+    early_input_data: Option<Vec<u8>>,
 }
 
 impl<'a> ModuleRequestContext<'a> {
@@ -860,9 +865,10 @@ fn process_approved_module(
     };
 
     // Run pre-xfer exec if configured
-    // upstream: clientserver.c — pre_exec() runs before the transfer starts
+    // upstream: clientserver.c — pre_exec() runs before the transfer starts.
+    // Early-input data (if any) is piped to the script's stdin.
     if let Some(command) = &module.pre_xfer_exec {
-        match run_pre_xfer_exec(command, &xfer_ctx) {
+        match run_pre_xfer_exec(command, &xfer_ctx, ctx.early_input_data.as_deref()) {
             Ok(Ok(())) => {
                 if let Some(log) = ctx.log_sink {
                     let text = format!(
@@ -957,6 +963,7 @@ fn respond_with_module_request(
     reverse_lookup: bool,
     messages: &LegacyMessageCache,
     negotiated_protocol: Option<ProtocolVersion>,
+    early_input_data: Option<Vec<u8>>,
 ) -> io::Result<()> {
     let Some(module) = modules.iter().find(|module| module.name == request) else {
         return handle_unknown_module(
@@ -1009,6 +1016,7 @@ fn respond_with_module_request(
         request,
         log_sink,
         messages,
+        early_input_data,
     };
 
     // Check access permission
