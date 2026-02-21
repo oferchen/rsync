@@ -136,6 +136,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) prefer_aes_gcm: Option<bool>,
     pub(crate) batch_config: Option<batch::BatchConfig>,
     pub(crate) no_motd: bool,
+    pub(crate) daemon_params: Vec<String>,
 }
 
 /// Builds the base [`ClientConfigBuilder`] from the provided inputs.
@@ -324,4 +325,5 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     builder
         .force_event_collection(force_event_collection)
         .no_motd(inputs.no_motd)
+        .daemon_params(inputs.daemon_params)
 }
