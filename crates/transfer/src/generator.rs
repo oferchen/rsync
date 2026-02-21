@@ -1806,6 +1806,7 @@ mod tests {
             checksum_seed: None,
             is_daemon_connection: false,
             checksum_choice: None,
+            write_devices: false,
         }
     }
 
@@ -2954,6 +2955,7 @@ mod tests {
             checksum_seed: None,
             is_daemon_connection: false,
             checksum_choice: None,
+            write_devices: false,
         }
     }
 

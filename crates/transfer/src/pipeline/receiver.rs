@@ -256,6 +256,7 @@ mod tests {
                 direct_write: true,
                 checksum_verifier: None,
                 file_entry: None,
+                is_device_target: false,
             })))
             .unwrap();
 

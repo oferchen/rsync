@@ -80,6 +80,16 @@ pub struct RequestConfig<'a> {
     pub do_fsync: bool,
     /// Whether to enable direct write optimization for new files.
     pub direct_write: bool,
+    /// Whether to write data directly to device files (`--write-devices`).
+    ///
+    /// When true, device file targets are opened with `O_WRONLY` and receive
+    /// delta data like regular files. Implies inplace for device targets
+    /// (no temp file + rename).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` — open device for writing
+    pub write_devices: bool,
 }
 
 /// Sends a file transfer request to the sender.
@@ -504,7 +514,9 @@ pub fn process_file_response_streaming<R: Read>(
 
     // Defer sending Begin — allows coalescing single-chunk files into a
     // single WholeFile message (3 channel sends → 1, reducing futex overhead).
-    let direct_write = basis_path.is_none() && ctx.config.direct_write;
+    let is_device_target =
+        ctx.config.write_devices && file_entry.as_ref().is_some_and(|e| e.is_device());
+    let direct_write = basis_path.is_none() && ctx.config.direct_write && !is_device_target;
     let begin_msg = Box::new(BeginMessage {
         file_path: file_path.clone(),
         target_size,
@@ -513,6 +525,7 @@ pub fn process_file_response_streaming<R: Read>(
         direct_write,
         checksum_verifier: Some(disk_verifier),
         file_entry,
+        is_device_target,
     });
 
     // Open basis file for block references
@@ -757,6 +770,7 @@ mod tests {
             use_sparse: false,
             do_fsync: false,
             direct_write: false,
+            write_devices: false,
         };
         let debug_str = format!("{config:?}");
         assert!(debug_str.contains("RequestConfig"));
