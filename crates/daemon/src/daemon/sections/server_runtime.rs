@@ -256,7 +256,28 @@ const fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
     }
 }
 
+/// Interval between signal flag checks in the accept loop.
+///
+/// The listener uses a non-blocking timeout so the loop can periodically
+/// inspect the SIGHUP (reload) and SIGTERM/SIGINT (shutdown) flags without
+/// waiting indefinitely for a new connection.
+const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(500);
+
 fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
+    // Register signal handlers before entering the accept loop so SIGPIPE is
+    // ignored and SIGHUP/SIGTERM/SIGINT flags are captured from the start.
+    // upstream: main.c SIGACT(SIGPIPE, SIG_IGN) and rsync_panic_handler setup.
+    let signal_flags = register_signal_handlers().map_err(|error| {
+        DaemonError::new(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            rsync_error!(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                format!("failed to register signal handlers: {error}")
+            )
+            .with_role(Role::Daemon),
+        )
+    })?;
+
     let manifest = manifest();
     let version = manifest.rust_version();
     let RuntimeOptions {
@@ -439,12 +460,44 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     use std::sync::mpsc;
 
     if listeners.len() == 1 {
-        // Single listener - use simple blocking accept loop
+        // Single listener with non-blocking accept so signal flags are
+        // checked periodically instead of blocking indefinitely.
         let listener = listeners.remove(0);
         let local_addr = bound_addresses[0];
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| bind_error(local_addr, error))?;
 
         loop {
             reap_finished_workers(&mut workers)?;
+
+            // Check SIGTERM/SIGINT shutdown flag.
+            if signal_flags.shutdown.load(Ordering::Relaxed) {
+                if let Some(log) = log_sink.as_ref() {
+                    let message =
+                        rsync_info!("received shutdown signal, stopping accept loop")
+                            .with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                break;
+            }
+
+            // Check SIGHUP config reload flag.
+            if signal_flags.reload_config.swap(false, Ordering::Relaxed) {
+                if let Some(log) = log_sink.as_ref() {
+                    let message =
+                        rsync_info!("received SIGHUP, config reload noted")
+                            .with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                if let Err(error) = notifier.status("Reloading configuration") {
+                    log_sd_notify_failure(
+                        log_sink.as_ref(),
+                        "config reload status",
+                        &error,
+                    );
+                }
+            }
 
             let current_active = workers.len();
             if current_active != active_connections {
@@ -457,6 +510,18 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
             match listener.accept() {
                 Ok((stream, raw_peer_addr)) => {
+                    // Accepted sockets must be blocking for the session handler.
+                    if let Err(error) = stream.set_nonblocking(false) {
+                        if let Some(log) = log_sink.as_ref() {
+                            let text = format!(
+                                "failed to set accepted socket to blocking: {error}"
+                            );
+                            let message = rsync_warning!(text).with_role(Role::Daemon);
+                            log_message(log, &message);
+                        }
+                        continue;
+                    }
+
                     let peer_addr = normalize_peer_address(raw_peer_addr);
                     let modules = Arc::clone(&modules);
                     let motd_lines = Arc::clone(&motd_lines);
@@ -496,6 +561,11 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         active_connections = current_active;
                     }
                 }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    // No pending connection -- sleep briefly then re-check flags.
+                    thread::sleep(SIGNAL_CHECK_INTERVAL);
+                    continue;
+                }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {
                     continue;
                 }
@@ -513,15 +583,23 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                 }
         }
     } else {
-        // Multiple listeners (dual-stack) - spawn acceptor threads and use channel
+        // Multiple listeners (dual-stack) - spawn acceptor threads and use channel.
+        // Share the signal-based shutdown flag with acceptor threads so SIGTERM/SIGINT
+        // stops all listeners promptly.
         let (tx, rx) = mpsc::channel::<Result<(TcpStream, SocketAddr), (SocketAddr, io::Error)>>();
-        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown = Arc::clone(&signal_flags.shutdown);
 
         let mut acceptor_handles: Vec<thread::JoinHandle<()>> = Vec::with_capacity(listeners.len());
 
         for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().copied()) {
             let tx = tx.clone();
             let shutdown = Arc::clone(&shutdown);
+
+            // Set non-blocking so acceptor threads can check the shutdown flag
+            // without getting stuck in a blocking accept() call.
+            if let Err(error) = listener.set_nonblocking(true) {
+                return Err(bind_error(local_addr, error));
+            }
 
             let handle = thread::spawn(move || {
                 while !shutdown.load(Ordering::Relaxed) {
@@ -530,6 +608,10 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                             if tx.send(Ok((stream, peer_addr))).is_err() {
                                 break; // Receiver dropped
                             }
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(50));
+                            continue;
                         }
                         Err(error) if error.kind() == io::ErrorKind::Interrupted => {
                             continue;
@@ -551,6 +633,34 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         loop {
             reap_finished_workers(&mut workers)?;
 
+            // Check SIGTERM/SIGINT shutdown flag.
+            if signal_flags.shutdown.load(Ordering::Relaxed) {
+                if let Some(log) = log_sink.as_ref() {
+                    let message =
+                        rsync_info!("received shutdown signal, stopping accept loop")
+                            .with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                break;
+            }
+
+            // Check SIGHUP config reload flag.
+            if signal_flags.reload_config.swap(false, Ordering::Relaxed) {
+                if let Some(log) = log_sink.as_ref() {
+                    let message =
+                        rsync_info!("received SIGHUP, config reload noted")
+                            .with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                if let Err(error) = notifier.status("Reloading configuration") {
+                    log_sd_notify_failure(
+                        log_sink.as_ref(),
+                        "config reload status",
+                        &error,
+                    );
+                }
+            }
+
             let current_active = workers.len();
             if current_active != active_connections {
                 let status = format_connection_status(current_active);
@@ -560,7 +670,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                 active_connections = current_active;
             }
 
-            // Use recv_timeout to allow periodic worker reaping and shutdown checks
+            // Use recv_timeout to allow periodic worker reaping and signal checks
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Ok((stream, raw_peer_addr))) => {
                     let peer_addr = normalize_peer_address(raw_peer_addr);
