@@ -22,6 +22,8 @@ pub struct ParsedServerFlags {
     pub specials: bool,
     /// Preserve modification times (`t` flag, `--times`).
     pub times: bool,
+    /// Preserve access times (`U` flag, `--atimes`).
+    pub atimes: bool,
     /// Preserve permissions (`p` flag, `--perms`).
     pub perms: bool,
     /// Recursive transfer (`r` flag, `--recursive`).
@@ -143,6 +145,7 @@ impl ParsedServerFlags {
                 self.specials = true;
             }
             b't' => self.times = true,
+            b'U' => self.atimes = true,
             b'p' => self.perms = true,
             b'r' => self.recursive = true,
             b'e' => self.rsh = true,

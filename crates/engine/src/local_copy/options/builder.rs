@@ -147,6 +147,7 @@ pub struct LocalCopyOptionsBuilder {
     preserve_executability: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    preserve_atimes: bool,
     omit_link_times: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
@@ -280,6 +281,7 @@ impl LocalCopyOptionsBuilder {
             preserve_executability: false,
             preserve_permissions: false,
             preserve_times: false,
+            preserve_atimes: false,
             owner_override: None,
             group_override: None,
             omit_dir_times: false,
@@ -740,6 +742,16 @@ impl LocalCopyOptionsBuilder {
     #[must_use]
     pub fn times(mut self, enabled: bool) -> Self {
         self.preserve_times = enabled;
+        self
+    }
+
+    /// Enables access time preservation.
+    ///
+    /// When enabled, the source file's access time is preserved on the destination.
+    /// This corresponds to the `-U` / `--atimes` flag in upstream rsync.
+    #[must_use]
+    pub fn preserve_atimes(mut self, enabled: bool) -> Self {
+        self.preserve_atimes = enabled;
         self
     }
 
@@ -1415,6 +1427,7 @@ impl LocalCopyOptionsBuilder {
             preserve_executability: self.preserve_executability,
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
+            preserve_atimes: self.preserve_atimes,
             omit_link_times: self.omit_link_times,
             owner_override: self.owner_override,
             group_override: self.group_override,

@@ -27,8 +27,8 @@
 
 use std::io::{self, Read};
 
-use protocol::wire::{CompressedToken, CompressedTokenDecoder};
 use protocol::CompressionAlgorithm;
+use protocol::wire::{CompressedToken, CompressedTokenDecoder};
 
 /// Result of reading a single token from the delta stream.
 ///
