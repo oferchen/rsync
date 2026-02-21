@@ -163,7 +163,7 @@ fn stress_10k_sorting_performance() {
     }
 
     let start = Instant::now();
-    sort_file_list(&mut entries);
+    sort_file_list(&mut entries, false);
     let elapsed = start.elapsed();
 
     // Sorting 10K entries should complete in under 100ms on modern hardware
@@ -247,7 +247,7 @@ fn stress_10k_sort_and_clean_with_duplicates() {
     }
 
     let original_count = entries.len();
-    let (cleaned, stats) = sort_and_clean_file_list(entries);
+    let (cleaned, stats) = sort_and_clean_file_list(entries, false);
 
     // Should have removed duplicates
     assert!(
@@ -315,7 +315,7 @@ fn stress_100k_sorting_performance() {
     let mut entries = generate_mock_entries(100_000);
 
     let start = Instant::now();
-    sort_file_list(&mut entries);
+    sort_file_list(&mut entries, false);
     let elapsed = start.elapsed();
 
     // Sorting 100K entries should complete in under 2 seconds
@@ -374,7 +374,7 @@ fn stress_10k_protocol_version_compatibility() {
     // Generate entries with sorted paths to work well with all protocol versions
     // (sorted paths give better prefix compression behavior)
     let mut entries = generate_mock_entries(10_000);
-    sort_file_list(&mut entries);
+    sort_file_list(&mut entries, false);
 
     // Test with protocol versions 30, 31, 32 (modern protocols with consistent behavior)
     // Note: Protocol 28/29 have some edge cases with name prefix compression
@@ -626,9 +626,9 @@ fn stress_comparison_stability_10k() {
     let mut sorted2 = entries.clone();
     let mut sorted3 = entries.clone();
 
-    sort_file_list(&mut sorted1);
-    sort_file_list(&mut sorted2);
-    sort_file_list(&mut sorted3);
+    sort_file_list(&mut sorted1, false);
+    sort_file_list(&mut sorted2, false);
+    sort_file_list(&mut sorted3, false);
 
     // All sorts should produce identical results
     for i in 0..sorted1.len() {
