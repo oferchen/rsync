@@ -92,6 +92,50 @@ pub(crate) struct ModuleDefinition {
     /// Upstream: `clientserver.c` — `munge_symlinks` global; defaults to true when
     /// `use_chroot` is false or when an inside-chroot module is configured.
     pub(crate) munge_symlinks: Option<bool>,
+    /// Caps the client's requested verbosity level.
+    ///
+    /// Upstream: `loadparm.c` — `max verbosity` parameter, default 1.
+    pub(crate) max_verbosity: i32,
+    /// When true, I/O errors during delete operations are ignored.
+    ///
+    /// Upstream: `loadparm.c` — `ignore errors` parameter, default false.
+    pub(crate) ignore_errors: bool,
+    /// When true, files the daemon cannot read are silently skipped.
+    ///
+    /// Upstream: `loadparm.c` — `ignore nonreadable` parameter, default false.
+    pub(crate) ignore_nonreadable: bool,
+    /// When true, per-file transfer logging is enabled.
+    ///
+    /// Upstream: `loadparm.c` — `transfer logging` parameter, default false.
+    pub(crate) transfer_logging: bool,
+    /// Format string for per-file transfer log entries.
+    ///
+    /// Upstream: `loadparm.c` — `log format` parameter, default `"%o %h [%a] %m (%u) %f %l"`.
+    pub(crate) log_format: Option<String>,
+    /// Glob patterns of files that should not be compressed during transfer.
+    ///
+    /// Upstream: `loadparm.c` — `dont compress` parameter.
+    pub(crate) dont_compress: Option<String>,
+    /// Command to execute before a transfer begins.
+    ///
+    /// Upstream: `loadparm.c` — `pre-xfer exec` parameter.
+    pub(crate) pre_xfer_exec: Option<String>,
+    /// Command to execute after a transfer completes.
+    ///
+    /// Upstream: `loadparm.c` — `post-xfer exec` parameter.
+    pub(crate) post_xfer_exec: Option<String>,
+    /// Temporary directory for receiving files before final placement.
+    ///
+    /// Upstream: `loadparm.c` — `temp dir` parameter.
+    pub(crate) temp_dir: Option<String>,
+    /// Character set for filename conversion.
+    ///
+    /// Upstream: `loadparm.c` — `charset` parameter.
+    pub(crate) charset: Option<String>,
+    /// When true, DNS forward lookup verification is performed on connecting hosts.
+    ///
+    /// Upstream: `loadparm.c` — `forward lookup` parameter, default true.
+    pub(crate) forward_lookup: bool,
 }
 
 impl ModuleDefinition {
@@ -252,6 +296,50 @@ impl ModuleDefinition {
 
     pub(super) fn munge_symlinks(&self) -> Option<bool> {
         self.munge_symlinks
+    }
+
+    pub(super) fn max_verbosity(&self) -> i32 {
+        self.max_verbosity
+    }
+
+    pub(super) fn ignore_errors(&self) -> bool {
+        self.ignore_errors
+    }
+
+    pub(super) fn ignore_nonreadable(&self) -> bool {
+        self.ignore_nonreadable
+    }
+
+    pub(super) fn transfer_logging(&self) -> bool {
+        self.transfer_logging
+    }
+
+    pub(super) fn log_format(&self) -> Option<&str> {
+        self.log_format.as_deref()
+    }
+
+    pub(super) fn dont_compress(&self) -> Option<&str> {
+        self.dont_compress.as_deref()
+    }
+
+    pub(super) fn pre_xfer_exec(&self) -> Option<&str> {
+        self.pre_xfer_exec.as_deref()
+    }
+
+    pub(super) fn post_xfer_exec(&self) -> Option<&str> {
+        self.post_xfer_exec.as_deref()
+    }
+
+    pub(super) fn temp_dir(&self) -> Option<&str> {
+        self.temp_dir.as_deref()
+    }
+
+    pub(super) fn charset(&self) -> Option<&str> {
+        self.charset.as_deref()
+    }
+
+    pub(super) fn forward_lookup(&self) -> bool {
+        self.forward_lookup
     }
 }
 
