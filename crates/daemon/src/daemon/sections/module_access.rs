@@ -485,11 +485,15 @@ fn determine_server_role(client_args: &[String]) -> ServerRole {
 
 /// Builds the server configuration from client arguments.
 ///
+/// The `effective_path` is the module path to use for the server transfer. When
+/// chroot is active, this is `"/"` (the module root is now the filesystem root);
+/// otherwise it is the original module path.
+///
 /// Returns the configuration on success, or sends an error and returns `None`.
 fn build_server_config(
     ctx: &mut ModuleRequestContext<'_>,
     client_args: &[String],
-    module: &ModuleRuntime,
+    effective_path: &Path,
 ) -> io::Result<Option<ServerConfig>> {
     let role = determine_server_role(client_args);
 
@@ -502,7 +506,7 @@ fn build_server_config(
     match ServerConfig::from_flag_string_and_args(
         role,
         flag_string,
-        vec![OsString::from(&module.path)],
+        vec![OsString::from(effective_path)],
     ) {
         Ok(cfg) => Ok(Some(cfg)),
         Err(err) => {
@@ -740,16 +744,31 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
-    // Build server configuration
-    let config = match build_server_config(ctx, &client_args, module)? {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
-
-    // Validate module path
+    // Validate module path before chroot
     if !validate_module_path(ctx, module)? {
         return Ok(());
     }
+
+    // Apply chroot and privilege dropping (upstream: clientserver.c rsync_module())
+    if let Err(err) = apply_module_privilege_restrictions(module, ctx.log_sink) {
+        let payload = format!("@ERROR: chroot/privilege setup failed: {err}");
+        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+        return Ok(());
+    }
+
+    // After chroot, the module path becomes "/" since the filesystem root is
+    // now the module directory. Without chroot, use the original module path.
+    let effective_path: PathBuf = if module.use_chroot {
+        PathBuf::from("/")
+    } else {
+        module.path.clone()
+    };
+
+    // Build server configuration with the effective path
+    let config = match build_server_config(ctx, &client_args, &effective_path)? {
+        Some(cfg) => cfg,
+        None => return Ok(()),
+    };
 
     // Setup transfer streams
     let (mut read_stream, mut write_stream) = match setup_transfer_streams(ctx)? {

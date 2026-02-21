@@ -175,6 +175,8 @@ include!("daemon/sections/session_runtime.rs");
 
 include!("daemon/sections/delegation.rs");
 
+include!("daemon/sections/privilege.rs");
+
 include!("daemon/sections/module_access.rs");
 
 include!("daemon/sections/auth_helpers.rs");
