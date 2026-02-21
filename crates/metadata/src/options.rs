@@ -9,6 +9,7 @@ pub struct MetadataOptions {
     preserve_executability: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    preserve_atimes: bool,
     numeric_ids: bool,
     fake_super: bool,
     owner_override: Option<u32>,
@@ -31,6 +32,7 @@ impl MetadataOptions {
             preserve_executability: false,
             preserve_permissions: true,
             preserve_times: true,
+            preserve_atimes: false,
             numeric_ids: false,
             fake_super: false,
             owner_override: None,
@@ -77,6 +79,22 @@ impl MetadataOptions {
     #[doc(alias = "--times")]
     pub const fn preserve_times(mut self, preserve: bool) -> Self {
         self.preserve_times = preserve;
+        self
+    }
+
+    /// Requests that access times be preserved when applying metadata.
+    ///
+    /// When enabled, the source file's access time (atime) is preserved on the
+    /// destination instead of using the current time or the mtime. This corresponds
+    /// to the `-U` / `--atimes` flag in upstream rsync.
+    ///
+    /// Access time preservation only applies to non-directory entries, matching
+    /// upstream rsync semantics where directories never have their atime set.
+    #[must_use]
+    #[doc(alias = "--atimes")]
+    #[doc(alias = "-U")]
+    pub const fn preserve_atimes(mut self, preserve: bool) -> Self {
+        self.preserve_atimes = preserve;
         self
     }
 
@@ -176,6 +194,12 @@ impl MetadataOptions {
         self.preserve_times
     }
 
+    /// Reports whether access times should be preserved.
+    #[must_use]
+    pub const fn atimes(&self) -> bool {
+        self.preserve_atimes
+    }
+
     /// Reports whether numeric UID/GID preservation was requested.
     #[must_use]
     pub const fn numeric_ids_enabled(&self) -> bool {
@@ -239,6 +263,7 @@ mod tests {
         assert!(!options.executability());
         assert!(options.permissions());
         assert!(options.times());
+        assert!(!options.atimes());
         assert!(!options.numeric_ids_enabled());
         assert!(!options.fake_super_enabled());
         assert!(options.owner_override().is_none());
