@@ -758,16 +758,47 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
-    // Build server configuration
-    let config = match build_server_config(ctx, &client_args, module)? {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
-
-    // Validate module path
+    // Validate module path before chroot (path must be accessible pre-chroot)
     if !validate_module_path(ctx, module)? {
         return Ok(());
     }
+
+    // Apply chroot and privilege restrictions before building server config.
+    // After chroot the effective module path becomes "/" since the process root
+    // is now the module directory itself.
+    // upstream: clientserver.c:rsync_module() — chroot + setuid/setgid happen
+    // after auth and arg reading but before the transfer starts.
+    if let Some(log) = ctx.log_sink {
+        if let Err(err) = apply_module_privilege_restrictions(module, log) {
+            let payload = format!("@ERROR: chroot/privilege setup failed: {err}");
+            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            return Ok(());
+        }
+    } else if module.use_chroot || module.uid.is_some() || module.gid.is_some() {
+        let sink = open_privilege_fallback_sink();
+        if let Err(err) = apply_module_privilege_restrictions(module, &sink) {
+            let payload = format!("@ERROR: chroot/privilege setup failed: {err}");
+            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            return Ok(());
+        }
+    }
+
+    // After chroot the server must use "/" as the module root
+    let effective_module;
+    let config_module = if module.use_chroot {
+        let mut adjusted = module.definition.clone();
+        adjusted.path = PathBuf::from("/");
+        effective_module = ModuleRuntime::from(adjusted);
+        &effective_module
+    } else {
+        module
+    };
+
+    // Build server configuration with the effective (post-chroot) path
+    let config = match build_server_config(ctx, &client_args, config_module)? {
+        Some(cfg) => cfg,
+        None => return Ok(()),
+    };
 
     // Setup transfer streams
     let (mut read_stream, mut write_stream) = match setup_transfer_streams(ctx)? {
