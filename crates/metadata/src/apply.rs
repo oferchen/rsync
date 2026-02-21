@@ -348,7 +348,7 @@ fn apply_permissions_with_chmod(
         use std::os::unix::fs::PermissionsExt;
 
         if let Some(modifiers) = options.chmod() {
-            let mut mode = base_mode_for_permissions(destination, metadata, options)?;
+            let mut mode = base_mode_for_permissions(destination, metadata, options, existing)?;
             mode = modifiers.apply(mode, metadata.file_type());
 
             if let Some(existing) = existing {
@@ -388,7 +388,7 @@ fn apply_permissions_with_chmod_fd(
     use std::os::unix::fs::PermissionsExt;
 
     if let Some(modifiers) = options.chmod() {
-        let mut mode = base_mode_for_permissions(destination, metadata, options)?;
+        let mut mode = base_mode_for_permissions(destination, metadata, options, existing)?;
         mode = modifiers.apply(mode, metadata.file_type());
 
         if let Some(existing) = existing {
@@ -448,6 +448,7 @@ fn base_mode_for_permissions(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
+    existing: Option<&fs::Metadata>,
 ) -> Result<u32, MetadataError> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -455,10 +456,16 @@ fn base_mode_for_permissions(
         return Ok(metadata.permissions().mode());
     }
 
-    let mut destination_permissions = fs::metadata(destination)
-        .map_err(|error| MetadataError::new("inspect destination permissions", destination, error))?
-        .permissions()
-        .mode();
+    let mut destination_permissions = if let Some(existing) = existing {
+        existing.permissions().mode()
+    } else {
+        fs::metadata(destination)
+            .map_err(|error| {
+                MetadataError::new("inspect destination permissions", destination, error)
+            })?
+            .permissions()
+            .mode()
+    };
 
     if options.executability() && metadata.is_file() {
         let source_exec = metadata.permissions().mode() & 0o111;
@@ -496,12 +503,16 @@ fn apply_permissions_without_chmod(
         if options.executability() && metadata.is_file() {
             use std::os::unix::fs::PermissionsExt;
 
-            let mut destination_permissions = fs::metadata(destination)
-                .map_err(|error| {
-                    MetadataError::new("inspect destination permissions", destination, error)
-                })?
-                .permissions()
-                .mode();
+            let mut destination_permissions = if let Some(existing) = existing {
+                existing.permissions().mode()
+            } else {
+                fs::metadata(destination)
+                    .map_err(|error| {
+                        MetadataError::new("inspect destination permissions", destination, error)
+                    })?
+                    .permissions()
+                    .mode()
+            };
 
             let source_exec = metadata.permissions().mode() & 0o111;
             if source_exec == 0 {
