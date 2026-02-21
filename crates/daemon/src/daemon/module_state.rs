@@ -83,6 +83,15 @@ pub(crate) struct ModuleDefinition {
     /// Enables backup/restore operations without root privileges by storing ownership
     /// and special file metadata in the `user.rsync.%stat` extended attribute.
     pub(crate) fake_super: bool,
+    /// Controls whether symlink targets are munged with a `/rsyncd-munged/` prefix.
+    ///
+    /// When `None`, the effective value defaults to `!use_chroot` (upstream behaviour).
+    /// When `Some(true)`, munging is always enabled. When `Some(false)`, munging is
+    /// always disabled regardless of chroot setting.
+    ///
+    /// Upstream: `clientserver.c` — `munge_symlinks` global; defaults to true when
+    /// `use_chroot` is false or when an inside-chroot module is configured.
+    pub(crate) munge_symlinks: Option<bool>,
 }
 
 impl ModuleDefinition {
@@ -153,6 +162,16 @@ impl ModuleDefinition {
         if self.refuse_options.is_empty() {
             self.refuse_options = options.to_vec();
         }
+    }
+
+    /// Returns whether symlink munging is effective for this module.
+    ///
+    /// When `munge_symlinks` is `None` (auto), defaults to `!use_chroot`.
+    /// Upstream: `clientserver.c` sets `munge_symlinks = !use_chroot` before reading
+    /// the per-module override.
+    #[allow(dead_code)] // Wired during file list send/receive in daemon mode
+    pub(crate) fn effective_munge_symlinks(&self) -> bool {
+        self.munge_symlinks.unwrap_or(!self.use_chroot)
     }
 
     pub(super) fn inherit_incoming_chmod(&mut self, chmod: Option<&str>) {
@@ -229,6 +248,10 @@ impl ModuleDefinition {
 
     pub(super) fn fake_super(&self) -> bool {
         self.fake_super
+    }
+
+    pub(super) fn munge_symlinks(&self) -> Option<bool> {
+        self.munge_symlinks
     }
 }
 
@@ -580,6 +603,7 @@ mod module_state_tests {
         assert!(!def.read_only);
         assert!(!def.write_only);
         assert!(!def.listable);
+        assert!(def.munge_symlinks.is_none());
     }
 
     #[test]

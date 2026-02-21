@@ -50,6 +50,7 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
         incoming_chmod: None,
         outgoing_chmod: None,
         fake_super: false,
+        munge_symlinks: None,
     }
 }
 
@@ -86,6 +87,7 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
         incoming_chmod: None,
         outgoing_chmod: None,
         fake_super: false,
+        munge_symlinks: None,
     }
 }
 
