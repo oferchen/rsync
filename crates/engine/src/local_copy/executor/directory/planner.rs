@@ -136,6 +136,16 @@ pub(crate) fn plan_directory_entries<'a>(
         let file_name = &entry.file_name;
         let entry_metadata = &entry.metadata;
         let entry_type = entry_metadata.file_type();
+
+        // upstream: flist.c:make_file() — skip entries with bogus zero st_mode
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if entry_metadata.mode() == 0 {
+                continue;
+            }
+        }
+
         let mut metadata_override = None;
         let mut effective_type = entry_type;
 
@@ -354,6 +364,16 @@ fn plan_directory_entries_with_prefetch<'a>(
         let file_name = &entry.file_name;
         let entry_metadata = &entry.metadata;
         let entry_type = entry_metadata.file_type();
+
+        // upstream: flist.c:make_file() — skip entries with bogus zero st_mode
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if entry_metadata.mode() == 0 {
+                continue;
+            }
+        }
+
         let mut metadata_override = None;
         let mut effective_type = entry_type;
 
