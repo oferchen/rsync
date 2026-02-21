@@ -149,6 +149,7 @@ pub struct LocalCopyOptionsBuilder {
     preserve_permissions: bool,
     preserve_times: bool,
     preserve_atimes: bool,
+    preserve_crtimes: bool,
     omit_link_times: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
@@ -284,6 +285,7 @@ impl LocalCopyOptionsBuilder {
             preserve_permissions: false,
             preserve_times: false,
             preserve_atimes: false,
+            preserve_crtimes: false,
             owner_override: None,
             group_override: None,
             omit_dir_times: false,
@@ -761,6 +763,15 @@ impl LocalCopyOptionsBuilder {
     #[must_use]
     pub fn preserve_atimes(mut self, enabled: bool) -> Self {
         self.preserve_atimes = enabled;
+        self
+    }
+
+    /// Enables creation time preservation.
+    #[must_use]
+    #[doc(alias = "--crtimes")]
+    #[doc(alias = "-N")]
+    pub fn preserve_crtimes(mut self, enabled: bool) -> Self {
+        self.preserve_crtimes = enabled;
         self
     }
 
@@ -1438,6 +1449,7 @@ impl LocalCopyOptionsBuilder {
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
             preserve_atimes: self.preserve_atimes,
+            preserve_crtimes: self.preserve_crtimes,
             omit_link_times: self.omit_link_times,
             owner_override: self.owner_override,
             group_override: self.group_override,

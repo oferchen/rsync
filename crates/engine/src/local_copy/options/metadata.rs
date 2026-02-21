@@ -93,6 +93,20 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that creation times be preserved when applying metadata.
+    ///
+    /// When enabled, the source file's creation time (birth time) is preserved
+    /// on the destination. This corresponds to the `-N` / `--crtimes` flag in
+    /// upstream rsync. Creation time setting is only supported on macOS; on
+    /// other platforms the flag is accepted but has no effect.
+    #[must_use]
+    #[doc(alias = "--crtimes")]
+    #[doc(alias = "-N")]
+    pub const fn crtimes(mut self, preserve: bool) -> Self {
+        self.preserve_crtimes = preserve;
+        self
+    }
+
     /// Skips preserving directory modification times even when [`Self::times`] is enabled.
     #[must_use]
     #[doc(alias = "--omit-dir-times")]
@@ -190,6 +204,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn preserve_atimes(&self) -> bool {
         self.preserve_atimes
+    }
+
+    /// Reports whether creation times should be preserved.
+    #[must_use]
+    pub const fn preserve_crtimes(&self) -> bool {
+        self.preserve_crtimes
     }
 
     /// Reports whether directory modification times should be skipped during metadata preservation.
@@ -380,6 +400,18 @@ mod tests {
     fn atimes_disabled_by_default() {
         let options = LocalCopyOptions::new();
         assert!(!options.preserve_atimes());
+    }
+
+    #[test]
+    fn crtimes_preservation() {
+        let options = LocalCopyOptions::new().crtimes(true);
+        assert!(options.preserve_crtimes());
+    }
+
+    #[test]
+    fn crtimes_defaults_to_false() {
+        let options = LocalCopyOptions::new();
+        assert!(!options.preserve_crtimes());
     }
 
     #[test]

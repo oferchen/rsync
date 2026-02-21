@@ -330,6 +330,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.update() {
             flags.push('u');
         }
+        if self.config.preserve_crtimes() {
+            flags.push('N');
+        }
 
         // Info flags after '.' separator
         // For now, we don't send info flags (upstream does this selectively)
