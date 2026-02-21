@@ -600,6 +600,10 @@ fn build_handshake_result(
 }
 
 /// Executes the server transfer and logs the result.
+///
+/// When the module has `transfer_logging` enabled and a log sink is available,
+/// a per-transfer log line is emitted using the module's configured format
+/// string (or `DEFAULT_LOG_FORMAT` as fallback).
 fn execute_transfer(
     ctx: &ModuleRequestContext<'_>,
     config: ServerConfig,
@@ -608,6 +612,7 @@ fn execute_transfer(
     write_stream: &mut TcpStream,
     role: ServerRole,
     final_protocol: ProtocolVersion,
+    module: &ModuleRuntime,
 ) {
     if let Some(log) = ctx.log_sink {
         let text = format!(
@@ -627,6 +632,40 @@ fn execute_transfer(
     match result {
         Ok(_server_stats) => {
             if let Some(log) = ctx.log_sink {
+                if module.transfer_logging {
+                    let operation = match role {
+                        ServerRole::Generator => TransferOperation::Send,
+                        ServerRole::Receiver => TransferOperation::Recv,
+                    };
+                    let addr_str = ctx.peer_ip.to_string();
+                    let path_str = module.path.display().to_string();
+                    let pid = std::process::id();
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default();
+                    let secs = now.as_secs();
+                    let timestamp = format_daemon_timestamp(secs);
+
+                    let log_ctx = LogFormatContext {
+                        operation,
+                        hostname: ctx.effective_host().unwrap_or("unknown"),
+                        remote_addr: &addr_str,
+                        module_name: ctx.request,
+                        username: "",
+                        filename: "",
+                        file_length: 0,
+                        pid,
+                        module_path: &path_str,
+                        timestamp: &timestamp,
+                        bytes_transferred: 0,
+                        bytes_checksumed: 0,
+                        itemize_string: "",
+                    };
+
+                    let fmt = effective_log_format(module);
+                    log_transfer(fmt, &log_ctx, log);
+                }
+
                 let text = format!(
                     "transfer to {} ({}): module={} status=success",
                     ctx.effective_host().unwrap_or("unknown"),
@@ -788,6 +827,7 @@ fn process_approved_module(
         &mut write_stream,
         role,
         final_protocol,
+        module,
     );
 
     Ok(())

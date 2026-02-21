@@ -92,6 +92,22 @@ pub(crate) struct ModuleDefinition {
     /// Upstream: `clientserver.c` — `munge_symlinks` global; defaults to true when
     /// `use_chroot` is false or when an inside-chroot module is configured.
     pub(crate) munge_symlinks: Option<bool>,
+    /// Enables per-file transfer logging for this module.
+    ///
+    /// When true, the daemon logs each transferred file using the format string
+    /// from `log_format`. Mirrors upstream rsync's `transfer logging` directive
+    /// in `rsyncd.conf(5)`.
+    pub(crate) transfer_logging: bool,
+    /// Format string for per-file transfer log entries.
+    ///
+    /// Supports upstream rsync log format escapes: `%o` (operation), `%h` (hostname),
+    /// `%a` (remote address), `%m` (module name), `%u` (username), `%f` (filename),
+    /// `%l` (file length), `%p` (PID), `%P` (module path), `%t` (timestamp),
+    /// `%b` (bytes transferred), `%c` (bytes checksumed), `%i` (itemize string),
+    /// and `%%` (literal percent).
+    ///
+    /// When `None`, `DEFAULT_LOG_FORMAT` is used.
+    pub(crate) log_format: Option<String>,
 }
 
 impl ModuleDefinition {
@@ -252,6 +268,14 @@ impl ModuleDefinition {
 
     pub(super) fn munge_symlinks(&self) -> Option<bool> {
         self.munge_symlinks
+    }
+
+    pub(super) fn transfer_logging(&self) -> bool {
+        self.transfer_logging
+    }
+
+    pub(super) fn log_format(&self) -> Option<&str> {
+        self.log_format.as_deref()
     }
 }
 
@@ -604,6 +628,8 @@ mod module_state_tests {
         assert!(!def.write_only);
         assert!(!def.listable);
         assert!(def.munge_symlinks.is_none());
+        assert!(!def.transfer_logging);
+        assert!(def.log_format.is_none());
     }
 
     #[test]

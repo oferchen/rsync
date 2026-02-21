@@ -215,6 +215,14 @@ fn generate_fallback_config(
             writeln!(config, "    fake super = yes")?;
         }
 
+        if module.transfer_logging {
+            writeln!(config, "    transfer logging = yes")?;
+        }
+
+        if let Some(fmt) = &module.log_format {
+            writeln!(config, "    log format = {fmt}")?;
+        }
+
         writeln!(config)?;
     }
 

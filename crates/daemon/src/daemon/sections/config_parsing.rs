@@ -273,6 +273,26 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_munge_symlinks(Some(parsed), path, line_number)?;
                     }
+                    "transfer logging" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'transfer logging'"
+                                ),
+                            )
+                        })?;
+                        builder.set_transfer_logging(parsed, path, line_number)?;
+                    }
+                    "log format" => {
+                        let fmt = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_log_format(fmt, path, line_number)?;
+                    }
                     "uid" => {
                         let uid = parse_numeric_identifier(value).ok_or_else(|| {
                             config_parse_error(path, line_number, format!("invalid uid '{value}'"))

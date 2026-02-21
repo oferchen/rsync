@@ -26,6 +26,8 @@ struct ModuleDefinitionBuilder {
     outgoing_chmod: Option<Option<String>>,
     fake_super: Option<bool>,
     munge_symlinks: Option<Option<bool>>,
+    transfer_logging: Option<bool>,
+    log_format: Option<Option<String>>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -58,6 +60,8 @@ impl ModuleDefinitionBuilder {
             outgoing_chmod: None,
             fake_super: None,
             munge_symlinks: None,
+            transfer_logging: None,
+            log_format: None,
         }
     }
 
@@ -482,6 +486,48 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_transfer_logging(
+        &mut self,
+        transfer_logging: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.transfer_logging.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'transfer logging' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.transfer_logging = Some(transfer_logging);
+        Ok(())
+    }
+
+    fn set_log_format(
+        &mut self,
+        log_format: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.log_format.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'log format' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.log_format = Some(log_format);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -573,6 +619,8 @@ impl ModuleDefinitionBuilder {
                 .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
             fake_super: self.fake_super.unwrap_or(false),
             munge_symlinks: self.munge_symlinks.unwrap_or(None),
+            transfer_logging: self.transfer_logging.unwrap_or(false),
+            log_format: self.log_format.unwrap_or(None),
         })
     }
 }
@@ -619,6 +667,8 @@ mod module_definition_builder_tests {
         assert!(builder.incoming_chmod.is_none());
         assert!(builder.outgoing_chmod.is_none());
         assert!(builder.munge_symlinks.is_none());
+        assert!(builder.transfer_logging.is_none());
+        assert!(builder.log_format.is_none());
     }
 
     // ==================== set_path tests ====================
@@ -1206,6 +1256,8 @@ mod module_definition_builder_tests {
         assert!(!def.bandwidth_limit_configured);
         assert!(!def.fake_super); // default false
         assert!(def.munge_symlinks.is_none()); // default None (auto)
+        assert!(!def.transfer_logging); // default false
+        assert!(def.log_format.is_none()); // default None
     }
 
     #[test]
