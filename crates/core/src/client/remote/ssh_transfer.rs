@@ -459,6 +459,7 @@ fn build_server_config_for_receiver(
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
     server_config.trust_sender = config.trust_sender();
+    server_config.qsort = config.qsort();
 
     Ok(server_config)
 }
@@ -479,6 +480,7 @@ fn build_server_config_for_generator(
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
     server_config.trust_sender = config.trust_sender();
+    server_config.qsort = config.qsort();
 
     Ok(server_config)
 }

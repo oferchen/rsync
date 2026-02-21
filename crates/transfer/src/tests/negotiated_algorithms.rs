@@ -50,6 +50,7 @@ fn test_config() -> ServerConfig {
         write_devices: false,
         trust_sender: false,
         stop_at: None,
+        qsort: false,
     }
 }
 
@@ -74,6 +75,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         write_devices: false,
         trust_sender: false,
         stop_at: None,
+        qsort: false,
     }
 }
 

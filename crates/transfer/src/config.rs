@@ -166,6 +166,20 @@ pub struct ServerConfig {
     /// - `main.c`: `stop_at_utime` global checked in transfer loop
     /// - `io.c`: deadline checked during I/O operations
     pub stop_at: Option<SystemTime>,
+    /// Use unstable sort (qsort) instead of stable merge sort for file lists.
+    ///
+    /// When true, uses `sort_unstable_by` which corresponds to upstream rsync's
+    /// `--qsort` flag that selects the C library `qsort()` instead of the default
+    /// merge sort. The unstable sort may be faster but does not preserve relative
+    /// order of equal elements.
+    ///
+    /// Default is false (stable merge sort).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2991`: `if (use_qsort) qsort(...); else merge_sort(...);`
+    /// - `options.c`: `--qsort` flag definition
+    pub qsort: bool,
 }
 
 impl ServerConfig {
@@ -210,6 +224,7 @@ impl ServerConfig {
             write_devices: false,
             trust_sender: false,
             stop_at: None,
+            qsort: false,
         })
     }
 }
