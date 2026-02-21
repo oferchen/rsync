@@ -137,6 +137,22 @@ pub struct ServerConfig {
     /// - `options.c`: `--write-devices` implies `inplace = 1`
     /// - `receiver.c`: `if (write_devices && IS_DEVICE(st.st_mode))` opens device for writing
     pub write_devices: bool,
+    /// Disables sender path safety checks when true (`--trust-sender`).
+    ///
+    /// When false (default), the receiver validates file list entries from the
+    /// sender to prevent directory traversal attacks:
+    /// - Rejects entries with absolute paths (when not using `--relative`)
+    /// - Rejects entries containing `..` path components
+    ///
+    /// When true, these checks are skipped. This flag is purely receiver-side
+    /// and does not affect the wire protocol.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:757`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
+    /// - `options.c:797`: `--trust-sender` option definition
+    /// - `options.c:2493`: trust_sender logic for args and filter
+    pub trust_sender: bool,
 }
 
 impl ServerConfig {
@@ -179,6 +195,7 @@ impl ServerConfig {
             is_daemon_connection: false,
             checksum_choice: None,
             write_devices: false,
+            trust_sender: false,
         })
     }
 }

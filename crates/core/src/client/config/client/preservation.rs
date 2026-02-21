@@ -61,6 +61,17 @@ impl ClientConfig {
     pub const fn munge_links(&self) -> bool {
         self.munge_links
     }
+
+    /// Reports whether the sender's file list is trusted without safety checks.
+    ///
+    /// When false (default), the receiver validates paths from the sender to
+    /// prevent directory traversal attacks (absolute paths and `..` components
+    /// are rejected). When true, these checks are skipped.
+    #[must_use]
+    #[doc(alias = "--trust-sender")]
+    pub const fn trust_sender(&self) -> bool {
+        self.trust_sender
+    }
 }
 
 #[cfg(test)]
@@ -125,5 +136,12 @@ mod tests {
     fn munge_links_default_is_false() {
         let config = default_config();
         assert!(!config.munge_links());
+    }
+
+    // Tests for trust_sender
+    #[test]
+    fn trust_sender_default_is_false() {
+        let config = default_config();
+        assert!(!config.trust_sender());
     }
 }

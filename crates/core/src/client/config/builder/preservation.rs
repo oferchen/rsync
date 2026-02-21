@@ -78,6 +78,18 @@ impl ClientConfigBuilder {
         self.munge_links = munge_links;
         self
     }
+
+    /// Enables or disables trusting the sender's file list without safety checks.
+    ///
+    /// When false (default), the receiver rejects file list entries with absolute
+    /// paths or `..` components to prevent directory traversal. When true, these
+    /// checks are skipped.
+    #[must_use]
+    #[doc(alias = "--trust-sender")]
+    pub const fn trust_sender(mut self, trust_sender: bool) -> Self {
+        self.trust_sender = trust_sender;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -221,5 +233,23 @@ mod tests {
     fn default_munge_links_is_false() {
         let config = builder().build();
         assert!(!config.munge_links());
+    }
+
+    #[test]
+    fn trust_sender_sets_flag() {
+        let config = builder().trust_sender(true).build();
+        assert!(config.trust_sender());
+    }
+
+    #[test]
+    fn trust_sender_false_clears_flag() {
+        let config = builder().trust_sender(true).trust_sender(false).build();
+        assert!(!config.trust_sender());
+    }
+
+    #[test]
+    fn default_trust_sender_is_false() {
+        let config = builder().build();
+        assert!(!config.trust_sender());
     }
 }
