@@ -101,7 +101,6 @@ impl SshCommand {
         self
     }
 
-
     /// Requests AES-GCM cipher selection for the SSH transport.
     ///
     /// When `Some(true)`, injects `-c aes128-gcm@openssh.com,aes256-gcm@openssh.com`
@@ -219,7 +218,6 @@ impl SshCommand {
 
         args.extend(self.options.iter().cloned());
 
-
         // Inject AES-GCM ciphers when requested and safe to do so.
         // upstream: rsync uses the system SSH default; we optionally prefer
         // hardware-accelerated AES-GCM for throughput on modern CPUs.
@@ -266,7 +264,6 @@ impl SshCommand {
 
         Some(target)
     }
-
 
     /// Determines whether AES-GCM cipher arguments should be injected.
     ///

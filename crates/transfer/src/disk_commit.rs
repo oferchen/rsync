@@ -349,18 +349,24 @@ fn process_file(
 
                 // Apply metadata immediately after rename — mirrors upstream
                 // finish_transfer() → set_file_attrs() in receiver.c.
-                let metadata_error = match (&config.metadata_opts, &begin.file_entry) {
-                    (Some(opts), Some(entry)) => {
-                        match metadata::apply_metadata_from_file_entry(
-                            &begin.file_path,
-                            entry,
-                            opts,
-                        ) {
-                            Ok(()) => None,
-                            Err(e) => Some((begin.file_path.clone(), e.to_string())),
+                // Skip metadata for device targets: changing perms/ownership on
+                // a device node after writing data is not appropriate.
+                let metadata_error = if begin.is_device_target {
+                    None
+                } else {
+                    match (&config.metadata_opts, &begin.file_entry) {
+                        (Some(opts), Some(entry)) => {
+                            match metadata::apply_metadata_from_file_entry(
+                                &begin.file_path,
+                                entry,
+                                opts,
+                            ) {
+                                Ok(()) => None,
+                                Err(e) => Some((begin.file_path.clone(), e.to_string())),
+                            }
                         }
+                        _ => None,
                     }
-                    _ => None,
                 };
 
                 // Finalize per-file checksum and return to network thread.
@@ -484,11 +490,26 @@ fn process_whole_file(
     })
 }
 
-/// Opens the output file using direct write or temp+rename strategy.
+/// Opens the output file using direct write, device write, or temp+rename strategy.
 ///
 /// Mirrors the logic in [`crate::transfer_ops::process_file_response`].
+///
+/// # Device targets
+///
+/// When `begin.is_device_target` is set, the device file is opened with `O_WRONLY`
+/// (no create, no truncate). Device files cannot use temp+rename since you cannot
+/// rename onto a device node.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` — inplace write to device
 fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard, bool)> {
-    if begin.direct_write {
+    if begin.is_device_target {
+        // Device files: open existing device for writing (no create, no truncate).
+        // Uses inplace semantics — no temp file + rename.
+        let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
+        Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
+    } else if begin.direct_write {
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -546,6 +567,7 @@ mod tests {
                 direct_write: true,
                 checksum_verifier: None,
                 file_entry: None,
+                is_device_target: false,
             })))
             .unwrap();
 
@@ -581,6 +603,7 @@ mod tests {
                 direct_write: false,
                 checksum_verifier: None,
                 file_entry: None,
+                is_device_target: false,
             })))
             .unwrap();
 
@@ -620,6 +643,7 @@ mod tests {
                     direct_write: true,
                     checksum_verifier: None,
                     file_entry: None,
+                    is_device_target: false,
                 })))
                 .unwrap();
 
@@ -666,6 +690,7 @@ mod tests {
                 direct_write: true,
                 checksum_verifier: None,
                 file_entry: None,
+                is_device_target: false,
             })))
             .unwrap();
 
@@ -698,6 +723,7 @@ mod tests {
                 direct_write: true,
                 checksum_verifier: None,
                 file_entry: None,
+                is_device_target: false,
             })))
             .unwrap();
 
@@ -739,6 +765,7 @@ mod tests {
                     direct_write: true,
                     checksum_verifier: None,
                     file_entry: None,
+                    is_device_target: false,
                 }),
                 data: b"whole dat".to_vec(),
             })
