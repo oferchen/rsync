@@ -661,6 +661,11 @@ pub fn apply_metadata_with_cached_stat(
         apply_timestamps_from_entry(destination, entry, options, cached_meta.as_ref())?;
     }
 
+    // Step 4: Apply creation time (if requested)
+    if options.crtimes() && entry.crtime() != 0 {
+        apply_crtime_from_entry(destination, entry)?;
+    }
+
     Ok(())
 }
 
@@ -943,6 +948,86 @@ fn apply_timestamps_from_entry(
             .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
     }
 
+    Ok(())
+}
+
+/// Applies the creation time from a FileEntry to the destination file.
+///
+/// On macOS this uses `setattrlist(2)` with `ATTR_CMN_CRTIME` to set the
+/// file's birth time. On other platforms this is a no-op since creation
+/// time is not universally settable.
+fn apply_crtime_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+) -> Result<(), MetadataError> {
+    let crtime_secs = entry.crtime();
+    set_crtime(destination, crtime_secs)
+}
+
+/// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
+///
+/// # Safety
+///
+/// Calls into the libc `setattrlist` function through FFI. The `attrlist`
+/// struct and buffer are stack-allocated with correct layout and size,
+/// and the path is converted to a NUL-terminated C string before passing.
+// upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[repr(C)]
+    struct AttrBuf {
+        timespec: libc::timespec,
+    }
+
+    let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        MetadataError::new(
+            "set creation time",
+            path,
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL byte"),
+        )
+    })?;
+
+    let mut attrlist: libc::attrlist = unsafe { std::mem::zeroed() };
+    attrlist.bitmapcount = libc::ATTR_BIT_MAP_COUNT;
+    attrlist.commonattr = libc::ATTR_CMN_CRTIME;
+
+    let buf = AttrBuf {
+        timespec: libc::timespec {
+            tv_sec: secs,
+            tv_nsec: 0,
+        },
+    };
+
+    // SAFETY: `c_path` is a valid NUL-terminated C string, `attrlist` is
+    // zeroed and then configured with valid bitmap values, and `buf` is a
+    // repr(C) struct with the exact layout expected by `setattrlist(2)`.
+    let ret = unsafe {
+        libc::setattrlist(
+            c_path.as_ptr(),
+            &attrlist as *const _ as *mut _,
+            &buf as *const _ as *mut libc::c_void,
+            std::mem::size_of::<AttrBuf>(),
+            0,
+        )
+    };
+
+    if ret != 0 {
+        return Err(MetadataError::new(
+            "set creation time",
+            path,
+            std::io::Error::last_os_error(),
+        ));
+    }
+    Ok(())
+}
+
+/// No-op stub for platforms where creation time cannot be set.
+#[cfg(not(target_os = "macos"))]
+fn set_crtime(_path: &Path, _secs: i64) -> Result<(), MetadataError> {
     Ok(())
 }
 

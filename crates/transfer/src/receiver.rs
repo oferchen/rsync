@@ -1329,6 +1329,7 @@ impl ReceiverContext {
             .preserve_permissions(self.config.flags.perms)
             .preserve_times(self.config.flags.times)
             .preserve_atimes(self.config.flags.atimes)
+            .preserve_crtimes(self.config.flags.crtimes)
             .preserve_owner(self.config.flags.owner)
             .preserve_group(self.config.flags.group)
             .numeric_ids(self.config.flags.numeric_ids);

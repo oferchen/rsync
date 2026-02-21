@@ -10,6 +10,7 @@ pub struct MetadataOptions {
     preserve_permissions: bool,
     preserve_times: bool,
     preserve_atimes: bool,
+    preserve_crtimes: bool,
     numeric_ids: bool,
     fake_super: bool,
     owner_override: Option<u32>,
@@ -33,6 +34,7 @@ impl MetadataOptions {
             preserve_permissions: true,
             preserve_times: true,
             preserve_atimes: false,
+            preserve_crtimes: false,
             numeric_ids: false,
             fake_super: false,
             owner_override: None,
@@ -95,6 +97,20 @@ impl MetadataOptions {
     #[doc(alias = "-U")]
     pub const fn preserve_atimes(mut self, preserve: bool) -> Self {
         self.preserve_atimes = preserve;
+        self
+    }
+
+    /// Requests that creation times be preserved when applying metadata.
+    ///
+    /// When enabled, the source file's creation time (birth time) is preserved
+    /// on the destination. This corresponds to the `-N` / `--crtimes` flag in
+    /// upstream rsync. Creation time setting is only supported on macOS; on
+    /// other platforms the flag is accepted but has no effect.
+    #[must_use]
+    #[doc(alias = "--crtimes")]
+    #[doc(alias = "-N")]
+    pub const fn preserve_crtimes(mut self, preserve: bool) -> Self {
+        self.preserve_crtimes = preserve;
         self
     }
 
@@ -200,6 +216,12 @@ impl MetadataOptions {
         self.preserve_atimes
     }
 
+    /// Reports whether creation times should be preserved.
+    #[must_use]
+    pub const fn crtimes(&self) -> bool {
+        self.preserve_crtimes
+    }
+
     /// Reports whether numeric UID/GID preservation was requested.
     #[must_use]
     pub const fn numeric_ids_enabled(&self) -> bool {
@@ -264,6 +286,7 @@ mod tests {
         assert!(options.permissions());
         assert!(options.times());
         assert!(!options.atimes());
+        assert!(!options.crtimes());
         assert!(!options.numeric_ids_enabled());
         assert!(!options.fake_super_enabled());
         assert!(options.owner_override().is_none());

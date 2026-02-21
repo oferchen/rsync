@@ -538,6 +538,9 @@ fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.update() {
         flags.push('u');
     }
+    if config.preserve_crtimes() {
+        flags.push('N');
+    }
 
     flags
 }
