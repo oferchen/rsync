@@ -8,6 +8,7 @@ impl<'a> CopyContext<'a> {
             .preserve_executability(self.options.preserve_executability())
             .preserve_permissions(self.options.preserve_permissions())
             .preserve_times(self.options.preserve_times())
+            .preserve_atimes(self.options.preserve_atimes())
             .numeric_ids(self.options.numeric_ids_enabled())
             .fake_super(self.options.fake_super_enabled())
             .with_owner_override(self.options.owner_override())

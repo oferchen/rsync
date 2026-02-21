@@ -280,6 +280,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.preserve_times() {
             flags.push('t');
         }
+        if self.config.preserve_atimes() {
+            flags.push('U');
+        }
         if self.config.preserve_permissions() {
             flags.push('p');
         }

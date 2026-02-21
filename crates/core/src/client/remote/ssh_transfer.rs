@@ -488,6 +488,9 @@ fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_times() {
         flags.push('t');
     }
+    if config.preserve_atimes() {
+        flags.push('U');
+    }
     if config.preserve_permissions() {
         flags.push('p');
     }

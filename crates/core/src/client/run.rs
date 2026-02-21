@@ -572,6 +572,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .executability(config.preserve_executability())
             .permissions(config.preserve_permissions())
             .times(config.preserve_times())
+            .atimes(config.preserve_atimes())
             .omit_dir_times(config.omit_dir_times())
             .omit_link_times(config.omit_link_times())
             .with_user_mapping(config.user_mapping().cloned())

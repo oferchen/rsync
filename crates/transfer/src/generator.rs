@@ -1024,7 +1024,8 @@ impl GeneratorContext {
         // Upstream flist.c uses preserve_uid/preserve_gid globals
         let mut flist_writer = flist_writer
             .with_preserve_uid(self.config.flags.owner)
-            .with_preserve_gid(self.config.flags.group);
+            .with_preserve_gid(self.config.flags.group)
+            .with_preserve_atimes(self.config.flags.atimes);
 
         // Wire up iconv converter if configured
         if let Some(ref converter) = self.config.iconv {

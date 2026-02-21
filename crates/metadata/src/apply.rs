@@ -658,7 +658,7 @@ pub fn apply_metadata_with_cached_stat(
 
     // Step 3: Apply timestamps (if requested)
     if options.times() {
-        apply_timestamps_from_entry(destination, entry, cached_meta.as_ref())?;
+        apply_timestamps_from_entry(destination, entry, options, cached_meta.as_ref())?;
     }
 
     Ok(())
@@ -908,22 +908,34 @@ fn apply_permissions_from_entry(
 fn apply_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    // Build FileTime from FileEntry's (mtime, mtime_nsec)
-    // This preserves nanosecond precision!
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
-    let atime = mtime; // Use mtime for both (rsync behavior)
 
-    // Optimization: check current mtime and skip syscall if already correct.
-    // This matches upstream rsync behavior which avoids redundant utimensat calls.
-    // Compare at second granularity first (fast path), then nanoseconds if needed.
+    // upstream: rsync preserves the source atime when --atimes is set;
+    // otherwise it uses mtime for both atime and mtime (the default).
+    let atime = if options.atimes() && entry.atime() != 0 {
+        FileTime::from_unix_time(entry.atime(), 0)
+    } else {
+        mtime
+    };
+
+    // Optimization: check current mtime (and atime when preserving) and skip
+    // syscall if already correct. Mirrors upstream's redundant-utimensat avoidance.
     let needs_utime = match cached_meta {
         Some(meta) => {
             let current_mtime = FileTime::from_last_modification_time(meta);
-            current_mtime != mtime
+            if current_mtime != mtime {
+                true
+            } else if options.atimes() {
+                let current_atime = FileTime::from_last_access_time(meta);
+                current_atime != atime
+            } else {
+                false
+            }
         }
-        None => true, // Can't stat, try utime anyway
+        None => true,
     };
 
     if needs_utime {
