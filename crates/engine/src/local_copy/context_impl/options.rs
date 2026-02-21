@@ -33,6 +33,10 @@ impl<'a> CopyContext<'a> {
         self.options.safe_links_enabled()
     }
 
+    pub(super) const fn munge_links_enabled(&self) -> bool {
+        self.options.munge_links_enabled()
+    }
+
     /// Returns the number of leading relative-path components that represent
     /// the transfer root name and should be excluded when computing safe-links
     /// depth.

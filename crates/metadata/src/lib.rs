@@ -130,6 +130,12 @@ use ownership_stub as ownership;
 pub mod stat_cache;
 
 mod special;
+/// Symlink munging helpers for daemon-mode security.
+///
+/// Provides `munge_symlink` and `unmunge_symlink` which prepend or strip the
+/// `/rsyncd-munged/` prefix used by upstream rsync to neutralise symlinks that
+/// would otherwise escape the module root.
+pub mod symlink_munge;
 
 #[cfg(all(unix, feature = "xattr"))]
 mod xattr;
@@ -206,3 +212,5 @@ pub use xattr_stub::sync_xattrs;
 pub use fake_super::{
     FAKE_SUPER_XATTR, FakeSuperStat, load_fake_super, remove_fake_super, store_fake_super,
 };
+
+pub use symlink_munge::{SYMLINK_MUNGE_PREFIX, munge_symlink, unmunge_symlink};

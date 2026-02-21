@@ -79,6 +79,21 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Enables or disables symlink munging for daemon-mode security.
+    ///
+    /// When enabled, symlink targets are prefixed with `/rsyncd-munged/` so they
+    /// cannot resolve to paths outside the module root. This is a security
+    /// feature for rsyncd and can also be forced via `--munge-links` on the
+    /// client side.
+    ///
+    /// # upstream: `clientserver.c:munge_symlink()`
+    #[must_use]
+    #[doc(alias = "--munge-links")]
+    pub const fn munge_links(mut self, enabled: bool) -> Self {
+        self.munge_links = enabled;
+        self
+    }
+
     /// Treats symlinks to directories as directories when traversing the source tree.
     #[must_use]
     #[doc(alias = "--copy-dirlinks")]
@@ -279,6 +294,16 @@ impl LocalCopyOptions {
         self.safe_links
     }
 
+    /// Reports whether symlink munging is enabled.
+    ///
+    /// When `true`, symlink targets are transformed by prepending the
+    /// `/rsyncd-munged/` prefix on creation and stripped on read, preventing
+    /// symlinks from escaping the module directory.
+    #[must_use]
+    pub const fn munge_links_enabled(&self) -> bool {
+        self.munge_links
+    }
+
     /// Reports whether symlinks to directories should be followed as directories.
     #[must_use]
     pub const fn copy_dirlinks_enabled(&self) -> bool {
@@ -436,6 +461,20 @@ mod tests {
     fn safe_links_disables() {
         let opts = LocalCopyOptions::new().safe_links(true).safe_links(false);
         assert!(!opts.safe_links_enabled());
+    }
+
+    #[test]
+    fn munge_links_enables() {
+        let opts = LocalCopyOptions::new().munge_links(true);
+        assert!(opts.munge_links_enabled());
+    }
+
+    #[test]
+    fn munge_links_disables() {
+        let opts = LocalCopyOptions::new()
+            .munge_links(true)
+            .munge_links(false);
+        assert!(!opts.munge_links_enabled());
     }
 
     #[test]
