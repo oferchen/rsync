@@ -142,11 +142,16 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 /// This mirrors upstream rsync's approach of sorting a pointer array
 /// (`sorted[]`) rather than moving `file_struct` data.
 ///
+/// When `use_qsort` is true, uses an unstable sort (matching upstream's
+/// `--qsort` which uses the C library `qsort()`). When false, uses a
+/// stable merge sort (upstream's default).
+///
 /// # Upstream Reference
 ///
 /// - `flist.c:flist_sort_and_clean()` - Called after `send_file_list()`
 ///   and `recv_file_list()` to sort entries.
-pub fn sort_file_list(file_list: &mut [FileEntry]) {
+/// - `flist.c:2991` - `if (use_qsort) qsort(...); else merge_sort(...);`
+pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool) {
     debug_log!(Flist, 2, "sorting {} entries", file_list.len());
     let n = file_list.len();
     if n <= 1 {
@@ -156,7 +161,12 @@ pub fn sort_file_list(file_list: &mut [FileEntry]) {
     // Sort indices — only 8-byte values are shuffled during the sort,
     // reducing memory bandwidth by ~20x vs moving full FileEntry structs.
     let mut indices: Vec<usize> = (0..n).collect();
-    indices.sort_by(|&a, &b| compare_file_entries(&file_list[a], &file_list[b]));
+    let cmp = |&a: &usize, &b: &usize| compare_file_entries(&file_list[a], &file_list[b]);
+    if use_qsort {
+        indices.sort_unstable_by(cmp);
+    } else {
+        indices.sort_by(cmp);
+    }
 
     // Apply the permutation in-place using cycle chasing.
     // Each element is moved exactly once.
@@ -287,13 +297,17 @@ pub fn flist_clean(mut file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResul
 /// Sorts and cleans a file list in one operation.
 ///
 /// Combines `sort_file_list` and `flist_clean` for convenience.
+/// When `use_qsort` is true, uses unstable sort matching upstream `--qsort`.
 ///
 /// # Upstream Reference
 ///
 /// - `flist.c:flist_sort_and_clean()` - The combined operation
 #[must_use]
-pub fn sort_and_clean_file_list(mut file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
-    sort_file_list(&mut file_list);
+pub fn sort_and_clean_file_list(
+    mut file_list: Vec<FileEntry>,
+    use_qsort: bool,
+) -> (Vec<FileEntry>, CleanResult) {
+    sort_file_list(&mut file_list, use_qsort);
     flist_clean(file_list)
 }
 
@@ -365,7 +379,7 @@ mod tests {
             make_dir("."),
         ];
 
-        sort_file_list(&mut entries);
+        sort_file_list(&mut entries, false);
 
         let mut names = Vec::with_capacity(entries.len());
         names.extend(entries.iter().map(|e| e.name()));
@@ -379,7 +393,7 @@ mod tests {
     fn sort_files_at_root_before_nested() {
         let mut entries = vec![make_file("z.txt"), make_file("a/nested.txt"), make_dir("a")];
 
-        sort_file_list(&mut entries);
+        sort_file_list(&mut entries, false);
 
         let mut names = Vec::with_capacity(entries.len());
         names.extend(entries.iter().map(|e| e.name()));
@@ -474,7 +488,7 @@ mod tests {
             make_file("a.txt"),
             make_file("a.txt"), // duplicate
         ];
-        let (cleaned, stats) = sort_and_clean_file_list(entries);
+        let (cleaned, stats) = sort_and_clean_file_list(entries, false);
         assert_eq!(stats.duplicates_removed, 1);
         let mut names = Vec::with_capacity(cleaned.len());
         names.extend(cleaned.iter().map(|e| e.name()));
@@ -524,7 +538,7 @@ mod tests {
             make_dir("x"),
         ];
 
-        sort_file_list(&mut entries);
+        sort_file_list(&mut entries, false);
 
         let names: Vec<&str> = entries.iter().map(|e| e.name()).collect();
         assert_eq!(
@@ -593,5 +607,44 @@ mod tests {
             compare_file_entries(&deep_dir, &sibling_file),
             Ordering::Greater
         );
+    }
+
+    /// Verifies that `use_qsort=true` produces the same ordering as the default
+    /// stable sort. The comparison function is identical; only sort stability differs.
+    #[test]
+    fn qsort_flag_produces_correct_order() {
+        let entries = vec![
+            make_file("test.txt"),
+            make_dir("subdir"),
+            make_file("subdir/file.txt"),
+            make_file("another.txt"),
+            make_dir("."),
+        ];
+
+        let mut stable_entries = entries.clone();
+        sort_file_list(&mut stable_entries, false);
+
+        let mut qsort_entries = entries;
+        sort_file_list(&mut qsort_entries, true);
+
+        // With no duplicate keys, both algorithms must produce the same result
+        let stable_names: Vec<&str> = stable_entries.iter().map(|e| e.name()).collect();
+        let qsort_names: Vec<&str> = qsort_entries.iter().map(|e| e.name()).collect();
+        assert_eq!(stable_names, qsort_names);
+    }
+
+    /// Verifies that `sort_and_clean_file_list` works with `use_qsort=true`.
+    #[test]
+    fn sort_and_clean_with_qsort() {
+        let entries = vec![
+            make_file("z.txt"),
+            make_dir("a"),
+            make_file("a.txt"),
+            make_file("a.txt"), // duplicate
+        ];
+        let (cleaned, stats) = sort_and_clean_file_list(entries, true);
+        assert_eq!(stats.duplicates_removed, 1);
+        let names: Vec<&str> = cleaned.iter().map(|e| e.name()).collect();
+        assert_eq!(names, vec!["a.txt", "z.txt", "a"]);
     }
 }

@@ -826,6 +826,7 @@ impl GeneratorContext {
         // Sort file list using rsync's ordering (upstream flist.c:f_name_cmp).
         // We need to sort both file_list and full_paths together to maintain correspondence.
         // Create index array, sort by rsync rules, then reorder both arrays.
+        // When --qsort is set, use unstable sort (upstream: flist.c:2991).
         let file_list_ref = &self.file_list;
         let mut indices: Vec<usize> = {
             let len = self.file_list.len();
@@ -833,7 +834,13 @@ impl GeneratorContext {
             v.extend(0..len);
             v
         };
-        indices.sort_by(|&a, &b| compare_file_entries(&file_list_ref[a], &file_list_ref[b]));
+        let cmp =
+            |&a: &usize, &b: &usize| compare_file_entries(&file_list_ref[a], &file_list_ref[b]);
+        if self.config.qsort {
+            indices.sort_unstable_by(cmp);
+        } else {
+            indices.sort_by(cmp);
+        }
 
         // Apply permutation in-place using cycle-following algorithm.
         // This avoids cloning every element - O(n) swaps instead of O(n) clones.
@@ -1826,6 +1833,7 @@ mod tests {
             write_devices: false,
             trust_sender: false,
             stop_at: None,
+            qsort: false,
         }
     }
 
@@ -2977,6 +2985,7 @@ mod tests {
             write_devices: false,
             trust_sender: false,
             stop_at: None,
+            qsort: false,
         }
     }
 

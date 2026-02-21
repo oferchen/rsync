@@ -205,7 +205,7 @@ impl ReceiverContext {
         // Sort file list to match sender's sorted order.
         // Upstream: flist_sort_and_clean() is called after recv_id_list()
         // See flist.c:2736 - both sides must sort to ensure matching NDX indices.
-        sort_file_list(&mut self.file_list);
+        sort_file_list(&mut self.file_list, self.config.qsort);
 
         Ok(count)
     }
@@ -263,6 +263,7 @@ impl ReceiverContext {
             incremental,
             finished_reading: false,
             entries_read: 0,
+            use_qsort: self.config.qsort,
         }
     }
 
@@ -1845,6 +1846,8 @@ pub struct IncrementalFileListReceiver<R> {
     finished_reading: bool,
     /// Number of entries read from the wire.
     entries_read: usize,
+    /// Whether to use unstable sort (qsort) instead of stable merge sort.
+    use_qsort: bool,
 }
 
 impl<R: Read> IncrementalFileListReceiver<R> {
@@ -2004,7 +2007,7 @@ impl<R: Read> IncrementalFileListReceiver<R> {
         entries.extend(self.incremental.drain_ready());
 
         // Sort to match sender's order for NDX indexing
-        sort_file_list(&mut entries);
+        sort_file_list(&mut entries, self.use_qsort);
 
         Ok(entries)
     }
@@ -2778,6 +2781,7 @@ mod tests {
             write_devices: false,
             trust_sender: false,
             stop_at: None,
+            qsort: false,
         }
     }
 
@@ -3671,6 +3675,7 @@ mod tests {
             write_devices: false,
             trust_sender: false,
             stop_at: None,
+            qsort: false,
         }
     }
 
@@ -4156,6 +4161,7 @@ mod tests {
                 incremental,
                 finished_reading: true, // Already finished
                 entries_read: 0,
+                use_qsort: false,
             };
 
             // Should return false since already finished
