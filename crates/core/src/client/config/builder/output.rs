@@ -42,6 +42,19 @@ impl ClientConfigBuilder {
         self.no_motd = no_motd;
         self
     }
+
+    /// Configures daemon parameter overrides sent during the daemon handshake.
+    ///
+    /// Each entry should be a `key=value` string that overrides a module-level
+    /// configuration directive on the daemon. Mirrors upstream rsync's
+    /// `--dparam` / `-M` option (clientserver.c).
+    #[must_use]
+    #[doc(alias = "--dparam")]
+    #[doc(alias = "-M")]
+    pub fn daemon_params(mut self, params: Vec<String>) -> Self {
+        self.daemon_params = params;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -128,5 +141,18 @@ mod tests {
     fn default_human_readable_is_false() {
         let config = builder().build();
         assert!(!config.human_readable());
+    }
+
+    #[test]
+    fn daemon_params_sets_values() {
+        let params = vec!["read only=true".to_owned(), "timeout=60".to_owned()];
+        let config = builder().daemon_params(params.clone()).build();
+        assert_eq!(config.daemon_params(), &params);
+    }
+
+    #[test]
+    fn default_daemon_params_is_empty() {
+        let config = builder().build();
+        assert!(config.daemon_params().is_empty());
     }
 }

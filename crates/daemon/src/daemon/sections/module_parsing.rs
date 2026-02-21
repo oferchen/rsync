@@ -408,6 +408,120 @@ fn apply_inline_module_options(
     Ok(())
 }
 
+/// Applies client-sent daemon parameter overrides to a module definition.
+///
+/// Each entry in `params` is a `key=value` string sent by the client via
+/// `--dparam` / `-M`. This mirrors upstream rsync's per-session module
+/// config overrides (loadparm.c / clientserver.c).
+///
+/// Only a safe subset of module directives are overridable via dparam:
+/// directives that affect access control (hosts allow/deny, auth users,
+/// secrets file) are excluded to prevent privilege escalation.
+fn apply_daemon_param_overrides(
+    params: &[String],
+    module: &mut ModuleDefinition,
+) -> Result<(), DaemonError> {
+    for param in params {
+        let (key_raw, value_raw) = param
+            .split_once('=')
+            .ok_or_else(|| config_error(format!("daemon param '{param}' is missing '='")))?;
+
+        let key = key_raw.trim().to_ascii_lowercase();
+        let value = value_raw.trim();
+
+        match key.as_str() {
+            "read only" | "read-only" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'read only'"))
+                })?;
+                module.read_only = parsed;
+            }
+            "write only" | "write-only" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'write only'"))
+                })?;
+                module.write_only = parsed;
+            }
+            "list" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'list'"))
+                })?;
+                module.listable = parsed;
+            }
+            "numeric ids" | "numeric-ids" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!(
+                        "invalid boolean value '{value}' for 'numeric ids'"
+                    ))
+                })?;
+                module.numeric_ids = parsed;
+            }
+            "use chroot" | "use-chroot" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!(
+                        "invalid boolean value '{value}' for 'use chroot'"
+                    ))
+                })?;
+                module.use_chroot = parsed;
+            }
+            "timeout" => {
+                let timeout = parse_timeout_seconds(value)
+                    .ok_or_else(|| config_error(format!("invalid timeout '{value}'")))?;
+                module.timeout = timeout;
+            }
+            "max connections" | "max-connections" => {
+                let max = parse_max_connections_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid max connections value '{value}'"))
+                })?;
+                module.max_connections = max;
+            }
+            "incoming chmod" | "incoming-chmod" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'incoming chmod' dparam must not be empty".to_owned(),
+                    ));
+                }
+                module.incoming_chmod = Some(value.to_owned());
+            }
+            "outgoing chmod" | "outgoing-chmod" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'outgoing chmod' dparam must not be empty".to_owned(),
+                    ));
+                }
+                module.outgoing_chmod = Some(value.to_owned());
+            }
+            "bwlimit" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'bwlimit' dparam must not be empty".to_owned(),
+                    ));
+                }
+                let components = parse_runtime_bwlimit(&OsString::from(value))?;
+                module.bandwidth_limit = components.rate();
+                module.bandwidth_burst = components.burst();
+                module.bandwidth_burst_specified = components.burst_specified();
+                module.bandwidth_limit_specified = true;
+                module.bandwidth_limit_configured = true;
+            }
+            // Security-sensitive directives are not overridable via dparam.
+            "hosts allow" | "hosts-allow" | "hosts deny" | "hosts-deny" | "auth users"
+            | "auth-users" | "secrets file" | "secrets-file" | "refuse options"
+            | "refuse-options" | "uid" | "gid" => {
+                return Err(config_error(format!(
+                    "daemon param '{key_raw}' cannot be overridden via --dparam"
+                )));
+            }
+            _ => {
+                // Silently ignore unrecognised directives, matching upstream
+                // rsync's behaviour of skipping unknown per-module params.
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn unescape_module_component(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut chars = text.chars();

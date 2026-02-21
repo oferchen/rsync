@@ -192,3 +192,51 @@ fn render_help_oc_rsyncd_contains_program_name() {
     assert!(!help.is_empty());
 }
 
+// ==================== apply_daemon_param_overrides tests ====================
+
+#[test]
+fn apply_daemon_param_overrides_sets_read_only() {
+    let mut module = ModuleDefinition::default();
+    assert!(!module.read_only);
+    let params = vec!["read only=true".to_owned()];
+    apply_daemon_param_overrides(&params, &mut module).expect("should apply");
+    assert!(module.read_only);
+}
+
+#[test]
+fn apply_daemon_param_overrides_sets_timeout() {
+    let mut module = ModuleDefinition::default();
+    let params = vec!["timeout=120".to_owned()];
+    apply_daemon_param_overrides(&params, &mut module).expect("should apply");
+    assert_eq!(module.timeout.map(|t| t.get()), Some(120));
+}
+
+#[test]
+fn apply_daemon_param_overrides_rejects_security_sensitive() {
+    let mut module = ModuleDefinition::default();
+    let params = vec!["hosts allow=*".to_owned()];
+    assert!(apply_daemon_param_overrides(&params, &mut module).is_err());
+}
+
+#[test]
+fn apply_daemon_param_overrides_rejects_missing_equals() {
+    let mut module = ModuleDefinition::default();
+    let params = vec!["read only".to_owned()];
+    assert!(apply_daemon_param_overrides(&params, &mut module).is_err());
+}
+
+#[test]
+fn apply_daemon_param_overrides_ignores_unknown_keys() {
+    let mut module = ModuleDefinition::default();
+    let params = vec!["unknown_key=value".to_owned()];
+    apply_daemon_param_overrides(&params, &mut module).expect("should ignore unknown");
+}
+
+#[test]
+fn apply_daemon_param_overrides_empty_params() {
+    let mut module = ModuleDefinition::default();
+    let original = module.clone();
+    apply_daemon_param_overrides(&[], &mut module).expect("empty params should succeed");
+    assert_eq!(module, original);
+}
+
