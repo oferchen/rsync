@@ -196,7 +196,7 @@ where
         stop_after,
         stop_at,
         out_format,
-        dparam: _,
+        dparam,
         no_iconv,
         prefer_aes_gcm,
     } = parsed;
@@ -659,6 +659,10 @@ where
         prefer_aes_gcm,
         batch_config,
         no_motd,
+        daemon_params: dparam
+            .into_iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect(),
     };
 
     let builder = config::build_base_config(config_inputs);

@@ -190,7 +190,8 @@ pub fn run_daemon_transfer(
     // Step 4: Perform daemon handshake
     // Output MOTD unless --no-motd was specified (upstream defaults to true)
     let output_motd = !config.no_motd();
-    let protocol = perform_daemon_handshake(&mut stream, &request, output_motd)?;
+    let protocol =
+        perform_daemon_handshake(&mut stream, &request, output_motd, config.daemon_params())?;
 
     // Step 5: Send arguments to daemon
     // For pull (we receive), the daemon is the sender, so is_sender=true
@@ -294,6 +295,7 @@ fn perform_daemon_handshake(
     stream: &mut TcpStream,
     request: &DaemonTransferRequest,
     output_motd: bool,
+    daemon_params: &[String],
 ) -> Result<ProtocolVersion, ClientError> {
     let mut reader = BufReader::new(
         stream
@@ -343,7 +345,20 @@ fn perform_daemon_handshake(
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
-    // Step 3: Send module name (upstream clientserver.c:351)
+    // Step 3a: Send daemon parameter overrides (upstream clientserver.c:send_daemon_args())
+    // Each --dparam key=value is sent as "OPTION key=value\n" before the module name.
+    for param in daemon_params {
+        let option_line = format!("OPTION {param}\n");
+        stream.write_all(option_line.as_bytes()).map_err(|e| {
+            socket_error(
+                "send daemon option to",
+                request.address.socket_addr_display(),
+                e,
+            )
+        })?;
+    }
+
+    // Step 3b: Send module name (upstream clientserver.c:351)
     // This happens BEFORE waiting for @RSYNCD: OK
     let module_request = format!("{}\n", request.module);
     stream.write_all(module_request.as_bytes()).map_err(|e| {

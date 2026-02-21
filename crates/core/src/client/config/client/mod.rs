@@ -162,6 +162,7 @@ pub struct ClientConfig {
     pub(super) prefer_aes_gcm: Option<bool>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
     pub(super) no_motd: bool,
+    pub(super) daemon_params: Vec<String>,
     #[cfg(all(unix, feature = "acl"))]
     pub(super) preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
@@ -280,6 +281,7 @@ impl Default for ClientConfig {
             prefer_aes_gcm: None,
             batch_config: None,
             no_motd: false,
+            daemon_params: Vec::new(),
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls: false,
             #[cfg(all(unix, feature = "xattr"))]

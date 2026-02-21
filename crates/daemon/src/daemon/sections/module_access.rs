@@ -727,6 +727,24 @@ fn process_approved_module(
         return handle_refused_option(ctx, refused);
     }
 
+    // Apply client-sent daemon parameter overrides to a session-local copy
+    // of the module definition. This avoids mutating the shared module state
+    // while honouring per-connection --dparam values.
+    let effective_module = if options.is_empty() {
+        None
+    } else {
+        let mut definition = module.definition.clone();
+        match apply_daemon_param_overrides(options, &mut definition) {
+            Ok(()) => Some(ModuleRuntime::from(definition)),
+            Err(err) => {
+                let payload = format!("@ERROR: invalid daemon param: {err}");
+                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                return Ok(());
+            }
+        }
+    };
+    let module = effective_module.as_ref().unwrap_or(module);
+
     apply_module_timeout(ctx.reader.get_mut(), module)?;
 
     // Handle authentication

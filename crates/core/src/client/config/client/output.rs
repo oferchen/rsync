@@ -48,6 +48,17 @@ impl ClientConfig {
     pub const fn no_motd(&self) -> bool {
         self.no_motd
     }
+
+    /// Returns the daemon parameter overrides to send during the daemon handshake.
+    ///
+    /// Each entry is a `key=value` string that overrides a module-level
+    /// configuration directive. Mirrors upstream rsync's `--dparam` / `-M` option.
+    #[must_use]
+    #[doc(alias = "--dparam")]
+    #[doc(alias = "-M")]
+    pub fn daemon_params(&self) -> &[String] {
+        &self.daemon_params
+    }
 }
 
 #[cfg(test)]
@@ -99,5 +110,12 @@ mod tests {
         let config = default_config();
         // By default: force_event_collection=false, verbosity=0, progress=false, list_only=false
         assert!(!config.collect_events());
+    }
+
+    // Tests for daemon_params
+    #[test]
+    fn daemon_params_default_is_empty() {
+        let config = default_config();
+        assert!(config.daemon_params().is_empty());
     }
 }
