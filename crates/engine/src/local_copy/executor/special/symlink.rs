@@ -345,14 +345,17 @@ pub(crate) fn copy_symlink(
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
             let total_bytes = Some(metadata_snapshot.len());
-            context.record(LocalCopyRecord::new(
-                path.clone(),
-                LocalCopyAction::SymlinkCopied,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            ));
+            context.record(
+                LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::SymlinkCopied,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                )
+                .with_creation(!destination_previously_existed),
+            );
         }
         context.register_progress();
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -394,14 +397,17 @@ pub(crate) fn copy_symlink(
     if let Some(path) = &record_path {
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
         let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            path.clone(),
-            LocalCopyAction::SymlinkCopied,
-            0,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
+        context.record(
+            LocalCopyRecord::new(
+                path.clone(),
+                LocalCopyAction::SymlinkCopied,
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            )
+            .with_creation(!destination_previously_existed),
+        );
     }
     context.register_progress();
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
