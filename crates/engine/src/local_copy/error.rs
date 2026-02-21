@@ -116,6 +116,25 @@ impl LocalCopyError {
         matches!(self.kind, LocalCopyErrorKind::Io { .. })
     }
 
+    /// Reports whether this error represents a vanished file (NotFound I/O error).
+    ///
+    /// Upstream rsync gracefully skips files that vanish during the transfer
+    /// regardless of whether `--delete` is active, logging a warning and
+    /// continuing with the remaining entries.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c`: vanished files produce a warning, not a fatal error
+    /// - Exit code 24 (`RERR_VANISHED`) when files disappear during transfer
+    #[must_use]
+    pub fn is_vanished_error(&self) -> bool {
+        matches!(
+            &self.kind,
+            LocalCopyErrorKind::Io { source, .. }
+                if source.kind() == io::ErrorKind::NotFound
+        )
+    }
+
     /// Provides access to the underlying error kind.
     #[must_use]
     pub const fn kind(&self) -> &LocalCopyErrorKind {

@@ -576,14 +576,17 @@ pub(crate) fn copy_directory_recursive(
         if pending_record.is_none()
             && let Some((ref rel_path, ref snapshot)) = metadata_record
         {
-            pending_record = Some(LocalCopyRecord::new(
-                rel_path.clone(),
-                LocalCopyAction::DirectoryCreated,
-                0,
-                Some(snapshot.len()),
-                Duration::default(),
-                Some(snapshot.clone()),
-            ));
+            pending_record = Some(
+                LocalCopyRecord::new(
+                    rel_path.clone(),
+                    LocalCopyAction::DirectoryCreated,
+                    0,
+                    Some(snapshot.len()),
+                    Duration::default(),
+                    Some(snapshot.clone()),
+                )
+                .with_creation(true),
+            );
         }
 
         Ok(())
@@ -641,6 +644,14 @@ pub(crate) fn copy_directory_recursive(
             Ok(entry_kept) => {
                 if entry_kept {
                     kept_any = true;
+                }
+            }
+            Err(error) if error.is_vanished_error() => {
+                // upstream: generator.c — vanished files are skipped with a
+                // warning regardless of --delete mode (exit code 24).
+                context.record_io_error();
+                if first_entry_io_error.is_none() {
+                    first_entry_io_error = Some(error);
                 }
             }
             Err(error) if error.is_io_error() && context.options().delete_extraneous() => {
