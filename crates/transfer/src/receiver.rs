@@ -856,7 +856,16 @@ impl ReceiverContext {
         );
         let mut token_buffer = TokenBuffer::with_default_capacity();
 
+        let deadline = super::shared::TransferDeadline::from_system_time(self.config.stop_at);
+
         for (file_idx, file_entry) in self.file_list.iter().enumerate() {
+            // Check deadline at file boundary before starting next file.
+            if let Some(ref dl) = deadline {
+                if dl.is_reached() {
+                    break;
+                }
+            }
+
             let relative_path = file_entry.path();
 
             // Compute actual file path
@@ -1571,6 +1580,9 @@ impl ReceiverContext {
     ) -> io::Result<(usize, u64)> {
         use crate::disk_commit::DiskCommitConfig;
         use crate::pipeline::receiver::PipelinedReceiver;
+        use crate::shared::TransferDeadline;
+
+        let deadline = TransferDeadline::from_system_time(self.config.stop_at);
 
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
@@ -1615,6 +1627,16 @@ impl ReceiverContext {
 
         let result = (|| -> io::Result<(usize, u64)> {
             loop {
+                // Check deadline at file boundary before requesting more files.
+                // Files already in-flight will finish; we just stop sending new requests.
+                // Mirrors upstream rsync's --stop-at which finishes the current file
+                // before exiting gracefully.
+                if let Some(ref dl) = deadline {
+                    if dl.is_reached() {
+                        break;
+                    }
+                }
+
                 // Fill the pipeline with requests
                 while pipeline.can_send() {
                     if let Some((file_idx, file_entry)) = file_iter.next() {
@@ -2755,6 +2777,7 @@ mod tests {
             checksum_choice: None,
             write_devices: false,
             trust_sender: false,
+            stop_at: None,
         }
     }
 
@@ -3647,6 +3670,7 @@ mod tests {
             checksum_choice: None,
             write_devices: false,
             trust_sender: false,
+            stop_at: None,
         }
     }
 
