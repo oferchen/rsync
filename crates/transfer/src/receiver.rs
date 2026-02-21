@@ -1375,6 +1375,7 @@ impl ReceiverContext {
             use_sparse: self.config.flags.sparse,
             do_fsync: self.config.fsync,
             direct_write: self.config.direct_write,
+            write_devices: self.config.write_devices,
         };
 
         let mut pipeline = PipelineState::new(pipeline_config);
@@ -1507,6 +1508,7 @@ impl ReceiverContext {
             use_sparse: self.config.flags.sparse,
             do_fsync: self.config.fsync,
             direct_write: self.config.direct_write,
+            write_devices: self.config.write_devices,
         };
 
         let mut pipeline = PipelineState::new(pipeline_config);
@@ -2609,6 +2611,7 @@ mod tests {
             checksum_seed: None,
             is_daemon_connection: false,
             checksum_choice: None,
+            write_devices: false,
         }
     }
 
@@ -3499,6 +3502,7 @@ mod tests {
             checksum_seed: None,
             is_daemon_connection: false,
             checksum_choice: None,
+            write_devices: false,
         }
     }
 
