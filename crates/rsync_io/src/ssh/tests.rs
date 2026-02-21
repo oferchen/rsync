@@ -375,3 +375,60 @@ fn drop_child_handle_kills_running_process() {
     // If Drop didn't kill, this test would hang for 60 seconds.
     drop(child_handle);
 }
+
+#[test]
+fn forces_aes_gcm_ciphers_when_explicitly_enabled() {
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(true));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(rendered.contains(&"-c".to_owned()));
+    assert!(rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()));
+}
+
+#[test]
+fn omits_cipher_args_when_aes_explicitly_disabled() {
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(!rendered.contains(&"-c".to_owned()));
+}
+
+#[test]
+fn auto_detects_aes_when_preference_is_none() {
+    // Default (None) does not inject cipher args, preserving backward compatibility
+    let command = SshCommand::new("example.com");
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(!rendered.iter().any(|a| a == "-c"));
+}
+
+#[test]
+fn skips_cipher_injection_when_custom_options_present() {
+    // Auto-detect with custom options present -> no cipher injection
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-v");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(!rendered.iter().any(|a| a == "-c"));
+}
+
+#[test]
+fn skips_cipher_injection_for_non_ssh_program() {
+    let mut command = SshCommand::new("example.com");
+    command.set_program("plink");
+    command.set_prefer_aes_gcm(Some(true));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(!rendered.contains(&"-c".to_owned()));
+}
