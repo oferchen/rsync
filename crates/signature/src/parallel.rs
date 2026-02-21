@@ -127,15 +127,33 @@ pub fn generate_file_signature_parallel<R: Read>(
         return Err(SignatureError::TrailingData { bytes: 1 });
     }
 
-    // Phase 2: Compute checksums in parallel
+    // Phase 2: Compute checksums in parallel using SIMD batch within each rayon chunk.
+    //
+    // Rayon distributes chunks of blocks across threads. Within each chunk, the SIMD
+    // batch API processes multiple blocks through multi-lane hashing (e.g., 4-16 lanes
+    // for MD4/MD5 on AVX2/AVX-512). This combines thread-level parallelism with
+    // data-level parallelism for maximum throughput.
+    const BATCH_SIZE: usize = 16;
+
     let blocks: Vec<SignatureBlock> = block_data
-        .par_iter()
+        .par_chunks(BATCH_SIZE)
         .enumerate()
-        .map(|(index, chunk)| {
-            let rolling = RollingDigest::from_bytes(chunk);
-            let mut strong = algorithm.compute_full(chunk);
-            strong.truncate(strong_len);
-            SignatureBlock::new(index as u64, rolling, strong)
+        .flat_map_iter(|(chunk_idx, chunk)| {
+            let base_index = chunk_idx * BATCH_SIZE;
+            let rolling_digests: Vec<RollingDigest> = chunk
+                .iter()
+                .map(|data| RollingDigest::from_bytes(data))
+                .collect();
+            let batch_slices: Vec<&[u8]> = chunk.iter().map(|v| v.as_slice()).collect();
+            let strong_digests = algorithm.compute_truncated_batch(&batch_slices, strong_len);
+
+            rolling_digests
+                .into_iter()
+                .zip(strong_digests)
+                .enumerate()
+                .map(move |(i, (rolling, strong))| {
+                    SignatureBlock::new((base_index + i) as u64, rolling, strong)
+                })
         })
         .collect();
 
