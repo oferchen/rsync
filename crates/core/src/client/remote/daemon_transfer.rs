@@ -177,7 +177,7 @@ pub fn run_daemon_transfer(
         connect_duration,
         handshake_io_timeout,
         config.address_mode(),
-        None, // No bind address
+        config.bind_address().map(|b| b.socket()),
     )?;
 
     // Apply user-specified socket options (--sockopts) to the data transfer socket.
