@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::time::{Duration, SystemTime};
 
 use crate::{ServerConfig, ServerRole};
 
@@ -89,4 +90,42 @@ fn config_preserves_role_for_daemon_transfers() {
 
     assert_eq!(receiver.role, ServerRole::Receiver);
     assert_eq!(generator.role, ServerRole::Generator);
+}
+
+#[test]
+fn config_stop_at_default_is_none() {
+    let config = ServerConfig::from_flag_string_and_args(
+        ServerRole::Receiver,
+        String::new(),
+        vec![OsString::from("/path")],
+    )
+    .expect("config parses");
+    assert!(config.stop_at.is_none());
+}
+
+#[test]
+fn config_stop_at_can_be_set() {
+    let deadline = SystemTime::now() + Duration::from_secs(3600);
+    let mut config = ServerConfig::from_flag_string_and_args(
+        ServerRole::Receiver,
+        String::new(),
+        vec![OsString::from("/path")],
+    )
+    .expect("config parses");
+    config.stop_at = Some(deadline);
+    assert!(config.stop_at.is_some());
+}
+
+#[test]
+fn config_stop_at_survives_clone() {
+    let deadline = SystemTime::now() + Duration::from_secs(60);
+    let mut config = ServerConfig::from_flag_string_and_args(
+        ServerRole::Generator,
+        String::new(),
+        vec![OsString::from("/path")],
+    )
+    .expect("config parses");
+    config.stop_at = Some(deadline);
+    let cloned = config.clone();
+    assert_eq!(cloned.stop_at, config.stop_at);
 }
