@@ -560,6 +560,11 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         mut options: LocalCopyOptions,
         config: &ClientConfig,
     ) -> LocalCopyOptions {
+        // Resolve --copy-as USER[:GROUP] specification into numeric IDs
+        let copy_as_ids = config
+            .copy_as()
+            .and_then(|spec| ::metadata::parse_copy_as_spec(spec).ok());
+
         options = options
             .with_stop_at(config.stop_at())
             .whole_file_option(config.whole_file_raw())
@@ -568,6 +573,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .with_owner_override(config.owner_override())
             .group(config.preserve_group())
             .with_group_override(config.group_override())
+            .with_copy_as(copy_as_ids)
             .with_chmod(config.chmod().cloned())
             .executability(config.preserve_executability())
             .permissions(config.preserve_permissions())
