@@ -69,6 +69,7 @@ impl<'a> CopyContext<'a> {
             deferred_sync,
             checksum_cache: None,
             io_errors_occurred: false,
+            verified_parents: HashSet::new(),
         }
     }
 

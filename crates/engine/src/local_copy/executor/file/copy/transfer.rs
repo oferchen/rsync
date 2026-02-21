@@ -303,9 +303,11 @@ pub(super) fn execute_transfer(
         }
         AppendMode::Disabled | AppendMode::Skip => 0,
     };
-    reader
-        .seek(SeekFrom::Start(append_offset))
-        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+    if append_offset > 0 {
+        reader
+            .seek(SeekFrom::Start(append_offset))
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+    }
 
     // delta signature if we can
     // For inplace mode, we can use delta transfer as long as we're careful about reading

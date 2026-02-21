@@ -1,7 +1,7 @@
 //! Execution context and helper types for local filesystem copies.
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -108,6 +108,10 @@ pub(crate) struct CopyContext<'a> {
     /// When set to `true` and `--ignore-errors` is not enabled, deletions
     /// are suppressed to prevent data loss.
     io_errors_occurred: bool,
+    /// Cache of parent directories whose existence has been verified.
+    /// Eliminates redundant `statx` syscalls when many files share the
+    /// same parent (e.g. 10K files in one directory → 1 stat instead of 10K).
+    verified_parents: HashSet<PathBuf>,
 }
 
 pub(crate) struct FinalizeMetadataParams<'a> {

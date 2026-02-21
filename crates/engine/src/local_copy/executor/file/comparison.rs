@@ -8,7 +8,6 @@ use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signatu
 use crate::local_copy::{COPY_BUFFER_SIZE, LocalCopyError};
 use crate::signature::{SignatureAlgorithm, SignatureError, generate_file_signature};
 
-use checksums::strong::{Md4, Md5, Sha1, Xxh3, Xxh3_128, Xxh64};
 use protocol::ProtocolVersion;
 
 /// Returns `true` when the destination modification time is strictly newer
@@ -133,12 +132,14 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
         });
     }
 
-    if ignore_times {
-        return false;
-    }
-
+    // Upstream: generator.c:unchanged_file() checks size_only before ignore_times.
+    // When both flags are set, size_only wins (skip if sizes match).
     if size_only {
         return true;
+    }
+
+    if ignore_times {
+        return false;
     }
 
     match (source.modified(), destination.modified()) {
@@ -196,92 +197,24 @@ where
     Ok(true)
 }
 
-pub(crate) enum StrongHasher {
-    Md4(Md4),
-    Md5(Md5),
-    Sha1(Sha1),
-    Xxh64(Xxh64),
-    Xxh3(Xxh3),
-    Xxh128(Xxh3_128),
-}
-
-/// Fixed-size digest output from various hash algorithms.
+/// Compares two local files for content equality.
 ///
-/// Uses stack-allocated arrays to avoid heap allocations during checksum
-/// comparison. The enum size is 24 bytes (8 bytes discriminant + 20 bytes
-/// for the largest variant Sha1), which is acceptable for stack usage.
-#[derive(Debug, PartialEq, Eq)]
-enum Digest {
-    Md4([u8; 16]),
-    Md5([u8; 16]),
-    Sha1([u8; 20]),
-    Xxh64([u8; 8]),
-    Xxh3([u8; 8]),
-    Xxh128([u8; 16]),
-}
-
-impl StrongHasher {
-    fn new(algorithm: SignatureAlgorithm) -> Self {
-        use checksums::strong::StrongDigest;
-        match algorithm {
-            SignatureAlgorithm::Md4 => StrongHasher::Md4(Md4::new()),
-            SignatureAlgorithm::Md5 { seed_config } => {
-                StrongHasher::Md5(Md5::with_seed(seed_config))
-            }
-            SignatureAlgorithm::Sha1 => StrongHasher::Sha1(Sha1::new()),
-            SignatureAlgorithm::Xxh64 { seed } => StrongHasher::Xxh64(Xxh64::new(seed)),
-            SignatureAlgorithm::Xxh3 { seed } => StrongHasher::Xxh3(Xxh3::new(seed)),
-            SignatureAlgorithm::Xxh3_128 { seed } => StrongHasher::Xxh128(Xxh3_128::new(seed)),
-        }
-    }
-
-    fn update(&mut self, data: &[u8]) {
-        match self {
-            StrongHasher::Md4(state) => state.update(data),
-            StrongHasher::Md5(state) => state.update(data),
-            StrongHasher::Sha1(state) => state.update(data),
-            StrongHasher::Xxh64(state) => state.update(data),
-            StrongHasher::Xxh3(state) => state.update(data),
-            StrongHasher::Xxh128(state) => state.update(data),
-        }
-    }
-
-    fn finalize(self) -> Digest {
-        match self {
-            StrongHasher::Md4(state) => Digest::Md4(state.finalize()),
-            StrongHasher::Md5(state) => Digest::Md5(state.finalize()),
-            StrongHasher::Sha1(state) => Digest::Sha1(state.finalize()),
-            StrongHasher::Xxh64(state) => Digest::Xxh64(state.finalize()),
-            StrongHasher::Xxh3(state) => Digest::Xxh3(state.finalize()),
-            StrongHasher::Xxh128(state) => Digest::Xxh128(state.finalize()),
-        }
-    }
-}
-
+/// Uses lockstep byte comparison which is both faster and more accurate than
+/// hashing for local files. Upstream rsync uses checksum comparison because
+/// source and destination are on different machines, but for local copies
+/// we can compare bytes directly.
 pub(crate) fn files_checksum_match(
     source: &Path,
     destination: &Path,
-    algorithm: SignatureAlgorithm,
+    _algorithm: SignatureAlgorithm,
 ) -> io::Result<bool> {
-    let mut source_hasher = StrongHasher::new(algorithm);
-    let mut destination_hasher = StrongHasher::new(algorithm);
-
-    let identical = compare_files_lockstep(source, destination, |src_chunk, dst_chunk| {
-        if src_chunk != dst_chunk {
-            LockstepCheck::Diverged
-        } else {
-            source_hasher.update(src_chunk);
-            destination_hasher.update(dst_chunk);
+    compare_files_lockstep(source, destination, |src_chunk, dst_chunk| {
+        if src_chunk == dst_chunk {
             LockstepCheck::Continue
+        } else {
+            LockstepCheck::Diverged
         }
-    })?;
-
-    if !identical {
-        return Ok(false);
-    }
-
-    // Compare digests directly using PartialEq - no heap allocation needed
-    Ok(source_hasher.finalize() == destination_hasher.finalize())
+    })
 }
 
 #[cfg(test)]
@@ -374,7 +307,9 @@ mod tests {
     }
 
     #[test]
-    fn should_skip_copy_respects_ignore_times_even_with_size_only() {
+    fn should_skip_copy_size_only_wins_over_ignore_times() {
+        // Upstream: generator.c:unchanged_file() checks size_only before
+        // ignore_times. When both are set and sizes match, size_only wins.
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
         let destination = temp.path().join("dest.txt");
@@ -402,7 +337,7 @@ mod tests {
             prefetched_match: None,
         };
 
-        assert!(!should_skip_copy(comparison));
+        assert!(should_skip_copy(comparison));
     }
 
     // ==================== destination_is_newer tests ====================
