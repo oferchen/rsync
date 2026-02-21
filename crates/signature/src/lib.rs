@@ -99,7 +99,7 @@ pub mod parallel;
 
 pub mod async_gen;
 
-pub use algorithm::SignatureAlgorithm;
+pub use algorithm::{DigestBuf, SignatureAlgorithm};
 pub use block::SignatureBlock;
 pub use block_size::{
     DEFAULT_BLOCK_SIZE, MAX_BLOCK_SIZE_OLD, MAX_BLOCK_SIZE_V30, MIN_BLOCK_SIZE,
