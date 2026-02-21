@@ -295,16 +295,53 @@ pub fn negotiate_capabilities(
     is_daemon_mode: bool,
     is_server: bool,
 ) -> io::Result<NegotiationResult> {
+    negotiate_capabilities_with_override(
+        protocol,
+        stdin,
+        stdout,
+        do_negotiation,
+        send_compression,
+        is_daemon_mode,
+        is_server,
+        None,
+    )
+}
+
+/// Negotiates checksum and compression algorithms with the peer, with an
+/// optional user-specified checksum algorithm override.
+///
+/// When `checksum_override` is `Some`, the advertised checksum list is replaced
+/// with just the requested algorithm (mirroring upstream rsync's
+/// `--checksum-choice` behavior from `options.c:valid_checksums`). The override
+/// also forces selection of that algorithm from the peer's list, returning an
+/// error if the peer does not support it.
+///
+/// When `checksum_override` is `None`, behaves identically to
+/// [`negotiate_capabilities`].
+pub fn negotiate_capabilities_with_override(
+    protocol: ProtocolVersion,
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+    do_negotiation: bool,
+    send_compression: bool,
+    is_daemon_mode: bool,
+    is_server: bool,
+    checksum_override: Option<ChecksumAlgorithm>,
+) -> io::Result<NegotiationResult> {
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.uses_fixed_encoding() {
+        // When user forced a checksum on a legacy protocol, honour it directly
+        // since there is no wire negotiation to perform.
+        let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD4);
         debug_log!(
             Proto,
             1,
-            "protocol {} uses legacy encoding, using defaults (MD4, Zlib)",
-            protocol.as_u8()
+            "protocol {} uses legacy encoding, using checksum={} compression=Zlib",
+            protocol.as_u8(),
+            checksum.as_str()
         );
         return Ok(NegotiationResult {
-            checksum: ChecksumAlgorithm::MD4,
+            checksum,
             compression: CompressionAlgorithm::Zlib,
         });
     }
@@ -320,13 +357,15 @@ pub fn negotiate_capabilities(
     if !do_negotiation {
         // Use protocol 30+ defaults without sending or reading anything
         // Upstream default when compression is not negotiated is CPRES_NONE (compat.c:234)
+        let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD5);
         debug_log!(
             Proto,
             1,
-            "client lacks VARINT_FLIST_FLAGS, using defaults (MD5, None)"
+            "client lacks VARINT_FLIST_FLAGS, using checksum={} compression=None",
+            checksum.as_str()
         );
         return Ok(NegotiationResult {
-            checksum: ChecksumAlgorithm::MD5,
+            checksum,
             compression: CompressionAlgorithm::None,
         });
     }
@@ -349,7 +388,14 @@ pub fn negotiate_capabilities(
 
     // Step 1: SEND our supported algorithm lists (upstream compat.c:541-544)
     // Uses vstring format (NOT varint) - see write_vstring documentation
-    let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
+    //
+    // When --checksum-choice overrides the selection, advertise only that
+    // algorithm (upstream options.c replaces valid_checksums with the user's
+    // choice so negotiate_the_strings sees a single-entry list).
+    let checksum_list = match checksum_override {
+        Some(algo) => algo.as_str().to_owned(),
+        None => SUPPORTED_CHECKSUMS.join(" "),
+    };
     debug_log!(Proto, 2, "sending checksum list: {}", checksum_list);
     write_vstring(stdout, &checksum_list)?;
 
@@ -378,7 +424,28 @@ pub fn negotiate_capabilities(
     // Step 3: Choose algorithms - pick first from REMOTE's list that WE also support
     // This matches upstream where "the client picks the first name in the server's list
     // that is also in the client's list"
-    let checksum = choose_checksum_algorithm(&remote_checksum_list)?;
+    //
+    // When the user forced a checksum via --checksum-choice, verify the remote
+    // advertises it and use it unconditionally.
+    let checksum = match checksum_override {
+        Some(forced) => {
+            let forced_name = forced.as_str();
+            if remote_checksum_list
+                .split_whitespace()
+                .any(|name| name == forced_name)
+            {
+                forced
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "--checksum-choice '{forced_name}' is not supported by the remote side (remote offers: {remote_checksum_list})"
+                    ),
+                ));
+            }
+        }
+        None => choose_checksum_algorithm(&remote_checksum_list)?,
+    };
 
     let compression = if let Some(ref list) = remote_compression_list {
         choose_compression_algorithm(list)?
