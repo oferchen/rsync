@@ -27,8 +27,8 @@ use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_dige
 use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
 use super::super::error::{ClientError, daemon_error, invalid_argument_error, socket_error};
 use super::super::module_list::{
-    DaemonAddress, DaemonAuthContext, connect_direct, load_daemon_password, parse_host_port,
-    send_daemon_auth_credentials,
+    DaemonAddress, DaemonAuthContext, apply_socket_options, connect_direct, load_daemon_password,
+    parse_host_port, resolve_connect_timeout, send_daemon_auth_credentials,
 };
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
@@ -164,13 +164,28 @@ pub fn run_daemon_transfer(
     let request = DaemonTransferRequest::parse_rsync_url(&daemon_url.to_string_lossy())?;
 
     // Step 3: Connect to daemon
+    // Use config timeouts with DAEMON_SOCKET_TIMEOUT as the default fallback.
+    // upstream: clientserver.c — start_daemon_client() applies io_timeout to connect.
+    let connect_duration = resolve_connect_timeout(
+        config.connect_timeout(),
+        config.timeout(),
+        DAEMON_SOCKET_TIMEOUT,
+    );
+    let handshake_io_timeout = config.timeout().effective(DAEMON_SOCKET_TIMEOUT);
     let mut stream = connect_direct(
         &request.address,
-        None, // No custom connect timeout
-        Some(DAEMON_SOCKET_TIMEOUT),
+        connect_duration,
+        handshake_io_timeout,
         config.address_mode(),
         None, // No bind address
     )?;
+
+    // Apply user-specified socket options (--sockopts) to the data transfer socket.
+    // upstream: clientserver.c — start_daemon_client() calls set_socket_options()
+    // on the daemon socket before the handshake.
+    if let Some(sockopts) = config.sockopts() {
+        apply_socket_options(&stream, sockopts)?;
+    }
 
     // Step 4: Perform daemon handshake
     // Output MOTD unless --no-motd was specified (upstream defaults to true)
@@ -452,6 +467,13 @@ fn send_daemon_arguments(
         args.push("--sender".to_owned());
     }
 
+    // Forward --checksum-choice to the daemon so both sides agree on the
+    // checksum algorithm (upstream options.c server_options()).
+    let checksum_choice = config.checksum_choice();
+    if let Some(override_algo) = checksum_choice.transfer_protocol_override() {
+        args.push(format!("--checksum-choice={}", override_algo.as_str()));
+    }
+
     // Build flag string with capabilities
     let flag_string = build_server_flag_string(config);
     if !flag_string.is_empty() {
@@ -546,18 +568,20 @@ fn run_pull_transfer(
         .set_nodelay(true)
         .map_err(|e| socket_error("set nodelay on", "daemon socket", e))?;
 
-    // Clear the handshake-phase socket timeouts before the data transfer begins.
-    // DAEMON_SOCKET_TIMEOUT (10s) was set during connect_direct() to detect
-    // unresponsive servers during the handshake, but during the actual transfer
-    // the remote server may legitimately take longer to prepare the file list.
-    // On Linux, an expired read timeout manifests as EAGAIN (errno 11), not
-    // ETIMEDOUT, which causes spurious "Resource temporarily unavailable" errors.
+    // Replace the handshake-phase socket timeout with the user-configured --timeout
+    // for the data transfer phase. When --timeout is not set, clear the handshake
+    // timeout (upstream default io_timeout is 0, meaning no timeout).
+    // upstream: io.c — select_timeout() uses io_timeout for all transfer I/O.
+    let transfer_timeout = config
+        .timeout()
+        .as_seconds()
+        .map(|s| Duration::from_secs(s.get()));
     stream
-        .set_read_timeout(None)
-        .map_err(|e| socket_error("clear read timeout on", "daemon socket", e))?;
+        .set_read_timeout(transfer_timeout)
+        .map_err(|e| socket_error("set read timeout on", "daemon socket", e))?;
     stream
-        .set_write_timeout(None)
-        .map_err(|e| socket_error("clear write timeout on", "daemon socket", e))?;
+        .set_write_timeout(transfer_timeout)
+        .map_err(|e| socket_error("set write timeout on", "daemon socket", e))?;
 
     // Build filter rules to pass to server config
     // (will be sent after multiplex activation in run_server_with_handshake)
@@ -572,7 +596,7 @@ fn run_pull_transfer(
         buffered: Vec::new(),
         compat_exchanged: false, // setup_protocol() will do compat exchange
         client_args: None,
-        io_timeout: None,
+        io_timeout: config.timeout().as_seconds().map(|s| s.get()),
         negotiated_algorithms: None, // Will be populated by setup_protocol()
         compat_flags: None,          // Will be populated by setup_protocol()
         checksum_seed: 0,            // Will be populated by setup_protocol()
@@ -615,13 +639,17 @@ fn run_push_transfer(
         .set_nodelay(true)
         .map_err(|e| socket_error("set nodelay on", "daemon socket", e))?;
 
-    // Clear the handshake-phase socket timeouts (same rationale as run_pull_transfer).
+    // Replace handshake-phase timeout with user-configured --timeout (same as pull).
+    let transfer_timeout = config
+        .timeout()
+        .as_seconds()
+        .map(|s| Duration::from_secs(s.get()));
     stream
-        .set_read_timeout(None)
-        .map_err(|e| socket_error("clear read timeout on", "daemon socket", e))?;
+        .set_read_timeout(transfer_timeout)
+        .map_err(|e| socket_error("set read timeout on", "daemon socket", e))?;
     stream
-        .set_write_timeout(None)
-        .map_err(|e| socket_error("clear write timeout on", "daemon socket", e))?;
+        .set_write_timeout(transfer_timeout)
+        .map_err(|e| socket_error("set write timeout on", "daemon socket", e))?;
 
     // Build filter rules to pass to server config
     // (will be sent after multiplex activation in run_server_with_handshake)
@@ -636,7 +664,7 @@ fn run_push_transfer(
         buffered: Vec::new(),
         compat_exchanged: false, // setup_protocol() will do compat exchange
         client_args: None,
-        io_timeout: None,
+        io_timeout: config.timeout().as_seconds().map(|s| s.get()),
         negotiated_algorithms: None, // Will be populated by setup_protocol()
         compat_flags: None,          // Will be populated by setup_protocol()
         checksum_seed: 0,            // Will be populated by setup_protocol()
@@ -666,31 +694,44 @@ fn convert_server_stats_to_summary(
 ) -> ClientSummary {
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
+    use transfer::io_error_flags;
 
-    let summary = match stats {
-        ServerStats::Receiver(transfer_stats) => {
-            // For pull transfers: we received files from remote
-            LocalCopySummary::from_receiver_stats(
+    let (local_summary, io_error, error_count) = match stats {
+        ServerStats::Receiver(ref transfer_stats) => {
+            let s = LocalCopySummary::from_receiver_stats(
                 transfer_stats.files_listed,
                 transfer_stats.files_transferred,
                 transfer_stats.bytes_received,
                 transfer_stats.bytes_sent,
                 transfer_stats.total_source_bytes,
                 elapsed,
-            )
+            );
+            (s, transfer_stats.io_error, transfer_stats.error_count)
         }
-        ServerStats::Generator(generator_stats) => {
-            // For push transfers: we sent files to remote
-            LocalCopySummary::from_generator_stats(
+        ServerStats::Generator(ref generator_stats) => {
+            let s = LocalCopySummary::from_generator_stats(
                 generator_stats.files_listed,
                 generator_stats.files_transferred,
                 generator_stats.bytes_sent,
                 elapsed,
-            )
+            );
+            (s, 0i32, 0u32)
         }
     };
 
-    ClientSummary::from_summary(summary)
+    let mut summary = ClientSummary::from_summary(local_summary);
+
+    // Map accumulated I/O error flags to an exit code.
+    // upstream: log.c — log_exit() converts io_error bitfield to RERR_* codes.
+    let exit_code = io_error_flags::to_exit_code(io_error);
+    if exit_code != 0 {
+        summary.set_io_error_exit_code(exit_code);
+    } else if error_count > 0 {
+        // Remote sender reported errors via MSG_ERROR — treat as partial transfer.
+        summary.set_io_error_exit_code(23); // RERR_PARTIAL
+    }
+
+    summary
 }
 
 /// Helper function to run server over a TCP stream with pre-negotiated handshake.
@@ -737,6 +778,7 @@ fn build_server_config_for_receiver(
     // This prevents the context from trying to read filter list
     // (since we'll send it to the daemon after multiplex activation).
     server_config.client_mode = true;
+    server_config.is_daemon_connection = true;
     server_config.filter_rules = filter_rules;
 
     // Set verbose flag for local output (not sent to daemon in server protocol string)
@@ -745,6 +787,7 @@ fn build_server_config_for_receiver(
     // Propagate long-form-only flags that aren't part of the server flag string
     server_config.fsync = config.fsync();
     server_config.direct_write = config.direct_write();
+    server_config.checksum_choice = config.checksum_protocol_override();
 
     Ok(server_config)
 }
@@ -769,6 +812,7 @@ fn build_server_config_for_generator(
     // This prevents the context from trying to read filter list
     // (since we'll send it to the daemon after multiplex activation).
     server_config.client_mode = true;
+    server_config.is_daemon_connection = true;
     server_config.filter_rules = filter_rules;
 
     // Set verbose flag for local output (not sent to daemon in server protocol string)
@@ -777,6 +821,7 @@ fn build_server_config_for_generator(
     // Propagate long-form-only flags that aren't part of the server flag string
     server_config.fsync = config.fsync();
     server_config.direct_write = config.direct_write();
+    server_config.checksum_choice = config.checksum_protocol_override();
 
     Ok(server_config)
 }

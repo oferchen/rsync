@@ -45,6 +45,8 @@ fn test_config() -> ServerConfig {
         fsync: false,
         direct_write: false,
         checksum_seed: None,
+        is_daemon_connection: false,
+        checksum_choice: None,
     }
 }
 
@@ -64,6 +66,8 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         fsync: false,
         direct_write: false,
         checksum_seed: None,
+        is_daemon_connection: false,
+        checksum_choice: None,
     }
 }
 

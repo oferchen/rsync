@@ -1076,6 +1076,8 @@ impl ReceiverContext {
             bytes_sent: 0,
             total_source_bytes,
             metadata_errors,
+            io_error: 0,
+            error_count: 0,
             entries_received: 0,
             directories_created: 0,
             directories_failed: 0,
@@ -1172,6 +1174,8 @@ impl ReceiverContext {
             bytes_sent: 0,
             total_source_bytes,
             metadata_errors,
+            io_error: 0,
+            error_count: 0,
             entries_received: 0,
             directories_created: 0,
             directories_failed: 0,
@@ -1948,6 +1952,22 @@ pub struct TransferStats {
     pub total_source_bytes: u64,
     /// Metadata errors encountered (path, error message).
     pub metadata_errors: Vec<(PathBuf, String)>,
+    /// Accumulated I/O error flags from the sender's file list trailer.
+    ///
+    /// This bitfield uses the constants from [`super::io_error_flags`] and is
+    /// propagated to the client summary so the exit code reflects any I/O
+    /// errors that occurred during the transfer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2518`: `write_int(f, ignore_errors ? 0 : io_error);`
+    pub io_error: i32,
+    /// Number of `MSG_ERROR` messages received from the remote sender.
+    ///
+    /// When the sender encounters per-file errors it sends `MSG_ERROR` frames
+    /// that the receiver tallies here. A non-zero count causes the exit code
+    /// to report a partial transfer (`RERR_PARTIAL`, exit 23).
+    pub error_count: u32,
 
     // Incremental mode statistics
     /// Total entries received from wire (incremental mode).
@@ -2587,6 +2607,8 @@ mod tests {
             fsync: false,
             direct_write: false,
             checksum_seed: None,
+            is_daemon_connection: false,
+            checksum_choice: None,
         }
     }
 
@@ -3475,6 +3497,8 @@ mod tests {
             fsync: false,
             direct_write: false,
             checksum_seed: None,
+            is_daemon_connection: false,
+            checksum_choice: None,
         }
     }
 
@@ -3901,7 +3925,8 @@ mod tests {
             bytes_sent: 0,
             total_source_bytes: 0,
             metadata_errors: vec![],
-            // New fields
+            io_error: 0,
+            error_count: 0,
             entries_received: 100,
             directories_created: 10,
             directories_failed: 2,

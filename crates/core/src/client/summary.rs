@@ -42,6 +42,13 @@ use engine::local_copy::{
 pub struct ClientSummary {
     stats: LocalCopySummary,
     events: Vec<ClientEvent>,
+    /// Optional exit code derived from server-side I/O error flags.
+    ///
+    /// When set, indicates the transfer completed with I/O errors that should
+    /// be reflected in the process exit code. Maps to upstream rsync exit codes
+    /// such as `RERR_PARTIAL` (23), `RERR_VANISHED` (24), or
+    /// `RERR_DEL_LIMIT` (25).
+    io_error_exit_code: Option<i32>,
 }
 
 impl ClientSummary {
@@ -53,7 +60,11 @@ impl ClientSummary {
             .iter()
             .map(|record| ClientEvent::from_record(record, Arc::clone(&destination_root)))
             .collect();
-        Self { stats, events }
+        Self {
+            stats,
+            events,
+            io_error_exit_code: None,
+        }
     }
 
     // Allow large_types_passed_by_value: constructor intentionally takes ownership
@@ -62,6 +73,7 @@ impl ClientSummary {
         Self {
             stats: summary,
             events: Vec::new(),
+            io_error_exit_code: None,
         }
     }
 
@@ -263,6 +275,24 @@ impl ClientSummary {
     #[must_use]
     pub const fn file_list_transfer_time(&self) -> Duration {
         self.stats.file_list_transfer_time()
+    }
+
+    /// Returns the I/O error exit code when the transfer finished with errors.
+    ///
+    /// Maps to upstream rsync exit codes such as `RERR_PARTIAL` (23),
+    /// `RERR_VANISHED` (24), or `RERR_DEL_LIMIT` (25). Returns `None`
+    /// when the transfer completed without I/O errors.
+    #[must_use]
+    pub const fn io_error_exit_code(&self) -> Option<i32> {
+        self.io_error_exit_code
+    }
+
+    /// Records an exit code derived from server-side I/O error flags.
+    ///
+    /// Called after a daemon transfer completes to propagate `io_error`
+    /// bitfield values into the process exit code.
+    pub(crate) fn set_io_error_exit_code(&mut self, code: i32) {
+        self.io_error_exit_code = Some(code);
     }
 }
 
