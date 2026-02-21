@@ -159,6 +159,7 @@ pub struct ClientConfig {
     pub(super) remote_shell: Option<Vec<OsString>>,
     pub(super) rsync_path: Option<OsString>,
     pub(super) early_input: Option<PathBuf>,
+    pub(super) prefer_aes_gcm: Option<bool>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
     pub(super) no_motd: bool,
     #[cfg(all(unix, feature = "acl"))]
@@ -276,6 +277,7 @@ impl Default for ClientConfig {
             remote_shell: None,
             rsync_path: None,
             early_input: None,
+            prefer_aes_gcm: None,
             batch_config: None,
             no_motd: false,
             #[cfg(all(unix, feature = "acl"))]

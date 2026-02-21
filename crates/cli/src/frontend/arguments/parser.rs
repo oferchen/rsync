@@ -221,6 +221,7 @@ where
     } else {
         open_noatime_flag
     };
+    let prefer_aes_gcm = tri_state_flag_positive_first(&matches, "aes", "no-aes");
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt
         && let Ok(setting) = parse_compress_level_argument(value.as_os_str())
@@ -672,6 +673,7 @@ where
         dparam,
         no_iconv,
         executability,
+        prefer_aes_gcm,
     })
 }
 
@@ -1070,5 +1072,37 @@ mod tests {
         assert!(result.is_ok());
         let parsed = result.unwrap();
         assert_eq!(parsed.times, Some(false));
+    }
+
+    #[test]
+    fn aes_flag() {
+        let result = parse_test_args(["--aes", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.prefer_aes_gcm, Some(true));
+    }
+
+    #[test]
+    fn no_aes_flag() {
+        let result = parse_test_args(["--no-aes", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.prefer_aes_gcm, Some(false));
+    }
+
+    #[test]
+    fn aes_default_is_none() {
+        let result = parse_test_args(["src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.prefer_aes_gcm, None);
+    }
+
+    #[test]
+    fn no_aes_then_aes_uses_last() {
+        let result = parse_test_args(["--no-aes", "--aes", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.prefer_aes_gcm, Some(true));
     }
 }
