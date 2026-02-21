@@ -4,6 +4,7 @@ use super::SshConnection;
 use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 fn args_to_strings(args: &[OsString]) -> Vec<String> {
     args.iter()
@@ -431,4 +432,66 @@ fn skips_cipher_injection_for_non_ssh_program() {
     let rendered = args_to_strings(&args);
 
     assert!(!rendered.contains(&"-c".to_owned()));
+}
+
+#[test]
+fn injects_bind_address_ipv4() {
+    let mut command = SshCommand::new("example.com");
+    command.set_bind_address(Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        rendered.contains(&"-oBindAddress=192.168.1.100".to_owned()),
+        "expected -oBindAddress=192.168.1.100 in {rendered:?}"
+    );
+}
+
+#[test]
+fn injects_bind_address_ipv6() {
+    let mut command = SshCommand::new("example.com");
+    command.set_bind_address(Some(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        rendered.contains(&"-oBindAddress=::1".to_owned()),
+        "expected -oBindAddress=::1 in {rendered:?}"
+    );
+}
+
+#[test]
+fn omits_bind_address_when_none() {
+    let command = SshCommand::new("example.com");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a.starts_with("-oBindAddress=")),
+        "bind address should not appear in {rendered:?}"
+    );
+}
+
+#[test]
+fn bind_address_appears_before_custom_options() {
+    let mut command = SshCommand::new("example.com");
+    command.set_bind_address(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+    command.push_option("-v");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let bind_pos = rendered
+        .iter()
+        .position(|a| a.starts_with("-oBindAddress="))
+        .expect("bind address present");
+    let option_pos = rendered.iter().position(|a| a == "-v").expect("-v present");
+
+    assert!(
+        bind_pos < option_pos,
+        "bind address at {bind_pos} should precede custom option at {option_pos}"
+    );
 }
