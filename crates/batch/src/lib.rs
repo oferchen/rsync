@@ -356,7 +356,7 @@ pub struct BatchConfig {
     ///
     /// These flags are automatically set based on protocol version in
     /// [`BatchConfig::new`]. For protocol versions < 30, this is `None`.
-    pub compat_flags: Option<u64>,
+    pub compat_flags: Option<i32>,
 
     /// Checksum seed for the transfer.
     ///
@@ -431,7 +431,7 @@ impl BatchConfig {
     ///
     /// assert_eq!(config.compat_flags, Some(0x01));
     /// ```
-    pub const fn with_compat_flags(mut self, flags: u64) -> Self {
+    pub const fn with_compat_flags(mut self, flags: i32) -> Self {
         if self.protocol_version >= 30 {
             self.compat_flags = Some(flags);
         }
