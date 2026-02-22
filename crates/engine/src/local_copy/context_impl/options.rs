@@ -454,6 +454,26 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Returns `true` when a directory path is excluded by a non-directory-specific
+    /// filter rule.
+    ///
+    /// Used by the planner when `--prune-empty-dirs` is active: directories
+    /// excluded by generic patterns (e.g., `*`) should still be descended into
+    /// so that file-level include rules can be evaluated. Only directory-specific
+    /// exclude patterns (trailing `/`) should prevent traversal outright.
+    pub(super) fn excluded_dir_by_non_dir_rule(&self, relative: &Path) -> bool {
+        if let Some(program) = &self.filter_program {
+            let layers = self.dir_merge_layers.borrow();
+            let ephemeral = self.dir_merge_ephemeral.borrow();
+            let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
+            program.excluded_dir_by_non_dir_rule(relative, layers.as_slice(), temp_layers)
+        } else if let Some(filters) = self.options.filter_set() {
+            filters.excluded_dir_by_non_dir_rule(relative)
+        } else {
+            false
+        }
+    }
+
     pub(super) fn allows_deletion(&self, relative: &Path, is_dir: bool) -> bool {
         let delete_excluded = self.options.delete_excluded_enabled();
         if let Some(program) = &self.filter_program {

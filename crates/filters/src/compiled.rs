@@ -129,6 +129,12 @@ impl CompiledRule {
         false
     }
 
+    /// Returns `true` if this rule was compiled from a directory-only pattern
+    /// (one with a trailing `/`).
+    pub(crate) const fn is_directory_only(&self) -> bool {
+        self.directory_only
+    }
+
     /// Clears applicability flags for this rule based on context.
     ///
     /// When a `!` (clear) rule is processed, it removes matching rules from
