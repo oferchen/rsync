@@ -2,14 +2,12 @@
 
 This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.4.1, treating code as the source of truth.
 
-**Last verified:** 2026-01-21
-**Test suite:** 10,285 passing tests
+**Last verified:** 2026-02-22
 **Validation commands:**
 ```sh
 cargo fmt --all -- --check \
-  && cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings \
-  && cargo nextest run --workspace --all-features \
-  && cargo xtask docs
+  && cargo clippy --workspace --all-targets --all-features --no-deps -D warnings \
+  && cargo nextest run --workspace --all-features
 ```
 
 ---
