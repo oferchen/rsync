@@ -1,0 +1,8 @@
+# oc-rsyncd configuration file
+# See oc-rsync --daemon --help for available options
+#
+# Example module:
+# [my_module]
+#     path = /srv/rsync/my_module
+#     comment = Example module
+#     read only = yes
