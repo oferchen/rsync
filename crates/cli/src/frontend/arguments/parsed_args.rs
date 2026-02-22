@@ -650,7 +650,7 @@ pub struct ParsedArgs {
     /// Allows non-root users to preserve root-only file attributes by
     /// storing them as extended attributes.
     ///
-    /// Corresponds to: `--fake-super` / `--no-fake-super`
+    /// Corresponds to: `--fake-super`
     ///
     /// Default: `None`
     pub fake_super: Option<bool>,
@@ -751,7 +751,7 @@ pub struct ParsedArgs {
     ///
     /// Transforms symlinks into regular files containing the target content.
     ///
-    /// Corresponds to: `--copy-links`, `-L` / `--no-copy-links`
+    /// Corresponds to: `--copy-links`, `-L`
     ///
     /// Default: `None`
     pub copy_links: Option<bool>,
@@ -769,7 +769,7 @@ pub struct ParsedArgs {
     ///
     /// Unsafe symlinks are those that point outside the transfer.
     ///
-    /// Corresponds to: `--copy-unsafe-links` / `--no-copy-unsafe-links`
+    /// Corresponds to: `--copy-unsafe-links`
     ///
     /// Default: `None`
     pub copy_unsafe_links: Option<bool>,
@@ -778,7 +778,7 @@ pub struct ParsedArgs {
     ///
     /// Allows rsync to transfer into symlinked directories on the receiver.
     ///
-    /// Corresponds to: `--keep-dirlinks`, `-K` / `--no-keep-dirlinks`
+    /// Corresponds to: `--keep-dirlinks`, `-K`
     ///
     /// Default: `None`
     pub keep_dirlinks: Option<bool>,
@@ -1031,7 +1031,7 @@ pub struct ParsedArgs {
     ///
     /// Calls `fsync()` to ensure data is written to stable storage.
     ///
-    /// Corresponds to: `--fsync` / `--no-fsync`
+    /// Corresponds to: `--fsync`
     ///
     /// Default: `None`
     pub fsync: Option<bool>,
@@ -1468,20 +1468,19 @@ pub struct ParsedArgs {
     ///
     /// Ensures executable permission is preserved when not preserving permissions.
     ///
-    /// Corresponds to: `--executability`, `-E` / `--no-executability`
+    /// Corresponds to: `--executability`, `-E`
     ///
     /// Default: `None`
     pub executability: Option<bool>,
 
-    /// Force or disable AES-GCM cipher selection for SSH connections.
+    /// Force AES-GCM cipher selection for SSH connections.
     ///
     /// Controls whether SSH connections should prefer hardware-accelerated
     /// AES-GCM ciphers over the default ChaCha20-Poly1305:
     /// - `Some(true)`: Force AES-GCM (`--aes`).
-    /// - `Some(false)`: Disable automatic cipher selection (`--no-aes`).
     /// - `None`: Use runtime hardware detection (default).
     ///
-    /// Corresponds to: `--aes` / `--no-aes`
+    /// Corresponds to: `--aes`
     ///
     /// Default: `None`
     pub prefer_aes_gcm: Option<bool>,
