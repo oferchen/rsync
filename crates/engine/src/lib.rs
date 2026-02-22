@@ -82,8 +82,6 @@ pub mod hardlink;
 pub mod local_copy;
 pub mod walk;
 
-// Re-export batch types from the batch crate for backward compatibility.
-// The batch crate is the source of truth for these types.
 #[doc(hidden)]
 pub mod batch {
     //! Re-exports from the [`batch`] crate for backward compatibility.
@@ -98,8 +96,6 @@ pub mod batch {
     }
 }
 
-// Re-export fuzzy matching types from the matching crate for backward compatibility.
-// The matching crate is the source of truth for these types.
 #[doc(hidden)]
 pub mod fuzzy {
     //! Re-exports from the [`matching`] crate for backward compatibility.
@@ -108,8 +104,6 @@ pub mod fuzzy {
     };
 }
 
-// Re-export signature types from the dedicated signature crate for backward compatibility.
-// The signature crate is the source of truth for these types.
 #[doc(hidden)]
 pub mod signature {
     //! Re-exports from the [`signature`] crate for backward compatibility.
@@ -118,26 +112,26 @@ pub mod signature {
     };
 }
 
-// Batch mode types for offline transfer workflows
+/// Batch mode types for offline transfer workflows.
 pub use batch::{BatchConfig, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchWriter};
 
-// Delta generation and signature layout for rsync block matching
+/// Delta generation and signature layout for rsync block matching.
 pub use delta::{
     DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, SignatureLayout,
     SignatureLayoutError, SignatureLayoutParams, apply_delta, calculate_signature_layout,
     generate_delta,
 };
 
-// Common error types
+/// Common error types for engine operations.
 pub use error::{EngineError, EngineResult};
 
-// Fuzzy matching for finding similar basis files
+/// Fuzzy matching for finding similar basis files.
 pub use fuzzy::{FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_similarity_score};
 
-// Hardlink detection and resolution
+/// Hardlink detection and resolution.
 pub use hardlink::{HardlinkAction, HardlinkGroup, HardlinkKey, HardlinkResolver, HardlinkTracker};
 
-// Local filesystem copy operations
+/// Local filesystem copy operations.
 pub use local_copy::{
     BuilderError, DeleteTiming, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind,
     LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan, LocalCopySummary, ReferenceDirectory,
@@ -145,15 +139,15 @@ pub use local_copy::{
     SparseRegion, SparseWriter,
 };
 
-// File signature generation for delta transfers
+/// File signature generation for delta transfers.
 pub use signature::{
     FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
 };
 
-// Directory traversal abstractions for file list generation
+/// Directory traversal abstractions for file list generation.
 pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError, WalkdirWalker};
 
-// Async I/O operations (available with `async` feature)
+/// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
 pub use async_io::{
     AsyncBatchCopier, AsyncFileCopier, AsyncFileReader, AsyncFileWriter, AsyncIoError,

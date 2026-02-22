@@ -1,5 +1,3 @@
-//! crates/protocol/src/stats.rs
-//!
 //! Transfer statistics wire format encoding and decoding.
 //!
 //! This module implements the wire format for exchanging transfer statistics

@@ -375,6 +375,7 @@ mod simd_parity_tests;
 /// - MD4: RFC 1320 test vectors pass
 pub(crate) mod simd_batch;
 
+/// Parallel checksum computation using rayon with automatic sequential fallback.
 pub mod parallel;
 
 /// Pipelined checksum computation with double-buffering.

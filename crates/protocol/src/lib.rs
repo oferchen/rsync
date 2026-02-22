@@ -12,9 +12,9 @@ pub mod acl;
 /// [`codec::NdxCodec`] for file-list index encoding. See [`codec`] for details.
 pub mod codec;
 mod compatibility;
-/// Debug I/O tracing for I/O operations
+/// Debug I/O tracing for protocol wire operations.
 pub mod debug_io;
-/// Debug tracing system for protocol analysis
+/// Debug tracing system for protocol analysis.
 pub mod debug_trace;
 mod envelope;
 mod error;
@@ -37,6 +37,7 @@ pub mod state;
 pub mod stats;
 mod varint;
 mod version;
+/// Wire protocol serialization for signatures, deltas, and file entries.
 pub mod wire;
 /// Extended attribute wire protocol encoding and decoding.
 pub mod xattr;

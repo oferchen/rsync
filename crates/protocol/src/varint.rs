@@ -73,10 +73,8 @@ fn invalid_data(message: &str) -> io::Error {
 #[inline]
 fn encode_bytes(value: i32) -> (usize, [u8; 5]) {
     let mut bytes = [0u8; 5];
-    // Store value in little-endian at bytes[1..5], leaving bytes[0] for the header
     bytes[1..5].copy_from_slice(&value.to_le_bytes());
 
-    // Find the minimum number of bytes needed (trim trailing zeros)
     let mut count = 4usize;
     while count > 1 && bytes[count] == 0 {
         count -= 1;
@@ -123,7 +121,6 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
     }
 
     let first = bytes[0];
-    // Lookup extra bytes needed using the high 6 bits of the first byte
     let extra = INT_BYTE_EXTRA[(first / 4) as usize] as usize;
     if extra > MAX_EXTRA_BYTES {
         return Err(invalid_data("overflow in read_varint"));
@@ -136,15 +133,12 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
         ));
     }
 
-    // Reconstruct the value from the encoded bytes
     let mut buf = [0u8; 5];
     if extra > 0 {
-        // Copy extra bytes and mask out the indicator bits from first byte
         buf[..extra].copy_from_slice(&bytes[1..1 + extra]);
         let bit = 1u8 << (8 - extra as u32);
         buf[extra] = first & (bit - 1);
     } else {
-        // Single byte encoding - value is the first byte directly
         buf[0] = first;
     }
 
@@ -189,14 +183,12 @@ pub fn write_varlong<W: Write + ?Sized>(
     // Convert to little-endian bytes
     let bytes = value.to_le_bytes();
 
-    // Find the minimum number of significant bytes needed
     let mut cnt = 8;
     while cnt > min_bytes as usize && bytes[cnt - 1] == 0 {
         cnt -= 1;
     }
 
-    // Calculate the leading byte
-    // Use wrapping arithmetic to avoid overflow when cnt > 7
+    // Wrapping arithmetic avoids overflow when cnt > 7
     let bit = 1u8 << ((7 + min_bytes as usize).wrapping_sub(cnt));
     let leading = if bytes[cnt - 1] >= bit {
         cnt += 1;
@@ -207,7 +199,6 @@ pub fn write_varlong<W: Write + ?Sized>(
         bytes[cnt - 1]
     };
 
-    // Write leading byte followed by the lower bytes
     writer.write_all(&[leading])?;
     writer.write_all(&bytes[..cnt - 1])
 }
@@ -229,46 +220,35 @@ pub fn write_varlong<W: Write + ?Sized>(
 /// * `min_bytes` - Minimum number of bytes used in encoding (must match the write call)
 #[inline]
 pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
-    // Read leading byte
     let mut leading_buf = [0u8; 1];
     reader.read_exact(&mut leading_buf)?;
     let leading = leading_buf[0];
 
-    // Determine cnt by counting consecutive high bits set in the leading byte
-    // Start with bit 7 and work down
+    // Count consecutive high bits to determine total byte count.
+    // Each set bit beyond min_bytes indicates one additional byte.
     let mut cnt = min_bytes as usize;
     let mut bit = 1u8 << 7;
 
-    // Each consecutive high bit set indicates one more byte beyond min_bytes
     while cnt < 8 && (leading & bit) != 0 {
         cnt += 1;
         bit >>= 1;
     }
 
-    // Determine mask for extracting data bits from leading byte
-    // When cnt == min_bytes, no flag bits were set, so all 8 bits are data.
-    // Otherwise, 'bit' points to either:
-    //   - The first zero bit we encountered (loop exited on bit check), or
-    //   - The bit we were about to check when cnt reached 8 (loop exited on cnt check)
-    // In both cases, (bit - 1) gives us the mask for the data bits.
+    // When no flag bits were set (cnt == min_bytes), all 8 bits are data.
+    // Otherwise (bit - 1) masks out the flag prefix, keeping only data bits.
     let mask = if cnt == min_bytes as usize {
-        // No flag bits set - all 8 bits of leading byte are data
         0xFF
     } else {
-        // Extract data bits below the current bit position
         bit - 1
     };
 
-    // Read the lower bytes (bytes 0..cnt-1)
     let mut bytes = [0u8; 8];
     if cnt > 1 {
         reader.read_exact(&mut bytes[..cnt - 1])?;
     }
 
-    // Set the highest byte from the leading byte (applying mask to extract data bits)
     bytes[cnt - 1] = leading & mask;
 
-    // Convert from little-endian
     Ok(i64::from_le_bytes(bytes))
 }
 
@@ -280,10 +260,8 @@ pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Resu
 /// - For larger values: writes 0xFFFFFFFF (4 bytes) followed by the full 8 bytes
 pub fn write_longint<W: Write + ?Sized>(writer: &mut W, value: i64) -> io::Result<()> {
     if (0..=0x7FFF_FFFF).contains(&value) {
-        // Fits in positive signed 32-bit
         writer.write_all(&(value as i32).to_le_bytes())
     } else {
-        // Write 0xFFFFFFFF marker followed by full 64-bit value
         writer.write_all(&0xFFFF_FFFFu32.to_le_bytes())?;
         writer.write_all(&value.to_le_bytes())
     }
