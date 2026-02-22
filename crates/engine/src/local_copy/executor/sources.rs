@@ -253,8 +253,7 @@ fn handle_directory_copy(
         // upstream: flist.c:flist_sort_and_clean() — when -m is active,
         // directories excluded by non-dir-specific rules are still
         // traversed so file-level include rules can rescue their contents.
-        if !(context.prune_empty_dirs_enabled()
-            && context.excluded_dir_by_non_dir_rule(&relative))
+        if !(context.prune_empty_dirs_enabled() && context.excluded_dir_by_non_dir_rule(&relative))
         {
             return Ok(());
         }

@@ -220,9 +220,7 @@ impl FilterProgram {
                     if let Some(ephemeral) = ephemeral_layers {
                         for (rule_index, segment) in ephemeral {
                             if *rule_index == *index {
-                                if let Some(result) =
-                                    segment.excluded_dir_by_non_dir_rule(path)
-                                {
+                                if let Some(result) = segment.excluded_dir_by_non_dir_rule(path) {
                                     return result;
                                 }
                             }
