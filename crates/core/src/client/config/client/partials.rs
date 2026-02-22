@@ -64,6 +64,14 @@ impl ClientConfig {
     pub const fn direct_write(&self) -> bool {
         self.direct_write
     }
+
+    /// Returns the io_uring usage policy.
+    #[must_use]
+    #[doc(alias = "--io-uring")]
+    #[doc(alias = "--no-io-uring")]
+    pub const fn io_uring_policy(&self) -> fast_io::IoUringPolicy {
+        self.io_uring_policy
+    }
 }
 
 #[cfg(test)]
@@ -135,5 +143,11 @@ mod tests {
     fn direct_write_default_is_false() {
         let config = default_config();
         assert!(!config.direct_write());
+    }
+
+    #[test]
+    fn io_uring_policy_default_is_auto() {
+        let config = default_config();
+        assert_eq!(config.io_uring_policy(), fast_io::IoUringPolicy::Auto);
     }
 }
