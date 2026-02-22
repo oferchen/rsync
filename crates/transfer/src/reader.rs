@@ -97,6 +97,27 @@ impl<R: Read> ServerReader<R> {
             _ => Ok(None),
         }
     }
+
+    /// Returns and resets accumulated `MSG_IO_ERROR` flags from the sender.
+    ///
+    /// When the multiplexed reader encounters `MSG_IO_ERROR` messages, it
+    /// accumulates the 4-byte little-endian error flags via bitwise OR.
+    /// The receiver should call this periodically and forward any non-zero
+    /// value to the generator via `MSG_IO_ERROR`.
+    ///
+    /// Returns 0 for plain-mode readers (no multiplexing, no MSG_IO_ERROR possible).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1521-1528`: receiver accumulates `io_error |= val` and forwards
+    ///   via `send_msg_int(MSG_IO_ERROR, val)` when `am_receiver`.
+    pub fn take_io_error(&mut self) -> i32 {
+        match self {
+            Self::Multiplex(mux) => mux.take_io_error(),
+            Self::Compressed(compressed) => compressed.get_mut().take_io_error(),
+            Self::Plain(_) => 0,
+        }
+    }
 }
 
 impl<R: Read> Read for ServerReader<R> {
@@ -113,10 +134,24 @@ impl<R: Read> Read for ServerReader<R> {
 ///
 /// Reads multiplex frames from the wire and extracts MSG_DATA payloads.
 /// Buffers partial messages internally to provide seamless streaming.
+///
+/// When `MSG_IO_ERROR` frames are received, the 4-byte little-endian payload
+/// is OR'd into an internal accumulator. Callers retrieve and forward the
+/// accumulated value via [`MultiplexReader::take_io_error`].
+///
+/// # Upstream Reference
+///
+/// - `io.c:1521-1528`: receiver reads `MSG_IO_ERROR`, OR's value into
+///   `io_error`, and forwards it to the generator when `am_receiver`.
 pub(super) struct MultiplexReader<R> {
     inner: R,
     buffer: Vec<u8>,
     pos: usize,
+    /// Accumulated I/O error flags from `MSG_IO_ERROR` messages.
+    ///
+    /// Uses the same bitfield constants as [`super::io_error_flags`].
+    /// upstream: io.c:1526 `io_error |= val;`
+    io_error: i32,
 }
 
 /// Default buffer capacity for MultiplexReader.
@@ -133,6 +168,35 @@ impl<R: Read> MultiplexReader<R> {
             // Pre-allocate buffer to avoid repeated allocations during transfer
             buffer: Vec::with_capacity(MULTIPLEX_READER_BUFFER_CAPACITY),
             pos: 0,
+            io_error: 0,
+        }
+    }
+
+    /// Returns the accumulated `MSG_IO_ERROR` flags and resets the accumulator.
+    ///
+    /// The receiver should call this after each read batch and forward any
+    /// non-zero value to the generator via `MSG_IO_ERROR`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1526-1528`: `io_error |= val; if (am_receiver) send_msg_int(MSG_IO_ERROR, val);`
+    fn take_io_error(&mut self) -> i32 {
+        std::mem::take(&mut self.io_error)
+    }
+
+    /// Handles a `MSG_IO_ERROR` payload by accumulating the error flags.
+    ///
+    /// The payload must be exactly 4 bytes (little-endian `i32`).
+    /// upstream: io.c:1522-1526
+    fn handle_io_error_msg(&mut self) {
+        if self.buffer.len() == 4 {
+            let val = i32::from_le_bytes([
+                self.buffer[0],
+                self.buffer[1],
+                self.buffer[2],
+                self.buffer[3],
+            ]);
+            self.io_error |= val;
         }
     }
 }
@@ -177,6 +241,10 @@ impl<R: Read> MultiplexReader<R> {
                         if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                             eprint!("{msg}");
                         }
+                    }
+                    protocol::MessageCode::IoError => {
+                        // upstream: io.c:1521-1526
+                        self.handle_io_error_msg();
                     }
                     _ => {}
                 }
@@ -250,6 +318,12 @@ impl<R: Read> Read for MultiplexReader<R> {
                         eprint!("{msg}");
                     }
                     // Continue loop to read next message
+                }
+                protocol::MessageCode::IoError => {
+                    // upstream: io.c:1521-1526
+                    // Accumulate the I/O error flags from the sender.
+                    // The receiver will forward these to the generator.
+                    self.handle_io_error_msg();
                 }
                 _ => {
                     // Other message types (Redo, Stats, etc.): silently skip
@@ -440,5 +514,211 @@ mod tests {
         assert_eq!(n, 3);
         assert_eq!(buf, [3, 4, 5]);
         assert_eq!(mux.pos, 5);
+    }
+
+    #[test]
+    fn multiplex_reader_accumulates_msg_io_error() {
+        // Construct a stream with MSG_IO_ERROR interleaved with MSG_DATA.
+        // MSG_IO_ERROR carries a 4-byte LE i32 payload.
+        // upstream: io.c:1521-1526
+        let mut stream = Vec::new();
+
+        // First: MSG_IO_ERROR with IOERR_GENERAL (1)
+        let io_err_val: i32 = 1; // IOERR_GENERAL
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::IoError,
+            &io_err_val.to_le_bytes(),
+        )
+        .unwrap();
+
+        // Then: MSG_DATA with some file data
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"hello").unwrap();
+
+        // Another MSG_IO_ERROR with IOERR_VANISHED (2) — should be OR'd in
+        let io_err_val2: i32 = 2; // IOERR_VANISHED
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::IoError,
+            &io_err_val2.to_le_bytes(),
+        )
+        .unwrap();
+
+        // More MSG_DATA
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"world").unwrap();
+
+        let mut mux = MultiplexReader::new(Cursor::new(stream));
+
+        // Read first data message — should skip over the MSG_IO_ERROR
+        let mut buf = [0u8; 5];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(&buf, b"hello");
+
+        // After first read, IOERR_GENERAL should be accumulated
+        assert_eq!(mux.io_error, 1);
+
+        // Read second data message — skips second MSG_IO_ERROR
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(&buf, b"world");
+
+        // Both flags should be OR'd together: 1 | 2 = 3
+        assert_eq!(mux.io_error, 3);
+
+        // take_io_error returns the accumulated value and resets
+        let taken = mux.take_io_error();
+        assert_eq!(taken, 3);
+        assert_eq!(mux.io_error, 0);
+    }
+
+    #[test]
+    fn multiplex_reader_io_error_wrong_payload_length_ignored() {
+        // MSG_IO_ERROR with wrong payload length (not 4 bytes) should be ignored.
+        // upstream: io.c:1522 `if (msg_bytes != 4) goto invalid_msg;`
+        let mut stream = Vec::new();
+
+        // MSG_IO_ERROR with 3 bytes (invalid — should be ignored)
+        protocol::send_msg(&mut stream, protocol::MessageCode::IoError, &[1, 0, 0]).unwrap();
+
+        // MSG_DATA follows
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"ok").unwrap();
+
+        let mut mux = MultiplexReader::new(Cursor::new(stream));
+        let mut buf = [0u8; 2];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(&buf, b"ok");
+
+        // Invalid payload length should not accumulate any error
+        assert_eq!(mux.io_error, 0);
+    }
+
+    #[test]
+    fn server_reader_take_io_error_plain_returns_zero() {
+        let mut reader = ServerReader::new_plain(Cursor::new(vec![]));
+        assert_eq!(reader.take_io_error(), 0);
+    }
+
+    #[test]
+    fn server_reader_take_io_error_multiplex_accumulates() {
+        // Build a multiplex stream with MSG_IO_ERROR + MSG_DATA
+        let mut stream = Vec::new();
+        let io_err: i32 = 1; // IOERR_GENERAL
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::IoError,
+            &io_err.to_le_bytes(),
+        )
+        .unwrap();
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"data").unwrap();
+
+        let mut reader = ServerReader::new_plain(Cursor::new(stream))
+            .activate_multiplex()
+            .unwrap();
+
+        // Read the data (which skips the IO_ERROR message)
+        let mut buf = [0u8; 4];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 4);
+        assert_eq!(&buf, b"data");
+
+        // take_io_error should return the accumulated value
+        let io_error = reader.take_io_error();
+        assert_eq!(io_error, 1);
+
+        // Second call returns 0 (reset)
+        assert_eq!(reader.take_io_error(), 0);
+    }
+
+    #[test]
+    fn msg_io_error_round_trip_through_multiplex_layer() {
+        // Verifies the full MSG_IO_ERROR round-trip:
+        // 1. Sender writes MSG_IO_ERROR via multiplex writer
+        // 2. Receiver reads it via multiplex reader (accumulates flags)
+        // 3. Receiver forwards accumulated flags via multiplex writer
+        // 4. Generator receives the forwarded MSG_IO_ERROR
+        //
+        // upstream: io.c:1521-1528 — receiver accumulates and forwards MSG_IO_ERROR.
+        use super::super::io_error_flags;
+        use protocol::{MessageCode, MplexWriter};
+        use std::io::Write;
+
+        // Step 1: Build a wire stream with two MSG_IO_ERROR messages
+        // interleaved with MSG_DATA.
+        //
+        // Wire layout: [IO_ERROR(1)] [DATA("part1")] [IO_ERROR(2)] [DATA("part2")]
+        let mut wire = Vec::new();
+        {
+            let mut writer = MplexWriter::new(&mut wire);
+
+            let flags1 = io_error_flags::IOERR_GENERAL;
+            writer
+                .write_message(MessageCode::IoError, &flags1.to_le_bytes())
+                .unwrap();
+            writer.write_all(b"part1").unwrap();
+            writer.flush().unwrap();
+
+            let flags2 = io_error_flags::IOERR_VANISHED;
+            writer
+                .write_message(MessageCode::IoError, &flags2.to_le_bytes())
+                .unwrap();
+            writer.write_all(b"part2").unwrap();
+            writer.flush().unwrap();
+        }
+
+        // Step 2: Receiver reads through the stream. Each read consumes
+        // MSG_IO_ERROR messages encountered while searching for MSG_DATA.
+        let mut reader = MultiplexReader::new(Cursor::new(wire));
+        let mut buf = [0u8; 5];
+
+        // First read: skips IO_ERROR(1), returns DATA("part1")
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(&buf, b"part1");
+
+        // Drain the first error (IOERR_GENERAL=1)
+        let first = reader.take_io_error();
+        assert_eq!(first, io_error_flags::IOERR_GENERAL);
+
+        // Second read: skips IO_ERROR(2), returns DATA("part2")
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(&buf, b"part2");
+
+        // Drain the second error (IOERR_VANISHED=2)
+        let second = reader.take_io_error();
+        assert_eq!(second, io_error_flags::IOERR_VANISHED);
+
+        // Combine both errors (as the receiver would do before forwarding)
+        let combined = first | second;
+        assert_eq!(
+            combined,
+            io_error_flags::IOERR_GENERAL | io_error_flags::IOERR_VANISHED
+        );
+
+        // Step 3: Receiver forwards the accumulated io_error to the generator
+        let mut forward_wire = Vec::new();
+        {
+            let mut fwd_writer = MplexWriter::new(&mut forward_wire);
+            fwd_writer
+                .write_message(MessageCode::IoError, &combined.to_le_bytes())
+                .unwrap();
+        }
+
+        // Step 4: Generator receives the forwarded MSG_IO_ERROR
+        let mut fwd_cursor = Cursor::new(forward_wire);
+        let frame = protocol::recv_msg(&mut fwd_cursor).unwrap();
+        assert_eq!(frame.code(), MessageCode::IoError);
+        assert_eq!(frame.payload().len(), 4);
+        let forwarded_flags = i32::from_le_bytes(frame.payload().try_into().unwrap());
+        assert_eq!(
+            forwarded_flags,
+            io_error_flags::IOERR_GENERAL | io_error_flags::IOERR_VANISHED
+        );
+
+        // Verify the exit code mapping
+        let exit_code = io_error_flags::to_exit_code(forwarded_flags);
+        assert_eq!(exit_code, 23); // RERR_PARTIAL — IOERR_GENERAL takes priority
     }
 }
