@@ -2,6 +2,12 @@ use std::path::{Path, PathBuf};
 
 use super::types::LocalCopyOptions;
 
+/// Subdirectory name used by upstream rsync for staging files when
+/// `--delay-updates` is active and no explicit `--partial-dir` is given.
+///
+/// upstream: options.c — `static char tmp_partialdir[] = ".~tmp~";`
+pub const DELAY_UPDATES_PARTIAL_DIR: &str = ".~tmp~";
+
 impl LocalCopyOptions {
     /// Enables sparse file handling during copies.
     #[must_use]
@@ -29,12 +35,21 @@ impl LocalCopyOptions {
     }
 
     /// Requests that updated files be renamed into place after the transfer completes.
+    ///
+    /// When enabled and no explicit `--partial-dir` has been configured, the
+    /// staging directory is automatically set to `.~tmp~` to match upstream
+    /// rsync behaviour.
+    ///
+    /// upstream: options.c — `if (delay_updates && !partial_dir) partial_dir = tmp_partialdir;`
     #[must_use]
     #[doc(alias = "--delay-updates")]
-    pub const fn delay_updates(mut self, delay: bool) -> Self {
+    pub fn delay_updates(mut self, delay: bool) -> Self {
         self.delay_updates = delay;
         if delay {
             self.partial = true;
+            if self.partial_dir.is_none() {
+                self.partial_dir = Some(PathBuf::from(DELAY_UPDATES_PARTIAL_DIR));
+            }
         }
         self
     }
@@ -205,6 +220,31 @@ mod tests {
         let opts = LocalCopyOptions::new().delay_updates(true);
         assert!(opts.delay_updates_enabled());
         assert!(opts.partial_enabled());
+    }
+
+    #[test]
+    fn delay_updates_sets_partial_dir_to_tmp_staging() {
+        let opts = LocalCopyOptions::new().delay_updates(true);
+        assert_eq!(
+            opts.partial_directory_path(),
+            Some(Path::new(DELAY_UPDATES_PARTIAL_DIR))
+        );
+    }
+
+    #[test]
+    fn delay_updates_preserves_explicit_partial_dir() {
+        let opts = LocalCopyOptions::new()
+            .with_partial_directory(Some("/custom/partial"))
+            .delay_updates(true);
+        assert_eq!(
+            opts.partial_directory_path(),
+            Some(Path::new("/custom/partial")),
+        );
+    }
+
+    #[test]
+    fn delay_updates_constant_matches_upstream() {
+        assert_eq!(DELAY_UPDATES_PARTIAL_DIR, ".~tmp~");
     }
 
     #[test]

@@ -112,6 +112,11 @@ pub(crate) struct CopyContext<'a> {
     /// Eliminates redundant `statx` syscalls when many files share the
     /// same parent (e.g. 10K files in one directory → 1 stat instead of 10K).
     verified_parents: HashSet<PathBuf>,
+    /// Staging directories (`.~tmp~`) created by `--delay-updates` that should
+    /// be removed (rmdir) after all deferred updates are committed.
+    ///
+    /// upstream: receiver.c — `handle_partial_dir(partialptr, PDIR_DELETE)`
+    delay_staging_dirs: HashSet<PathBuf>,
 }
 
 pub(crate) struct FinalizeMetadataParams<'a> {

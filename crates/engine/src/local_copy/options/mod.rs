@@ -17,7 +17,7 @@ mod link_dest;
 mod logging;
 mod metadata;
 mod path_behavior;
-mod staging;
+pub(crate) mod staging;
 mod types;
 
 pub use builder::{BuilderError, LocalCopyOptionsBuilder};
