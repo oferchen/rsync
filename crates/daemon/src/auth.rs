@@ -592,4 +592,122 @@ mod tests {
             Some(29)
         ));
     }
+
+    /// Validates the complete auth round trip at protocol 32 for all
+    /// unambiguous-length digests (SHA-512, SHA-256, SHA-1) plus MD5 (the
+    /// protocol-appropriate choice for the ambiguous MD4/MD5 length at v32).
+    /// MD4 is intentionally excluded: its base64 length matches MD5, so the
+    /// verifier disambiguates by protocol version and picks MD5 for v32.
+    #[test]
+    fn full_auth_roundtrip_protocol_32_all_digests() {
+        let password = b"daemon_secret";
+        let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap());
+
+        // Digests that should verify at protocol 32: all except MD4
+        let verifiable = [
+            DaemonAuthDigest::Sha512,
+            DaemonAuthDigest::Sha256,
+            DaemonAuthDigest::Sha1,
+            DaemonAuthDigest::Md5,
+        ];
+        for digest in verifiable {
+            let response = compute_auth_response(password, &challenge, digest);
+            assert!(
+                verify_client_response(password, &challenge, &response, Some(32)),
+                "protocol 32 roundtrip failed for {digest:?}"
+            );
+        }
+
+        // MD4 should be rejected at protocol 32 (ambiguous length, verifier picks MD5)
+        let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
+        assert!(
+            !verify_client_response(password, &challenge, &md4_resp, Some(32)),
+            "protocol 32 should reject MD4 (ambiguous length)"
+        );
+    }
+
+    /// Validates the complete auth round trip at protocol 30 (MD5 + MD4).
+    /// MD5 must succeed and MD4 must be rejected for ambiguous responses.
+    #[test]
+    fn full_auth_roundtrip_protocol_30() {
+        let password = b"p30_secret";
+        let challenge = ChallengeGenerator::generate("172.16.0.1".parse().unwrap());
+
+        // MD5 should succeed
+        let md5_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md5);
+        assert!(
+            verify_client_response(password, &challenge, &md5_resp, Some(30)),
+            "protocol 30 should accept MD5"
+        );
+
+        // MD4 should be rejected (ambiguous length, protocol picks MD5)
+        let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
+        assert!(
+            !verify_client_response(password, &challenge, &md4_resp, Some(30)),
+            "protocol 30 should reject MD4"
+        );
+
+        // SHA-256 and SHA-512 have unambiguous lengths and should verify
+        let sha256_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Sha256);
+        assert!(
+            verify_client_response(password, &challenge, &sha256_resp, Some(30)),
+            "protocol 30 should accept SHA-256 (unambiguous length)"
+        );
+
+        let sha512_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Sha512);
+        assert!(
+            verify_client_response(password, &challenge, &sha512_resp, Some(30)),
+            "protocol 30 should accept SHA-512 (unambiguous length)"
+        );
+    }
+
+    /// Validates the complete auth round trip at protocol 29 (MD4 only).
+    /// MD4 must succeed and MD5 must be rejected for ambiguous responses.
+    #[test]
+    fn full_auth_roundtrip_protocol_29() {
+        let password = b"p29_secret";
+        let challenge = ChallengeGenerator::generate("192.168.1.100".parse().unwrap());
+
+        // MD4 should succeed
+        let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
+        assert!(
+            verify_client_response(password, &challenge, &md4_resp, Some(29)),
+            "protocol 29 should accept MD4"
+        );
+
+        // MD5 should be rejected (ambiguous length, protocol picks MD4)
+        let md5_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md5);
+        assert!(
+            !verify_client_response(password, &challenge, &md5_resp, Some(29)),
+            "protocol 29 should reject MD5"
+        );
+    }
+
+    /// Validates that `digests_for_protocol` returns the correct set for each era.
+    #[test]
+    fn digests_for_protocol_covers_all_eras() {
+        use protocol::ProtocolVersion;
+
+        // Protocol 28: MD4 only
+        let d28 = digests_for_protocol(ProtocolVersion::V28);
+        assert_eq!(d28, &[DaemonAuthDigest::Md4]);
+
+        // Protocol 29: MD4 only
+        let d29 = digests_for_protocol(ProtocolVersion::V29);
+        assert_eq!(d29, &[DaemonAuthDigest::Md4]);
+
+        // Protocol 30: MD5 + MD4
+        let d30 = digests_for_protocol(ProtocolVersion::V30);
+        assert_eq!(d30, &[DaemonAuthDigest::Md5, DaemonAuthDigest::Md4]);
+
+        // Protocol 31: all five
+        let d31 = digests_for_protocol(ProtocolVersion::V31);
+        assert_eq!(d31.len(), 5);
+        assert_eq!(d31[0], DaemonAuthDigest::Sha512);
+        assert_eq!(d31[4], DaemonAuthDigest::Md4);
+
+        // Protocol 32: all five
+        let d32 = digests_for_protocol(ProtocolVersion::V32);
+        assert_eq!(d32.len(), 5);
+    }
 }
