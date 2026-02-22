@@ -1880,6 +1880,8 @@ mod tests {
             trust_sender: false,
             stop_at: None,
             qsort: false,
+            min_file_size: None,
+            max_file_size: None,
         }
     }
 
@@ -3112,6 +3114,8 @@ mod tests {
             trust_sender: false,
             stop_at: None,
             qsort: false,
+            min_file_size: None,
+            max_file_size: None,
         }
     }
 
