@@ -136,6 +136,11 @@ pub(crate) struct ModuleDefinition {
     ///
     /// Upstream: `loadparm.c` — `forward lookup` parameter, default true.
     pub(crate) forward_lookup: bool,
+    /// When true, the daemon checks that the secrets file has appropriate permissions.
+    ///
+    /// Upstream: `loadparm.c` — `strict modes` parameter, default true.
+    /// Controls whether the secrets file must not be world-readable.
+    pub(crate) strict_modes: bool,
 }
 
 impl ModuleDefinition {
@@ -340,6 +345,10 @@ impl ModuleDefinition {
 
     pub(super) fn forward_lookup(&self) -> bool {
         self.forward_lookup
+    }
+
+    pub(super) fn strict_modes(&self) -> bool {
+        self.strict_modes
     }
 }
 

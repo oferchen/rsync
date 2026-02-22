@@ -197,6 +197,7 @@ pub struct ModuleConfig {
     dont_compress: Vec<String>,
     pre_xfer_exec: Option<String>,
     post_xfer_exec: Option<String>,
+    strict_modes: bool,
 }
 
 impl ModuleConfig {
@@ -328,6 +329,14 @@ impl ModuleConfig {
     /// Returns the post-transfer command, if specified.
     pub fn post_xfer_exec(&self) -> Option<&str> {
         self.post_xfer_exec.as_deref()
+    }
+
+    /// Returns whether strict permission checks on the secrets file are enabled (default: true).
+    ///
+    /// When true, the daemon verifies that the secrets file is not world-readable.
+    /// Upstream: `loadparm.c` — `strict modes` parameter, default true.
+    pub fn strict_modes(&self) -> bool {
+        self.strict_modes
     }
 }
 
@@ -627,6 +636,9 @@ impl<'a> Parser<'a> {
             "post-xfer exec" => {
                 builder.post_xfer_exec = Some(value.to_string());
             }
+            "strict modes" => {
+                builder.strict_modes = Some(self.parse_bool(value)?);
+            }
             _ => {
                 // Unknown module directives are silently ignored
             }
@@ -690,6 +702,7 @@ struct ModuleBuilder {
     dont_compress: Vec<String>,
     pre_xfer_exec: Option<String>,
     post_xfer_exec: Option<String>,
+    strict_modes: Option<bool>,
 }
 
 impl ModuleBuilder {
@@ -740,6 +753,7 @@ impl ModuleBuilder {
             dont_compress: self.dont_compress,
             pre_xfer_exec: self.pre_xfer_exec,
             post_xfer_exec: self.post_xfer_exec,
+            strict_modes: self.strict_modes.unwrap_or(true),
         })
     }
 }
@@ -1043,6 +1057,7 @@ mod tests {
         assert!(module.auth_users().is_empty());
         assert!(module.refuse_options().is_empty());
         assert!(module.dont_compress().is_empty());
+        assert!(module.strict_modes());
     }
 
     #[test]
@@ -1086,5 +1101,47 @@ mod tests {
         let upload = config.get_module("upload").unwrap();
         assert_eq!(upload.comment(), Some("Upload area"));
         assert!(!upload.read_only());
+    }
+
+    #[test]
+    fn parse_strict_modes_yes() {
+        let file = write_config("[mod]\npath = /data\nstrict modes = yes\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(config.modules()[0].strict_modes());
+    }
+
+    #[test]
+    fn parse_strict_modes_no() {
+        let file = write_config("[mod]\npath = /data\nstrict modes = no\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(!config.modules()[0].strict_modes());
+    }
+
+    #[test]
+    fn parse_strict_modes_true() {
+        let file = write_config("[mod]\npath = /data\nstrict modes = true\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(config.modules()[0].strict_modes());
+    }
+
+    #[test]
+    fn parse_strict_modes_false() {
+        let file = write_config("[mod]\npath = /data\nstrict modes = false\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(!config.modules()[0].strict_modes());
+    }
+
+    #[test]
+    fn parse_strict_modes_default_true() {
+        let file = write_config("[mod]\npath = /data\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(config.modules()[0].strict_modes());
+    }
+
+    #[test]
+    fn parse_strict_modes_invalid_boolean() {
+        let file = write_config("[mod]\npath = /data\nstrict modes = maybe\n");
+        let err = RsyncdConfig::from_file(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("invalid boolean"));
     }
 }
