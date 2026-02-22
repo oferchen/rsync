@@ -1738,4 +1738,303 @@ mod config_parsing_tests {
             .expect_err("should fail");
         assert!(err.to_string().contains("failed to"));
     }
+
+    // --- Global vs module directive ordering tests ---
+
+    #[test]
+    fn global_directives_before_modules_apply_as_defaults() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path1 = dir.path().join("alpha");
+        let path2 = dir.path().join("beta");
+        fs::create_dir(&path1).expect("create alpha dir");
+        fs::create_dir(&path2).expect("create beta dir");
+
+        let config = format!(
+            "incoming chmod = Dg+s,ug+w\n\
+             outgoing chmod = Fo-w,+X\n\
+             \n\
+             [alpha]\n\
+             path = {}\n\
+             \n\
+             [beta]\n\
+             path = {}\n",
+            path1.display(),
+            path2.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+
+        // Both modules inherit global chmod defaults
+        assert_eq!(
+            result.modules[0].incoming_chmod.as_deref(),
+            Some("Dg+s,ug+w")
+        );
+        assert_eq!(
+            result.modules[0].outgoing_chmod.as_deref(),
+            Some("Fo-w,+X")
+        );
+        assert_eq!(
+            result.modules[1].incoming_chmod.as_deref(),
+            Some("Dg+s,ug+w")
+        );
+        assert_eq!(
+            result.modules[1].outgoing_chmod.as_deref(),
+            Some("Fo-w,+X")
+        );
+    }
+
+    #[test]
+    fn module_directives_override_global_defaults() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path1 = dir.path().join("inherited");
+        let path2 = dir.path().join("overridden");
+        fs::create_dir(&path1).expect("create inherited dir");
+        fs::create_dir(&path2).expect("create overridden dir");
+
+        let config = format!(
+            "incoming chmod = global-in\n\
+             outgoing chmod = global-out\n\
+             \n\
+             [inherited]\n\
+             path = {}\n\
+             \n\
+             [overridden]\n\
+             path = {}\n\
+             incoming chmod = module-in\n\
+             outgoing chmod = module-out\n",
+            path1.display(),
+            path2.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+
+        // `inherited` gets global defaults
+        let inherited = &result.modules[0];
+        assert_eq!(inherited.name, "inherited");
+        assert_eq!(inherited.incoming_chmod.as_deref(), Some("global-in"));
+        assert_eq!(inherited.outgoing_chmod.as_deref(), Some("global-out"));
+
+        // `overridden` uses its own module-level values
+        let overridden = &result.modules[1];
+        assert_eq!(overridden.name, "overridden");
+        assert_eq!(overridden.incoming_chmod.as_deref(), Some("module-in"));
+        assert_eq!(overridden.outgoing_chmod.as_deref(), Some("module-out"));
+    }
+
+    #[test]
+    fn directive_in_one_module_does_not_affect_another() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path_a = dir.path().join("mod_a");
+        let path_b = dir.path().join("mod_b");
+        fs::create_dir(&path_a).expect("create mod_a dir");
+        fs::create_dir(&path_b).expect("create mod_b dir");
+
+        let config = format!(
+            "[mod_a]\n\
+             path = {}\n\
+             read only = no\n\
+             use chroot = no\n\
+             numeric ids = yes\n\
+             fake super = yes\n\
+             timeout = 300\n\
+             max verbosity = 5\n\
+             ignore errors = yes\n\
+             transfer logging = yes\n\
+             \n\
+             [mod_b]\n\
+             path = {}\n",
+            path_a.display(),
+            path_b.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+
+        let mod_a = &result.modules[0];
+        assert!(!mod_a.read_only);
+        assert!(!mod_a.use_chroot);
+        assert!(mod_a.numeric_ids);
+        assert!(mod_a.fake_super);
+        assert_eq!(mod_a.timeout.map(|t| t.get()), Some(300));
+        assert_eq!(mod_a.max_verbosity, 5);
+        assert!(mod_a.ignore_errors);
+        assert!(mod_a.transfer_logging);
+
+        // mod_b retains all defaults, unaffected by mod_a settings
+        let mod_b = &result.modules[1];
+        assert!(mod_b.read_only); // default true
+        assert!(mod_b.use_chroot); // default true
+        assert!(!mod_b.numeric_ids); // default false
+        assert!(!mod_b.fake_super); // default false
+        assert!(mod_b.timeout.is_none()); // default None
+        assert_eq!(mod_b.max_verbosity, 1); // default 1
+        assert!(!mod_b.ignore_errors); // default false
+        assert!(!mod_b.transfer_logging); // default false
+    }
+
+    #[test]
+    fn global_only_directive_inside_module_is_unknown() {
+        // "pid file" is a global-only directive. Inside a module section,
+        // it becomes an unknown per-module directive (warned and ignored).
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\n\
+             path = {}\n\
+             pid file = /var/run/test.pid\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        // The "pid file" directive should NOT be parsed as a global setting
+        assert!(result.pid_file.is_none());
+        assert_eq!(result.modules.len(), 1);
+    }
+
+    #[test]
+    fn global_refuse_options_inherited_by_modules_without_own_refuse() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "refuse options = delete, compress\n\
+             \n\
+             [mod]\n\
+             path = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        // Global refuse options should be stored separately
+        assert_eq!(result.global_refuse_options.len(), 1);
+        assert_eq!(
+            result.global_refuse_options[0].0,
+            vec!["delete", "compress"]
+        );
+
+        // Module should have empty refuse options (inheritance happens at RuntimeOptions level)
+        assert!(result.modules[0].refuse_options.is_empty());
+    }
+
+    #[test]
+    fn module_with_own_refuse_options_separate_from_global() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path1 = dir.path().join("inheritor");
+        let path2 = dir.path().join("overrider");
+        fs::create_dir(&path1).expect("create dir 1");
+        fs::create_dir(&path2).expect("create dir 2");
+
+        let config = format!(
+            "refuse options = delete\n\
+             \n\
+             [inheritor]\n\
+             path = {}\n\
+             \n\
+             [overrider]\n\
+             path = {}\n\
+             refuse options = hardlinks\n",
+            path1.display(),
+            path2.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.global_refuse_options.len(), 1);
+        assert_eq!(result.global_refuse_options[0].0, vec!["delete"]);
+
+        // Inheritor has no own refuse options
+        assert!(result.modules[0].refuse_options.is_empty());
+
+        // Overrider has its own refuse options
+        assert_eq!(result.modules[1].refuse_options, vec!["hardlinks"]);
+    }
+
+    #[test]
+    fn global_bwlimit_stored_in_result() {
+        let file = write_config(
+            "bwlimit = 1000\n\
+             [mod]\npath = /tmp\n",
+        );
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert!(result.global_bandwidth_limit.is_some());
+        assert_eq!(result.modules.len(), 1);
+    }
+
+    #[test]
+    fn reverse_lookup_before_module_is_global() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "reverse lookup = no\n\
+             \n\
+             [mod]\n\
+             path = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        let (value, _) = result.reverse_lookup.expect("reverse lookup set");
+        assert!(!value);
+    }
+
+    #[test]
+    fn multiple_modules_with_independent_boolean_settings() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path_a = dir.path().join("a");
+        let path_b = dir.path().join("b");
+        let path_c = dir.path().join("c");
+        fs::create_dir(&path_a).expect("create dir a");
+        fs::create_dir(&path_b).expect("create dir b");
+        fs::create_dir(&path_c).expect("create dir c");
+
+        let config = format!(
+            "[a]\n\
+             path = {}\n\
+             read only = no\n\
+             \n\
+             [b]\n\
+             path = {}\n\
+             write only = yes\n\
+             \n\
+             [c]\n\
+             path = {}\n\
+             list = no\n",
+            path_a.display(),
+            path_b.display(),
+            path_c.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 3);
+
+        // Module [a] overrides read_only; others keep defaults
+        assert!(!result.modules[0].read_only);
+        assert!(!result.modules[0].write_only); // default
+        assert!(result.modules[0].listable); // default
+
+        // Module [b] overrides write_only; others keep defaults
+        assert!(result.modules[1].read_only); // default
+        assert!(result.modules[1].write_only);
+        assert!(result.modules[1].listable); // default
+
+        // Module [c] overrides list; others keep defaults
+        assert!(result.modules[2].read_only); // default
+        assert!(!result.modules[2].write_only); // default
+        assert!(!result.modules[2].listable);
+    }
 }
