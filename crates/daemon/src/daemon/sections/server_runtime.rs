@@ -271,6 +271,94 @@ const fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
 /// waiting indefinitely for a new connection.
 const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
+/// Tracks the number of active client connections in the daemon server loop.
+///
+/// The counter uses an [`AtomicUsize`] for lock-free concurrent access from
+/// worker threads. Each accepted connection increments the counter via
+/// [`ConnectionCounter::acquire`], which returns a [`ConnectionGuard`] that
+/// automatically decrements the counter when dropped.
+///
+/// # Usage
+///
+/// ```ignore
+/// let counter = ConnectionCounter::new();
+/// assert_eq!(counter.active(), 0);
+///
+/// let guard = counter.acquire();
+/// assert_eq!(counter.active(), 1);
+///
+/// drop(guard);
+/// assert_eq!(counter.active(), 0);
+/// ```
+///
+/// The counter is wrapped in an `Arc` so it can be shared between the main
+/// accept loop and spawned worker threads. This enables future max-connections
+/// enforcement at the daemon level (as opposed to the per-module limits
+/// already tracked by `ModuleRuntime::active_connections`).
+///
+/// upstream: clientserver.c — `count_connections()` tracks active children
+/// for the `max connections` global directive.
+#[derive(Debug)]
+pub(crate) struct ConnectionCounter {
+    active: Arc<AtomicUsize>,
+}
+
+impl ConnectionCounter {
+    /// Creates a new connection counter with zero active connections.
+    pub(crate) fn new() -> Self {
+        Self {
+            active: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Returns the current number of active connections.
+    ///
+    /// This is wired into the accept loop for future daemon-level
+    /// max-connections enforcement.
+    #[allow(dead_code)]
+    pub(crate) fn active(&self) -> usize {
+        self.active.load(Ordering::Acquire)
+    }
+
+    /// Increments the counter and returns an RAII guard that decrements it on drop.
+    pub(crate) fn acquire(&self) -> ConnectionGuard {
+        self.active.fetch_add(1, Ordering::AcqRel);
+        ConnectionGuard {
+            counter: Arc::clone(&self.active),
+        }
+    }
+}
+
+impl Default for ConnectionCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for ConnectionCounter {
+    fn clone(&self) -> Self {
+        Self {
+            active: Arc::clone(&self.active),
+        }
+    }
+}
+
+/// RAII guard that decrements the parent [`ConnectionCounter`] when dropped.
+///
+/// Created by [`ConnectionCounter::acquire`]. The guard holds an `Arc` reference
+/// to the shared atomic counter, ensuring the decrement occurs even if the
+/// owning thread panics (since `Drop` runs during unwinding).
+#[derive(Debug)]
+pub(crate) struct ConnectionGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     // Register signal handlers before entering the accept loop so SIGPIPE is
     // ignored and SIGHUP/SIGTERM/SIGINT flags are captured from the start.
@@ -462,6 +550,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let mut workers: Vec<thread::JoinHandle<WorkerResult>> = Vec::new();
     let max_sessions = max_sessions.map(NonZeroUsize::get);
     let mut active_connections = 0usize;
+    let connection_counter = ConnectionCounter::new();
 
     // For dual-stack (multiple listeners), use channels to receive accepted connections
     // from listener threads. For single listener, use direct accept for simplicity.
@@ -535,7 +624,12 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                     let motd_lines = Arc::clone(&motd_lines);
                     let log_for_worker = log_sink.as_ref().map(Arc::clone);
                     let delegation_clone = delegation.clone();
+                    let conn_guard = connection_counter.acquire();
                     let handle = thread::spawn(move || {
+                        // Hold the connection guard for the lifetime of the
+                        // handler so the counter stays accurate even if the
+                        // session panics (Drop runs during unwinding).
+                        let _conn_guard = conn_guard;
                         // upstream rsync forks per connection, so a crash only
                         // kills that child.  We use threads, so catch_unwind
                         // isolates panics to the faulting connection and keeps
@@ -716,7 +810,9 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                     let motd_lines = Arc::clone(&motd_lines);
                     let log_for_worker = log_sink.as_ref().map(Arc::clone);
                     let delegation_clone = delegation.clone();
+                    let conn_guard = connection_counter.acquire();
                     let handle = thread::spawn(move || {
+                        let _conn_guard = conn_guard;
                         let result = std::panic::catch_unwind(
                             std::panic::AssertUnwindSafe(|| {
                                 let modules_vec = modules.as_ref();
@@ -1400,6 +1496,106 @@ mod server_runtime_tests {
         let config = result.unwrap();
         let content = std::fs::read_to_string(config.config_path()).unwrap();
         assert!(!content.contains("fake super"));
+    }
+
+    // Tests for ConnectionCounter
+
+    #[test]
+    fn connection_counter_starts_at_zero() {
+        let counter = ConnectionCounter::new();
+        assert_eq!(counter.active(), 0);
+    }
+
+    #[test]
+    fn connection_counter_default_starts_at_zero() {
+        let counter = ConnectionCounter::default();
+        assert_eq!(counter.active(), 0);
+    }
+
+    #[test]
+    fn connection_counter_increments_on_acquire() {
+        let counter = ConnectionCounter::new();
+        let _guard = counter.acquire();
+        assert_eq!(counter.active(), 1);
+    }
+
+    #[test]
+    fn connection_counter_decrements_on_guard_drop() {
+        let counter = ConnectionCounter::new();
+        let guard = counter.acquire();
+        assert_eq!(counter.active(), 1);
+        drop(guard);
+        assert_eq!(counter.active(), 0);
+    }
+
+    #[test]
+    fn connection_counter_tracks_multiple_connections() {
+        let counter = ConnectionCounter::new();
+        let g1 = counter.acquire();
+        let g2 = counter.acquire();
+        let g3 = counter.acquire();
+        assert_eq!(counter.active(), 3);
+
+        drop(g2);
+        assert_eq!(counter.active(), 2);
+
+        drop(g1);
+        assert_eq!(counter.active(), 1);
+
+        drop(g3);
+        assert_eq!(counter.active(), 0);
+    }
+
+    #[test]
+    fn connection_counter_clone_shares_state() {
+        let counter = ConnectionCounter::new();
+        let cloned = counter.clone();
+
+        let _guard = counter.acquire();
+        assert_eq!(cloned.active(), 1);
+
+        let _guard2 = cloned.acquire();
+        assert_eq!(counter.active(), 2);
+    }
+
+    #[test]
+    fn connection_counter_concurrent_access() {
+        let counter = ConnectionCounter::new();
+        let mut handles = vec![];
+
+        for _ in 0..10 {
+            let cloned = counter.clone();
+            let handle = thread::spawn(move || {
+                let mut guards = Vec::new();
+                for _ in 0..100 {
+                    guards.push(cloned.acquire());
+                }
+                // All 100 guards are held here, then dropped when guards goes out of scope
+                assert!(cloned.active() >= 100);
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(counter.active(), 0);
+    }
+
+    #[test]
+    fn connection_guard_debug_format() {
+        let counter = ConnectionCounter::new();
+        let guard = counter.acquire();
+        let debug = format!("{guard:?}");
+        assert!(debug.contains("ConnectionGuard"));
+    }
+
+    #[test]
+    fn connection_counter_debug_format() {
+        let counter = ConnectionCounter::new();
+        let debug = format!("{counter:?}");
+        assert!(debug.contains("ConnectionCounter"));
     }
 }
 
