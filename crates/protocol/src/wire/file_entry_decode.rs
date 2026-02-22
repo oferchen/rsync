@@ -703,6 +703,15 @@ pub fn decode_rdev<R: Read>(
     Ok((major, minor))
 }
 
+/// Maximum allowed symlink target length on receive.
+///
+/// Matches upstream rsync's `MAXPATHLEN` (4096). Without this cap, a malicious
+/// sender could claim an arbitrarily large symlink target, causing unbounded
+/// memory allocation on the receiver.
+///
+/// upstream: rsync.h `MAXPATHLEN`
+pub const MAX_SYMLINK_TARGET_LEN: usize = 4096;
+
 /// Decodes symlink target path.
 ///
 /// # Arguments
@@ -714,11 +723,21 @@ pub fn decode_rdev<R: Read>(
 ///
 /// `varint30(len)` + `target_bytes`
 ///
+/// # Errors
+///
+/// Returns `InvalidData` if the target length exceeds [`MAX_SYMLINK_TARGET_LEN`].
+///
 /// # Note
 ///
 /// Only decode when preserve_links is enabled and entry is a symlink.
 pub fn decode_symlink_target<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Vec<u8>> {
     let len = read_varint30_int(reader, protocol_version)? as usize;
+    if len > MAX_SYMLINK_TARGET_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("symlink target length {len} exceeds maximum {MAX_SYMLINK_TARGET_LEN}"),
+        ));
+    }
     let mut target = vec![0u8; len];
     reader.read_exact(&mut target)?;
     Ok(target)
@@ -1384,5 +1403,61 @@ mod tests {
         let mut cursor = Cursor::new(&buf);
         let decoded = decode_checksum(&mut cursor, 4).unwrap();
         assert_eq!(decoded, vec![0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn decode_symlink_target_at_max_length() {
+        let target = vec![b'a'; MAX_SYMLINK_TARGET_LEN];
+        for proto in [29u8, 30, 32] {
+            let mut buf = Vec::new();
+            encode_symlink_target(&mut buf, &target, proto).unwrap();
+
+            let mut cursor = Cursor::new(&buf);
+            let decoded = decode_symlink_target(&mut cursor, proto).unwrap();
+            assert_eq!(
+                decoded, target,
+                "target at MAX_SYMLINK_TARGET_LEN should decode for proto {proto}"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_symlink_target_exceeding_max_length() {
+        let target = vec![b'a'; MAX_SYMLINK_TARGET_LEN + 1];
+        for proto in [29u8, 30, 32] {
+            let mut buf = Vec::new();
+            encode_symlink_target(&mut buf, &target, proto).unwrap();
+
+            let mut cursor = Cursor::new(&buf);
+            let result = decode_symlink_target(&mut cursor, proto);
+            assert!(
+                result.is_err(),
+                "should reject target exceeding max for proto {proto}"
+            );
+            let err = result.unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert!(
+                err.to_string().contains("exceeds maximum"),
+                "error message should mention exceeding maximum, got: {err}",
+            );
+        }
+    }
+
+    #[test]
+    fn decode_symlink_target_far_exceeding_max_length() {
+        // Simulate a malicious sender claiming a 1 MiB target
+        let huge_len = 1_048_576usize;
+        for proto in [29u8, 30, 32] {
+            let mut buf = Vec::new();
+            encode_symlink_target(&mut buf, &vec![b'x'; huge_len], proto).unwrap();
+
+            let mut cursor = Cursor::new(&buf);
+            let result = decode_symlink_target(&mut cursor, proto);
+            assert!(
+                result.is_err(),
+                "should reject 1 MiB target for proto {proto}"
+            );
+            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        }
     }
 }

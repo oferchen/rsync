@@ -80,6 +80,8 @@ pub use self::file_entry::{
 
 // File entry wire format decoding
 pub use self::file_entry_decode::{
+    // Symlink safety limit
+    MAX_SYMLINK_TARGET_LEN,
     // Metadata decoding
     decode_atime,
     decode_checksum,
