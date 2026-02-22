@@ -184,7 +184,14 @@ fn handle_directory_contents_copy(
     // Check filter rules
     if let Some(root) = relative_root {
         if !context.allows(root.as_path(), true) {
-            return Ok(true); // Filtered out, continue to next source
+            // upstream: flist.c:flist_sort_and_clean() — when -m is active,
+            // directories excluded by non-dir-specific rules are still
+            // traversed so file-level include rules can rescue contents.
+            if !(context.prune_empty_dirs_enabled()
+                && context.excluded_dir_by_non_dir_rule(root.as_path()))
+            {
+                return Ok(true); // Filtered out, continue to next source
+            }
         }
     }
 
@@ -243,7 +250,14 @@ fn handle_directory_copy(
         .unwrap_or_else(|| PathBuf::from(Path::new(name)));
 
     if !context.allows(&relative, true) {
-        return Ok(());
+        // upstream: flist.c:flist_sort_and_clean() — when -m is active,
+        // directories excluded by non-dir-specific rules are still
+        // traversed so file-level include rules can rescue their contents.
+        if !(context.prune_empty_dirs_enabled()
+            && context.excluded_dir_by_non_dir_rule(&relative))
+        {
+            return Ok(());
+        }
     }
 
     if !recursion_enabled && !dirs_enabled {
@@ -493,7 +507,15 @@ fn handle_non_directory_source(
         resolve_effective_metadata(context, source_path, metadata, file_type)?;
 
     if !context.allows(&relative, effective_type.is_dir()) {
-        return Ok(());
+        // upstream: flist.c:flist_sort_and_clean() — when -m is active,
+        // directories excluded by non-dir-specific rules are still
+        // traversed so file-level include rules can rescue contents.
+        if !(effective_type.is_dir()
+            && context.prune_empty_dirs_enabled()
+            && context.excluded_dir_by_non_dir_rule(&relative))
+        {
+            return Ok(());
+        }
     }
 
     // Determine if we should use the root destination directly

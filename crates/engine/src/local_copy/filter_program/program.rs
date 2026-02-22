@@ -189,6 +189,52 @@ impl FilterProgram {
         outcome
     }
 
+    /// Checks whether a directory path is excluded by a non-directory-specific rule.
+    ///
+    /// Used by `--prune-empty-dirs` to determine whether an excluded directory
+    /// should still be descended into. When the exclusion comes from a generic
+    /// pattern (e.g., `*`) rather than a directory-specific one (e.g., `cache/`),
+    /// the directory should be traversed so file-level include rules can be
+    /// evaluated inside it.
+    pub(crate) fn excluded_dir_by_non_dir_rule(
+        &self,
+        path: &Path,
+        dir_merge_layers: &[Vec<FilterSegment>],
+        ephemeral_layers: Option<&[(usize, FilterSegment)]>,
+    ) -> bool {
+        for instruction in &self.instructions {
+            match instruction {
+                FilterInstruction::Segment(segment) => {
+                    if let Some(result) = segment.excluded_dir_by_non_dir_rule(path) {
+                        return result;
+                    }
+                }
+                FilterInstruction::DirMerge { index } => {
+                    if let Some(layers) = dir_merge_layers.get(*index) {
+                        for layer in layers {
+                            if let Some(result) = layer.excluded_dir_by_non_dir_rule(path) {
+                                return result;
+                            }
+                        }
+                    }
+                    if let Some(ephemeral) = ephemeral_layers {
+                        for (rule_index, segment) in ephemeral {
+                            if *rule_index == *index {
+                                if let Some(result) =
+                                    segment.excluded_dir_by_non_dir_rule(path)
+                                {
+                                    return result;
+                                }
+                            }
+                        }
+                    }
+                }
+                FilterInstruction::ExcludeIfPresent { .. } => {}
+            }
+        }
+        false
+    }
+
     pub(crate) fn should_exclude_directory(
         &self,
         directory: &Path,
