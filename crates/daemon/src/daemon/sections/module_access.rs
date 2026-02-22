@@ -61,9 +61,14 @@ enum AuthenticationStatus {
 /// Performs challenge-response authentication for a protected module.
 ///
 /// This implements the rsync daemon authentication protocol:
-/// 1. Sends a base64-encoded MD5 challenge to the client
+/// 1. Sends a base64-encoded challenge to the client
 /// 2. Reads the client's response containing username and digest
 /// 3. Verifies the digest against the module's secrets file
+///
+/// The `protocol_version` determines which digest algorithm to use for legacy
+/// (MD4/MD5) responses when the response length is ambiguous.
+///
+/// upstream: compat.c:858 — `protocol_version >= 30 ? "md5" : "md4"`
 ///
 /// Returns `Granted` if authentication succeeded, `Denied` otherwise.
 fn perform_module_authentication(
@@ -72,6 +77,7 @@ fn perform_module_authentication(
     module: &ModuleDefinition,
     peer_ip: IpAddr,
     messages: &LegacyMessageCache,
+    protocol_version: Option<ProtocolVersion>,
 ) -> io::Result<AuthenticationStatus> {
     let challenge = generate_auth_challenge(peer_ip);
     {
@@ -112,7 +118,7 @@ fn perform_module_authentication(
         }
     };
 
-    if !verify_secret_response(module, username, &challenge, digest)? {
+    if !verify_secret_response(module, username, &challenge, digest, protocol_version)? {
         send_auth_failed(reader.get_mut(), module, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }
@@ -162,12 +168,16 @@ fn generate_auth_challenge(peer_ip: IpAddr) -> String {
 /// using the stored secret and challenge, then compares with the client's
 /// response.
 ///
+/// The `protocol_version` is forwarded to `verify_daemon_auth_response` to
+/// select the correct digest for ambiguous MD4/MD5 responses.
+///
 /// Returns `true` if the username exists and the digest matches, `false` otherwise.
 fn verify_secret_response(
     module: &ModuleDefinition,
     username: &str,
     challenge: &str,
     response: &str,
+    protocol_version: Option<ProtocolVersion>,
 ) -> io::Result<bool> {
     let secrets_path = match &module.secrets_file {
         Some(path) => path,
@@ -184,7 +194,12 @@ fn verify_secret_response(
 
         if let Some((user, secret)) = line.split_once(':')
             && user == username
-            && verify_daemon_auth_response(secret.as_bytes(), challenge, response)
+            && verify_daemon_auth_response(
+                secret.as_bytes(),
+                challenge,
+                response,
+                protocol_version.map(|v| v.as_u8()),
+            )
         {
             return Ok(true);
         }
@@ -438,14 +453,21 @@ fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> i
 fn handle_authentication(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleDefinition,
+    protocol_version: Option<ProtocolVersion>,
 ) -> io::Result<bool> {
     if !module.requires_authentication() {
         send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
         return Ok(true);
     }
 
-    match perform_module_authentication(ctx.reader, ctx.limiter, module, ctx.peer_ip, ctx.messages)?
-    {
+    match perform_module_authentication(
+        ctx.reader,
+        ctx.limiter,
+        module,
+        ctx.peer_ip,
+        ctx.messages,
+        protocol_version,
+    )? {
         AuthenticationStatus::Denied => {
             if let Some(log) = ctx.log_sink {
                 log_module_auth_failure(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
@@ -816,7 +838,7 @@ fn process_approved_module(
     apply_module_timeout(ctx.reader.get_mut(), module)?;
 
     // Handle authentication
-    if !handle_authentication(ctx, module)? {
+    if !handle_authentication(ctx, module, negotiated_protocol)? {
         return Ok(());
     }
 

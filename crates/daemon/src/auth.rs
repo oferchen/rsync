@@ -67,7 +67,7 @@
 //!
 //! // Verify
 //! if let Some(password) = secrets.lookup("alice") {
-//!     if verify_client_response(password.as_bytes(), &challenge, "dGVzdHJlc3BvbnNl") {
+//!     if verify_client_response(password.as_bytes(), &challenge, "dGVzdHJlc3BvbnNl", Some(31)) {
 //!         println!("Authentication successful");
 //!     }
 //! }
@@ -495,11 +495,16 @@ mod tests {
         let password = b"mysecret";
         let challenge = "test_challenge";
 
-        // Compute response using MD5
+        // Compute response using MD5 (protocol >= 30 default)
         let response = compute_auth_response(password, challenge, DaemonAuthDigest::Md5);
 
-        // Verify should succeed
-        assert!(verify_client_response(password, challenge, &response));
+        // Verify should succeed with protocol 31
+        assert!(verify_client_response(
+            password,
+            challenge,
+            &response,
+            Some(31)
+        ));
     }
 
     #[test]
@@ -514,7 +519,8 @@ mod tests {
         assert!(!verify_client_response(
             wrong_password,
             challenge,
-            &response
+            &response,
+            Some(31),
         ));
     }
 
@@ -527,7 +533,12 @@ mod tests {
         let response = compute_auth_response(password, challenge1, DaemonAuthDigest::Md5);
 
         // Verification with different challenge should fail
-        assert!(!verify_client_response(password, challenge2, &response));
+        assert!(!verify_client_response(
+            password,
+            challenge2,
+            &response,
+            Some(31)
+        ));
     }
 
     #[test]
@@ -535,13 +546,50 @@ mod tests {
         let password = b"test";
         let challenge = "ch";
 
-        // Test all supported algorithms
+        // Test all supported algorithms (no protocol version restriction)
         for &digest in SUPPORTED_DAEMON_DIGESTS {
             let response = compute_auth_response(password, challenge, digest);
             assert!(
-                verify_client_response(password, challenge, &response),
+                verify_client_response(password, challenge, &response, None),
                 "Failed for digest: {digest:?}"
             );
         }
+    }
+
+    #[test]
+    fn verify_client_response_protocol_version_selects_correct_digest() {
+        let password = b"secret";
+        let challenge = "challenge";
+
+        // Protocol >= 30 should use MD5
+        let md5_resp = compute_auth_response(password, challenge, DaemonAuthDigest::Md5);
+        assert!(verify_client_response(
+            password,
+            challenge,
+            &md5_resp,
+            Some(30)
+        ));
+
+        let md4_resp = compute_auth_response(password, challenge, DaemonAuthDigest::Md4);
+        assert!(!verify_client_response(
+            password,
+            challenge,
+            &md4_resp,
+            Some(30)
+        ));
+
+        // Protocol < 30 should use MD4
+        assert!(verify_client_response(
+            password,
+            challenge,
+            &md4_resp,
+            Some(29)
+        ));
+        assert!(!verify_client_response(
+            password,
+            challenge,
+            &md5_resp,
+            Some(29)
+        ));
     }
 }
