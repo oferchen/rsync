@@ -45,7 +45,7 @@ fn run_daemon_filters_modules_during_list_request() {
 
     line.clear();
     reader.read_line(&mut line).expect("public module");
-    assert_eq!(line.trim_end(), "public");
+    assert_eq!(line, "public         \t\n");
 
     line.clear();
     reader

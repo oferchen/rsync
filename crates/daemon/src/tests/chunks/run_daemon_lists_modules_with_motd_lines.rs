@@ -65,7 +65,7 @@ fn run_daemon_lists_modules_with_motd_lines() {
 
     line.clear();
     reader.read_line(&mut line).expect("module line");
-    assert_eq!(line.trim_end(), "docs");
+    assert_eq!(line, "docs           \t\n");
 
     line.clear();
     reader.read_line(&mut line).expect("exit line");

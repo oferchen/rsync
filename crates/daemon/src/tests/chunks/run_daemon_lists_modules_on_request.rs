@@ -40,11 +40,11 @@ fn run_daemon_lists_modules_on_request() {
 
     line.clear();
     reader.read_line(&mut line).expect("first module");
-    assert_eq!(line.trim_end(), "docs\tDocumentation");
+    assert_eq!(line, "docs           \tDocumentation\n");
 
     line.clear();
     reader.read_line(&mut line).expect("second module");
-    assert_eq!(line.trim_end(), "logs");
+    assert_eq!(line, "logs           \t\n");
 
     line.clear();
     reader.read_line(&mut line).expect("exit line");
