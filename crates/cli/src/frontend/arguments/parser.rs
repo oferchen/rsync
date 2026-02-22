@@ -226,7 +226,15 @@ where
     if let Some(ref value) = compress_level_opt
         && let Ok(setting) = parse_compress_level_argument(value.as_os_str())
     {
-        compress = !setting.is_disabled();
+        // upstream: options.c — last-flag-wins between --no-compress and --compress-level
+        let level_implies_compress = !setting.is_disabled();
+        if no_compress && level_implies_compress {
+            let no_compress_idx = last_occurrence(&matches, "no-compress").unwrap_or(0);
+            let level_idx = last_occurrence(&matches, "compress-level").unwrap_or(0);
+            compress = level_idx > no_compress_idx;
+        } else {
+            compress = level_implies_compress;
+        }
     }
     let iconv = matches.remove_one::<OsString>("iconv");
     let no_iconv = matches.get_flag("no-iconv");

@@ -1826,6 +1826,34 @@ mod compression_options {
         let parsed = parse_test_args(["--compress-level=0", "src/", "dst/"]).expect("parse");
         assert!(!parsed.compress); // Level 0 should disable compression
     }
+
+    #[test]
+    fn no_compress_then_compress_level_enables() {
+        let parsed = parse_test_args(["--no-compress", "--compress-level=3", "src/", "dst/"])
+            .expect("parse");
+        assert!(parsed.compress); // --compress-level=3 appears after --no-compress
+    }
+
+    #[test]
+    fn compress_level_then_no_compress_disables() {
+        let parsed = parse_test_args(["--compress-level=3", "--no-compress", "src/", "dst/"])
+            .expect("parse");
+        assert!(!parsed.compress); // --no-compress appears after --compress-level=3
+    }
+
+    #[test]
+    fn compress_level_zero_then_no_compress_stays_disabled() {
+        let parsed = parse_test_args(["--compress-level=0", "--no-compress", "src/", "dst/"])
+            .expect("parse");
+        assert!(!parsed.compress);
+    }
+
+    #[test]
+    fn no_compress_then_compress_level_zero_stays_disabled() {
+        let parsed = parse_test_args(["--no-compress", "--compress-level=0", "src/", "dst/"])
+            .expect("parse");
+        assert!(!parsed.compress);
+    }
 }
 
 mod verbosity_tests {
