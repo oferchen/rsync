@@ -66,7 +66,9 @@ use super::config::{ReferenceDirectory, ServerConfig};
 use super::handshake::HandshakeResult;
 use super::pipeline::{PipelineConfig, PipelineState};
 use super::shared::ChecksumFactory;
+#[cfg(test)]
 use super::temp_guard::TempFileGuard;
+use super::temp_guard::open_tmpfile;
 use super::transfer_ops::{
     RequestConfig, ResponseContext, process_file_response, process_file_response_streaming,
     send_file_request,
@@ -946,10 +948,9 @@ impl ReceiverContext {
             let _echoed_sum_head = SumHead::read(reader)?;
 
             // Apply delta to reconstruct file
-            let temp_path = file_path.with_extension("oc-rsync.tmp");
-            let mut temp_guard = TempFileGuard::new(temp_path.clone());
+            // upstream: receiver.c open_tmpfile() → do_mkstemp() with ".filename.XXXXXX"
+            let (file, mut temp_guard) = open_tmpfile(&file_path, None)?;
             let target_size = file_entry.size();
-            let file = fs::File::create(&temp_path)?;
             let writer_capacity = adaptive_writer_capacity(target_size);
             let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
             let mut total_bytes: u64 = 0;
@@ -1129,7 +1130,7 @@ impl ReceiverContext {
             drop(file); // Ensure file is closed before rename
 
             // Atomic rename (crash-safe)
-            fs::rename(&temp_path, &file_path)?;
+            fs::rename(temp_guard.path(), &file_path)?;
             temp_guard.keep(); // Success! Keep the file (now renamed)
 
             // Step 6: Apply metadata from FileEntry (best-effort)
