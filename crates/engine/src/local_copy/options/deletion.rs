@@ -95,11 +95,27 @@ impl LocalCopyOptions {
         self.max_deletions
     }
 
-    /// Returns the configured deletion timing when deletion sweeps are enabled.
+    /// Returns the effective deletion timing when deletion sweeps are enabled.
+    ///
+    /// When `--delay-updates` is active, files are staged in `.~tmp~`
+    /// subdirectories during the transfer phase and renamed into place only
+    /// after all transfers complete.  Deleting with `During` timing would
+    /// treat those staging directories as extraneous and remove them before
+    /// the rename sweep runs, corrupting the transfer.  We therefore promote
+    /// `During` to `After` whenever `delay_updates` is set.
+    ///
+    /// upstream: generator.c — delete_in_dir() is only invoked after the
+    /// receiver rename sweep completes when delay_updates is active.
     #[must_use]
     pub const fn delete_timing(&self) -> Option<DeleteTiming> {
         if self.delete {
-            Some(self.delete_timing)
+            // Promote During → After when --delay-updates is active so that
+            // staged .~tmp~ files are not treated as extraneous mid-transfer.
+            if self.delay_updates && matches!(self.delete_timing, DeleteTiming::During) {
+                Some(DeleteTiming::After)
+            } else {
+                Some(self.delete_timing)
+            }
         } else {
             None
         }
@@ -114,7 +130,9 @@ impl LocalCopyOptions {
     /// Reports whether deletions should occur after transfers instead of immediately.
     #[must_use]
     pub const fn delete_after_enabled(&self) -> bool {
-        matches!(self.delete_timing, DeleteTiming::After) && self.delete
+        self.delete
+            && (matches!(self.delete_timing, DeleteTiming::After)
+                || (self.delay_updates && matches!(self.delete_timing, DeleteTiming::During)))
     }
 
     /// Reports whether deletions are deferred until after transfers but determined during the walk.
@@ -126,7 +144,7 @@ impl LocalCopyOptions {
     /// Reports whether deletions should occur while processing directory entries.
     #[must_use]
     pub const fn delete_during_enabled(&self) -> bool {
-        matches!(self.delete_timing, DeleteTiming::During) && self.delete
+        matches!(self.delete_timing, DeleteTiming::During) && self.delete && !self.delay_updates
     }
 
     /// Reports whether excluded paths should also be removed during deletion sweeps.
@@ -297,6 +315,49 @@ mod tests {
     #[test]
     fn delete_timing_default_is_during() {
         assert_eq!(DeleteTiming::default(), DeleteTiming::During);
+    }
+
+    #[test]
+    fn delay_updates_promotes_during_to_after() {
+        let opts = LocalCopyOptions::new().delete(true).delay_updates(true);
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::After));
+        assert!(opts.delete_after_enabled());
+        assert!(!opts.delete_during_enabled());
+    }
+
+    #[test]
+    fn delay_updates_preserves_explicit_after_timing() {
+        let opts = LocalCopyOptions::new()
+            .delete_after(true)
+            .delay_updates(true);
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::After));
+        assert!(opts.delete_after_enabled());
+    }
+
+    #[test]
+    fn delay_updates_preserves_before_timing() {
+        let opts = LocalCopyOptions::new()
+            .delete_before(true)
+            .delay_updates(true);
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::Before));
+        assert!(opts.delete_before_enabled());
+        assert!(!opts.delete_during_enabled());
+    }
+
+    #[test]
+    fn delay_updates_preserves_delay_timing() {
+        let opts = LocalCopyOptions::new()
+            .delete_delay(true)
+            .delay_updates(true);
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::Delay));
+        assert!(opts.delete_delay_enabled());
+    }
+
+    #[test]
+    fn delete_during_without_delay_updates_stays_during() {
+        let opts = LocalCopyOptions::new().delete(true);
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::During));
+        assert!(opts.delete_during_enabled());
     }
 
     #[test]
