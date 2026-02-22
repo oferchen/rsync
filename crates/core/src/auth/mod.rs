@@ -121,17 +121,37 @@ pub fn parse_daemon_digest_list(list: Option<&str>) -> Vec<DaemonAuthDigest> {
 }
 
 /// Selects the strongest mutually supported digest between the local implementation and the advertised list.
+///
+/// When no advertised digest matches, falls back based on `protocol_version`:
+/// MD5 for protocol >= 30, MD4 for protocol < 30.
+///
+/// upstream: compat.c:858 — `protocol_version >= 30 ? "md5" : "md4"`
 #[must_use]
-pub fn select_daemon_digest(advertised: &[DaemonAuthDigest]) -> DaemonAuthDigest {
+pub fn select_daemon_digest(
+    advertised: &[DaemonAuthDigest],
+    protocol_version: u8,
+) -> DaemonAuthDigest {
     for preferred in SUPPORTED_DAEMON_DIGESTS.iter().copied() {
         if advertised.contains(&preferred) {
             return preferred;
         }
     }
 
-    // No explicit match; fall back to the historical default so older daemons without an
-    // advertised list continue working.
-    DaemonAuthDigest::Md5
+    // upstream: compat.c:858 — when no daemon_auth_choices are configured the default
+    // digest depends on the negotiated protocol version.
+    default_legacy_digest(protocol_version)
+}
+
+/// Returns the protocol-version-appropriate legacy digest.
+///
+/// upstream: compat.c:858 — `protocol_version >= 30 ? "md5" : "md4"`
+#[must_use]
+pub const fn default_legacy_digest(protocol_version: u8) -> DaemonAuthDigest {
+    if protocol_version >= 30 {
+        DaemonAuthDigest::Md5
+    } else {
+        DaemonAuthDigest::Md4
+    }
 }
 
 /// Computes the base64-encoded daemon authentication response using the provided digest.
@@ -164,6 +184,13 @@ const MD_LEGACY: &[DaemonAuthDigest] = &[DaemonAuthDigest::Md5, DaemonAuthDigest
 
 /// Verifies whether the supplied daemon authentication response matches the secret and challenge.
 ///
+/// When `protocol_version` is provided and the response length is ambiguous between MD4 and MD5
+/// (both produce 22-character base64 output), only the protocol-appropriate digest is tried:
+/// MD5 for protocol >= 30, MD4 for protocol < 30. This matches upstream rsync's
+/// `negotiate_daemon_auth()` behavior in `compat.c:847`.
+///
+/// When `protocol_version` is `None`, both MD4 and MD5 are tried for backward compatibility.
+///
 /// # Security
 ///
 /// This function uses constant-time comparison to prevent timing attacks. An attacker
@@ -172,10 +199,29 @@ const MD_LEGACY: &[DaemonAuthDigest] = &[DaemonAuthDigest::Md5, DaemonAuthDigest
 /// Reference: Upstream rsync uses `strcmp()` which is timing-vulnerable. This implementation
 /// improves upon upstream by using constant-time comparison for cryptographic security.
 #[must_use]
-pub fn verify_daemon_auth_response(secret: &[u8], challenge: &str, response: &str) -> bool {
-    digests_for_response(response)
+pub fn verify_daemon_auth_response(
+    secret: &[u8],
+    challenge: &str,
+    response: &str,
+    protocol_version: Option<u8>,
+) -> bool {
+    let candidates = digests_for_response(response);
+
+    candidates
         .iter()
         .filter(|digest| SUPPORTED_DAEMON_DIGESTS.contains(digest))
+        .filter(|digest| {
+            // When the protocol version is known and the response is ambiguous (MD4/MD5),
+            // only try the protocol-appropriate digest.
+            // upstream: compat.c:858 — protocol_version >= 30 ? "md5" : "md4"
+            if let Some(version) = protocol_version {
+                if candidates.len() > 1 {
+                    let expected = default_legacy_digest(version);
+                    return **digest == expected;
+                }
+            }
+            true
+        })
         .any(|digest| {
             let expected = compute_daemon_auth_response(secret, challenge, *digest);
             constant_time_eq(expected.as_bytes(), response.as_bytes())
@@ -237,12 +283,20 @@ mod tests {
             DaemonAuthDigest::Sha1,
             DaemonAuthDigest::Sha256,
         ];
-        assert_eq!(select_daemon_digest(&digests), DaemonAuthDigest::Sha256);
+        assert_eq!(select_daemon_digest(&digests, 31), DaemonAuthDigest::Sha256);
     }
 
     #[test]
-    fn selection_falls_back_to_md5_when_list_empty() {
-        assert_eq!(select_daemon_digest(&[]), DaemonAuthDigest::Md5);
+    fn selection_falls_back_to_md5_for_protocol_30_plus() {
+        assert_eq!(select_daemon_digest(&[], 30), DaemonAuthDigest::Md5);
+        assert_eq!(select_daemon_digest(&[], 31), DaemonAuthDigest::Md5);
+        assert_eq!(select_daemon_digest(&[], 32), DaemonAuthDigest::Md5);
+    }
+
+    #[test]
+    fn selection_falls_back_to_md4_for_protocol_below_30() {
+        assert_eq!(select_daemon_digest(&[], 29), DaemonAuthDigest::Md4);
+        assert_eq!(select_daemon_digest(&[], 28), DaemonAuthDigest::Md4);
     }
 
     #[test]
@@ -250,7 +304,9 @@ mod tests {
         let secret = b"secret";
         let challenge = "challenge";
         let response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Sha512);
-        assert!(verify_daemon_auth_response(secret, challenge, &response));
+        assert!(verify_daemon_auth_response(
+            secret, challenge, &response, None
+        ));
     }
 
     #[test]
@@ -301,15 +357,19 @@ mod tests {
             tampered.push(if c == 'A' { 'B' } else { 'A' });
         }
 
-        assert!(verify_daemon_auth_response(secret, challenge, &correct));
-        assert!(!verify_daemon_auth_response(secret, challenge, &tampered));
+        assert!(verify_daemon_auth_response(
+            secret, challenge, &correct, None
+        ));
+        assert!(!verify_daemon_auth_response(
+            secret, challenge, &tampered, None
+        ));
     }
 
     #[test]
     fn verify_rejects_empty_response() {
         let secret = b"secret";
         let challenge = "challenge";
-        assert!(!verify_daemon_auth_response(secret, challenge, ""));
+        assert!(!verify_daemon_auth_response(secret, challenge, "", None));
     }
 
     #[test]
@@ -317,11 +377,131 @@ mod tests {
         let secret = b"secret";
         let challenge = "challenge";
         // Response length doesn't match any known digest
-        assert!(!verify_daemon_auth_response(secret, challenge, "tooshort"));
+        assert!(!verify_daemon_auth_response(
+            secret, challenge, "tooshort", None
+        ));
         assert!(!verify_daemon_auth_response(
             secret,
             challenge,
-            &"A".repeat(100)
+            &"A".repeat(100),
+            None,
         ));
+    }
+
+    #[test]
+    fn verify_uses_md5_for_protocol_30_plus() {
+        let secret = b"test_secret";
+        let challenge = "test_challenge";
+        let md5_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md5);
+        let md4_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md4);
+
+        // Protocol >= 30 should accept MD5 and reject MD4
+        assert!(verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md5_response,
+            Some(30)
+        ));
+        assert!(!verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md4_response,
+            Some(30)
+        ));
+        assert!(verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md5_response,
+            Some(31)
+        ));
+        assert!(!verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md4_response,
+            Some(31)
+        ));
+    }
+
+    #[test]
+    fn verify_uses_md4_for_protocol_below_30() {
+        let secret = b"test_secret";
+        let challenge = "test_challenge";
+        let md5_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md5);
+        let md4_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md4);
+
+        // Protocol < 30 should accept MD4 and reject MD5
+        assert!(verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md4_response,
+            Some(29)
+        ));
+        assert!(!verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md5_response,
+            Some(29)
+        ));
+        assert!(verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md4_response,
+            Some(28)
+        ));
+        assert!(!verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md5_response,
+            Some(28)
+        ));
+    }
+
+    #[test]
+    fn verify_accepts_both_md4_and_md5_without_protocol() {
+        let secret = b"test_secret";
+        let challenge = "test_challenge";
+        let md5_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md5);
+        let md4_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md4);
+
+        // Without protocol version, both should be accepted
+        assert!(verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md5_response,
+            None
+        ));
+        assert!(verify_daemon_auth_response(
+            secret,
+            challenge,
+            &md4_response,
+            None
+        ));
+    }
+
+    #[test]
+    fn verify_unambiguous_digests_unaffected_by_protocol() {
+        let secret = b"test_secret";
+        let challenge = "test_challenge";
+
+        // SHA-512, SHA-256, SHA-1 are unambiguous (unique response lengths)
+        for digest in [
+            DaemonAuthDigest::Sha512,
+            DaemonAuthDigest::Sha256,
+            DaemonAuthDigest::Sha1,
+        ] {
+            let response = compute_daemon_auth_response(secret, challenge, digest);
+            assert!(verify_daemon_auth_response(
+                secret,
+                challenge,
+                &response,
+                Some(29)
+            ));
+            assert!(verify_daemon_auth_response(
+                secret,
+                challenge,
+                &response,
+                Some(31)
+            ));
+        }
     }
 }
