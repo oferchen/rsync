@@ -3378,4 +3378,112 @@ mod tests {
             );
         }
     }
+
+    /// Verifies exact wire bytes for the end-of-list marker in non-varint mode.
+    ///
+    /// Upstream: `flist.c:write_end_of_flist()` — without `xfer_flags_as_varint`,
+    /// writes a single `write_byte(f, 0)`.
+    #[test]
+    fn write_end_nonvarint_produces_single_zero_byte() {
+        let protocol = test_protocol();
+        let writer = FileListWriter::new(protocol);
+
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, None).unwrap();
+
+        assert_eq!(
+            buf,
+            [0x00],
+            "non-varint end marker must be exactly one zero byte"
+        );
+    }
+
+    /// Verifies exact wire bytes for the end-of-list marker in varint mode
+    /// (CF_VARINT_FLIST_FLAGS active, no I/O error).
+    ///
+    /// Upstream: `flist.c:write_end_of_flist()` — with `xfer_flags_as_varint`,
+    /// writes `write_varint(f, 0); write_varint(f, 0);` (two varint-encoded zeros).
+    #[test]
+    fn write_end_varint_no_error_produces_double_zero_bytes() {
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let writer = FileListWriter::with_compat_flags(protocol, flags);
+
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, None).unwrap();
+
+        assert_eq!(
+            buf,
+            [0x00, 0x00],
+            "varint end marker without error must be exactly two zero bytes (varint(0) + varint(0))"
+        );
+    }
+
+    /// Verifies exact wire bytes for the end-of-list marker in varint mode
+    /// with an I/O error code.
+    ///
+    /// Upstream: `flist.c:write_end_of_flist()` — with `xfer_flags_as_varint`,
+    /// writes `write_varint(f, 0); write_varint(f, io_error);`.
+    #[test]
+    fn write_end_varint_with_error_produces_zero_then_error_varint() {
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let writer = FileListWriter::with_compat_flags(protocol, flags);
+
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, Some(5)).unwrap();
+
+        // varint(0) = 0x00, varint(5) = 0x05 (small values encode as single byte)
+        assert_eq!(
+            buf,
+            [0x00, 0x05],
+            "varint end marker with error=5 must be varint(0) + varint(5)"
+        );
+    }
+
+    /// Verifies that varint mode end marker with a larger error code encodes
+    /// correctly as double-varint.
+    #[test]
+    fn write_end_varint_with_large_error_encodes_correctly() {
+        use crate::varint::decode_varint;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let writer = FileListWriter::with_compat_flags(protocol, flags);
+
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, Some(300)).unwrap();
+
+        // First byte must be varint(0) = 0x00
+        assert_eq!(buf[0], 0x00, "first varint must encode zero flags");
+
+        // Remaining bytes must decode to 300
+        let (error_code, _) = decode_varint(&buf[1..]).unwrap();
+        assert_eq!(error_code, 300, "second varint must encode the error code");
+    }
+
+    /// Verifies that varint mode produces a DIFFERENT wire encoding than
+    /// non-varint mode for the same end-of-list-without-error scenario.
+    #[test]
+    fn write_end_varint_differs_from_nonvarint() {
+        let protocol = test_protocol();
+
+        let nonvarint_writer = FileListWriter::new(protocol);
+        let mut nonvarint_buf = Vec::new();
+        nonvarint_writer
+            .write_end(&mut nonvarint_buf, None)
+            .unwrap();
+
+        let varint_writer =
+            FileListWriter::with_compat_flags(protocol, CompatibilityFlags::VARINT_FLIST_FLAGS);
+        let mut varint_buf = Vec::new();
+        varint_writer.write_end(&mut varint_buf, None).unwrap();
+
+        assert_eq!(nonvarint_buf.len(), 1, "non-varint end marker is 1 byte");
+        assert_eq!(varint_buf.len(), 2, "varint end marker is 2 bytes");
+        assert_ne!(
+            nonvarint_buf, varint_buf,
+            "varint and non-varint end markers must differ in wire encoding"
+        );
+    }
 }
