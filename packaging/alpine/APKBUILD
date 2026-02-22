@@ -1,0 +1,34 @@
+# Maintainer: oc-rsync maintainers <https://github.com/oferchen/rsync>
+pkgname=oc-rsync
+# Version is replaced by CI at build time
+pkgver=0.0.0
+pkgrel=0
+pkgdesc="Pure-Rust implementation of rsync, wire-compatible with upstream 3.4.1"
+url="https://github.com/oferchen/rsync"
+arch="x86_64 aarch64"
+license="MIT"
+depends=""
+install="$pkgname.pre-install $pkgname.post-install $pkgname.pre-deinstall"
+source=""
+options="!check"
+
+# The binary is pre-built as a static musl binary by CI.
+# This APKBUILD packages it with config files and init scripts.
+
+build() {
+	return 0
+}
+
+package() {
+	install -Dm755 "$startdir/oc-rsync" \
+		"$pkgdir/usr/bin/oc-rsync"
+
+	install -Dm644 "$startdir/oc-rsyncd.conf.default" \
+		"$pkgdir/etc/oc-rsyncd/oc-rsyncd.conf"
+
+	install -Dm755 "$startdir/oc-rsyncd.initd" \
+		"$pkgdir/etc/init.d/oc-rsyncd"
+
+	install -Dm644 "$startdir/oc-rsyncd.confd" \
+		"$pkgdir/etc/conf.d/oc-rsyncd"
+}
