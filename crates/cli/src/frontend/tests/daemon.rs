@@ -104,3 +104,40 @@ fn daemon_mode_arguments_ignore_operands_after_double_dash() {
 
     assert!(server::daemon_mode_arguments(&args).is_none());
 }
+
+#[test]
+fn daemon_config_flag_is_passed_through() {
+    let args = vec![
+        OsString::from(RSYNC),
+        OsString::from("--daemon"),
+        OsString::from("--config=/tmp/test.conf"),
+        OsString::from("--help"),
+    ];
+
+    let daemon_args = server::daemon_mode_arguments(&args).expect("daemon mode detected");
+    assert!(
+        daemon_args.iter().any(|a| a == "--config=/tmp/test.conf"),
+        "expected --config flag to be forwarded, got: {daemon_args:?}"
+    );
+}
+
+#[test]
+fn daemon_config_flag_separate_value_is_passed_through() {
+    let args = vec![
+        OsString::from(RSYNC),
+        OsString::from("--daemon"),
+        OsString::from("--config"),
+        OsString::from("/tmp/test.conf"),
+        OsString::from("--help"),
+    ];
+
+    let daemon_args = server::daemon_mode_arguments(&args).expect("daemon mode detected");
+    assert!(
+        daemon_args.iter().any(|a| a == "--config"),
+        "expected --config flag to be forwarded, got: {daemon_args:?}"
+    );
+    assert!(
+        daemon_args.iter().any(|a| a == "/tmp/test.conf"),
+        "expected config path to be forwarded, got: {daemon_args:?}"
+    );
+}
