@@ -180,6 +180,8 @@ include!("tests/chunks/run_daemon_handles_binary_negotiation.rs");
 include!("tests/chunks/run_daemon_handles_parallel_sessions.rs");
 include!("tests/chunks/run_daemon_honours_max_sessions.rs");
 include!("tests/chunks/run_daemon_lists_modules_on_request.rs");
+include!("tests/chunks/run_daemon_loads_modules_from_config_file.rs");
+include!("tests/chunks/run_daemon_loads_modules_from_inline_config_flag.rs");
 include!("tests/chunks/run_daemon_lists_modules_with_motd_lines.rs");
 include!("tests/chunks/run_daemon_omits_unlisted_modules_from_listing.rs");
 include!("tests/chunks/run_daemon_records_log_file_entries.rs");
