@@ -47,7 +47,7 @@ use std::os::unix::fs::PermissionsExt;
 use checksums::strong::Md5;
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use core::{
-    auth::{SUPPORTED_DAEMON_DIGESTS, verify_daemon_auth_response},
+    auth::{digests_for_protocol, verify_daemon_auth_response},
     bandwidth::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
         parse_bandwidth_limit,
