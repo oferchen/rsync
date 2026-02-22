@@ -469,15 +469,13 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .long("copy-links")
                     .short('L')
                     .help("Transform symlinks into referent files/directories.")
-                    .action(ArgAction::SetTrue)
-                    .conflicts_with("no-copy-links"),
+                    .action(ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("copy-unsafe-links")
                     .long("copy-unsafe-links")
                     .help("Transform unsafe symlinks into referent files/directories.")
-                    .action(ArgAction::SetTrue)
-                    .conflicts_with("no-copy-unsafe-links"),
+                    .action(ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("hard-links")
@@ -499,22 +497,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .long("keep-dirlinks")
                     .short('K')
                     .help("Treat existing destination symlinks to directories as directories.")
-                    .action(ArgAction::SetTrue)
-                    .conflicts_with("no-keep-dirlinks"),
-            )
-            .arg(
-                Arg::new("no-copy-links")
-                    .long("no-copy-links")
-                    .help("Preserve symlinks instead of following them.")
-                    .action(ArgAction::SetTrue)
-                    .conflicts_with("copy-links"),
-            )
-            .arg(
-                Arg::new("no-copy-unsafe-links")
-                    .long("no-copy-unsafe-links")
-                    .help("Preserve unsafe symlinks instead of following them.")
-                    .action(ArgAction::SetTrue)
-                    .conflicts_with("copy-unsafe-links"),
+                    .action(ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("no-hard-links")
@@ -592,13 +575,6 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .num_args(1)
                     .action(ArgAction::Set)
                     .value_parser(OsStringValueParser::new()),
-            )
-            .arg(
-                Arg::new("no-keep-dirlinks")
-                    .long("no-keep-dirlinks")
-                    .help("Disable treating destination symlinks to directories as directories.")
-                    .action(ArgAction::SetTrue)
-                    .conflicts_with("keep-dirlinks"),
             )
             .arg(
                 Arg::new("archive-devices")
@@ -682,15 +658,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                 Arg::new("fake-super")
                     .long("fake-super")
                     .help("Store/restore privileged attrs using xattrs instead of real permissions.")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("no-fake-super"),
-            )
-            .arg(
-                Arg::new("no-fake-super")
-                    .long("no-fake-super")
-                    .help("Disable fake super-user mode.")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("fake-super"),
+                    .action(ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("verbose")

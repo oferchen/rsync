@@ -1507,14 +1507,5 @@ options:
     notes: Negates the corresponding positive option.
 oc_only_options:
   - option: --connect-program
-    short: 
-    notes: Specific to oc-rsync; upstream rsync does not expose this flag.
-  - option: --no-copy-links
-    short: 
-    notes: Specific to oc-rsync; upstream rsync does not expose this flag.
-  - option: --no-copy-unsafe-links
-    short: 
-    notes: Specific to oc-rsync; upstream rsync does not expose this flag.
-  - option: --no-keep-dirlinks
-    short: 
+    short:
     notes: Specific to oc-rsync; upstream rsync does not expose this flag.

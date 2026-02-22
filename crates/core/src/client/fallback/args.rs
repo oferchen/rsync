@@ -117,7 +117,7 @@ pub struct RemoteFallbackArgs {
     pub groupmap: Option<OsString>,
     /// Repeated `--chmod` specifications forwarded to the fallback binary.
     pub chmod: Vec<OsString>,
-    /// Optional `--executability`/`--no-executability` toggle.
+    /// Optional `--executability` toggle.
     pub executability: Option<bool>,
     /// Optional `--perms`/`--no-perms` toggle.
     pub perms: Option<bool>,
@@ -135,13 +135,13 @@ pub struct RemoteFallbackArgs {
     pub hard_links: Option<bool>,
     /// Optional `--links`/`--no-links` toggle.
     pub links: Option<bool>,
-    /// Optional `--copy-links`/`--no-copy-links` toggle.
+    /// Optional `--copy-links` toggle.
     pub copy_links: Option<bool>,
     /// Enables `--copy-dirlinks` when `true`.
     pub copy_dirlinks: bool,
-    /// Optional `--copy-unsafe-links`/`--no-copy-unsafe-links` toggle.
+    /// Optional `--copy-unsafe-links` toggle.
     pub copy_unsafe_links: Option<bool>,
-    /// Optional `--keep-dirlinks`/`--no-keep-dirlinks` toggle.
+    /// Optional `--keep-dirlinks` toggle.
     pub keep_dirlinks: Option<bool>,
     /// Enables `--safe-links` when `true`.
     pub safe_links: bool,
@@ -179,7 +179,7 @@ pub struct RemoteFallbackArgs {
     pub partial: bool,
     /// Enables `--preallocate`.
     pub preallocate: bool,
-    /// Controls `--fsync`/`--no-fsync` forwarding.
+    /// Controls `--fsync` forwarding.
     pub fsync: Option<bool>,
     /// Enables `--delay-updates`.
     pub delay_updates: bool,
