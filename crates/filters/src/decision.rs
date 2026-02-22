@@ -93,6 +93,29 @@ impl FilterSetInner {
 
         decision
     }
+
+    /// Checks whether a directory is excluded by a non-directory-specific rule.
+    ///
+    /// When `--prune-empty-dirs` is active, directories excluded by generic
+    /// patterns (e.g., `exclude("*")`) should still be descended into so that
+    /// file-level include rules can be evaluated. Only directory-specific
+    /// exclude patterns (trailing `/`) should prevent traversal outright.
+    ///
+    /// Returns `true` when the first matching sender-side include/exclude rule
+    /// is an exclude rule whose pattern is NOT directory-only.
+    pub(crate) fn excluded_dir_by_non_dir_rule(&self, path: &Path) -> bool {
+        if let Some(rule) = first_matching_rule(
+            &self.include_exclude,
+            path,
+            true,
+            |rule| rule.applies_to_sender,
+            true,
+        ) {
+            matches!(rule.action, FilterAction::Exclude) && !rule.is_directory_only()
+        } else {
+            false
+        }
+    }
 }
 
 /// Finds the first matching rule in the list (first-match-wins semantics).

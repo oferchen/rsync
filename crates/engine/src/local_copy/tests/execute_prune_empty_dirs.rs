@@ -461,7 +461,6 @@ fn prune_empty_dirs_with_existing_only_option() {
 }
 
 #[test]
-#[ignore] // Requires planner changes: non-dir-specific exclude patterns should not prevent directory traversal when prune_empty_dirs is enabled
 fn prune_empty_dirs_with_include_exclude_filters() {
     let ctx = test_helpers::setup_copy_test();
 
