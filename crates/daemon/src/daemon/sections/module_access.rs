@@ -39,14 +39,9 @@ fn respond_with_module_list(
             continue;
         }
 
-        let mut line = module.name.clone();
-        if let Some(comment) = &module.comment
-            && !comment.is_empty()
-        {
-            line.push('\t');
-            line.push_str(comment);
-        }
-        line.push('\n');
+        // upstream: clientserver.c:1254 — io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
+        let comment = module.comment.as_deref().unwrap_or("");
+        let line = format!("{:<15}\t{}\n", module.name, comment);
         write_limited(stream, limiter, line.as_bytes())?;
     }
 

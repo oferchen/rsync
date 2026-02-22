@@ -50,12 +50,12 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
 
     line.clear();
     reader.read_line(&mut line).expect("first module");
-    assert_eq!(line.trim_end(), format!("docs\t{comment}"));
+    assert_eq!(line, format!("docs           \t{comment}\n"));
     total_bytes += line.len();
 
     line.clear();
     reader.read_line(&mut line).expect("second module");
-    assert_eq!(line.trim_end(), "logs");
+    assert_eq!(line, "logs           \t\n");
     total_bytes += line.len();
 
     line.clear();
