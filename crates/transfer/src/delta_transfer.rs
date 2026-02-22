@@ -174,7 +174,8 @@
 //! #     delta_script: engine::delta::DeltaScript
 //! # ) -> std::io::Result<()> {
 //! // Atomic file reconstruction using temp file
-//! let temp_path = basis_path.with_extension("oc-rsync.tmp");
+//! // open_tmpfile() generates ".filename.XXXXXX" names (upstream receiver.c convention)
+//! let (mut output, mut guard) = open_tmpfile(basis_path, None)?;
 //!
 //! // Create signature index
 //! let index = DeltaSignatureIndex::from_signature(
@@ -184,14 +185,14 @@
 //!
 //! // Open basis for reading
 //! let basis = fs::File::open(basis_path)?;
-//! let mut output = fs::File::create(&temp_path)?;
 //!
 //! // Apply the delta
 //! apply_delta(basis, &mut output, &index, &delta_script)?;
 //! output.sync_all()?;
 //!
 //! // Atomic rename (crash-safe)
-//! fs::rename(&temp_path, basis_path)?;
+//! fs::rename(guard.path(), basis_path)?;
+//! guard.keep();
 //! # Ok(())
 //! # }
 //! ```
@@ -390,13 +391,14 @@
 //! ```rust,ignore
 //! # use std::fs;
 //! # fn example(final_path: &std::path::Path) -> std::io::Result<()> {
-//! let temp_path = final_path.with_extension("oc-rsync.tmp");
-//! let mut output = fs::File::create(&temp_path)?;
+//! // open_tmpfile() generates ".filename.XXXXXX" names (upstream receiver.c convention)
+//! let (mut output, mut guard) = open_tmpfile(final_path, None)?;
 //!
 //! // ... write data ...
 //! output.sync_all()?;
 //!
-//! fs::rename(&temp_path, final_path)?;  // Atomic on same filesystem
+//! fs::rename(guard.path(), final_path)?;  // Atomic on same filesystem
+//! guard.keep();
 //! # Ok(())
 //! # }
 //! ```
