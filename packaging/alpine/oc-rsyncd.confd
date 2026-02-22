@@ -1,0 +1,7 @@
+# Configuration for oc-rsyncd OpenRC service
+
+# Path to oc-rsyncd configuration file
+OC_RSYNCD_CONFIG="/etc/oc-rsyncd/oc-rsyncd.conf"
+
+# Additional arguments passed to oc-rsync --daemon
+OC_RSYNCD_ARGS=""

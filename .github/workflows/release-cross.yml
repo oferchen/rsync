@@ -6,9 +6,10 @@ name: Release-cross
 # This workflow handles the complete release process:
 #   1. Validates tag matches Cargo.toml version (fail-fast)
 #   2. Builds release artifacts for all platforms (parallelized)
-#   3. Uploads artifacts to GitHub Release
-#   4. Updates Homebrew formula and creates PR
-#   5. Builds and pushes multi-arch Docker image to GHCR
+#   3. Creates Alpine APK packages from musl static binaries
+#   4. Uploads artifacts to GitHub Release
+#   5. Updates Homebrew formula and creates PR
+#   6. Builds and pushes multi-arch Docker image to GHCR
 #
 # Trigger: Push a tag matching vX.Y.Z (e.g., v0.5.1)
 # Prerequisites: Cargo.toml version MUST match the tag (without 'v' prefix)
@@ -404,6 +405,109 @@ jobs:
           path: target/dist/oc-rsync-*-linux-${{ matrix.arch }}-musl*.tar.gz
 
   # ===========================================================================
+  # Alpine APK Packages (uses pre-built musl static binaries)
+  # ===========================================================================
+  # Creates .apk packages from pre-built musl static binaries for Alpine Linux.
+  # Packages include OpenRC init scripts and default configuration.
+  # ===========================================================================
+  linux-alpine:
+    name: alpine-apk-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    needs:
+      - validate-version
+      - linux-musl
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download stable musl artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist-linux-musl-${{ matrix.arch }}-stable
+          path: dist-musl
+
+      - name: Build APK package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          PKGVER="${VERSION}-r0"
+
+          # Extract pre-built static binary from musl tarball
+          mkdir -p /tmp/musl-extract
+          tar -xzf "dist-musl/oc-rsync-${VERSION}-linux-${ARCH}-musl.tar.gz" \
+            -C /tmp/musl-extract --strip-components=1
+
+          BINARY="/tmp/musl-extract/oc-rsync"
+          chmod +x "${BINARY}"
+
+          # --- Build data tarball (installed files) ---
+          DATA_DIR="$(mktemp -d)"
+
+          install -Dm755 "${BINARY}" "${DATA_DIR}/usr/bin/oc-rsync"
+          install -Dm644 packaging/alpine/oc-rsyncd.conf.default \
+            "${DATA_DIR}/etc/oc-rsyncd/oc-rsyncd.conf"
+          install -Dm755 packaging/alpine/oc-rsyncd.initd \
+            "${DATA_DIR}/etc/init.d/oc-rsyncd"
+          install -Dm644 packaging/alpine/oc-rsyncd.confd \
+            "${DATA_DIR}/etc/conf.d/oc-rsyncd"
+
+          # Calculate installed size (in bytes)
+          INSTALLED_SIZE=$(du -sb "${DATA_DIR}" | awk '{print $1}')
+
+          tar -czf /tmp/data.tar.gz -C "${DATA_DIR}" .
+          DATA_HASH=$(sha256sum /tmp/data.tar.gz | awk '{print $1}')
+
+          # --- Build control tarball (.PKGINFO + install scripts) ---
+          CONTROL_DIR="$(mktemp -d)"
+
+          cat > "${CONTROL_DIR}/.PKGINFO" << PKGINFO
+pkgname = oc-rsync
+pkgver = ${PKGVER}
+pkgdesc = Pure-Rust implementation of rsync, wire-compatible with upstream 3.4.1
+url = https://github.com/oferchen/rsync
+builddate = $(date +%s)
+packager = oc-rsync CI <ci@github.com>
+size = ${INSTALLED_SIZE}
+arch = ${ARCH}
+license = MIT
+origin = oc-rsync
+datahash = ${DATA_HASH}
+PKGINFO
+
+          cp packaging/alpine/oc-rsync.pre-install "${CONTROL_DIR}/.pre-install"
+          cp packaging/alpine/oc-rsync.post-install "${CONTROL_DIR}/.post-install"
+          cp packaging/alpine/oc-rsync.pre-deinstall "${CONTROL_DIR}/.pre-deinstall"
+
+          tar -czf /tmp/control.tar.gz -C "${CONTROL_DIR}" .
+
+          # --- Assemble APK (control + data concatenation) ---
+          mkdir -p target/dist
+          APK_NAME="oc-rsync-${PKGVER}-${ARCH}.apk"
+          cat /tmp/control.tar.gz /tmp/data.tar.gz > "target/dist/${APK_NAME}"
+
+          printf 'Built APK: %s (%s bytes)\n' "${APK_NAME}" "$(stat -c %s "target/dist/${APK_NAME}")"
+
+          # Cleanup
+          rm -rf "${DATA_DIR}" "${CONTROL_DIR}" /tmp/data.tar.gz /tmp/control.tar.gz /tmp/musl-extract
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-alpine-${{ matrix.arch }}
+          retention-days: 7
+          path: target/dist/oc-rsync-*.apk
+
+  # ===========================================================================
   # macOS Builds (matrix: parallel x86_64 and aarch64, all toolchains)
   # ===========================================================================
   macos:
@@ -588,6 +692,7 @@ jobs:
       - validate-version
       - linux-gnu
       - linux-musl
+      - linux-alpine
       - macos
       - windows
 
@@ -624,10 +729,11 @@ jobs:
           echo "=== Verifying all expected artifacts are present ==="
 
           # Count expected artifacts (3 toolchains: stable, beta, nightly)
-          # Each architecture × 3 toolchains
+          # Each architecture × 3 toolchains (except alpine: stable only)
           EXPECTED_DEB=6      # 2 arch (amd64, arm64) × 3 toolchains
           EXPECTED_RPM=6      # 2 arch (x86_64, aarch64) × 3 toolchains
           EXPECTED_MUSL=6     # 2 arch (x86_64, aarch64) × 3 toolchains
+          EXPECTED_APK=2      # 2 arch (x86_64, aarch64) × 1 (stable only)
           EXPECTED_MACOS=6    # 2 arch (x86_64, aarch64) × 3 toolchains
           EXPECTED_WINDOWS=3  # 1 arch (x86_64) × 3 toolchains
 
@@ -635,6 +741,7 @@ jobs:
           DEB_COUNT=$(find dist -name "*.deb" | wc -l)
           RPM_COUNT=$(find dist -name "*.rpm" | wc -l)
           MUSL_COUNT=$(find dist -name "*-musl*.tar.gz" | wc -l)
+          APK_COUNT=$(find dist -name "*.apk" | wc -l)
           MACOS_COUNT=$(find dist -name "*darwin*.tar.gz" | wc -l)
           WINDOWS_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
 
@@ -661,6 +768,13 @@ jobs:
             echo "✓ Found $MUSL_COUNT musl static tarballs (expected $EXPECTED_MUSL)"
           fi
 
+          if [ "$APK_COUNT" -lt "$EXPECTED_APK" ]; then
+            echo "::error::Expected $EXPECTED_APK .apk files, found $APK_COUNT"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✓ Found $APK_COUNT Alpine .apk packages (expected $EXPECTED_APK)"
+          fi
+
           if [ "$MACOS_COUNT" -lt "$EXPECTED_MACOS" ]; then
             echo "::error::Expected $EXPECTED_MACOS macOS tarballs, found $MACOS_COUNT"
             ERRORS=$((ERRORS + 1))
@@ -680,7 +794,7 @@ jobs:
             exit 1
           fi
 
-          echo "=== All required artifacts verified (27 total: 6 deb + 6 rpm + 6 musl + 6 macos + 3 windows) ==="
+          echo "=== All required artifacts verified (29 total: 6 deb + 6 rpm + 6 musl + 2 apk + 6 macos + 3 windows) ==="
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
@@ -692,6 +806,7 @@ jobs:
             dist/**/*.tar.gz
             dist/**/*.deb
             dist/**/*.rpm
+            dist/**/*.apk
             dist/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
