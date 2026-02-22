@@ -38,6 +38,23 @@ impl FilterSegment {
         self.include_exclude.is_empty() && self.protect_risk.is_empty()
     }
 
+    /// Checks whether a directory path is excluded by a non-directory-specific
+    /// sender-side rule in this segment.
+    ///
+    /// Returns `Some(true)` if excluded by a non-dir-only rule, `Some(false)` if
+    /// excluded by a dir-only rule or included, and `None` if no rule matched.
+    pub(crate) fn excluded_dir_by_non_dir_rule(&self, path: &Path) -> Option<bool> {
+        for rule in &self.include_exclude {
+            if rule.applies_to_sender && rule.matches(path, true) {
+                if matches!(rule.action, FilterAction::Exclude) {
+                    return Some(!rule.directory_only);
+                }
+                return Some(false);
+            }
+        }
+        None
+    }
+
     pub(crate) fn apply(
         &self,
         path: &Path,
