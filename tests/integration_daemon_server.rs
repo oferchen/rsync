@@ -1085,3 +1085,279 @@ fn server_sanitizes_module_name_in_error() {
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 }
+
+/// Helper: starts a daemon with an auth-protected module and returns
+/// (port, tempdir, daemon thread handle). The secrets file contains
+/// `testuser:testpassword`.
+#[cfg(unix)]
+fn start_auth_daemon() -> (
+    u16,
+    tempfile::TempDir,
+    thread::JoinHandle<Result<(), daemon::DaemonError>>,
+) {
+    let port = allocate_test_port();
+    let temp = tempdir().expect("tempdir");
+
+    let secrets_path = temp.path().join("secrets.txt");
+    fs::write(&secrets_path, "testuser:testpassword\n").expect("write secrets");
+    fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600)).expect("chmod");
+
+    let config_path = temp.path().join("rsyncd.conf");
+    let module_dir = temp.path().join("authmod");
+    fs::create_dir(&module_dir).expect("create module dir");
+
+    let config_content = format!(
+        "[authmod]\npath = {}\nauth users = testuser\nsecrets file = {}\nuse chroot = false\n",
+        module_dir.display(),
+        secrets_path.display()
+    );
+    fs::write(&config_path, config_content).expect("write config");
+
+    let config = DaemonConfig::builder()
+        .disable_default_paths()
+        .arguments([
+            OsString::from("--port"),
+            OsString::from(port.to_string()),
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+            OsString::from("--once"),
+        ])
+        .build();
+
+    let handle = thread::spawn(move || run_daemon(config));
+    (port, temp, handle)
+}
+
+/// Performs a full auth handshake against the daemon at the given port,
+/// using the specified client protocol version and digest algorithm.
+/// Returns the final response line from the daemon (either `@RSYNCD: OK` or `@ERROR`).
+#[cfg(unix)]
+fn perform_auth_handshake(
+    port: u16,
+    client_protocol: u8,
+    digest: daemon::auth::DaemonAuthDigest,
+) -> String {
+    let mut stream = connect_with_retries(port);
+    let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+
+    // Read server greeting
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("greeting");
+    assert!(
+        line.starts_with("@RSYNCD:"),
+        "expected greeting, got: {line}"
+    );
+
+    // Send client version
+    let version_line = format!("@RSYNCD: {client_protocol}.0\n");
+    stream
+        .write_all(version_line.as_bytes())
+        .expect("send version");
+    stream.flush().expect("flush version");
+
+    // Request the auth-protected module
+    stream.write_all(b"authmod\n").expect("send module name");
+    stream.flush().expect("flush module name");
+
+    // Read AUTHREQD challenge
+    line.clear();
+    reader.read_line(&mut line).expect("auth challenge");
+    assert!(line.contains("AUTHREQD"), "expected AUTHREQD, got: {line}");
+
+    // Extract challenge string: "@RSYNCD: AUTHREQD <challenge>\n"
+    let challenge = line
+        .trim()
+        .strip_prefix("@RSYNCD: AUTHREQD ")
+        .expect("parse challenge")
+        .to_owned();
+
+    // Compute auth response with the specified digest
+    let response = daemon::auth::compute_auth_response(b"testpassword", &challenge, digest);
+
+    // Send credentials: "username response\n"
+    let credentials = format!("testuser {response}\n");
+    stream
+        .write_all(credentials.as_bytes())
+        .expect("send credentials");
+    stream.flush().expect("flush credentials");
+
+    // Read the result line
+    line.clear();
+    reader.read_line(&mut line).expect("auth result");
+    line.trim().to_owned()
+}
+
+/// Tests that protocol 32 auth succeeds when using SHA-512 (strongest available digest).
+#[cfg(unix)]
+#[test]
+fn auth_flow_protocol_32_sha512_succeeds() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
+
+    let (port, _temp, handle) = start_auth_daemon();
+    let result = perform_auth_handshake(port, 32, daemon::auth::DaemonAuthDigest::Sha512);
+    assert!(
+        result.contains("OK"),
+        "protocol 32 with SHA-512 should succeed: {result}"
+    );
+    let _ = handle.join();
+}
+
+/// Tests that protocol 32 auth succeeds when using MD5.
+#[cfg(unix)]
+#[test]
+fn auth_flow_protocol_32_md5_succeeds() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
+
+    let (port, _temp, handle) = start_auth_daemon();
+    let result = perform_auth_handshake(port, 32, daemon::auth::DaemonAuthDigest::Md5);
+    assert!(
+        result.contains("OK"),
+        "protocol 32 with MD5 should succeed: {result}"
+    );
+    let _ = handle.join();
+}
+
+/// Tests that protocol 30 auth succeeds when using MD5
+/// (the default digest for protocol 30).
+#[cfg(unix)]
+#[test]
+fn auth_flow_protocol_30_md5_succeeds() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
+
+    let (port, _temp, handle) = start_auth_daemon();
+    let result = perform_auth_handshake(port, 30, daemon::auth::DaemonAuthDigest::Md5);
+    assert!(
+        result.contains("OK"),
+        "protocol 30 with MD5 should succeed: {result}"
+    );
+    let _ = handle.join();
+}
+
+/// Tests that protocol 30 auth REJECTS MD4 responses.
+/// upstream: compat.c:858 -- protocol_version >= 30 uses MD5, not MD4.
+#[cfg(unix)]
+#[test]
+fn auth_flow_protocol_30_md4_rejected() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
+
+    let (port, _temp, handle) = start_auth_daemon();
+    let result = perform_auth_handshake(port, 30, daemon::auth::DaemonAuthDigest::Md4);
+    assert!(
+        result.contains("@ERROR") && result.to_lowercase().contains("auth failed"),
+        "protocol 30 with MD4 should be rejected: {result}"
+    );
+    let _ = handle.join();
+}
+
+/// Tests that protocol 29 auth succeeds when using MD4
+/// (the only digest for protocol < 30).
+#[cfg(unix)]
+#[test]
+fn auth_flow_protocol_29_md4_succeeds() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
+
+    let (port, _temp, handle) = start_auth_daemon();
+    let result = perform_auth_handshake(port, 29, daemon::auth::DaemonAuthDigest::Md4);
+    assert!(
+        result.contains("OK"),
+        "protocol 29 with MD4 should succeed: {result}"
+    );
+    let _ = handle.join();
+}
+
+/// Tests that protocol 29 auth REJECTS MD5 responses.
+/// upstream: compat.c:858 -- protocol_version < 30 uses MD4, not MD5.
+#[cfg(unix)]
+#[test]
+fn auth_flow_protocol_29_md5_rejected() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
+
+    let (port, _temp, handle) = start_auth_daemon();
+    let result = perform_auth_handshake(port, 29, daemon::auth::DaemonAuthDigest::Md5);
+    assert!(
+        result.contains("@ERROR") && result.to_lowercase().contains("auth failed"),
+        "protocol 29 with MD5 should be rejected: {result}"
+    );
+    let _ = handle.join();
+}
+
+/// Tests that protocol 32 auth succeeds when using SHA-256.
+#[cfg(unix)]
+#[test]
+fn auth_flow_protocol_32_sha256_succeeds() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
+
+    let (port, _temp, handle) = start_auth_daemon();
+    let result = perform_auth_handshake(port, 32, daemon::auth::DaemonAuthDigest::Sha256);
+    assert!(
+        result.contains("OK"),
+        "protocol 32 with SHA-256 should succeed: {result}"
+    );
+    let _ = handle.join();
+}
+
+/// Tests that a wrong password is rejected regardless of protocol version.
+#[cfg(unix)]
+#[test]
+fn auth_flow_wrong_password_rejected() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
+
+    let (port, _temp, handle) = start_auth_daemon();
+
+    let mut stream = connect_with_retries(port);
+    let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("greeting");
+
+    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
+    stream.flush().expect("flush");
+
+    stream.write_all(b"authmod\n").expect("send module");
+    stream.flush().expect("flush");
+
+    line.clear();
+    reader.read_line(&mut line).expect("auth challenge");
+    let challenge = line
+        .trim()
+        .strip_prefix("@RSYNCD: AUTHREQD ")
+        .expect("parse challenge");
+
+    // Compute response with WRONG password
+    let response = daemon::auth::compute_auth_response(
+        b"wrong_password",
+        challenge,
+        daemon::auth::DaemonAuthDigest::Sha512,
+    );
+    let credentials = format!("testuser {response}\n");
+    stream
+        .write_all(credentials.as_bytes())
+        .expect("send credentials");
+    stream.flush().expect("flush");
+
+    line.clear();
+    reader.read_line(&mut line).expect("auth result");
+    assert!(
+        line.contains("@ERROR"),
+        "wrong password should be rejected: {line}"
+    );
+
+    drop(reader);
+    let _ = handle.join();
+}
