@@ -81,6 +81,20 @@ impl<R: Read> CompressedReader<R> {
         Ok(Self { decoder })
     }
 
+    /// Returns a mutable reference to the underlying reader.
+    ///
+    /// This is used to access the `MultiplexReader`'s `take_io_error()` method
+    /// when the compressed reader wraps a multiplex stream.
+    pub fn get_mut(&mut self) -> &mut R {
+        match &mut self.decoder {
+            DecoderVariant::Zlib(decoder) => decoder.get_mut(),
+            #[cfg(feature = "lz4")]
+            DecoderVariant::Lz4(decoder) => decoder.get_mut(),
+            #[cfg(feature = "zstd")]
+            DecoderVariant::Zstd(decoder) => decoder.get_mut(),
+        }
+    }
+
     /// Returns the number of compressed bytes read so far.
     #[must_use]
     pub const fn bytes_read(&self) -> u64 {
