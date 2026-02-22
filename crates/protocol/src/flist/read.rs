@@ -2760,4 +2760,136 @@ mod tests {
             );
         }
     }
+
+    /// Verifies that non-varint mode consumes exactly one zero byte for end-of-list.
+    ///
+    /// Upstream: `flist.c:recv_file_list()` — without `xfer_flags_as_varint`,
+    /// `read_byte(f)` returns 0 and the loop breaks immediately.
+    #[test]
+    fn read_end_of_list_nonvarint_consumes_single_byte() {
+        let reader = FileListReader::new(test_protocol());
+        // One zero byte followed by a sentinel
+        let data = [0x00, 0xFF];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let result = reader.read_flags(&mut cursor).unwrap();
+        assert!(matches!(result, FlagsResult::EndOfList));
+        assert_eq!(
+            cursor.position(),
+            1,
+            "non-varint end-of-list must consume exactly 1 byte"
+        );
+    }
+
+    /// Verifies that varint mode consumes exactly two zero bytes for end-of-list
+    /// (varint(0) for flags + varint(0) for error code).
+    ///
+    /// Upstream: `flist.c:recv_file_list()` — with `xfer_flags_as_varint`,
+    /// `read_varint(f)` returns 0 for flags, then `read_varint(f)` returns 0 for error.
+    #[test]
+    fn read_end_of_list_varint_consumes_two_bytes() {
+        let reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+        // Two zero bytes (varint(0) + varint(0)), followed by a sentinel
+        let data = [0x00, 0x00, 0xFF];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let result = reader.read_flags(&mut cursor).unwrap();
+        assert!(matches!(result, FlagsResult::EndOfList));
+        assert_eq!(
+            cursor.position(),
+            2,
+            "varint end-of-list must consume exactly 2 bytes (flags=0 + error=0)"
+        );
+    }
+
+    /// Verifies that varint mode with non-zero error code consumes the second
+    /// varint and returns IoError.
+    ///
+    /// Upstream: `flist.c:recv_file_list()` — flags varint = 0, error varint != 0
+    /// causes `io_error |= err`.
+    #[test]
+    fn read_end_of_list_varint_with_error_returns_io_error() {
+        use crate::varint::encode_varint_to_vec;
+
+        let reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let mut data = Vec::new();
+        encode_varint_to_vec(0, &mut data); // flags = 0
+        encode_varint_to_vec(7, &mut data); // error = 7
+        data.push(0xFF); // sentinel (should not be consumed)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let result = reader.read_flags(&mut cursor).unwrap();
+
+        match result {
+            FlagsResult::IoError(code) => assert_eq!(code, 7),
+            other => panic!("expected IoError(7), got {other:?}"),
+        }
+        assert_eq!(
+            cursor.position() as usize,
+            data.len() - 1,
+            "must consume flags varint + error varint but not the sentinel"
+        );
+    }
+
+    /// Verifies round-trip: varint write_end -> read_flags produces EndOfList
+    /// and consumes exactly the written bytes.
+    #[test]
+    fn read_write_end_of_list_varint_round_trip_exact_bytes() {
+        use super::super::write::FileListWriter;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let writer = FileListWriter::with_compat_flags(protocol, flags);
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, None).unwrap();
+
+        // Must produce exactly [0x00, 0x00]
+        assert_eq!(buf, [0x00, 0x00], "varint end marker without error");
+
+        let reader = FileListReader::with_compat_flags(protocol, flags);
+        let mut cursor = Cursor::new(&buf[..]);
+        let result = reader.read_flags(&mut cursor).unwrap();
+
+        assert!(matches!(result, FlagsResult::EndOfList));
+        assert_eq!(
+            cursor.position() as usize,
+            buf.len(),
+            "must consume all written bytes"
+        );
+    }
+
+    /// Verifies round-trip: non-varint write_end -> read_flags produces EndOfList
+    /// and consumes exactly one byte.
+    #[test]
+    fn read_write_end_of_list_nonvarint_round_trip_exact_bytes() {
+        use super::super::write::FileListWriter;
+
+        let protocol = test_protocol();
+
+        let writer = FileListWriter::new(protocol);
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, None).unwrap();
+
+        // Must produce exactly [0x00]
+        assert_eq!(buf, [0x00], "non-varint end marker");
+
+        let reader = FileListReader::new(protocol);
+        let mut cursor = Cursor::new(&buf[..]);
+        let result = reader.read_flags(&mut cursor).unwrap();
+
+        assert!(matches!(result, FlagsResult::EndOfList));
+        assert_eq!(
+            cursor.position() as usize,
+            buf.len(),
+            "must consume all written bytes"
+        );
+    }
 }
