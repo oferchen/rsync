@@ -439,6 +439,18 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_forward_lookup(parsed, path, line_number)?;
                     }
+                    "strict modes" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'strict modes'"
+                                ),
+                            )
+                        })?;
+                        builder.set_strict_modes(parsed, path, line_number)?;
+                    }
                     _ => {
                         eprintln!(
                             "warning: unknown per-module directive '{}' in '{}' line {}",
@@ -1587,6 +1599,81 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.modules[0].forward_lookup);
+    }
+
+    // --- Strict modes directive tests ---
+
+    #[test]
+    fn parse_module_strict_modes_yes() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nstrict modes = yes\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].strict_modes);
+    }
+
+    #[test]
+    fn parse_module_strict_modes_no() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nstrict modes = no\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].strict_modes);
+    }
+
+    #[test]
+    fn parse_module_strict_modes_default_true() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].strict_modes);
+    }
+
+    #[test]
+    fn parse_module_strict_modes_false_value() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nstrict modes = false\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].strict_modes);
+    }
+
+    #[test]
+    fn parse_module_strict_modes_invalid_boolean() {
+        let file = write_config("[mod]\npath = /tmp\nstrict modes = maybe\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("invalid boolean"));
+    }
+
+    #[test]
+    fn parse_module_strict_modes_duplicate() {
+        let file = write_config(
+            "[mod]\npath = /tmp\nstrict modes = yes\nstrict modes = no\n",
+        );
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("duplicate"));
     }
 
     #[test]

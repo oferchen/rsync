@@ -37,6 +37,7 @@ struct ModuleDefinitionBuilder {
     temp_dir: Option<Option<String>>,
     charset: Option<Option<String>>,
     forward_lookup: Option<bool>,
+    strict_modes: Option<bool>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -80,6 +81,7 @@ impl ModuleDefinitionBuilder {
             temp_dir: None,
             charset: None,
             forward_lookup: None,
+            strict_modes: None,
         }
     }
 
@@ -735,6 +737,27 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_strict_modes(
+        &mut self,
+        strict_modes: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.strict_modes.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'strict modes' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.strict_modes = Some(strict_modes);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -839,6 +862,7 @@ impl ModuleDefinitionBuilder {
             temp_dir: self.temp_dir.unwrap_or(None),
             charset: self.charset.unwrap_or(None),
             forward_lookup: self.forward_lookup.unwrap_or(true),
+            strict_modes: self.strict_modes.unwrap_or(true),
         })
     }
 }
@@ -896,6 +920,7 @@ mod module_definition_builder_tests {
         assert!(builder.temp_dir.is_none());
         assert!(builder.charset.is_none());
         assert!(builder.forward_lookup.is_none());
+        assert!(builder.strict_modes.is_none());
     }
 
     // ==================== set_path tests ====================
@@ -1315,6 +1340,30 @@ mod module_definition_builder_tests {
         assert!(result.is_err());
     }
 
+    // ==================== set_strict_modes tests ====================
+
+    #[test]
+    fn set_strict_modes_stores_true() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_strict_modes(true, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.strict_modes, Some(true));
+    }
+
+    #[test]
+    fn set_strict_modes_stores_false() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_strict_modes(false, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.strict_modes, Some(false));
+    }
+
+    #[test]
+    fn set_strict_modes_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_strict_modes(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_strict_modes(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
     // ==================== finish() tests ====================
 
     #[test]
@@ -1497,6 +1546,7 @@ mod module_definition_builder_tests {
         assert!(def.temp_dir.is_none());
         assert!(def.charset.is_none());
         assert!(def.forward_lookup); // default true
+        assert!(def.strict_modes); // default true
     }
 
     #[test]
