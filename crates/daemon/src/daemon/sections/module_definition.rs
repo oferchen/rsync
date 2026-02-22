@@ -764,6 +764,7 @@ impl ModuleDefinitionBuilder {
         default_secrets: Option<&Path>,
         default_incoming_chmod: Option<&str>,
         default_outgoing_chmod: Option<&str>,
+        default_use_chroot: Option<bool>,
     ) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
@@ -776,7 +777,7 @@ impl ModuleDefinitionBuilder {
             )
         })?;
 
-        let use_chroot = self.use_chroot.unwrap_or(true);
+        let use_chroot = self.use_chroot.or(default_use_chroot).unwrap_or(true);
 
         if use_chroot && !path.is_absolute() {
             return Err(config_parse_error(
@@ -1370,7 +1371,7 @@ mod module_definition_builder_tests {
     fn finish_succeeds_with_minimal_config() {
         let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
-        let result = builder.finish(&test_config_path(), None, None, None);
+        let result = builder.finish(&test_config_path(), None, None, None, None);
         assert!(result.is_ok());
         let def = result.unwrap();
         assert_eq!(def.name, "testmod");
@@ -1384,7 +1385,7 @@ mod module_definition_builder_tests {
     #[test]
     fn finish_fails_without_path() {
         let builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
-        let result = builder.finish(&test_config_path(), None, None, None);
+        let result = builder.finish(&test_config_path(), None, None, None, None);
         assert!(result.is_err());
     }
 
@@ -1393,7 +1394,7 @@ mod module_definition_builder_tests {
         let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
         builder.set_path(PathBuf::from("relative/path"), &test_config_path(), 2).unwrap();
         // use_chroot defaults to true
-        let result = builder.finish(&test_config_path(), None, None, None);
+        let result = builder.finish(&test_config_path(), None, None, None, None);
         assert!(result.is_err());
     }
 
@@ -1402,7 +1403,7 @@ mod module_definition_builder_tests {
         let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
         builder.set_path(PathBuf::from("relative/path"), &test_config_path(), 2).unwrap();
         builder.set_use_chroot(false, &test_config_path(), 3).unwrap();
-        let result = builder.finish(&test_config_path(), None, None, None);
+        let result = builder.finish(&test_config_path(), None, None, None, None);
         assert!(result.is_ok());
     }
 
@@ -1412,7 +1413,7 @@ mod module_definition_builder_tests {
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
         builder.set_auth_users(vec![AuthUser::new("alice".to_owned())], &test_config_path(), 3).unwrap();
         let default_secrets = PathBuf::from("/etc/secrets");
-        let result = builder.finish(&test_config_path(), Some(&default_secrets), None, None);
+        let result = builder.finish(&test_config_path(), Some(&default_secrets), None, None, None);
         assert!(result.is_ok());
         let def = result.unwrap();
         assert_eq!(def.secrets_file, Some(PathBuf::from("/etc/secrets")));
@@ -1423,7 +1424,7 @@ mod module_definition_builder_tests {
         let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
         builder.set_auth_users(vec![AuthUser::new("alice".to_owned())], &test_config_path(), 3).unwrap();
-        let result = builder.finish(&test_config_path(), None, None, None);
+        let result = builder.finish(&test_config_path(), None, None, None, None);
         assert!(result.is_err());
     }
 
@@ -1436,6 +1437,7 @@ mod module_definition_builder_tests {
             None,
             Some("Dg+s"),
             Some("Fo-w"),
+            None,
         );
         assert!(result.is_ok());
         let def = result.unwrap();
@@ -1454,6 +1456,7 @@ mod module_definition_builder_tests {
             None,
             Some("default-in"),
             Some("default-out"),
+            None,
         );
         assert!(result.is_ok());
         let def = result.unwrap();
@@ -1482,7 +1485,7 @@ mod module_definition_builder_tests {
             12,
         ).unwrap();
 
-        let result = builder.finish(&test_config_path(), None, None, None);
+        let result = builder.finish(&test_config_path(), None, None, None, None);
         assert!(result.is_ok());
         let def = result.unwrap();
 
@@ -1509,7 +1512,7 @@ mod module_definition_builder_tests {
         let mut builder = ModuleDefinitionBuilder::new("defaults".to_owned(), 1);
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
 
-        let result = builder.finish(&test_config_path(), None, None, None);
+        let result = builder.finish(&test_config_path(), None, None, None, None);
         assert!(result.is_ok());
         let def = result.unwrap();
 
@@ -1555,7 +1558,7 @@ mod module_definition_builder_tests {
         builder.set_path(PathBuf::from("/backup"), &test_config_path(), 2).unwrap();
         builder.set_fake_super(true, &test_config_path(), 3).unwrap();
 
-        let result = builder.finish(&test_config_path(), None, None, None);
+        let result = builder.finish(&test_config_path(), None, None, None, None);
         assert!(result.is_ok());
         let def = result.unwrap();
         assert!(def.fake_super);
@@ -1566,7 +1569,7 @@ mod module_definition_builder_tests {
         let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
 
-        let def = builder.finish(&test_config_path(), None, None, None).unwrap();
+        let def = builder.finish(&test_config_path(), None, None, None, None).unwrap();
         assert!(def.munge_symlinks.is_none());
     }
 
@@ -1576,7 +1579,7 @@ mod module_definition_builder_tests {
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
         builder.set_munge_symlinks(Some(true), &test_config_path(), 3).unwrap();
 
-        let def = builder.finish(&test_config_path(), None, None, None).unwrap();
+        let def = builder.finish(&test_config_path(), None, None, None, None).unwrap();
         assert_eq!(def.munge_symlinks, Some(true));
     }
 
@@ -1586,7 +1589,7 @@ mod module_definition_builder_tests {
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
         builder.set_munge_symlinks(Some(false), &test_config_path(), 3).unwrap();
 
-        let def = builder.finish(&test_config_path(), None, None, None).unwrap();
+        let def = builder.finish(&test_config_path(), None, None, None, None).unwrap();
         assert_eq!(def.munge_symlinks, Some(false));
     }
 }
