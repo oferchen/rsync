@@ -732,7 +732,7 @@ PKGINFO
           # Each architecture × 3 toolchains (except alpine: stable only)
           EXPECTED_DEB=6      # 2 arch (amd64, arm64) × 3 toolchains
           EXPECTED_RPM=6      # 2 arch (x86_64, aarch64) × 3 toolchains
-          EXPECTED_MUSL=6     # 2 arch (x86_64, aarch64) × 3 toolchains
+          EXPECTED_MUSL=12    # 2 arch × 3 toolchains × 2 variants (pure + openssl)
           EXPECTED_APK=2      # 2 arch (x86_64, aarch64) × 1 (stable only)
           EXPECTED_MACOS=6    # 2 arch (x86_64, aarch64) × 3 toolchains
           EXPECTED_WINDOWS=3  # 1 arch (x86_64) × 3 toolchains
@@ -794,7 +794,7 @@ PKGINFO
             exit 1
           fi
 
-          echo "=== All required artifacts verified (29 total: 6 deb + 6 rpm + 6 musl + 2 apk + 6 macos + 3 windows) ==="
+          echo "=== All required artifacts verified (35 min: 6 deb + 6 rpm + 12 musl + 2 apk + 6 macos + 3 windows) ==="
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
