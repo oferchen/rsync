@@ -47,7 +47,7 @@ fn run_daemon_omits_unlisted_modules_from_listing() {
 
     line.clear();
     reader.read_line(&mut line).expect("first module");
-    assert_eq!(line.trim_end(), "visible");
+    assert_eq!(line, "visible        \t\n");
 
     line.clear();
     reader.read_line(&mut line).expect("exit line");
