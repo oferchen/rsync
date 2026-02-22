@@ -96,7 +96,6 @@ where
 
     // 3) run native daemon mode
     let config = DaemonConfig::builder()
-        .disable_default_paths()
         .brand(parsed.program_name.brand())
         .arguments(parsed.remainder)
         .build();
