@@ -2133,8 +2133,9 @@ fn delay_updates_files_atomically_moved_from_staging() {
     fs::create_dir_all(&source_root).expect("create source");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    // Pre-populate destination with different content to ensure atomicity.
-    fs::write(dest_root.join("file.txt"), b"old content").expect("write old");
+    // Pre-populate destination with shorter content (different size avoids
+    // quick-check skipping the file when mtime matches within the same second).
+    fs::write(dest_root.join("file.txt"), b"old").expect("write old");
     fs::write(source_root.join("file.txt"), b"new content").expect("write new");
 
     let mut source_operand = source_root.into_os_string();
@@ -2152,7 +2153,7 @@ fn delay_updates_files_atomically_moved_from_staging() {
 
     assert_eq!(summary.files_copied(), 1);
 
-    // Verify the final file has the new content (rename succeeded).
+    // Verify the final file has the source content (staging rename succeeded).
     assert_eq!(
         fs::read(dest_root.join("file.txt")).expect("read"),
         b"new content"
