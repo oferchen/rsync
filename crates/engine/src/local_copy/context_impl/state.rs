@@ -70,6 +70,7 @@ impl<'a> CopyContext<'a> {
             checksum_cache: None,
             io_errors_occurred: false,
             verified_parents: HashSet::new(),
+            delay_staging_dirs: HashSet::new(),
         }
     }
 
@@ -316,6 +317,15 @@ impl<'a> CopyContext<'a> {
     }
 
     pub(super) fn register_deferred_update(&mut self, update: DeferredUpdate) {
+        // Track the `.~tmp~` staging directory for cleanup after all updates
+        // are committed.
+        if let Some(parent) = update.guard.staging_path().parent() {
+            if parent.file_name().is_some_and(|name| {
+                name == super::options::staging::DELAY_UPDATES_PARTIAL_DIR
+            }) {
+                self.delay_staging_dirs.insert(parent.to_path_buf());
+            }
+        }
         let metadata = update.metadata.clone();
         let destination = update.destination.clone();
         self.record_hard_link(&metadata, destination.as_path());
@@ -338,14 +348,21 @@ impl<'a> CopyContext<'a> {
     }
 
     pub(super) fn flush_deferred_updates(&mut self) -> Result<(), LocalCopyError> {
-        if self.deferred_updates.is_empty() {
-            return Ok(());
-        }
-
         let updates = std::mem::take(&mut self.deferred_updates);
         for update in updates {
             self.finalize_deferred_update(update)?;
         }
+
+        // Remove empty `.~tmp~` staging directories after all deferred files
+        // have been moved to their final locations. This covers both updates
+        // committed here and those committed early via `commit_deferred_update_for`.
+        //
+        // upstream: receiver.c -- handle_partial_dir(partialptr, PDIR_DELETE)
+        let dirs = std::mem::take(&mut self.delay_staging_dirs);
+        for dir in &dirs {
+            let _ = fs::remove_dir(dir);
+        }
+
         Ok(())
     }
 
