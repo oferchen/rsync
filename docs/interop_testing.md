@@ -26,7 +26,7 @@ Both test suites use similar infrastructure:
 
 Tests verify compatibility with:
 
-- **rsync 3.4.1** - Latest stable, protocol 31
+- **rsync 3.4.1** - Latest stable, protocol 32
 - **rsync 3.1.3** - Common production version, protocol 30/31
 - **rsync 3.0.9** - Older widely-deployed version, protocol 30
 
@@ -45,7 +45,7 @@ cd target/interop/upstream-src
 wget https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz
 tar xzf rsync-3.4.1.tar.gz
 cd rsync-3.4.1
-./configure --prefix=/home/ofer/rsync/target/interop/upstream-install/3.4.1
+./configure --prefix=$(pwd)/target/interop/upstream-install/3.4.1
 make
 make install
 
@@ -54,7 +54,7 @@ cd ../
 wget https://download.samba.org/pub/rsync/src/rsync-3.1.3.tar.gz
 tar xzf rsync-3.1.3.tar.gz
 cd rsync-3.1.3
-./configure --prefix=/home/ofer/rsync/target/interop/upstream-install/3.1.3
+./configure --prefix=$(pwd)/target/interop/upstream-install/3.1.3
 make
 make install
 
@@ -63,7 +63,7 @@ cd ../
 wget https://download.samba.org/pub/rsync/src/rsync-3.0.9.tar.gz
 tar xzf rsync-3.0.9.tar.gz
 cd rsync-3.0.9
-./configure --prefix=/home/ofer/rsync/target/interop/upstream-install/3.0.9
+./configure --prefix=$(pwd)/target/interop/upstream-install/3.0.9
 make
 make install
 

@@ -10,30 +10,32 @@ Batch mode allows recording an rsync transfer operation to a file and replaying 
 
 ## Current Status
 
-✅ **Complete**: Core batch module infrastructure (`crates/engine/src/batch/`)
+✅ **Complete**: Core batch crate (`crates/batch/src/`)
 - Binary format matching upstream rsync
 - BatchWriter for recording transfers
 - BatchReader for replaying transfers
 - Shell script generation (.sh files)
-- Full test coverage (26/26 tests passing)
-
-🚧 **In Progress**: CLI integration
-- Batch arguments (--write-batch, --only-write-batch, --read-batch) are parsed
-- Integration with transfer I/O layer pending
+- Full test coverage (~50 tests passing)
+- CLI integration (--write-batch, --only-write-batch, --read-batch)
+- Transfer I/O integration in `crates/core/src/client/run.rs`
 
 ## Architecture
 
 ### Module Structure
 
 ```
-crates/engine/src/batch/
-├── mod.rs           # Public API and BatchConfig
+crates/batch/src/
+├── lib.rs           # Public API and BatchConfig
+├── error.rs         # Error types
 ├── format.rs        # Binary format (BatchHeader, BatchFlags)
 ├── writer.rs        # BatchWriter implementation
 ├── reader.rs        # BatchReader implementation
 ├── script.rs        # Shell script generation
 └── tests.rs         # Integration tests
 ```
+
+> **Note**: The `engine` crate re-exports batch types for convenience
+> (`engine::batch::*`), but the source of truth is the `batch` crate.
 
 ### Batch File Format
 
@@ -184,37 +186,13 @@ pub struct ParsedArgs {
 }
 ```
 
-### 2. Configuration Building
+### 2. Transfer I/O Integration
 
-**TODO**: Add batch configuration to `ConfigInputs` in `crates/cli/src/frontend/execution/drive/config.rs`:
+Batch mode is integrated in `crates/core/src/client/run.rs`:
+- **Write mode**: `BatchWriter::new()` is created when `config.batch_config()` is set, writes header, attaches to transfer options
+- **Read mode**: `replay_batch()` is called to replay a previously recorded batch
 
-```rust
-pub(crate) struct ConfigInputs {
-    // ... existing fields ...
-    pub(crate) batch_config: Option<engine::batch::BatchConfig>,
-}
-```
-
-### 3. Transfer I/O Layer Integration
-
-**TODO**: The main integration work is coordinating batch recording/replay with the transfer I/O:
-
-**For Write Mode**:
-1. Create `BatchWriter` when `--write-batch` or `--only-write-batch` is detected
-2. Write header with flags derived from transfer options
-3. Hook into file list generation to record via `writer.write_data()`
-4. Hook into delta generation to record operations
-5. Call `writer.finalize()` after transfer
-6. Generate shell script via `generate_script()`
-
-**For Read Mode**:
-1. Create `BatchReader` when `--read-batch` is detected
-2. Read and validate header via `reader.read_header()`
-3. Replay file list from batch instead of walking source
-4. Replay delta operations from batch instead of generating
-5. Apply to destination
-
-### 4. Protocol Coordination
+### 3. Protocol Coordination
 
 Batch files must use the same protocol version as the transfer. The protocol version is determined during negotiation and should be passed to `BatchConfig::new()`.
 
@@ -224,10 +202,10 @@ Batch operations should emit errors with the `[client]` role trailer and exit co
 
 ## Testing
 
-### Unit Tests (26 tests, all passing)
+### Unit Tests (~50 tests, all passing)
 
 ```bash
-cargo test -p engine --lib batch
+cargo nextest run -p batch
 ```
 
 Coverage includes:
@@ -241,19 +219,7 @@ Coverage includes:
 
 ### Integration Tests
 
-**TODO**: Add end-to-end tests in `tests/batch_mode.rs`:
-- Write a batch during local copy, verify batch file content
-- Read a batch and verify destination matches source
-- Test with upstream rsync (both directions):
-  - oc-rsync writes, rsync reads
-  - rsync writes, oc-rsync reads
-
-### Interop Testing
-
-**TODO**: Extend `tools/ci/run_interop.sh` or create `tools/ci/run_batch_interop.sh`:
-- Test against upstream 3.0.9, 3.1.3, 3.4.1
-- Verify batch files are interchangeable
-- Test protocol versions 28, 29, 30+
+End-to-end interop tests verify batch file interchangeability with upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
 ## Usage Examples
 
@@ -325,13 +291,13 @@ Tested against: rsync 3.0.9, 3.1.3, 3.4.1
 ## Implementation References
 
 - Upstream: `target/interop/upstream-src/rsync-3.4.1/batch.c`
-- Format definitions: `crates/engine/src/batch/format.rs`
-- Writer: `crates/engine/src/batch/writer.rs`
-- Reader: `crates/engine/src/batch/reader.rs`
-- Script generator: `crates/engine/src/batch/script.rs`
+- Format definitions: `crates/batch/src/format.rs`
+- Writer: `crates/batch/src/writer.rs`
+- Reader: `crates/batch/src/reader.rs`
+- Script generator: `crates/batch/src/script.rs`
 
 ## See Also
 
 - Upstream rsync batch mode documentation: `man rsync` (search for "batch")
 - Protocol specification: `docs/PROTOCOL.md` (file list and delta encoding)
-- Engine API: `crates/engine/src/batch/mod.rs`
+- Batch crate API: `crates/batch/src/lib.rs`
