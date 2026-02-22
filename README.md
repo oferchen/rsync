@@ -136,7 +136,14 @@ See `cargo doc --workspace --no-deps --open` for API documentation.
 
 ## Security
 
-Protocol parsing crates enforce `#![deny(unsafe_code)]`. Unsafe code is limited to SIMD-accelerated checksums and platform I/O, both with safe fallbacks. Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747).
+Protocol parsing crates enforce `#![deny(unsafe_code)]`. Unsafe code is limited to:
+
+- SIMD-accelerated checksums (with scalar fallbacks)
+- Platform I/O operations (sendfile, io_uring, mmap -- with fallbacks)
+- Metadata/ownership FFI (UID/GID lookup, chroot, setuid/setgid)
+- Windows GNU exception handling
+
+Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747). OS-level race conditions (TOCTOU) remain possible at filesystem boundaries.
 
 For security issues, see [SECURITY.md](./SECURITY.md).
 
