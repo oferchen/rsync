@@ -45,6 +45,7 @@ protocol = { path = "../protocol" }
 compress = { path = "../compress", default-features = false }
 metadata = { path = "../metadata", default-features = false }
 rsync_io = { path = "../rsync_io", package = "rsync_io" }
+fast_io = { path = "../fast_io", default-features = false }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
 tempfile = "3.15"
 tracing = { workspace = true }

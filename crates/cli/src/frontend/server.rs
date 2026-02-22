@@ -105,6 +105,13 @@ where
     let ignore_errors = args.iter().any(|a| a == "--ignore-errors");
     let fsync = args.iter().any(|a| a == "--fsync");
     let direct_write = args.iter().any(|a| a == "--direct-write");
+    let io_uring_policy = if args.iter().any(|a| a == "--io-uring") {
+        fast_io::IoUringPolicy::Enabled
+    } else if args.iter().any(|a| a == "--no-io-uring") {
+        fast_io::IoUringPolicy::Disabled
+    } else {
+        fast_io::IoUringPolicy::Auto
+    };
 
     let role = if is_sender {
         ServerRole::Generator // Server sends files to client (generator role)
@@ -134,6 +141,8 @@ where
             || arg_str == "--ignore-errors"
             || arg_str == "--fsync"
             || arg_str == "--direct-write"
+            || arg_str == "--io-uring"
+            || arg_str == "--no-io-uring"
         {
             continue;
         }
@@ -174,6 +183,7 @@ where
     config.ignore_errors = ignore_errors;
     config.fsync = fsync;
     config.direct_write = direct_write;
+    config.io_uring_policy = io_uring_policy;
 
     // Run native server with stdio
     let mut stdin = io::stdin().lock();

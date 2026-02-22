@@ -88,6 +88,15 @@ impl ClientConfigBuilder {
         self.direct_write = direct_write;
         self
     }
+
+    /// Sets the io_uring usage policy.
+    #[must_use]
+    #[doc(alias = "--io-uring")]
+    #[doc(alias = "--no-io-uring")]
+    pub const fn io_uring_policy(mut self, policy: fast_io::IoUringPolicy) -> Self {
+        self.io_uring_policy = policy;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -217,5 +226,27 @@ mod tests {
     fn direct_write_false_clears_flag() {
         let config = builder().direct_write(true).direct_write(false).build();
         assert!(!config.direct_write());
+    }
+
+    #[test]
+    fn io_uring_policy_sets_enabled() {
+        let config = builder()
+            .io_uring_policy(fast_io::IoUringPolicy::Enabled)
+            .build();
+        assert_eq!(config.io_uring_policy(), fast_io::IoUringPolicy::Enabled);
+    }
+
+    #[test]
+    fn io_uring_policy_sets_disabled() {
+        let config = builder()
+            .io_uring_policy(fast_io::IoUringPolicy::Disabled)
+            .build();
+        assert_eq!(config.io_uring_policy(), fast_io::IoUringPolicy::Disabled);
+    }
+
+    #[test]
+    fn io_uring_policy_default_is_auto() {
+        let config = builder().build();
+        assert_eq!(config.io_uring_policy(), fast_io::IoUringPolicy::Auto);
     }
 }

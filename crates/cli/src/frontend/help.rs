@@ -139,6 +139,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --fsync    Fsync updated files after writing completes.\n",
             "      --direct-write  Write new files directly to destination, skipping temp+rename.\n",
             "      --no-direct-write  Always use temp file + rename, even for new files (default).\n",
+            "      --io-uring   Force io_uring for file I/O (error if unavailable).\n",
+            "      --no-io-uring  Disable io_uring; always use standard buffered I/O.\n",
             "      --inplace    Write updated data directly to destination files.\n",
             "      --no-inplace Use temporary files when updating regular files.\n",
             "  -h, --human-readable  Output numbers in a human-readable format.\n",

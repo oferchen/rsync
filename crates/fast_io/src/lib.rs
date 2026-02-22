@@ -67,3 +67,21 @@ pub use io_uring::{
     IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
     IoUringWriter, IoUringWriterFactory, is_io_uring_available, writer_from_file,
 };
+
+/// Policy controlling io_uring usage for file I/O.
+///
+/// This enum allows callers to explicitly enable, disable, or auto-detect
+/// io_uring support. It is used by CLI flags `--io-uring` and `--no-io-uring`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IoUringPolicy {
+    /// Auto-detect io_uring availability at runtime (default).
+    ///
+    /// Uses io_uring on Linux 5.6+ when the `io_uring` feature is enabled
+    /// and the kernel supports it. Falls back to standard I/O otherwise.
+    #[default]
+    Auto,
+    /// Force io_uring usage. Returns an error if io_uring is unavailable.
+    Enabled,
+    /// Disable io_uring; always use standard buffered I/O.
+    Disabled,
+}
