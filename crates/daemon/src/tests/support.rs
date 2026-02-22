@@ -62,6 +62,7 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
         temp_dir: None,
         charset: None,
         forward_lookup: true,
+        strict_modes: true,
     }
 }
 
@@ -110,6 +111,7 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
         temp_dir: None,
         charset: None,
         forward_lookup: true,
+        strict_modes: true,
     }
 }
 
