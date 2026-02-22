@@ -119,7 +119,7 @@
 
 pub use core::auth::{
     DaemonAuthDigest, SUPPORTED_DAEMON_DIGESTS,
-    compute_daemon_auth_response as compute_auth_response,
+    compute_daemon_auth_response as compute_auth_response, digests_for_protocol,
     verify_daemon_auth_response as verify_client_response,
 };
 
