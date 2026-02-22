@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stop the daemon before removal
+if rc-service --exists oc-rsyncd 2>/dev/null; then
+    rc-service oc-rsyncd stop 2>/dev/null || true
+    rc-update del oc-rsyncd default 2>/dev/null || true
+fi
+exit 0
