@@ -187,6 +187,10 @@ pub struct ServerConfig {
     /// - `Enabled`: require io_uring, error if unavailable (`--io-uring`)
     /// - `Disabled`: always use standard I/O (`--no-io-uring`)
     pub io_uring_policy: fast_io::IoUringPolicy,
+    /// Minimum file size in bytes. Files smaller than this are skipped.
+    pub min_file_size: Option<u64>,
+    /// Maximum file size in bytes. Files larger than this are skipped.
+    pub max_file_size: Option<u64>,
 }
 
 impl ServerConfig {
@@ -233,6 +237,8 @@ impl ServerConfig {
             stop_at: None,
             qsort: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
+            min_file_size: None,
+            max_file_size: None,
         })
     }
 }

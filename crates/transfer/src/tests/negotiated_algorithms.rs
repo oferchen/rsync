@@ -52,6 +52,8 @@ fn test_config() -> ServerConfig {
         trust_sender: false,
         stop_at: None,
         qsort: false,
+        min_file_size: None,
+        max_file_size: None,
     }
 }
 
@@ -78,6 +80,8 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         trust_sender: false,
         stop_at: None,
         qsort: false,
+        min_file_size: None,
+        max_file_size: None,
     }
 }
 
