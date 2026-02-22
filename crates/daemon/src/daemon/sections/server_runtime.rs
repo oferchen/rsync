@@ -536,22 +536,52 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                     let log_for_worker = log_sink.as_ref().map(Arc::clone);
                     let delegation_clone = delegation.clone();
                     let handle = thread::spawn(move || {
-                        let modules_vec = modules.as_ref();
-                        let motd_vec = motd_lines.as_ref();
-                        handle_session(
-                            stream,
-                            peer_addr,
-                            SessionParams {
-                                modules: modules_vec.as_slice(),
-                                motd_lines: motd_vec.as_slice(),
-                                daemon_limit: bandwidth_limit,
-                                daemon_burst: bandwidth_burst,
-                                log_sink: log_for_worker,
-                                reverse_lookup,
-                                delegation: delegation_clone,
-                            },
-                        )
-                        .map_err(|error| (Some(peer_addr), error))
+                        // upstream rsync forks per connection, so a crash only
+                        // kills that child.  We use threads, so catch_unwind
+                        // isolates panics to the faulting connection and keeps
+                        // the daemon alive.
+                        let result = std::panic::catch_unwind(
+                            std::panic::AssertUnwindSafe(|| {
+                                let modules_vec = modules.as_ref();
+                                let motd_vec = motd_lines.as_ref();
+                                handle_session(
+                                    stream,
+                                    peer_addr,
+                                    SessionParams {
+                                        modules: modules_vec.as_slice(),
+                                        motd_lines: motd_vec.as_slice(),
+                                        daemon_limit: bandwidth_limit,
+                                        daemon_burst: bandwidth_burst,
+                                        log_sink: log_for_worker.clone(),
+                                        reverse_lookup,
+                                        delegation: delegation_clone,
+                                    },
+                                )
+                            }),
+                        );
+                        match result {
+                            Ok(Ok(())) => Ok(()),
+                            Ok(Err(error)) => {
+                                Err((Some(peer_addr), error))
+                            }
+                            Err(payload) => {
+                                let description =
+                                    describe_panic_payload(payload);
+                                if let Some(log) = log_for_worker.as_ref() {
+                                    let text = format!(
+                                        "connection handler for {peer_addr} \
+                                         panicked: {description}"
+                                    );
+                                    let message = rsync_error!(
+                                        SOCKET_IO_EXIT_CODE,
+                                        text
+                                    )
+                                    .with_role(Role::Daemon);
+                                    log_message(log, &message);
+                                }
+                                Ok(())
+                            }
+                        }
                     });
                     workers.push(handle);
                     served = served.saturating_add(1);
@@ -687,22 +717,48 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                     let log_for_worker = log_sink.as_ref().map(Arc::clone);
                     let delegation_clone = delegation.clone();
                     let handle = thread::spawn(move || {
-                        let modules_vec = modules.as_ref();
-                        let motd_vec = motd_lines.as_ref();
-                        handle_session(
-                            stream,
-                            peer_addr,
-                            SessionParams {
-                                modules: modules_vec.as_slice(),
-                                motd_lines: motd_vec.as_slice(),
-                                daemon_limit: bandwidth_limit,
-                                daemon_burst: bandwidth_burst,
-                                log_sink: log_for_worker,
-                                reverse_lookup,
-                                delegation: delegation_clone,
-                            },
-                        )
-                        .map_err(|error| (Some(peer_addr), error))
+                        let result = std::panic::catch_unwind(
+                            std::panic::AssertUnwindSafe(|| {
+                                let modules_vec = modules.as_ref();
+                                let motd_vec = motd_lines.as_ref();
+                                handle_session(
+                                    stream,
+                                    peer_addr,
+                                    SessionParams {
+                                        modules: modules_vec.as_slice(),
+                                        motd_lines: motd_vec.as_slice(),
+                                        daemon_limit: bandwidth_limit,
+                                        daemon_burst: bandwidth_burst,
+                                        log_sink: log_for_worker.clone(),
+                                        reverse_lookup,
+                                        delegation: delegation_clone,
+                                    },
+                                )
+                            }),
+                        );
+                        match result {
+                            Ok(Ok(())) => Ok(()),
+                            Ok(Err(error)) => {
+                                Err((Some(peer_addr), error))
+                            }
+                            Err(payload) => {
+                                let description =
+                                    describe_panic_payload(payload);
+                                if let Some(log) = log_for_worker.as_ref() {
+                                    let text = format!(
+                                        "connection handler for {peer_addr} \
+                                         panicked: {description}"
+                                    );
+                                    let message = rsync_error!(
+                                        SOCKET_IO_EXIT_CODE,
+                                        text
+                                    )
+                                    .with_role(Role::Daemon);
+                                    log_message(log, &message);
+                                }
+                                Ok(())
+                            }
+                        }
                     });
                     workers.push(handle);
                     served = served.saturating_add(1);
@@ -847,17 +903,33 @@ fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonErr
                 Err(stream_error(peer, "serve legacy handshake", error))
             }
         }
-        Err(panic) => {
-            let description = match panic.downcast::<String>() {
-                Ok(message) => *message,
-                Err(payload) => match payload.downcast::<&str>() {
-                    Ok(message) => (*message).to_owned(),
-                    Err(_) => "worker thread panicked".to_owned(),
-                },
-            };
-            let error = io::Error::other(description);
-            Err(stream_error(None, "serve legacy handshake", error))
+        // Defense-in-depth: catch_unwind inside the thread already handles
+        // panics, but if one somehow escapes, log it and keep the daemon
+        // running rather than terminating all connections.
+        // upstream: rsync forks per connection, so a crash only kills that
+        // child process.
+        Err(payload) => {
+            let description = describe_panic_payload(payload);
+            let error = io::Error::other(format!(
+                "worker thread panicked (unwind escaped catch_unwind): {description}"
+            ));
+            eprintln!("{error}");
+            Ok(())
         }
+    }
+}
+
+/// Extracts a human-readable message from a panic payload.
+///
+/// Handles the two common payload types (`String` and `&str`) and falls back
+/// to a generic description for anything else.
+fn describe_panic_payload(payload: Box<dyn std::any::Any + Send>) -> String {
+    match payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(payload) => match payload.downcast::<&str>() {
+            Ok(message) => (*message).to_owned(),
+            Err(_) => "unknown panic payload".to_owned(),
+        },
     }
 }
 

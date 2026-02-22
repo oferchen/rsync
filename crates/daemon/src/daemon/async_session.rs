@@ -278,7 +278,12 @@ impl AsyncDaemonListener {
                     #[cfg(feature = "concurrent-sessions")]
                     let pool = self.connection_pool.clone();
 
-                    // Spawn handler task
+                    // Spawn handler task.
+                    // Tokio captures panics in spawn'd tasks (returning
+                    // Err(JoinError) from the JoinHandle).  We log them
+                    // explicitly so panics in one connection never tear
+                    // down the daemon — matching upstream rsync's fork-
+                    // per-connection isolation.
                     tokio::spawn(async move {
                         let result = handle_async_session(
                             stream,
@@ -306,8 +311,10 @@ impl AsyncDaemonListener {
                         drop(permit);
 
                         if let Err(e) = result {
-                            // Log error (in a real implementation)
-                            let _ = e;
+                            eprintln!(
+                                "async session handler for {peer_addr} \
+                                 failed: {e}"
+                            );
                         }
                     });
                 }
