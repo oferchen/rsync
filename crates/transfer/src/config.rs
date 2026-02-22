@@ -180,6 +180,13 @@ pub struct ServerConfig {
     /// - `flist.c:2991`: `if (use_qsort) qsort(...); else merge_sort(...);`
     /// - `options.c`: `--qsort` flag definition
     pub qsort: bool,
+    /// Policy controlling io_uring usage for file I/O.
+    ///
+    /// Controls whether io_uring is used for file writes during transfer:
+    /// - `Auto`: use io_uring when available (default)
+    /// - `Enabled`: require io_uring, error if unavailable (`--io-uring`)
+    /// - `Disabled`: always use standard I/O (`--no-io-uring`)
+    pub io_uring_policy: fast_io::IoUringPolicy,
 }
 
 impl ServerConfig {
@@ -225,6 +232,7 @@ impl ServerConfig {
             trust_sender: false,
             stop_at: None,
             qsort: false,
+            io_uring_policy: fast_io::IoUringPolicy::Auto,
         })
     }
 }
