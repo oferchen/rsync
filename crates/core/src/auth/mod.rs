@@ -13,6 +13,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use checksums::strong::{Md4, Md5, Sha1, Sha256, Sha512};
+use protocol::ProtocolVersion;
 
 /// Digest algorithms supported for daemon challenge/response authentication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,6 +101,33 @@ pub const SUPPORTED_DAEMON_DIGESTS: &[DaemonAuthDigest; 5] = &[
     DaemonAuthDigest::Md5,
     DaemonAuthDigest::Md4,
 ];
+
+/// Returns the authentication digests appropriate for the given protocol version.
+///
+/// upstream: csprotocol.txt — digest negotiation rules depend on protocol era:
+///
+/// - **Protocol >= 31**: all digests (SHA-512, SHA-256, SHA-1, MD5, MD4).
+///   Rsync 3.2.7 introduced the digest list in the greeting for protocol 31+.
+/// - **Protocol 30**: MD5 and MD4. SHA-family digests were not available before
+///   protocol 31.
+/// - **Protocol < 30**: MD4 only. MD5 was introduced in protocol 30.
+#[must_use]
+pub fn digests_for_protocol(version: ProtocolVersion) -> &'static [DaemonAuthDigest] {
+    let v = version.as_u8();
+    if v >= 31 {
+        SUPPORTED_DAEMON_DIGESTS
+    } else if v >= 30 {
+        PROTOCOL_30_DIGESTS
+    } else {
+        LEGACY_DIGESTS
+    }
+}
+
+/// Digests available for protocol 30 (MD5 + MD4).
+const PROTOCOL_30_DIGESTS: &[DaemonAuthDigest] = &[DaemonAuthDigest::Md5, DaemonAuthDigest::Md4];
+
+/// Digests available for protocols before 30 (MD4 only).
+const LEGACY_DIGESTS: &[DaemonAuthDigest] = &[DaemonAuthDigest::Md4];
 
 /// Parses the whitespace-separated digest list advertised by a daemon greeting.
 #[must_use]
@@ -323,5 +351,42 @@ mod tests {
             challenge,
             &"A".repeat(100)
         ));
+    }
+
+    #[test]
+    fn digests_for_protocol_32_returns_all() {
+        let digests = digests_for_protocol(ProtocolVersion::V32);
+        assert_eq!(digests.len(), 5);
+        assert_eq!(digests[0], DaemonAuthDigest::Sha512);
+        assert_eq!(digests[4], DaemonAuthDigest::Md4);
+    }
+
+    #[test]
+    fn digests_for_protocol_31_returns_all() {
+        let digests = digests_for_protocol(ProtocolVersion::V31);
+        assert_eq!(digests.len(), 5);
+        assert_eq!(digests[0], DaemonAuthDigest::Sha512);
+    }
+
+    #[test]
+    fn digests_for_protocol_30_returns_md5_and_md4() {
+        let digests = digests_for_protocol(ProtocolVersion::V30);
+        assert_eq!(digests.len(), 2);
+        assert_eq!(digests[0], DaemonAuthDigest::Md5);
+        assert_eq!(digests[1], DaemonAuthDigest::Md4);
+    }
+
+    #[test]
+    fn digests_for_protocol_29_returns_md4_only() {
+        let digests = digests_for_protocol(ProtocolVersion::V29);
+        assert_eq!(digests.len(), 1);
+        assert_eq!(digests[0], DaemonAuthDigest::Md4);
+    }
+
+    #[test]
+    fn digests_for_protocol_28_returns_md4_only() {
+        let digests = digests_for_protocol(ProtocolVersion::V28);
+        assert_eq!(digests.len(), 1);
+        assert_eq!(digests[0], DaemonAuthDigest::Md4);
     }
 }
