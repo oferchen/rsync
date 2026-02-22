@@ -16,7 +16,7 @@ This document outlines the crate boundaries, role separation, and design pattern
 | `matching` | Block matching and delta generation | `lib.rs` |
 | `batch` | Batch mode recording and replay | `format.rs`, `writer.rs`, `reader.rs`, `script.rs` |
 | `protocol` | Wire format, multiplex codec, negotiation, flist | `multiplex/`, `negotiation.rs`, `flist/` |
-| `daemon` | Daemon mode, config parsing, session management | `daemon.rs`, `config.rs`, `rsyncd_config.rs` |
+| `daemon` | Daemon mode, config parsing, session management (thread-per-connection; see `DAEMON_PROCESS_MODEL.md`) | `daemon.rs`, `config.rs`, `rsyncd_config.rs` |
 | `filters` | Filter rules (include/exclude), pattern matching | `set.rs`, `rule.rs`, `merge.rs` |
 | `checksums` | Rolling (SIMD) and strong checksums (XXH3, MD5, etc.) | `rolling/`, `strong/` |
 | `compress` | Compression algorithms (zlib, zstd, lz4) | `zlib.rs`, `zstd.rs`, `lz4.rs` |
