@@ -43,9 +43,15 @@ Protocol-handling crates enforce `#![deny(unsafe_code)]`:
 - `signature` - File signatures
 - `matching` - Delta generation
 
-The only crates with unsafe code:
-- `engine` - Denies unsafe outside tests (`#![cfg_attr(not(test), deny(unsafe_code))]`) with targeted `#[allow(unsafe_code)]` on platform FFI functions (clonefile, syncfs, prefetch, buffer pool)
-- `windows-gnu-eh` - Required for Windows FFI (properly documented)
+Crates with targeted unsafe code:
+- `checksums` - SIMD intrinsics for MD4/MD5 and rolling checksums (AVX2, AVX-512, SSE2, SSSE3, SSE4.1, NEON, WASM), with scalar fallbacks and parity tests
+- `fast_io` - Platform I/O syscalls (sendfile, io_uring, mmap, copy_file_range), with standard I/O fallbacks
+- `metadata` - Ownership/privilege FFI (UID/GID lookup via getpwuid_r/getgrnam_r, setuid/setgid, setattrlist), with `#![deny(unsafe_code)]` at crate level and targeted `#[allow(unsafe_code)]` per module
+- `flist` - Batched stat syscalls (fstatat, statx) for file list generation
+- `engine` - Denies unsafe outside tests (`#![cfg_attr(not(test), deny(unsafe_code))]`) with targeted `#[allow(unsafe_code)]` on platform FFI functions (prefetch, buffer pool, CopyFileExW)
+- `windows-gnu-eh` - Windows GNU exception handling shims (properly documented)
+
+**Note:** OS-level race conditions (TOCTOU) remain possible at filesystem boundaries; Rust's memory safety does not prevent them.
 
 ## CVE Monitoring
 
