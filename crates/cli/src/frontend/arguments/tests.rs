@@ -1487,19 +1487,17 @@ mod error_handling {
     }
 
     #[test]
-    fn usermap_twice_fails() {
-        let result = parse_test_args(["--usermap=0:1000", "--usermap=0:1001", "src/", "dst/"]);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("usermap"));
+    fn usermap_twice_concatenates() {
+        let result = parse_test_args(["--usermap=0:1000", "--usermap=100:2000", "src/", "dst/"]);
+        let parsed = result.expect("multiple --usermap should succeed");
+        assert_eq!(parsed.usermap, Some(OsString::from("0:1000,100:2000")));
     }
 
     #[test]
-    fn groupmap_twice_fails() {
-        let result = parse_test_args(["--groupmap=0:1000", "--groupmap=0:1001", "src/", "dst/"]);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("groupmap"));
+    fn groupmap_twice_concatenates() {
+        let result = parse_test_args(["--groupmap=0:1000", "--groupmap=100:2000", "src/", "dst/"]);
+        let parsed = result.expect("multiple --groupmap should succeed");
+        assert_eq!(parsed.groupmap, Some(OsString::from("0:1000,100:2000")));
     }
 
     #[test]

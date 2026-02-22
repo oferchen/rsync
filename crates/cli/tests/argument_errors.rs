@@ -98,15 +98,15 @@ fn test_delete_after_and_delay_conflict() {
 }
 
 #[test]
-fn test_multiple_usermap_conflict() {
+fn test_multiple_usermap_concatenated() {
     let result = parse_args(["oc-rsync", "--usermap=a:b", "--usermap=c:d", "src", "dest"]);
-    assert!(result.is_err(), "Multiple usermap should fail");
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+    assert!(result.is_ok(), "Multiple usermap should concatenate");
+    let args = result.unwrap();
+    assert_eq!(args.usermap, Some("a:b,c:d".into()));
 }
 
 #[test]
-fn test_multiple_groupmap_conflict() {
+fn test_multiple_groupmap_concatenated() {
     let result = parse_args([
         "oc-rsync",
         "--groupmap=a:b",
@@ -114,9 +114,9 @@ fn test_multiple_groupmap_conflict() {
         "src",
         "dest",
     ]);
-    assert!(result.is_err(), "Multiple groupmap should fail");
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+    assert!(result.is_ok(), "Multiple groupmap should concatenate");
+    let args = result.unwrap();
+    assert_eq!(args.groupmap, Some("a:b,c:d".into()));
 }
 
 #[test]
@@ -158,31 +158,33 @@ fn test_delete_conflict_error_message() {
 }
 
 #[test]
-fn test_usermap_conflict_error_message() {
-    let result = parse_args(["oc-rsync", "--usermap=a:b", "--usermap=c:d", "src", "dest"]);
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.to_lowercase().contains("usermap") || err_msg.to_lowercase().contains("conflict"),
-        "Error message should mention usermap or conflict: {err_msg}"
-    );
+fn test_multiple_usermap_three_values() {
+    let result = parse_args([
+        "oc-rsync",
+        "--usermap=a:b",
+        "--usermap=c:d",
+        "--usermap=e:f",
+        "src",
+        "dest",
+    ]);
+    assert!(result.is_ok(), "Three --usermap values should concatenate");
+    let args = result.unwrap();
+    assert_eq!(args.usermap, Some("a:b,c:d,e:f".into()));
 }
 
 #[test]
-fn test_groupmap_conflict_error_message() {
+fn test_multiple_groupmap_three_values() {
     let result = parse_args([
         "oc-rsync",
         "--groupmap=a:b",
         "--groupmap=c:d",
+        "--groupmap=e:f",
         "src",
         "dest",
     ]);
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.to_lowercase().contains("groupmap") || err_msg.to_lowercase().contains("conflict"),
-        "Error message should mention groupmap or conflict: {err_msg}"
-    );
+    assert!(result.is_ok(), "Three --groupmap values should concatenate");
+    let args = result.unwrap();
+    assert_eq!(args.groupmap, Some("a:b,c:d,e:f".into()));
 }
 
 #[test]
