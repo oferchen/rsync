@@ -410,8 +410,6 @@ write_rust_daemon_conf() {
   local comment=$5
 
   cat >"$path" <<CONF
-[daemon]
-path = ${dest}
 pid file = ${pid_file}
 port = ${port}
 use chroot = false
