@@ -161,6 +161,7 @@ impl CompiledRule {
     }
 }
 
+/// Removes rules whose cleared side flags leave them inactive.
 pub(crate) fn apply_clear_rule(rules: &mut Vec<CompiledRule>, sender: bool, receiver: bool) {
     if !sender && !receiver {
         return;
@@ -200,7 +201,6 @@ fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let starts_with_slash = pattern.starts_with('/');
     let directory_only = pattern.ends_with('/');
 
-    // Check if pattern contains internal slashes (besides leading/trailing)
     let core_pattern = if directory_only && pattern.len() > 1 {
         &pattern[..pattern.len() - 1]
     } else {
@@ -216,7 +216,6 @@ fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let has_internal_slash = core_pattern_no_leading.contains('/');
     let anchored = starts_with_slash || has_internal_slash;
 
-    // Fast path: no stripping needed
     if !starts_with_slash && !directory_only {
         return (anchored, false, Cow::Borrowed(pattern));
     }
@@ -228,7 +227,6 @@ fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
         pattern.len()
     };
 
-    // If we stripped nothing meaningful, return borrowed
     if start == 0 && end == pattern.len() {
         (anchored, directory_only, Cow::Borrowed(pattern))
     } else {

@@ -54,21 +54,17 @@ impl DaemonTransferRequest {
     ///
     /// Format: rsync://[user@]host[:port]/module/path
     fn parse_rsync_url(url: &str) -> Result<Self, ClientError> {
-        // Strip rsync:// prefix
         let rest = url
             .strip_prefix("rsync://")
             .or_else(|| url.strip_prefix("RSYNC://"))
             .ok_or_else(|| invalid_argument_error(&format!("not an rsync:// URL: {url}"), 1))?;
 
-        // Split into host and path components
         let mut parts = rest.splitn(2, '/');
         let host_port = parts.next().unwrap_or("");
         let path_part = parts.next().unwrap_or("");
 
-        // Parse host and port
         let target = parse_host_port(host_port, 873)?;
 
-        // Split path into module and file path
         let mut path_parts = path_part.splitn(2, '/');
         let module = path_parts.next().unwrap_or("").to_owned();
         let file_path = path_parts.next().unwrap_or("").to_owned();
@@ -125,7 +121,6 @@ pub fn run_daemon_transfer(
     config: &ClientConfig,
     _observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
-    // Step 1: Parse transfer args to determine role and paths
     let args = config.transfer_args();
     if args.len() < 2 {
         return Err(invalid_argument_error(
@@ -137,7 +132,6 @@ pub fn run_daemon_transfer(
     let (sources, destination) = args.split_at(args.len() - 1);
     let destination = &destination[0];
 
-    // Determine push vs pull and extract local/remote paths
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();
     let local_paths = match &transfer_spec {
@@ -161,10 +155,8 @@ pub fn run_daemon_transfer(
         })
         .ok_or_else(|| invalid_argument_error("no rsync:// URL found", 1))?;
 
-    // Step 2: Parse the URL
     let request = DaemonTransferRequest::parse_rsync_url(&daemon_url.to_string_lossy())?;
 
-    // Step 3: Connect to daemon
     // Use config timeouts with DAEMON_SOCKET_TIMEOUT as the default fallback.
     // upstream: clientserver.c — start_daemon_client() applies io_timeout to connect.
     let connect_duration = resolve_connect_timeout(
@@ -188,7 +180,6 @@ pub fn run_daemon_transfer(
         apply_socket_options(&stream, sockopts)?;
     }
 
-    // Step 4: Perform daemon handshake
     // Output MOTD unless --no-motd was specified (upstream defaults to true)
     let output_motd = !config.no_motd();
     let protocol = perform_daemon_handshake(
@@ -199,13 +190,11 @@ pub fn run_daemon_transfer(
         config.early_input(),
     )?;
 
-    // Step 5: Send arguments to daemon
-    // For pull (we receive), the daemon is the sender, so is_sender=true
-    // For push (we send), the daemon is the receiver, so is_sender=false
+    // For pull (we receive), the daemon is the sender, so is_sender=true.
+    // For push (we send), the daemon is the receiver, so is_sender=false.
     let daemon_is_sender = matches!(role, RemoteRole::Receiver);
     send_daemon_arguments(&mut stream, config, &request, protocol, daemon_is_sender)?;
 
-    // Step 6: Execute transfer based on role
     // Protocol is already negotiated via @RSYNCD text exchange (not binary 4-byte exchange)
     // This mirrors upstream where remote_protocol != 0 after exchange_protocols,
     // so setup_protocol skips the binary exchange (compat.c:599)
@@ -310,7 +299,6 @@ fn perform_daemon_handshake(
             .map_err(|e| socket_error("clone", request.address.socket_addr_display(), e))?,
     );
 
-    // Step 1: Read daemon greeting: @RSYNCD: 31.0
     let mut greeting = String::new();
     reader.read_line(&mut greeting).map_err(|e| {
         socket_error(
@@ -327,16 +315,12 @@ fn perform_daemon_handshake(
         ));
     }
 
-    // Parse daemon's protocol version from greeting: @RSYNCD: XX.Y [digests]
-    // Mirrors upstream exchange_protocols line 178: sscanf(buf, "@RSYNCD: %d.%d", ...)
+    // upstream: exchange_protocols line 178: sscanf(buf, "@RSYNCD: %d.%d", ...)
     let remote_protocol = parse_protocol_from_greeting(&greeting)?;
-
-    // Parse digest list from greeting for authentication
     let advertised_digests = parse_digest_list_from_greeting(&greeting);
 
-    // Step 2: Send client version with auth digest list (upstream compat.c:832-845)
-    // For protocol 30+, client must include supported auth digests.
-    // Order follows upstream checksum.c:71-84 valid_auth_checksums_items[]
+    // upstream: compat.c:832-845 — for protocol 30+, client must include
+    // supported auth digests. Order follows checksum.c:71-84.
     let client_version = format!(
         "@RSYNCD: {}.0 sha512 sha256 sha1 md5 md4\n",
         ProtocolVersion::NEWEST.as_u8()
@@ -352,8 +336,8 @@ fn perform_daemon_handshake(
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
-    // Step 3a: Send daemon parameter overrides (upstream clientserver.c:send_daemon_args())
-    // Each --dparam key=value is sent as "OPTION key=value\n" before the module name.
+    // upstream: clientserver.c:send_daemon_args() — each --dparam key=value is
+    // sent as "OPTION key=value\n" before the module name.
     for param in daemon_params {
         let option_line = format!("OPTION {param}\n");
         stream.write_all(option_line.as_bytes()).map_err(|e| {
@@ -365,7 +349,6 @@ fn perform_daemon_handshake(
         })?;
     }
 
-    // Step 3b: Send early-input data if configured.
     // upstream: clientserver.c:266-294 — sends `#early_input=<len>\n` followed by
     // the raw file contents before the module name. The daemon reads this in
     // rsync_module() and passes it to pre-xfer exec on stdin.
@@ -373,8 +356,7 @@ fn perform_daemon_handshake(
         send_early_input(stream, path, request)?;
     }
 
-    // Step 3c: Send module name (upstream clientserver.c:351)
-    // This happens BEFORE waiting for @RSYNCD: OK
+    // upstream: clientserver.c:351 — module name is sent BEFORE waiting for @RSYNCD: OK
     let module_request = format!("{}\n", request.module);
     stream.write_all(module_request.as_bytes()).map_err(|e| {
         socket_error(
@@ -387,9 +369,8 @@ fn perform_daemon_handshake(
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
-    // Step 4: Read response lines (upstream clientserver.c:357-390)
-    // Loop until we get @RSYNCD: OK, @ERROR, or @RSYNCD: EXIT
-    // Other lines are MOTD (message of the day) which we skip
+    // upstream: clientserver.c:357-390 — loop until @RSYNCD: OK, @ERROR, or
+    // @RSYNCD: EXIT. Other lines are MOTD output.
     loop {
         let mut line = String::new();
         reader.read_line(&mut line).map_err(|e| {
@@ -424,7 +405,6 @@ fn perform_daemon_handshake(
             // upstream: compat.c:858 — fallback depends on protocol version
             let digest = select_daemon_digest(&advertised_digests, remote_protocol.as_u8());
 
-            // Build auth context and send credentials
             let auth_context = DaemonAuthContext::new(username, secret, digest);
             send_daemon_auth_credentials(&mut reader, &auth_context, challenge, &request.address)?;
 
@@ -432,7 +412,6 @@ fn perform_daemon_handshake(
             continue;
         }
 
-        // Success - module accepted
         if trimmed == "@RSYNCD: OK" {
             break;
         }
@@ -509,7 +488,6 @@ pub(crate) fn read_early_input_file(path: &Path) -> Result<Vec<u8>, ClientError>
     let mut buf = vec![0u8; EARLY_INPUT_MAX_SIZE];
     let mut total = 0;
 
-    // Read up to EARLY_INPUT_MAX_SIZE bytes, handling partial reads.
     while total < EARLY_INPUT_MAX_SIZE {
         let n = file.read(&mut buf[total..]).map_err(|e| {
             daemon_error(
@@ -546,7 +524,6 @@ fn send_early_input(
         return Ok(());
     }
 
-    // Send the command header: #early_input=<len>\n
     let header = format!("{EARLY_INPUT_CMD}{}\n", data.len());
     stream.write_all(header.as_bytes()).map_err(|e| {
         socket_error(
@@ -556,7 +533,6 @@ fn send_early_input(
         )
     })?;
 
-    // Send the raw file data
     stream.write_all(&data).map_err(|e| {
         socket_error(
             "send early-input data to",
@@ -581,14 +557,8 @@ fn send_daemon_arguments(
     protocol: ProtocolVersion,
     is_sender: bool,
 ) -> Result<(), ClientError> {
-    // Build argument list (mirrors ssh_transfer.rs server_options)
     let mut args = Vec::new();
-
-    // First arg is always --server (tells daemon we're using server protocol)
     args.push("--server".to_owned());
-
-    // For pull (we receive), daemon is sender, so we send --sender
-    // For push (we send), daemon is receiver, so we don't send --sender
     if is_sender {
         args.push("--sender".to_owned());
     }
@@ -600,7 +570,6 @@ fn send_daemon_arguments(
         args.push(format!("--checksum-choice={}", override_algo.as_str()));
     }
 
-    // Build flag string with capabilities
     let flag_string = build_server_flag_string(config);
     if !flag_string.is_empty() {
         args.push(flag_string);
@@ -634,7 +603,6 @@ fn send_daemon_arguments(
     let module_path = format!("{}/{}", request.module, request.path);
     args.push(module_path);
 
-    // Send arguments with appropriate terminator
     let terminator = if protocol.as_u8() >= 30 { b'\0' } else { b'\n' };
 
     for arg in &args {
@@ -650,7 +618,7 @@ fn send_daemon_arguments(
         })?;
     }
 
-    // Send final empty string to signal end
+    // Empty string signals end of argument list.
     stream.write_all(&[terminator]).map_err(|e| {
         socket_error(
             "send final terminator to",
@@ -709,35 +677,28 @@ fn run_pull_transfer(
         .set_write_timeout(transfer_timeout)
         .map_err(|e| socket_error("set write timeout on", "daemon socket", e))?;
 
-    // Build filter rules to pass to server config
-    // (will be sent after multiplex activation in run_server_with_handshake)
     let filter_rules = build_wire_format_rules(config.filter_rules())?;
 
-    // Build handshake result with negotiated protocol
     // Protocol was negotiated via @RSYNCD text exchange, not binary 4-byte exchange.
     // setup_protocol() will skip the binary exchange because remote_protocol != 0
     // (mirrors upstream compat.c:599: if (remote_protocol == 0) { ... })
     let handshake = HandshakeResult {
         protocol,
         buffered: Vec::new(),
-        compat_exchanged: false, // setup_protocol() will do compat exchange
+        compat_exchanged: false,
         client_args: None,
         io_timeout: config.timeout().as_seconds().map(|s| s.get()),
-        negotiated_algorithms: None, // Will be populated by setup_protocol()
-        compat_flags: None,          // Will be populated by setup_protocol()
-        checksum_seed: 0,            // Will be populated by setup_protocol()
+        negotiated_algorithms: None,
+        compat_flags: None,
+        checksum_seed: 0,
     };
 
-    // Build server config for receiver role with filter rules
     let server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
-
-    // Run server with pre-negotiated handshake, tracking elapsed time for rate calculation
     let start = Instant::now();
     let server_stats =
         run_server_with_handshake_over_stream(server_config, handshake, &mut stream)?;
     let elapsed = start.elapsed();
 
-    // Convert server stats to client summary
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
 }
 
@@ -777,35 +738,28 @@ fn run_push_transfer(
         .set_write_timeout(transfer_timeout)
         .map_err(|e| socket_error("set write timeout on", "daemon socket", e))?;
 
-    // Build filter rules to pass to server config
-    // (will be sent after multiplex activation in run_server_with_handshake)
     let filter_rules = build_wire_format_rules(config.filter_rules())?;
 
-    // Build handshake result with negotiated protocol
     // Protocol was negotiated via @RSYNCD text exchange, not binary 4-byte exchange.
     // setup_protocol() will skip the binary exchange because remote_protocol != 0
     // (mirrors upstream compat.c:599: if (remote_protocol == 0) { ... })
     let handshake = HandshakeResult {
         protocol,
         buffered: Vec::new(),
-        compat_exchanged: false, // setup_protocol() will do compat exchange
+        compat_exchanged: false,
         client_args: None,
         io_timeout: config.timeout().as_seconds().map(|s| s.get()),
-        negotiated_algorithms: None, // Will be populated by setup_protocol()
-        compat_flags: None,          // Will be populated by setup_protocol()
-        checksum_seed: 0,            // Will be populated by setup_protocol()
+        negotiated_algorithms: None,
+        compat_flags: None,
+        checksum_seed: 0,
     };
 
-    // Build server config for generator (sender) role with filter rules
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
-
-    // Run server with pre-negotiated handshake, tracking elapsed time for rate calculation
     let start = Instant::now();
     let server_stats =
         run_server_with_handshake_over_stream(server_config, handshake, &mut stream)?;
     let elapsed = start.elapsed();
 
-    // Convert server stats to client summary
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
 }
 
@@ -890,10 +844,7 @@ fn build_server_config_for_receiver(
     local_paths: &[String],
     filter_rules: Vec<FilterRuleWireFormat>,
 ) -> Result<ServerConfig, ClientError> {
-    // Build flag string from client config
     let flag_string = build_server_flag_string(config);
-
-    // Receiver uses destination path as args
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
     let mut server_config =
@@ -930,10 +881,7 @@ fn build_server_config_for_generator(
     local_paths: &[String],
     filter_rules: Vec<FilterRuleWireFormat>,
 ) -> Result<ServerConfig, ClientError> {
-    // Build flag string from client config
     let flag_string = build_server_flag_string(config);
-
-    // Generator uses source paths as args
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
     let mut server_config =
@@ -970,7 +918,7 @@ fn build_server_config_for_generator(
 fn build_server_flag_string(config: &ClientConfig) -> String {
     let mut flags = String::from("-");
 
-    // Transfer flags (order matches upstream server_options())
+    // Order matches upstream server_options().
     if config.links() {
         flags.push('l');
     }
@@ -1056,7 +1004,6 @@ fn build_wire_format_rules(
     let mut wire_rules = Vec::new();
 
     for spec in client_rules {
-        // Convert FilterRuleKind to RuleType
         let rule_type = match spec.kind() {
             FilterRuleKind::Include => RuleType::Include,
             FilterRuleKind::Exclude => RuleType::Exclude,
@@ -1086,7 +1033,6 @@ fn build_wire_format_rules(
             }
         };
 
-        // Build wire format rule
         let mut wire_rule = FilterRuleWireFormat {
             rule_type,
             pattern: spec.pattern().to_owned(),
