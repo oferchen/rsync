@@ -359,6 +359,16 @@ impl Drop for ConnectionGuard {
     }
 }
 
+/// Accepts TCP connections and spawns a thread per session.
+///
+/// Unlike upstream rsync which forks a child process per connection
+/// (giving each session its own address space), this function uses
+/// `std::thread::spawn` with `catch_unwind` to isolate panics.  A panic
+/// in one session is caught and logged without tearing down the daemon,
+/// matching upstream's crash-isolation semantics.
+///
+/// See `docs/DAEMON_PROCESS_MODEL.md` for details on the thread-vs-fork
+/// trade-offs.
 fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     // Register signal handlers before entering the accept loop so SIGPIPE is
     // ignored and SIGHUP/SIGTERM/SIGINT flags are captured from the start.
@@ -1596,6 +1606,115 @@ mod server_runtime_tests {
         let counter = ConnectionCounter::new();
         let debug = format!("{counter:?}");
         assert!(debug.contains("ConnectionCounter"));
+    }
+
+    // Tests for describe_panic_payload
+
+    #[test]
+    fn describe_panic_payload_extracts_string_message() {
+        let payload = std::panic::catch_unwind(|| {
+            panic!("handler exploded: {}", "bad input");
+        })
+        .unwrap_err();
+        let description = describe_panic_payload(payload);
+        assert!(
+            description.contains("handler exploded"),
+            "expected String payload to be extracted, got: {description}"
+        );
+    }
+
+    #[test]
+    fn describe_panic_payload_extracts_str_message() {
+        let payload = std::panic::catch_unwind(|| {
+            panic!("static str panic");
+        })
+        .unwrap_err();
+        let description = describe_panic_payload(payload);
+        assert_eq!(description, "static str panic");
+    }
+
+    #[test]
+    fn describe_panic_payload_handles_non_string_payload() {
+        let payload = std::panic::catch_unwind(|| {
+            std::panic::panic_any(42u32);
+        })
+        .unwrap_err();
+        let description = describe_panic_payload(payload);
+        assert_eq!(description, "unknown panic payload");
+    }
+
+    // Tests for join_worker — panic isolation defense-in-depth
+
+    #[test]
+    fn join_worker_handles_successful_thread() {
+        let handle = thread::spawn(|| Ok(()));
+        let result = join_worker(handle);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn join_worker_handles_connection_closed_error() {
+        let handle = thread::spawn(|| {
+            Err((
+                Some("127.0.0.1:12345".parse().unwrap()),
+                io::Error::new(io::ErrorKind::BrokenPipe, "connection closed"),
+            ))
+        });
+        let result = join_worker(handle);
+        assert!(
+            result.is_ok(),
+            "BrokenPipe should be treated as normal close"
+        );
+    }
+
+    #[test]
+    fn join_worker_swallows_panicking_thread() {
+        // Verify that a thread panic does not propagate through join_worker.
+        // This is the defense-in-depth path: if catch_unwind inside the worker
+        // somehow fails to catch the panic, join_worker still keeps the daemon
+        // alive by converting the panic into Ok(()).
+        let handle = thread::spawn(|| -> WorkerResult {
+            panic!("simulated handler crash");
+        });
+        // Give the thread a moment to actually panic.
+        thread::sleep(Duration::from_millis(50));
+        let result = join_worker(handle);
+        assert!(
+            result.is_ok(),
+            "join_worker must swallow panics to keep the daemon alive"
+        );
+    }
+
+    // Tests for catch_unwind isolation pattern
+
+    #[test]
+    fn catch_unwind_isolates_panic_and_returns_ok() {
+        // Simulates the exact pattern used in serve_connections: a worker
+        // thread wraps its handler in catch_unwind, converts a panic into
+        // a log-and-return-Ok path.
+        let peer_addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let handle = thread::spawn(move || -> WorkerResult {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                panic!("connection handler for test panicked");
+            }));
+            match result {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(error)) => Err((Some(peer_addr), error)),
+                Err(payload) => {
+                    let description = describe_panic_payload(payload);
+                    assert!(
+                        description.contains("connection handler for test panicked"),
+                        "panic message should be preserved: {description}"
+                    );
+                    Ok(())
+                }
+            }
+        });
+        let result = handle.join().expect("thread should not propagate panic");
+        assert!(
+            result.is_ok(),
+            "catch_unwind should convert panics into Ok(())"
+        );
     }
 }
 

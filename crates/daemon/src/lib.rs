@@ -56,6 +56,29 @@
 //!   daemon capabilities available today, keeping the help text aligned with actual
 //!   behaviour until the parity help renderer is implemented.
 //!
+//! # Process Model
+//!
+//! Upstream rsync forks a child process per connection (`main.c`), so a crash
+//! in one transfer only kills that child while the parent continues accepting
+//! connections. oc-rsync uses OS threads (sync mode) or tokio tasks (async
+//! mode) instead, sharing one process across all connections.
+//!
+//! To match upstream's crash-isolation guarantee, every session handler is
+//! wrapped in `std::panic::catch_unwind`.  A panic in one connection is
+//! caught, logged to the daemon log file, and the thread exits cleanly.  The
+//! daemon continues serving all other connections.  A second defense layer in
+//! `join_worker` catches any panics that escape `catch_unwind` via
+//! `JoinHandle::join`.
+//!
+//! The thread model was chosen over `fork` for cross-platform portability
+//! (Windows has no `fork`), lower per-connection overhead, and efficient
+//! shared-state access via `Arc`.  Rust's ownership model and
+//! `#![deny(unsafe_code)]` on this crate eliminate the memory-corruption risks
+//! that make fork's address-space isolation valuable in C.
+//!
+//! See `docs/DAEMON_PROCESS_MODEL.md` for a full comparison including
+//! operational recommendations.
+//!
 //! # Invariants
 //!
 //! - Diagnostics are routed through [`core::message`] so trailers and
