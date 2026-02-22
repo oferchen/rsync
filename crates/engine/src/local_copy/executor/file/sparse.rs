@@ -718,9 +718,7 @@ fn write_zeros_fallback(
 #[derive(Default)]
 pub(crate) struct SparseWriteState {
     pending_zero_run: u64,
-    /// Position where the pending zero run starts (used for punch_hole path)
-    ///
-    /// TODO: Will be used for delta transfer in-place updates via flush_with_punch_hole
+    /// Position where the pending zero run starts (used for punch_hole path).
     #[cfg_attr(not(test), allow(dead_code))]
     zero_run_start_pos: u64,
 }
