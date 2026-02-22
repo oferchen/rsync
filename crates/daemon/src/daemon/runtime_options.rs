@@ -1019,6 +1019,77 @@ mod runtime_options_tests {
         assert!(result.is_ok());
     }
 
+    // ==== Config file tests ====
+
+    #[test]
+    fn parse_config_loads_modules_from_file() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[share]\npath = /srv/share\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.modules().len(), 1);
+        assert_eq!(options.modules()[0].name, "share");
+    }
+
+    #[test]
+    fn parse_config_inline_form_loads_modules() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[data]\npath = /srv/data\n").expect("write config");
+
+        let inline_arg = format!("--config={}", file.path().display());
+        let args = vec![OsString::from(inline_arg)];
+        let options = RuntimeOptions::parse(&args).expect("parse inline config");
+        assert_eq!(options.modules().len(), 1);
+        assert_eq!(options.modules()[0].name, "data");
+    }
+
+    #[test]
+    fn parse_config_forwards_to_delegate_arguments() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[repo]\npath = /srv/repo\n").expect("write config");
+
+        let config_path = file.path().as_os_str().to_os_string();
+        let args = vec![OsString::from("--config"), config_path.clone()];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert!(options.delegate_arguments.contains(&OsString::from("--config")));
+        assert!(options.delegate_arguments.contains(&config_path));
+    }
+
+    #[test]
+    fn parse_config_inline_form_forwards_to_delegate_arguments() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[repo]\npath = /srv/repo\n").expect("write config");
+
+        let config_path = file.path().as_os_str().to_os_string();
+        let inline_arg = format!("--config={}", file.path().display());
+        let args = vec![OsString::from(inline_arg)];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert!(options.delegate_arguments.contains(&OsString::from("--config")));
+        assert!(options.delegate_arguments.contains(&config_path));
+    }
+
+    #[test]
+    fn parse_config_with_other_options() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[files]\npath = /srv/files\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--port"),
+            OsString::from("9999"),
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+            OsString::from("--once"),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.port, 9999);
+        assert_eq!(options.modules().len(), 1);
+        assert_eq!(options.modules()[0].name, "files");
+    }
+
     // ==== Unsupported option tests ====
 
     #[test]
