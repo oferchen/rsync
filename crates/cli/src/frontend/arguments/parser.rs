@@ -232,28 +232,8 @@ where
     let no_iconv = matches.get_flag("no-iconv");
     let owner = tri_state_flag_positive_first(&matches, "owner", "no-owner");
     let group = tri_state_flag_positive_first(&matches, "group", "no-group");
-    let usermap_values = matches
-        .remove_many::<OsString>("usermap")
-        .map(|values| values.collect::<Vec<_>>())
-        .unwrap_or_default();
-    if usermap_values.len() > 1 {
-        return Err(clap::Error::raw(
-            clap::error::ErrorKind::TooManyValues,
-            "You can only specify --usermap once.",
-        ));
-    }
-    let usermap = usermap_values.into_iter().next();
-    let groupmap_values = matches
-        .remove_many::<OsString>("groupmap")
-        .map(|values| values.collect::<Vec<_>>())
-        .unwrap_or_default();
-    if groupmap_values.len() > 1 {
-        return Err(clap::Error::raw(
-            clap::error::ErrorKind::TooManyValues,
-            "You can only specify --groupmap once.",
-        ));
-    }
-    let groupmap = groupmap_values.into_iter().next();
+    let usermap = join_os_values(matches.remove_many::<OsString>("usermap"));
+    let groupmap = join_os_values(matches.remove_many::<OsString>("groupmap"));
     let chown = matches.remove_one::<OsString>("chown");
     let copy_as = matches.remove_one::<OsString>("copy-as");
     let chmod = matches
@@ -677,6 +657,25 @@ where
     })
 }
 
+/// Joins multiple `OsString` values with commas into a single `OsString`.
+///
+/// Returns `None` if the iterator is empty, or the single value if there is
+/// exactly one. Multiple values are comma-separated so the downstream mapping
+/// parser (`NameMapping::parse`) sees them as additional rules.
+fn join_os_values(values: Option<impl Iterator<Item = OsString>>) -> Option<OsString> {
+    let mut iter = values?.peekable();
+    let first = iter.next()?;
+    if iter.peek().is_none() {
+        return Some(first);
+    }
+    let mut joined = first;
+    for value in iter {
+        joined.push(",");
+        joined.push(&value);
+    }
+    Some(joined)
+}
+
 fn tri_state_flag_positive_first(
     matches: &clap::ArgMatches,
     positive: &str,
@@ -952,19 +951,17 @@ mod tests {
     }
 
     #[test]
-    fn usermap_twice_fails() {
-        let result = parse_test_args(["--usermap=0:1000", "--usermap=0:1001", "src/", "dst/"]);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("usermap"));
+    fn usermap_twice_concatenates() {
+        let result = parse_test_args(["--usermap=0:1000", "--usermap=100:2000", "src/", "dst/"]);
+        let parsed = result.expect("multiple --usermap should succeed");
+        assert_eq!(parsed.usermap, Some(OsString::from("0:1000,100:2000")));
     }
 
     #[test]
-    fn groupmap_twice_fails() {
-        let result = parse_test_args(["--groupmap=0:1000", "--groupmap=0:1001", "src/", "dst/"]);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("groupmap"));
+    fn groupmap_twice_concatenates() {
+        let result = parse_test_args(["--groupmap=0:1000", "--groupmap=100:2000", "src/", "dst/"]);
+        let parsed = result.expect("multiple --groupmap should succeed");
+        assert_eq!(parsed.groupmap, Some(OsString::from("0:1000,100:2000")));
     }
 
     #[test]
