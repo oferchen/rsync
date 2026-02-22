@@ -889,7 +889,7 @@ mod edge_cases {
     fn compat_flags_boundary_values() {
         let temp_dir = TempDir::new().unwrap();
 
-        let compat_flags = [0u64, 1, 0x7F, 0x80, 0xFF, 0xFFFF, u64::MAX];
+        let compat_flags: &[i32] = &[0, 1, 0x7F, 0x80, 0xFF, 0xFFFF, i32::MAX];
 
         for (i, &flags) in compat_flags.iter().enumerate() {
             let batch_path = temp_dir.path().join(format!("compat_{i}.batch"));
