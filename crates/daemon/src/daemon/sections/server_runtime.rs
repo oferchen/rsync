@@ -451,8 +451,9 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
     let _generated_config_guard = generated_config;
 
-    // Warning message removed - eprintln! crashes when stderr unavailable in daemon mode
-    // If fallback warning needs to be logged, use proper logging framework instead
+    // Suppress unused variable — stderr is unavailable in daemon mode, so the
+    // warning cannot be emitted via eprintln!. A structured logging framework
+    // would be needed to surface this.
     let _ = fallback_warning_message;
 
     let log_sink = if let Some(path) = log_file {
