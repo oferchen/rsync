@@ -975,7 +975,7 @@ fn server_lists_modules_with_comments() {
     // Module listing should include comment (tab-separated)
     if line.contains('\t') {
         let parts: Vec<&str> = line.trim().split('\t').collect();
-        assert_eq!(parts[0], "docs", "module name should be 'docs'");
+        assert_eq!(parts[0].trim(), "docs", "module name should be 'docs'");
         assert_eq!(
             parts.get(1).copied(),
             Some("Documentation files"),

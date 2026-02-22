@@ -423,10 +423,13 @@ pub struct ParsedArgs {
     /// Maximum number of files to delete.
     ///
     /// Limits how many extraneous files will be deleted in a single run.
+    /// Use `-1` to remove the limit after reporting how many would be deleted.
     ///
     /// Corresponds to: `--max-delete`
     ///
     /// Default: `None` (no limit).
+    ///
+    /// Constraint: Integer (use -1 for "report but don't limit").
     pub max_delete: Option<OsString>,
 
     /// Minimum file size to transfer.
@@ -455,6 +458,8 @@ pub struct ParsedArgs {
     /// Corresponds to: `--block-size`, `-B`
     ///
     /// Default: `None` (rsync chooses automatically based on file size).
+    ///
+    /// Constraint: Positive integer.
     pub block_size: Option<OsString>,
 
     /// Timestamp comparison tolerance in seconds.
@@ -650,7 +655,7 @@ pub struct ParsedArgs {
     /// Allows non-root users to preserve root-only file attributes by
     /// storing them as extended attributes.
     ///
-    /// Corresponds to: `--fake-super`
+    /// Corresponds to: `--fake-super` / `--no-fake-super`
     ///
     /// Default: `None`
     pub fake_super: Option<bool>,
@@ -1401,6 +1406,8 @@ pub struct ParsedArgs {
     /// Corresponds to: `--protocol`
     ///
     /// Default: `None` (negotiate with remote).
+    ///
+    /// Constraint: Integer in the range 28–32.
     pub protocol: Option<OsString>,
 
     /// I/O timeout in seconds.
