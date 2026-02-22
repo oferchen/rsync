@@ -470,19 +470,19 @@ jobs:
           # --- Build control tarball (.PKGINFO + install scripts) ---
           CONTROL_DIR="$(mktemp -d)"
 
-          cat > "${CONTROL_DIR}/.PKGINFO" << PKGINFO
-pkgname = oc-rsync
-pkgver = ${PKGVER}
-pkgdesc = Pure-Rust implementation of rsync, wire-compatible with upstream 3.4.1
-url = https://github.com/oferchen/rsync
-builddate = $(date +%s)
-packager = oc-rsync CI <ci@github.com>
-size = ${INSTALLED_SIZE}
-arch = ${ARCH}
-license = MIT
-origin = oc-rsync
-datahash = ${DATA_HASH}
-PKGINFO
+          {
+            printf 'pkgname = oc-rsync\n'
+            printf 'pkgver = %s\n' "${PKGVER}"
+            printf 'pkgdesc = Pure-Rust implementation of rsync, wire-compatible with upstream 3.4.1\n'
+            printf 'url = https://github.com/oferchen/rsync\n'
+            printf 'builddate = %s\n' "$(date +%s)"
+            printf 'packager = oc-rsync CI <ci@github.com>\n'
+            printf 'size = %s\n' "${INSTALLED_SIZE}"
+            printf 'arch = %s\n' "${ARCH}"
+            printf 'license = MIT\n'
+            printf 'origin = oc-rsync\n'
+            printf 'datahash = %s\n' "${DATA_HASH}"
+          } > "${CONTROL_DIR}/.PKGINFO"
 
           cp packaging/alpine/oc-rsync.pre-install "${CONTROL_DIR}/.pre-install"
           cp packaging/alpine/oc-rsync.post-install "${CONTROL_DIR}/.post-install"
