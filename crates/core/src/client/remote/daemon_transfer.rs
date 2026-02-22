@@ -14,6 +14,7 @@
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "tracing")]
@@ -301,7 +302,7 @@ fn perform_daemon_handshake(
     request: &DaemonTransferRequest,
     output_motd: bool,
     daemon_params: &[String],
-    early_input: Option<&std::path::Path>,
+    early_input: Option<&Path>,
 ) -> Result<ProtocolVersion, ClientError> {
     let mut reader = BufReader::new(
         stream
@@ -479,12 +480,52 @@ fn perform_daemon_handshake(
 /// of data".
 ///
 /// upstream: rsync.h — `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` or `4096 + 1024`.
-const EARLY_INPUT_MAX_SIZE: u64 = 5120;
+pub(crate) const EARLY_INPUT_MAX_SIZE: usize = 5120;
 
 /// Command prefix for the early-input protocol message.
 ///
 /// upstream: clientserver.c — `#define EARLY_INPUT_CMD "#early_input="`
 const EARLY_INPUT_CMD: &str = "#early_input=";
+
+/// Reads the early-input file content, capping at [`EARLY_INPUT_MAX_SIZE`] bytes.
+///
+/// Returns the file content truncated to 5120 bytes if the file is larger.
+/// Returns an empty `Vec` for empty files. Returns an error if the file cannot
+/// be opened or read.
+///
+/// upstream: clientserver.c:266-294 — `start_inband_exchange()` reads the file
+/// specified by `--early-input` before sending it to the daemon.
+pub(crate) fn read_early_input_file(path: &Path) -> Result<Vec<u8>, ClientError> {
+    use std::fs::File;
+    use std::io::Read;
+
+    let mut file = File::open(path).map_err(|e| {
+        daemon_error(
+            format!("failed to open {}: {e}", path.display()),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        )
+    })?;
+
+    let mut buf = vec![0u8; EARLY_INPUT_MAX_SIZE];
+    let mut total = 0;
+
+    // Read up to EARLY_INPUT_MAX_SIZE bytes, handling partial reads.
+    while total < EARLY_INPUT_MAX_SIZE {
+        let n = file.read(&mut buf[total..]).map_err(|e| {
+            daemon_error(
+                format!("failed to read {}: {e}", path.display()),
+                CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+            )
+        })?;
+        if n == 0 {
+            break;
+        }
+        total += n;
+    }
+
+    buf.truncate(total);
+    Ok(buf)
+}
 
 /// Reads and sends the early-input file to the daemon before the module name.
 ///
@@ -496,37 +537,14 @@ const EARLY_INPUT_CMD: &str = "#early_input=";
 /// input after `exchange_protocols()` and before the module name.
 fn send_early_input(
     stream: &mut TcpStream,
-    path: &std::path::Path,
+    path: &Path,
     request: &DaemonTransferRequest,
 ) -> Result<(), ClientError> {
-    use std::fs;
+    let data = read_early_input_file(path)?;
 
-    let metadata = fs::metadata(path).map_err(|e| {
-        daemon_error(
-            format!("failed to open {}: {e}", path.display()),
-            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-        )
-    })?;
-
-    let file_len = metadata.len();
-
-    if file_len > EARLY_INPUT_MAX_SIZE {
-        return Err(daemon_error(
-            format!("{} is > {EARLY_INPUT_MAX_SIZE} bytes.", path.display()),
-            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-        ));
-    }
-
-    if file_len == 0 {
+    if data.is_empty() {
         return Ok(());
     }
-
-    let data = fs::read(path).map_err(|e| {
-        daemon_error(
-            format!("failed to read {}: {e}", path.display()),
-            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-        )
-    })?;
 
     // Send the command header: #early_input=<len>\n
     let header = format!("{EARLY_INPUT_CMD}{}\n", data.len());
@@ -1150,5 +1168,92 @@ mod tests {
         let greeting = "@RSYNCD: 28.0\n";
         let protocol = parse_protocol_from_greeting(greeting).unwrap();
         assert_eq!(protocol.as_u8(), 28);
+    }
+
+    mod early_input_tests {
+        use super::*;
+
+        #[test]
+        fn read_normal_file() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("early.txt");
+            std::fs::write(&file_path, b"hello early input").unwrap();
+
+            let data = read_early_input_file(&file_path).unwrap();
+            assert_eq!(data, b"hello early input");
+        }
+
+        #[test]
+        fn read_empty_file() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("empty.txt");
+            std::fs::write(&file_path, b"").unwrap();
+
+            let data = read_early_input_file(&file_path).unwrap();
+            assert!(data.is_empty());
+        }
+
+        #[test]
+        fn read_file_exactly_at_limit() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("exact.bin");
+            let content = vec![0xABu8; EARLY_INPUT_MAX_SIZE];
+            std::fs::write(&file_path, &content).unwrap();
+
+            let data = read_early_input_file(&file_path).unwrap();
+            assert_eq!(data.len(), EARLY_INPUT_MAX_SIZE);
+            assert_eq!(data, content);
+        }
+
+        #[test]
+        fn read_file_exceeding_limit_is_truncated() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("large.bin");
+            let content = vec![0xCDu8; EARLY_INPUT_MAX_SIZE + 1024];
+            std::fs::write(&file_path, &content).unwrap();
+
+            let data = read_early_input_file(&file_path).unwrap();
+            assert_eq!(data.len(), EARLY_INPUT_MAX_SIZE);
+            assert_eq!(data, &content[..EARLY_INPUT_MAX_SIZE]);
+        }
+
+        #[test]
+        fn read_missing_file_returns_error() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("nonexistent.txt");
+
+            let err = read_early_input_file(&file_path).unwrap_err();
+            assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);
+            assert!(err.to_string().contains("failed to open"));
+        }
+
+        #[test]
+        fn max_size_constant_is_5k() {
+            assert_eq!(EARLY_INPUT_MAX_SIZE, 5120);
+        }
+
+        #[test]
+        fn read_file_with_binary_content() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("binary.bin");
+            // All byte values 0x00..=0xFF repeated
+            let content: Vec<u8> = (0..=255u8).cycle().take(1024).collect();
+            std::fs::write(&file_path, &content).unwrap();
+
+            let data = read_early_input_file(&file_path).unwrap();
+            assert_eq!(data, content);
+        }
+
+        #[test]
+        fn read_file_well_over_limit_truncated_to_max() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("huge.bin");
+            // 10x the limit
+            let content = vec![0xFFu8; EARLY_INPUT_MAX_SIZE * 10];
+            std::fs::write(&file_path, &content).unwrap();
+
+            let data = read_early_input_file(&file_path).unwrap();
+            assert_eq!(data.len(), EARLY_INPUT_MAX_SIZE);
+        }
     }
 }
