@@ -861,6 +861,17 @@ impl FileListReader {
         // Step 2: Read name with compression
         let name = self.read_name(reader, flags)?;
 
+        // Step 2b: Reject zero-length filenames.
+        // upstream: flist.c:1873 — sender rejects empty names with "cannot send file
+        // with empty name". We enforce the same invariant on the receiver side as
+        // defense-in-depth against a malicious or buggy sender.
+        if name.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "received file entry with zero-length filename",
+            ));
+        }
+
         // Step 3: Read hardlink index (MUST come immediately after name)
         // For hardlink followers, this is the only field read after the name.
         // Upstream rsync does "goto create_object" after reading the index for followers.
@@ -2626,6 +2637,83 @@ mod tests {
                 "Reader should correctly decode size {size} at {label} boundary"
             );
         }
+    }
+
+    // =========================================================================
+    // Zero-length filename validation tests
+    //
+    // upstream: flist.c:1873 — sender rejects empty names. These tests verify
+    // that the receiver also rejects zero-length filenames as defense-in-depth.
+    // =========================================================================
+
+    #[test]
+    fn read_entry_rejects_zero_length_filename() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        // Craft wire data with a zero-length filename:
+        // flags=0x01 (valid, not end-of-list), suffix_len=0, no XMIT_SAME_NAME
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(0u8); // suffix_len = 0 (zero-length filename)
+
+        // The name check fires immediately after read_name, before any further
+        // wire reads (hardlink index, size, metadata), so no additional data
+        // is needed in the stream.
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
+
+        let result = reader.read_entry(&mut cursor);
+        assert!(result.is_err(), "zero-length filename should be rejected");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("zero-length filename"),
+            "error message should mention zero-length filename, got: {err}"
+        );
+    }
+
+    #[test]
+    fn read_entry_accepts_non_empty_filename() {
+        use super::super::write::FileListWriter;
+
+        let protocol = test_protocol();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+
+        let mut entry = FileEntry::new_file("a".into(), 1, 0o100644);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "a");
+    }
+
+    #[test]
+    fn read_entry_rejects_zero_length_filename_nonvarint() {
+        // Non-varint mode (default): flags are a single byte.
+        // Flags byte 0x01 (valid) + suffix_len=0 -> empty filename.
+        let data: &[u8] = &[
+            0x01, // flags byte (valid, not end-of-list, no XMIT_SAME_NAME)
+            0x00, // suffix_len = 0 (zero-length filename)
+        ];
+
+        let mut cursor = Cursor::new(data);
+        let mut reader = FileListReader::new(test_protocol());
+
+        let result = reader.read_entry(&mut cursor);
+        assert!(result.is_err(), "zero-length filename should be rejected");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("zero-length filename"));
     }
 
     /// Test reading large file sizes with legacy protocol 29 (longint encoding).
