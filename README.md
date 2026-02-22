@@ -6,7 +6,7 @@
 
 `rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.1 (protocol 32), works as a drop-in replacement.
 
-Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict.
+Binary name: **`oc-rsync`** — installs alongside system `rsync` without conflict.
 
 ---
 
@@ -14,14 +14,14 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 **Release:** 0.5.8 (alpha)
 
-Local and SSH transfers are fully functional with native delta algorithm, metadata preservation, and all core options. Daemon mode handles negotiation, authentication, and module access control; file transfers in daemon mode are functional while native transfer integration is under development. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
+Local, SSH, and daemon transfers are fully functional with native delta algorithm, metadata preservation, and all core options. Daemon mode handles negotiation, authentication, module access control, and file transfers natively. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
 | Area | Status |
 |------|--------|
 | Local copy | Complete |
 | SSH transfer | Complete |
 | Daemon negotiation & auth | Complete |
-| Daemon file transfer | Semi-complete |
+| Daemon file transfer | Complete |
 | Delta algorithm | Complete |
 | Filter rules | Complete |
 | --delete (all timings) | Complete |
