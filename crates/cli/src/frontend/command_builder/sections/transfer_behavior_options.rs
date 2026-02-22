@@ -131,15 +131,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                 Arg::new("fsync")
                     .long("fsync")
                     .help("Fsync updated destination files after writing.")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("no-fsync"),
-            )
-            .arg(
-                Arg::new("no-fsync")
-                    .long("no-fsync")
-                    .help("Skip forced fsync even when enabled earlier.")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("fsync"),
+                    .action(ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("direct-write")
@@ -513,15 +505,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .long("executability")
                     .short('E')
                     .help("Preserve executability without altering other permission bits.")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("no-executability"),
-            )
-            .arg(
-                Arg::new("no-executability")
-                    .long("no-executability")
-                    .help("Disable executability preservation.")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("executability"),
+                    .action(ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("perms")

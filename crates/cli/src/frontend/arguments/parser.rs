@@ -221,7 +221,11 @@ where
     } else {
         open_noatime_flag
     };
-    let prefer_aes_gcm = tri_state_flag_positive_first(&matches, "aes", "no-aes");
+    let prefer_aes_gcm = if matches.get_flag("aes") {
+        Some(true)
+    } else {
+        None
+    };
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt
         && let Ok(setting) = parse_compress_level_argument(value.as_os_str())
@@ -241,10 +245,17 @@ where
         .map(Iterator::collect)
         .unwrap_or_default();
     let perms = tri_state_flag_positive_first(&matches, "perms", "no-perms");
-    let executability =
-        tri_state_flag_positive_first(&matches, "executability", "no-executability");
+    let executability = if matches.get_flag("executability") {
+        Some(true)
+    } else {
+        None
+    };
     let super_mode = tri_state_flag_positive_first(&matches, "super", "no-super");
-    let fake_super = tri_state_flag_positive_first(&matches, "fake-super", "no-fake-super");
+    let fake_super = if matches.get_flag("fake-super") {
+        Some(true)
+    } else {
+        None
+    };
     let times = tri_state_flag_positive_first(&matches, "times", "no-times");
     let omit_dir_times =
         tri_state_flag_positive_first(&matches, "omit-dir-times", "no-omit-dir-times");
@@ -255,17 +266,24 @@ where
     let links = tri_state_flag_positive_first(&matches, "links", "no-links");
     let sparse = tri_state_flag_positive_first(&matches, "sparse", "no-sparse");
     let fuzzy = tri_state_flag_positive_first(&matches, "fuzzy", "no-fuzzy");
-    let copy_links = tri_state_flag_positive_first(&matches, "copy-links", "no-copy-links");
+    let copy_links = if matches.get_flag("copy-links") {
+        Some(true)
+    } else {
+        None
+    };
     let copy_dirlinks = matches.get_flag("copy-dirlinks");
     let copy_unsafe_links_option = if matches.get_flag("copy-unsafe-links") {
         Some(true)
-    } else if matches.get_flag("no-copy-unsafe-links") || matches.get_flag("safe-links") {
+    } else if matches.get_flag("safe-links") {
         Some(false)
     } else {
         None
     };
-    let keep_dirlinks =
-        tri_state_flag_positive_first(&matches, "keep-dirlinks", "no-keep-dirlinks");
+    let keep_dirlinks = if matches.get_flag("keep-dirlinks") {
+        Some(true)
+    } else {
+        None
+    };
     let safe_links = matches.get_flag("safe-links") || copy_unsafe_links_option == Some(true);
     let munge_links = tri_state_flag_positive_first(&matches, "munge-links", "no-munge-links");
     let trust_sender = matches.get_flag("trust-sender");
@@ -307,7 +325,11 @@ where
     let partial_flag = matches.get_flag("partial") || matches.get_count("partial-progress") > 0;
     let no_partial = matches.get_flag("no-partial");
     let preallocate = matches.get_flag("preallocate");
-    let fsync = tri_state_flag_positive_first(&matches, "fsync", "no-fsync");
+    let fsync = if matches.get_flag("fsync") {
+        Some(true)
+    } else {
+        None
+    };
     let direct_write = matches.get_flag("direct-write") && !matches.get_flag("no-direct-write");
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
     let partial_dir_cli = matches
@@ -1080,26 +1102,10 @@ mod tests {
     }
 
     #[test]
-    fn no_aes_flag() {
-        let result = parse_test_args(["--no-aes", "src/", "dst/"]);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
-        assert_eq!(parsed.prefer_aes_gcm, Some(false));
-    }
-
-    #[test]
     fn aes_default_is_none() {
         let result = parse_test_args(["src/", "dst/"]);
         assert!(result.is_ok());
         let parsed = result.unwrap();
         assert_eq!(parsed.prefer_aes_gcm, None);
-    }
-
-    #[test]
-    fn no_aes_then_aes_uses_last() {
-        let result = parse_test_args(["--no-aes", "--aes", "src/", "dst/"]);
-        assert!(result.is_ok());
-        let parsed = result.unwrap();
-        assert_eq!(parsed.prefer_aes_gcm, Some(true));
     }
 }
