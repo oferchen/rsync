@@ -1093,12 +1093,10 @@ fn start_loopback_daemon(
     let pid_path = bench_dir.join(format!("loopback-{name}.pid"));
     let log_path = bench_dir.join(format!("loopback-{name}.log"));
 
-    // Write daemon config (oc-rsync requires [daemon] section, upstream uses bare directives)
+    // Write daemon config: global directives before any [module] section
     let config = if is_oc_rsync {
         format!(
-            r#"[daemon]
-path = {data}
-pid file = {pid}
+            r#"pid file = {pid}
 log file = {log}
 port = {port}
 use chroot = false
