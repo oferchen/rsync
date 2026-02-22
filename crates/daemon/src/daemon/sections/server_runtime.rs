@@ -451,12 +451,6 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
     let _generated_config_guard = generated_config;
 
-    let pid_guard = if let Some(path) = pid_file {
-        Some(PidFileGuard::create(path)?)
-    } else {
-        None
-    };
-
     // Warning message removed - eprintln! crashes when stderr unavailable in daemon mode
     // If fallback warning needs to be logged, use proper logging framework instead
     let _ = fallback_warning_message;
@@ -536,6 +530,14 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses available to bind"),
         ));
     }
+
+    // Write the PID file after binding so the file only appears once the port
+    // is ready to accept connections — matching upstream main.c write_pid_file().
+    let pid_guard = if let Some(path) = pid_file {
+        Some(PidFileGuard::create(path)?)
+    } else {
+        None
+    };
 
     let notifier = systemd::ServiceNotifier::new();
     let ready_status = if bound_addresses.len() == 1 {
@@ -959,6 +961,12 @@ impl PidFileGuard {
             .write(true)
             .open(&path)
             .map_err(|error| pid_file_error(&path, error))?;
+
+        // upstream: main.c write_pid_file() — mode 0644
+        #[cfg(unix)]
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+            .map_err(|error| pid_file_error(&path, error))?;
+
         let pid = std::process::id();
         writeln!(file, "{pid}").map_err(|error| pid_file_error(&path, error))?;
         file.sync_all()

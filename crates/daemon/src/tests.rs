@@ -196,6 +196,7 @@ include!("tests/chunks/run_daemon_rejects_unknown_argument.rs");
 include!("tests/chunks/run_daemon_requests_authentication_for_protected_module.rs");
 include!("tests/chunks/run_daemon_serves_single_legacy_connection.rs");
 include!("tests/chunks/run_daemon_writes_and_removes_pid_file.rs");
+include!("tests/chunks/run_daemon_pid_file_contains_correct_pid.rs");
 // Daemon mode negotiation tests
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
