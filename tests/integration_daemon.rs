@@ -222,14 +222,21 @@ fn error_unknown_module_format() {
 
 #[test]
 fn error_access_denied_format() {
-    // This test documents the expected error format for access denied
-    // The daemon should respond with:
-    // @ERROR: access denied to module 'modulename' from <ip>
+    // This test documents the expected error format for access denied.
+    //
+    // upstream: clientserver.c:733 — access denied:
+    //   "@ERROR: access denied to %s from %s (%s)\n" with (name, host, addr)
+    //
+    // upstream: clientserver.c:762 — auth failure:
+    //   "@ERROR: auth failed on module %s\n" with (name)
+    //
     // @RSYNCD: EXIT
 
-    let example_error = "@ERROR: access denied to module 'restricted' from 127.0.0.1";
-    assert!(example_error.contains("access denied"));
-    assert!(example_error.contains("module"));
+    let access_denied = "@ERROR: access denied to restricted from 127.0.0.1 (127.0.0.1)";
+    assert!(access_denied.contains("access denied"));
+
+    let auth_failed = "@ERROR: auth failed on module restricted";
+    assert!(auth_failed.contains("auth failed on module"));
 }
 
 #[test]

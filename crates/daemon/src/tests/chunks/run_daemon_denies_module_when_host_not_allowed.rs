@@ -36,13 +36,17 @@ fn run_daemon_denies_module_when_host_not_allowed() {
     stream.write_all(b"docs\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    // Daemon responds with error for denied access after module selection
-    // (CAP is only sent for #list requests)
+    // upstream: clientserver.c:733 — access denied sends
+    // "@ERROR: access denied to %s from %s (%s)\n" with (name, host, addr)
+    // The host may be resolved to "localhost" or remain as "127.0.0.1"
+    // depending on the system's DNS configuration.
     line.clear();
     reader.read_line(&mut line).expect("error message");
-    assert_eq!(
-        line.trim_end(),
-        "@ERROR: access denied to module 'docs' from 127.0.0.1"
+    let trimmed = line.trim_end();
+    assert!(
+        trimmed.starts_with("@ERROR: access denied to docs from ")
+            && trimmed.ends_with("(127.0.0.1)"),
+        "Expected upstream-format access denied message, got: {trimmed}"
     );
 
     line.clear();
