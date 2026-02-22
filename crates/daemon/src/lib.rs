@@ -5,26 +5,16 @@
 
 //! # Overview
 //!
-//! `daemon` provides the thin command-line front-end for the Rust `rsyncd`
-//! binary. The crate now exposes a deterministic daemon loop capable of
-//! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
-//! with protocol `32`, serving `#list` requests from an in-memory module table,
-//! authenticating `auth users` entries via the upstream challenge/response
-//! exchange backed by the configured secrets file, and delegating authenticated
-//! module sessions to the upstream `rsync` binary by default so clients retain
-//! full transfers while the native engine is completed. Operators can disable
-//! delegation via the documented `OC_RSYNC_*` environment overrides, in which
-//! case the daemon responds with explanatory `@ERROR` messages until the
-//! built-in data path lands.
-//! Clients that initiate the newer binary negotiation (protocols ≥ 30) are
-//! recognised automatically: the daemon responds with the negotiated protocol
-//! advertisement and emits multiplexed error frames describing the current
-//! feature gap so modern clients observe a graceful failure rather than
-//! stalling on the ASCII greeting.
-//! The number of connections can be capped via
-//! command-line flags, allowing integration tests to exercise the handshake
-//! without leaving background threads running indefinitely while keeping the
-//! default behaviour ready for long-lived daemons once module serving lands.
+//! `daemon` implements the rsync daemon mode (`--daemon`), providing a TCP
+//! listener that accepts rsync protocol connections, performs `@RSYNCD:`
+//! greeting negotiation with protocol `32`, serves `#list` module listings,
+//! authenticates `auth users` via challenge/response backed by a secrets
+//! file (with strict-modes permission enforcement), and executes file
+//! transfers natively using the Rust transfer engine.
+//!
+//! Both legacy ASCII and modern binary protocol negotiation (protocols ≥ 30)
+//! are supported. The daemon handles per-module access control, chroot,
+//! uid/gid mapping, and configuration via `oc-rsyncd.conf`.
 //!
 //! # Design
 //!
