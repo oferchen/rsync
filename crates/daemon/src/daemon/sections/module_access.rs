@@ -1,3 +1,13 @@
+/// Formats a single module listing line using upstream's `%-15s\t%s\n` layout.
+///
+/// The module name is left-aligned in a 15-character wide field, followed by a
+/// tab separator and the comment string, terminated by a newline.
+///
+/// upstream: clientserver.c:1254 — `io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));`
+fn format_module_listing_line(name: &str, comment: &str) -> String {
+    format!("{name:<15}\t{comment}\n")
+}
+
 /// Sends the list of available modules to a client.
 ///
 /// This responds to a module listing request by sending the MOTD (message of the
@@ -41,7 +51,7 @@ fn respond_with_module_list(
 
         // upstream: clientserver.c:1254 — io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
         let comment = module.comment.as_deref().unwrap_or("");
-        let line = format!("{:<15}\t{}\n", module.name, comment);
+        let line = format_module_listing_line(&module.name, comment);
         write_limited(stream, limiter, line.as_bytes())?;
     }
 
@@ -1552,5 +1562,65 @@ mod module_access_tests {
     fn determine_server_role_receiver_when_empty() {
         let args: Vec<String> = vec![];
         assert!(matches!(determine_server_role(&args), ServerRole::Receiver));
+    }
+
+    // Tests for format_module_listing_line — upstream: clientserver.c:1254
+
+    #[test]
+    fn module_listing_format_short_name_padded_to_15() {
+        // upstream: %-15s pads short names with trailing spaces
+        let line = format_module_listing_line("docs", "Documentation");
+        assert_eq!(line, "docs           \tDocumentation\n");
+    }
+
+    #[test]
+    fn module_listing_format_exact_15_char_name() {
+        // A name exactly 15 characters wide should have no extra padding
+        let line = format_module_listing_line("exactly15chars_", "comment");
+        assert_eq!(line, "exactly15chars_\tcomment\n");
+    }
+
+    #[test]
+    fn module_listing_format_name_longer_than_15() {
+        // upstream: %-15s does not truncate — names wider than 15 chars extend the field
+        let line = format_module_listing_line("very_long_module_name", "A long name module");
+        assert_eq!(line, "very_long_module_name\tA long name module\n");
+    }
+
+    #[test]
+    fn module_listing_format_empty_comment() {
+        // upstream: lp_comment(i) returns "" for modules without a comment directive
+        let line = format_module_listing_line("backup", "");
+        assert_eq!(line, "backup         \t\n");
+    }
+
+    #[test]
+    fn module_listing_format_single_char_name() {
+        let line = format_module_listing_line("x", "tiny");
+        assert_eq!(line, "x              \ttiny\n");
+    }
+
+    #[test]
+    fn module_listing_format_empty_name() {
+        // Edge case: empty module name still gets padded to 15 spaces
+        let line = format_module_listing_line("", "orphan");
+        assert_eq!(line, "               \torphan\n");
+    }
+
+    #[test]
+    fn module_listing_format_tab_separator_present() {
+        // The separator between name field and comment must be exactly one tab
+        let line = format_module_listing_line("test", "hello");
+        let parts: Vec<&str> = line.trim_end_matches('\n').splitn(2, '\t').collect();
+        assert_eq!(parts.len(), 2, "line must contain exactly one tab separator");
+        assert_eq!(parts[0], "test           ");
+        assert_eq!(parts[1], "hello");
+    }
+
+    #[test]
+    fn module_listing_format_terminates_with_newline() {
+        let line = format_module_listing_line("mod", "comment");
+        assert!(line.ends_with('\n'), "line must end with newline");
+        assert!(!line.ends_with("\n\n"), "line must not have double newline");
     }
 }
