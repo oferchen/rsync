@@ -107,7 +107,9 @@ fn run_daemon_enforces_module_connection_limit() {
     first_reader
         .read_line(&mut line)
         .expect("first denial message");
-    assert!(line.starts_with("@ERROR: access denied"));
+    // upstream: clientserver.c:762 — auth failure uses
+    // "@ERROR: auth failed on module %s\n"
+    assert!(line.starts_with("@ERROR: auth failed on module"));
 
     line.clear();
     first_reader
