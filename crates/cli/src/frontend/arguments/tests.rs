@@ -892,12 +892,6 @@ mod negation_flags {
     }
 
     #[test]
-    fn no_fsync_flag() {
-        let parsed = parse_test_args(["--no-fsync", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.fsync, Some(false));
-    }
-
-    #[test]
     fn no_force_flag() {
         let parsed = parse_test_args(["--no-force", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.force, Some(false));
@@ -2250,22 +2244,9 @@ mod super_mode_tests {
     }
 
     #[test]
-    fn no_fake_super_flag() {
-        let parsed = parse_test_args(["--no-fake-super", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.fake_super, Some(false));
-    }
-
-    #[test]
     fn super_then_no_super() {
         let parsed = parse_test_args(["--super", "--no-super", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.super_mode, Some(false));
-    }
-
-    #[test]
-    fn fake_super_then_no_fake_super() {
-        let parsed =
-            parse_test_args(["--fake-super", "--no-fake-super", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.fake_super, Some(false));
     }
 }
 
@@ -2387,12 +2368,6 @@ mod copy_link_tests {
     fn copy_unsafe_links_flag() {
         let parsed = parse_test_args(["--copy-unsafe-links", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.copy_unsafe_links, Some(true));
-    }
-
-    #[test]
-    fn no_copy_unsafe_links_flag() {
-        let parsed = parse_test_args(["--no-copy-unsafe-links", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.copy_unsafe_links, Some(false));
     }
 }
 
@@ -2626,22 +2601,6 @@ mod acls_xattrs_tests {
     fn no_xattrs_flag() {
         let parsed = parse_test_args(["--no-xattrs", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.xattrs, Some(false));
-    }
-}
-
-mod executability_tests {
-    use super::*;
-
-    #[test]
-    fn no_executability_flag() {
-        let parsed = parse_test_args(["--no-executability", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.executability, Some(false));
-    }
-
-    #[test]
-    fn executability_then_no_executability() {
-        let parsed = parse_test_args(["-E", "--no-executability", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.executability, Some(false));
     }
 }
 

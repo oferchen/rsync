@@ -99,7 +99,6 @@ impl ClientConfig {
     /// `None` (default) uses runtime hardware detection.
     #[must_use]
     #[doc(alias = "--aes")]
-    #[doc(alias = "--no-aes")]
     pub const fn prefer_aes_gcm(&self) -> Option<bool> {
         self.prefer_aes_gcm
     }
