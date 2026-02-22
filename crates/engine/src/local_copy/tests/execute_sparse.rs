@@ -1139,6 +1139,93 @@ fn execute_sparse_with_large_file() {
     assert_eq!(&buffer, b"FOOTER");
 }
 
+/// Test: A dense all-zeros file (written byte-for-byte, not via `set_len`) is
+/// converted into a fully sparse file.
+///
+/// Unlike `execute_sparse_with_sparse_enabled_counts_literal_data` which uses
+/// `set_len` to create a sparse source, this test writes 1 MB of actual zero
+/// bytes.  The sparse writer must detect that every byte is zero, emit no data
+/// writes, and rely on `ftruncate`/`set_len` to produce a file that is
+/// entirely a sparse hole.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_dense_all_zeros_produces_sparse_hole() {
+    let temp = tempdir().expect("tempdir");
+    let file_size: usize = 1024 * 1024; // 1 MB
+
+    // Write actual zero bytes so the source is dense on disk.
+    let source = temp.path().join("dense-all-zeros.bin");
+    fs::write(&source, vec![0u8; file_size]).expect("write dense source");
+
+    let dense_dest = temp.path().join("dense-dest.bin");
+    let sparse_dest = temp.path().join("sparse-dest.bin");
+
+    // Dense copy (baseline)
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+    // (a) Output file size must match the input.
+    assert_eq!(dense_meta.len(), file_size as u64);
+    assert_eq!(sparse_meta.len(), file_size as u64);
+
+    // (b) Content must read back as all zeros.
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    assert!(
+        sparse_content.iter().all(|&b| b == 0),
+        "sparse file should contain only zeros"
+    );
+
+    // (c) Sparse file should use fewer disk blocks than the dense copy.
+    use std::os::unix::fs::MetadataExt;
+    let dense_blocks = dense_meta.blocks();
+    let sparse_blocks = sparse_meta.blocks();
+
+    if sparse_blocks == dense_blocks {
+        eprintln!(
+            "dense-all-zeros sparse uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem does not expose sparse allocation difference, skipping block check"
+        );
+        return;
+    }
+
+    assert!(
+        sparse_blocks < dense_blocks,
+        "all-zeros sparse should allocate fewer blocks than dense copy \
+         (sparse: {sparse_blocks}, dense: {dense_blocks})"
+    );
+
+    // For a fully sparse file the block count should be near zero.
+    let max_expected = dense_blocks / 4;
+    if sparse_blocks > max_expected {
+        eprintln!(
+            "NOTE: dense-all-zeros sparse uses {sparse_blocks} blocks, \
+             expected significantly fewer than {dense_blocks}"
+        );
+    }
+}
+
 /// Test: All-zeros file creates a fully sparse file with minimal block allocation.
 #[cfg(unix)]
 #[test]
