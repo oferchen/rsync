@@ -214,6 +214,10 @@ include!("tests/chunks/runtime_options_config_pid_file_respects_cli_override.rs"
 include!("tests/chunks/runtime_options_default_enables_reverse_lookup.rs");
 include!("tests/chunks/runtime_options_default_secrets_path_updates_delegate_arguments.rs");
 include!("tests/chunks/runtime_options_global_bwlimit_respects_cli_override.rs");
+include!("tests/chunks/runtime_options_global_directives_apply_as_module_defaults.rs");
+include!(
+    "tests/chunks/runtime_options_global_only_directive_after_module_stays_in_module_scope.rs"
+);
 include!("tests/chunks/runtime_options_inherits_global_secrets_file_from_config.rs");
 include!("tests/chunks/runtime_options_inline_module_uses_default_secrets_file.rs");
 include!("tests/chunks/runtime_options_inline_module_uses_global_secrets_file.rs");
@@ -242,6 +246,7 @@ include!("tests/chunks/runtime_options_loads_timeout_from_config.rs");
 include!("tests/chunks/runtime_options_loads_unlimited_global_bwlimit_from_config.rs");
 include!("tests/chunks/runtime_options_loads_unlimited_max_connections_from_config.rs");
 include!("tests/chunks/runtime_options_loads_use_chroot_directive_from_config.rs");
+include!("tests/chunks/runtime_options_module_directive_does_not_leak_to_sibling.rs");
 include!("tests/chunks/runtime_options_module_overrides_chmod_directives.rs");
 include!("tests/chunks/runtime_options_module_definition_parses_inline_bwlimit_burst.rs");
 include!("tests/chunks/runtime_options_module_definition_parses_inline_options.rs");

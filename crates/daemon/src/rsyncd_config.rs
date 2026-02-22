@@ -1144,4 +1144,245 @@ mod tests {
         let err = RsyncdConfig::from_file(file.path()).expect_err("should fail");
         assert!(err.to_string().contains("invalid boolean"));
     }
+
+    // --- Global vs module directive ordering tests ---
+
+    #[test]
+    fn global_directives_before_modules_are_parsed() {
+        let file = write_config(
+            "port = 9999\n\
+             address = 10.0.0.1\n\
+             motd file = /etc/motd.txt\n\
+             log file = /var/log/daemon.log\n\
+             pid file = /var/run/daemon.pid\n\
+             socket options = SO_KEEPALIVE\n\
+             log format = %o %f %l\n\
+             \n\
+             [alpha]\n\
+             path = /srv/alpha\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+
+        assert_eq!(config.global().port(), 9999);
+        assert_eq!(config.global().address(), Some("10.0.0.1"));
+        assert_eq!(
+            config.global().motd_file(),
+            Some(Path::new("/etc/motd.txt"))
+        );
+        assert_eq!(
+            config.global().log_file(),
+            Some(Path::new("/var/log/daemon.log"))
+        );
+        assert_eq!(
+            config.global().pid_file(),
+            Some(Path::new("/var/run/daemon.pid"))
+        );
+        assert_eq!(config.global().socket_options(), Some("SO_KEEPALIVE"));
+        assert_eq!(config.global().log_format(), Some("%o %f %l"));
+        assert_eq!(config.modules().len(), 1);
+        assert_eq!(config.modules()[0].name(), "alpha");
+    }
+
+    #[test]
+    fn module_directives_override_defaults() {
+        let file = write_config(
+            "[override]\n\
+             path = /data/override\n\
+             read only = no\n\
+             write only = yes\n\
+             list = no\n\
+             use chroot = no\n\
+             numeric ids = yes\n\
+             fake super = yes\n\
+             transfer logging = yes\n\
+             timeout = 600\n\
+             max connections = 50\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        let module = &config.modules()[0];
+
+        // These values differ from the defaults in ModuleBuilder
+        assert!(!module.read_only()); // default: true
+        assert!(module.write_only()); // default: false
+        assert!(!module.list()); // default: true
+        assert!(!module.use_chroot()); // default: true
+        assert!(module.numeric_ids()); // default: false
+        assert!(module.fake_super()); // default: false
+        assert!(module.transfer_logging()); // default: false
+        assert_eq!(module.timeout(), Some(600));
+        assert_eq!(module.max_connections(), 50);
+    }
+
+    #[test]
+    fn directive_in_one_module_does_not_affect_another() {
+        let file = write_config(
+            "[secure]\n\
+             path = /srv/secure\n\
+             read only = no\n\
+             use chroot = no\n\
+             numeric ids = yes\n\
+             fake super = yes\n\
+             timeout = 120\n\
+             \n\
+             [public]\n\
+             path = /srv/public\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.modules().len(), 2);
+
+        let secure = config.get_module("secure").unwrap();
+        assert!(!secure.read_only());
+        assert!(!secure.use_chroot());
+        assert!(secure.numeric_ids());
+        assert!(secure.fake_super());
+        assert_eq!(secure.timeout(), Some(120));
+
+        // The `public` module should retain all defaults, unaffected by `secure`
+        let public = config.get_module("public").unwrap();
+        assert!(public.read_only()); // default
+        assert!(public.use_chroot()); // default
+        assert!(!public.numeric_ids()); // default
+        assert!(!public.fake_super()); // default
+        assert!(public.timeout().is_none()); // default
+    }
+
+    #[test]
+    fn global_directive_after_module_section_is_treated_as_module_directive() {
+        // In upstream rsync, once a [module] section starts, all subsequent directives
+        // belong to that module. A "port" directive inside a module is an unknown
+        // module directive, silently ignored. It does NOT update the global port.
+        let file = write_config(
+            "port = 8873\n\
+             \n\
+             [mymod]\n\
+             path = /data\n\
+             port = 9999\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+
+        // The global port should remain 8873 (the value set before [mymod])
+        assert_eq!(config.global().port(), 8873);
+
+        // The module should still parse correctly
+        assert_eq!(config.modules().len(), 1);
+        assert_eq!(config.modules()[0].name(), "mymod");
+        assert_eq!(config.modules()[0].path(), Path::new("/data"));
+    }
+
+    #[test]
+    fn global_only_directives_silently_ignored_inside_module() {
+        // Global-only directives like "address", "pid file", "log file" that appear
+        // inside a module section are treated as unknown module directives and ignored.
+        let file = write_config(
+            "[mod]\n\
+             path = /data\n\
+             address = 10.0.0.1\n\
+             pid file = /var/run/test.pid\n\
+             log file = /var/log/test.log\n\
+             socket options = SO_KEEPALIVE\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+
+        // Global settings should be untouched (defaults)
+        assert!(config.global().address().is_none());
+        assert!(config.global().pid_file().is_none());
+        assert!(config.global().log_file().is_none());
+        assert!(config.global().socket_options().is_none());
+
+        // Module should parse successfully
+        assert_eq!(config.modules().len(), 1);
+        assert_eq!(config.modules()[0].path(), Path::new("/data"));
+    }
+
+    #[test]
+    fn multiple_modules_each_have_independent_settings() {
+        let file = write_config(
+            "[alpha]\n\
+             path = /srv/alpha\n\
+             read only = no\n\
+             timeout = 60\n\
+             max connections = 5\n\
+             \n\
+             [beta]\n\
+             path = /srv/beta\n\
+             use chroot = no\n\
+             numeric ids = yes\n\
+             \n\
+             [gamma]\n\
+             path = /srv/gamma\n\
+             fake super = yes\n\
+             transfer logging = yes\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.modules().len(), 3);
+
+        let alpha = config.get_module("alpha").unwrap();
+        assert!(!alpha.read_only());
+        assert_eq!(alpha.timeout(), Some(60));
+        assert_eq!(alpha.max_connections(), 5);
+        assert!(alpha.use_chroot()); // default
+        assert!(!alpha.numeric_ids()); // default
+        assert!(!alpha.fake_super()); // default
+        assert!(!alpha.transfer_logging()); // default
+
+        let beta = config.get_module("beta").unwrap();
+        assert!(beta.read_only()); // default
+        assert!(beta.timeout().is_none()); // default
+        assert_eq!(beta.max_connections(), 0); // default (unlimited)
+        assert!(!beta.use_chroot());
+        assert!(beta.numeric_ids());
+        assert!(!beta.fake_super()); // default
+        assert!(!beta.transfer_logging()); // default
+
+        let gamma = config.get_module("gamma").unwrap();
+        assert!(gamma.read_only()); // default
+        assert!(gamma.timeout().is_none()); // default
+        assert_eq!(gamma.max_connections(), 0); // default
+        assert!(gamma.use_chroot()); // default
+        assert!(!gamma.numeric_ids()); // default
+        assert!(gamma.fake_super());
+        assert!(gamma.transfer_logging());
+    }
+
+    #[test]
+    fn global_and_multiple_modules_with_mixed_settings() {
+        let file = write_config(
+            "port = 8873\n\
+             log file = /var/log/rsyncd.log\n\
+             \n\
+             [readonly]\n\
+             path = /srv/readonly\n\
+             read only = yes\n\
+             \n\
+             [writable]\n\
+             path = /srv/writable\n\
+             read only = no\n\
+             write only = no\n\
+             \n\
+             [hidden]\n\
+             path = /srv/hidden\n\
+             list = no\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+
+        assert_eq!(config.global().port(), 8873);
+        assert_eq!(
+            config.global().log_file(),
+            Some(Path::new("/var/log/rsyncd.log"))
+        );
+        assert_eq!(config.modules().len(), 3);
+
+        let readonly = config.get_module("readonly").unwrap();
+        assert!(readonly.read_only());
+        assert!(readonly.list());
+
+        let writable = config.get_module("writable").unwrap();
+        assert!(!writable.read_only());
+        assert!(!writable.write_only());
+        assert!(writable.list());
+
+        let hidden = config.get_module("hidden").unwrap();
+        assert!(hidden.read_only()); // default
+        assert!(!hidden.list());
+    }
 }
