@@ -24,6 +24,8 @@ pub mod error_recovery;
 pub mod filters;
 /// File list encoding and decoding.
 pub mod flist;
+/// Basis file comparison type constants for alternate basis selection.
+pub mod fnamecmp;
 /// Filename encoding conversion (iconv) for cross-platform transfers.
 pub mod iconv;
 /// UID/GID mapping lists for name-based ownership transfer.
@@ -52,6 +54,7 @@ pub use envelope::{
     ParseMessageCodeError,
 };
 pub use error::NegotiationError;
+pub use fnamecmp::{FnameCmpType, InvalidFnameCmpType};
 pub use iconv::{
     ConversionError, EncodingConverter, EncodingError, EncodingPair, FilenameConverter,
     converter_from_locale,

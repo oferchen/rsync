@@ -2218,7 +2218,10 @@ pub struct SenderAttrs {
     /// Item flags indicating transfer mode.
     pub iflags: u16,
     /// Optional basis file type (if `ITEM_BASIS_TYPE_FOLLOWS` set).
-    pub fnamecmp_type: Option<u8>,
+    ///
+    /// When present, indicates which basis file the generator selected for
+    /// the delta transfer. See `FnameCmpType` for the possible values.
+    pub fnamecmp_type: Option<protocol::FnameCmpType>,
     /// Optional alternate basis name (if `ITEM_XNAME_FOLLOWS` set).
     pub xname: Option<Vec<u8>>,
 }
@@ -2275,7 +2278,12 @@ impl SenderAttrs {
         let fnamecmp_type = if iflags & Self::ITEM_BASIS_TYPE_FOLLOWS != 0 {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
-            Some(byte[0])
+            Some(protocol::FnameCmpType::from_wire(byte[0]).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid fnamecmp type: 0x{:02X}", byte[0]),
+                )
+            })?)
         } else {
             None
         };
@@ -2357,7 +2365,12 @@ impl SenderAttrs {
         let fnamecmp_type = if iflags & Self::ITEM_BASIS_TYPE_FOLLOWS != 0 {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
-            Some(byte[0])
+            Some(protocol::FnameCmpType::from_wire(byte[0]).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid fnamecmp type: 0x{:02X}", byte[0]),
+                )
+            })?)
         } else {
             None
         };
@@ -3363,12 +3376,15 @@ mod tests {
         // NDX byte + iflags (0x8800 = ITEM_TRANSFER | ITEM_BASIS_TYPE_FOLLOWS) + fnamecmp_type
         let mut data = vec![0x05u8]; // NDX byte
         data.extend_from_slice(&0x8800u16.to_le_bytes()); // iflags with BASIS_TYPE_FOLLOWS
-        data.push(0x02); // fnamecmp_type
+        data.push(0x02); // fnamecmp_type = BasisDir(2)
 
         let attrs = SenderAttrs::read(&mut Cursor::new(data), 29).unwrap();
 
         assert_eq!(attrs.iflags, 0x8800);
-        assert_eq!(attrs.fnamecmp_type, Some(0x02));
+        assert_eq!(
+            attrs.fnamecmp_type,
+            Some(protocol::FnameCmpType::BasisDir(2))
+        );
         assert!(attrs.xname.is_none());
     }
 
