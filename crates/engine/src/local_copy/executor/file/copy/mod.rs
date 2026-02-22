@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use logging::debug_log;
+use logging::{debug_log, info_log};
 
 use crate::local_copy::{
     CopyContext, LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata,
@@ -62,15 +62,18 @@ pub(crate) fn copy_file(
     context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
 
+    // upstream: generator.c:recv_generator() — skip files outside size range
     if let Some(min_limit) = context.min_file_size_limit()
         && file_size < min_limit
     {
+        info_log!(Skip, 1, "{} is under min-size", record_path.display());
         return Ok(false);
     }
 
     if let Some(max_limit) = context.max_file_size_limit()
         && file_size > max_limit
     {
+        info_log!(Skip, 1, "{} is over max-size", record_path.display());
         return Ok(false);
     }
 
