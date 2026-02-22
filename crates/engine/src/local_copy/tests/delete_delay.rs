@@ -184,15 +184,17 @@ fn delete_delay_works_with_recursive_traversal() {
         ("top.txt", Some(b"top")),
     ]);
 
-    // Create destination with extra files at various levels
+    // Create destination with extra files at various levels.
+    // Use shorter content than source to ensure different sizes, avoiding
+    // quick-check (same mtime+size) skipping the transfer.
     let target_root = ctx.dest.join("source");
     test_helpers::create_test_tree(&target_root, &[
-        ("level1/level2/level3/file.txt", Some(b"old")),
+        ("level1/level2/level3/file.txt", Some(b"x")),
         ("level1/level2/level3/extra_deep.txt", Some(b"extra")),
         ("level1/level2/extra_mid.txt", Some(b"extra")),
-        ("level1/keep.txt", Some(b"old")),
+        ("level1/keep.txt", Some(b"x")),
         ("level1/extra_shallow.txt", Some(b"extra")),
-        ("top.txt", Some(b"old")),
+        ("top.txt", Some(b"x")),
         ("extra_top.txt", Some(b"extra")),
     ]);
 
