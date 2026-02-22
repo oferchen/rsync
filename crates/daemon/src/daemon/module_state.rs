@@ -141,6 +141,16 @@ pub(crate) struct ModuleDefinition {
     /// Upstream: `loadparm.c` — `strict modes` parameter, default true.
     /// Controls whether the secrets file must not be world-readable.
     pub(crate) strict_modes: bool,
+    /// Path to a file containing exclude patterns for this module.
+    ///
+    /// Upstream: `daemon-parm.txt` — `exclude_from` STRING parameter, default NULL.
+    /// Patterns are loaded via `parse_filter_file()` in `clientserver.c`.
+    pub(crate) exclude_from: Option<PathBuf>,
+    /// Path to a file containing include patterns for this module.
+    ///
+    /// Upstream: `daemon-parm.txt` — `include_from` STRING parameter, default NULL.
+    /// Patterns are loaded via `parse_filter_file()` in `clientserver.c`.
+    pub(crate) include_from: Option<PathBuf>,
 }
 
 impl ModuleDefinition {
@@ -349,6 +359,14 @@ impl ModuleDefinition {
 
     pub(super) fn strict_modes(&self) -> bool {
         self.strict_modes
+    }
+
+    pub(super) fn exclude_from(&self) -> Option<&Path> {
+        self.exclude_from.as_deref()
+    }
+
+    pub(super) fn include_from(&self) -> Option<&Path> {
+        self.include_from.as_deref()
     }
 }
 
@@ -701,6 +719,8 @@ mod module_state_tests {
         assert!(!def.write_only);
         assert!(!def.listable);
         assert!(def.munge_symlinks.is_none());
+        assert!(def.exclude_from.is_none());
+        assert!(def.include_from.is_none());
     }
 
     #[test]

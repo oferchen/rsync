@@ -149,6 +149,8 @@ fn parse_module_definition(
         charset: None,
         forward_lookup: true,
         strict_modes: true,
+        exclude_from: None,
+        include_from: None,
     };
 
     if let Some(options_text) = options_part {

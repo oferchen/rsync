@@ -38,6 +38,8 @@ struct ModuleDefinitionBuilder {
     charset: Option<Option<String>>,
     forward_lookup: Option<bool>,
     strict_modes: Option<bool>,
+    exclude_from: Option<PathBuf>,
+    include_from: Option<PathBuf>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -82,6 +84,8 @@ impl ModuleDefinitionBuilder {
             charset: None,
             forward_lookup: None,
             strict_modes: None,
+            exclude_from: None,
+            include_from: None,
         }
     }
 
@@ -758,6 +762,48 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_exclude_from(
+        &mut self,
+        path: PathBuf,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.exclude_from.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'exclude from' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.exclude_from = Some(path);
+        Ok(())
+    }
+
+    fn set_include_from(
+        &mut self,
+        path: PathBuf,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.include_from.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'include from' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.include_from = Some(path);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -864,6 +910,8 @@ impl ModuleDefinitionBuilder {
             charset: self.charset.unwrap_or(None),
             forward_lookup: self.forward_lookup.unwrap_or(true),
             strict_modes: self.strict_modes.unwrap_or(true),
+            exclude_from: self.exclude_from,
+            include_from: self.include_from,
         })
     }
 }
@@ -922,6 +970,8 @@ mod module_definition_builder_tests {
         assert!(builder.charset.is_none());
         assert!(builder.forward_lookup.is_none());
         assert!(builder.strict_modes.is_none());
+        assert!(builder.exclude_from.is_none());
+        assert!(builder.include_from.is_none());
     }
 
     // ==================== set_path tests ====================
@@ -1365,6 +1415,40 @@ mod module_definition_builder_tests {
         assert!(result.is_err());
     }
 
+    // ==================== set_exclude_from tests ====================
+
+    #[test]
+    fn set_exclude_from_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_exclude_from(PathBuf::from("/etc/excludes.txt"), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.exclude_from, Some(PathBuf::from("/etc/excludes.txt")));
+    }
+
+    #[test]
+    fn set_exclude_from_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_exclude_from(PathBuf::from("/etc/excludes.txt"), &test_config_path(), 5).unwrap();
+        let result = builder.set_exclude_from(PathBuf::from("/etc/other.txt"), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== set_include_from tests ====================
+
+    #[test]
+    fn set_include_from_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_include_from(PathBuf::from("/etc/includes.txt"), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.include_from, Some(PathBuf::from("/etc/includes.txt")));
+    }
+
+    #[test]
+    fn set_include_from_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_include_from(PathBuf::from("/etc/includes.txt"), &test_config_path(), 5).unwrap();
+        let result = builder.set_include_from(PathBuf::from("/etc/other.txt"), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
     // ==================== finish() tests ====================
 
     #[test]
@@ -1550,6 +1634,8 @@ mod module_definition_builder_tests {
         assert!(def.charset.is_none());
         assert!(def.forward_lookup); // default true
         assert!(def.strict_modes); // default true
+        assert!(def.exclude_from.is_none());
+        assert!(def.include_from.is_none());
     }
 
     #[test]
@@ -1591,5 +1677,25 @@ mod module_definition_builder_tests {
 
         let def = builder.finish(&test_config_path(), None, None, None, None).unwrap();
         assert_eq!(def.munge_symlinks, Some(false));
+    }
+
+    #[test]
+    fn finish_transfers_exclude_from() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_exclude_from(PathBuf::from("/etc/excludes.txt"), &test_config_path(), 3).unwrap();
+
+        let def = builder.finish(&test_config_path(), None, None, None, None).unwrap();
+        assert_eq!(def.exclude_from, Some(PathBuf::from("/etc/excludes.txt")));
+    }
+
+    #[test]
+    fn finish_transfers_include_from() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_include_from(PathBuf::from("/etc/includes.txt"), &test_config_path(), 3).unwrap();
+
+        let def = builder.finish(&test_config_path(), None, None, None, None).unwrap();
+        assert_eq!(def.include_from, Some(PathBuf::from("/etc/includes.txt")));
     }
 }
