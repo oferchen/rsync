@@ -95,6 +95,14 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
         }
 
         if context.mode().is_dry_run() {
+            if file_type.is_dir() {
+                delete_directory_tree_recursive(
+                    context,
+                    &path,
+                    &entry_relative,
+                    &mut skipped_due_to_limit,
+                )?;
+            }
             context.summary_mut().record_deletion();
             context.record(LocalCopyRecord::new(
                 entry_relative,
@@ -110,11 +118,31 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
 
         context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
         if file_type.is_dir() {
+            // upstream: generator.c:delete_in_dir() — recursively delete
+            // directory contents first, counting each item individually,
+            // then remove the now-empty directory.
+            delete_directory_tree_recursive(
+                context,
+                &path,
+                &entry_relative,
+                &mut skipped_due_to_limit,
+            )?;
             info_log!(Del, 1, "deleting directory {}", entry_relative.display());
+            match fs::remove_dir(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "remove extraneous directory",
+                        path,
+                        error,
+                    ));
+                }
+            }
         } else {
             info_log!(Del, 1, "deleting {}", entry_relative.display());
+            remove_extraneous_path(&path, file_type)?;
         }
-        remove_extraneous_path(&path, file_type)?;
         context.summary_mut().record_deletion();
         context.record(LocalCopyRecord::new(
             entry_relative,
@@ -158,6 +186,137 @@ fn remove_extraneous_path(path: &Path, file_type: fs::FileType) -> Result<(), Lo
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(LocalCopyError::io(context, path, error)),
     }
+}
+
+/// Recursively deletes an extraneous directory, recording each item
+/// individually in the deletion count and event log.
+///
+/// Unlike `remove_dir_all` (which counts as a single deletion), this mirrors
+/// upstream rsync's `delete_in_dir()` behavior: it descends into the directory
+/// tree, deletes files first, then removes the empty directories bottom-up,
+/// counting each item as a separate deletion.
+fn delete_directory_tree_recursive(
+    context: &mut CopyContext,
+    dir_path: &Path,
+    dir_relative: &Path,
+    skipped_due_to_limit: &mut u64,
+) -> Result<(), LocalCopyError> {
+    let read_dir = match fs::read_dir(dir_path) {
+        Ok(iter) => iter,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "read extraneous directory",
+                dir_path.to_path_buf(),
+                error,
+            ));
+        }
+    };
+
+    for entry in read_dir {
+        context.enforce_timeout()?;
+        let entry = entry.map_err(|error| {
+            LocalCopyError::io("read extraneous directory entry", dir_path, error)
+        })?;
+        let name = entry.file_name();
+        let child_path = dir_path.join(&name);
+        let child_relative = dir_relative.join(&name);
+
+        let file_type = entry.file_type().map_err(|error| {
+            LocalCopyError::io(
+                "inspect extraneous directory entry",
+                child_path.clone(),
+                error,
+            )
+        })?;
+
+        if !context.allows_deletion(child_relative.as_path(), file_type.is_dir()) {
+            debug_log!(
+                Filter,
+                2,
+                "filter protected {} from deletion",
+                child_relative.display()
+            );
+            continue;
+        }
+
+        if let Some(limit) = context.options().max_deletion_limit()
+            && context.summary().items_deleted() >= limit
+        {
+            *skipped_due_to_limit = skipped_due_to_limit.saturating_add(1);
+            continue;
+        }
+
+        if context.mode().is_dry_run() {
+            if file_type.is_dir() {
+                delete_directory_tree_recursive(
+                    context,
+                    &child_path,
+                    &child_relative,
+                    skipped_due_to_limit,
+                )?;
+            }
+            context.summary_mut().record_deletion();
+            context.record(LocalCopyRecord::new(
+                child_relative,
+                LocalCopyAction::EntryDeleted,
+                0,
+                None,
+                Duration::default(),
+                None,
+            ));
+            context.register_progress();
+            continue;
+        }
+
+        context.backup_existing_entry(&child_path, Some(child_relative.as_path()), file_type)?;
+
+        if file_type.is_dir() {
+            delete_directory_tree_recursive(
+                context,
+                &child_path,
+                &child_relative,
+                skipped_due_to_limit,
+            )?;
+            info_log!(Del, 1, "deleting directory {}", child_relative.display());
+            match fs::remove_dir(&child_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "remove extraneous directory",
+                        child_path,
+                        error,
+                    ));
+                }
+            }
+        } else {
+            info_log!(Del, 1, "deleting {}", child_relative.display());
+            match fs::remove_file(&child_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "remove extraneous entry",
+                        child_path,
+                        error,
+                    ));
+                }
+            }
+        }
+        context.summary_mut().record_deletion();
+        context.record(LocalCopyRecord::new(
+            child_relative,
+            LocalCopyAction::EntryDeleted,
+            0,
+            None,
+            Duration::default(),
+            None,
+        ));
+        context.register_progress();
+    }
+
+    Ok(())
 }
 
 pub(crate) fn remove_source_entry_if_requested(

@@ -406,7 +406,9 @@ fn deletion_removes_directories_recursively() {
     // Directory and all contents should be deleted
     assert!(!dest.join("delete_dir").exists());
     assert!(dest.join("keep.txt").exists());
-    assert_eq!(summary.items_deleted(), 1);
+    // upstream: each item in the tree is counted individually:
+    // delete_dir/file.txt, delete_dir/nested/deep.txt, delete_dir/nested, delete_dir
+    assert_eq!(summary.items_deleted(), 4);
 }
 
 /// Tests deletion with multiple sources.
