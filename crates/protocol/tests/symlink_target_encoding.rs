@@ -548,18 +548,33 @@ fn flist_roundtrip_path_max_target() {
     );
 }
 
-/// Tests symlink target exceeding PATH_MAX (8192 bytes).
-/// The wire protocol does not enforce PATH_MAX; it is length-prefixed.
+/// Tests that symlink targets exceeding PATH_MAX (4096 bytes) are rejected on receive.
+///
+/// A malicious sender could claim an arbitrarily large symlink target to cause
+/// unbounded memory allocation. The receiver caps the length at MAXPATHLEN (4096),
+/// matching upstream rsync behavior.
 #[test]
-fn flist_roundtrip_exceeding_path_max_target() {
+fn flist_rejects_exceeding_path_max_target() {
     let target: String = std::iter::repeat_n('x', 8192).collect();
 
-    let decoded = roundtrip_symlink("link", PathBuf::from(&target), ProtocolVersion::NEWEST);
-    assert_eq!(
-        decoded
-            .link_target()
-            .map(|p| p.to_string_lossy().into_owned()),
-        Some(target),
+    let entry = make_symlink("link", &target);
+
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(ProtocolVersion::NEWEST).with_preserve_links(true);
+    writer.write_entry(&mut buf, &entry).expect("write failed");
+    writer.write_end(&mut buf, None).expect("write end failed");
+
+    let mut cursor = Cursor::new(&buf);
+    let mut reader = FileListReader::new(ProtocolVersion::NEWEST).with_preserve_links(true);
+    let result = reader.read_entry(&mut cursor);
+    assert!(
+        result.is_err(),
+        "should reject symlink target exceeding PATH_MAX",
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("exceeds maximum"),
+        "error should mention exceeding maximum, got: {err}",
     );
 }
 
@@ -605,16 +620,24 @@ fn flist_roundtrip_256_byte_target() {
     }
 }
 
-/// Tests symlink target of exactly 65535 bytes (two-byte varint boundary).
+/// Tests that a 65535-byte symlink target is rejected on receive.
+///
+/// Targets exceeding MAXPATHLEN (4096) are rejected to prevent unbounded allocation.
 #[test]
-fn flist_roundtrip_65535_byte_target() {
+fn flist_rejects_65535_byte_target() {
     let target: String = std::iter::repeat_n('c', 65535).collect();
 
-    let decoded = roundtrip_symlink("link", PathBuf::from(&target), ProtocolVersion::NEWEST);
-    assert_eq!(
-        decoded.link_target().map(|p| p.to_string_lossy().len()),
-        Some(65535),
-    );
+    let entry = make_symlink("link", &target);
+
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(ProtocolVersion::NEWEST).with_preserve_links(true);
+    writer.write_entry(&mut buf, &entry).expect("write failed");
+    writer.write_end(&mut buf, None).expect("write end failed");
+
+    let mut cursor = Cursor::new(&buf);
+    let mut reader = FileListReader::new(ProtocolVersion::NEWEST).with_preserve_links(true);
+    let result = reader.read_entry(&mut cursor);
+    assert!(result.is_err(), "should reject 65535-byte symlink target",);
 }
 
 /// Tests multiple symlinks with different target types in the same file list.

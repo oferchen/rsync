@@ -587,6 +587,18 @@ impl FileListReader {
             return Ok(None);
         }
 
+        // upstream: rsync.h MAXPATHLEN — reject targets that exceed PATH_MAX to
+        // prevent unbounded allocation from a malicious sender.
+        if len > crate::wire::file_entry_decode::MAX_SYMLINK_TARGET_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "symlink target length {len} exceeds maximum {}",
+                    crate::wire::file_entry_decode::MAX_SYMLINK_TARGET_LEN
+                ),
+            ));
+        }
+
         let mut target_bytes = vec![0u8; len];
         reader.read_exact(&mut target_bytes)?;
 
