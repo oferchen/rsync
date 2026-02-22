@@ -42,7 +42,6 @@ impl ClientConfigBuilder {
         /// `Some(false)` disables automatic cipher selection entirely,
         /// `None` (default) uses runtime hardware detection.
         #[doc(alias = "--aes")]
-        #[doc(alias = "--no-aes")]
         prefer_aes_gcm: Option<bool>,
     }
 

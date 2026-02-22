@@ -23,10 +23,10 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--log-file-format, --delay-updates, --no-delay-updates, --whole-file/-W, --no-whole-file, --remove-source-files, ",
     "--remove-sent-files, --append, --no-append, --append-verify, --preallocate, --fsync, --direct-write, --no-direct-write, --inplace, --no-inplace, ",
     "--human-readable/-h, --no-human-readable, -P, --sparse/-S, --no-sparse/--no-S, --links/-l, --no-links/--no-l, ",
-    "--copy-links/-L, --no-copy-links, ",
-    "--copy-unsafe-links, --no-copy-unsafe-links, --safe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, ",
+    "--copy-links/-L, ",
+    "--copy-unsafe-links, --safe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, ",
     "-D, --devices, --copy-devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, ",
-    "--chown, --usermap, --groupmap, --chmod, --executability/-E, --no-executability, --perms/-p, --no-perms, --times/-t, --no-times, ",
+    "--chown, --usermap, --groupmap, --chmod, --executability/-E, --perms/-p, --no-perms, --times/-t, --no-times, ",
     "--atimes/-U, --no-atimes, --crtimes/-N, --no-crtimes, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, ",
     "--acls/-A, --no-acls, --xattrs/-X, --no-xattrs, ",
     "--numeric-ids, --no-numeric-ids"
