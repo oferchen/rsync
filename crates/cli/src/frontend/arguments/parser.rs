@@ -147,11 +147,62 @@ where
     let delete_excluded = matches.get_flag("delete-excluded");
     let ignore_errors =
         tri_state_flag_negative_first(&matches, "ignore-errors", "no-ignore-errors");
-    let max_delete = matches.remove_one::<OsString>("max-delete");
+    let max_delete = match matches.remove_one::<OsString>("max-delete") {
+        Some(value) => {
+            let s = value.to_string_lossy();
+            // upstream allows -1 to mean "no limit after reporting"
+            if s.parse::<i64>().is_err() {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("invalid --max-delete value '{s}': must be an integer\n"),
+                ));
+            }
+            Some(value)
+        }
+        None => None,
+    };
+
     let min_size = matches.remove_one::<OsString>("min-size");
     let max_size = matches.remove_one::<OsString>("max-size");
-    let block_size = matches.remove_one::<OsString>("block-size");
-    let modify_window = matches.remove_one::<OsString>("modify-window");
+    let block_size = match matches.remove_one::<OsString>("block-size") {
+        Some(value) => {
+            let s = value.to_string_lossy();
+            if s.parse::<u64>().is_err() {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("invalid --block-size value '{s}': must be a positive integer\n"),
+                ));
+            }
+            Some(value)
+        }
+        None => None,
+    };
+
+    let modify_window = match matches.remove_one::<OsString>("modify-window") {
+        Some(value) => {
+            let s = value.to_string_lossy();
+            match s.parse::<i32>() {
+                Ok(n) if n >= 0 => Some(value),
+                Ok(_) => {
+                    return Err(clap::Error::raw(
+                        clap::error::ErrorKind::ValueValidation,
+                        format!(
+                            "invalid --modify-window value '{s}': must be a non-negative integer\n"
+                        ),
+                    ));
+                }
+                Err(_) => {
+                    return Err(clap::Error::raw(
+                        clap::error::ErrorKind::ValueValidation,
+                        format!(
+                            "invalid --modify-window value '{s}': must be a non-negative integer\n"
+                        ),
+                    ));
+                }
+            }
+        }
+        None => None,
+    };
 
     let delete_mode_conflicts = [
         delete_before_flag,
@@ -243,11 +294,7 @@ where
         None
     };
     let super_mode = tri_state_flag_positive_first(&matches, "super", "no-super");
-    let fake_super = if matches.get_flag("fake-super") {
-        Some(true)
-    } else {
-        None
-    };
+    let fake_super = tri_state_flag_positive_first(&matches, "fake-super", "no-fake-super");
     let times = tri_state_flag_positive_first(&matches, "times", "no-times");
     let omit_dir_times =
         tri_state_flag_positive_first(&matches, "omit-dir-times", "no-omit-dir-times");
@@ -501,6 +548,8 @@ where
     let existing = matches.get_flag("existing");
     let update = matches.get_flag("update");
     let password_file = matches.remove_one::<OsString>("password-file");
+    // upstream: options.c does not range-check --protocol at parse time.
+    // Incompatible versions fail during negotiation with RERR_PROTOCOL (exit 2).
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
     let contimeout = matches.remove_one::<OsString>("contimeout");
