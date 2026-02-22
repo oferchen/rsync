@@ -454,6 +454,32 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_strict_modes(parsed, path, line_number)?;
                     }
+                    // upstream: daemon-parm.txt — `exclude_from` STRING, default NULL.
+                    // Loaded via parse_filter_file() in clientserver.c.
+                    "exclude from" => {
+                        if value.is_empty() {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                "'exclude from' directive must not be empty",
+                            ));
+                        }
+                        let resolved = resolve_config_relative_path(&canonical, value);
+                        builder.set_exclude_from(resolved, path, line_number)?;
+                    }
+                    // upstream: daemon-parm.txt — `include_from` STRING, default NULL.
+                    // Loaded via parse_filter_file() in clientserver.c.
+                    "include from" => {
+                        if value.is_empty() {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                "'include from' directive must not be empty",
+                            ));
+                        }
+                        let resolved = resolve_config_relative_path(&canonical, value);
+                        builder.set_include_from(resolved, path, line_number)?;
+                    }
                     _ => {
                         eprintln!(
                             "warning: unknown per-module directive '{}' in '{}' line {}",
@@ -2141,5 +2167,211 @@ mod config_parsing_tests {
 
         // No global 'use chroot' directive — default is true
         assert!(result.modules[0].use_chroot);
+    }
+
+    // --- exclude from / include from tests ---
+
+    #[test]
+    fn exclude_from_and_include_from_default_to_none() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0].exclude_from.is_none());
+        assert!(result.modules[0].include_from.is_none());
+    }
+
+    #[test]
+    fn exclude_from_set_to_absolute_path() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nexclude from = /etc/rsync/excludes.txt\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(
+            result.modules[0].exclude_from,
+            Some(PathBuf::from("/etc/rsync/excludes.txt"))
+        );
+    }
+
+    #[test]
+    fn include_from_set_to_absolute_path() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\ninclude from = /etc/rsync/includes.txt\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(
+            result.modules[0].include_from,
+            Some(PathBuf::from("/etc/rsync/includes.txt"))
+        );
+    }
+
+    #[test]
+    fn exclude_from_relative_path_resolved_against_config_dir() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nexclude from = excludes.txt\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        let exclude_from = result.modules[0].exclude_from.as_ref().expect("exclude_from set");
+        let config_dir = file.path().canonicalize().unwrap();
+        let expected = config_dir.parent().unwrap().join("excludes.txt");
+        assert_eq!(*exclude_from, expected);
+    }
+
+    #[test]
+    fn include_from_relative_path_resolved_against_config_dir() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\ninclude from = includes.txt\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        let include_from = result.modules[0].include_from.as_ref().expect("include_from set");
+        let config_dir = file.path().canonicalize().unwrap();
+        let expected = config_dir.parent().unwrap().join("includes.txt");
+        assert_eq!(*include_from, expected);
+    }
+
+    #[test]
+    fn exclude_from_and_include_from_both_set() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nexclude from = /etc/excludes.txt\ninclude from = /etc/includes.txt\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(
+            result.modules[0].exclude_from,
+            Some(PathBuf::from("/etc/excludes.txt"))
+        );
+        assert_eq!(
+            result.modules[0].include_from,
+            Some(PathBuf::from("/etc/includes.txt"))
+        );
+    }
+
+    #[test]
+    fn exclude_from_empty_value_rejected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nexclude from =\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
+        assert!(err.to_string().contains("exclude from"));
+    }
+
+    #[test]
+    fn include_from_empty_value_rejected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\ninclude from =\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
+        assert!(err.to_string().contains("include from"));
+    }
+
+    #[test]
+    fn exclude_from_duplicate_rejected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nexclude from = /a.txt\nexclude from = /b.txt\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn include_from_duplicate_rejected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\ninclude from = /a.txt\ninclude from = /b.txt\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn exclude_from_per_module_isolation() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path1 = dir.path().join("data1");
+        let path2 = dir.path().join("data2");
+        fs::create_dir(&path1).expect("create dir 1");
+        fs::create_dir(&path2).expect("create dir 2");
+
+        let config = format!(
+            "[mod1]\npath = {}\nexclude from = /etc/mod1_excludes.txt\n\
+             [mod2]\npath = {}\n",
+            path1.display(),
+            path2.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+        assert_eq!(
+            result.modules[0].exclude_from,
+            Some(PathBuf::from("/etc/mod1_excludes.txt"))
+        );
+        assert!(result.modules[1].exclude_from.is_none());
     }
 }
