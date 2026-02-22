@@ -21,7 +21,7 @@ This document defines the upstream compatibility test scenarios used to validate
 |-------------------------------------|------------------------------------------|-----------|-------|
 | Local copy (archive mode)           | `-av /src /dest`                          | ✅        | Full test coverage |
 | Sparse file round-trip              | Zero run → hole                           | ✅        | Fixed in Phase 2 (2025-11-25) |
-| Remote copy via SSH (sender/recv)   | `-av host:/src /dest`                     | ⚠️        | Uses fallback (native SSH pending) |
+| Remote copy via SSH (sender/recv)   | `-av host:/src /dest`                     | ✅        | Native SSH transport integrated |
 | Daemon transfer (host::module)      | `-av rsync://host/module/ /dest`         | ✅        | Auth + transfers fixed in Phase 3 |
 | Filters (include/exclude/filter)    | Deep ruleset match                        | ✅        | Comprehensive coverage |
 | Compression level                   | `-z --compress-level=9`                  | ✅        | Verified against rsync 3.4.1 |
@@ -40,7 +40,7 @@ This document defines the upstream compatibility test scenarios used to validate
 ### Workflow: `.github/workflows/ci.yml`
 
 **Job**: `interop-upstream`
-- **Depends on**: `lint-and-test`
+- **Depends on**: `lint`
 - **Runs**: Bidirectional interop tests against upstream rsync versions
 - **Script**: `tools/ci/run_interop.sh`
 - **Tests**:
@@ -51,7 +51,7 @@ This document defines the upstream compatibility test scenarios used to validate
   - Payload file existence
   - Exit code correctness
 
-**Status**: `continue-on-error: true` during stabilization (will be removed after 1 week)
+**Status**: Required CI check (must pass before merge)
 
 ### Test Scripts
 
@@ -134,7 +134,7 @@ Upstream binaries are obtained via multi-tier fallback:
 
 ### ⚠️ ONGOING
 - **ACLs**: Partially implemented, not all platforms supported
-- **Native SSH transport**: Infrastructure exists, integration pending (see `SSH_TRANSPORT_ARCHITECTURE.md`)
+- **Native SSH transport**: Fully integrated (`crates/core/src/client/remote/ssh_transfer.rs`)
 - **Filter merge edge cases**: Complex merge directives pending deeper validation
 
 ### ❌ TODO
@@ -187,11 +187,6 @@ kill %1
 
 - **CI workflow**: `.github/workflows/ci.yml`
 - **Interop scripts**: `tools/ci/run_interop.sh`, `scripts/rsync-interop-*.sh`
-- **CI hardening plan**: `docs/CI_INTEROP_HARDENING.md`
-- **Session summary**: `docs/SESSION_SUMMARY_2025-11-25.md`
-- **Gap tracking**: `docs/gaps.md`
-- **Message verification**: `docs/MESSAGE_EXIT_CODE_VERIFICATION.md`
-- **SSH analysis**: `docs/SSH_TRANSPORT_ARCHITECTURE.md`
 - **Upstream reference**: https://github.com/RsyncProject/rsync
 
 ---
