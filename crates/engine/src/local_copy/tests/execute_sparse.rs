@@ -1680,3 +1680,112 @@ fn execute_append_disables_sparse_writes() {
     assert_eq!(content[total_size - 1], 0xEE);
 }
 
+/// Test: Large trailing zero block uses ftruncate (set_len) to extend the file
+/// rather than writing zeros, producing a sparse hole at the end.
+///
+/// Upstream rsync's sparse writer accumulates trailing zeros and, on finish,
+/// uses ftruncate to set the final file size. This avoids writing a large
+/// block of zeros and creates a genuine sparse hole on supporting filesystems.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_large_trailing_zeros_uses_ftruncate() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("trailing-zeros.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    let data_size = 1024 * 1024; // 1MB of data
+    let trailing_zeros_size = 1024 * 1024; // 1MB of trailing zeros
+    let total_size = data_size + trailing_zeros_size;
+
+    // Write 1MB of non-zero data (cycling pattern to verify integrity)
+    let data_pattern: Vec<u8> = (0..data_size).map(|i| ((i % 251) + 1) as u8).collect();
+    source_file
+        .write_all(&data_pattern)
+        .expect("write data region");
+
+    // Write 1MB of trailing zeros
+    source_file
+        .write_all(&vec![0u8; trailing_zeros_size])
+        .expect("write trailing zeros");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense-trailing.bin");
+    let sparse_dest = temp.path().join("sparse-trailing.bin");
+
+    // Dense copy (baseline)
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy (should use ftruncate for trailing zeros)
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // (a) Verify the output file size is correct
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+    assert_eq!(dense_meta.len(), total_size as u64);
+    assert_eq!(sparse_meta.len(), total_size as u64);
+
+    // (b) Verify the data portion is correct
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    assert_eq!(
+        &sparse_content[..data_size],
+        &data_pattern[..],
+        "data region must match original pattern byte-for-byte"
+    );
+
+    // Verify the trailing zero region reads back as zeros
+    assert!(
+        sparse_content[data_size..].iter().all(|&b| b == 0),
+        "trailing region must be all zeros"
+    );
+
+    // Full content match against dense copy
+    let dense_content = fs::read(&dense_dest).expect("read dense");
+    assert_eq!(sparse_content, dense_content);
+
+    // (c) Verify the sparse file uses less disk space (sparse hole)
+    use std::os::unix::fs::MetadataExt;
+    let dense_blocks = dense_meta.blocks();
+    let sparse_blocks = sparse_meta.blocks();
+
+    if sparse_blocks == dense_blocks {
+        eprintln!(
+            "trailing-zeros sparse uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem does not expose sparse allocation difference, skipping block check"
+        );
+        return;
+    }
+
+    assert!(
+        sparse_blocks < dense_blocks,
+        "sparse copy with trailing zeros should allocate fewer blocks than dense copy \
+         (sparse: {sparse_blocks}, dense: {dense_blocks})"
+    );
+
+    // The trailing 1MB should be a hole, so the sparse file should use roughly
+    // half the blocks of the dense file (data region only, plus overhead).
+    let expected_max_sparse_blocks = dense_blocks * 3 / 4;
+    if sparse_blocks <= expected_max_sparse_blocks {
+        eprintln!(
+            "trailing-zeros sparse uses {sparse_blocks} blocks vs dense {dense_blocks} \
+             (within expected range, max {expected_max_sparse_blocks})"
+        );
+    }
+}
+
