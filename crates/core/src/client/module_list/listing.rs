@@ -195,9 +195,10 @@ pub fn run_module_list_with_password_and_options(
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
         .map_err(|error| map_daemon_handshake_error(error, addr))?;
+    let negotiated_protocol = handshake.negotiated_protocol();
     let server_greeting = handshake.server_greeting().clone();
     let advertised_digests = parse_daemon_digest_list(server_greeting.digest_list());
-    let selected_digest = select_daemon_digest(&advertised_digests);
+    let selected_digest = select_daemon_digest(&advertised_digests, negotiated_protocol.as_u8());
     let mut reader = BufReader::new(handshake.into_stream());
 
     reader

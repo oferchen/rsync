@@ -420,7 +420,8 @@ fn perform_daemon_handshake(
             });
 
             // Select strongest mutually supported digest
-            let digest = select_daemon_digest(&advertised_digests);
+            // upstream: compat.c:858 — fallback depends on protocol version
+            let digest = select_daemon_digest(&advertised_digests, remote_protocol.as_u8());
 
             // Build auth context and send credentials
             let auth_context = DaemonAuthContext::new(username, secret, digest);
