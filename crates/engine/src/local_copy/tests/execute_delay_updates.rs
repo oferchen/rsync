@@ -2047,3 +2047,179 @@ fn delay_updates_creates_destination_directories_as_needed() {
         b"sibling"
     );
 }
+
+// ==================== .~tmp~ Staging Directory Tests ====================
+
+/// Verifies that `--delay-updates` automatically sets the partial directory
+/// to `.~tmp~` (matching upstream rsync's `tmp_partialdir`).
+#[test]
+fn delay_updates_options_set_partial_dir_to_tmp_staging() {
+    let opts = LocalCopyOptions::default().delay_updates(true);
+    assert_eq!(
+        opts.partial_directory_path(),
+        Some(Path::new(".~tmp~")),
+        "delay_updates should auto-set partial_dir to .~tmp~"
+    );
+}
+
+/// When an explicit `--partial-dir` is provided before `--delay-updates`,
+/// the user's choice must be preserved.
+#[test]
+fn delay_updates_preserves_user_partial_dir() {
+    let opts = LocalCopyOptions::default()
+        .with_partial_directory(Some("/my/partial"))
+        .delay_updates(true);
+    assert_eq!(
+        opts.partial_directory_path(),
+        Some(Path::new("/my/partial")),
+        "explicit partial_dir should not be overridden"
+    );
+}
+
+/// Verifies that staging temp files are placed inside a `.~tmp~`
+/// subdirectory during `--delay-updates` transfers, and the directory is
+/// cleaned up after all updates have been committed.
+#[test]
+fn delay_updates_staging_dir_created_and_cleaned_up() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::create_dir_all(&dest_root).expect("create dest");
+
+    fs::write(source_root.join("alpha.txt"), b"alpha content").expect("write alpha");
+    fs::write(source_root.join("beta.txt"), b"beta content").expect("write beta");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().delay_updates(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 2);
+
+    // After completion, destination files must be present with correct content.
+    assert_eq!(
+        fs::read(dest_root.join("alpha.txt")).expect("read alpha"),
+        b"alpha content"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("beta.txt")).expect("read beta"),
+        b"beta content"
+    );
+
+    // The `.~tmp~` staging directory must have been removed.
+    assert!(
+        !dest_root.join(".~tmp~").exists(),
+        ".~tmp~ staging directory should be removed after flush"
+    );
+}
+
+/// Verifies that files are atomically moved from `.~tmp~` to their final
+/// destination: after a successful delay-updates transfer, the destination
+/// contains the correct content and no staging artifacts remain.
+#[test]
+fn delay_updates_files_atomically_moved_from_staging() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::create_dir_all(&dest_root).expect("create dest");
+
+    // Pre-populate destination with different content to ensure atomicity.
+    fs::write(dest_root.join("file.txt"), b"old content").expect("write old");
+    fs::write(source_root.join("file.txt"), b"new content").expect("write new");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().delay_updates(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+
+    // Verify the final file has the new content (rename succeeded).
+    assert_eq!(
+        fs::read(dest_root.join("file.txt")).expect("read"),
+        b"new content"
+    );
+
+    // No staging artifacts should remain.
+    assert!(
+        !dest_root.join(".~tmp~").exists(),
+        ".~tmp~ staging directory must not persist"
+    );
+}
+
+/// Verifies `.~tmp~` cleanup in subdirectories: when a recursive copy
+/// stages files in per-directory `.~tmp~` subdirectories, all of them
+/// must be removed after flush.
+#[test]
+fn delay_updates_staging_dirs_cleaned_in_subdirectories() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(source_root.join("sub1")).expect("create sub1");
+    fs::create_dir_all(source_root.join("sub2")).expect("create sub2");
+    fs::create_dir_all(&dest_root).expect("create dest");
+
+    fs::write(source_root.join("sub1").join("a.txt"), b"a").expect("write a");
+    fs::write(source_root.join("sub2").join("b.txt"), b"b").expect("write b");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().delay_updates(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 2);
+
+    // Verify content arrived at final locations.
+    assert_eq!(
+        fs::read(dest_root.join("source").join("sub1").join("a.txt")).expect("read a"),
+        b"a"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("source").join("sub2").join("b.txt")).expect("read b"),
+        b"b"
+    );
+
+    // Walk the entire tree and assert no `.~tmp~` directories remain.
+    fn assert_no_staging_dirs(dir: &Path) {
+        for entry in fs::read_dir(dir).expect("read dir") {
+            let entry = entry.expect("dir entry");
+            let name = entry.file_name();
+            assert_ne!(
+                name.to_string_lossy().as_ref(),
+                ".~tmp~",
+                "staging dir should not remain under {}",
+                dir.display()
+            );
+            if entry.file_type().expect("file type").is_dir() {
+                assert_no_staging_dirs(&entry.path());
+            }
+        }
+    }
+    assert_no_staging_dirs(&dest_root);
+}
