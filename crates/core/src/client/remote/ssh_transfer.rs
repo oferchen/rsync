@@ -68,7 +68,6 @@ pub fn run_ssh_transfer(
     config: &ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
-    // Step 1: Parse transfer args into sources and destination
     let args = config.transfer_args();
     if args.len() < 2 {
         return Err(invalid_argument_error(
@@ -80,7 +79,6 @@ pub fn run_ssh_transfer(
     let (sources, destination) = args.split_at(args.len() - 1);
     let destination = &destination[0];
 
-    // Determine transfer type
     let transfer_spec = determine_transfer_role(sources, destination)?;
 
     match transfer_spec {
@@ -88,7 +86,6 @@ pub fn run_ssh_transfer(
             local_sources,
             remote_dest,
         } => {
-            // Push: local → remote
             let (invocation_args, ssh_host, ssh_user, ssh_port) =
                 parse_single_remote(&remote_dest, config, RemoteRole::Sender)?;
             let connection =
@@ -99,7 +96,6 @@ pub fn run_ssh_transfer(
             remote_sources,
             local_dest,
         } => {
-            // Pull: remote → local
             let (invocation_args, ssh_host, ssh_user, ssh_port) =
                 parse_remote_operands(&remote_sources, config, RemoteRole::Receiver)?;
             let connection =
@@ -146,11 +142,9 @@ fn parse_remote_operands(
         RemoteOperands::Single(operand_str) => parse_single_remote(operand_str, config, role),
         RemoteOperands::Multiple(operand_strs) => {
             // Multiple sources (pull operation)
-            // Parse first operand to get SSH connection details
             let first_operand = parse_ssh_operand(OsStr::new(&operand_strs[0]))
                 .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
 
-            // Parse all operands to extract paths
             let mut paths = Vec::new();
             for operand_str in operand_strs {
                 let operand = parse_ssh_operand(OsStr::new(operand_str)).map_err(|e| {
@@ -159,7 +153,6 @@ fn parse_remote_operands(
                 paths.push(operand.path().to_owned());
             }
 
-            // Build invocation with all paths
             let invocation_builder = RemoteInvocationBuilder::new(config, role);
             let path_refs: Vec<&str> = paths.iter().map(|s| s.as_ref()).collect();
             let args = invocation_builder.build_with_paths(&path_refs);
@@ -184,12 +177,10 @@ fn build_ssh_connection(
 ) -> Result<SshConnection, ClientError> {
     let mut ssh = SshCommand::new(host);
 
-    // Set user if provided
     if let Some(user) = user {
         ssh.set_user(user);
     }
 
-    // Set port if provided
     if let Some(port) = port {
         ssh.set_port(port);
     }
@@ -198,7 +189,6 @@ fn build_ssh_connection(
     if let Some(shell_args) = config.remote_shell()
         && !shell_args.is_empty()
     {
-        // First argument is the program name
         ssh.set_program(&shell_args[0]);
         // Remaining arguments are SSH options
         for arg in &shell_args[1..] {
@@ -247,12 +237,10 @@ fn run_pull_transfer(
         .map_err(|e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12))?;
     server_config.stop_at = config.stop_at();
 
-    // Split connection into separate read/write halves and run server, tracking elapsed time
     let start = Instant::now();
     let server_stats = run_server_over_ssh_connection(server_config, connection)?;
     let elapsed = start.elapsed();
 
-    // Convert server stats to client summary
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
 }
 
@@ -275,12 +263,10 @@ fn run_push_transfer(
         .map_err(|e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12))?;
     server_config.stop_at = config.stop_at();
 
-    // Split connection into separate read/write halves and run server, tracking elapsed time
     let start = Instant::now();
     let server_stats = run_server_over_ssh_connection(server_config, connection)?;
     let elapsed = start.elapsed();
 
-    // Convert server stats to client summary
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
 }
 
@@ -318,26 +304,20 @@ fn convert_server_stats_to_summary(
     use engine::local_copy::LocalCopySummary;
 
     let summary = match stats {
-        ServerStats::Receiver(transfer_stats) => {
-            // For pull transfers: we received files from remote
-            LocalCopySummary::from_receiver_stats(
-                transfer_stats.files_listed,
-                transfer_stats.files_transferred,
-                transfer_stats.bytes_received,
-                transfer_stats.bytes_sent,
-                transfer_stats.total_source_bytes,
-                elapsed,
-            )
-        }
-        ServerStats::Generator(generator_stats) => {
-            // For push transfers: we sent files to remote
-            LocalCopySummary::from_generator_stats(
-                generator_stats.files_listed,
-                generator_stats.files_transferred,
-                generator_stats.bytes_sent,
-                elapsed,
-            )
-        }
+        ServerStats::Receiver(transfer_stats) => LocalCopySummary::from_receiver_stats(
+            transfer_stats.files_listed,
+            transfer_stats.files_transferred,
+            transfer_stats.bytes_received,
+            transfer_stats.bytes_sent,
+            transfer_stats.total_source_bytes,
+            elapsed,
+        ),
+        ServerStats::Generator(generator_stats) => LocalCopySummary::from_generator_stats(
+            generator_stats.files_listed,
+            generator_stats.files_transferred,
+            generator_stats.bytes_sent,
+            elapsed,
+        ),
     };
 
     ClientSummary::from_summary(summary)
@@ -408,8 +388,7 @@ fn run_server_over_ssh_connection(
 
     match transfer_result {
         Ok(stats) => {
-            // Transfer succeeded -- check if the child reported an error.
-            // Mirror upstream: take MAX of transfer and child exit codes.
+            // upstream: take MAX of transfer and child exit codes.
             if child_exit_code.is_success() {
                 Ok(stats)
             } else {
@@ -423,7 +402,6 @@ fn run_server_over_ssh_connection(
             }
         }
         Err(transfer_error) => {
-            // Transfer failed -- propagate the worse of the two exit codes.
             let transfer_exit = ExitCode::from_io_error(&transfer_error);
             if child_exit_code.as_i32() > transfer_exit.as_i32() {
                 Err(invalid_argument_error_typed(
@@ -448,10 +426,7 @@ fn build_server_config_for_receiver(
     config: &ClientConfig,
     local_paths: &[String],
 ) -> Result<ServerConfig, ClientError> {
-    // Build flag string from client config
     let flag_string = build_server_flag_string(config);
-
-    // Receiver uses destination path as args
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
     let mut server_config =
@@ -471,10 +446,7 @@ fn build_server_config_for_generator(
     config: &ClientConfig,
     local_paths: &[String],
 ) -> Result<ServerConfig, ClientError> {
-    // Build flag string from client config
     let flag_string = build_server_flag_string(config);
-
-    // Generator uses source paths as args
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
     let mut server_config =
@@ -496,7 +468,7 @@ fn build_server_config_for_generator(
 fn build_server_flag_string(config: &ClientConfig) -> String {
     let mut flags = String::from("-");
 
-    // Transfer flags (order matches upstream server_options())
+    // Order matches upstream server_options().
     if config.links() {
         flags.push('l');
     }
@@ -579,7 +551,6 @@ fn build_wire_format_rules(
     let mut wire_rules = Vec::new();
 
     for spec in client_rules {
-        // Convert FilterRuleKind to RuleType
         let rule_type = match spec.kind() {
             FilterRuleKind::Include => RuleType::Include,
             FilterRuleKind::Exclude => RuleType::Exclude,
@@ -609,7 +580,6 @@ fn build_wire_format_rules(
             }
         };
 
-        // Build wire format rule
         let mut wire_rule = FilterRuleWireFormat {
             rule_type,
             pattern: spec.pattern().to_owned(),
@@ -626,9 +596,7 @@ fn build_wire_format_rules(
             negate: false,
         };
 
-        // Handle dir_merge options if present
         if let Some(options) = spec.dir_merge_options() {
-            // Extract modifiers from dir_merge options
             wire_rule.no_inherit = !options.inherit_rules();
             wire_rule.word_split = options.uses_whitespace();
             wire_rule.exclude_from_merge = options.excludes_self();
