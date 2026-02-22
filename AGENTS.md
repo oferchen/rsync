@@ -1616,22 +1616,27 @@ pub enum FileType {
 
 ```rust
 // Path component encoding (crates/protocol/)
-pub struct PathComponent<'a> {
-    bytes: &'a [u8],
+pub struct PathComponent {
+    bytes: Vec<u8>,
 }
 
-impl<'a> PathComponent<'a> {
+impl PathComponent {
     /// Encode path for wire transmission
     /// - Paths are relative, never absolute
     /// - Uses '/' separator regardless of platform
     /// - Encodes special characters per rsync protocol
-    pub fn encode(path: &'a Path) -> Self {
-        // Convert to unix-style path bytes
-        let bytes = path.to_str()
-            .expect("path must be valid UTF-8")
+    pub fn encode(path: &Path) -> Self {
+        // Convert to unix-style path bytes, replacing backslashes for wire format.
+        // to_string_lossy handles non-UTF-8 components (common on Unix) without panicking.
+        let bytes = path.to_string_lossy()
             .replace('\\', "/")
             .into_bytes();
-        Self { bytes: bytes.leak() }
+        Self { bytes }
+    }
+
+    /// Wire bytes for this path component
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
     }
 }
 ```
