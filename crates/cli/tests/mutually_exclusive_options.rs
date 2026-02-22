@@ -147,7 +147,7 @@ fn test_single_usermap_accepted() {
 }
 
 #[test]
-fn test_multiple_usermap_rejected() {
+fn test_multiple_usermap_concatenated() {
     let result = parse_args([
         "oc-rsync",
         "--usermap=foo:bar",
@@ -156,12 +156,11 @@ fn test_multiple_usermap_rejected() {
         "dest",
     ]);
     assert!(
-        result.is_err(),
-        "Multiple --usermap options should be rejected"
+        result.is_ok(),
+        "Multiple --usermap options should be concatenated"
     );
-    let err = result.unwrap_err();
-    // Clap reports this as ArgumentConflict when the same option is used multiple times
-    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    let args = result.unwrap();
+    assert_eq!(args.usermap, Some("foo:bar,baz:qux".into()));
 }
 
 #[test]
@@ -173,7 +172,7 @@ fn test_single_groupmap_accepted() {
 }
 
 #[test]
-fn test_multiple_groupmap_rejected() {
+fn test_multiple_groupmap_concatenated() {
     let result = parse_args([
         "oc-rsync",
         "--groupmap=admin:wheel",
@@ -182,12 +181,11 @@ fn test_multiple_groupmap_rejected() {
         "dest",
     ]);
     assert!(
-        result.is_err(),
-        "Multiple --groupmap options should be rejected"
+        result.is_ok(),
+        "Multiple --groupmap options should be concatenated"
     );
-    let err = result.unwrap_err();
-    // Clap reports this as ArgumentConflict when the same option is used multiple times
-    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    let args = result.unwrap();
+    assert_eq!(args.groupmap, Some("admin:wheel,users:staff".into()));
 }
 
 #[test]
@@ -227,13 +225,8 @@ fn test_delete_conflict_error_message_contains_options() {
 }
 
 #[test]
-fn test_usermap_too_many_error_message() {
+fn test_multiple_usermap_concatenation_preserves_order() {
     let result = parse_args(["oc-rsync", "--usermap=a:b", "--usermap=c:d", "src", "dest"]);
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    // Error message should mention usermap
-    assert!(
-        err_msg.contains("usermap") || err_msg.contains("once"),
-        "Error message should mention usermap can only be specified once"
-    );
+    let args = result.expect("multiple --usermap should succeed");
+    assert_eq!(args.usermap, Some("a:b,c:d".into()));
 }
