@@ -487,6 +487,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .long("usermap")
                     .value_name("STRING")
                     .help("Apply custom user ID mapping rules.")
+                    .action(ArgAction::Append)
                     .value_parser(OsStringValueParser::new())
                     .num_args(1),
             )
@@ -495,6 +496,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .long("groupmap")
                     .value_name("STRING")
                     .help("Apply custom group ID mapping rules.")
+                    .action(ArgAction::Append)
                     .value_parser(OsStringValueParser::new())
                     .num_args(1),
             )
