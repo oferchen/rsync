@@ -663,9 +663,10 @@ impl GeneratorContext {
                 let delta_script = generate_delta_from_signature(source, config)?;
 
                 // Send ndx, iflags, sum_head
+                // upstream: sender.c:180-187 write_ndx_and_attrs()
                 ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
                 if self.protocol.as_u8() >= 29 {
-                    writer.write_all(&iflags.raw().to_le_bytes())?;
+                    writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
                 }
                 sum_head.write(&mut *writer)?;
 
@@ -689,9 +690,10 @@ impl GeneratorContext {
                 let source = fs::File::open(source_path)?;
 
                 // Send ndx, iflags, sum_head (only after successful file open)
+                // upstream: sender.c:180-187 write_ndx_and_attrs()
                 ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
                 if self.protocol.as_u8() >= 29 {
-                    writer.write_all(&iflags.raw().to_le_bytes())?;
+                    writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
                 }
                 sum_head.write(&mut *writer)?;
 
@@ -1307,6 +1309,16 @@ impl ItemFlags {
     /// Item was matched (log formatting only).
     pub const ITEM_MATCHED: u32 = 1 << 18; // 0x4_0000
 
+    /// Bitmask of flags considered significant for wire transmission and itemize
+    /// reporting. Strips framing-only bits (`ITEM_BASIS_TYPE_FOLLOWS`,
+    /// `ITEM_XNAME_FOLLOWS`) and the local-only `ITEM_LOCAL_CHANGE` flag.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.h:235-236` - `SIGNIFICANT_ITEM_FLAGS`
+    pub const SIGNIFICANT_ITEM_FLAGS: u32 =
+        !(Self::ITEM_BASIS_TYPE_FOLLOWS | Self::ITEM_XNAME_FOLLOWS | Self::ITEM_LOCAL_CHANGE);
+
     /// Creates ItemFlags from a raw value.
     #[must_use]
     pub const fn from_raw(raw: u32) -> Self {
@@ -1323,6 +1335,21 @@ impl ItemFlags {
     #[must_use]
     pub const fn wire_bits(&self) -> u16 {
         self.raw as u16
+    }
+
+    /// Returns the wire-format value with only significant flags preserved.
+    ///
+    /// Applies [`Self::SIGNIFICANT_ITEM_FLAGS`] mask, then truncates to 16 bits.
+    /// Use this when sending iflags on the wire to strip framing-only and
+    /// internal-only bits that should not leak to the remote side.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.h:235-236` - `SIGNIFICANT_ITEM_FLAGS` definition
+    /// - `generator.c:574-575` - Applied before wire send in `itemize()`
+    #[must_use]
+    pub const fn significant_wire_bits(&self) -> u16 {
+        (self.raw & Self::SIGNIFICANT_ITEM_FLAGS) as u16
     }
 
     /// Returns true if the item needs data transfer.
@@ -2562,6 +2589,75 @@ mod tests {
         assert_eq!(ItemFlags::ITEM_MISSING_DATA, 0x1_0000);
         assert_eq!(ItemFlags::ITEM_DELETED, 0x2_0000);
         assert_eq!(ItemFlags::ITEM_MATCHED, 0x4_0000);
+    }
+
+    #[test]
+    fn significant_item_flags_masks_framing_and_internal_bits() {
+        // upstream rsync.h:235-236 — strips BASIS_TYPE_FOLLOWS, XNAME_FOLLOWS, LOCAL_CHANGE
+        let mask = ItemFlags::SIGNIFICANT_ITEM_FLAGS;
+        assert_eq!(mask & ItemFlags::ITEM_BASIS_TYPE_FOLLOWS, 0);
+        assert_eq!(mask & ItemFlags::ITEM_XNAME_FOLLOWS, 0);
+        assert_eq!(mask & ItemFlags::ITEM_LOCAL_CHANGE, 0);
+
+        // Report flags and TRANSFER survive the mask
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_ATIME, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_CHANGE, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_SIZE, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_TIME, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_PERMS, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_OWNER, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_GROUP, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_ACL, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_XATTR, 0);
+        assert_ne!(mask & ItemFlags::ITEM_REPORT_CRTIME, 0);
+        assert_ne!(mask & ItemFlags::ITEM_IS_NEW, 0);
+        assert_ne!(mask & ItemFlags::ITEM_TRANSFER, 0);
+    }
+
+    #[test]
+    fn significant_wire_bits_strips_internal_flags() {
+        // ITEM_TRANSFER alone passes through
+        let flags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER);
+        assert_eq!(flags.significant_wire_bits(), 0x8000);
+
+        // Framing bits are stripped
+        let flags = ItemFlags::from_raw(
+            ItemFlags::ITEM_TRANSFER
+                | ItemFlags::ITEM_BASIS_TYPE_FOLLOWS
+                | ItemFlags::ITEM_XNAME_FOLLOWS
+                | ItemFlags::ITEM_LOCAL_CHANGE,
+        );
+        assert_eq!(flags.significant_wire_bits(), 0x8000);
+
+        // Log-only upper bits are stripped by u16 truncation
+        let flags = ItemFlags::from_raw(
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_DELETED | ItemFlags::ITEM_MATCHED,
+        );
+        assert_eq!(flags.significant_wire_bits(), 0x8000);
+
+        // Report flags survive
+        let flags = ItemFlags::from_raw(
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_CHANGE | ItemFlags::ITEM_REPORT_SIZE,
+        );
+        assert_eq!(flags.significant_wire_bits(), 0x8000 | 0x0002 | 0x0004);
+    }
+
+    #[test]
+    fn significant_wire_bits_returns_two_bytes() {
+        // Ensure the return type is u16 (2 bytes) for wire transmission
+        let flags = ItemFlags::from_raw(0xFFFF_FFFF);
+        let wire = flags.significant_wire_bits();
+        let bytes = wire.to_le_bytes();
+        assert_eq!(bytes.len(), 2);
+    }
+
+    #[test]
+    fn significant_wire_bits_matches_upstream_mask() {
+        // upstream: ~(ITEM_BASIS_TYPE_FOLLOWS | ITEM_XNAME_FOLLOWS | ITEM_LOCAL_CHANGE)
+        // = ~(0x0800 | 0x1000 | 0x4000) = ~0x5800
+        // Lower 16 bits of ~0x5800 = 0xA7FF
+        let flags = ItemFlags::from_raw(0xFFFF);
+        assert_eq!(flags.significant_wire_bits(), 0xA7FF);
     }
 
     #[test]
