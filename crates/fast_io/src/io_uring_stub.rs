@@ -400,11 +400,23 @@ impl FileWriterFactory for IoUringWriterFactory {
     }
 }
 
-/// Creates a writer from an existing file handle (always standard I/O on this platform).
-pub fn writer_from_file(file: std::fs::File, buffer_capacity: usize) -> IoUringOrStdWriter {
-    IoUringOrStdWriter::Std(StdFileWriter::from_file_with_capacity(
-        file,
-        buffer_capacity,
+/// Creates a writer from an existing file handle, respecting the io_uring policy.
+///
+/// On non-Linux platforms, `Enabled` returns an error since io_uring is unavailable.
+/// `Auto` and `Disabled` both use standard buffered I/O.
+pub fn writer_from_file(
+    file: std::fs::File,
+    buffer_capacity: usize,
+    policy: crate::IoUringPolicy,
+) -> io::Result<IoUringOrStdWriter> {
+    if matches!(policy, crate::IoUringPolicy::Enabled) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring requested via --io-uring but not available on this platform",
+        ));
+    }
+    Ok(IoUringOrStdWriter::Std(
+        StdFileWriter::from_file_with_capacity(file, buffer_capacity),
     ))
 }
 
