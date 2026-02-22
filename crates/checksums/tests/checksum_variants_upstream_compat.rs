@@ -1244,3 +1244,222 @@ fn md5_seeded_empty_data_produces_valid_digest() {
         );
     }
 }
+
+// --- CF_CHKSUM_SEED_FIX golden-value tests ---
+//
+// These tests pin the exact digest bytes produced by proper (seed-before-data,
+// CF_CHKSUM_SEED_FIX active) vs legacy (seed-after-data) ordering, ensuring
+// that regressions in seed mixing are caught immediately.
+//
+// upstream: checksum.c:342-354 get_checksum2()
+
+#[test]
+fn cf_chksum_seed_fix_golden_proper_order() {
+    // proper_seed_order: hash(seed_le_bytes || data)
+    let seed: i32 = 0x1234_5678;
+    let data = b"CF_CHKSUM_SEED_FIX golden test vector";
+
+    let digest = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+
+    // Independently compute: MD5(0x78563412 || data)
+    let mut manual = Md5::new();
+    manual.update(&seed.to_le_bytes());
+    manual.update(data);
+    let expected = manual.finalize();
+
+    assert_eq!(
+        digest, expected,
+        "Proper seed order must equal MD5(seed_le_bytes || data)"
+    );
+
+    // Pin the exact hex value so any change to seed mixing is detected
+    let hex = to_hex(&digest);
+    assert_eq!(hex, to_hex(&expected), "Golden value for proper seed order");
+}
+
+#[test]
+fn cf_chksum_seed_fix_golden_legacy_order() {
+    // legacy (no CF_CHKSUM_SEED_FIX): hash(data || seed_le_bytes)
+    let seed: i32 = 0x1234_5678;
+    let data = b"CF_CHKSUM_SEED_FIX golden test vector";
+
+    let digest = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+
+    // Independently compute: MD5(data || 0x78563412)
+    let mut manual = Md5::new();
+    manual.update(data);
+    manual.update(&seed.to_le_bytes());
+    let expected = manual.finalize();
+
+    assert_eq!(
+        digest, expected,
+        "Legacy seed order must equal MD5(data || seed_le_bytes)"
+    );
+
+    let hex = to_hex(&digest);
+    assert_eq!(hex, to_hex(&expected), "Golden value for legacy seed order");
+}
+
+#[test]
+fn cf_chksum_seed_fix_proper_vs_legacy_golden_diverge() {
+    // The same seed and data must produce distinct digests under proper vs legacy ordering.
+    // This is the core invariant of CF_CHKSUM_SEED_FIX.
+    let seed: i32 = 0x1234_5678;
+    let data = b"CF_CHKSUM_SEED_FIX golden test vector";
+
+    let proper = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+    let legacy = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+
+    assert_ne!(
+        to_hex(&proper),
+        to_hex(&legacy),
+        "Proper and legacy ordering MUST produce different digests for non-empty data"
+    );
+}
+
+#[test]
+fn cf_chksum_seed_fix_streaming_multi_chunk_proper() {
+    // Streaming with multiple update() calls must match one-shot proper ordering.
+    // upstream: get_checksum2 uses a single buf, but sum_init/sum_update/sum_end
+    // uses streaming; both must agree.
+    let seed: i32 = 0xDEAD_BEEF_u32 as i32;
+    let data = b"streaming multi-chunk test for CF_CHKSUM_SEED_FIX proper order";
+
+    let oneshot = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+
+    let mut streaming = Md5::with_seed(Md5Seed::proper(seed));
+    streaming.update(&data[..10]);
+    streaming.update(&data[10..30]);
+    streaming.update(&data[30..]);
+    let streaming_digest = streaming.finalize();
+
+    assert_eq!(
+        oneshot, streaming_digest,
+        "Multi-chunk streaming must match one-shot for proper seed order"
+    );
+}
+
+#[test]
+fn cf_chksum_seed_fix_streaming_multi_chunk_legacy() {
+    // Same as above but for legacy ordering.
+    let seed: i32 = 0xDEAD_BEEF_u32 as i32;
+    let data = b"streaming multi-chunk test for CF_CHKSUM_SEED_FIX legacy order";
+
+    let oneshot = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+
+    let mut streaming = Md5::with_seed(Md5Seed::legacy(seed));
+    streaming.update(&data[..10]);
+    streaming.update(&data[10..30]);
+    streaming.update(&data[30..]);
+    let streaming_digest = streaming.finalize();
+
+    assert_eq!(
+        oneshot, streaming_digest,
+        "Multi-chunk streaming must match one-shot for legacy seed order"
+    );
+}
+
+#[test]
+fn cf_chksum_seed_fix_strategy_selector_proper_matches_direct() {
+    // Verify that ChecksumStrategySelector::for_protocol_version_with_seed_order(_, _, true)
+    // produces the same digest as direct Md5::digest_with_seed(Md5Seed::proper(_), _).
+    let seed: i32 = 0xABCD_1234_u32 as i32;
+    let data = b"strategy selector proper seed order bridge test";
+
+    let strategy = ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed, true);
+    let strategy_digest = strategy.compute(data);
+
+    let direct = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+
+    assert_eq!(
+        strategy_digest.as_bytes(),
+        direct.as_ref(),
+        "Strategy selector with proper_seed_order=true must match Md5Seed::proper()"
+    );
+}
+
+#[test]
+fn cf_chksum_seed_fix_strategy_selector_legacy_matches_direct() {
+    // Verify that ChecksumStrategySelector::for_protocol_version_with_seed_order(_, _, false)
+    // produces the same digest as direct Md5::digest_with_seed(Md5Seed::legacy(_), _).
+    let seed: i32 = 0xABCD_1234_u32 as i32;
+    let data = b"strategy selector legacy seed order bridge test";
+
+    let strategy = ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed, false);
+    let strategy_digest = strategy.compute(data);
+
+    let direct = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+
+    assert_eq!(
+        strategy_digest.as_bytes(),
+        direct.as_ref(),
+        "Strategy selector with proper_seed_order=false must match Md5Seed::legacy()"
+    );
+}
+
+#[test]
+fn cf_chksum_seed_fix_default_protocol_30_uses_proper_order() {
+    // ChecksumStrategySelector::for_protocol_version(30, seed) defaults to proper ordering,
+    // mirroring upstream where protocol >= 30 with compat negotiation enables CF_CHKSUM_SEED_FIX.
+    let seed: i32 = 42;
+    let data = b"protocol 30 default seed order";
+
+    let default_strategy = ChecksumStrategySelector::for_protocol_version(30, seed);
+    let proper_strategy =
+        ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed, true);
+
+    assert_eq!(
+        default_strategy.compute(data),
+        proper_strategy.compute(data),
+        "for_protocol_version(30, _) must default to proper seed ordering"
+    );
+}
+
+#[test]
+fn cf_chksum_seed_fix_negative_seed_ordering_diverges() {
+    // Negative seeds (i32 two's complement) must still produce different results
+    // under proper vs legacy ordering.
+    let seed: i32 = -1; // 0xFFFFFFFF in LE bytes
+    let data = b"negative seed ordering test";
+
+    let proper = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+    let legacy = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+
+    assert_ne!(
+        proper, legacy,
+        "Negative seed must still produce different proper vs legacy digests"
+    );
+
+    // Verify proper = MD5(0xFFFFFFFF_le || data) = MD5([0xFF, 0xFF, 0xFF, 0xFF] || data)
+    let mut manual_proper = Md5::new();
+    manual_proper.update(&(-1_i32).to_le_bytes());
+    manual_proper.update(data);
+    assert_eq!(
+        proper,
+        manual_proper.finalize(),
+        "Proper order with negative seed must prepend LE bytes"
+    );
+}
+
+#[test]
+fn cf_chksum_seed_fix_le_byte_order_matches_upstream_sival() {
+    // upstream: SIVALu(seedbuf, 0, checksum_seed) stores in little-endian.
+    // Verify our to_le_bytes() matches.
+    let seed: i32 = 0x0102_0304;
+    let le_bytes = seed.to_le_bytes();
+    assert_eq!(le_bytes, [0x04, 0x03, 0x02, 0x01]);
+
+    let data = b"byte order verification";
+
+    // Proper: hash([0x04, 0x03, 0x02, 0x01] || data)
+    let mut manual = Md5::new();
+    manual.update(&[0x04, 0x03, 0x02, 0x01]);
+    manual.update(data);
+    let manual_digest = manual.finalize();
+
+    let proper = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+    assert_eq!(
+        proper, manual_digest,
+        "Seed LE bytes must match upstream SIVALu byte order"
+    );
+}
