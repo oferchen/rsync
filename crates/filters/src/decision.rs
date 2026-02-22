@@ -4,6 +4,7 @@ use logging::debug_log;
 
 use crate::{FilterAction, compiled::CompiledRule};
 
+/// Internal rule storage shared by [`FilterSet`](crate::FilterSet) instances.
 #[derive(Debug, Default)]
 pub(crate) struct FilterSetInner {
     pub(crate) include_exclude: Vec<CompiledRule>,
@@ -152,12 +153,14 @@ where
     })
 }
 
+/// Whether a filter evaluation is for the transfer or deletion phase.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecisionContext {
     Transfer,
     Deletion,
 }
 
+/// Outcome of evaluating a path against the compiled filter rules.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FilterDecision {
     transfer_allowed: bool,

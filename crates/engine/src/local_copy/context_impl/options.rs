@@ -119,7 +119,7 @@ impl<'a> CopyContext<'a> {
         self.options.force_replacements_enabled()
     }
 
-    // Filter program accessor used by xattr sync logic.
+    /// Returns the filter program used by xattr sync logic.
     #[cfg(all(unix, feature = "xattr"))]
     pub(super) const fn filter_program(
         &self,
@@ -127,7 +127,7 @@ impl<'a> CopyContext<'a> {
         self.filter_program.as_ref()
     }
 
-    // ACL accessor – only meaningful on Unix with ACL support.
+    /// Reports whether ACL preservation is enabled.
     #[cfg(all(unix, feature = "acl"))]
     pub(super) const fn acls_enabled(&self) -> bool {
         self.options.acls_enabled()
@@ -164,8 +164,6 @@ impl<'a> CopyContext<'a> {
     pub(super) const fn omit_link_times_enabled(&self) -> bool {
         self.options.omit_link_times_enabled()
     }
-
-    // --- Template-style helpers for parent replacement policies ----------------
 
     fn parent_relative_to_destination<'p>(&self, parent: &'p Path) -> Option<&'p Path> {
         parent

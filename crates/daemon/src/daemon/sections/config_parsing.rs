@@ -1,8 +1,8 @@
 // Daemon configuration file parsing.
 //
-// This section parses `rsyncd.conf` files into structured module definitions
-// and global settings. It supports the full upstream rsyncd.conf syntax including:
-// module sections, global directives, include directives with recursive detection,
+// Parses `rsyncd.conf` files into structured module definitions and global
+// settings. Supports the full upstream rsyncd.conf syntax including module
+// sections, global directives, include directives with recursive detection,
 // and per-module settings.
 
 /// Tracks the source location of a configuration directive for error reporting.
@@ -14,6 +14,8 @@ struct ConfigDirectiveOrigin {
     line: usize,
 }
 
+/// Parsed result of an `rsyncd.conf` file, containing module definitions and
+/// global settings extracted from the configuration.
 #[derive(Debug)]
 pub(crate) struct ParsedConfigModules {
     modules: Vec<ModuleDefinition>,
@@ -28,6 +30,7 @@ pub(crate) struct ParsedConfigModules {
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
 }
 
+/// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
 pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
     let mut stack = Vec::new();
     parse_config_modules_inner(path, &mut stack)
