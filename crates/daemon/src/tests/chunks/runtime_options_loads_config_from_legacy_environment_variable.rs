@@ -18,12 +18,5 @@ fn runtime_options_loads_config_from_legacy_environment_variable() {
     let module = &options.modules()[0];
     assert_eq!(module.name, "legacy");
     assert_eq!(module.path, module_dir);
-    assert_eq!(
-        &options.delegate_arguments,
-        &[
-            OsString::from("--config"),
-            config_path.into_os_string(),
-        ]
-    );
 }
 

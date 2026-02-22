@@ -114,7 +114,6 @@ pub(crate) struct ConfigInputs {
     pub(crate) append: bool,
     pub(crate) append_verify: bool,
     pub(crate) whole_file: Option<bool>,
-    pub(crate) force_fallback: bool,
     pub(crate) timeout: TransferTimeout,
     pub(crate) connect_timeout: TransferTimeout,
     pub(crate) stop_deadline: Option<SystemTime>,
@@ -246,7 +245,6 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .append(inputs.append)
         .append_verify(inputs.append_verify)
         .whole_file_option(inputs.whole_file)
-        .force_fallback(inputs.force_fallback)
         .timeout(inputs.timeout)
         .connect_timeout(inputs.connect_timeout)
         .stop_at(inputs.stop_deadline)

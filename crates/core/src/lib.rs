@@ -18,8 +18,6 @@ pub mod timeout;
 pub use ::branding::branding;
 /// Client orchestration helpers consumed by the CLI binary.
 pub mod client;
-/// Helpers for interpreting fallback environment overrides shared across crates.
-pub mod fallback;
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
 /// Remote shell command construction and SSH argument parsing.

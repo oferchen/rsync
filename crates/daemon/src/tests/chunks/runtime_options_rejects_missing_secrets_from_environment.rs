@@ -10,11 +10,8 @@ fn runtime_options_rejects_missing_secrets_from_environment() {
     )
     .expect("missing secrets should be ignored");
     assert!(
-        !options
-            .delegate_arguments
-            .iter()
-            .any(|arg| arg == "--secrets-file"),
-        "no secrets override should be forwarded when the environment path is missing"
+        options.global_secrets_file().is_none(),
+        "no secrets override should be loaded when the environment path is missing"
     );
 }
 

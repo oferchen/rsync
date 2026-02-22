@@ -5,7 +5,6 @@ struct SessionParams<'a> {
     daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
-    delegation: Option<SessionDelegation>,
 }
 
 struct LegacySessionParams<'a> {
@@ -31,27 +30,7 @@ fn handle_session(
         daemon_burst,
         log_sink,
         reverse_lookup,
-        delegation,
     } = params;
-
-    if let Some(delegation) = delegation.as_ref() {
-        let delegated = stream
-            .try_clone()
-            .and_then(|clone| delegate_binary_session(clone, delegation, log_sink.as_ref()));
-        if delegated.is_ok() {
-            drop(stream);
-            return Ok(());
-        }
-
-        if let Some(log) = log_sink.as_ref() {
-            let text = format!(
-                "failed to delegate session to '{}'; continuing with internal handler",
-                Path::new(delegation.binary()).display()
-            );
-            let message = rsync_warning!(text).with_role(Role::Daemon);
-            log_message(log, &message);
-        }
-    }
 
     // rsync daemon protocol is ALWAYS the legacy @RSYNCD protocol.
     // Attempting to detect session style creates a deadlock: detect_session_style()
@@ -407,7 +386,6 @@ mod session_runtime_tests {
             daemon_burst: None,
             log_sink: None,
             reverse_lookup: false,
-            delegation: None,
         };
         assert!(params.modules.is_empty());
         assert!(params.motd_lines.is_empty());
@@ -428,7 +406,6 @@ mod session_runtime_tests {
             daemon_burst: burst,
             log_sink: None,
             reverse_lookup: true,
-            delegation: None,
         };
         assert_eq!(params.daemon_limit, NonZeroU64::new(1000));
         assert_eq!(params.daemon_burst, NonZeroU64::new(2000));

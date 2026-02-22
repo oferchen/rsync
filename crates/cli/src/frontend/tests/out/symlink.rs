@@ -1,4 +1,5 @@
 use super::*;
+use core::client::run_client;
 use std::fs;
 use std::os::unix::fs::symlink;
 use tempfile::tempdir;
@@ -26,12 +27,7 @@ fn out_format_renders_symlink_target_placeholder() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
     let event = summary
         .events()
         .iter()
@@ -70,12 +66,7 @@ fn out_format_renders_combined_name_and_target_placeholder() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
     let event = summary
         .events()
         .iter()

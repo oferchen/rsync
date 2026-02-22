@@ -195,7 +195,6 @@ pub struct ClientConfigBuilder {
     append_verify: bool,
     force_replacements: bool,
     force_event_collection: bool,
-    force_fallback: bool,
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
@@ -318,7 +317,6 @@ impl ClientConfigBuilder {
             append_verify: self.append_verify,
             force_replacements: self.force_replacements,
             force_event_collection: self.force_event_collection,
-            force_fallback: self.force_fallback,
             preserve_devices: self.preserve_devices,
             preserve_specials: self.preserve_specials,
             list_only: self.list_only,
@@ -350,7 +348,6 @@ impl ClientConfigBuilder {
 
 mod arguments;
 mod deletion;
-mod fallback;
 mod filters;
 mod metadata;
 mod network;

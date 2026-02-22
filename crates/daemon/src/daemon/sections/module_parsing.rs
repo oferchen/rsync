@@ -691,25 +691,5 @@ fn network_error<T: fmt::Display>(action: &str, target: T, error: io::Error) -> 
     )
 }
 
-pub(crate) const fn configured_fallback_binary() -> Option<OsString> {
-    None
-}
-
-/// Returns the configured fallback binary for daemon mode.
-///
-/// Daemon mode always uses the internal Rust implementation and never
-/// delegates to system rsync. This ensures the @RSYNCD greeting is sent
-/// correctly by our code and matches the behavior expected by upstream
-/// rsync clients.
-///
-/// # Returns
-///
-/// Always returns `None` (use internal Rust implementation)
-#[allow(dead_code)]
-pub(crate) const fn configured_fallback_binary_for_daemon() -> Option<OsString> {
-    // Daemon mode never delegates - always use internal Rust implementation
-    None
-}
-
 #[cfg(test)]
 mod tests;
