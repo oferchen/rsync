@@ -135,6 +135,18 @@ impl FilterSet {
             .allows_transfer()
     }
 
+    /// Returns `true` when a directory is excluded by a non-directory-specific rule.
+    ///
+    /// This is used by `--prune-empty-dirs` to decide whether to still descend
+    /// into an excluded directory. When the exclusion comes from a generic
+    /// pattern (e.g., `*`) rather than a directory-specific one (e.g., `cache/`),
+    /// the directory should be traversed so that file-level include rules can
+    /// be evaluated inside it.
+    #[must_use]
+    pub fn excluded_dir_by_non_dir_rule(&self, path: &Path) -> bool {
+        self.inner.excluded_dir_by_non_dir_rule(path)
+    }
+
     /// Returns `true` if deleting the path on the receiver is permitted.
     ///
     /// A path may be deleted when:

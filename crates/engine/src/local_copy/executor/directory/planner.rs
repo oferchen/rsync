@@ -52,6 +52,16 @@ pub(crate) struct DirectoryPlan<'a> {
 /// This encapsulates the "strategy" for turning the entry type + context
 /// into an [`EntryAction`] and whether the name should be preserved for
 /// deletion tracking.
+///
+/// When `prune_empty_dirs` is active and a directory is excluded by a
+/// non-directory-specific filter rule (e.g., `*` rather than `cache/`),
+/// we still return [`EntryAction::CopyDirectory`] so the directory is
+/// descended into. This allows file-level include rules to be evaluated
+/// inside the directory; the pruning logic in [`copy_directory_recursive`]
+/// removes the directory afterwards if no children survive filtering.
+/// This matches upstream rsync behavior where the sender includes all
+/// directories in the file list and the receiver prunes empty ones
+/// post-hoc in `flist_sort_and_clean()`.
 fn decide_entry_action(
     context: &CopyContext,
     relative_path: &Path,
@@ -60,6 +70,16 @@ fn decide_entry_action(
     keep_name: &mut bool,
 ) -> Result<EntryAction, LocalCopyError> {
     if !context.allows(relative_path, effective_type.is_dir()) {
+        // upstream: flist.c:flist_sort_and_clean() — when -m is active,
+        // directories excluded by non-dir-specific rules are still traversed
+        // so that file-level include rules can rescue their contents.
+        if effective_type.is_dir()
+            && context.prune_empty_dirs_enabled()
+            && context.excluded_dir_by_non_dir_rule(relative_path)
+        {
+            return Ok(EntryAction::CopyDirectory);
+        }
+
         if context.options().delete_excluded_enabled() {
             *keep_name = false;
         }
