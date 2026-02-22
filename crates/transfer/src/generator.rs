@@ -1386,15 +1386,22 @@ impl ItemFlags {
 
     /// Reads optional trailing fields based on flags.
     ///
-    /// Returns (fnamecmp_type, xname) where each is present only if indicated by flags.
+    /// Returns `(fnamecmp_type, xname)` where each is present only if indicated by flags.
+    /// The `fnamecmp_type` is decoded into a typed `FnameCmpType` enum that mirrors
+    /// upstream `FNAMECMP_*` constants from `rsync.h`.
     pub fn read_trailing<R: Read>(
         &self,
         reader: &mut R,
-    ) -> io::Result<(Option<u8>, Option<Vec<u8>>)> {
+    ) -> io::Result<(Option<protocol::FnameCmpType>, Option<Vec<u8>>)> {
         let fnamecmp_type = if self.has_basis_type() {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
-            Some(byte[0])
+            Some(protocol::FnameCmpType::from_wire(byte[0]).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid fnamecmp type: 0x{:02X}", byte[0]),
+                )
+            })?)
         } else {
             None
         };
@@ -2547,13 +2554,13 @@ mod tests {
     #[test]
     fn item_flags_read_trailing_basis_type() {
         // ITEM_BASIS_TYPE_FOLLOWS reads 1 byte
-        let data = [0x42]; // basis type = 0x42
+        let data = [0x42]; // basis type = BasisDir(0x42)
         let mut cursor = Cursor::new(&data[..]);
 
         let flags = ItemFlags::from_raw(0x0800); // ITEM_BASIS_TYPE_FOLLOWS
         let (ftype, xname) = flags.read_trailing(&mut cursor).unwrap();
 
-        assert_eq!(ftype, Some(0x42));
+        assert_eq!(ftype, Some(protocol::FnameCmpType::BasisDir(0x42)));
         assert!(xname.is_none());
     }
 
