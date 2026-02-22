@@ -129,3 +129,30 @@ fn config_stop_at_survives_clone() {
     let cloned = config.clone();
     assert_eq!(cloned.stop_at, config.stop_at);
 }
+#[test]
+fn size_limits_default_to_none() {
+    let cfg = ServerConfig::from_flag_string_and_args(
+        ServerRole::Receiver,
+        String::new(),
+        vec![OsString::from("/p")],
+    )
+    .expect("ok");
+    let mfs = cfg.min_file_size;
+    assert!(mfs.is_none());
+    let mxs = cfg.max_file_size;
+    assert!(mxs.is_none());
+}
+
+#[test]
+fn size_limits_can_be_configured() {
+    let mut cfg = ServerConfig::from_flag_string_and_args(
+        ServerRole::Receiver,
+        String::new(),
+        vec![OsString::from("/p")],
+    )
+    .expect("ok");
+    cfg.min_file_size = Some(100);
+    cfg.max_file_size = Some(1000);
+    assert_eq!(cfg.min_file_size, Some(100));
+    assert_eq!(cfg.max_file_size, Some(1000));
+}

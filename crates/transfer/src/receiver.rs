@@ -890,6 +890,19 @@ impl ReceiverContext {
                 continue;
             }
 
+            // Skip files outside the configured size range.
+            let file_size = file_entry.size();
+            if let Some(min_limit) = self.config.min_file_size {
+                if file_size < min_limit {
+                    continue;
+                }
+            }
+            if let Some(max_limit) = self.config.max_file_size {
+                if file_size > max_limit {
+                    continue;
+                }
+            }
+
             // Output file name in verbose mode (mirrors upstream rsync.c:674)
             if self.config.flags.verbose && self.config.client_mode {
                 eprintln!("{}", relative_path.display());
@@ -1205,6 +1218,12 @@ impl ReceiverContext {
         let mut files_to_transfer: Vec<(usize, &FileEntry)> = Vec::new();
         for (idx, entry) in self.file_list.iter().enumerate() {
             if entry.is_file() {
+                let sz = entry.size();
+                if self.config.min_file_size.is_some_and(|m| sz < m)
+                    || self.config.max_file_size.is_some_and(|m| sz > m)
+                {
+                    continue;
+                }
                 if let Some(cached_meta) = self.quick_check_ok(entry, &setup.dest_dir) {
                     let file_path = setup.dest_dir.join(entry.path());
                     if let Err(e) = apply_metadata_with_cached_stat(
@@ -1319,6 +1338,12 @@ impl ReceiverContext {
         let mut files_to_transfer: Vec<(usize, &FileEntry)> = Vec::new();
         for (idx, entry) in self.file_list.iter().enumerate() {
             if entry.is_file() {
+                let sz = entry.size();
+                if self.config.min_file_size.is_some_and(|m| sz < m)
+                    || self.config.max_file_size.is_some_and(|m| sz > m)
+                {
+                    continue;
+                }
                 if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
                     if self.config.flags.verbose && self.config.client_mode {
                         eprintln!(
@@ -2799,6 +2824,8 @@ mod tests {
             trust_sender: false,
             stop_at: None,
             qsort: false,
+            min_file_size: None,
+            max_file_size: None,
         }
     }
 
@@ -3697,6 +3724,8 @@ mod tests {
             trust_sender: false,
             stop_at: None,
             qsort: false,
+            min_file_size: None,
+            max_file_size: None,
         }
     }
 
