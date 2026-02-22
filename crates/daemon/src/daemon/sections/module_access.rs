@@ -89,7 +89,7 @@ fn perform_module_authentication(
     let response = if let Some(line) = read_trimmed_line(reader)? {
         line
     } else {
-        deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
+        send_auth_failed(reader.get_mut(), module, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     };
 
@@ -100,26 +100,26 @@ fn perform_module_authentication(
     });
 
     if username.is_empty() || digest.is_empty() {
-        deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
+        send_auth_failed(reader.get_mut(), module, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
     let auth_user = match module.get_auth_user(username) {
         Some(user) => user,
         None => {
-            deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
+            send_auth_failed(reader.get_mut(), module, limiter, messages)?;
             return Ok(AuthenticationStatus::Denied);
         }
     };
 
     if !verify_secret_response(module, username, &challenge, digest)? {
-        deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
+        send_auth_failed(reader.get_mut(), module, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
     // Check for explicit deny access level
     if auth_user.access_level == UserAccessLevel::Deny {
-        deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
+        send_auth_failed(reader.get_mut(), module, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
@@ -195,19 +195,42 @@ fn verify_secret_response(
 
 /// Sends an access denied response to the client and closes the session.
 ///
-/// This writes the "@ERROR: access denied" message with the module name
-/// and peer address, then sends the daemon exit marker.
+/// This writes the "@ERROR: access denied" message with the module name,
+/// host, and peer address, then sends the daemon exit marker.
+///
+/// upstream: clientserver.c:733 — `@ERROR: access denied to %s from %s (%s)\n`
 fn deny_module(
     stream: &mut TcpStream,
     module: &ModuleDefinition,
     peer_ip: IpAddr,
+    host: Option<&str>,
     limiter: &mut Option<BandwidthLimiter>,
     messages: &LegacyMessageCache,
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
+    let addr_str = peer_ip.to_string();
+    let host_display = host.unwrap_or(&addr_str);
     let payload = ACCESS_DENIED_PAYLOAD
         .replace("{module}", module_display.as_ref())
-        .replace("{addr}", &peer_ip.to_string());
+        .replace("{host}", host_display)
+        .replace("{addr}", &addr_str);
+    write_limited(stream, limiter, payload.as_bytes())?;
+    write_limited(stream, limiter, b"\n")?;
+    messages.write_exit(stream, limiter)?;
+    stream.flush()
+}
+
+/// Sends an auth failure response to the client and closes the session.
+///
+/// upstream: clientserver.c:762 — `@ERROR: auth failed on module %s\n`
+fn send_auth_failed(
+    stream: &mut TcpStream,
+    module: &ModuleDefinition,
+    limiter: &mut Option<BandwidthLimiter>,
+    messages: &LegacyMessageCache,
+) -> io::Result<()> {
+    let module_display = sanitize_module_identifier(&module.name);
+    let payload = AUTH_FAILED_PAYLOAD.replace("{module}", module_display.as_ref());
     write_limited(stream, limiter, payload.as_bytes())?;
     write_limited(stream, limiter, b"\n")?;
     messages.write_exit(stream, limiter)?;
@@ -728,13 +751,15 @@ fn handle_module_denied(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleDefinition,
 ) -> io::Result<()> {
+    let host = ctx.module_peer_host.or(ctx.session_peer_host);
     if let Some(log) = ctx.log_sink {
-        log_module_denied(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
+        log_module_denied(log, host, ctx.peer_ip, ctx.request);
     }
     deny_module(
         ctx.reader.get_mut(),
         module,
         ctx.peer_ip,
+        host,
         ctx.limiter,
         ctx.messages,
     )

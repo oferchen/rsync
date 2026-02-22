@@ -109,7 +109,15 @@ const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Error payload returned to clients while daemon functionality is incomplete.
 const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailable in this build";
-const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to module '{module}' from {addr}";
+/// Error payload sent when a host is denied access to a module.
+///
+/// upstream: clientserver.c:733 — `@ERROR: access denied to %s from %s (%s)\n`
+/// where args are (name, host, addr).
+const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to {module} from {host} ({addr})";
+/// Error payload sent when authentication fails on a protected module.
+///
+/// upstream: clientserver.c:762 — `@ERROR: auth failed on module %s\n`
+const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {module}";
 /// Error payload returned when a requested module does not exist.
 const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
 /// Error payload returned when a module reaches its connection cap.
