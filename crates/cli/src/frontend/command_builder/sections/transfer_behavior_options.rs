@@ -144,14 +144,14 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("direct-write")
                     .long("direct-write")
-                    .help("Write new files directly to destination, skipping temp+rename (default).")
+                    .help("Write new files directly to destination, skipping temp+rename.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("no-direct-write"),
             )
             .arg(
                 Arg::new("no-direct-write")
                     .long("no-direct-write")
-                    .help("Always use temp file + rename, even for new files.")
+                    .help("Always use temp file + rename, even for new files (default).")
                     .action(ArgAction::SetTrue)
                     .overrides_with("direct-write"),
             )
