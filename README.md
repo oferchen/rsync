@@ -21,7 +21,7 @@ Local and SSH transfers are fully functional with native delta algorithm, metada
 | Local copy | Complete |
 | SSH transfer | Complete |
 | Daemon negotiation & auth | Complete |
-| Daemon file transfer | Delegates to upstream |
+| Daemon file transfer | Semi-complete |
 | Delta algorithm | Complete |
 | Filter rules | Complete |
 | --delete (all timings) | Complete |
