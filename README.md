@@ -12,9 +12,30 @@ Binary name: **`oc-rsync`** — installs alongside system `rsync` without confli
 
 ## Status
 
-**Release:** 0.5.8 (beta)
+**Release:** 0.5.8 (alpha)
 
-Core transfer, delta algorithm, daemon mode, and SSH transport are complete. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
+Local and SSH transfers are fully functional with native delta algorithm, metadata preservation, and all core options. Daemon mode handles negotiation, authentication, and module access control; file transfers in daemon mode currently delegate to upstream rsync while native transfer integration is under development. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
+
+| Area | Status |
+|------|--------|
+| Local copy | Complete |
+| SSH transfer | Complete |
+| Daemon negotiation & auth | Complete |
+| Daemon file transfer | Delegates to upstream |
+| Delta algorithm | Complete |
+| Filter rules | Complete |
+| --delete (all timings) | Complete |
+| --delay-updates | Complete |
+| Sparse files, hardlinks, symlinks | Complete |
+| ACLs (-A), xattrs (-X) | Unix only |
+| --compress (zlib, zstd, lz4) | Complete |
+| Batch files | Local only; remote replay pending |
+| Incremental recursion | Pending |
+| Daemon daemonization (--detach) | Foreground-only by design |
+| Daemon syslog | Pending |
+| SIMD checksums (AVX2, SSE2, NEON) | Complete |
+| Linux, macOS | Full support |
+| Windows | Partial (no ACLs/xattrs) |
 
 ### Performance
 
