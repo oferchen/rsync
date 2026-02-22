@@ -41,44 +41,36 @@ where
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
 
-    // Handle human-readable flag: supports both explicit values (--human-readable=2)
-    // and counting (-h -h). When explicit values are provided, use the highest one.
-    // When no explicit values, count occurrences.
+    // Handle human-readable: bare flags (-h, --human-readable) count occurrences
+    // while explicit values (--human-readable=2) set the level directly.
+    // The sentinel "__h_count__" distinguishes bare flags from explicit values.
+    // upstream: options.c — human_readable starts at 1, each -h increments,
+    // --no-human-readable sets to 0.
     let mut human_readable = None;
     if let Some(values) = matches.remove_many::<OsString>("human-readable") {
         let values: Vec<OsString> = values.collect();
+        let sentinel = OsString::from("__h_count__");
 
-        // Check if any explicit values were provided (will be non-"1" or we need to check count)
-        let mut max_explicit_level = None;
+        let mut bare_flag_count: u32 = 0;
+        let mut last_explicit_level: Option<HumanReadableMode> = None;
+
         for value in &values {
-            let level = parse_human_readable_level(value.as_os_str())?;
-            max_explicit_level = Some(match max_explicit_level {
-                None => level,
-                Some(existing) => {
-                    // Use the higher level
-                    match (existing, level) {
-                        (HumanReadableMode::Disabled, other)
-                        | (other, HumanReadableMode::Disabled) => other,
-                        (HumanReadableMode::Enabled, HumanReadableMode::Combined)
-                        | (HumanReadableMode::Combined, _) => HumanReadableMode::Combined,
-                        _ => existing,
-                    }
-                }
-            });
+            if *value == sentinel {
+                bare_flag_count += 1;
+            } else {
+                last_explicit_level = Some(parse_human_readable_level(value.as_os_str())?);
+            }
         }
 
-        // If we have values, use the counting logic: 1 -> Enabled, 2+ -> Combined
-        if let Some(level) = max_explicit_level {
-            // Special case: if all values are "1" (default_missing_value), count them
-            let all_default = values.iter().all(|v| v == "1");
-            if all_default && values.len() >= 2 {
-                human_readable = Some(HumanReadableMode::Combined);
-            } else if values.len() >= 2 {
-                // Multiple occurrences with explicit values - use the highest
-                human_readable = Some(HumanReadableMode::Combined);
-            } else {
-                human_readable = Some(level);
-            }
+        if let Some(level) = last_explicit_level {
+            // Explicit value takes precedence: --human-readable=2 means level 2
+            human_readable = Some(level);
+        } else {
+            // Bare flags only: count determines level (1 = Enabled, 2+ = Combined)
+            human_readable = Some(match bare_flag_count {
+                1 => HumanReadableMode::Enabled,
+                _ => HumanReadableMode::Combined,
+            });
         }
     }
 
@@ -1107,5 +1099,69 @@ mod tests {
         assert!(result.is_ok());
         let parsed = result.unwrap();
         assert_eq!(parsed.prefer_aes_gcm, None);
+    }
+
+    // --- human-readable level detection tests ---
+
+    #[test]
+    fn human_readable_single_short_h_is_enabled() {
+        let parsed = parse_test_args(["-h", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    }
+
+    #[test]
+    fn human_readable_double_short_hh_is_combined() {
+        let parsed = parse_test_args(["-hh", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    }
+
+    #[test]
+    fn human_readable_long_flag_is_enabled() {
+        let parsed = parse_test_args(["--human-readable", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    }
+
+    #[test]
+    fn human_readable_explicit_level_two() {
+        let parsed = parse_test_args(["--human-readable=2", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    }
+
+    #[test]
+    fn human_readable_explicit_level_zero() {
+        let parsed = parse_test_args(["--human-readable=0", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    }
+
+    #[test]
+    fn human_readable_no_flag_disables() {
+        let parsed = parse_test_args(["--no-human-readable", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    }
+
+    #[test]
+    fn human_readable_not_specified_is_none() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, None);
+    }
+
+    #[test]
+    fn human_readable_explicit_one_twice_stays_enabled() {
+        let parsed = parse_test_args(["--human-readable=1", "--human-readable=1", "src/", "dst/"])
+            .expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    }
+
+    #[test]
+    fn human_readable_two_bare_long_flags_is_combined() {
+        let parsed = parse_test_args(["--human-readable", "--human-readable", "src/", "dst/"])
+            .expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    }
+
+    #[test]
+    fn human_readable_two_separate_short_flags_is_combined() {
+        let parsed = parse_test_args(["-h", "-h", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
     }
 }
