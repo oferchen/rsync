@@ -31,7 +31,6 @@ default = [
     "acl",
     "xattr",
     "iconv",
-    "simd",
     "parallel",
     "copy_file_range",
 ]
@@ -57,10 +56,6 @@ iconv = ["core/iconv"]
 # ============================================================================
 # Performance Optimization Features
 # ============================================================================
-
-# SIMD-accelerated checksums - reserved for future use
-# XXH3 SIMD is now always compiled in (the xxh3 crate has its own runtime detection)
-simd = []
 
 # Parallel processing with rayon - enables multi-core file operations
 # Requirements: None (pure Rust)
