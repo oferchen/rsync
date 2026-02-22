@@ -150,8 +150,9 @@ Use for: Dhat heap analysis
 Always benchmark against upstream rsync for reference:
 
 ```bash
-# Ensure upstream is built
-./scripts/build_upstream.sh
+# Ensure upstream is built (see docs/interop_testing.md for build instructions)
+# Or use the automated interop harness:
+bash tools/ci/run_interop.sh
 
 # Run comparison
 ./scripts/profile_transfer.sh
