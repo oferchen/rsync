@@ -258,7 +258,7 @@ impl Default for ClientConfig {
             append_verify: false,
             force_replacements: false,
             fsync: false,
-            direct_write: true,
+            direct_write: false,
             force_event_collection: false,
             force_fallback: false,
             preserve_devices: false,

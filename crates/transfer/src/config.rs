@@ -92,7 +92,7 @@ pub struct ServerConfig {
     /// files instead of using temp file + rename. This skips renameat and getrandom
     /// syscalls for each new file, improving performance.
     ///
-    /// Default is true. Use `--no-direct-write` to disable.
+    /// Default is false. Use `--direct-write` to enable.
     pub direct_write: bool,
     /// Optional user-specified checksum seed from `--checksum-seed=NUM`.
     ///
@@ -217,7 +217,7 @@ impl ServerConfig {
             iconv: None,
             ignore_errors: false,
             fsync: false,
-            direct_write: true,
+            direct_write: false,
             checksum_seed: None,
             is_daemon_connection: false,
             checksum_choice: None,

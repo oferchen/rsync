@@ -132,8 +132,8 @@ mod tests {
 
     // Tests for direct_write
     #[test]
-    fn direct_write_default_is_true() {
+    fn direct_write_default_is_false() {
         let config = default_config();
-        assert!(config.direct_write());
+        assert!(!config.direct_write());
     }
 }
