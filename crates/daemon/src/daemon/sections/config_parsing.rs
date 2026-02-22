@@ -65,6 +65,7 @@ fn parse_config_modules_inner(
     let mut global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
     let mut global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut global_use_chroot: Option<(bool, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -108,11 +109,13 @@ fn parse_config_modules_inner(
                         global_incoming_chmod.as_ref().map(|(value, _)| value.as_str());
                     let default_outgoing =
                         global_outgoing_chmod.as_ref().map(|(value, _)| value.as_str());
+                    let default_use_chroot = global_use_chroot.as_ref().map(|(v, _)| *v);
                     modules.push(builder.finish(
                         path,
                         default_secrets,
                         default_incoming,
                         default_outgoing,
+                        default_use_chroot,
                     )?);
                 }
 
@@ -835,6 +838,37 @@ fn parse_config_modules_inner(
                         lock_file = Some((resolved, origin));
                     }
                 }
+                // upstream: loadparm.c — use chroot is valid in the global section as a
+                // default that applies to all modules which do not override it explicitly.
+                "use chroot" => {
+                    let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid boolean value '{value}' for 'use chroot'"),
+                        )
+                    })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &global_use_chroot {
+                        if *existing != parsed {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'use chroot' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        global_use_chroot = Some((parsed, origin));
+                    }
+                }
                 _ => {
                     eprintln!(
                         "warning: unknown global directive '{}' in '{}' line {}",
@@ -852,11 +886,13 @@ fn parse_config_modules_inner(
                 global_incoming_chmod.as_ref().map(|(value, _)| value.as_str());
             let default_outgoing =
                 global_outgoing_chmod.as_ref().map(|(value, _)| value.as_str());
+            let default_use_chroot = global_use_chroot.as_ref().map(|(v, _)| *v);
             modules.push(builder.finish(
                 path,
                 default_secrets,
                 default_incoming,
                 default_outgoing,
+                default_use_chroot,
             )?);
         }
 
@@ -2036,5 +2072,74 @@ mod config_parsing_tests {
         assert!(result.modules[2].read_only); // default
         assert!(!result.modules[2].write_only); // default
         assert!(!result.modules[2].listable);
+    }
+
+    #[test]
+    fn global_use_chroot_false_applies_to_all_modules() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path1 = dir.path().join("mod1");
+        let path2 = dir.path().join("mod2");
+        fs::create_dir(&path1).expect("create dir 1");
+        fs::create_dir(&path2).expect("create dir 2");
+
+        let config = format!(
+            "use chroot = false\n\
+             \n\
+             [mod1]\n\
+             path = {}\n\
+             \n\
+             [mod2]\n\
+             path = {}\n",
+            path1.display(),
+            path2.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+        assert!(!result.modules[0].use_chroot);
+        assert!(!result.modules[1].use_chroot);
+    }
+
+    #[test]
+    fn global_use_chroot_false_can_be_overridden_per_module() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path1 = dir.path().join("inherits");
+        let path2 = dir.path().join("overrides");
+        fs::create_dir(&path1).expect("create dir 1");
+        fs::create_dir(&path2).expect("create dir 2");
+
+        let config = format!(
+            "use chroot = false\n\
+             \n\
+             [inherits]\n\
+             path = {}\n\
+             \n\
+             [overrides]\n\
+             path = {}\n\
+             use chroot = yes\n",
+            path1.display(),
+            path2.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+        assert!(!result.modules[0].use_chroot); // inherits global false
+        assert!(result.modules[1].use_chroot);  // overridden to true per-module
+    }
+
+    #[test]
+    fn global_use_chroot_default_true_when_absent() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        // No global 'use chroot' directive — default is true
+        assert!(result.modules[0].use_chroot);
     }
 }
