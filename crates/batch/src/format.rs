@@ -13,7 +13,7 @@ pub struct BatchHeader {
     /// Protocol version (i32).
     pub protocol_version: i32,
     /// Compatibility flags (varint for protocol >= 30, None otherwise).
-    pub compat_flags: Option<u64>,
+    pub compat_flags: Option<i32>,
     /// Checksum seed for this transfer (i32).
     pub checksum_seed: i32,
     /// Stream flags bitmap (i32).
@@ -247,45 +247,27 @@ fn read_i32<R: Read>(reader: &mut R) -> io::Result<i32> {
     Ok(i32::from_le_bytes(buf))
 }
 
-/// Write a variable-length integer (varint) matching upstream rsync's format.
-fn write_varint<W: Write>(writer: &mut W, mut value: u64) -> io::Result<()> {
-    // Upstream rsync uses a varint format where:
-    // - Values < 0x80 use 1 byte
-    // - Larger values use multiple bytes with continuation bit
-    while value >= 0x80 {
-        writer.write_all(&[(value as u8) | 0x80])?;
-        value >>= 7;
-    }
-    writer.write_all(&[value as u8])
+/// Write a variable-length integer using upstream rsync's varint format.
+///
+/// Delegates to [`protocol::write_varint`] which mirrors `write_varint()` from
+/// upstream `io.c`. The encoding uses high bits of the first byte as a length
+/// tag, not LEB128 continuation bits.
+fn write_varint<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
+    protocol::write_varint(writer, value)
 }
 
-/// Read a variable-length integer (varint) matching upstream rsync's format.
-fn read_varint<R: Read>(reader: &mut R) -> io::Result<u64> {
-    let mut result = 0u64;
-    let mut shift = 0;
-    loop {
-        let mut buf = [0u8; 1];
-        reader.read_exact(&mut buf)?;
-        let byte = buf[0];
-        result |= ((byte & 0x7F) as u64) << shift;
-        if (byte & 0x80) == 0 {
-            break;
-        }
-        shift += 7;
-        if shift >= 64 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "varint overflow",
-            ));
-        }
-    }
-    Ok(result)
+/// Read a variable-length integer using upstream rsync's varint format.
+///
+/// Delegates to [`protocol::read_varint`] which mirrors `read_varint()` from
+/// upstream `io.c`.
+fn read_varint<R: Read>(reader: &mut R) -> io::Result<i32> {
+    protocol::read_varint(reader)
 }
 
 /// Write a variable-length string (length prefix + bytes).
 fn write_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     let bytes = s.as_bytes();
-    write_varint(writer, bytes.len() as u64)?;
+    write_varint(writer, bytes.len() as i32)?;
     writer.write_all(bytes)
 }
 
@@ -293,7 +275,6 @@ fn write_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
 fn read_string<R: Read>(reader: &mut R) -> io::Result<String> {
     let len = read_varint(reader)? as usize;
     if len > 1024 * 1024 {
-        // Sanity check: reject strings > 1 MB
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "string too long",
@@ -376,19 +357,18 @@ impl FileEntry {
         // Write mtime
         write_i32(writer, self.mtime as i32)?;
 
-        // Write optional uid/gid (varint for space efficiency)
         if let Some(uid) = self.uid {
-            write_varint(writer, 1)?; // Flag: uid present
+            write_varint(writer, 1)?;
             write_u32(writer, uid)?;
         } else {
-            write_varint(writer, 0)?; // Flag: uid not present
+            write_varint(writer, 0)?;
         }
 
         if let Some(gid) = self.gid {
-            write_varint(writer, 1)?; // Flag: gid present
+            write_varint(writer, 1)?;
             write_u32(writer, gid)?;
         } else {
-            write_varint(writer, 0)?; // Flag: gid not present
+            write_varint(writer, 0)?;
         }
 
         Ok(())
@@ -452,8 +432,8 @@ mod tests {
 
     #[test]
     fn test_write_read_varint() {
-        let values = [0, 1, 127, 128, 255, 256, 16383, 16384, u64::MAX];
-        for &val in &values {
+        let values: &[i32] = &[0, 1, 127, 128, 255, 256, 16383, 16384, i32::MAX];
+        for &val in values {
             let mut buf = Vec::new();
             write_varint(&mut buf, val).unwrap();
             let mut cursor = Cursor::new(buf);
@@ -647,9 +627,8 @@ mod tests {
 
     #[test]
     fn test_varint_edge_cases() {
-        // Test boundary values for varint encoding
-        let values = [0u64, 127, 128, 16383, 16384, 2097151, 2097152];
-        for &val in &values {
+        let values: &[i32] = &[0, 127, 128, 16383, 16384, 2097151, 2097152];
+        for &val in values {
             let mut buf = Vec::new();
             write_varint(&mut buf, val).unwrap();
             let mut cursor = Cursor::new(buf);
