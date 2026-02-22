@@ -148,6 +148,20 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("direct-write"),
             )
             .arg(
+                Arg::new("io-uring")
+                    .long("io-uring")
+                    .help("Force io_uring for file I/O (error if unavailable).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-io-uring"),
+            )
+            .arg(
+                Arg::new("no-io-uring")
+                    .long("no-io-uring")
+                    .help("Disable io_uring; always use standard buffered I/O.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("io-uring"),
+            )
+            .arg(
                 Arg::new("inplace")
                     .long("inplace")
                     .help("Write updated data directly to destination files.")

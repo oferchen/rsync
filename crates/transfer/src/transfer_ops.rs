@@ -90,6 +90,8 @@ pub struct RequestConfig<'a> {
     ///
     /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` — open device for writing
     pub write_devices: bool,
+    /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
+    pub io_uring_policy: fast_io::IoUringPolicy,
 }
 
 /// Sends a file transfer request to the sender.
@@ -269,7 +271,7 @@ pub fn process_file_response<R: Read>(
     // - Medium files (64KB - 1MB): 64KB buffer for balanced performance
     // - Large files (> 1MB): 256KB buffer to maximize throughput
     let writer_capacity = adaptive_writer_capacity(target_size);
-    let mut output = fast_io::writer_from_file(file, writer_capacity);
+    let mut output = fast_io::writer_from_file(file, writer_capacity, ctx.config.io_uring_policy)?;
     let mut total_bytes: u64 = 0;
 
     // Sparse file support
@@ -771,6 +773,7 @@ mod tests {
             do_fsync: false,
             direct_write: false,
             write_devices: false,
+            io_uring_policy: fast_io::IoUringPolicy::Auto,
         };
         let debug_str = format!("{config:?}");
         assert!(debug_str.contains("RequestConfig"));

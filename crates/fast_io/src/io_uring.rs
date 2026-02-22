@@ -767,32 +767,61 @@ pub fn read_file<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
     reader.read_all()
 }
 
-/// Creates a writer from an existing file handle, using io_uring when available.
+/// Creates a writer from an existing file handle, respecting the io_uring policy.
 ///
 /// This is the primary integration point for hot paths that open files
 /// themselves (e.g., with `create_new` for atomic creation) but want to
 /// leverage io_uring for the actual writes.
 ///
-/// Falls back to standard buffered I/O when io_uring is unavailable.
-pub fn writer_from_file(file: File, buffer_capacity: usize) -> IoUringOrStdWriter {
-    if is_io_uring_available() {
-        // Try creating the ring before consuming the file handle, so we
-        // can fall back to standard I/O if ring creation fails.
-        if let Ok(ring) = RawIoUring::new(IoUringConfig::default().sq_entries) {
-            return IoUringOrStdWriter::IoUring(IoUringWriter {
+/// The `policy` parameter controls io_uring usage:
+/// - `Auto`: use io_uring when available, fall back to standard I/O
+/// - `Enabled`: require io_uring, return error if unavailable
+/// - `Disabled`: always use standard buffered I/O
+pub fn writer_from_file(
+    file: File,
+    buffer_capacity: usize,
+    policy: crate::IoUringPolicy,
+) -> io::Result<IoUringOrStdWriter> {
+    match policy {
+        crate::IoUringPolicy::Auto => {
+            if is_io_uring_available() {
+                if let Ok(ring) = RawIoUring::new(IoUringConfig::default().sq_entries) {
+                    return Ok(IoUringOrStdWriter::IoUring(IoUringWriter {
+                        ring,
+                        file,
+                        bytes_written: 0,
+                        buffer: vec![0u8; buffer_capacity],
+                        buffer_pos: 0,
+                        buffer_size: buffer_capacity,
+                    }));
+                }
+            }
+            Ok(IoUringOrStdWriter::Std(
+                crate::traits::StdFileWriter::from_file_with_capacity(file, buffer_capacity),
+            ))
+        }
+        crate::IoUringPolicy::Enabled => {
+            if !is_io_uring_available() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "io_uring requested via --io-uring but not available on this system",
+                ));
+            }
+            let ring = RawIoUring::new(IoUringConfig::default().sq_entries)
+                .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
+            Ok(IoUringOrStdWriter::IoUring(IoUringWriter {
                 ring,
                 file,
                 bytes_written: 0,
                 buffer: vec![0u8; buffer_capacity],
                 buffer_pos: 0,
                 buffer_size: buffer_capacity,
-            });
+            }))
         }
+        crate::IoUringPolicy::Disabled => Ok(IoUringOrStdWriter::Std(
+            crate::traits::StdFileWriter::from_file_with_capacity(file, buffer_capacity),
+        )),
     }
-    IoUringOrStdWriter::Std(crate::traits::StdFileWriter::from_file_with_capacity(
-        file,
-        buffer_capacity,
-    ))
 }
 
 /// Writes data to a file using io_uring if available, falling back to standard I/O.

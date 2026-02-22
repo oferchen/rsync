@@ -1465,6 +1465,7 @@ impl ReceiverContext {
             do_fsync: self.config.fsync,
             direct_write: self.config.direct_write,
             write_devices: self.config.write_devices,
+            io_uring_policy: self.config.io_uring_policy,
         };
 
         let mut pipeline = PipelineState::new(pipeline_config);
@@ -1601,6 +1602,7 @@ impl ReceiverContext {
             do_fsync: self.config.fsync,
             direct_write: self.config.direct_write,
             write_devices: self.config.write_devices,
+            io_uring_policy: self.config.io_uring_policy,
         };
 
         let mut pipeline = PipelineState::new(pipeline_config);
@@ -2776,6 +2778,7 @@ mod tests {
             ignore_errors: false,
             fsync: false,
             direct_write: false,
+            io_uring_policy: fast_io::IoUringPolicy::Auto,
             checksum_seed: None,
             is_daemon_connection: false,
             checksum_choice: None,
@@ -3670,6 +3673,7 @@ mod tests {
             ignore_errors: false,
             fsync: false,
             direct_write: false,
+            io_uring_policy: fast_io::IoUringPolicy::Auto,
             checksum_seed: None,
             is_daemon_connection: false,
             checksum_choice: None,

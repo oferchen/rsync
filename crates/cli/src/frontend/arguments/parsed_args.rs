@@ -1046,6 +1046,18 @@ pub struct ParsedArgs {
     /// Default: `false`
     pub direct_write: bool,
 
+    /// Policy controlling io_uring usage for file I/O.
+    ///
+    /// Controls whether io_uring is used for file writes:
+    /// - `Auto`: auto-detect at runtime (default)
+    /// - `Enabled`: require io_uring, error if unavailable (`--io-uring`)
+    /// - `Disabled`: always use standard I/O (`--no-io-uring`)
+    ///
+    /// Corresponds to: `--io-uring`, `--no-io-uring`
+    ///
+    /// Default: `IoUringPolicy::Auto`
+    pub io_uring_policy: fast_io::IoUringPolicy,
+
     /// Delay updates until the end of the transfer.
     ///
     /// Uses temporary files and renames them after all transfers complete.
