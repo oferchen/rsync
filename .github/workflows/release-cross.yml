@@ -221,6 +221,8 @@ jobs:
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           PKG_CONFIG_ALLOW_CROSS: "1"
+          # Added PKG_CONFIG_SYSROOT_DIR for arm64 to prevent pkg-config from mixing amd64/arm64 library search paths during cross-compilation.
+          PKG_CONFIG_SYSROOT_DIR: ${{ matrix.arch == 'arm64' && '/' || '' }}          
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
         run: |
           set -euo pipefail
@@ -329,6 +331,7 @@ jobs:
           key: ${{ matrix.arch }}
 
       - name: Build static musl binary (pure Rust)
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -341,6 +344,7 @@ jobs:
             --target ${{ matrix.target }}
 
       - name: Build static musl binary (OpenSSL vendored)
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -359,6 +363,7 @@ jobs:
           cp "/tmp/oc-rsync-pure" "target/${{ matrix.target }}/dist/oc-rsync"
 
       - name: Create tarballs
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -512,7 +517,7 @@ jobs:
   # ===========================================================================
   macos:
     name: macos-${{ matrix.arch }}-${{ matrix.toolchain }}
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runner }}
     needs: validate-version
     timeout-minutes: 30
 
@@ -524,8 +529,10 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-apple-darwin
+            runner: macos-13
           - arch: aarch64
             target: aarch64-apple-darwin
+            runner: macos-latest
 
     steps:
       - name: Checkout
@@ -544,15 +551,18 @@ jobs:
           key: ${{ matrix.arch }}
 
       - name: Install OpenSSL
+        shell: bash
         run: |
           brew update
           brew install openssl@3 || true
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
       - name: Build tarball
+        shell: bash
         run: cargo xtask package --tarball --tarball-target ${{ matrix.target }} --profile dist
 
       - name: Rename tarball with toolchain
+        shell: bash
         run: |
           set -euo pipefail
           VERSION="${{ needs.validate-version.outputs.version }}"
@@ -717,6 +727,7 @@ jobs:
           merge-multiple: true
 
       - name: List artifacts
+        shell: bash
         run: |
           echo "=== All downloaded artifacts ==="
           find dist -type f | sort
@@ -735,7 +746,8 @@ jobs:
           EXPECTED_MUSL=12    # 2 arch × 3 toolchains × 2 variants (pure + openssl)
           EXPECTED_APK=2      # 2 arch (x86_64, aarch64) × 1 (stable only)
           EXPECTED_MACOS=6    # 2 arch (x86_64, aarch64) × 3 toolchains
-          EXPECTED_WINDOWS=3  # 1 arch (x86_64) × 3 toolchains
+          EXPECTED_WIN_TGZ=3  # 1 arch (x86_64) x 3 toolchains
+          EXPECTED_WIN_ZIP=3  # 1 arch (x86_64) x 3 toolchains
 
           # Count actual artifacts (stable has no suffix, beta/nightly have suffix)
           DEB_COUNT=$(find dist -name "*.deb" | wc -l)
@@ -743,58 +755,36 @@ jobs:
           MUSL_COUNT=$(find dist -name "*-musl*.tar.gz" | wc -l)
           APK_COUNT=$(find dist -name "*.apk" | wc -l)
           MACOS_COUNT=$(find dist -name "*darwin*.tar.gz" | wc -l)
-          WINDOWS_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
+          # WINDOWS_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
+          WIN_TGZ_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
+          WIN_ZIP_COUNT=$(find dist -name "*windows*.zip" | wc -l)
 
           ERRORS=0
 
-          if [ "$DEB_COUNT" -lt "$EXPECTED_DEB" ]; then
-            echo "::error::Expected $EXPECTED_DEB .deb files, found $DEB_COUNT"
-            ERRORS=$((ERRORS + 1))
-          else
-            echo "✓ Found $DEB_COUNT .deb packages (expected $EXPECTED_DEB)"
-          fi
+          check() {
+            local label="$1" actual="$2" expected="$3"
+            if [ "${actual}" -lt "${expected}" ]; then
+              echo "::error::Expected ${expected} ${label}, found ${actual}"
+              ERRORS=$((ERRORS + 1))
+            else
+              echo "✓ Found ${actual} ${label} (expected ${expected})"
+            fi
+          }
 
-          if [ "$RPM_COUNT" -lt "$EXPECTED_RPM" ]; then
-            echo "::error::Expected $EXPECTED_RPM .rpm files, found $RPM_COUNT"
-            ERRORS=$((ERRORS + 1))
-          else
-            echo "✓ Found $RPM_COUNT .rpm packages (expected $EXPECTED_RPM)"
-          fi
-
-          if [ "$MUSL_COUNT" -lt "$EXPECTED_MUSL" ]; then
-            echo "::error::Expected $EXPECTED_MUSL musl tarballs, found $MUSL_COUNT"
-            ERRORS=$((ERRORS + 1))
-          else
-            echo "✓ Found $MUSL_COUNT musl static tarballs (expected $EXPECTED_MUSL)"
-          fi
-
-          if [ "$APK_COUNT" -lt "$EXPECTED_APK" ]; then
-            echo "::error::Expected $EXPECTED_APK .apk files, found $APK_COUNT"
-            ERRORS=$((ERRORS + 1))
-          else
-            echo "✓ Found $APK_COUNT Alpine .apk packages (expected $EXPECTED_APK)"
-          fi
-
-          if [ "$MACOS_COUNT" -lt "$EXPECTED_MACOS" ]; then
-            echo "::error::Expected $EXPECTED_MACOS macOS tarballs, found $MACOS_COUNT"
-            ERRORS=$((ERRORS + 1))
-          else
-            echo "✓ Found $MACOS_COUNT macOS tarballs (expected $EXPECTED_MACOS)"
-          fi
-
-          if [ "$WINDOWS_COUNT" -lt "$EXPECTED_WINDOWS" ]; then
-            echo "::error::Expected $EXPECTED_WINDOWS Windows tarballs, found $WINDOWS_COUNT"
-            ERRORS=$((ERRORS + 1))
-          else
-            echo "✓ Found $WINDOWS_COUNT Windows tarballs (expected $EXPECTED_WINDOWS)"
-          fi
+          check ".deb packages"        "${DEB_COUNT}"     "${EXPECTED_DEB}"
+          check ".rpm packages"        "${RPM_COUNT}"     "${EXPECTED_RPM}"
+          check "musl tarballs"        "${MUSL_COUNT}"    "${EXPECTED_MUSL}"
+          check "Alpine .apk packages" "${APK_COUNT}"     "${EXPECTED_APK}"
+          check "macOS tarballs"       "${MACOS_COUNT}"   "${EXPECTED_MACOS}"
+          check "Windows tarballs"     "${WIN_TGZ_COUNT}" "${EXPECTED_WIN_TGZ}"
+          check "Windows zips"         "${WIN_ZIP_COUNT}" "${EXPECTED_WIN_ZIP}"
 
           if [ $ERRORS -gt 0 ]; then
             echo "::error::$ERRORS validation checks failed!"
             exit 1
           fi
 
-          echo "=== All required artifacts verified (35 min: 6 deb + 6 rpm + 12 musl + 2 apk + 6 macos + 3 windows) ==="
+          echo "=== All required artifacts verified ==="
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
@@ -868,7 +858,7 @@ jobs:
               PATTERN_SUFFIX="-${TOOLCHAIN}"
               FORMULA_FILE="Formula/oc-rsync@${TOOLCHAIN}.rb"
               # Ruby class names: OcRsyncAT<toolchain> (capitalize first letter)
-              TC_CAP="$(echo "${TOOLCHAIN}" | sed 's/./\U&/')"
+              TC_CAP="$(printf '%s' "${TOOLCHAIN}" | cut -c1 | tr '[:lower:]' '[:upper:]')$(printf '%s' "${TOOLCHAIN}" | cut -c2-)"
               CLASS_NAME="OcRsyncAT${TC_CAP}"
               DESC_SUFFIX=" (${TOOLCHAIN} toolchain)"
             fi
