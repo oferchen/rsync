@@ -178,6 +178,13 @@ fn generate_auth_challenge(peer_ip: IpAddr) -> String {
 /// using the stored secret and challenge, then compares with the client's
 /// response.
 ///
+/// When the module has `strict_modes` enabled (the default), the secrets file
+/// permissions are validated before reading: the file must not be accessible by
+/// "other" users.
+///
+/// upstream: authenticate.c — `check_secret()` enforces `lp_strict_modes(module)`
+/// by rejecting files with `(st.st_mode & 06) != 0`.
+///
 /// The `protocol_version` is forwarded to `verify_daemon_auth_response` to
 /// select the correct digest for ambiguous MD4/MD5 responses.
 ///
@@ -193,6 +200,10 @@ fn verify_secret_response(
         Some(path) => path,
         None => return Ok(false),
     };
+
+    if module.strict_modes {
+        check_secrets_file_permissions(secrets_path)?;
+    }
 
     let contents = fs::read_to_string(secrets_path)?;
 
@@ -216,6 +227,55 @@ fn verify_secret_response(
     }
 
     Ok(false)
+}
+
+/// Checks that a secrets file has appropriately restrictive permissions.
+///
+/// On Unix, verifies the file is not other-accessible (`mode & 0o006`).
+/// When the daemon runs as root, also verifies the file is owned by root.
+///
+/// upstream: authenticate.c — `(st.st_mode & 06) != 0` rejects other-accessible
+/// files; `st.st_uid != ROOT_UID` rejects non-root-owned files when running as root.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
+    let metadata = fs::metadata(path)?;
+    let mode = metadata.permissions().mode();
+
+    // upstream: authenticate.c — reject if other-readable or other-writable
+    if (mode & 0o006) != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "secrets file must not be other-accessible (see strict modes option): '{}'",
+                path.display()
+            ),
+        ));
+    }
+
+    // upstream: authenticate.c — when running as root, secrets must be owned by root
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: `getuid` is a trivial POSIX call with no arguments and no side effects.
+        let my_uid = unsafe { libc::getuid() };
+        if my_uid == 0 && metadata.uid() != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "secrets file must be owned by root when running as root (see strict modes option): '{}'",
+                    path.display()
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// No-op permission check on non-Unix platforms (matching upstream rsync).
+#[cfg(not(unix))]
+fn check_secrets_file_permissions(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Sends an access denied response to the client and closes the session.
@@ -1622,5 +1682,125 @@ mod module_access_tests {
         let line = format_module_listing_line("mod", "comment");
         assert!(line.ends_with('\n'), "line must end with newline");
         assert!(!line.ends_with("\n\n"), "line must not have double newline");
+    }
+
+    // --- check_secrets_file_permissions tests (Unix only) ---
+
+    #[cfg(unix)]
+    #[test]
+    fn check_permissions_accepts_owner_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "alice:pass\n").expect("write");
+        fs::set_permissions(&secrets, PermissionsExt::from_mode(0o600)).expect("chmod");
+
+        assert!(check_secrets_file_permissions(&secrets).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_permissions_rejects_other_readable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "alice:pass\n").expect("write");
+        fs::set_permissions(&secrets, PermissionsExt::from_mode(0o604)).expect("chmod");
+
+        let err = check_secrets_file_permissions(&secrets).expect_err("should reject");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains("must not be other-accessible"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_permissions_rejects_other_writable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "alice:pass\n").expect("write");
+        fs::set_permissions(&secrets, PermissionsExt::from_mode(0o602)).expect("chmod");
+
+        let err = check_secrets_file_permissions(&secrets).expect_err("should reject");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_permissions_allows_group_readable_without_other() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "alice:pass\n").expect("write");
+        // upstream: authenticate.c only checks `(mode & 06)` — group bits are allowed
+        fs::set_permissions(&secrets, PermissionsExt::from_mode(0o640)).expect("chmod");
+
+        assert!(check_secrets_file_permissions(&secrets).is_ok());
+    }
+
+    // --- verify_secret_response strict_modes enforcement tests ---
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_secret_rejects_other_accessible_when_strict_modes_enabled() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "alice:password123\n").expect("write");
+        fs::set_permissions(&secrets, PermissionsExt::from_mode(0o644)).expect("chmod");
+
+        let module = ModuleDefinition {
+            secrets_file: Some(secrets),
+            strict_modes: true,
+            ..Default::default()
+        };
+
+        let err = verify_secret_response(&module, "alice", "challenge", "response", None)
+            .expect_err("strict modes should reject other-accessible secrets");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_secret_accepts_other_accessible_when_strict_modes_disabled() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "alice:password123\n").expect("write");
+        fs::set_permissions(&secrets, PermissionsExt::from_mode(0o644)).expect("chmod");
+
+        let module = ModuleDefinition {
+            secrets_file: Some(secrets),
+            strict_modes: false,
+            ..Default::default()
+        };
+
+        // With strict_modes disabled, the file is read even though it's world-readable.
+        // Authentication will fail (wrong response), but no permission error is returned.
+        let result = verify_secret_response(&module, "alice", "challenge", "response", None)
+            .expect("should not error on permissions");
+        assert!(!result, "auth should fail due to wrong response, not permissions");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_secret_succeeds_with_strict_modes_and_correct_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(&secrets, "alice:password123\n").expect("write");
+        fs::set_permissions(&secrets, PermissionsExt::from_mode(0o600)).expect("chmod");
+
+        let module = ModuleDefinition {
+            secrets_file: Some(secrets),
+            strict_modes: true,
+            ..Default::default()
+        };
+
+        // Permissions are fine, so the file is read. Auth will fail (wrong response)
+        // but no permission error is returned.
+        let result = verify_secret_response(&module, "alice", "challenge", "response", None)
+            .expect("should not error on permissions");
+        assert!(!result, "auth should fail due to wrong response");
     }
 }
