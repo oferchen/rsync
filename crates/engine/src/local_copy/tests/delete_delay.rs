@@ -365,9 +365,7 @@ fn delete_delay_processes_deletions_even_after_successful_transfer() {
 }
 
 /// Tests that delete_delay properly batches multiple directory deletions.
-/// TODO: Fix - may need recursive(true) option for proper directory handling.
 #[test]
-#[ignore = "delete_delay batched directory deletions: needs recursive option or implementation fix"]
 fn delete_delay_batches_multiple_directory_deletions() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
