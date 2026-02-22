@@ -7,7 +7,7 @@
 //   keeps non-Unix builds clean.
 
 use crate::error::MetadataError;
-use crate::options::MetadataOptions;
+use crate::options::{AttrsFlags, MetadataOptions};
 use filetime::{FileTime, set_file_times, set_symlink_file_times};
 use std::fs;
 #[cfg(unix)]
@@ -650,19 +650,64 @@ pub fn apply_metadata_with_cached_stat(
     options: &MetadataOptions,
     cached_meta: Option<fs::Metadata>,
 ) -> Result<(), MetadataError> {
+    apply_metadata_with_attrs_flags(
+        destination,
+        entry,
+        options,
+        cached_meta,
+        AttrsFlags::empty(),
+    )
+}
+
+/// Applies metadata from a [`protocol::flist::FileEntry`] with explicit
+/// [`AttrsFlags`] controlling which time attributes to skip.
+///
+/// This is the full-featured variant that mirrors upstream `set_file_attrs()`
+/// in `rsync.c`. Callers pass [`AttrsFlags`] to selectively skip mtime, atime,
+/// or crtime application — for example when directory/link times should be
+/// omitted, or after a transfer where `ATTRS_ACCURATE_TIME` requests exact
+/// comparison instead of `modify_window` tolerance.
+///
+/// # Upstream Reference
+///
+/// - `rsync.c:574-625` - `set_file_attrs()` uses `flags` parameter to govern
+///   which timestamps are applied and whether the comparison is exact.
+/// - `rsync.c:585` - `flags |= ATTRS_SKIP_MTIME | ATTRS_SKIP_ATIME | ATTRS_SKIP_CRTIME`
+///   when `omit_dir_times` or `omit_link_times` is active.
+/// - `generator.c:1814` - Passes `maybe_ATTRS_REPORT | maybe_ATTRS_ACCURATE_TIME`
+///   on quick-check match paths.
+pub fn apply_metadata_with_attrs_flags(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: Option<fs::Metadata>,
+    attrs_flags: AttrsFlags,
+) -> Result<(), MetadataError> {
     // Step 1: Apply ownership (if requested)
     apply_ownership_from_entry(destination, entry, options, cached_meta.as_ref())?;
 
     // Step 2: Apply permissions (if requested)
     apply_permissions_from_entry(destination, entry, options, cached_meta.as_ref())?;
 
-    // Step 3: Apply timestamps (if requested)
-    if options.times() {
+    // Step 3: Apply mtime (if requested and not skipped by ATTRS_SKIP_MTIME)
+    // upstream: rsync.c:597 — `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
+    if options.times() && !attrs_flags.skip_mtime() {
         apply_timestamps_from_entry(destination, entry, options, cached_meta.as_ref())?;
     }
 
-    // Step 4: Apply creation time (if requested)
-    if options.crtimes() && entry.crtime() != 0 {
+    // Step 4: Apply atime separately if only SKIP_MTIME is active but not SKIP_ATIME.
+    // When both times() and atimes() are set and SKIP_MTIME is active but not SKIP_ATIME,
+    // we still need to apply atime. The `apply_timestamps_from_entry` handles both mtime
+    // and atime together, so when SKIP_MTIME is set but atimes should still be preserved,
+    // we apply atime-only here.
+    // upstream: rsync.c:604 — `if (!(flags & ATTRS_SKIP_ATIME))`
+    if options.atimes() && attrs_flags.skip_mtime() && !attrs_flags.skip_atime() {
+        apply_atime_only_from_entry(destination, entry, cached_meta.as_ref())?;
+    }
+
+    // Step 5: Apply creation time (if requested and not skipped by ATTRS_SKIP_CRTIME)
+    // upstream: rsync.c:615 — `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
+    if options.crtimes() && entry.crtime() != 0 && !attrs_flags.skip_crtime() {
         apply_crtime_from_entry(destination, entry)?;
     }
 
@@ -946,6 +991,53 @@ fn apply_timestamps_from_entry(
     if needs_utime {
         set_file_times(destination, atime, mtime)
             .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
+    }
+
+    Ok(())
+}
+
+/// Applies only the access time from a [`protocol::flist::FileEntry`], preserving the
+/// destination's existing mtime.
+///
+/// Used when `ATTRS_SKIP_MTIME` is active but `ATTRS_SKIP_ATIME` is not, meaning
+/// the caller wants to update the access time without touching the modification time.
+///
+/// # Upstream Reference
+///
+/// - `rsync.c:604-612` - atime is applied independently of mtime when
+///   `!(flags & ATTRS_SKIP_ATIME)` but `(flags & ATTRS_SKIP_MTIME)`.
+fn apply_atime_only_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    cached_meta: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    let atime = if entry.atime() != 0 {
+        FileTime::from_unix_time(entry.atime(), 0)
+    } else {
+        return Ok(());
+    };
+
+    let needs_update = match cached_meta {
+        Some(meta) => {
+            let current_atime = FileTime::from_last_access_time(meta);
+            current_atime != atime
+        }
+        None => true,
+    };
+
+    if needs_update {
+        // Preserve the existing mtime while updating only atime.
+        let mtime = match cached_meta {
+            Some(meta) => FileTime::from_last_modification_time(meta),
+            None => {
+                let meta = fs::metadata(destination).map_err(|error| {
+                    MetadataError::new("read current timestamps", destination, error)
+                })?;
+                FileTime::from_last_modification_time(&meta)
+            }
+        };
+        set_file_times(destination, atime, mtime)
+            .map_err(|error| MetadataError::new("preserve access time", destination, error))?;
     }
 
     Ok(())
@@ -1799,5 +1891,210 @@ mod tests {
         // Note: Some filesystems may not support nanosecond precision,
         // so we check that we at least preserved the second (0)
         assert_eq!(dest_mtime.seconds(), 0, "seconds should be zero");
+    }
+
+    // ==================== apply_metadata_with_attrs_flags tests ====================
+
+    #[test]
+    fn attrs_flags_empty_applies_mtime_normally() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("attrs-empty.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let mut entry = FileEntry::new_file("attrs-empty.txt".into(), 4, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let opts = MetadataOptions::new().preserve_times(true);
+        apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::empty())
+            .expect("apply with empty flags");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    }
+
+    #[test]
+    fn attrs_flags_skip_mtime_prevents_mtime_application() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("attrs-skip-mtime.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        // Record the original mtime before we try to apply the entry.
+        let original_mtime =
+            FileTime::from_last_modification_time(&fs::metadata(&dest).expect("meta"));
+
+        let mut entry = FileEntry::new_file("attrs-skip-mtime.txt".into(), 4, 0o644);
+        // Set a very different mtime that would be obvious if applied.
+        entry.set_mtime(1_600_000_000, 0);
+
+        let opts = MetadataOptions::new().preserve_times(true);
+        apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::SKIP_MTIME)
+            .expect("apply with SKIP_MTIME");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        // mtime should NOT have been changed to 1_600_000_000
+        assert_eq!(dest_mtime, original_mtime);
+    }
+
+    #[test]
+    fn attrs_flags_skip_crtime_prevents_crtime_application() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("attrs-skip-crtime.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let mut entry = FileEntry::new_file("attrs-skip-crtime.txt".into(), 4, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+        entry.set_crtime(1_600_000_000);
+
+        let opts = MetadataOptions::new()
+            .preserve_times(true)
+            .preserve_crtimes(true);
+        // SKIP_CRTIME should prevent crtime from being set, but mtime is still applied.
+        apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::SKIP_CRTIME)
+            .expect("apply with SKIP_CRTIME");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    }
+
+    #[test]
+    fn attrs_flags_skip_all_times_prevents_all_time_application() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("attrs-skip-all.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let original_mtime =
+            FileTime::from_last_modification_time(&fs::metadata(&dest).expect("meta"));
+
+        let mut entry = FileEntry::new_file("attrs-skip-all.txt".into(), 4, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+        entry.set_crtime(1_500_000_000);
+
+        let opts = MetadataOptions::new()
+            .preserve_times(true)
+            .preserve_atimes(true)
+            .preserve_crtimes(true);
+        apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::SKIP_ALL_TIMES)
+            .expect("apply with SKIP_ALL_TIMES");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_eq!(dest_mtime, original_mtime);
+    }
+
+    #[test]
+    fn attrs_flags_skip_mtime_with_atime_still_applies_atime() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("attrs-skip-mtime-keep-atime.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let original_mtime =
+            FileTime::from_last_modification_time(&fs::metadata(&dest).expect("meta"));
+
+        let mut entry = FileEntry::new_file("attrs-skip-mtime-keep-atime.txt".into(), 4, 0o644);
+        entry.set_mtime(1_600_000_000, 0);
+        entry.set_atime(1_650_000_000);
+
+        let opts = MetadataOptions::new()
+            .preserve_times(true)
+            .preserve_atimes(true);
+        // SKIP_MTIME only -- atime should still be applied.
+        apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::SKIP_MTIME)
+            .expect("apply with SKIP_MTIME only");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        // mtime should be preserved (not changed to 1_600_000_000)
+        assert_eq!(dest_mtime, original_mtime);
+
+        // atime should have been applied
+        let dest_atime = FileTime::from_last_access_time(&dest_meta);
+        assert_eq!(dest_atime.seconds(), 1_650_000_000);
+    }
+
+    #[test]
+    fn attrs_flags_delegating_function_matches_direct_call() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest1 = temp.path().join("delegate1.txt");
+        let dest2 = temp.path().join("delegate2.txt");
+        fs::write(&dest1, b"data").expect("write");
+        fs::write(&dest2, b"data").expect("write");
+
+        let mut entry = FileEntry::new_file("test.txt".into(), 4, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let opts = MetadataOptions::new().preserve_times(true);
+
+        // Call through the delegating function (no attrs flags)
+        apply_metadata_with_cached_stat(&dest1, &entry, &opts, None).expect("apply cached");
+        // Call directly with empty flags
+        apply_metadata_with_attrs_flags(&dest2, &entry, &opts, None, AttrsFlags::empty())
+            .expect("apply flags");
+
+        let m1 = FileTime::from_last_modification_time(&fs::metadata(&dest1).expect("m1"));
+        let m2 = FileTime::from_last_modification_time(&fs::metadata(&dest2).expect("m2"));
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn attrs_flags_skip_atime_alone_does_not_affect_mtime() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("attrs-skip-atime-only.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let mut entry = FileEntry::new_file("attrs-skip-atime-only.txt".into(), 4, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+        entry.set_atime(1_650_000_000);
+
+        let opts = MetadataOptions::new()
+            .preserve_times(true)
+            .preserve_atimes(true);
+        // SKIP_ATIME only -- mtime should still be applied.
+        apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::SKIP_ATIME)
+            .expect("apply with SKIP_ATIME");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attrs_flags_skip_mtime_does_not_affect_permissions() {
+        use protocol::flist::FileEntry;
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("attrs-perms.txt");
+        fs::write(&dest, b"data").expect("write dest");
+        fs::set_permissions(&dest, PermissionsExt::from_mode(0o666)).expect("set dest perms");
+
+        let entry = FileEntry::new_file("attrs-perms.txt".into(), 4, 0o755);
+
+        let opts = MetadataOptions::new()
+            .preserve_permissions(true)
+            .preserve_times(true);
+        // Even with SKIP_MTIME, permissions should still be applied
+        apply_metadata_with_attrs_flags(&dest, &entry, &opts, None, AttrsFlags::SKIP_MTIME)
+            .expect("apply with SKIP_MTIME");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        assert_eq!(dest_meta.permissions().mode() & 0o777, 0o755);
     }
 }
