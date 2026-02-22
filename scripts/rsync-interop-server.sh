@@ -311,8 +311,6 @@ ensure_upstream_build() {
 write_rust_daemon_conf() {
   local path=$1 pid_file=$2 port=$3 dest=$4 comment=$5
   cat >"${path}" <<CONF
-[daemon]
-path = ${dest}
 pid file = ${pid_file}
 port = ${port}
 use chroot = false
