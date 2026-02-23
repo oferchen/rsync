@@ -33,7 +33,7 @@ use super::super::append::{AppendMode, determine_append_mode};
 use super::super::comparison::{
     CopyComparison, build_delta_signature, files_checksum_match, should_skip_copy,
 };
-use super::super::guard::{DestinationWriteGuard, DirectWriteGuard, remove_incomplete_destination};
+use super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::preallocate::maybe_preallocate_destination;
 
 /// Boolean flags controlling file transfer behavior.
@@ -343,7 +343,6 @@ pub(super) fn execute_transfer(
     // choose write strategy
     let delay_updates_enabled = context.delay_updates_enabled();
     let mut guard = None;
-    let mut direct_guard: Option<DirectWriteGuard> = None;
     let mut staging_path: Option<PathBuf> = None;
 
     let mut writer = if append_offset > 0 {
@@ -367,39 +366,6 @@ pub(super) fn execute_transfer(
             .truncate(should_truncate)
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?
-    } else if existing_metadata.is_none()
-        && !partial_enabled
-        && !delay_updates_enabled
-        && context.temp_directory_path().is_none()
-    {
-        // Direct write for new files: skip temp file + rename overhead.
-        // Safe because there's no existing file to protect with atomicity.
-        // DirectWriteGuard ensures cleanup on error, panic, or signal.
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(destination)
-        {
-            Ok(file) => {
-                direct_guard = Some(DirectWriteGuard::new(destination.to_path_buf()));
-                file
-            }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                // Race: file appeared between stat and open. Fall back to guard.
-                let (new_guard, file) = DestinationWriteGuard::new(
-                    destination,
-                    partial_enabled,
-                    context.partial_directory_path(),
-                    context.temp_directory_path(),
-                )?;
-                staging_path = Some(new_guard.staging_path().to_path_buf());
-                guard = Some(new_guard);
-                file
-            }
-            Err(error) => {
-                return Err(LocalCopyError::io("copy file", destination, error));
-            }
-        }
     } else {
         let (new_guard, file) = DestinationWriteGuard::new(
             destination,
@@ -617,11 +583,6 @@ pub(super) fn execute_transfer(
         preserve_acls,
     )?;
 
-    // Direct write completed successfully — prevent cleanup on drop.
-    if let Some(ref mut dg) = direct_guard {
-        dg.commit();
-    }
-
     Ok(())
 }
 
@@ -629,7 +590,7 @@ pub(super) fn execute_transfer(
 ///
 /// When `delay_updates_enabled` is true, the guard is registered for deferred
 /// commit. Otherwise the guard is committed immediately and metadata is applied.
-/// If no guard is present (direct-write or inplace path), metadata is applied
+/// If no guard is present (inplace path), metadata is applied
 /// directly to `destination`.
 #[allow(clippy::too_many_arguments)]
 fn finalize_guard_and_metadata(
