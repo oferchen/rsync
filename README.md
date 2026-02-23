@@ -30,8 +30,8 @@ Local, SSH, and daemon transfers are fully functional with native delta algorith
 | ACLs (-A), xattrs (-X) | Unix only |
 | --compress (zlib, zstd, lz4) | Complete |
 | Batch files | Local only; remote replay pending |
-| Incremental recursion | Pending |
-| Daemon daemonization (--detach) | Foreground-only by design |
+| Incremental recursion | Complete |
+| Daemon daemonization (--detach) | Complete |
 | Daemon syslog | Pending |
 | SIMD checksums (AVX2, SSE2, NEON) | Complete |
 | Linux, macOS | Full support |
