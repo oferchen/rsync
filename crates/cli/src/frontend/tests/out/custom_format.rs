@@ -7,6 +7,7 @@
 //! 4. Invalid formats are handled appropriately
 
 use super::*;
+use core::client::run_client;
 
 #[test]
 fn out_format_filename_placeholder_renders_basename() {
@@ -28,12 +29,7 @@ fn out_format_filename_placeholder_renders_basename() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -70,12 +66,7 @@ fn out_format_full_path_placeholder_renders_complete_path() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -114,12 +105,7 @@ fn out_format_file_length_placeholder_shows_size() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -157,12 +143,7 @@ fn out_format_bytes_transferred_placeholder_shows_transferred() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -199,12 +180,7 @@ fn out_format_operation_placeholder_describes_event() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -242,12 +218,7 @@ fn out_format_process_id_placeholder_shows_pid() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -286,12 +257,7 @@ fn out_format_escaped_percent_renders_literal_percent() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -328,12 +294,7 @@ fn out_format_multiple_escaped_percent_signs() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -371,12 +332,7 @@ fn out_format_combines_multiple_placeholders() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -416,12 +372,7 @@ fn out_format_mixes_literals_and_placeholders() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -460,12 +411,7 @@ fn out_format_respects_width_specifier() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -506,12 +452,7 @@ fn out_format_respects_left_alignment() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -559,12 +500,7 @@ fn out_format_humanizes_with_separator() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -602,12 +538,7 @@ fn out_format_humanizes_with_decimal_units() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -647,12 +578,7 @@ fn out_format_humanizes_with_binary_units() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -743,12 +669,7 @@ fn out_format_complex_realistic_format() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -790,12 +711,7 @@ fn out_format_directory_names_include_trailing_slash() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()

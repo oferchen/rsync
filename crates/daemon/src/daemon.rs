@@ -34,12 +34,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use std::process::{ChildStdin, Command as ProcessCommand, Stdio};
+use std::process::{Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use fs2::FileExt;
-use tempfile::NamedTempFile;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -53,10 +52,6 @@ use core::{
         parse_bandwidth_limit,
     },
     branding::{self, Brand, manifest},
-    fallback::{
-        CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, describe_missing_fallback_binary,
-        fallback_binary_available, fallback_disabled_reason,
-    },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
     server::{HandshakeResult, ServerConfig, ServerRole, run_server_with_handshake},
@@ -183,7 +178,7 @@ include!("daemon/sections/server_runtime.rs");
 
 include!("daemon/sections/session_runtime.rs");
 
-include!("daemon/sections/delegation.rs");
+include!("daemon/sections/greeting.rs");
 
 include!("daemon/sections/privilege.rs");
 

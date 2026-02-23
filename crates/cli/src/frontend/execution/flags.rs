@@ -190,8 +190,6 @@ impl InfoFlagSettings {
             return (stripped, 0);
         }
 
-        // Fallback: no known keyword match, return as-is with level 1
-        // (will be rejected by the caller's match statement)
         (input, 1)
     }
 }
@@ -533,7 +531,6 @@ impl DebugFlagSettings {
             return (stripped, 0);
         }
 
-        // Fallback: return as-is (will be rejected by the caller's match)
         (input, 1)
     }
 }
@@ -576,29 +573,6 @@ fn debug_flag_error(display: &str) -> Message {
         format!("invalid --debug flag '{display}': use --debug=help for supported flags")
     )
     .with_role(Role::Client)
-}
-
-/// Check if progress-related flags are present in --info flags.
-/// Used by fallback path to determine if progress output is enabled.
-/// TODO: Will be used once fallback module is re-enabled
-#[allow(dead_code)]
-pub(crate) fn info_flags_include_progress(flags: &[OsString]) -> bool {
-    flags.iter().any(|value| {
-        value
-            .to_string_lossy()
-            .split(',')
-            .map(|token| token.trim())
-            .filter(|token| !token.is_empty())
-            .any(|token| {
-                let normalized = token.to_ascii_lowercase();
-                let without_dash = normalized.strip_prefix('-').unwrap_or(&normalized);
-                let stripped = without_dash
-                    .strip_prefix("no-")
-                    .or_else(|| without_dash.strip_prefix("no"))
-                    .unwrap_or(without_dash);
-                stripped.starts_with("progress")
-            })
-    })
 }
 
 pub(crate) const INFO_HELP_TEXT: &str = "The following --info flags are supported:\n\
@@ -825,24 +799,6 @@ mod tests {
         let result = parse_debug_flags(&values).unwrap();
         assert_eq!(result.io, Some(1));
         assert_eq!(result.flist, Some(1));
-    }
-
-    #[test]
-    fn info_flags_include_progress_basic() {
-        let flags = vec![OsString::from("progress")];
-        assert!(info_flags_include_progress(&flags));
-    }
-
-    #[test]
-    fn info_flags_include_progress_no_prefix() {
-        let flags = vec![OsString::from("noprogress")];
-        assert!(info_flags_include_progress(&flags));
-    }
-
-    #[test]
-    fn info_flags_include_progress_not_found() {
-        let flags = vec![OsString::from("stats")];
-        assert!(!info_flags_include_progress(&flags));
     }
 
     #[test]
@@ -1281,36 +1237,6 @@ mod tests {
                 "keyword '{keyword}' should be accepted but got: {result:?}"
             );
         }
-    }
-
-    #[test]
-    fn info_flags_include_progress_with_level() {
-        let flags = vec![OsString::from("progress2")];
-        assert!(info_flags_include_progress(&flags));
-    }
-
-    #[test]
-    fn info_flags_include_progress_dash_prefix() {
-        let flags = vec![OsString::from("-progress")];
-        assert!(info_flags_include_progress(&flags));
-    }
-
-    #[test]
-    fn info_flags_include_progress_in_comma_list() {
-        let flags = vec![OsString::from("name,progress,stats")];
-        assert!(info_flags_include_progress(&flags));
-    }
-
-    #[test]
-    fn info_flags_include_progress_empty() {
-        let flags: Vec<OsString> = vec![];
-        assert!(!info_flags_include_progress(&flags));
-    }
-
-    #[test]
-    fn info_flags_include_progress_multiple_values() {
-        let flags = vec![OsString::from("name"), OsString::from("progress")];
-        assert!(info_flags_include_progress(&flags));
     }
 
     #[test]

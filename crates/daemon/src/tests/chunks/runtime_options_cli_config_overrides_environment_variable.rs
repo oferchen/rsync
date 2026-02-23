@@ -24,7 +24,7 @@ fn runtime_options_cli_config_overrides_environment_variable() {
     let _env = EnvGuard::set(LEGACY_CONFIG_ENV, env_config.as_os_str());
     let args = [
         OsString::from("--config"),
-        cli_config.clone().into_os_string(),
+        cli_config.into_os_string(),
     ];
     let options = RuntimeOptions::parse(&args).expect("parse cli config");
 
@@ -32,12 +32,5 @@ fn runtime_options_cli_config_overrides_environment_variable() {
     let module = &options.modules()[0];
     assert_eq!(module.name, "cli");
     assert_eq!(module.path, cli_module_dir);
-    assert_eq!(
-        options.delegate_arguments,
-        vec![
-            OsString::from("--config"),
-            cli_config.into_os_string(),
-        ]
-    );
 }
 

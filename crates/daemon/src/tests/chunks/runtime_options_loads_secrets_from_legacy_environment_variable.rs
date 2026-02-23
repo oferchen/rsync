@@ -21,11 +21,8 @@ fn runtime_options_loads_secrets_from_legacy_environment_variable() {
     .expect("parse env secrets");
 
     assert_eq!(
-        options.delegate_arguments,
-        [
-            OsString::from("--secrets-file"),
-            secrets_path.into_os_string(),
-        ]
+        options.global_secrets_file(),
+        Some(secrets_path.as_path()),
     );
 }
 
