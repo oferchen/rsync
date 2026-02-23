@@ -58,11 +58,16 @@ mod compressor;
 /// See [`concurrent_delta::DeltaPipeline`] for the main entry point.
 pub mod concurrent_delta;
 mod context;
-pub(crate) mod debug_del;
-pub(crate) mod debug_deltasum;
-pub(crate) mod debug_flist;
-pub(crate) mod debug_recv;
-pub(crate) mod debug_send;
+#[cfg(test)]
+mod debug_del;
+#[cfg(test)]
+mod debug_deltasum;
+#[cfg(test)]
+mod debug_flist;
+#[cfg(test)]
+mod debug_recv;
+#[cfg(test)]
+mod debug_send;
 mod deferred_sync;
 /// Deletion strategy implementations for rsync `--delete` variants.
 ///
