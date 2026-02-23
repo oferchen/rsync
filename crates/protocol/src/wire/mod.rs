@@ -102,4 +102,5 @@ pub use self::file_entry_decode::{
     decode_size,
     decode_symlink_target,
     decode_uid,
+    is_io_error_end_marker,
 };
