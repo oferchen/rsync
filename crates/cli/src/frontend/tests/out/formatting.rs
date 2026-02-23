@@ -1,4 +1,5 @@
 use super::*;
+use core::client::run_client;
 
 #[test]
 fn out_format_respects_width_alignment_and_humanization_controls() {
@@ -21,12 +22,7 @@ fn out_format_respects_width_alignment_and_humanization_controls() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -91,12 +87,7 @@ fn out_format_renders_modify_time_placeholder() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
     let event = summary
         .events()
         .iter()

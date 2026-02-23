@@ -9,7 +9,7 @@ use ::metadata::{MappingKind, NameMapping};
 
 use crate::frontend::execution::chown::ParsedChown;
 
-/// Derived metadata preservation settings used by both config and fallback logic.
+/// Derived metadata preservation settings used by config construction.
 pub(crate) struct MetadataSettings {
     pub(crate) preserve_owner: bool,
     pub(crate) preserve_group: bool,

@@ -1,5 +1,6 @@
 use super::*;
 use checksums::strong::Md5;
+use core::client::run_client;
 
 #[test]
 fn out_format_renders_full_checksum_for_files() {
@@ -22,12 +23,7 @@ fn out_format_renders_full_checksum_for_files() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -67,12 +63,7 @@ fn out_format_renders_full_checksum_for_non_file_entries_as_spaces() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let dir_event = summary
         .events()
@@ -114,12 +105,7 @@ fn out_format_renders_checksum_bytes_for_data_copy_events() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -160,18 +146,9 @@ fn out_format_renders_checksum_bytes_as_zero_when_metadata_reused() {
             .build()
     };
 
-    let outcome = run_client_or_fallback::<io::Sink, io::Sink>(build_config(), None, None)
-        .expect("initial copy");
-    if let ClientOutcome::Fallback(_) = outcome {
-        panic!("unexpected fallback outcome during initial copy");
-    }
+    run_client(build_config()).expect("initial copy");
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(build_config(), None, None).expect("re-run");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(build_config()).expect("re-run");
 
     let event = summary
         .events()

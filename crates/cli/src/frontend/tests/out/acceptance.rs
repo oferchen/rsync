@@ -1,4 +1,5 @@
 use super::*;
+use core::client::run_client;
 
 #[test]
 fn out_format_argument_accepts_supported_placeholders() {
@@ -35,12 +36,7 @@ fn out_format_remote_placeholders_preserve_literals_without_context() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()

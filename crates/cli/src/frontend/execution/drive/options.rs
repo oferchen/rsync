@@ -55,10 +55,6 @@ pub(crate) struct SettingsInputs<'a> {
 /// Derived execution settings gathered from [`derive_settings`].
 pub(crate) struct DerivedSettings {
     pub(crate) out_format_template: Option<OutFormat>,
-    /// Progress setting derived from --info and --progress flags.
-    /// Ignored in current implementation (passed through fallback instead).
-    #[allow(dead_code)]
-    pub(crate) progress_setting: ProgressSetting,
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) stats: bool,
     pub(crate) name_level: NameOutputLevel,
@@ -72,27 +68,11 @@ pub(crate) struct DerivedSettings {
     pub(crate) max_alloc_limit: Option<u64>,
     pub(crate) modify_window_setting: Option<u64>,
     pub(crate) compress: bool,
-    /// Whether compression is explicitly disabled.
-    /// Kept for fallback mode argument generation.
-    #[allow(dead_code)]
-    pub(crate) compress_disabled: bool,
     pub(crate) compression_level_override: Option<CompressionLevel>,
-    /// Raw CLI value for compression level.
-    /// Kept for fallback mode argument passthrough.
-    #[allow(dead_code)]
-    pub(crate) compress_level_cli: Option<OsString>,
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) compression_setting: CompressionSetting,
-    /// Raw CLI value for compression choice.
-    /// Kept for fallback mode argument passthrough.
-    #[allow(dead_code)]
-    pub(crate) compress_choice_cli: Option<OsString>,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
     pub(crate) log_file_path: Option<OsString>,
-    /// Raw CLI value for log file format.
-    /// Kept for fallback mode argument passthrough.
-    #[allow(dead_code)]
-    pub(crate) log_file_format_cli: Option<OsString>,
     pub(crate) log_file_template: Option<OutFormat>,
 }
 
@@ -332,12 +312,9 @@ where
 /// Result of parsing compression settings.
 struct CompressionResult {
     compress: bool,
-    compress_disabled: bool,
     compression_level_override: Option<CompressionLevel>,
-    compress_level_cli: Option<OsString>,
     skip_compress_list: Option<SkipCompressList>,
     compression_setting: CompressionSetting,
-    compress_choice_cli: Option<OsString>,
     compression_algorithm: Option<CompressionAlgorithm>,
 }
 
@@ -356,8 +333,6 @@ where
     let mut compress = compress_flag;
     let mut compression_level_override = None;
     let mut compression_algorithm = None;
-    let mut compress_choice_cli = compress_choice.clone();
-    let mut compress_choice_disabled = false;
 
     let mut compress_level_setting = match compress_level {
         Some(value) => match parse_compress_level(value.as_os_str()) {
@@ -373,8 +348,6 @@ where
                 compress = false;
                 compression_level_override = None;
                 compress_level_setting = Some(CompressLevelArg::Disable);
-                compress_choice_disabled = true;
-                compress_choice_cli = None;
             }
             Ok(Some(algorithm)) => {
                 compression_algorithm = Some(algorithm);
@@ -400,10 +373,6 @@ where
         }
     }
 
-    let mut compress_disabled = no_compress
-        || compress_choice_disabled
-        || matches!(compress_level_setting, Some(CompressLevelArg::Disable));
-
     let force_no_compress = match force_no_compress_from_env("OC_RSYNC_FORCE_NO_COMPRESS") {
         Ok(value) => value,
         Err(message) => return Err(fail_with_message(message, stderr)),
@@ -413,22 +382,8 @@ where
         compress = false;
         compression_level_override = None;
         compress_level_setting = Some(CompressLevelArg::Disable);
-        compress_disabled = true;
         compression_algorithm = None;
-        compress_choice_cli = None;
     }
-
-    if compress_disabled {
-        compress_choice_cli = None;
-    }
-
-    let compress_level_cli = match (compress_level_setting.as_ref(), compress_disabled) {
-        (Some(CompressLevelArg::Level(level)), false) => {
-            Some(OsString::from(level.get().to_string()))
-        }
-        (Some(CompressLevelArg::Disable), _) => Some(OsString::from("0")),
-        _ => None,
-    };
 
     let skip_compress_list = if let Some(value) = skip_compress.as_ref() {
         match parse_skip_compress_list(value.as_os_str()) {
@@ -466,12 +421,9 @@ where
 
     Ok(CompressionResult {
         compress,
-        compress_disabled,
         compression_level_override,
-        compress_level_cli,
         skip_compress_list,
         compression_setting,
-        compress_choice_cli,
         compression_algorithm,
     })
 }
@@ -479,7 +431,6 @@ where
 /// Result of parsing log file settings.
 struct LogFileResult {
     log_file_path: Option<OsString>,
-    log_file_format_cli: Option<OsString>,
     log_file_template: Option<OutFormat>,
 }
 
@@ -494,16 +445,15 @@ where
 {
     match log_file {
         Some(path) => {
-            let (format_string, format_cli) = if let Some(spec) = log_file_format {
-                (spec.clone(), Some(spec.clone()))
+            let format_string = if let Some(spec) = log_file_format {
+                spec.clone()
             } else {
-                (OsString::from("%i %n%L"), None)
+                OsString::from("%i %n%L")
             };
 
             match parse_out_format(format_string.as_os_str()) {
                 Ok(template) => Ok(LogFileResult {
                     log_file_path: Some(path.clone()),
-                    log_file_format_cli: format_cli,
                     log_file_template: Some(template),
                 }),
                 Err(message) => Err(fail_with_message(message, stderr)),
@@ -511,7 +461,6 @@ where
         }
         None => Ok(LogFileResult {
             log_file_path: None,
-            log_file_format_cli: None,
             log_file_template: None,
         }),
     }
@@ -619,7 +568,6 @@ where
 
     SettingsOutcome::Proceed(Box::new(DerivedSettings {
         out_format_template,
-        progress_setting: info_result.progress_setting,
         progress_mode: info_result.progress_setting.resolved(),
         stats: info_result.stats,
         name_level: info_result.name_level,
@@ -633,15 +581,11 @@ where
         max_alloc_limit: limits.max_alloc_limit,
         modify_window_setting: limits.modify_window_setting,
         compress: compression.compress,
-        compress_disabled: compression.compress_disabled,
         compression_level_override: compression.compression_level_override,
-        compress_level_cli: compression.compress_level_cli,
         skip_compress_list: compression.skip_compress_list,
         compression_setting: compression.compression_setting,
-        compress_choice_cli: compression.compress_choice_cli,
         compression_algorithm: compression.compression_algorithm,
         log_file_path: log.log_file_path,
-        log_file_format_cli: log.log_file_format_cli,
         log_file_template: log.log_file_template,
     }))
 }

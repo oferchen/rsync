@@ -1,10 +1,9 @@
 //! Client transfer execution and orchestration.
 //!
 //! This module implements the primary entry points for executing file transfers,
-//! including [`run_client`], [`run_client_with_observer`], and
-//! [`run_client_or_fallback`]. These functions coordinate local copies, remote
-//! transfers over SSH and rsync daemon protocols, and delegation to system rsync
-//! binaries when features are not yet implemented natively.
+//! including [`run_client`] and [`run_client_with_observer`]. These functions
+//! coordinate local copies and remote transfers over SSH and rsync daemon
+//! protocols.
 //!
 //! The orchestration layer handles:
 //! - Configuration validation and argument parsing
@@ -12,7 +11,6 @@
 //! - Filter rule compilation and application
 //! - Batch mode file replay and recording
 //! - Remote transfer role determination
-//! - Fallback delegation when requested
 //!
 //! # Examples
 //!
@@ -71,8 +69,6 @@ use super::config::{
 use super::error::{
     ClientError, compile_filter_error, map_local_copy_error, missing_operands_error,
 };
-use super::fallback::RemoteFallbackContext;
-use super::outcome::ClientOutcome;
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::remote;
 use super::summary::ClientSummary;
@@ -176,65 +172,6 @@ pub fn run_client_with_observer(
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     run_client_internal(config, observer)
-}
-
-/// Executes the client flow, delegating to a fallback `rsync` binary when provided.
-///
-/// The caller may supply a [`RemoteFallbackContext`] that describes how to invoke
-/// an upstream `rsync` binary for remote transfers while the native engine
-/// evolves.
-///
-/// # Arguments
-///
-/// * `config` - The client configuration specifying sources, destination,
-///   and transfer options.
-/// * `observer` - Optional progress observer to receive transfer updates.
-/// * `_fallback` - Optional fallback context for delegating to system rsync
-///   (currently unused but reserved for future fallback support).
-///
-/// # Returns
-///
-/// Returns `Ok(ClientOutcome)` wrapping either a local transfer summary or
-/// fallback execution result. Returns `Err(ClientError)` if the transfer fails
-/// or configuration is invalid.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - No transfer operands are provided (missing source or destination)
-/// - The destination directory cannot be accessed due to permission denied
-/// - Filter rules fail to compile due to invalid patterns
-/// - The local copy engine fails during file transfer
-/// - Remote SSH or daemon transfer fails
-/// - Batch file operations fail (creation, header writing, or flushing)
-///
-/// # Examples
-///
-/// ```no_run
-/// use core::client::{run_client_or_fallback, ClientConfig};
-///
-/// let config = ClientConfig::builder()
-///     .transfer_args(vec!["source.txt", "dest.txt"])
-///     .build();
-///
-/// let outcome = run_client_or_fallback::<std::io::Stdout, std::io::Stderr>(
-///     config,
-///     None,
-///     None,
-/// )?;
-/// # Ok::<(), core::client::ClientError>(())
-/// ```
-#[cfg_attr(feature = "tracing", instrument(skip(config, observer, _fallback)))]
-pub fn run_client_or_fallback<Out, Err>(
-    config: ClientConfig,
-    observer: Option<&mut dyn ClientProgressObserver>,
-    _fallback: Option<RemoteFallbackContext<'_, Out, Err>>,
-) -> Result<ClientOutcome, ClientError>
-where
-    Out: Write,
-    Err: Write,
-{
-    run_client_internal(config, observer).map(|summary| ClientOutcome::Local(Box::new(summary)))
 }
 
 #[cfg_attr(

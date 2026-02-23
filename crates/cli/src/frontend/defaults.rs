@@ -32,7 +32,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--numeric-ids, --no-numeric-ids"
 );
 
-/// Format string used when forwarding `--itemize-changes` to fallback binaries.
+/// Format string used for `--itemize-changes` output.
 pub(super) const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 
 /// Default patterns excluded by `--cvs-exclude`.

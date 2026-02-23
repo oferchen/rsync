@@ -24,15 +24,14 @@ fn runtime_options_branded_secrets_env_overrides_legacy_env() {
     )
     .expect("parse env secrets");
 
-    let delegate = &options.delegate_arguments;
-    let expected_tail = [
-        OsString::from("--secrets-file"),
-        branded_path.into_os_string(),
-    ];
-    assert!(delegate.ends_with(&expected_tail));
-    assert!(
-        !delegate.iter().any(|arg| arg == legacy_path.as_os_str()),
-        "legacy secrets path should not be forwarded"
+    assert_eq!(
+        options.global_secrets_file(),
+        Some(branded_path.as_path()),
+    );
+    assert_ne!(
+        options.global_secrets_file(),
+        Some(legacy_path.as_path()),
+        "legacy secrets path should not override branded path"
     );
 }
 
