@@ -1,6 +1,6 @@
 //! Disk commit thread for the decoupled receiver architecture.
 //!
-//! Consumes [`FileMessage`] items from a bounded channel and performs all
+//! Consumes `FileMessage` items from a bounded channel and performs all
 //! disk I/O: opening files, writing chunks, flushing, renaming, and metadata
 //! application.  Runs on a dedicated [`std::thread`] so the network thread
 //! never blocks on disk.
@@ -151,7 +151,7 @@ impl Seek for ReusableBufWriter<'_> {
 
 /// Channels and handle returned by [`spawn_disk_thread`].
 pub struct DiskThreadHandle {
-    /// Send [`FileMessage`] items to the disk thread.
+    /// Send `FileMessage` items to the disk thread.
     pub file_tx: spsc::Sender<FileMessage>,
     /// Receive [`CommitResult`] (one per committed file).
     pub result_rx: spsc::Receiver<io::Result<CommitResult>>,
