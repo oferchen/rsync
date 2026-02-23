@@ -174,6 +174,9 @@ include!("daemon/sections/legacy_messages.rs");
 
 include!("daemon/sections/signals.rs");
 
+#[cfg(unix)]
+include!("daemon/sections/daemonize.rs");
+
 include!("daemon/sections/server_runtime.rs");
 
 include!("daemon/sections/session_runtime.rs");
