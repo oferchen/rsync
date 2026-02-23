@@ -5,7 +5,7 @@
 //! userspace synchronization with no futex, no `thread::park`, no condvar.
 //!
 //! Designed for the network → disk thread pipeline where exactly one producer
-//! (network ingest) and one consumer (disk commit) exchange [`FileMessage`]
+//! (network ingest) and one consumer (disk commit) exchange `FileMessage`
 //! items at high throughput.
 
 use std::fmt;

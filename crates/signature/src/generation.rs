@@ -64,7 +64,7 @@ const BATCH_SIZE: usize = 16;
 
 /// Generates an rsync-compatible file signature using the provided layout and strong checksum.
 ///
-/// Reads blocks in batches of up to [`BATCH_SIZE`] and computes strong checksums using
+/// Reads blocks in batches of up to `BATCH_SIZE` and computes strong checksums using
 /// SIMD-accelerated batch hashing when the algorithm supports it (MD4, unseeded MD5).
 /// This amortizes per-block hasher construction overhead and enables multi-lane SIMD
 /// processing of independent block digests.
