@@ -50,7 +50,7 @@ use crate::pipeline::PendingTransfer;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::reader::ServerReader;
 use crate::receiver::{SenderAttrs, SumHead, write_signature_blocks};
-use crate::temp_guard::{TempFileGuard, open_tmpfile};
+use crate::temp_guard::open_tmpfile;
 use crate::token_buffer::TokenBuffer;
 use fast_io::FileWriter;
 
@@ -78,8 +78,6 @@ pub struct RequestConfig<'a> {
     pub use_sparse: bool,
     /// Whether to fsync after write.
     pub do_fsync: bool,
-    /// Whether to enable direct write optimization for new files.
-    pub direct_write: bool,
     /// Whether to write data directly to device files (`--write-devices`).
     ///
     /// When true, device file targets are opened with `O_WRONLY` and receive
@@ -230,40 +228,10 @@ pub fn process_file_response<R: Read>(
     // Decompose pending transfer
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
-    // Choose write strategy: direct write for new files, temp+rename for updates.
-    //
-    // When no basis file was found (basis_path is None), the destination doesn't
-    // exist, so we can skip the temp file + rename overhead. This mirrors the
-    // DirectWriteGuard optimization in the local copy engine.
-    //
-    // For delta transfers (existing files), we always use temp+rename to ensure
-    // atomic replacement of the destination.
-    let (file, mut cleanup_guard, needs_rename) = if basis_path.is_none() && ctx.config.direct_write
-    {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&file_path)
-        {
-            Ok(file) => {
-                // Direct write: guard cleans up file_path on failure, no rename needed.
-                (file, TempFileGuard::new(file_path.clone()), false)
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                // Race: file appeared between basis check and create. Use temp+rename
-                // with upstream rsync's `.filename.XXXXXX` naming convention.
-                let (file, guard) = open_tmpfile(&file_path, None)?;
-                (file, guard, true)
-            }
-            Err(e) => return Err(e),
-        }
-    } else {
-        // Existing file / delta transfer: use temp+rename for atomicity.
-        // Uses upstream rsync's `.filename.XXXXXX` naming convention so
-        // retries succeed even if a previous temp file was not cleaned up.
-        let (file, guard) = open_tmpfile(&file_path, None)?;
-        (file, guard, true)
-    };
+    // Use temp+rename for atomicity, matching upstream rsync's `.filename.XXXXXX`
+    // naming convention so retries succeed even if a previous temp file was not
+    // cleaned up.
+    let (file, mut cleanup_guard) = open_tmpfile(&file_path, None)?;
 
     // Use io_uring when available (Linux 5.6+), falling back to BufWriter.
     // Buffer capacity is adaptive based on file size:
@@ -421,10 +389,8 @@ pub fn process_file_response<R: Read>(
     }
     drop(output);
 
-    // Atomic rename (only needed for temp+rename path)
-    if needs_rename {
-        fs::rename(cleanup_guard.path(), &file_path)?;
-    }
+    // Atomic rename: temp file to final destination.
+    fs::rename(cleanup_guard.path(), &file_path)?;
     cleanup_guard.keep();
 
     Ok(total_bytes)
@@ -518,13 +484,11 @@ pub fn process_file_response_streaming<R: Read>(
     // single WholeFile message (3 channel sends → 1, reducing futex overhead).
     let is_device_target =
         ctx.config.write_devices && file_entry.as_ref().is_some_and(|e| e.is_device());
-    let direct_write = basis_path.is_none() && ctx.config.direct_write && !is_device_target;
     let begin_msg = Box::new(BeginMessage {
         file_path: file_path.clone(),
         target_size,
         file_entry_index,
         use_sparse: ctx.config.use_sparse,
-        direct_write,
         checksum_verifier: Some(disk_verifier),
         file_entry,
         is_device_target,
@@ -771,7 +735,6 @@ mod tests {
             checksum_seed: 0,
             use_sparse: false,
             do_fsync: false,
-            direct_write: false,
             write_devices: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
         };

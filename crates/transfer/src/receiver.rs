@@ -1488,7 +1488,7 @@ impl ReceiverContext {
             checksum_seed: self.checksum_seed,
             use_sparse: self.config.flags.sparse,
             do_fsync: self.config.fsync,
-            direct_write: self.config.direct_write,
+
             write_devices: self.config.write_devices,
             io_uring_policy: self.config.io_uring_policy,
         };
@@ -1625,7 +1625,7 @@ impl ReceiverContext {
             checksum_seed: self.checksum_seed,
             use_sparse: self.config.flags.sparse,
             do_fsync: self.config.fsync,
-            direct_write: self.config.direct_write,
+
             write_devices: self.config.write_devices,
             io_uring_policy: self.config.io_uring_policy,
         };
@@ -2815,7 +2815,7 @@ mod tests {
             iconv: None,
             ignore_errors: false,
             fsync: false,
-            direct_write: false,
+
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             checksum_seed: None,
             is_daemon_connection: false,
@@ -3715,7 +3715,7 @@ mod tests {
             iconv: None,
             ignore_errors: false,
             fsync: false,
-            direct_write: false,
+
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             checksum_seed: None,
             is_daemon_connection: false,

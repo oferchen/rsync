@@ -134,20 +134,6 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::SetTrue),
             )
             .arg(
-                Arg::new("direct-write")
-                    .long("direct-write")
-                    .help("Write new files directly to destination, skipping temp+rename.")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("no-direct-write"),
-            )
-            .arg(
-                Arg::new("no-direct-write")
-                    .long("no-direct-write")
-                    .help("Always use temp file + rename, even for new files (default).")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("direct-write"),
-            )
-            .arg(
                 Arg::new("io-uring")
                     .long("io-uring")
                     .help("Force io_uring for file I/O (error if unavailable).")

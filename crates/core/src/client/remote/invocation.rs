@@ -217,11 +217,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--fsync"));
         }
 
-        // NOTE: --direct-write is a receiver-local optimization that does not
-        // affect the wire protocol.  It is NOT forwarded to the remote server
-        // because upstream rsync does not recognise it and would reject the
-        // connection.  The local receiver applies it from its own config.
-
         // Build compact flag string
         let flags = self.build_flag_string();
         if !flags.is_empty() {
@@ -844,32 +839,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn direct_write_never_sent_to_remote_receiver() {
-        // --direct-write is a receiver-local optimization; it must never be
-        // forwarded to a remote server (upstream rsync would reject it).
-        let config = ClientConfig::builder().direct_write(true).build();
-        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-        let args = builder.build("/path");
-
-        assert!(
-            !args.iter().any(|a| a == "--direct-write"),
-            "unexpected --direct-write in remote args: {args:?}"
-        );
-    }
-
-    #[test]
-    fn direct_write_never_sent_to_remote_sender() {
-        let config = ClientConfig::builder().direct_write(true).build();
-        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-        let args = builder.build("/path");
-
-        assert!(
-            !args.iter().any(|a| a == "--direct-write"),
-            "unexpected --direct-write in remote sender args: {args:?}"
-        );
-    }
-
     /// Allowlist of long-form arguments that upstream rsync 3.x recognises in
     /// `--server` mode.  Any long flag emitted by `RemoteInvocationBuilder`
     /// that is NOT on this list would break interop with stock rsync.
@@ -884,7 +853,6 @@ mod tests {
         // Build a config with every oc-rsync extension enabled so we can
         // verify none of them leak into the remote argument vector.
         let config = ClientConfig::builder()
-            .direct_write(true)
             .fsync(true)
             .ignore_errors(true)
             .recursive(true)

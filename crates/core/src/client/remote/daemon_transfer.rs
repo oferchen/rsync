@@ -863,7 +863,6 @@ fn build_server_config_for_receiver(
 
     // Propagate long-form-only flags that aren't part of the server flag string
     server_config.fsync = config.fsync();
-    server_config.direct_write = config.direct_write();
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
     server_config.trust_sender = config.trust_sender();
@@ -900,7 +899,6 @@ fn build_server_config_for_generator(
 
     // Propagate long-form-only flags that aren't part of the server flag string
     server_config.fsync = config.fsync();
-    server_config.direct_write = config.direct_write();
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
     server_config.trust_sender = config.trust_sender();
