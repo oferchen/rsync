@@ -1833,9 +1833,13 @@ mod tests {
     fn encoder_see_token_noop_in_zlibx_mode() {
         let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
         encoder.set_zlibx(true);
-        encoder.see_token(b"block data that must not enter the dictionary").unwrap();
+        encoder
+            .see_token(b"block data that must not enter the dictionary")
+            .unwrap();
         let mut output = Vec::new();
-        encoder.send_literal(&mut output, b"literal after zlibx noop").unwrap();
+        encoder
+            .send_literal(&mut output, b"literal after zlibx noop")
+            .unwrap();
         encoder.finish(&mut output).unwrap();
         assert!(!output.is_empty());
     }
@@ -1844,7 +1848,9 @@ mod tests {
     fn decoder_see_token_noop_in_zlibx_mode() {
         let mut decoder = CompressedTokenDecoder::new();
         decoder.set_zlibx(true);
-        decoder.see_token(b"block data that must not enter the dictionary").unwrap();
+        decoder
+            .see_token(b"block data that must not enter the dictionary")
+            .unwrap();
     }
 
     #[test]
@@ -1867,7 +1873,8 @@ mod tests {
         let mut decoder = CompressedTokenDecoder::new();
         decoder.set_zlibx(true);
         decoder.reset();
-        decoder.see_token(b"still a noop after explicit reset").unwrap();
+        decoder
+            .see_token(b"still a noop after explicit reset")
+            .unwrap();
     }
-
 }
