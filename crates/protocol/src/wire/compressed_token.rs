@@ -148,6 +148,11 @@ pub struct CompressedTokenEncoder {
     /// Protocol version for compatibility.
     /// Protocol versions < 31 have a data-duplicating bug in `see_token`.
     protocol_version: u32,
+    /// When `true`, [`Self::see_token`] is a no-op (CPRES_ZLIBX mode).
+    ///
+    /// In zlibx mode block-match tokens do not update the compressor
+    /// dictionary; only literal bytes flow through the deflate context.
+    is_zlibx: bool,
 }
 
 impl CompressedTokenEncoder {
@@ -195,6 +200,7 @@ impl CompressedTokenEncoder {
             run_start: 0,
             last_run_end: 0,
             protocol_version,
+            is_zlibx: false,
         }
     }
 
@@ -454,6 +460,10 @@ impl CompressedTokenEncoder {
     ///
     /// Reference: upstream token.c lines 463-484 (`send_deflated_token`).
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
+        // CPRES_ZLIBX: block-match tokens never update the deflate dictionary.
+        if self.is_zlibx {
+            return Ok(());
+        }
         let mut toklen = data.len();
         let mut offset = 0usize;
 
@@ -482,6 +492,15 @@ impl CompressedTokenEncoder {
         }
 
         Ok(())
+    }
+
+    /// Configures zlibx mode for this encoder.
+    ///
+    /// When `true`, [`Self::see_token`] becomes a no-op, matching upstream
+    /// rsync's CPRES_ZLIBX behaviour. The flag persists across [`Self::reset`]
+    /// calls because the compression algorithm is fixed for the session.
+    pub fn set_zlibx(&mut self, zlibx: bool) {
+        self.is_zlibx = zlibx;
     }
 }
 
@@ -540,6 +559,10 @@ pub struct CompressedTokenDecoder {
     rx_run: i32,
     /// Decoder initialized flag.
     initialized: bool,
+    /// When `true`, [`Self::see_token`] is a no-op (CPRES_ZLIBX mode).
+    ///
+    /// Must mirror the paired encoder's flag.
+    is_zlibx: bool,
 }
 
 impl Default for CompressedTokenDecoder {
@@ -564,6 +587,7 @@ impl CompressedTokenDecoder {
             rx_token: 0,
             rx_run: 0,
             initialized: false,
+            is_zlibx: false,
         }
     }
 
@@ -752,6 +776,10 @@ impl CompressedTokenDecoder {
     ///
     /// Reference: upstream token.c lines 631-670.
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
+        // CPRES_ZLIBX: block-match tokens never update the inflate dictionary.
+        if self.is_zlibx {
+            return Ok(());
+        }
         let mut remaining = data;
 
         while !remaining.is_empty() {
@@ -780,6 +808,14 @@ impl CompressedTokenDecoder {
         }
 
         Ok(())
+    }
+
+    /// Configures zlibx mode for this decoder.
+    ///
+    /// When `true`, [`Self::see_token`] becomes a no-op. Must be set to the
+    /// same value as the paired encoder's flag.
+    pub fn set_zlibx(&mut self, zlibx: bool) {
+        self.is_zlibx = zlibx;
     }
 }
 
@@ -1793,4 +1829,45 @@ mod tests {
         let end = decoder.recv_token(&mut cursor).unwrap();
         assert!(matches!(end, CompressedToken::End));
     }
+    #[test]
+    fn encoder_see_token_noop_in_zlibx_mode() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        encoder.set_zlibx(true);
+        encoder.see_token(b"block data that must not enter the dictionary").unwrap();
+        let mut output = Vec::new();
+        encoder.send_literal(&mut output, b"literal after zlibx noop").unwrap();
+        encoder.finish(&mut output).unwrap();
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn decoder_see_token_noop_in_zlibx_mode() {
+        let mut decoder = CompressedTokenDecoder::new();
+        decoder.set_zlibx(true);
+        decoder.see_token(b"block data that must not enter the dictionary").unwrap();
+    }
+
+    #[test]
+    fn set_zlibx_persists_across_encoder_reset() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        encoder.set_zlibx(true);
+        let mut output = Vec::new();
+        encoder.send_literal(&mut output, b"first file").unwrap();
+        encoder.finish(&mut output).unwrap(); // calls self.reset() internally
+        // is_zlibx must survive the reset() inside finish()
+        encoder.see_token(b"still a noop").unwrap();
+        let mut output2 = Vec::new();
+        encoder.send_literal(&mut output2, b"second file").unwrap();
+        encoder.finish(&mut output2).unwrap();
+        assert!(!output2.is_empty());
+    }
+
+    #[test]
+    fn set_zlibx_persists_across_decoder_reset() {
+        let mut decoder = CompressedTokenDecoder::new();
+        decoder.set_zlibx(true);
+        decoder.reset();
+        decoder.see_token(b"still a noop after explicit reset").unwrap();
+    }
+
 }
