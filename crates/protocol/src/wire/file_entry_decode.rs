@@ -121,6 +121,20 @@ pub fn decode_flags<R: Read>(
 
             // Combine: low byte + extended byte
             let flags = (flags0 as u32) | ((flags1 as u32) << 8);
+
+            // Detect the safe-file-list IO-error end-of-list sentinel.
+            // Wire: [XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST] + varint(err).
+            // Without this, decode_end_marker is never called; the error
+            // varint leaks into the next entry parse, corrupting the flist.
+            // Upstream: flist.c recv_file_entry() XMIT_IO_ERROR_ENDLIST branch.
+            // The sentinel is exactly [XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST].
+            // XMIT_IO_ERROR_ENDLIST shares its bit with XMIT_HLINK_FIRST; a bitmask
+            // test would fire on any hardlink-leader or atime-inherit entry that also
+            // has bit 0x1000 set.  Exact equality is the only safe check.
+            if flags == (XMIT_EXTENDED_FLAGS as u32) | ((XMIT_IO_ERROR_ENDLIST as u32) << 8) {
+                return Ok((flags, true));
+            }
+
             Ok((flags, false))
         } else {
             Ok((flags0 as u32, false))
@@ -191,6 +205,21 @@ pub fn decode_end_marker<R: Read>(
         // Normal mode: no error code
         Ok(None)
     }
+}
+
+/// Returns `true` when the flag word from `decode_flags` is a
+/// safe-file-list IO-error end-of-list sentinel rather than a file entry.
+///
+/// After `decode_flags` returns `(flags, true)`, callers must check this
+/// to distinguish `flags == 0` (normal end) from the IO-error sentinel
+/// (which needs `decode_end_marker` to consume the trailing error varint).
+///
+/// Upstream: `flist.c:recv_file_entry()` XMIT_IO_ERROR_ENDLIST branch.
+#[must_use]
+pub fn is_io_error_end_marker(flags: u32) -> bool {
+    // Must match exact sentinel, not just the bit: XMIT_HLINK_FIRST shares
+    // the same bit position as XMIT_IO_ERROR_ENDLIST.
+    flags == (XMIT_EXTENDED_FLAGS as u32) | ((XMIT_IO_ERROR_ENDLIST as u32) << 8)
 }
 
 /// Decodes a file name with prefix decompression.
@@ -394,8 +423,16 @@ pub fn decode_mtime<R: Read>(
 pub fn decode_mtime_nsec<R: Read>(reader: &mut R, flags: u32) -> io::Result<Option<u32>> {
     if flags & ((XMIT_MOD_NSEC as u32) << 8) != 0 {
         Ok(Some(read_varint(reader)? as u32))
-    } else {
+    } else if flags & (XMIT_SAME_TIME as u32) != 0 {
+        // mtime is inherited from the previous entry; callers must also
+        // inherit the previous entry's nsec.  Signal this with None.
         Ok(None)
+    } else {
+        // New mtime without XMIT_MOD_NSEC: upstream defines nsec = 0,
+        // NOT "carry forward the previous nsec".  Returning Some(0)
+        // prevents callers from accidentally inheriting a stale nsec.
+        // Upstream: flist.c recv_file_entry() -- nsec absent => 0.
+        Ok(Some(0))
     }
 }
 
@@ -762,14 +799,16 @@ pub fn decode_symlink_target<R: Read>(reader: &mut R, protocol_version: u8) -> i
 ///
 /// Only decode when `XMIT_HLINKED` is set but `XMIT_HLINK_FIRST` is NOT set.
 /// The first occurrence of a hardlink group (leader) doesn't have an index.
-pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Option<i32>> {
+pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Option<u32>> {
     if flags & ((XMIT_HLINKED as u32) << 8) != 0 {
         if flags & ((XMIT_HLINK_FIRST as u32) << 8) != 0 {
             // First occurrence (leader) - no index follows
             Ok(None)
         } else {
-            // Follower - read index
-            Ok(Some(read_varint(reader)?))
+            // Follower - read index.
+            // Cast i32 bits to u32 to preserve the full index space;
+            // upstream C uses unsigned int for hlink_flist indices.
+            Ok(Some(read_varint(reader)? as u32))
         }
     } else {
         Ok(None)
