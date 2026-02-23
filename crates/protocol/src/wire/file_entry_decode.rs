@@ -423,8 +423,16 @@ pub fn decode_mtime<R: Read>(
 pub fn decode_mtime_nsec<R: Read>(reader: &mut R, flags: u32) -> io::Result<Option<u32>> {
     if flags & ((XMIT_MOD_NSEC as u32) << 8) != 0 {
         Ok(Some(read_varint(reader)? as u32))
-    } else {
+    } else if flags & (XMIT_SAME_TIME as u32) != 0 {
+        // mtime is inherited from the previous entry; callers must also
+        // inherit the previous entry's nsec.  Signal this with None.
         Ok(None)
+    } else {
+        // New mtime without XMIT_MOD_NSEC: upstream defines nsec = 0,
+        // NOT "carry forward the previous nsec".  Returning Some(0)
+        // prevents callers from accidentally inheriting a stale nsec.
+        // Upstream: flist.c recv_file_entry() -- nsec absent => 0.
+        Ok(Some(0))
     }
 }
 
