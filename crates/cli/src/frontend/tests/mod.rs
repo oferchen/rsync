@@ -4,7 +4,6 @@ use super::server;
 use super::*;
 use crate::password::set_password_stdin_input;
 use checksums::strong::Md5;
-use core::fallback::CLIENT_FALLBACK_ENV;
 use core::{
     branding::manifest,
     client::{ClientEventKind, FilterRuleKind},

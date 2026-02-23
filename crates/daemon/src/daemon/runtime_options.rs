@@ -23,8 +23,6 @@ pub(crate) struct RuntimeOptions {
     reverse_lookup_configured: bool,
     lock_file: Option<PathBuf>,
     lock_file_from_config: bool,
-    pub(crate) delegate_arguments: Vec<OsString>,
-    inline_modules: bool,
     global_incoming_chmod: Option<String>,
     global_outgoing_chmod: Option<String>,
 }
@@ -55,8 +53,6 @@ impl Default for RuntimeOptions {
             reverse_lookup_configured: false,
             lock_file: None,
             lock_file_from_config: false,
-            delegate_arguments: Vec::new(),
-            inline_modules: false,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
         }
@@ -82,12 +78,8 @@ impl RuntimeOptions {
         let mut seen_modules = HashSet::new();
         if load_defaults && !config_argument_present(arguments) {
             if let Some(path) = environment_config_override() {
-                options.delegate_arguments.push(OsString::from("--config"));
-                options.delegate_arguments.push(path.clone());
                 options.load_config_modules(&path, &mut seen_modules)?;
             } else if let Some(path) = default_config_path_if_present(brand) {
-                options.delegate_arguments.push(OsString::from("--config"));
-                options.delegate_arguments.push(path.clone());
                 options.load_config_modules(&path, &mut seen_modules)?;
             }
         }
@@ -96,20 +88,12 @@ impl RuntimeOptions {
             if let Some((path, env)) = environment_secrets_override() {
                 let path_buf = PathBuf::from(&path);
                 if let Some(validated) = validate_secrets_file_from_env(&path_buf, env)? {
-                    options.global_secrets_file = Some(validated.clone());
+                    options.global_secrets_file = Some(validated);
                     options.global_secrets_from_config = false;
-                    options
-                        .delegate_arguments
-                        .push(OsString::from("--secrets-file"));
-                    options.delegate_arguments.push(validated.into_os_string());
                 }
             } else if let Some(path) = default_secrets_path_if_present(brand) {
                 options.global_secrets_file = Some(PathBuf::from(&path));
                 options.global_secrets_from_config = false;
-                options
-                    .delegate_arguments
-                    .push(OsString::from("--secrets-file"));
-                options.delegate_arguments.push(path);
             }
         }
 
@@ -118,21 +102,13 @@ impl RuntimeOptions {
         while let Some(argument) = iter.next() {
             if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
-                options.delegate_arguments.push(OsString::from("--port"));
-                options.delegate_arguments.push(value.clone());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bind")? {
                 let addr = parse_bind_address(&value)?;
                 options.set_bind_address(addr)?;
-                options.delegate_arguments.push(OsString::from("--address"));
-                options.delegate_arguments.push(value.clone());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--address")? {
                 let addr = parse_bind_address(&value)?;
                 options.set_bind_address(addr)?;
-                options.delegate_arguments.push(OsString::from("--address"));
-                options.delegate_arguments.push(value.clone());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--config")? {
-                options.delegate_arguments.push(OsString::from("--config"));
-                options.delegate_arguments.push(value.clone());
                 options.load_config_modules(&value, &mut seen_modules)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-file")? {
                 options.load_motd_file(&value)?;
@@ -143,52 +119,29 @@ impl RuntimeOptions {
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bwlimit")? {
                 let components = parse_runtime_bwlimit(&value)?;
                 options.set_bandwidth_limit(components.rate(), components.burst())?;
-                options.delegate_arguments.push(OsString::from("--bwlimit"));
-                options.delegate_arguments.push(value.clone());
             } else if argument == "--no-bwlimit" {
                 options.set_bandwidth_limit(None, None)?;
-                options.delegate_arguments.push(OsString::from("--bwlimit"));
-                options.delegate_arguments.push(OsString::from("0"));
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
             } else if argument == "--no-detach" {
                 // Accepted for compatibility with CI and tests, but currently a no-op
-                // since the daemon doesn't fork/detach by default anyway
-                options.delegate_arguments.push(OsString::from("--no-detach"));
+                // since the daemon doesn't fork/detach by default anyway.
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
                 let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;
             } else if argument == "--ipv4" {
                 options.force_address_family(AddressFamily::Ipv4)?;
-                options.delegate_arguments.push(OsString::from("--ipv4"));
             } else if argument == "--ipv6" {
                 options.force_address_family(AddressFamily::Ipv6)?;
-                options.delegate_arguments.push(OsString::from("--ipv6"));
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
-                options.set_log_file(PathBuf::from(value.clone()))?;
-                options
-                    .delegate_arguments
-                    .push(OsString::from("--log-file"));
-                options.delegate_arguments.push(value.clone());
+                options.set_log_file(PathBuf::from(value))?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--lock-file")? {
-                options.set_lock_file(PathBuf::from(value.clone()))?;
-                options
-                    .delegate_arguments
-                    .push(OsString::from("--lock-file"));
-                options.delegate_arguments.push(value.clone());
+                options.set_lock_file(PathBuf::from(value))?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--secrets-file")? {
-                let validated = validate_cli_secrets_file(PathBuf::from(value.clone()))?;
-                options.set_cli_secrets_file(validated.clone())?;
-                options
-                    .delegate_arguments
-                    .push(OsString::from("--secrets-file"));
-                options.delegate_arguments.push(validated.into_os_string());
+                let validated = validate_cli_secrets_file(PathBuf::from(value))?;
+                options.set_cli_secrets_file(validated)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--pid-file")? {
-                options.set_pid_file(PathBuf::from(value.clone()))?;
-                options
-                    .delegate_arguments
-                    .push(OsString::from("--pid-file"));
-                options.delegate_arguments.push(value.clone());
+                options.set_pid_file(PathBuf::from(value))?;
             } else if argument == "--module" {
                 let value = iter
                     .next()
@@ -207,7 +160,6 @@ impl RuntimeOptions {
                     return Err(duplicate_module(&module.name));
                 }
                 options.modules.push(module);
-                options.inline_modules = true;
             } else {
                 return Err(unsupported_option(argument.clone(), brand));
             }
@@ -706,6 +658,10 @@ impl RuntimeOptions {
     pub(super) fn lock_file(&self) -> Option<&Path> {
         self.lock_file.as_deref()
     }
+
+    pub(super) fn global_secrets_file(&self) -> Option<&Path> {
+        self.global_secrets_file.as_deref()
+    }
 }
 
 // Tests use Unix-style paths and daemon functionality designed for Unix
@@ -1045,31 +1001,6 @@ mod runtime_options_tests {
         let options = RuntimeOptions::parse(&args).expect("parse inline config");
         assert_eq!(options.modules().len(), 1);
         assert_eq!(options.modules()[0].name, "data");
-    }
-
-    #[test]
-    fn parse_config_forwards_to_delegate_arguments() {
-        let mut file = NamedTempFile::new().expect("config file");
-        writeln!(file, "[repo]\npath = /srv/repo\n").expect("write config");
-
-        let config_path = file.path().as_os_str().to_os_string();
-        let args = vec![OsString::from("--config"), config_path.clone()];
-        let options = RuntimeOptions::parse(&args).expect("parse");
-        assert!(options.delegate_arguments.contains(&OsString::from("--config")));
-        assert!(options.delegate_arguments.contains(&config_path));
-    }
-
-    #[test]
-    fn parse_config_inline_form_forwards_to_delegate_arguments() {
-        let mut file = NamedTempFile::new().expect("config file");
-        writeln!(file, "[repo]\npath = /srv/repo\n").expect("write config");
-
-        let config_path = file.path().as_os_str().to_os_string();
-        let inline_arg = format!("--config={}", file.path().display());
-        let args = vec![OsString::from(inline_arg)];
-        let options = RuntimeOptions::parse(&args).expect("parse");
-        assert!(options.delegate_arguments.contains(&OsString::from("--config")));
-        assert!(options.delegate_arguments.contains(&config_path));
     }
 
     #[test]

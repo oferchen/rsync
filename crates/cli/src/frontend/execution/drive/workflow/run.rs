@@ -302,7 +302,6 @@ where
 
     let options::DerivedSettings {
         out_format_template,
-        progress_setting: _,
         progress_mode,
         stats,
         name_level,
@@ -316,15 +315,11 @@ where
         max_alloc_limit,
         modify_window_setting,
         compress,
-        compress_disabled: _,
         compression_level_override,
-        compress_level_cli: _,
         skip_compress_list,
         compression_setting,
-        compress_choice_cli: _,
         compression_algorithm,
         log_file_path,
-        log_file_format_cli: _,
         log_file_template,
     } = match options::derive_settings(stdout, stderr, settings_inputs) {
         options::SettingsOutcome::Proceed(settings) => *settings,
@@ -425,9 +420,6 @@ where
             )
         })
     };
-
-    // Remote transfers are handled natively by the SSH transport in core::client::run_client_internal
-    // No fallback to system rsync is needed anymore
 
     let numeric_ids = numeric_ids_option.unwrap_or(false);
 
@@ -636,7 +628,6 @@ where
         append: append_enabled,
         append_verify,
         whole_file: whole_file_enabled, // Pass Option<bool> through for tri-state semantics
-        force_fallback: batch_config.is_some(),
         timeout: timeout_setting,
         connect_timeout: connect_timeout_setting,
         stop_deadline: stop_request.as_ref().map(StopRequest::deadline),

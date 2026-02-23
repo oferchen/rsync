@@ -29,15 +29,6 @@ impl UnsupportedOption {
             .unwrap_or_else(|| rsync_error!(1, text))
             .with_role(Role::Client)
     }
-
-    /// Deprecated: Kept for reference, will be removed once native SSH is fully validated
-    #[allow(dead_code)]
-    pub(crate) fn fallback_text(&self) -> String {
-        let option = self.option.to_string_lossy();
-        format!(
-            "unknown option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
-        )
-    }
 }
 
 fn is_option(argument: &OsStr) -> bool {
@@ -259,13 +250,6 @@ mod tests {
         let message = unsupported.to_message();
         let text = format!("{message}");
         assert!(text.contains("--unknown-opt"));
-    }
-
-    #[test]
-    fn unsupported_option_fallback_text_contains_option() {
-        let unsupported = UnsupportedOption::new(OsString::from("-xyz"));
-        let text = unsupported.fallback_text();
-        assert!(text.contains("-xyz"));
     }
 
     // ==================== parse_bind_address_argument tests ====================
