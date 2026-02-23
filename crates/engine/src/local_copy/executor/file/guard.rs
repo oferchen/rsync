@@ -309,56 +309,6 @@ impl Drop for DestinationWriteGuard {
     }
 }
 
-/// A guard for direct file writes without a temporary file.
-///
-/// Used for new file creation where no existing file needs atomic protection.
-/// If the guard is dropped without calling [`commit`](Self::commit), the
-/// destination file is removed — matching the cleanup behavior of
-/// [`DestinationWriteGuard`] and upstream rsync's signal-handler cleanup.
-///
-/// This avoids the overhead of creating a temporary file and renaming it,
-/// while still ensuring partial files are cleaned up on error, panic, or
-/// signal-induced process termination.
-pub struct DirectWriteGuard {
-    path: PathBuf,
-    committed: bool,
-}
-
-impl DirectWriteGuard {
-    /// Creates a new direct-write guard for the given destination path.
-    ///
-    /// The file at `path` should already be open for writing. The guard
-    /// takes ownership of cleanup responsibility.
-    pub fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            committed: false,
-        }
-    }
-
-    /// Marks the write as successfully completed.
-    ///
-    /// After calling this method, the guard will not remove the destination
-    /// file on drop.
-    pub fn commit(&mut self) {
-        self.committed = true;
-    }
-
-    /// Returns the destination path.
-    #[cfg(test)]
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for DirectWriteGuard {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,66 +505,5 @@ mod tests {
         assert!(staging.is_file());
 
         guard.discard();
-    }
-
-    // ==================== DirectWriteGuard Tests ====================
-
-    #[test]
-    fn direct_write_guard_removes_file_on_drop() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("direct.txt");
-        fs::write(&path, b"partial content").expect("write file");
-
-        {
-            let _guard = DirectWriteGuard::new(path.clone());
-            assert!(path.exists());
-            // Guard is dropped here without commit
-        }
-
-        assert!(!path.exists(), "file should be removed on drop");
-    }
-
-    #[test]
-    fn direct_write_guard_preserves_file_on_commit() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("direct-committed.txt");
-        fs::write(&path, b"complete content").expect("write file");
-
-        {
-            let mut guard = DirectWriteGuard::new(path.clone());
-            guard.commit();
-            // Guard is dropped here after commit
-        }
-
-        assert!(path.exists(), "file should be preserved after commit");
-        let content = fs::read_to_string(&path).expect("read");
-        assert_eq!(content, "complete content");
-    }
-
-    #[test]
-    fn direct_write_guard_handles_already_removed_file() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("removed.txt");
-        // Don't create the file — guard drop should not panic
-
-        {
-            let _guard = DirectWriteGuard::new(path.clone());
-            // Guard is dropped, file doesn't exist — should not panic
-        }
-
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn direct_write_guard_path_returns_destination() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("check-path.txt");
-        fs::write(&path, b"data").expect("write file");
-
-        let guard = DirectWriteGuard::new(path.clone());
-        assert_eq!(guard.path(), path.as_path());
-
-        let mut guard = guard;
-        guard.commit();
     }
 }

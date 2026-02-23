@@ -1041,16 +1041,6 @@ pub struct ParsedArgs {
     /// Default: `None`
     pub fsync: Option<bool>,
 
-    /// Enable direct write optimization for new files.
-    ///
-    /// When set, write new files directly to their destination path
-    /// instead of using temp file + rename.
-    ///
-    /// Corresponds to: `--direct-write`
-    ///
-    /// Default: `false`
-    pub direct_write: bool,
-
     /// Policy controlling io_uring usage for file I/O.
     ///
     /// Controls whether io_uring is used for file writes:

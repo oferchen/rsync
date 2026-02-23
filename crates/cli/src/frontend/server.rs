@@ -104,7 +104,6 @@ where
     let is_receiver = args.iter().any(|a| a == "--receiver");
     let ignore_errors = args.iter().any(|a| a == "--ignore-errors");
     let fsync = args.iter().any(|a| a == "--fsync");
-    let direct_write = args.iter().any(|a| a == "--direct-write");
     let io_uring_policy = if args.iter().any(|a| a == "--io-uring") {
         fast_io::IoUringPolicy::Enabled
     } else if args.iter().any(|a| a == "--no-io-uring") {
@@ -140,7 +139,6 @@ where
             || arg_str == "--receiver"
             || arg_str == "--ignore-errors"
             || arg_str == "--fsync"
-            || arg_str == "--direct-write"
             || arg_str == "--io-uring"
             || arg_str == "--no-io-uring"
         {
@@ -182,7 +180,6 @@ where
     // Apply additional flags parsed from full arguments
     config.ignore_errors = ignore_errors;
     config.fsync = fsync;
-    config.direct_write = direct_write;
     config.io_uring_policy = io_uring_policy;
 
     // Run native server with stdio
