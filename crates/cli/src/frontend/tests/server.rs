@@ -6,10 +6,8 @@ use std::io::Write;
 use std::os::unix::ffi::OsStringExt;
 
 use core::branding::Brand;
-use core::fallback::CLIENT_FALLBACK_ENV;
 use core::server::{ServerConfig, ServerRole};
 
-use super::common::EnvGuard;
 use crate::frontend::server::{
     InvocationRole, ServerInvocation, daemon_mode_arguments, is_rsync_flag_string,
     is_rsync_flag_tail, run_server_mode, server_mode_requested, touch_server_invocation,
@@ -422,8 +420,6 @@ fn run_server_mode_receiver_attempts_handshake_and_flushes_streams() {
     let mut stdout = Buffer::new();
     let mut stderr = Buffer::new();
 
-    // Remove the fallback env var so native server mode is used
-    let _guard = EnvGuard::remove(CLIENT_FALLBACK_ENV);
 
     let code = run_server_mode(&args, &mut stdout, &mut stderr);
     // Server will fail because there's no actual client providing handshake data
@@ -460,8 +456,6 @@ fn run_server_mode_generator_attempts_handshake() {
     let mut stdout = Buffer::new();
     let mut stderr = Buffer::new();
 
-    // Remove the fallback env var so native server mode is used
-    let _guard = EnvGuard::remove(CLIENT_FALLBACK_ENV);
 
     let code = run_server_mode(&args, &mut stdout, &mut stderr);
     // Server will fail because there's no actual client providing handshake data
@@ -483,8 +477,6 @@ fn run_server_mode_reports_parse_error_for_invalid_invocation() {
     let mut stdout = Buffer::new();
     let mut stderr = Buffer::new();
 
-    // Remove the fallback env var so native server error is reported
-    let _guard = EnvGuard::remove(CLIENT_FALLBACK_ENV);
 
     let code = run_server_mode(&args, &mut stdout, &mut stderr);
     assert_eq!(code, 1);

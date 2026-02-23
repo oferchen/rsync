@@ -169,18 +169,6 @@ pub(crate) fn missing_operands_error() -> ClientError {
     ClientError::with_code(code, message)
 }
 
-#[cold]
-#[allow(dead_code)]
-pub(crate) fn fallback_disabled_error() -> ClientError {
-    let code = ExitCode::Syntax;
-    let message = rsync_error!(
-        code.as_i32(),
-        "remote transfers require native support; fallback to system rsync is disabled"
-    )
-    .with_role(Role::Client);
-    ClientError::with_code(code, message)
-}
-
 /// Creates an invalid argument error from an i32 exit code.
 ///
 /// If the exit code doesn't map to a known [`ExitCode`] variant,
@@ -500,13 +488,6 @@ mod tests {
             let error = missing_operands_error();
             assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
             assert!(error.to_string().contains("missing source operands"));
-        }
-
-        #[test]
-        fn fallback_disabled_error_uses_correct_code() {
-            let error = fallback_disabled_error();
-            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
-            assert!(error.to_string().contains("fallback"));
         }
 
         #[test]

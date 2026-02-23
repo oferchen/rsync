@@ -22,12 +22,10 @@
 //!   [`engine::local_copy`] to mirror a simplified subset of upstream
 //!   behaviour by copying files, directories, and symbolic links on the local
 //!   filesystem while preserving permissions, timestamps, optional
-//!   ownership/group metadata, and sparse regions when requested. Delta
-//!   compression and advanced metadata such as ACLs or extended attributes
-//!   remain out of scope for this snapshot. When remote operands are detected,
-//!   the client delegates to the system `rsync` binary so network transfers are
-//!   available while the native engine is completed. When
-//!   deletion is requested (including [`--delete-excluded`](crate::client::ClientConfig::delete_excluded)),
+//!   ownership/group metadata, and sparse regions when requested. When remote
+//!   operands are detected, the client uses the native SSH or daemon transport.
+//!   When deletion is requested (including
+//!   [`--delete-excluded`](crate::client::ClientConfig::delete_excluded)),
 //!   the helper removes destination entries that are absent from the source tree
 //!   before applying metadata and prunes excluded entries when explicitly
 //!   requested.
@@ -87,7 +85,6 @@
 
 mod config;
 mod error;
-mod fallback;
 mod module_list;
 mod outcome;
 mod progress;
@@ -107,15 +104,14 @@ pub use self::error::{
     FILE_IO_EXIT_CODE, FILE_SELECTION_EXIT_CODE, IPC_EXIT_CODE, PARTIAL_TRANSFER_EXIT_CODE,
     PROTOCOL_INCOMPATIBLE_EXIT_CODE, REMOTE_COMMAND_NOT_FOUND_EXIT_CODE, SOCKET_IO_EXIT_CODE,
 };
-pub use self::fallback::{RemoteFallbackArgs, RemoteFallbackContext, run_remote_transfer_fallback};
 pub use self::module_list::{
     DaemonAddress, ModuleList, ModuleListEntry, ModuleListOptions, ModuleListRequest,
     run_module_list, run_module_list_with_options, run_module_list_with_password,
     run_module_list_with_password_and_options,
 };
-pub use self::outcome::{ClientOutcome, FallbackSummary};
+pub use self::outcome::ClientOutcome;
 pub use self::progress::{ClientProgressObserver, ClientProgressUpdate};
-pub use self::run::{run_client, run_client_or_fallback, run_client_with_observer};
+pub use self::run::{run_client, run_client_with_observer};
 pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
 };

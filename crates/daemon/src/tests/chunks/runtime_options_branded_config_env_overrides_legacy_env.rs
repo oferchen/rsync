@@ -29,12 +29,5 @@ fn runtime_options_branded_config_env_overrides_legacy_env() {
     let module = &options.modules()[0];
     assert_eq!(module.name, "branded");
     assert_eq!(module.path, branded_dir);
-    assert_eq!(
-        &options.delegate_arguments,
-        &[
-            OsString::from("--config"),
-            branded_config.into_os_string(),
-        ]
-    );
 }
 

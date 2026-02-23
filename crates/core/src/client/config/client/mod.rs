@@ -140,7 +140,6 @@ pub struct ClientConfig {
     pub(super) fsync: bool,
     pub(super) io_uring_policy: fast_io::IoUringPolicy,
     pub(super) force_event_collection: bool,
-    pub(super) force_fallback: bool,
     pub(super) preserve_devices: bool,
     pub(super) copy_devices: bool,
     pub(super) write_devices: bool,
@@ -260,7 +259,6 @@ impl Default for ClientConfig {
             fsync: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             force_event_collection: false,
-            force_fallback: false,
             preserve_devices: false,
             copy_devices: false,
             write_devices: false,
@@ -332,7 +330,6 @@ impl ClientConfig {
 
 mod arguments;
 mod deletion;
-mod fallback;
 mod filters;
 mod metadata;
 mod network;

@@ -1,4 +1,5 @@
 use super::*;
+use core::client::run_client;
 
 #[test]
 fn out_format_renders_itemized_placeholder_for_new_file() {
@@ -20,12 +21,7 @@ fn out_format_renders_itemized_placeholder_for_new_file() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let event = summary
         .events()
@@ -63,12 +59,7 @@ fn out_format_itemized_placeholder_reports_deletion() {
         .force_event_collection(true)
         .build();
 
-    let outcome =
-        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
-    let summary = match outcome {
-        ClientOutcome::Local(summary) => *summary,
-        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
-    };
+    let summary = run_client(config).expect("run client");
 
     let mut events = summary.events().iter();
     let event = events
