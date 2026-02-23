@@ -1,6 +1,6 @@
 //! Deadline enforcement for `--stop-at` / `--stop-after` / `--time-limit`.
 //!
-//! Converts the wall-clock `SystemTime` deadline from [`ServerConfig::stop_at`]
+//! Converts the wall-clock `SystemTime` deadline from `ServerConfig::stop_at`
 //! into a monotonic `Instant` that can be cheaply compared without syscalls.
 //! The check is performed at file boundaries (between files, never mid-file)
 //! to match upstream rsync's graceful stop behavior.
