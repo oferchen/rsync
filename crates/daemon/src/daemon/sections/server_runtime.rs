@@ -160,6 +160,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
     let manifest = manifest();
     let version = manifest.rust_version();
+    let detach = options.detach();
     let RuntimeOptions {
         bind_address,
         port,
@@ -248,6 +249,19 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses available to bind"),
         ));
     }
+
+    // Detach from terminal if --detach is active (Unix default).
+    // Must happen after binding so startup errors reach stderr, and before
+    // PID file creation so the file records the child's PID.
+    // upstream: clientserver.c:1518-1521 -- become_daemon() called before accept loop.
+    #[cfg(unix)]
+    if detach {
+        become_daemon()?;
+    }
+
+    // Suppress unused-variable warning on platforms where fork is unavailable.
+    #[cfg(not(unix))]
+    let _ = detach;
 
     // Write the PID file after binding so the file only appears once the port
     // is ready to accept connections — matching upstream main.c write_pid_file().

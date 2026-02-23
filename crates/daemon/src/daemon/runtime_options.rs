@@ -25,6 +25,7 @@ pub(crate) struct RuntimeOptions {
     lock_file_from_config: bool,
     global_incoming_chmod: Option<String>,
     global_outgoing_chmod: Option<String>,
+    detach: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -55,6 +56,7 @@ impl Default for RuntimeOptions {
             lock_file_from_config: false,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
+            detach: cfg!(unix),
         }
     }
 }
@@ -124,8 +126,9 @@ impl RuntimeOptions {
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
             } else if argument == "--no-detach" {
-                // Accepted for compatibility with CI and tests, but currently a no-op
-                // since the daemon doesn't fork/detach by default anyway.
+                options.detach = false;
+            } else if argument == "--detach" {
+                options.detach = true;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
                 let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;
@@ -590,6 +593,14 @@ impl RuntimeOptions {
             .clone_into(&mut line);
         self.motd_lines.push(line);
     }
+
+    /// Returns whether the daemon should fork and detach from the terminal.
+    ///
+    /// Defaults to `true` on Unix (matching upstream `become_daemon()`) and
+    /// `false` on Windows where `fork` is not available.
+    pub(crate) fn detach(&self) -> bool {
+        self.detach
+    }
 }
 
 fn validate_cli_secrets_file(path: PathBuf) -> Result<PathBuf, DaemonError> {
@@ -966,13 +977,40 @@ mod runtime_options_tests {
         assert!(result.is_err());
     }
 
-    // ==== No-detach option tests ====
+    // ==== Detach option tests ====
 
     #[test]
-    fn parse_no_detach_is_accepted() {
+    fn parse_detach_sets_flag() {
+        let args = vec![OsString::from("--detach")];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert!(options.detach());
+    }
+
+    #[test]
+    fn parse_no_detach_clears_flag() {
         let args = vec![OsString::from("--no-detach")];
-        let result = RuntimeOptions::parse(&args);
-        assert!(result.is_ok());
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert!(!options.detach());
+    }
+
+    #[test]
+    fn detach_default_matches_platform() {
+        let args: Vec<OsString> = vec![];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        #[cfg(unix)]
+        assert!(options.detach());
+        #[cfg(windows)]
+        assert!(!options.detach());
+    }
+
+    #[test]
+    fn last_detach_flag_wins() {
+        let args = vec![
+            OsString::from("--no-detach"),
+            OsString::from("--detach"),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert!(options.detach());
     }
 
     // ==== Config file tests ====
