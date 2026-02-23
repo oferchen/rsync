@@ -611,6 +611,9 @@ pub fn encode_symlink_target<W: Write>(
 /// Only encode when `XMIT_HLINKED` is set but `XMIT_HLINK_FIRST` is NOT set.
 /// The first occurrence of a hardlink group (leader) doesn't write an index.
 pub fn encode_hardlink_idx<W: Write>(writer: &mut W, idx: u32) -> io::Result<()> {
+    // Upstream rsync writes the hlink group index as a plain signed int.
+    // Indices are bounded by the flist size (< 2^31), so the as-i32 cast
+    // is safe in practice.  The decoder mirrors this with `as u32`.
     write_varint(writer, idx as i32)
 }
 
