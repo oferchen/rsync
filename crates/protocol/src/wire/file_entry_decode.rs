@@ -791,14 +791,16 @@ pub fn decode_symlink_target<R: Read>(reader: &mut R, protocol_version: u8) -> i
 ///
 /// Only decode when `XMIT_HLINKED` is set but `XMIT_HLINK_FIRST` is NOT set.
 /// The first occurrence of a hardlink group (leader) doesn't have an index.
-pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Option<i32>> {
+pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Option<u32>> {
     if flags & ((XMIT_HLINKED as u32) << 8) != 0 {
         if flags & ((XMIT_HLINK_FIRST as u32) << 8) != 0 {
             // First occurrence (leader) - no index follows
             Ok(None)
         } else {
-            // Follower - read index
-            Ok(Some(read_varint(reader)?))
+            // Follower - read index.
+            // Cast i32 bits to u32 to preserve the full index space;
+            // upstream C uses unsigned int for hlink_flist indices.
+            Ok(Some(read_varint(reader)? as u32))
         }
     } else {
         Ok(None)
