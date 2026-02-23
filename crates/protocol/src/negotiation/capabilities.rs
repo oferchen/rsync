@@ -550,6 +550,11 @@ fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 ///
 /// This is DIFFERENT from varint encoding!
 fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
+    // MAX_NSTR_STRLEN matches upstream compat.c:537: reject anything a real
+    // rsync peer would also reject, preventing DoS via oversized negotiation
+    // strings.
+    const MAX_NSTR_STRLEN: usize = 1024;
+
     let mut first = [0u8; 1];
     reader.read_exact(&mut first)?;
 
@@ -564,12 +569,11 @@ fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
         first[0] as usize
     };
 
-    // Sanity check: negotiation strings should be small
-    // Upstream uses MAX_NSTR_STRLEN = 1024 (compat.c:537)
-    if len > 8192 {
+    // Sanity check: must not exceed upstream's hard limit.
+    if len > MAX_NSTR_STRLEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("vstring too long: {len} bytes"),
+            format!("vstring too long: {len} bytes (max {MAX_NSTR_STRLEN})"),
         ));
     }
 
@@ -1764,7 +1768,8 @@ mod tests {
     /// Tests sample values across the 2-byte range.
     #[test]
     fn phase2_11_vstring_2byte_sample_values() {
-        let lengths = [128, 200, 255, 256, 500, 1000, 2000, 4000, 8000];
+        // Values capped at MAX_NSTR_STRLEN=1024; larger lengths need write-only tests.
+        let lengths = [128, 200, 255, 256, 500, 1000];
         for len in lengths {
             let test_str = "g".repeat(len);
             let mut buffer = Vec::new();
@@ -1796,7 +1801,6 @@ mod tests {
             (200, 0x80, 0xC8),     // 200 = 0x00C8
             (256, 0x81, 0x00),     // 256 = 0x0100
             (1000, 0x83, 0xE8),    // 1000 = 0x03E8
-            (8000, 0x9F, 0x40),    // 8000 = 0x1F40
         ];
 
         for (len, high, low) in cases {
@@ -1850,8 +1854,7 @@ mod tests {
     //
     // The vstring format has limits:
     // - Maximum encodable length: 0x7FFF (32767 bytes)
-    // - Sanity limit in read_vstring: 8192 bytes
-    // - Upstream MAX_NSTR_STRLEN: 1024 bytes
+    // - Wire/sanity limit in read_vstring: 1024 bytes (MAX_NSTR_STRLEN, matches upstream)
     //
     // These tests verify boundary conditions and error handling.
 
@@ -1884,26 +1887,29 @@ mod tests {
         assert!(err.to_string().contains("vstring too long"));
     }
 
-    /// Tests sanity limit in read_vstring (8192 bytes).
+    /// Tests sanity limit in read_vstring (MAX_NSTR_STRLEN = 1024 bytes).
     #[test]
     fn phase2_12_vstring_sanity_limit_exceeded() {
-        // Encode a length of 10000 (exceeds 8192 sanity limit)
+        // Encode a length of 10000 (exceeds MAX_NSTR_STRLEN = 1024)
         // 10000 = 0x2710, so high byte = 0x27 | 0x80 = 0xA7, low byte = 0x10
         let data = [0xA7u8, 0x10];
 
         let mut reader = &data[..];
         let result = read_vstring(&mut reader);
 
-        assert!(result.is_err(), "should reject vstrings > 8192 bytes");
+        assert!(
+            result.is_err(),
+            "should reject vstrings > MAX_NSTR_STRLEN bytes"
+        );
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(err.to_string().contains("vstring too long"));
     }
 
-    /// Tests exactly at sanity limit (8192 bytes).
+    /// Tests exactly at sanity limit (MAX_NSTR_STRLEN = 1024 bytes).
     #[test]
     fn phase2_12_vstring_at_sanity_limit() {
-        let test_str = "m".repeat(8192);
+        let test_str = "m".repeat(1024);
         let mut buffer = Vec::new();
         write_vstring(&mut buffer, &test_str).unwrap();
 
@@ -1912,10 +1918,10 @@ mod tests {
         assert_eq!(received, test_str);
     }
 
-    /// Tests just below sanity limit (8191 bytes).
+    /// Tests just below sanity limit (MAX_NSTR_STRLEN - 1 = 1023 bytes).
     #[test]
     fn phase2_12_vstring_below_sanity_limit() {
-        let test_str = "n".repeat(8191);
+        let test_str = "n".repeat(1023);
         let mut buffer = Vec::new();
         write_vstring(&mut buffer, &test_str).unwrap();
 
@@ -1924,18 +1930,21 @@ mod tests {
         assert_eq!(received, test_str);
     }
 
-    /// Tests just above sanity limit (8193 bytes).
+    /// Tests just above sanity limit (MAX_NSTR_STRLEN + 1 = 1025 bytes).
     #[test]
     fn phase2_12_vstring_above_sanity_limit() {
         // Write succeeds (max is 0x7FFF)
-        let test_str = "o".repeat(8193);
+        let test_str = "o".repeat(1025);
         let mut buffer = Vec::new();
         write_vstring(&mut buffer, &test_str).unwrap();
 
-        // Read fails (sanity limit is 8192)
+        // Read fails (MAX_NSTR_STRLEN = 1024)
         let mut reader = &buffer[..];
         let result = read_vstring(&mut reader);
-        assert!(result.is_err(), "should reject vstrings > 8192 bytes");
+        assert!(
+            result.is_err(),
+            "should reject vstrings > MAX_NSTR_STRLEN bytes"
+        );
     }
 
     /// Tests typical upstream limit (1024 bytes, MAX_NSTR_STRLEN).
@@ -1988,11 +1997,8 @@ mod tests {
             128,  // Min 2-byte
             255,  // 0x00FF
             256,  // 0x0100
-            1023, // Just under upstream limit
-            1024, // Upstream limit
-            4096, // 4KB
-            8191, // Just under sanity limit
-            8192, // At sanity limit
+            1023, // Just under MAX_NSTR_STRLEN
+            1024, // At MAX_NSTR_STRLEN (upstream hard limit)
         ];
 
         for len in boundaries {

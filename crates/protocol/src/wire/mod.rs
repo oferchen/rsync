@@ -7,11 +7,11 @@
 //!
 //! # Submodules
 //!
-//! - [`file_entry`] - Low-level file entry wire format encoding functions
-//! - [`file_entry_decode`] - Low-level file entry wire format decoding functions
-//! - [`signature`] - Signature block encoding for delta generation
-//! - [`delta`] - Delta token encoding for file reconstruction
-//! - [`compressed_token`] - Compressed token stream handling
+//! - `file_entry` - Low-level file entry wire format encoding functions
+//! - `file_entry_decode` - Low-level file entry wire format decoding functions
+//! - `signature` - Signature block encoding for delta generation
+//! - `delta` - Delta token encoding for file reconstruction
+//! - `compressed_token` - Compressed token stream handling
 //!
 //! For high-level file list encoding/decoding, see the [`crate::flist`] module
 //! which provides [`crate::flist::FileListWriter`] and [`crate::flist::FileListReader`].
