@@ -51,11 +51,6 @@ const WRITE_BUF_SIZE: usize = 256 * 1024;
 /// threshold catches the common case.
 const DIRECT_WRITE_THRESHOLD: usize = 8 * 1024;
 
-/// Minimum file size to pre-allocate with `set_len()`.
-/// Matches upstream rsync's `preallocate_files` threshold — small files are not
-/// worth the extra syscall.
-const PREALLOC_THRESHOLD: u64 = 64 * 1024;
-
 /// Writes two buffers as a single `writev` syscall, falling back to
 /// sequential `write_all` if vectored I/O is unsupported.
 fn write_all_vectored(file: &mut fs::File, first: &[u8], second: &[u8]) -> io::Result<()> {
@@ -270,14 +265,6 @@ fn process_file(
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin)?;
 
-    // Pre-allocate disk space for new files above the threshold.
-    // Mirrors upstream receiver.c:254-258 `do_fallocate(fd, 0, total_size)`.
-    if begin.direct_write && begin.target_size >= PREALLOC_THRESHOLD {
-        // set_len pre-allocates on most filesystems. On failure (e.g. ENOSPC),
-        // we continue — writes will fail later with a clearer error.
-        let _ = file.set_len(begin.target_size);
-    }
-
     let mut output = ReusableBufWriter::new(file, write_buf);
 
     let mut sparse_state = if begin.use_sparse {
@@ -421,10 +408,6 @@ fn process_whole_file(
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin)?;
 
-    if begin.direct_write && begin.target_size >= PREALLOC_THRESHOLD {
-        let _ = file.set_len(begin.target_size);
-    }
-
     let mut output = ReusableBufWriter::new(file, write_buf);
     let bytes_written = data.len() as u64;
 
@@ -490,7 +473,7 @@ fn process_whole_file(
     })
 }
 
-/// Opens the output file using direct write, device write, or temp+rename strategy.
+/// Opens the output file using device write or temp+rename strategy.
 ///
 /// Mirrors the logic in [`crate::transfer_ops::process_file_response`].
 ///
@@ -509,23 +492,6 @@ fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard
         // Uses inplace semantics — no temp file + rename.
         let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
         Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
-    } else if begin.direct_write {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&begin.file_path)
-        {
-            Ok(file) => {
-                // Direct write: guard cleans up file_path on failure, no rename needed.
-                Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                // Race: file appeared between basis check and create. Use temp+rename.
-                let (file, guard) = open_tmpfile(&begin.file_path, None)?;
-                Ok((file, guard, true))
-            }
-            Err(e) => Err(e),
-        }
     } else {
         let (file, guard) = open_tmpfile(&begin.file_path, None)?;
         Ok((file, guard, true))
@@ -564,7 +530,6 @@ mod tests {
                 target_size: 1024,
                 file_entry_index: 0,
                 use_sparse: false,
-                direct_write: true,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
@@ -600,7 +565,6 @@ mod tests {
                 target_size: 100,
                 file_entry_index: 1,
                 use_sparse: false,
-                direct_write: false,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
@@ -640,7 +604,6 @@ mod tests {
                     target_size: data.len() as u64,
                     file_entry_index: i,
                     use_sparse: false,
-                    direct_write: true,
                     checksum_verifier: None,
                     file_entry: None,
                     is_device_target: false,
@@ -687,7 +650,6 @@ mod tests {
                 target_size: 300,
                 file_entry_index: 0,
                 use_sparse: false,
-                direct_write: true,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
@@ -720,7 +682,6 @@ mod tests {
                 target_size: 100,
                 file_entry_index: 0,
                 use_sparse: false,
-                direct_write: true,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
@@ -762,7 +723,6 @@ mod tests {
                     target_size: 9,
                     file_entry_index: 0,
                     use_sparse: false,
-                    direct_write: true,
                     checksum_verifier: None,
                     file_entry: None,
                     is_device_target: false,

@@ -253,7 +253,6 @@ mod tests {
                 target_size: 100,
                 file_entry_index: 0,
                 use_sparse: false,
-                direct_write: true,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,

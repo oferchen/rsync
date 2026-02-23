@@ -54,8 +54,6 @@ pub struct BeginMessage {
     pub file_entry_index: usize,
     /// Whether to use sparse file writing.
     pub use_sparse: bool,
-    /// Whether to attempt direct write (skip temp+rename for new files).
-    pub direct_write: bool,
     /// Checksum verifier for computing per-file integrity digest on the disk
     /// thread. When `Some`, the disk thread hashes every chunk it writes and
     /// returns the final digest in [`CommitResult::computed_checksum`].

@@ -1070,4 +1070,3 @@ include!("execute_log_file.rs");
 include!("execute_filter_program.rs");
 include!("execute_skip_compress.rs");
 include!("execute_dry_run.rs");
-include!("execute_direct_write.rs");
