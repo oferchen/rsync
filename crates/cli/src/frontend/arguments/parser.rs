@@ -369,7 +369,6 @@ where
     } else {
         None
     };
-    let direct_write = matches.get_flag("direct-write") && !matches.get_flag("no-direct-write");
     let io_uring_policy = if matches.get_flag("io-uring") {
         fast_io::IoUringPolicy::Enabled
     } else if matches.get_flag("no-io-uring") {
@@ -675,7 +674,6 @@ where
         partial,
         preallocate,
         fsync,
-        direct_write,
         io_uring_policy,
         delay_updates,
         partial_dir,
