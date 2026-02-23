@@ -10,7 +10,6 @@
 //! - **Zero-copy file transfer** using `copy_file_range` for file-to-file copies
 //! - **Zero-copy socket send** using `sendfile` for file-to-socket transfers
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
-//! - **Buffer pools** for reduced allocation overhead
 //! - **Cached sorting** with Schwartzian transform
 //!
 //! # Design Principles
@@ -24,7 +23,6 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
 
-pub mod buffer_pool;
 pub mod cached_sort;
 pub mod parallel;
 pub mod traits;
@@ -56,7 +54,6 @@ pub mod io_uring;
 #[path = "io_uring_stub.rs"]
 pub mod io_uring;
 
-pub use buffer_pool::{BufferGuard, BufferPool};
 pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use traits::{FileReader, FileWriter};
