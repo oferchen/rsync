@@ -86,7 +86,7 @@ ensure_workspace_binaries() {
   if [[ -x "${target_dir}/oc-rsync" ]]; then
     return
   fi
-  cargo --profile dist --bin oc-rsync
+  cargo build --profile dist --bin oc-rsync
 }
 
 build_jobs() {
