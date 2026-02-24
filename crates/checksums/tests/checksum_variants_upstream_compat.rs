@@ -660,7 +660,7 @@ fn for_algorithm_factory_matches_concrete_factories() {
         let boxed = ChecksumStrategySelector::for_algorithm(*kind, seed);
         let concrete: Box<dyn ChecksumStrategy> = match kind {
             ChecksumAlgorithmKind::Md4 => Box::new(ChecksumStrategySelector::md4()),
-            ChecksumAlgorithmKind::Md5 => Box::new(ChecksumStrategySelector::md5_proper(seed)),
+            ChecksumAlgorithmKind::Md5 => Box::new(ChecksumStrategySelector::md5_legacy(seed)),
             ChecksumAlgorithmKind::Sha1 => Box::new(ChecksumStrategySelector::sha1()),
             ChecksumAlgorithmKind::Sha256 => Box::new(ChecksumStrategySelector::sha256()),
             ChecksumAlgorithmKind::Sha512 => Box::new(ChecksumStrategySelector::sha512()),
@@ -1417,20 +1417,39 @@ fn cf_chksum_seed_fix_strategy_selector_legacy_matches_direct() {
 }
 
 #[test]
-fn cf_chksum_seed_fix_default_protocol_30_uses_proper_order() {
-    // ChecksumStrategySelector::for_protocol_version(30, seed) defaults to proper ordering,
-    // mirroring upstream where protocol >= 30 with compat negotiation enables CF_CHKSUM_SEED_FIX.
-    let seed: i32 = 42;
-    let data = b"protocol 30 default seed order";
+fn cf_chksum_seed_fix_default_protocol_30_uses_legacy_order_by_default() {
+    // for_protocol_version() does not receive negotiated compat flags.
+    // It must default to legacy seed ordering (seed appended after data) so that
+    // transfers with rsync peers that predate CF_CHKSUM_SEED_FIX (rsync < 3.2.x)
+    // produce matching digests.  Callers with negotiated caps must use
+    // for_protocol_version_with_seed_order(..., proper_seed_order) explicitly.
+    let data = b"cf_chksum_seed_fix default ordering";
+    let seed = 0xDEAD_BEEF_u32 as i32;
 
-    let default_strategy = ChecksumStrategySelector::for_protocol_version(30, seed);
-    let proper_strategy =
-        ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed, true);
+    let strategy = ChecksumStrategySelector::for_protocol_version(30, seed);
+    let strategy_digest = strategy.compute(data);
+
+    let direct_legacy = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+    let direct_proper = Md5::digest_with_seed(Md5Seed::proper(seed), data);
 
     assert_eq!(
-        default_strategy.compute(data),
-        proper_strategy.compute(data),
-        "for_protocol_version(30, _) must default to proper seed ordering"
+        strategy_digest.as_bytes(),
+        direct_legacy.as_ref(),
+        "for_protocol_version(30, _) must default to legacy seed ordering (no CF_CHKSUM_SEED_FIX assumed)"
+    );
+    assert_ne!(
+        strategy_digest.as_bytes(),
+        direct_proper.as_ref(),
+        "legacy and proper orderings must produce different digests"
+    );
+
+    // Verify proper ordering is reachable via the explicit API.
+    let proper_strategy =
+        ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed, true);
+    assert_eq!(
+        proper_strategy.compute(data).as_bytes(),
+        direct_proper.as_ref(),
+        "for_protocol_version_with_seed_order(30, seed, true) must match Md5Seed::proper"
     );
 }
 
