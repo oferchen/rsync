@@ -726,7 +726,7 @@ impl ChecksumStrategySelector {
     #[must_use]
     pub fn for_protocol_version(protocol_version: u8, seed: i32) -> Box<dyn ChecksumStrategy> {
         if protocol_version >= 30 {
-            Box::new(Md5Strategy::with_proper_seed(seed))
+            Box::new(Md5Strategy::with_legacy_seed(seed))
         } else {
             Box::new(Md4Strategy::new())
         }
@@ -784,7 +784,7 @@ impl ChecksumStrategySelector {
     pub fn for_algorithm(kind: ChecksumAlgorithmKind, seed: i32) -> Box<dyn ChecksumStrategy> {
         match kind {
             ChecksumAlgorithmKind::Md4 => Box::new(Md4Strategy::new()),
-            ChecksumAlgorithmKind::Md5 => Box::new(Md5Strategy::with_proper_seed(seed)),
+            ChecksumAlgorithmKind::Md5 => Box::new(Md5Strategy::with_legacy_seed(seed)),
             ChecksumAlgorithmKind::Sha1 => Box::new(Sha1Strategy::new()),
             ChecksumAlgorithmKind::Sha256 => Box::new(Sha256Strategy::new()),
             ChecksumAlgorithmKind::Sha512 => Box::new(Sha512Strategy::new()),
@@ -1171,7 +1171,24 @@ mod tests {
     #[test]
     fn selector_for_protocol_version_30() {
         let strategy = ChecksumStrategySelector::for_protocol_version(30, 12345);
+        // Default (no CF_CHKSUM_SEED_FIX) must use legacy ordering to stay
+        // wire-compatible with rsync peers that predate the seed-fix flag.
         assert_eq!(strategy.algorithm_name(), "md5");
+        let proper =
+            ChecksumStrategySelector::for_protocol_version_with_seed_order(30, 12345, true);
+        let legacy =
+            ChecksumStrategySelector::for_protocol_version_with_seed_order(30, 12345, false);
+        // The unflagged default must match legacy, not proper.
+        assert_eq!(
+            strategy.compute(b"test"),
+            legacy.compute(b"test"),
+            "for_protocol_version must default to legacy seed ordering"
+        );
+        assert_ne!(
+            strategy.compute(b"test"),
+            proper.compute(b"test"),
+            "legacy and proper must differ"
+        );
     }
 
     #[test]
