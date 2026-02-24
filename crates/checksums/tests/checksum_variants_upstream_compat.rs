@@ -503,17 +503,36 @@ fn checksum_seed_propagated_through_strategy_selector() {
     let data = b"strategy seed propagation";
     let seed = 0x1234_5678_i32;
 
-    // Strategy with proper seed (what protocol 30+ with CHECKSUM_SEED_FIX uses)
+    // for_protocol_version has no knowledge of CF_CHKSUM_SEED_FIX negotiation,
+    // so it must default to legacy ordering to stay wire-compatible with peers
+    // that predate rsync 3.2.x (which introduced the seed-fix flag).
+    // Callers that have negotiated CF_CHKSUM_SEED_FIX must use
+    // for_protocol_version_with_seed_order(..., true) explicitly.
     let strategy = ChecksumStrategySelector::for_protocol_version(30, seed);
     let strategy_digest = strategy.compute(data);
 
-    // Direct with proper seed
-    let direct = Md5::digest_with_seed(Md5Seed::proper(seed), data);
+    // Default must match legacy (seed appended after data), not proper.
+    let direct_legacy = Md5::digest_with_seed(Md5Seed::legacy(seed), data);
+    let direct_proper = Md5::digest_with_seed(Md5Seed::proper(seed), data);
 
     assert_eq!(
         strategy_digest.as_bytes(),
-        direct.as_ref(),
-        "Strategy selector should use proper seed ordering for protocol 30+"
+        direct_legacy.as_ref(),
+        "for_protocol_version must default to legacy seed ordering (no CF_CHKSUM_SEED_FIX assumed)"
+    );
+    assert_ne!(
+        strategy_digest.as_bytes(),
+        direct_proper.as_ref(),
+        "legacy and proper must differ"
+    );
+
+    // Verify that explicitly requesting proper ordering gives the proper result.
+    let proper_strategy =
+        ChecksumStrategySelector::for_protocol_version_with_seed_order(30, seed, true);
+    assert_eq!(
+        proper_strategy.compute(data).as_bytes(),
+        direct_proper.as_ref(),
+        "for_protocol_version_with_seed_order(true) must match Md5Seed::proper"
     );
 }
 
