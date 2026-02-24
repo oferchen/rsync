@@ -477,7 +477,7 @@ fn choose_checksum_algorithm(client_list: &str) -> io::Result<ChecksumAlgorithm>
         // Try to parse each algorithm the client supports
         if let Ok(checksum) = ChecksumAlgorithm::parse(algo) {
             // Check if we support it
-            if SUPPORTED_CHECKSUMS.contains(&algo) {
+            if SUPPORTED_CHECKSUMS.contains(&checksum.as_str()) {
                 return Ok(checksum);
             }
         }
@@ -2882,7 +2882,7 @@ mod tests {
         let result = choose_checksum_algorithm(remote_list).unwrap();
         // Note: "xxh" parses to XXH64, but SUPPORTED_CHECKSUMS has "xxh64" not "xxh"
         // So this should skip "xxh" and match "md5"
-        assert_eq!(result, ChecksumAlgorithm::MD5);
+        assert_eq!(result, ChecksumAlgorithm::XXH64);
     }
 
     /// Tests that algorithm names must be exact matches.
