@@ -444,6 +444,25 @@ mod file_entry_roundtrip {
         fn flags_roundtrip_non_varint(
             raw_flags in 0u32..=0xFFFFu32,
         ) {
+        // Skip raw_flags == 0: primary byte 0x00 is the plain end-of-list marker.
+        prop_assume!(raw_flags != 0);
+
+        // Skip raw_flags the encoder normalises into the IO_ERROR_ENDLIST sentinel.
+        // The encoder auto-ORs XMIT_EXTENDED_FLAGS (0x04) into the primary byte
+        // when any extended bits (bits 8-15) are set.  The sentinel is the
+        // exact value 0x1004 (XMIT_EXTENDED_FLAGS | XMIT_IO_ERROR_ENDLIST<<8).
+        // Real XMIT_HLINK_FIRST entries always carry XMIT_HLINKED too (>=0x1204).
+        {
+            // 0x04 = XMIT_EXTENDED_FLAGS, 0x10<<8 = XMIT_IO_ERROR_ENDLIST in ext byte
+            const SENTINEL: u32 = 0x1004_u32;
+            let normalised: u32 = if raw_flags & 0xFF00 != 0 {
+                raw_flags | 0x04_u32
+            } else {
+                raw_flags
+            };
+            prop_assume!(normalised != SENTINEL);
+        }
+
             let protocol_version = 32u8;
             let is_end = false;
             let use_varint_flags = false;
