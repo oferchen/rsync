@@ -365,8 +365,6 @@ impl IoUringReader {
 
             // Build per-slot buffer slices. Each slot borrows a region of `output`
             // through raw pointers to avoid multiple mutable borrows.
-            let mut submitted = 0u32;
-
             // Track (offset_in_output, len, bytes_done) per slot.
             let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(batch_count);
 
@@ -379,7 +377,7 @@ impl IoUringReader {
 
             let mut all_done = false;
             while !all_done {
-                submitted = 0;
+                let mut submitted = 0u32;
 
                 for (idx, &(out_start, len, done)) in slots.iter().enumerate() {
                     let want = len - done;
