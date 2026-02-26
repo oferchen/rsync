@@ -28,6 +28,8 @@ pub(crate) struct ParsedConfigModules {
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
+    syslog_facility: Option<(String, ConfigDirectiveOrigin)>,
+    syslog_tag: Option<(String, ConfigDirectiveOrigin)>,
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
@@ -69,6 +71,8 @@ fn parse_config_modules_inner(
     let mut global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut global_use_chroot: Option<(bool, ConfigDirectiveOrigin)> = None;
+    let mut syslog_facility: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut syslog_tag: Option<(String, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -898,6 +902,71 @@ fn parse_config_modules_inner(
                         global_use_chroot = Some((parsed, origin));
                     }
                 }
+                // upstream: loadparm.c — syslog facility sets the syslog facility
+                // for daemon log messages (e.g., "daemon", "local0"-"local7").
+                "syslog facility" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'syslog facility' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &syslog_facility {
+                        if existing != value {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'syslog facility' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        let mut owned = String::new();
+                        value.clone_into(&mut owned);
+                        syslog_facility = Some((owned, origin));
+                    }
+                }
+                // upstream: loadparm.c — syslog tag sets the syslog ident prefix.
+                "syslog tag" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'syslog tag' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &syslog_tag {
+                        if existing != value {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'syslog tag' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        let mut owned = String::new();
+                        value.clone_into(&mut owned);
+                        syslog_tag = Some((owned, origin));
+                    }
+                }
                 _ => {
                     eprintln!(
                         "warning: unknown global directive '{}' in '{}' line {}",
@@ -936,6 +1005,8 @@ fn parse_config_modules_inner(
             global_secrets_file,
             global_incoming_chmod,
             global_outgoing_chmod,
+            syslog_facility,
+            syslog_tag,
         })
     })();
 
@@ -2376,5 +2447,130 @@ mod config_parsing_tests {
             Some(PathBuf::from("/etc/mod1_excludes.txt"))
         );
         assert!(result.modules[1].exclude_from.is_none());
+    }
+
+    // --- Syslog facility directive tests ---
+
+    #[test]
+    fn parse_syslog_facility_global_directive() {
+        let file = write_config("syslog facility = local5\n[mod]\npath = /tmp\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (facility, _origin) = result.syslog_facility.expect("should have syslog facility");
+        assert_eq!(facility, "local5");
+    }
+
+    #[test]
+    fn parse_syslog_facility_default_when_absent() {
+        let file = write_config("[mod]\npath = /tmp\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.syslog_facility.is_none());
+    }
+
+    #[test]
+    fn parse_syslog_facility_empty_rejected() {
+        let file = write_config("syslog facility =\n[mod]\npath = /tmp\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
+        assert!(err.to_string().contains("syslog facility"));
+    }
+
+    #[test]
+    fn parse_syslog_facility_duplicate_same_value_accepted() {
+        let file = write_config(
+            "syslog facility = daemon\nsyslog facility = daemon\n[mod]\npath = /tmp\n",
+        );
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (facility, _) = result.syslog_facility.expect("should have facility");
+        assert_eq!(facility, "daemon");
+    }
+
+    #[test]
+    fn parse_syslog_facility_duplicate_different_value_rejected() {
+        let file = write_config(
+            "syslog facility = daemon\nsyslog facility = local0\n[mod]\npath = /tmp\n",
+        );
+        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
+        assert!(err.to_string().contains("duplicate"));
+        assert!(err.to_string().contains("syslog facility"));
+    }
+
+    #[test]
+    fn parse_syslog_facility_inside_module_is_unknown() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nsyslog facility = local0\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.syslog_facility.is_none());
+    }
+
+    // --- Syslog tag directive tests ---
+
+    #[test]
+    fn parse_syslog_tag_global_directive() {
+        let file = write_config("syslog tag = mybackup\n[mod]\npath = /tmp\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (tag, _origin) = result.syslog_tag.expect("should have syslog tag");
+        assert_eq!(tag, "mybackup");
+    }
+
+    #[test]
+    fn parse_syslog_tag_default_when_absent() {
+        let file = write_config("[mod]\npath = /tmp\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.syslog_tag.is_none());
+    }
+
+    #[test]
+    fn parse_syslog_tag_empty_rejected() {
+        let file = write_config("syslog tag =\n[mod]\npath = /tmp\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
+        assert!(err.to_string().contains("syslog tag"));
+    }
+
+    #[test]
+    fn parse_syslog_tag_duplicate_same_value_accepted() {
+        let file =
+            write_config("syslog tag = rsyncd\nsyslog tag = rsyncd\n[mod]\npath = /tmp\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (tag, _) = result.syslog_tag.expect("should have tag");
+        assert_eq!(tag, "rsyncd");
+    }
+
+    #[test]
+    fn parse_syslog_tag_duplicate_different_value_rejected() {
+        let file =
+            write_config("syslog tag = rsyncd\nsyslog tag = custom\n[mod]\npath = /tmp\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail on duplicate");
+        assert!(err.to_string().contains("duplicate"));
+        assert!(err.to_string().contains("syslog tag"));
+    }
+
+    #[test]
+    fn parse_syslog_tag_inside_module_is_unknown() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nsyslog tag = custom\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.syslog_tag.is_none());
+    }
+
+    #[test]
+    fn parse_both_syslog_directives_global() {
+        let file = write_config(
+            "syslog facility = local3\nsyslog tag = backup-daemon\n[mod]\npath = /tmp\n",
+        );
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (facility, _) = result.syslog_facility.expect("should have facility");
+        let (tag, _) = result.syslog_tag.expect("should have tag");
+        assert_eq!(facility, "local3");
+        assert_eq!(tag, "backup-daemon");
     }
 }
