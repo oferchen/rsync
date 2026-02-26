@@ -127,6 +127,8 @@ pub struct GlobalConfig {
     pid_file: Option<PathBuf>,
     socket_options: Option<String>,
     log_format: Option<String>,
+    syslog_facility: Option<String>,
+    syslog_tag: Option<String>,
 }
 
 impl GlobalConfig {
@@ -163,6 +165,22 @@ impl GlobalConfig {
     /// Returns the log format string, if specified.
     pub fn log_format(&self) -> Option<&str> {
         self.log_format.as_deref()
+    }
+
+    /// Returns the syslog facility name (default: "daemon").
+    ///
+    /// Upstream: `loadparm.c` — `syslog facility` parameter. Valid values include
+    /// "daemon", "auth", "user", "local0" through "local7", etc.
+    pub fn syslog_facility(&self) -> &str {
+        self.syslog_facility.as_deref().unwrap_or("daemon")
+    }
+
+    /// Returns the syslog tag/ident prefix (default: "oc-rsyncd").
+    ///
+    /// Upstream: `loadparm.c` — `syslog tag` parameter, default "rsyncd".
+    /// For oc-rsync the default is "oc-rsyncd".
+    pub fn syslog_tag(&self) -> &str {
+        self.syslog_tag.as_deref().unwrap_or("oc-rsyncd")
     }
 }
 
@@ -524,6 +542,12 @@ impl<'a> Parser<'a> {
             }
             "log format" => {
                 global.log_format = Some(value.to_string());
+            }
+            "syslog facility" => {
+                global.syslog_facility = Some(value.to_string());
+            }
+            "syslog tag" => {
+                global.syslog_tag = Some(value.to_string());
             }
             _ => {
                 // Unknown global directives are silently ignored for forward compatibility
@@ -1342,6 +1366,76 @@ mod tests {
         assert!(!gamma.numeric_ids()); // default
         assert!(gamma.fake_super());
         assert!(gamma.transfer_logging());
+    }
+
+    // --- Syslog facility tests ---
+
+    #[test]
+    fn parse_syslog_facility_default() {
+        let file = write_config("");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_facility(), "daemon");
+    }
+
+    #[test]
+    fn parse_syslog_facility_custom() {
+        let file = write_config("syslog facility = local5\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_facility(), "local5");
+    }
+
+    #[test]
+    fn parse_syslog_facility_auth() {
+        let file = write_config("syslog facility = auth\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_facility(), "auth");
+    }
+
+    // --- Syslog tag tests ---
+
+    #[test]
+    fn parse_syslog_tag_default() {
+        let file = write_config("");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_tag(), "oc-rsyncd");
+    }
+
+    #[test]
+    fn parse_syslog_tag_custom() {
+        let file = write_config("syslog tag = myapp\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_tag(), "myapp");
+    }
+
+    #[test]
+    fn parse_syslog_tag_upstream_default() {
+        let file = write_config("syslog tag = rsyncd\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_tag(), "rsyncd");
+    }
+
+    // --- Combined syslog directives ---
+
+    #[test]
+    fn parse_both_syslog_directives() {
+        let file = write_config("syslog facility = local3\nsyslog tag = backup\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_facility(), "local3");
+        assert_eq!(config.global().syslog_tag(), "backup");
+    }
+
+    #[test]
+    fn syslog_directives_inside_module_are_ignored() {
+        let file = write_config(
+            "[mod]\n\
+             path = /data\n\
+             syslog facility = local7\n\
+             syslog tag = custom\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_facility(), "daemon");
+        assert_eq!(config.global().syslog_tag(), "oc-rsyncd");
+        assert_eq!(config.modules().len(), 1);
     }
 
     #[test]
