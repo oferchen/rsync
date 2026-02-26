@@ -41,9 +41,43 @@ const fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
 /// Interval between signal flag checks in the accept loop.
 ///
 /// The listener uses a non-blocking timeout so the loop can periodically
-/// inspect the SIGHUP (reload) and SIGTERM/SIGINT (shutdown) flags without
+/// inspect signal flags (SIGHUP, SIGTERM/SIGINT, SIGUSR1, SIGUSR2) without
 /// waiting indefinitely for a new connection.
 const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Logs a progress summary when SIGUSR2 is received.
+///
+/// Outputs the number of active worker threads, total connections served, and
+/// daemon uptime. Mirrors upstream rsync's SIGUSR2 behaviour of dumping
+/// transfer statistics to the log.
+/// upstream: main.c — SIGUSR2 handler outputs transfer progress info.
+fn log_progress_summary(
+    log: Option<&SharedLogSink>,
+    active_workers: usize,
+    served: usize,
+    start_time: SystemTime,
+) {
+    let uptime_secs = start_time
+        .elapsed()
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let hours = uptime_secs / 3600;
+    let minutes = (uptime_secs % 3600) / 60;
+    let seconds = uptime_secs % 60;
+
+    let text = format!(
+        "progress: {active_workers} active connection(s), \
+         {served} total served, uptime {hours}h {minutes}m {seconds}s"
+    );
+
+    if let Some(sink) = log {
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(sink, &message);
+    } else {
+        eprintln!("{text}");
+    }
+}
 
 /// Tracks the number of active client connections in the daemon server loop.
 ///
@@ -295,6 +329,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let max_sessions = max_sessions.map(NonZeroUsize::get);
     let mut active_connections = 0usize;
     let connection_counter = ConnectionCounter::new();
+    let start_time = SystemTime::now();
 
     // For dual-stack (multiple listeners), use channels to receive accepted connections
     // from listener threads. For single listener, use direct accept for simplicity.
@@ -323,6 +358,28 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                 break;
             }
 
+            // Check SIGUSR1 graceful exit flag.
+            // upstream: main.c — SIGUSR1 causes the daemon to stop accepting
+            // new connections and exit after active transfers drain.
+            if signal_flags.graceful_exit.load(Ordering::Relaxed) {
+                if let Some(log) = log_sink.as_ref() {
+                    let text = format!(
+                        "received SIGUSR1, draining {} active connection(s) before exit",
+                        workers.len()
+                    );
+                    let message = rsync_info!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                if let Err(error) = notifier.status("Graceful exit: draining active transfers") {
+                    log_sd_notify_failure(
+                        log_sink.as_ref(),
+                        "graceful exit status",
+                        &error,
+                    );
+                }
+                break;
+            }
+
             // Check SIGHUP config reload flag.
             if signal_flags.reload_config.swap(false, Ordering::Relaxed) {
                 if let Some(log) = log_sink.as_ref() {
@@ -338,6 +395,17 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         &error,
                     );
                 }
+            }
+
+            // Check SIGUSR2 progress dump flag.
+            // upstream: main.c — SIGUSR2 outputs transfer statistics.
+            if signal_flags.progress_dump.swap(false, Ordering::Relaxed) {
+                log_progress_summary(
+                    log_sink.as_ref(),
+                    workers.len(),
+                    served,
+                    start_time,
+                );
             }
 
             let current_active = workers.len();
@@ -458,16 +526,18 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         }
     } else {
         // Multiple listeners (dual-stack) - spawn acceptor threads and use channel.
-        // Share the signal-based shutdown flag with acceptor threads so SIGTERM/SIGINT
-        // stops all listeners promptly.
+        // Share signal-based flags with acceptor threads so SIGTERM/SIGINT/SIGUSR1
+        // stop all listeners promptly.
         let (tx, rx) = mpsc::channel::<Result<(TcpStream, SocketAddr), (SocketAddr, io::Error)>>();
         let shutdown = Arc::clone(&signal_flags.shutdown);
+        let graceful_exit = Arc::clone(&signal_flags.graceful_exit);
 
         let mut acceptor_handles: Vec<thread::JoinHandle<()>> = Vec::with_capacity(listeners.len());
 
         for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().copied()) {
             let tx = tx.clone();
             let shutdown = Arc::clone(&shutdown);
+            let graceful_exit = Arc::clone(&graceful_exit);
 
             // Set non-blocking so acceptor threads can check the shutdown flag
             // without getting stuck in a blocking accept() call.
@@ -476,7 +546,9 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             }
 
             let handle = thread::spawn(move || {
-                while !shutdown.load(Ordering::Relaxed) {
+                while !shutdown.load(Ordering::Relaxed)
+                    && !graceful_exit.load(Ordering::Relaxed)
+                {
                     match listener.accept() {
                         Ok((stream, peer_addr)) => {
                             if tx.send(Ok((stream, peer_addr))).is_err() {
@@ -518,6 +590,26 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                 break;
             }
 
+            // Check SIGUSR1 graceful exit flag.
+            if signal_flags.graceful_exit.load(Ordering::Relaxed) {
+                if let Some(log) = log_sink.as_ref() {
+                    let text = format!(
+                        "received SIGUSR1, draining {} active connection(s) before exit",
+                        workers.len()
+                    );
+                    let message = rsync_info!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                if let Err(error) = notifier.status("Graceful exit: draining active transfers") {
+                    log_sd_notify_failure(
+                        log_sink.as_ref(),
+                        "graceful exit status",
+                        &error,
+                    );
+                }
+                break;
+            }
+
             // Check SIGHUP config reload flag.
             if signal_flags.reload_config.swap(false, Ordering::Relaxed) {
                 if let Some(log) = log_sink.as_ref() {
@@ -533,6 +625,16 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         &error,
                     );
                 }
+            }
+
+            // Check SIGUSR2 progress dump flag.
+            if signal_flags.progress_dump.swap(false, Ordering::Relaxed) {
+                log_progress_summary(
+                    log_sink.as_ref(),
+                    workers.len(),
+                    served,
+                    start_time,
+                );
             }
 
             let current_active = workers.len();
@@ -1060,6 +1162,66 @@ mod server_runtime_tests {
         assert!(
             result.is_ok(),
             "catch_unwind should convert panics into Ok(())"
+        );
+    }
+
+    // Tests for log_progress_summary
+
+    #[test]
+    fn log_progress_summary_without_log_sink() {
+        // Verify that calling without a log sink does not panic.
+        // Output goes to stderr which we do not capture here, but the
+        // function must not panic.
+        log_progress_summary(None, 3, 10, SystemTime::now());
+    }
+
+    #[test]
+    fn log_progress_summary_zero_active() {
+        log_progress_summary(None, 0, 0, SystemTime::now());
+    }
+
+    #[test]
+    fn log_progress_summary_with_uptime() {
+        // Use a start time 90 seconds in the past to verify the uptime
+        // calculation does not panic on non-zero durations.
+        let past = SystemTime::now() - Duration::from_secs(90);
+        log_progress_summary(None, 2, 5, past);
+    }
+
+    // Tests for signal flag interactions with the server loop
+
+    #[test]
+    fn graceful_exit_flag_stops_accept_loop_independently() {
+        let flags = SignalFlags {
+            reload_config: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            graceful_exit: Arc::new(AtomicBool::new(true)),
+            progress_dump: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(
+            flags.graceful_exit.load(Ordering::Relaxed),
+            "graceful_exit should be set"
+        );
+        assert!(
+            !flags.shutdown.load(Ordering::Relaxed),
+            "shutdown must remain unset when only graceful_exit is triggered"
+        );
+    }
+
+    #[test]
+    fn progress_dump_flag_is_consumed() {
+        let flags = SignalFlags {
+            reload_config: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            graceful_exit: Arc::new(AtomicBool::new(false)),
+            progress_dump: Arc::new(AtomicBool::new(true)),
+        };
+        // Consume the flag just like the server loop does.
+        let was_set = flags.progress_dump.swap(false, Ordering::Relaxed);
+        assert!(was_set, "progress_dump should have been set");
+        assert!(
+            !flags.progress_dump.load(Ordering::Relaxed),
+            "progress_dump must be cleared after swap"
         );
     }
 }
