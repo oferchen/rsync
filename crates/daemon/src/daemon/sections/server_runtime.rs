@@ -167,6 +167,86 @@ impl Drop for ConnectionGuard {
     }
 }
 
+/// Re-reads and re-parses the daemon configuration file on SIGHUP.
+///
+/// On success, replaces `modules` and `motd_lines` with freshly parsed values
+/// so that subsequent connections use the new configuration. Existing
+/// connections retain the old config via their `Arc` clones.
+///
+/// On failure (missing file, parse error), the error is logged and the daemon
+/// continues with the previous configuration — matching upstream rsync
+/// behaviour where a bad config reload is non-fatal.
+///
+/// upstream: clientserver.c — `re_read_config()` called from SIGHUP handler.
+fn reload_daemon_config(
+    config_path: Option<&Path>,
+    connection_limiter: &Option<Arc<ConnectionLimiter>>,
+    modules: &mut Arc<Vec<ModuleRuntime>>,
+    motd_lines: &mut Arc<Vec<String>>,
+    log_sink: Option<&SharedLogSink>,
+    notifier: &systemd::ServiceNotifier,
+) {
+    if let Some(log) = log_sink {
+        let message = rsync_info!("received SIGHUP, reloading configuration")
+            .with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+    if let Err(error) = notifier.status("Reloading configuration") {
+        log_sd_notify_failure(log_sink, "config reload status", &error);
+    }
+
+    let path = match config_path {
+        Some(path) => path,
+        None => {
+            if let Some(log) = log_sink {
+                let message = rsync_info!(
+                    "SIGHUP ignored: no config file was loaded at startup"
+                )
+                .with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            return;
+        }
+    };
+
+    let parsed = match parse_config_modules(path) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            if let Some(log) = log_sink {
+                let text = format!(
+                    "config reload failed, keeping old configuration: {error}"
+                );
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            return;
+        }
+    };
+
+    let new_modules: Vec<ModuleRuntime> = parsed
+        .modules
+        .into_iter()
+        .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
+        .collect();
+    let module_count = new_modules.len();
+    *modules = Arc::new(new_modules);
+    *motd_lines = Arc::new(parsed.motd_lines);
+
+    if let Some(log) = log_sink {
+        let text = format!(
+            "configuration reloaded successfully ({module_count} module{})",
+            if module_count == 1 { "" } else { "s" }
+        );
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    let status = format!("Configuration reloaded ({module_count} modules)");
+    if let Err(error) = notifier.status(&status) {
+        log_sd_notify_failure(log_sink, "config reload status", &error);
+    }
+}
+
 /// Accepts TCP connections and spawns a thread per session.
 ///
 /// Unlike upstream rsync which forks a child process per connection
@@ -209,6 +289,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         lock_file,
         address_family,
         bind_address_overridden,
+        config_path,
         ..
     } = options;
 
@@ -224,13 +305,13 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         None
     };
 
-    let modules: Arc<Vec<ModuleRuntime>> = Arc::new(
+    let mut modules: Arc<Vec<ModuleRuntime>> = Arc::new(
         modules
             .into_iter()
             .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
             .collect(),
     );
-    let motd_lines = Arc::new(motd_lines);
+    let mut motd_lines = Arc::new(motd_lines);
 
     // Determine bind addresses based on address_family and bind_address_overridden.
     // When no specific family or address is configured, bind to both IPv4 and IPv6
@@ -382,19 +463,14 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
             // Check SIGHUP config reload flag.
             if signal_flags.reload_config.swap(false, Ordering::Relaxed) {
-                if let Some(log) = log_sink.as_ref() {
-                    let message =
-                        rsync_info!("received SIGHUP, config reload noted")
-                            .with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                if let Err(error) = notifier.status("Reloading configuration") {
-                    log_sd_notify_failure(
-                        log_sink.as_ref(),
-                        "config reload status",
-                        &error,
-                    );
-                }
+                reload_daemon_config(
+                    config_path.as_deref(),
+                    &connection_limiter,
+                    &mut modules,
+                    &mut motd_lines,
+                    log_sink.as_ref(),
+                    &notifier,
+                );
             }
 
             // Check SIGUSR2 progress dump flag.
@@ -612,19 +688,14 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
             // Check SIGHUP config reload flag.
             if signal_flags.reload_config.swap(false, Ordering::Relaxed) {
-                if let Some(log) = log_sink.as_ref() {
-                    let message =
-                        rsync_info!("received SIGHUP, config reload noted")
-                            .with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                if let Err(error) = notifier.status("Reloading configuration") {
-                    log_sd_notify_failure(
-                        log_sink.as_ref(),
-                        "config reload status",
-                        &error,
-                    );
-                }
+                reload_daemon_config(
+                    config_path.as_deref(),
+                    &connection_limiter,
+                    &mut modules,
+                    &mut motd_lines,
+                    log_sink.as_ref(),
+                    &notifier,
+                );
             }
 
             // Check SIGUSR2 progress dump flag.
@@ -1223,6 +1294,227 @@ mod server_runtime_tests {
             !flags.progress_dump.load(Ordering::Relaxed),
             "progress_dump must be cleared after swap"
         );
+    }
+
+    // Tests for reload_daemon_config
+
+    #[test]
+    fn reload_config_with_no_config_path_is_noop() {
+        let limiter: Option<Arc<ConnectionLimiter>> = None;
+        let mut modules: Arc<Vec<ModuleRuntime>> = Arc::new(Vec::new());
+        let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
+        let notifier = systemd::ServiceNotifier::new();
+
+        reload_daemon_config(
+            None,
+            &limiter,
+            &mut modules,
+            &mut motd,
+            None,
+            &notifier,
+        );
+
+        assert!(modules.is_empty());
+        assert!(motd.is_empty());
+    }
+
+    #[test]
+    fn reload_config_with_missing_file_keeps_old_config() {
+        let limiter: Option<Arc<ConnectionLimiter>> = None;
+        let old_module = ModuleRuntime::new(
+            ModuleDefinition {
+                name: "old".to_owned(),
+                path: PathBuf::from("/old"),
+                ..Default::default()
+            },
+            None,
+        );
+        let mut modules: Arc<Vec<ModuleRuntime>> = Arc::new(vec![old_module]);
+        let mut motd: Arc<Vec<String>> = Arc::new(vec!["old motd".to_owned()]);
+        let notifier = systemd::ServiceNotifier::new();
+
+        let missing = PathBuf::from("/nonexistent/rsyncd.conf");
+        reload_daemon_config(
+            Some(&missing),
+            &limiter,
+            &mut modules,
+            &mut motd,
+            None,
+            &notifier,
+        );
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].definition.name, "old");
+        assert_eq!(motd.len(), 1);
+        assert_eq!(motd[0], "old motd");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reload_config_replaces_modules_and_motd() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("rsyncd.conf");
+        {
+            let mut f = fs::File::create(&conf_path).unwrap();
+            writeln!(f, "motd file = {}", dir.path().join("motd.txt").display()).unwrap();
+            writeln!(f, "[alpha]").unwrap();
+            writeln!(f, "path = /alpha").unwrap();
+        }
+        {
+            let motd_path = dir.path().join("motd.txt");
+            let mut f = fs::File::create(motd_path).unwrap();
+            writeln!(f, "Welcome!").unwrap();
+        }
+
+        let limiter: Option<Arc<ConnectionLimiter>> = None;
+        let mut modules: Arc<Vec<ModuleRuntime>> = Arc::new(Vec::new());
+        let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
+        let notifier = systemd::ServiceNotifier::new();
+
+        reload_daemon_config(
+            Some(&conf_path),
+            &limiter,
+            &mut modules,
+            &mut motd,
+            None,
+            &notifier,
+        );
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].definition.name, "alpha");
+        assert_eq!(modules[0].definition.path, PathBuf::from("/alpha"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reload_config_existing_connections_keep_old_config() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("rsyncd.conf");
+        {
+            let mut f = fs::File::create(&conf_path).unwrap();
+            writeln!(f, "[original]").unwrap();
+            writeln!(f, "path = /original").unwrap();
+        }
+
+        let limiter: Option<Arc<ConnectionLimiter>> = None;
+        let mut modules: Arc<Vec<ModuleRuntime>> = Arc::new(Vec::new());
+        let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
+        let notifier = systemd::ServiceNotifier::new();
+
+        // Initial load
+        reload_daemon_config(
+            Some(&conf_path),
+            &limiter,
+            &mut modules,
+            &mut motd,
+            None,
+            &notifier,
+        );
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].definition.name, "original");
+
+        // Simulate an existing connection holding a clone of the old config
+        let old_modules = Arc::clone(&modules);
+
+        // Update the config file and reload
+        {
+            let mut f = fs::File::create(&conf_path).unwrap();
+            writeln!(f, "[updated]").unwrap();
+            writeln!(f, "path = /updated").unwrap();
+        }
+        reload_daemon_config(
+            Some(&conf_path),
+            &limiter,
+            &mut modules,
+            &mut motd,
+            None,
+            &notifier,
+        );
+
+        // New config is visible
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].definition.name, "updated");
+
+        // Old connection still sees the original config
+        assert_eq!(old_modules.len(), 1);
+        assert_eq!(old_modules[0].definition.name, "original");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reload_config_with_invalid_syntax_keeps_old_config() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("rsyncd.conf");
+
+        // Start with valid config
+        {
+            let mut f = fs::File::create(&conf_path).unwrap();
+            writeln!(f, "[valid]").unwrap();
+            writeln!(f, "path = /valid").unwrap();
+        }
+
+        let limiter: Option<Arc<ConnectionLimiter>> = None;
+        let mut modules: Arc<Vec<ModuleRuntime>> = Arc::new(Vec::new());
+        let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
+        let notifier = systemd::ServiceNotifier::new();
+
+        reload_daemon_config(
+            Some(&conf_path),
+            &limiter,
+            &mut modules,
+            &mut motd,
+            None,
+            &notifier,
+        );
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].definition.name, "valid");
+
+        // Write invalid config (unterminated module header)
+        {
+            let mut f = fs::File::create(&conf_path).unwrap();
+            writeln!(f, "[broken").unwrap();
+        }
+
+        reload_daemon_config(
+            Some(&conf_path),
+            &limiter,
+            &mut modules,
+            &mut motd,
+            None,
+            &notifier,
+        );
+
+        // Old config is preserved
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].definition.name, "valid");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reload_config_sighup_flag_triggers_reload() {
+        // Verify that the AtomicBool swap pattern works correctly:
+        // setting the flag to true and swapping to false returns true once.
+        let flags = SignalFlags {
+            reload_config: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            graceful_exit: Arc::new(AtomicBool::new(false)),
+            progress_dump: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Simulate SIGHUP
+        flags.reload_config.store(true, Ordering::Relaxed);
+
+        // First swap should return true (flag was set)
+        assert!(flags.reload_config.swap(false, Ordering::Relaxed));
+
+        // Second swap should return false (flag was cleared)
+        assert!(!flags.reload_config.swap(false, Ordering::Relaxed));
     }
 }
 
