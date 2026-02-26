@@ -71,3 +71,74 @@ fn daemonize_error(action: &str, error: io::Error) -> DaemonError {
         .with_role(Role::Daemon),
     )
 }
+
+#[cfg(test)]
+#[allow(unsafe_code)]
+mod daemonize_tests {
+    use super::*;
+
+    #[test]
+    fn daemonize_error_uses_feature_unavailable_exit_code() {
+        let error = daemonize_error("fork", io::Error::from_raw_os_error(libc::EAGAIN));
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+    }
+
+    #[test]
+    fn daemonize_error_includes_action_in_message() {
+        let error = daemonize_error("setsid", io::Error::from_raw_os_error(libc::EPERM));
+        let message = format!("{}", error.message());
+        assert!(
+            message.contains("setsid"),
+            "error message should include the action name, got: {message}"
+        );
+        assert!(
+            message.contains("daemonization"),
+            "error message should mention daemonization, got: {message}"
+        );
+    }
+
+    #[test]
+    fn daemonize_error_includes_underlying_os_error() {
+        let os_error = io::Error::from_raw_os_error(libc::ENOMEM);
+        let expected_fragment = os_error.to_string();
+        let error = daemonize_error("fork", io::Error::from_raw_os_error(libc::ENOMEM));
+        let message = format!("{}", error.message());
+        assert!(
+            message.contains(&expected_fragment),
+            "error message should contain the OS error description, got: {message}"
+        );
+    }
+
+    #[test]
+    fn redirect_stdio_to_devnull_succeeds_in_subprocess() {
+        // Spawn a child process that calls redirect_stdio_to_devnull() and
+        // exits with code 0 on success or 1 on failure. This avoids closing
+        // the test runner's own stdio file descriptors.
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => panic!("fork failed: {}", io::Error::last_os_error()),
+            0 => {
+                // Child: attempt the redirect, then _exit.
+                let result = redirect_stdio_to_devnull();
+                unsafe {
+                    libc::_exit(if result.is_ok() { 0 } else { 1 });
+                }
+            }
+            child_pid => {
+                // Parent: wait for the child and check its exit status.
+                let mut status: libc::c_int = 0;
+                let waited = unsafe { libc::waitpid(child_pid, &mut status, 0) };
+                assert_ne!(waited, -1, "waitpid failed");
+                assert!(
+                    libc::WIFEXITED(status),
+                    "child did not exit normally"
+                );
+                assert_eq!(
+                    libc::WEXITSTATUS(status),
+                    0,
+                    "redirect_stdio_to_devnull failed in subprocess"
+                );
+            }
+        }
+    }
+}
