@@ -16,3 +16,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 core = { path = "../core", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

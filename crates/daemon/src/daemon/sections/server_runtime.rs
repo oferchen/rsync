@@ -290,6 +290,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         address_family,
         bind_address_overridden,
         config_path,
+        syslog_facility,
+        syslog_tag,
         ..
     } = options;
 
@@ -298,6 +300,28 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     } else {
         None
     };
+
+    // Open syslog connection when no log file is configured (matching upstream
+    // rsync's behaviour: log.c routes to syslog when logfile_name is NULL).
+    // The guard is held for the daemon's lifetime; dropping it calls closelog(3).
+    #[cfg(unix)]
+    let _syslog_guard = if log_sink.is_none() {
+        let facility = syslog_facility
+            .as_deref()
+            .and_then(logging_sink::syslog::SyslogFacility::from_name)
+            .unwrap_or_default();
+        let tag = syslog_tag
+            .as_deref()
+            .unwrap_or(logging_sink::syslog::DEFAULT_SYSLOG_TAG);
+        let config = logging_sink::syslog::SyslogConfig::new(facility, tag);
+        Some(config.open())
+    } else {
+        None
+    };
+
+    // Suppress unused-variable warnings on non-Unix.
+    #[cfg(not(unix))]
+    let _ = (&syslog_facility, &syslog_tag);
 
     let connection_limiter = if let Some(path) = lock_file {
         Some(Arc::new(ConnectionLimiter::open(path)?))
