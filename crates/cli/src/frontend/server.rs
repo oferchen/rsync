@@ -46,8 +46,18 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
 }
 
 /// Returns `true` when the invocation requests server mode.
+///
+/// Only considers `--server` appearing before any `--` separator.
 pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
-    args.iter().skip(1).any(|arg| arg == "--server")
+    for arg in args.iter().skip(1) {
+        if arg == "--" {
+            return false;
+        }
+        if arg == "--server" {
+            return true;
+        }
+    }
+    false
 }
 
 /// Delegates execution to the daemon front-end (Unix) or reports that daemon
@@ -112,6 +122,10 @@ where
         fast_io::IoUringPolicy::Auto
     };
 
+    // Detect secluded-args mode: `-s` flag appears as a standalone argument
+    // after --server. upstream: options.c — protect_args in server mode.
+    let secluded_args = detect_secluded_args_flag(args);
+
     let role = if is_sender {
         ServerRole::Generator // Server sends files to client (generator role)
     } else if is_receiver {
@@ -121,19 +135,87 @@ where
         ServerRole::Receiver
     };
 
-    // Extract flag string and positional arguments
-    // Example args: ["oc-rsync", "--server", "--sender", "-vlogDtprze.iLsfxC.", ".", "src/"]
-    // Flag string is the first arg starting with '-' after --server/--sender/--receiver
-    // Everything after the flag string (and optional ".") are positional args
+    let mut stdin = io::stdin().lock();
 
+    // When secluded-args is active, read the full argument list from stdin
+    // before parsing server flags. The client sends arguments as
+    // null-separated strings terminated by an empty string.
+    // upstream: main.c — read_args() reads protected args from stdin.
+    let effective_args: Vec<OsString>;
+    let (flag_string, positional_args) = if secluded_args {
+        match protocol::secluded_args::recv_secluded_args(&mut stdin) {
+            Ok(received_args) => {
+                effective_args = received_args.into_iter().map(OsString::from).collect();
+                parse_server_flag_string_and_args(&effective_args)
+            }
+            Err(e) => {
+                write_server_error(
+                    stderr,
+                    program_brand,
+                    format!("failed to read secluded args: {e}"),
+                );
+                return 1;
+            }
+        }
+    } else {
+        parse_server_flag_string_and_args(&args[1..])
+    };
+
+    // Build server configuration
+    let mut config =
+        match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                write_server_error(
+                    stderr,
+                    program_brand,
+                    format!("invalid server arguments: {e}"),
+                );
+                return 1;
+            }
+        };
+
+    // Apply additional flags parsed from full arguments
+    config.ignore_errors = ignore_errors;
+    config.fsync = fsync;
+    config.io_uring_policy = io_uring_policy;
+
+    // Run native server with stdio
+    match run_server_stdio(config, &mut stdin, stdout) {
+        Ok(_stats) => {
+            // Success
+            0
+        }
+        Err(e) => {
+            write_server_error(stderr, program_brand, format!("server error: {e}"));
+            1
+        }
+    }
+}
+
+/// Detects whether secluded-args mode is requested in the server arguments.
+///
+/// In secluded-args mode, the client sends `-s` as a standalone argument
+/// on the command line (not as part of a combined flag string). The server
+/// then reads the full argument list from stdin before proceeding.
+fn detect_secluded_args_flag(args: &[OsString]) -> bool {
+    args.iter().skip(1).any(|a| a == "-s")
+}
+
+/// Parses the flag string and positional arguments from server-mode argument list.
+///
+/// This extracts the compact flag string (first arg starting with `-` that is not
+/// a known long flag) and positional arguments (everything after the flag string
+/// and optional `.` separator).
+fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, Vec<OsString>) {
     let mut flag_string = String::new();
     let mut positional_args = Vec::new();
     let mut found_flags = false;
 
-    for arg in args.iter().skip(1) {
+    for arg in args {
         let arg_str = arg.to_string_lossy();
 
-        // Skip --server, --sender, --receiver, --ignore-errors, --fsync
+        // Skip known long-form arguments and secluded-args flag
         if arg_str == "--server"
             || arg_str == "--sender"
             || arg_str == "--receiver"
@@ -141,6 +223,7 @@ where
             || arg_str == "--fsync"
             || arg_str == "--io-uring"
             || arg_str == "--no-io-uring"
+            || arg_str == "-s"
         {
             continue;
         }
@@ -163,38 +246,7 @@ where
         }
     }
 
-    // Build server configuration
-    let mut config =
-        match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                write_server_error(
-                    stderr,
-                    program_brand,
-                    format!("invalid server arguments: {e}"),
-                );
-                return 1;
-            }
-        };
-
-    // Apply additional flags parsed from full arguments
-    config.ignore_errors = ignore_errors;
-    config.fsync = fsync;
-    config.io_uring_policy = io_uring_policy;
-
-    // Run native server with stdio
-    let mut stdin = io::stdin().lock();
-
-    match run_server_stdio(config, &mut stdin, stdout) {
-        Ok(_stats) => {
-            // Success
-            0
-        }
-        Err(e) => {
-            write_server_error(stderr, program_brand, format!("server error: {e}"));
-            1
-        }
-    }
+    (flag_string, positional_args)
 }
 
 fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
@@ -399,5 +451,81 @@ mod tests {
             OsString::from("-logDtprze.iLsfxC"),
         ];
         assert!(server_mode_requested(&args));
+    }
+
+    // ==================== detect_secluded_args_flag tests ====================
+
+    #[test]
+    fn detect_secluded_args_when_present() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("-s"),
+            OsString::from("."),
+        ];
+        assert!(detect_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn detect_secluded_args_when_absent() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("-logDtpr"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ];
+        assert!(!detect_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn detect_secluded_args_ignores_program_name() {
+        // -s in program position should not be detected
+        let args: Vec<OsString> = vec![OsString::from("-s"), OsString::from("--server")];
+        assert!(!detect_secluded_args_flag(&args));
+    }
+
+    // ==================== parse_server_flag_string_and_args tests ====================
+
+    #[test]
+    fn parse_server_args_basic() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("-logDtpr"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ];
+        let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+        assert_eq!(flags, "-logDtpr");
+        assert_eq!(pos_args, vec![OsString::from("dest")]);
+    }
+
+    #[test]
+    fn parse_server_args_skips_known_long_args() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("--ignore-errors"),
+            OsString::from("-logDtpr"),
+            OsString::from("."),
+            OsString::from("src/"),
+        ];
+        let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+        assert_eq!(flags, "-logDtpr");
+        assert_eq!(pos_args, vec![OsString::from("src/")]);
+    }
+
+    #[test]
+    fn parse_server_args_skips_secluded_flag() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("-s"),
+            OsString::from("-logDtpr"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ];
+        let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+        assert_eq!(flags, "-logDtpr");
+        assert_eq!(pos_args, vec![OsString::from("dest")]);
     }
 }

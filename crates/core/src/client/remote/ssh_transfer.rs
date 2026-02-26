@@ -28,11 +28,19 @@ use super::invocation::{
 use crate::exit_code::ExitCode;
 use crate::server::{ServerConfig, ServerRole};
 
-/// SSH invocation result containing args, host, optional user, and optional port.
+/// SSH invocation result containing args, host, optional user, optional port, and stdin args.
 ///
 /// Used by `parse_single_remote` and `parse_remote_operands` to return parsed
 /// remote connection information along with the rsync invocation arguments.
-type SshInvocationResult = (Vec<OsString>, String, Option<String>, Option<u16>);
+/// The final `Vec<String>` contains arguments to send over stdin when
+/// secluded-args is active (empty when disabled).
+type SshInvocationResult = (
+    Vec<OsString>,
+    String,
+    Option<String>,
+    Option<u16>,
+    Vec<String>,
+);
 
 /// Executes a transfer over SSH transport.
 ///
@@ -86,20 +94,32 @@ pub fn run_ssh_transfer(
             local_sources,
             remote_dest,
         } => {
-            let (invocation_args, ssh_host, ssh_user, ssh_port) =
+            let (invocation_args, ssh_host, ssh_user, ssh_port, stdin_args) =
                 parse_single_remote(&remote_dest, config, RemoteRole::Sender)?;
-            let connection =
-                build_ssh_connection(&ssh_user, &ssh_host, ssh_port, &invocation_args, config)?;
+            let connection = build_ssh_connection(
+                &ssh_user,
+                &ssh_host,
+                ssh_port,
+                &invocation_args,
+                config,
+                &stdin_args,
+            )?;
             run_push_transfer(config, connection, &local_sources, observer)
         }
         TransferSpec::Pull {
             remote_sources,
             local_dest,
         } => {
-            let (invocation_args, ssh_host, ssh_user, ssh_port) =
+            let (invocation_args, ssh_host, ssh_user, ssh_port, stdin_args) =
                 parse_remote_operands(&remote_sources, config, RemoteRole::Receiver)?;
-            let connection =
-                build_ssh_connection(&ssh_user, &ssh_host, ssh_port, &invocation_args, config)?;
+            let connection = build_ssh_connection(
+                &ssh_user,
+                &ssh_host,
+                ssh_port,
+                &invocation_args,
+                config,
+                &stdin_args,
+            )?;
             run_pull_transfer(config, connection, &[local_dest], observer)
         }
         TransferSpec::Proxy {
@@ -122,13 +142,14 @@ fn parse_single_remote(
         .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
 
     let invocation_builder = RemoteInvocationBuilder::new(config, role);
-    let args = invocation_builder.build(operand.path());
+    let secluded = invocation_builder.build_secluded(&[operand.path()]);
 
     Ok((
-        args,
+        secluded.command_line_args,
         operand.host().to_owned(),
         operand.user().map(String::from),
         operand.port(),
+        secluded.stdin_args,
     ))
 }
 
@@ -155,25 +176,31 @@ fn parse_remote_operands(
 
             let invocation_builder = RemoteInvocationBuilder::new(config, role);
             let path_refs: Vec<&str> = paths.iter().map(|s| s.as_ref()).collect();
-            let args = invocation_builder.build_with_paths(&path_refs);
+            let secluded = invocation_builder.build_secluded(&path_refs);
 
             Ok((
-                args,
+                secluded.command_line_args,
                 first_operand.host().to_owned(),
                 first_operand.user().map(String::from),
                 first_operand.port(),
+                secluded.stdin_args,
             ))
         }
     }
 }
 
 /// Builds and spawns an SSH connection with the remote rsync invocation.
+///
+/// When `stdin_args` is non-empty (secluded-args mode), the arguments are
+/// sent over stdin immediately after spawning the SSH process, before
+/// returning the connection for protocol negotiation.
 fn build_ssh_connection(
     user: &Option<String>,
     host: &str,
     port: Option<u16>,
     invocation_args: &[OsString],
     config: &ClientConfig,
+    stdin_args: &[String],
 ) -> Result<SshConnection, ClientError> {
     let mut ssh = SshCommand::new(host);
 
@@ -209,12 +236,27 @@ fn build_ssh_connection(
 
     // Spawn the SSH process
     // Mirror upstream: SSH spawn failures return IPC error code (pipe.c:85)
-    ssh.spawn().map_err(|e| {
+    let mut connection = ssh.spawn().map_err(|e| {
         invalid_argument_error(
             &format!("failed to spawn SSH connection: {e}"),
             super::super::IPC_EXIT_CODE,
         )
-    })
+    })?;
+
+    // Send secluded args over stdin if enabled.
+    // upstream: main.c — send_protected_args() sends args as null-separated
+    // strings over the pipe before protocol negotiation begins.
+    if !stdin_args.is_empty() {
+        let arg_refs: Vec<&str> = stdin_args.iter().map(String::as_str).collect();
+        protocol::secluded_args::send_secluded_args(&mut connection, &arg_refs).map_err(|e| {
+            invalid_argument_error(
+                &format!("failed to send secluded args: {e}"),
+                super::super::IPC_EXIT_CODE,
+            )
+        })?;
+    }
+
+    Ok(connection)
 }
 
 /// Executes a pull transfer (remote → local).
