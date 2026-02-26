@@ -1479,4 +1479,40 @@ mod tests {
         assert!(hidden.read_only()); // default
         assert!(!hidden.list());
     }
+
+    // --- Syslog directive tests ---
+
+    #[test]
+    fn syslog_facility_parsed_from_global() {
+        let file = write_config("syslog facility = local5\n[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_facility(), "local5");
+    }
+
+    #[test]
+    fn syslog_tag_parsed_from_global() {
+        let file = write_config("syslog tag = my-daemon\n[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_tag(), "my-daemon");
+    }
+
+    #[test]
+    fn syslog_defaults_when_not_configured() {
+        let file = write_config("[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_facility(), "daemon");
+        assert_eq!(config.global().syslog_tag(), "oc-rsyncd");
+    }
+
+    #[test]
+    fn syslog_facility_and_tag_both_parsed() {
+        let file = write_config(
+            "syslog facility = auth\n\
+             syslog tag = backup-daemon\n\
+             [m]\npath = /srv/m\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(config.global().syslog_facility(), "auth");
+        assert_eq!(config.global().syslog_tag(), "backup-daemon");
+    }
 }
