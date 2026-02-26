@@ -22,6 +22,10 @@
 //! buffers alive for the duration of a logging session. Callers can control
 //! whether rendered messages end with a newline by selecting a [`LineMode`].
 //!
+//! On Unix platforms the crate also provides a [`syslog`] backend that routes
+//! daemon-mode diagnostics through `syslog(3)` with a configurable facility
+//! and tag, matching upstream rsync's `log.c` behaviour.
+//!
 //! # Invariants
 //!
 //! - The sink never clones message payloads; it streams the segments emitted by
@@ -70,6 +74,15 @@
 
 mod line_mode;
 mod sink;
+/// Syslog backend for daemon-mode logging via `openlog(3)`/`syslog(3)`/`closelog(3)`.
+///
+/// This module is only available on Unix platforms. It provides facility/tag
+/// configuration and an RAII guard for the syslog connection, matching upstream
+/// rsync's `log.c` behaviour of routing daemon diagnostics through syslog when
+/// no explicit log file is configured.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+pub mod syslog;
 
 pub use line_mode::LineMode;
 pub use sink::{LineModeGuard, MessageSink, TryMapWriterError};
