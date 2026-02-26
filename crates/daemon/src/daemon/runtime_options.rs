@@ -1332,5 +1332,46 @@ mod runtime_options_tests {
         let b = RuntimeOptions::default();
         assert_eq!(a, b);
     }
+
+    // ==== Syslog config tests ====
+
+    #[test]
+    fn default_has_no_syslog_config() {
+        let options = RuntimeOptions::default();
+        assert!(options.syslog_facility.is_none());
+        assert!(options.syslog_tag.is_none());
+    }
+
+    #[test]
+    fn syslog_config_loaded_from_config_file() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "syslog facility = local5\nsyslog tag = my-daemon\n[m]\npath = /srv/m\n"
+        )
+        .expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.syslog_facility.as_deref(), Some("local5"));
+        assert_eq!(options.syslog_tag.as_deref(), Some("my-daemon"));
+    }
+
+    #[test]
+    fn syslog_config_defaults_to_none_when_absent() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[m]\npath = /srv/m\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert!(options.syslog_facility.is_none());
+        assert!(options.syslog_tag.is_none());
+    }
 }
 
