@@ -288,3 +288,13 @@ include!("tests/chunks/runtime_options_require_secrets_file_with_auth_users.rs")
 include!("tests/chunks/sanitize_module_identifier_preserves_clean_input.rs");
 include!("tests/chunks/sanitize_module_identifier_replaces_control_characters.rs");
 include!("tests/chunks/version_flag_renders_report.rs");
+// Daemon detach tests
+include!("tests/chunks/help_text_documents_detach_flags.rs");
+include!("tests/chunks/parse_args_passes_detach_flags_to_remainder.rs");
+include!("tests/chunks/run_daemon_no_detach_serves_connection.rs");
+include!("tests/chunks/runtime_options_detach_combines_with_other_options.rs");
+include!("tests/chunks/runtime_options_detach_default_matches_platform.rs");
+include!("tests/chunks/runtime_options_detach_enables_detach.rs");
+include!("tests/chunks/runtime_options_detach_parsed_default_matches_platform.rs");
+include!("tests/chunks/runtime_options_last_detach_flag_wins.rs");
+include!("tests/chunks/runtime_options_no_detach_disables_detach.rs");
