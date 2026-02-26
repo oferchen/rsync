@@ -27,6 +27,12 @@ pub struct IoUringConfig {
     pub buffer_size: usize,
     /// Whether to use direct I/O.
     pub direct_io: bool,
+    /// Whether to register file descriptors (no-op on non-Linux).
+    pub register_files: bool,
+    /// Whether to enable SQPOLL (no-op on non-Linux).
+    pub sqpoll: bool,
+    /// SQPOLL idle timeout in ms (no-op on non-Linux).
+    pub sqpoll_idle_ms: u32,
 }
 
 impl Default for IoUringConfig {
@@ -35,6 +41,9 @@ impl Default for IoUringConfig {
             sq_entries: 64,
             buffer_size: 64 * 1024,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         }
     }
 }
@@ -47,6 +56,9 @@ impl IoUringConfig {
             sq_entries: 256,
             buffer_size: 256 * 1024,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         }
     }
 
@@ -57,6 +69,9 @@ impl IoUringConfig {
             sq_entries: 128,
             buffer_size: 16 * 1024,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         }
     }
 }
