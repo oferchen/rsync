@@ -30,6 +30,12 @@ pub(crate) struct RuntimeOptions {
     syslog_tag: Option<String>,
     syslog_tag_from_config: bool,
     detach: bool,
+    /// Path to the config file loaded at startup, retained for SIGHUP reload.
+    ///
+    /// When the daemon receives SIGHUP, this path is re-read and re-parsed so
+    /// new connections pick up module definition changes without a restart.
+    /// `None` when no config file was loaded (all modules from CLI flags).
+    config_path: Option<PathBuf>,
 }
 
 impl Default for RuntimeOptions {
@@ -65,6 +71,7 @@ impl Default for RuntimeOptions {
             syslog_tag: None,
             syslog_tag_from_config: false,
             detach: cfg!(unix),
+            config_path: None,
         }
     }
 }
@@ -326,6 +333,14 @@ impl RuntimeOptions {
     ) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
         let parsed = parse_config_modules(&path)?;
+
+        // Retain the config path for SIGHUP reload. Only the first config
+        // file loaded is reloadable; subsequent --config flags add modules
+        // but the first path is the one re-read on SIGHUP (matching upstream
+        // rsync behaviour where only the primary config is reloaded).
+        if self.config_path.is_none() {
+            self.config_path = Some(path.clone());
+        }
 
         for (options, origin) in parsed.global_refuse_options {
             self.inherit_global_refuse_options(options, &origin)?;
@@ -747,6 +762,10 @@ impl RuntimeOptions {
     pub(super) fn syslog_tag(&self) -> &str {
         self.syslog_tag.as_deref().unwrap_or("oc-rsyncd")
     }
+
+    pub(super) fn config_path(&self) -> Option<&Path> {
+        self.config_path.as_deref()
+    }
 }
 
 // Tests use Unix-style paths and daemon functionality designed for Unix
@@ -1101,6 +1120,33 @@ mod runtime_options_tests {
         let options = RuntimeOptions::parse(&args).expect("parse");
         assert_eq!(options.modules().len(), 1);
         assert_eq!(options.modules()[0].name, "share");
+    }
+
+    #[test]
+    fn parse_config_stores_config_path_for_sighup_reload() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[reload_test]\npath = /srv/reload\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert!(
+            options.config_path().is_some(),
+            "config_path should be set when --config is used"
+        );
+        assert_eq!(options.config_path().unwrap(), file.path());
+    }
+
+    #[test]
+    fn no_config_flag_yields_no_config_path() {
+        let args: Vec<OsString> = vec![OsString::from("--port"), OsString::from("9999")];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert!(
+            options.config_path().is_none(),
+            "config_path should be None when no --config is used"
+        );
     }
 
     #[test]
