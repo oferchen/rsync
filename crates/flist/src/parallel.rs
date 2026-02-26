@@ -155,9 +155,7 @@ pub fn collect_paths_then_metadata_parallel(
     }
 
     if errors.is_empty() {
-        // sort_unstable_by avoids auxiliary allocation; paths are unique so
-        // stability is irrelevant.
-        entries.sort_unstable_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        crate::sort::sort_file_entries(&mut entries);
         Ok(entries)
     } else {
         Err(errors)
@@ -282,9 +280,7 @@ pub fn collect_with_batched_stats(
     }
 
     if errors.is_empty() {
-        // sort_unstable_by avoids auxiliary allocation; paths are unique so
-        // stability is irrelevant.
-        entries.sort_unstable_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        crate::sort::sort_file_entries(&mut entries);
         Ok(entries)
     } else {
         Err(errors)
@@ -341,9 +337,7 @@ pub fn resolve_metadata_parallel(
     }
 
     if errors.is_empty() {
-        // sort_unstable_by avoids auxiliary allocation; paths are unique so
-        // stability is irrelevant.
-        resolved.sort_unstable_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        crate::sort::sort_file_entries(&mut resolved);
         Ok(resolved)
     } else {
         Err(errors)
@@ -379,9 +373,7 @@ fn collect_paths_recursive(
     if should_recurse {
         if let Ok(entries) = fs::read_dir(current) {
             let mut child_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-            // sort_unstable_by_key avoids auxiliary allocation; file names within
-            // a directory are unique so stability is irrelevant.
-            child_entries.sort_unstable_by_key(|e| e.file_name());
+            crate::sort::sort_dir_entries(&mut child_entries);
 
             for entry in child_entries {
                 let child_path = entry.path();

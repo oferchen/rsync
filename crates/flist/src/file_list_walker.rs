@@ -1,6 +1,7 @@
 use crate::entry::FileListEntry;
 use crate::error::FileListError;
 use logging::debug_log;
+#[cfg(not(feature = "art"))]
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
@@ -14,7 +15,10 @@ pub struct FileListWalker {
     pub(crate) yielded_root: bool,
     pub(crate) root_metadata: Option<fs::Metadata>,
     pub(crate) stack: Vec<DirectoryState>,
+    #[cfg(not(feature = "art"))]
     pub(crate) visited: HashSet<PathBuf>,
+    #[cfg(feature = "art")]
+    pub(crate) visited: rart::tree::AdaptiveRadixTree<rart::keys::vector_key::VectorKey, ()>,
     pub(crate) finished: bool,
 }
 
@@ -36,7 +40,10 @@ impl FileListWalker {
             yielded_root: !include_root,
             root_metadata: Some(metadata),
             stack: Vec::new(),
+            #[cfg(not(feature = "art"))]
             visited: HashSet::new(),
+            #[cfg(feature = "art")]
+            visited: rart::tree::AdaptiveRadixTree::new(),
             finished: false,
         };
 
@@ -68,6 +75,23 @@ impl FileListWalker {
     ) -> Result<(), FileListError> {
         let canonical = fs::canonicalize(&fs_path)
             .map_err(|error| FileListError::canonicalize(fs_path.clone(), error))?;
+
+        #[cfg(feature = "art")]
+        {
+            // Null-terminate the key so no path is a prefix of another in the ART.
+            // ART requires prefix-free keys; VectorKey::new_from_vec does not
+            // auto-terminate (unlike new_from_str). Path bytes never contain 0x00.
+            let mut bytes = canonical.as_os_str().as_encoded_bytes().to_vec();
+            bytes.push(0);
+            let key = rart::keys::vector_key::VectorKey::new_from_vec(bytes);
+            if self.visited.get_k(&key).is_some() {
+                debug_log!(Dup, 1, "skipping already visited directory: {:?}", fs_path);
+                return Ok(());
+            }
+            self.visited.insert(key, ());
+        }
+
+        #[cfg(not(feature = "art"))]
         if !self.visited.insert(canonical) {
             debug_log!(Dup, 1, "skipping already visited directory: {:?}", fs_path);
             return Ok(());
@@ -185,17 +209,16 @@ impl DirectoryState {
         relative_prefix: PathBuf,
         depth: usize,
     ) -> Result<Self, FileListError> {
-        let mut entries = Vec::new();
         let read_dir = fs::read_dir(&fs_path)
             .map_err(|error| FileListError::read_dir(fs_path.clone(), error))?;
+
+        let mut entries = Vec::new();
         for entry in read_dir {
             let entry =
                 entry.map_err(|error| FileListError::read_dir_entry(fs_path.clone(), error))?;
             entries.push(entry.file_name());
         }
-        // sort_unstable avoids auxiliary memory allocation and is faster.
-        // Stability is irrelevant: file names within a directory are unique.
-        entries.sort_unstable();
+        crate::sort::sort_os_strings(&mut entries);
 
         debug_log!(Flist, 3, "found {} entries in {:?}", entries.len(), fs_path);
 
