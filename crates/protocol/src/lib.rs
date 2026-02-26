@@ -33,6 +33,11 @@ pub mod idlist;
 mod legacy;
 mod multiplex;
 mod negotiation;
+/// Secluded-args (protect-args) stdin argument transmission protocol.
+///
+/// When `--protect-args` is active, arguments are sent over stdin as
+/// null-separated strings instead of appearing on the remote command line.
+pub mod secluded_args;
 /// Type-safe state machine for rsync protocol phases.
 pub mod state;
 /// Transfer statistics wire format encoding and decoding.

@@ -43,6 +43,17 @@ impl ClientConfigBuilder {
         /// `None` (default) uses runtime hardware detection.
         #[doc(alias = "--aes")]
         prefer_aes_gcm: Option<bool>,
+
+        /// Enables or disables protect-args (secluded-args) for SSH connections.
+        ///
+        /// When `Some(true)`, arguments are sent over stdin after the SSH
+        /// connection is established instead of on the remote command line.
+        /// When `Some(false)`, protect-args is explicitly disabled.
+        /// When `None`, the default behavior applies.
+        #[doc(alias = "--protect-args")]
+        #[doc(alias = "--secluded-args")]
+        #[doc(alias = "-s")]
+        protect_args: Option<bool>,
     }
 
     /// Configures the deadline at which the transfer should stop.
@@ -334,5 +345,23 @@ mod tests {
     fn prefer_aes_gcm_default_is_none() {
         let config = builder().prefer_aes_gcm(None).build();
         assert!(config.prefer_aes_gcm().is_none());
+    }
+
+    #[test]
+    fn protect_args_sets_some_true() {
+        let config = builder().protect_args(Some(true)).build();
+        assert_eq!(config.protect_args(), Some(true));
+    }
+
+    #[test]
+    fn protect_args_sets_some_false() {
+        let config = builder().protect_args(Some(false)).build();
+        assert_eq!(config.protect_args(), Some(false));
+    }
+
+    #[test]
+    fn protect_args_default_is_none() {
+        let config = builder().protect_args(None).build();
+        assert!(config.protect_args().is_none());
     }
 }

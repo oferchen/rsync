@@ -10,7 +10,7 @@ pub mod ssh_transfer;
 
 pub use daemon_transfer::run_daemon_transfer;
 pub use invocation::{
-    RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
-    operand_is_remote,
+    RemoteInvocationBuilder, RemoteOperands, RemoteRole, SecludedInvocation, TransferSpec,
+    determine_transfer_role, operand_is_remote,
 };
 pub use ssh_transfer::run_ssh_transfer;
