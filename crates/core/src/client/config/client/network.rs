@@ -102,6 +102,24 @@ impl ClientConfig {
     pub const fn prefer_aes_gcm(&self) -> Option<bool> {
         self.prefer_aes_gcm
     }
+
+    /// Returns the protect-args (secluded-args) preference for SSH connections.
+    ///
+    /// When `Some(true)`, arguments are sent over stdin after the SSH connection
+    /// is established instead of passing them on the remote command line. This
+    /// avoids shell quoting issues with special characters in file paths.
+    ///
+    /// `Some(false)` explicitly disables protect-args even when the environment
+    /// variable `RSYNC_PROTECT_ARGS` would otherwise enable it.
+    ///
+    /// `None` uses the default behavior (disabled unless the environment enables it).
+    #[must_use]
+    #[doc(alias = "--protect-args")]
+    #[doc(alias = "--secluded-args")]
+    #[doc(alias = "-s")]
+    pub const fn protect_args(&self) -> Option<bool> {
+        self.protect_args
+    }
 }
 
 #[cfg(test)]
@@ -201,5 +219,12 @@ mod tests {
     fn prefer_aes_gcm_default_is_none() {
         let config = default_config();
         assert!(config.prefer_aes_gcm().is_none());
+    }
+
+    // Tests for protect_args
+    #[test]
+    fn protect_args_default_is_none() {
+        let config = default_config();
+        assert!(config.protect_args().is_none());
     }
 }

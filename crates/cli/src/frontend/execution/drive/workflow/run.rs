@@ -53,7 +53,7 @@ where
         daemon_port,
         remote_options,
         rsync_path: _,
-        protect_args: _,
+        protect_args,
         old_args: _,
         address_mode,
         bind_address: bind_address_raw,
@@ -649,6 +649,7 @@ where
         rsync_path: parsed.rsync_path.clone(),
         early_input: early_input.map(PathBuf::from),
         prefer_aes_gcm,
+        protect_args,
         batch_config,
         no_motd,
         daemon_params: dparam

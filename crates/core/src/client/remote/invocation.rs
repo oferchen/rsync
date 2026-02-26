@@ -147,6 +147,20 @@ impl TransferSpec {
     }
 }
 
+/// Result of building a remote invocation with secluded-args support.
+///
+/// When secluded-args is enabled, the command-line arguments are minimal
+/// (just `rsync --server -s`) and the full argument list is provided
+/// separately for transmission over stdin after SSH connection.
+#[derive(Debug)]
+pub struct SecludedInvocation {
+    /// Arguments to place on the SSH command line (minimal when secluded-args).
+    pub command_line_args: Vec<OsString>,
+    /// Arguments to send over stdin (non-empty only when secluded-args is active).
+    /// Each string is sent null-separated with an empty-string terminator.
+    pub stdin_args: Vec<String>,
+}
+
 /// Builder for constructing remote rsync `--server` invocation arguments.
 ///
 /// This builder translates client configuration options into the compact flag
@@ -166,6 +180,13 @@ impl TransferSpec {
 /// ```
 ///
 /// The `.` is a dummy argument required by upstream rsync for compatibility.
+///
+/// # Secluded Args
+///
+/// When `--protect-args` / `-s` is enabled, the builder produces a minimal
+/// command line containing only `rsync --server -s` (plus `--sender` for pull),
+/// and the full argument list is provided via [`SecludedInvocation::stdin_args`]
+/// for transmission over stdin after SSH connection establishment.
 pub struct RemoteInvocationBuilder<'a> {
     config: &'a ClientConfig,
     role: RemoteRole,
@@ -183,14 +204,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// The first element is the rsync binary name (either from `--rsync-path`
     /// or "rsync" by default), followed by "--server", optional role flags,
     /// the compact flag string, ".", and the remote path(s).
-    pub fn build(self, remote_path: &str) -> Vec<OsString> {
+    pub fn build(&self, remote_path: &str) -> Vec<OsString> {
         self.build_with_paths(&[remote_path])
     }
 
     /// Builds the complete invocation argument vector with multiple remote paths.
     ///
     /// This is used for pull operations with multiple remote sources from the same host.
-    pub fn build_with_paths(self, remote_paths: &[&str]) -> Vec<OsString> {
+    pub fn build_with_paths(&self, remote_paths: &[&str]) -> Vec<OsString> {
         let mut args = Vec::new();
 
         // Use custom rsync path if specified, otherwise default to "rsync"
@@ -199,51 +220,101 @@ impl<'a> RemoteInvocationBuilder<'a> {
         } else {
             args.push(OsString::from("rsync"));
         }
+
+        args.extend(self.build_args_without_program(remote_paths));
+        args
+    }
+
+    /// Builds an invocation with secluded-args support.
+    ///
+    /// When secluded args is active, the SSH command line contains only the
+    /// minimal server startup arguments (`rsync --server [-s] [--sender]`),
+    /// and the full argument list is returned in `stdin_args` for transmission
+    /// over stdin after the SSH connection is established.
+    ///
+    /// When secluded args is not active, this returns the same result as
+    /// `build_with_paths` with an empty `stdin_args`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `send_protected_args()` in upstream `main.c:1119`.
+    pub fn build_secluded(self, remote_paths: &[&str]) -> SecludedInvocation {
+        if !self.config.protect_args().unwrap_or(false) {
+            return SecludedInvocation {
+                command_line_args: self.build_with_paths(remote_paths),
+                stdin_args: Vec::new(),
+            };
+        }
+
+        // Build the full argument list as if secluded args were off —
+        // these are what we will send over stdin.
+        let full_args = self.build_full_args_for_stdin(remote_paths);
+
+        // Build the minimal command line: rsync --server [-s] [--sender]
+        let mut cmd_args = Vec::new();
+        if let Some(rsync_path) = self.config.rsync_path() {
+            cmd_args.push(OsString::from(rsync_path));
+        } else {
+            cmd_args.push(OsString::from("rsync"));
+        }
+        cmd_args.push(OsString::from("--server"));
+        if self.role == RemoteRole::Receiver {
+            cmd_args.push(OsString::from("--sender"));
+        }
+        // The `-s` flag tells the remote server to read args from stdin.
+        // upstream: options.c — protect_args flag sent as `-s` in server mode
+        cmd_args.push(OsString::from("-s"));
+        // Dummy argument required by upstream
+        cmd_args.push(OsString::from("."));
+
+        SecludedInvocation {
+            command_line_args: cmd_args,
+            stdin_args: full_args,
+        }
+    }
+
+    /// Builds the full argument list for stdin transmission in secluded-args mode.
+    ///
+    /// This produces the same arguments as `build_with_paths()` but as `String`
+    /// values suitable for null-separated transmission over stdin.
+    fn build_full_args_for_stdin(&self, remote_paths: &[&str]) -> Vec<String> {
+        let os_args = self.build_args_without_program(remote_paths);
+        os_args
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// Builds the argument list without the rsync program name.
+    ///
+    /// This is shared between normal `build_with_paths` and secluded-args
+    /// `build_full_args_for_stdin`. The result includes `--server`, optional
+    /// `--sender`, flags, capability string, `.`, and remote paths.
+    fn build_args_without_program(&self, remote_paths: &[&str]) -> Vec<OsString> {
+        let mut args = Vec::new();
+
         args.push(OsString::from("--server"));
 
-        // Mirror upstream options.c:2598-2599: `if (!am_sender) args[ac++] = "--sender";`
-        // When the local side is the receiver (pull), the remote must act as sender.
         if self.role == RemoteRole::Receiver {
             args.push(OsString::from("--sender"));
         }
 
-        // Add --ignore-errors if set (upstream sends this as full argument)
         if self.config.ignore_errors() {
             args.push(OsString::from("--ignore-errors"));
         }
 
-        // Add --fsync if set (upstream sends this as full argument, no short flag)
         if self.config.fsync() {
             args.push(OsString::from("--fsync"));
         }
 
-        // Build compact flag string
         let flags = self.build_flag_string();
         if !flags.is_empty() {
             args.push(OsString::from(flags));
         }
 
-        // Capability info string — tells the remote server what protocol
-        // features this client supports. Mirrors upstream server_options()
-        // and daemon_transfer.rs:479. Characters (upstream compat.c:720-760):
-        //   L = symlink timestamps (SYMLINK_TIMES)
-        //   s = symlink iconv (SYMLINK_ICONV)
-        //   f = incremental flist I/O (FLIST_IO)
-        //   x = extra attrs in flist entries (XMIT_EXTRA_ATTRS)
-        //   C = checksum seed order fix (CHECKSUM_SEED_FIX)
-        //   I = inplace_partial behavior (INPLACE_PARTIAL_DIR)
-        //   v = varint for flist flags (VARINT_FLIST_FLAGS) — enables
-        //       checksum algorithm negotiation (XXH3/XXH128 instead of MD5)
-        //   u = include uid 0 & gid 0 names (ID0_NAMES)
-        //
-        // Without 'v', the server doesn't set CF_VARINT_FLIST_FLAGS and
-        // checksum negotiation is skipped, falling back to MD5.
         args.push(OsString::from("-e.LsfxCIvu"));
-
-        // Dummy argument required by upstream
         args.push(OsString::from("."));
 
-        // Remote path(s) come last
         for path in remote_paths {
             args.push(OsString::from(path));
         }
@@ -894,5 +965,122 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ==================== secluded-args tests ====================
+
+    #[test]
+    fn secluded_invocation_disabled_returns_normal_args() {
+        let config = ClientConfig::builder().protect_args(None).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let secluded = builder.build_secluded(&["/path"]);
+
+        // When secluded-args is not enabled, stdin_args should be empty
+        assert!(
+            secluded.stdin_args.is_empty(),
+            "stdin_args should be empty when protect_args is off"
+        );
+        // command_line_args should contain the full invocation
+        assert!(
+            secluded.command_line_args.iter().any(|a| a == "/path"),
+            "command_line_args should contain the remote path"
+        );
+    }
+
+    #[test]
+    fn secluded_invocation_enabled_produces_minimal_command_line() {
+        let config = ClientConfig::builder().protect_args(Some(true)).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let secluded = builder.build_secluded(&["/path/to/files"]);
+
+        // Command line should be minimal
+        let cmd_strs: Vec<String> = secluded
+            .command_line_args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(cmd_strs.contains(&"rsync".to_owned()));
+        assert!(cmd_strs.contains(&"--server".to_owned()));
+        assert!(cmd_strs.contains(&"-s".to_owned()));
+        assert!(cmd_strs.contains(&".".to_owned()));
+
+        // Command line should NOT contain the remote path
+        assert!(
+            !cmd_strs.contains(&"/path/to/files".to_owned()),
+            "command line should not contain remote path in secluded mode"
+        );
+
+        // stdin_args should contain the full arguments
+        assert!(
+            !secluded.stdin_args.is_empty(),
+            "stdin_args should not be empty when protect_args is on"
+        );
+        assert!(
+            secluded.stdin_args.iter().any(|a| a == "/path/to/files"),
+            "stdin_args should contain the remote path"
+        );
+    }
+
+    #[test]
+    fn secluded_invocation_pull_includes_sender_flag() {
+        let config = ClientConfig::builder().protect_args(Some(true)).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+        let secluded = builder.build_secluded(&["/remote/src"]);
+
+        let cmd_strs: Vec<String> = secluded
+            .command_line_args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(
+            cmd_strs.contains(&"--sender".to_owned()),
+            "pull secluded invocation should include --sender on command line"
+        );
+        assert!(
+            cmd_strs.contains(&"-s".to_owned()),
+            "secluded invocation should include -s flag"
+        );
+
+        // stdin_args should also include --sender
+        assert!(
+            secluded.stdin_args.iter().any(|a| a == "--sender"),
+            "stdin_args should include --sender for pull"
+        );
+    }
+
+    #[test]
+    fn secluded_invocation_stdin_args_contain_flag_string() {
+        let config = ClientConfig::builder()
+            .protect_args(Some(true))
+            .recursive(true)
+            .times(true)
+            .build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let secluded = builder.build_secluded(&["/data"]);
+
+        // stdin_args should contain the flag string
+        let has_flags = secluded
+            .stdin_args
+            .iter()
+            .any(|a| a.starts_with('-') && a.contains('r') && a.contains('t'));
+        assert!(
+            has_flags,
+            "stdin_args should contain flag string with 'r' and 't': {:?}",
+            secluded.stdin_args
+        );
+    }
+
+    #[test]
+    fn secluded_invocation_explicitly_disabled_returns_normal() {
+        let config = ClientConfig::builder().protect_args(Some(false)).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let secluded = builder.build_secluded(&["/path"]);
+
+        assert!(
+            secluded.stdin_args.is_empty(),
+            "stdin_args should be empty when protect_args is explicitly false"
+        );
     }
 }
