@@ -182,7 +182,7 @@ fn submit_write_batch(
         let remaining = total - global_done;
 
         // Build a batch of chunks from the remaining data.
-        let n_chunks = ((remaining + chunk_size - 1) / chunk_size).min(max_sqes);
+        let n_chunks = remaining.div_ceil(chunk_size).min(max_sqes);
         // Per-chunk tracking: (chunk_start_in_data, chunk_len, bytes_written_so_far).
         let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(n_chunks);
         for i in 0..n_chunks {
@@ -354,7 +354,7 @@ impl IoUringReader {
         let mut output = vec![0u8; size];
         let chunk_size = self.buffer_size;
         let max_batch = self.sq_entries as usize;
-        let total_chunks = (size + chunk_size - 1) / chunk_size;
+        let total_chunks = size.div_ceil(chunk_size);
         let fd = types::Fd(self.file.as_raw_fd());
 
         let mut chunks_done = 0usize;
