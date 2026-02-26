@@ -259,7 +259,7 @@ const EARLY_INPUT_MAX_SIZE: usize = 5120;
 /// and stores it for later delivery to the pre-xfer exec script.
 fn read_early_input(
     line: &str,
-    reader: &mut BufReader<TcpStream>,
+    reader: &mut impl Read,
 ) -> io::Result<Option<Vec<u8>>> {
     let len_str = match line.strip_prefix(EARLY_INPUT_CMD) {
         Some(rest) => rest,
@@ -446,6 +446,113 @@ mod session_runtime_tests {
         };
         assert_eq!(params.peer_host.as_deref(), Some("example.com"));
         assert!(params.reverse_lookup);
+    }
+
+    // Tests for read_early_input
+
+    #[test]
+    fn read_early_input_parses_valid_command() {
+        let data = b"hello world";
+        let mut cursor = io::Cursor::new(data.to_vec());
+        let result = read_early_input("#early_input=11", &mut cursor).unwrap();
+        assert_eq!(result, Some(b"hello world".to_vec()));
+    }
+
+    #[test]
+    fn read_early_input_returns_none_for_non_command() {
+        let mut cursor = io::Cursor::new(Vec::new());
+        let result = read_early_input("mymodule", &mut cursor).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn read_early_input_returns_none_for_empty_line() {
+        let mut cursor = io::Cursor::new(Vec::new());
+        let result = read_early_input("", &mut cursor).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn read_early_input_rejects_zero_length() {
+        let mut cursor = io::Cursor::new(Vec::new());
+        let result = read_early_input("#early_input=0", &mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn read_early_input_rejects_exceeding_max_size() {
+        let mut cursor = io::Cursor::new(Vec::new());
+        let too_large = EARLY_INPUT_MAX_SIZE + 1;
+        let line = format!("#early_input={too_large}");
+        let result = read_early_input(&line, &mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn read_early_input_rejects_non_numeric_length() {
+        let mut cursor = io::Cursor::new(Vec::new());
+        let result = read_early_input("#early_input=abc", &mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("invalid early_input length"));
+    }
+
+    #[test]
+    fn read_early_input_reads_binary_data() {
+        let data: Vec<u8> = (0..=255u8).collect();
+        let mut cursor = io::Cursor::new(data.clone());
+        let line = format!("#early_input={}", data.len());
+        let result = read_early_input(&line, &mut cursor).unwrap();
+        assert_eq!(result, Some(data));
+    }
+
+    #[test]
+    fn read_early_input_at_max_size() {
+        let data = vec![0xABu8; EARLY_INPUT_MAX_SIZE];
+        let mut cursor = io::Cursor::new(data.clone());
+        let line = format!("#early_input={EARLY_INPUT_MAX_SIZE}");
+        let result = read_early_input(&line, &mut cursor).unwrap();
+        assert_eq!(result, Some(data));
+    }
+
+    #[test]
+    fn read_early_input_roundtrip_with_send_format() {
+        let payload = b"authentication-token-xyz";
+        let header = format!("{EARLY_INPUT_CMD}{}\n", payload.len());
+        let mut wire = header.into_bytes();
+        wire.extend_from_slice(payload);
+
+        // The daemon reads lines; `#early_input=24` would be the trimmed line.
+        let line = format!("{EARLY_INPUT_CMD}{}", payload.len());
+        let mut cursor = io::Cursor::new(payload.to_vec());
+        let result = read_early_input(&line, &mut cursor).unwrap();
+        assert_eq!(result.unwrap(), payload);
+    }
+
+    #[test]
+    fn read_early_input_returns_error_on_short_stream() {
+        // Only 3 bytes available but header says 10
+        let data = vec![1u8, 2, 3];
+        let mut cursor = io::Cursor::new(data);
+        let result = read_early_input("#early_input=10", &mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn early_input_cmd_constant_matches_upstream() {
+        assert_eq!(EARLY_INPUT_CMD, "#early_input=");
+    }
+
+    #[test]
+    fn early_input_max_size_is_5k() {
+        assert_eq!(EARLY_INPUT_MAX_SIZE, 5120);
     }
 }
 
