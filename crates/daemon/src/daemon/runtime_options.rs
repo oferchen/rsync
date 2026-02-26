@@ -25,6 +25,10 @@ pub(crate) struct RuntimeOptions {
     lock_file_from_config: bool,
     global_incoming_chmod: Option<String>,
     global_outgoing_chmod: Option<String>,
+    syslog_facility: Option<String>,
+    syslog_facility_from_config: bool,
+    syslog_tag: Option<String>,
+    syslog_tag_from_config: bool,
     detach: bool,
 }
 
@@ -56,6 +60,10 @@ impl Default for RuntimeOptions {
             lock_file_from_config: false,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
+            syslog_facility: None,
+            syslog_facility_from_config: false,
+            syslog_tag: None,
+            syslog_tag_from_config: false,
             detach: cfg!(unix),
         }
     }
@@ -354,6 +362,14 @@ impl RuntimeOptions {
             self.set_global_outgoing_chmod(outgoing, &origin)?;
         }
 
+        if let Some((facility, origin)) = parsed.syslog_facility {
+            self.set_syslog_facility_from_config(facility, &origin)?;
+        }
+
+        if let Some((tag, origin)) = parsed.syslog_tag {
+            self.set_syslog_tag_from_config(tag, &origin)?;
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -456,6 +472,54 @@ impl RuntimeOptions {
         }
 
         self.global_outgoing_chmod = Some(value);
+        Ok(())
+    }
+
+    fn set_syslog_facility_from_config(
+        &mut self,
+        value: String,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.syslog_facility {
+            if self.syslog_facility_from_config {
+                if existing == &value {
+                    return Ok(());
+                }
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'syslog facility' directive in global section",
+                ));
+            }
+            return Ok(());
+        }
+
+        self.syslog_facility = Some(value);
+        self.syslog_facility_from_config = true;
+        Ok(())
+    }
+
+    fn set_syslog_tag_from_config(
+        &mut self,
+        value: String,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.syslog_tag {
+            if self.syslog_tag_from_config {
+                if existing == &value {
+                    return Ok(());
+                }
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'syslog tag' directive in global section",
+                ));
+            }
+            return Ok(());
+        }
+
+        self.syslog_tag = Some(value);
+        self.syslog_tag_from_config = true;
         Ok(())
     }
 
@@ -672,6 +736,16 @@ impl RuntimeOptions {
 
     pub(super) fn global_secrets_file(&self) -> Option<&Path> {
         self.global_secrets_file.as_deref()
+    }
+
+    /// Returns the configured syslog facility, or "daemon" if not set.
+    pub(super) fn syslog_facility(&self) -> &str {
+        self.syslog_facility.as_deref().unwrap_or("daemon")
+    }
+
+    /// Returns the configured syslog tag, or "oc-rsyncd" if not set.
+    pub(super) fn syslog_tag(&self) -> &str {
+        self.syslog_tag.as_deref().unwrap_or("oc-rsyncd")
     }
 }
 
