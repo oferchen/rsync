@@ -1723,6 +1723,9 @@ mod tests {
             sq_entries: 32,
             buffer_size: 4096,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         };
 
         let factory = IoUringReaderFactory::with_config(config);
@@ -1774,6 +1777,9 @@ mod tests {
             sq_entries: 4,
             buffer_size: 1024,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         };
 
         let mut writer = IoUringWriter::create(&path, &config).unwrap();
@@ -1839,6 +1845,9 @@ mod tests {
             sq_entries: 64,
             buffer_size: 64 * 1024,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         };
 
         let mut reader = IoUringReader::open(&path, &config).unwrap();
@@ -1867,6 +1876,9 @@ mod tests {
             sq_entries: 4,
             buffer_size: 8 * 1024,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         };
 
         let mut reader = IoUringReader::open(&path, &config).unwrap();
@@ -1894,6 +1906,9 @@ mod tests {
             sq_entries: 32,
             buffer_size: 64 * 1024,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         };
 
         let mut writer = IoUringWriter::create(&path, &config).unwrap();
@@ -1923,6 +1938,9 @@ mod tests {
             sq_entries: 64,
             buffer_size: 64 * 1024,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         };
 
         {
