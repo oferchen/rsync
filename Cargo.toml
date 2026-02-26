@@ -23,8 +23,8 @@ required-features = ["dhat-heap"]
 # ============================================================================
 # Default Features
 # ============================================================================
-# Optimized for best performance on modern systems
-# Excludes io_uring (requires Linux 5.6+) for broader compatibility
+# Optimized for best performance on modern systems.
+# io_uring auto-detects Linux 5.6+ at runtime and falls back to standard I/O.
 default = [
     "zstd",
     "lz4",
@@ -33,6 +33,7 @@ default = [
     "iconv",
     "parallel",
     "copy_file_range",
+    "io_uring",
 ]
 
 # ============================================================================
