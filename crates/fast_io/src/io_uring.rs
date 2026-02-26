@@ -3,29 +3,29 @@
 //! This module provides high-performance file I/O using Linux's io_uring interface,
 //! which batches syscalls and enables true async I/O without thread pools.
 //!
-//! # Features
+//! # Batching strategy
 //!
-//! - Batched submissions reduce syscall overhead
-//! - True async I/O (no thread pool like tokio::fs)
-//! - Zero-copy where possible using registered buffers
-//! - Automatic fallback to standard I/O on unsupported systems
+//! The core advantage of io_uring is amortizing syscall overhead by submitting
+//! multiple I/O operations in a single `submit_and_wait()` call. This module
+//! implements two batched methods:
+//!
+//! - [`IoUringReader::read_all_batched`]: Submits up to `sq_entries` concurrent
+//!   reads at different file offsets, processes all completions, then repeats
+//!   until the entire file is read. A single large file read may need only
+//!   `ceil(file_size / (buffer_size * sq_entries))` syscalls instead of
+//!   `ceil(file_size / buffer_size)`.
+//!
+//! - [`IoUringWriter::write_all_batched`]: Splits a contiguous buffer into
+//!   chunk-sized SQEs, submits them all at once, and processes completions.
+//!   The `flush()` implementation uses this for the internal write buffer.
+//!
+//! Single-operation methods (`read_at`, `write_at`) are retained as convenience
+//! wrappers for callers that need one-off positioned I/O.
 //!
 //! # Requirements
 //!
 //! - Linux kernel 5.6 or later
 //! - The `io_uring` feature must be enabled
-//!
-//! # Example
-//!
-//! ```ignore
-//! use fast_io::io_uring::{IoUring, IoUringConfig};
-//!
-//! // Check if io_uring is available
-//! if IoUring::is_available() {
-//!     let uring = IoUring::new(IoUringConfig::default())?;
-//!     let data = uring.read_file("large_file.bin").await?;
-//! }
-//! ```
 
 use std::ffi::CStr;
 use std::fs::File;
@@ -156,22 +156,119 @@ impl IoUringConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Batched I/O helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Submits a batch of write SQEs from contiguous `data` and collects completions.
+///
+/// Splits `data` into `chunk_size`-sized pieces, submitting up to `max_sqes` at
+/// a time. Handles short writes by resubmitting the remainder.
+fn submit_write_batch(
+    ring: &mut RawIoUring,
+    fd: types::Fd,
+    data: &[u8],
+    base_offset: u64,
+    chunk_size: usize,
+    max_sqes: usize,
+) -> io::Result<usize> {
+    if data.is_empty() {
+        return Ok(0);
+    }
+
+    let total = data.len();
+    let mut global_done = 0usize;
+
+    while global_done < total {
+        let remaining = total - global_done;
+
+        // Build a batch of chunks from the remaining data.
+        let n_chunks = remaining.div_ceil(chunk_size).min(max_sqes);
+        // Per-chunk tracking: (chunk_start_in_data, chunk_len, bytes_written_so_far).
+        let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(n_chunks);
+        for i in 0..n_chunks {
+            let start = global_done + i * chunk_size;
+            let len = chunk_size.min(total - start);
+            slots.push((start, len, 0));
+        }
+
+        let mut batch_complete = false;
+        while !batch_complete {
+            let mut submitted = 0u32;
+            for (idx, &(start, len, done)) in slots.iter().enumerate() {
+                let want = len - done;
+                if want == 0 {
+                    continue;
+                }
+                let file_off = base_offset + (start + done) as u64;
+                let write_op = opcode::Write::new(fd, data[start + done..].as_ptr(), want as u32)
+                    .offset(file_off)
+                    .build()
+                    .user_data(idx as u64);
+
+                unsafe {
+                    ring.submission()
+                        .push(&write_op)
+                        .map_err(|_| io::Error::other("submission queue full"))?;
+                }
+                submitted += 1;
+            }
+
+            if submitted == 0 {
+                break;
+            }
+
+            ring.submit_and_wait(submitted as usize)?;
+
+            let mut completed = 0u32;
+            while completed < submitted {
+                let cqe = ring
+                    .completion()
+                    .next()
+                    .ok_or_else(|| io::Error::other("missing CQE"))?;
+
+                let idx = cqe.user_data() as usize;
+                let result = cqe.result();
+
+                if result < 0 {
+                    return Err(io::Error::from_raw_os_error(-result));
+                }
+                if result == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "write returned 0 bytes",
+                    ));
+                }
+
+                slots[idx].2 += result as usize;
+                completed += 1;
+            }
+
+            batch_complete = slots.iter().all(|&(_, len, done)| done >= len);
+        }
+
+        let batch_written: usize = slots.iter().map(|&(_, _, done)| done).sum();
+        global_done += batch_written;
+    }
+
+    Ok(global_done)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // io_uring File Reader
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A file reader using io_uring for async I/O.
 ///
-/// Operations are submitted to the io_uring submission queue and completed
-/// asynchronously, reducing syscall overhead.
+/// Provides both single-operation (`read_at`) and batched (`read_all_batched`)
+/// interfaces. The batched path submits up to `sq_entries` concurrent reads per
+/// `submit_and_wait` call, dramatically reducing syscall count for large files.
 pub struct IoUringReader {
     ring: RawIoUring,
     file: File,
     size: u64,
     position: u64,
-    #[allow(dead_code)] // Reserved for future batched read optimization
-    buffer: Vec<u8>,
-    #[allow(dead_code)] // Reserved for future batched read optimization
     buffer_size: usize,
+    sq_entries: u32,
 }
 
 impl IoUringReader {
@@ -194,14 +291,15 @@ impl IoUringReader {
             file,
             size,
             position: 0,
-            buffer: vec![0u8; config.buffer_size],
             buffer_size: config.buffer_size,
+            sq_entries: config.sq_entries,
         })
     }
 
     /// Reads data at the specified offset without advancing the position.
     ///
-    /// This is useful for random access patterns.
+    /// Submits a single SQE and waits for completion. For bulk reads, prefer
+    /// `read_all_batched` which amortizes syscall overhead across many SQEs.
     pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         if offset >= self.size {
             return Ok(0);
@@ -214,13 +312,11 @@ impl IoUringReader {
 
         let fd = types::Fd(self.file.as_raw_fd());
 
-        // Prepare read operation
         let read_op = opcode::Read::new(fd, buf.as_mut_ptr(), to_read as u32)
             .offset(offset)
             .build()
-            .user_data(0x42);
+            .user_data(0);
 
-        // Submit and wait
         unsafe {
             self.ring
                 .submission()
@@ -230,7 +326,6 @@ impl IoUringReader {
 
         self.ring.submit_and_wait(1)?;
 
-        // Get completion
         let cqe = self
             .ring
             .completion()
@@ -245,25 +340,106 @@ impl IoUringReader {
         Ok(result as usize)
     }
 
-    /// Reads the entire file into a vector.
+    /// Reads the entire file into a vector using batched io_uring submissions.
     ///
-    /// Uses batched submissions for better performance on large files.
+    /// Divides the file into `buffer_size` chunks and submits up to `sq_entries`
+    /// reads per `submit_and_wait` call. For a 1 MB file with 64 KB buffers and
+    /// 64 SQ entries, this completes in a single syscall instead of 16.
     pub fn read_all_batched(&mut self) -> io::Result<Vec<u8>> {
         let size = self.size as usize;
-        let mut data = vec![0u8; size];
-        let mut offset = 0usize;
-
-        while offset < size {
-            let chunk_size = self.buffer_size.min(size - offset);
-            let n = self.read_at(offset as u64, &mut data[offset..offset + chunk_size])?;
-            if n == 0 {
-                break;
-            }
-            offset += n;
+        if size == 0 {
+            return Ok(Vec::new());
         }
 
-        data.truncate(offset);
-        Ok(data)
+        let mut output = vec![0u8; size];
+        let chunk_size = self.buffer_size;
+        let max_batch = self.sq_entries as usize;
+        let total_chunks = size.div_ceil(chunk_size);
+        let fd = types::Fd(self.file.as_raw_fd());
+
+        let mut chunks_done = 0usize;
+
+        while chunks_done < total_chunks {
+            let batch_count = (total_chunks - chunks_done).min(max_batch);
+            let base_offset = (chunks_done * chunk_size) as u64;
+
+            // Build per-slot buffer slices. Each slot borrows a region of `output`
+            // through raw pointers to avoid multiple mutable borrows.
+            // Track (offset_in_output, len, bytes_done) per slot.
+            let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(batch_count);
+
+            for i in 0..batch_count {
+                let out_start = (chunks_done + i) * chunk_size;
+                let out_end = (out_start + chunk_size).min(size);
+                let len = out_end - out_start;
+                slots.push((out_start, len, 0));
+            }
+
+            let mut all_done = false;
+            while !all_done {
+                let mut submitted = 0u32;
+
+                for (idx, &(out_start, len, done)) in slots.iter().enumerate() {
+                    let want = len - done;
+                    if want == 0 {
+                        continue;
+                    }
+                    let file_off = base_offset + (idx * chunk_size) as u64 + done as u64;
+                    if file_off >= self.size {
+                        continue;
+                    }
+                    let clamped = want.min((self.size - file_off) as usize);
+                    if clamped == 0 {
+                        continue;
+                    }
+
+                    let ptr = output[out_start + done..].as_mut_ptr();
+                    let read_op = opcode::Read::new(fd, ptr, clamped as u32)
+                        .offset(file_off)
+                        .build()
+                        .user_data(idx as u64);
+
+                    unsafe {
+                        self.ring
+                            .submission()
+                            .push(&read_op)
+                            .map_err(|_| io::Error::other("submission queue full"))?;
+                    }
+                    submitted += 1;
+                }
+
+                if submitted == 0 {
+                    break;
+                }
+
+                self.ring.submit_and_wait(submitted as usize)?;
+
+                let mut completed = 0u32;
+                while completed < submitted {
+                    let cqe = self
+                        .ring
+                        .completion()
+                        .next()
+                        .ok_or_else(|| io::Error::other("missing CQE"))?;
+
+                    let idx = cqe.user_data() as usize;
+                    let result = cqe.result();
+
+                    if result < 0 {
+                        return Err(io::Error::from_raw_os_error(-result));
+                    }
+
+                    slots[idx].2 += result as usize;
+                    completed += 1;
+                }
+
+                all_done = slots.iter().all(|&(_, len, done)| done >= len);
+            }
+
+            chunks_done += batch_count;
+        }
+
+        Ok(output)
     }
 }
 
@@ -306,6 +482,10 @@ impl FileReader for IoUringReader {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A file writer using io_uring for async I/O.
+///
+/// Incoming writes are buffered internally. On `flush()` (or when the buffer
+/// fills), the buffered data is submitted as a batch of write SQEs -- up to
+/// `sq_entries` concurrent writes per `submit_and_wait` call.
 pub struct IoUringWriter {
     ring: RawIoUring,
     file: File,
@@ -313,6 +493,7 @@ pub struct IoUringWriter {
     buffer: Vec<u8>,
     buffer_pos: usize,
     buffer_size: usize,
+    sq_entries: u32,
 }
 
 impl IoUringWriter {
@@ -336,6 +517,7 @@ impl IoUringWriter {
             buffer: vec![0u8; config.buffer_size],
             buffer_pos: 0,
             buffer_size: config.buffer_size,
+            sq_entries: config.sq_entries,
         })
     }
 
@@ -351,6 +533,7 @@ impl IoUringWriter {
             buffer: vec![0u8; config.buffer_size],
             buffer_pos: 0,
             buffer_size: config.buffer_size,
+            sq_entries: config.sq_entries,
         })
     }
 
@@ -373,10 +556,14 @@ impl IoUringWriter {
             buffer: vec![0u8; config.buffer_size],
             buffer_pos: 0,
             buffer_size: config.buffer_size,
+            sq_entries: config.sq_entries,
         })
     }
 
-    /// Writes data at the specified offset without advancing the position.
+    /// Writes data at the specified offset without advancing the internal position.
+    ///
+    /// Submits a single SQE and waits for completion. For bulk writes, prefer
+    /// buffered `write()` + `flush()` which batches SQEs automatically.
     pub fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -384,13 +571,11 @@ impl IoUringWriter {
 
         let fd = types::Fd(self.file.as_raw_fd());
 
-        // Prepare write operation
         let write_op = opcode::Write::new(fd, buf.as_ptr(), buf.len() as u32)
             .offset(offset)
             .build()
-            .user_data(0x43);
+            .user_data(0);
 
-        // Submit and wait
         unsafe {
             self.ring
                 .submission()
@@ -400,7 +585,6 @@ impl IoUringWriter {
 
         self.ring.submit_and_wait(1)?;
 
-        // Get completion
         let cqe = self
             .ring
             .completion()
@@ -415,29 +599,38 @@ impl IoUringWriter {
         Ok(result as usize)
     }
 
-    /// Flushes the internal buffer to disk.
+    /// Writes all of `data` starting at `offset` using batched SQEs.
+    ///
+    /// Splits `data` into `buffer_size` chunks and submits up to `sq_entries`
+    /// writes per `submit_and_wait` call, handling short writes via resubmission.
+    pub fn write_all_batched(&mut self, data: &[u8], offset: u64) -> io::Result<()> {
+        let fd = types::Fd(self.file.as_raw_fd());
+        let written = submit_write_batch(
+            &mut self.ring,
+            fd,
+            data,
+            offset,
+            self.buffer_size,
+            self.sq_entries as usize,
+        )?;
+        if written != data.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "batched write incomplete",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Flushes the internal buffer to disk using batched writes.
     fn flush_buffer(&mut self) -> io::Result<()> {
         if self.buffer_pos == 0 {
             return Ok(());
         }
 
-        let buffer_len = self.buffer_pos;
-        let mut written = 0;
-
-        while written < buffer_len {
-            // Create a temporary copy to avoid borrow issues
-            let chunk = self.buffer[written..buffer_len].to_vec();
-            let n = self.write_at(self.bytes_written, &chunk)?;
-            if n == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    "failed to write data",
-                ));
-            }
-            written += n;
-            self.bytes_written += n as u64;
-        }
-
+        let pending = self.buffer[..self.buffer_pos].to_vec();
+        self.write_all_batched(&pending, self.bytes_written)?;
+        self.bytes_written += pending.len() as u64;
         self.buffer_pos = 0;
         Ok(())
     }
@@ -445,6 +638,10 @@ impl IoUringWriter {
 
 impl Write for IoUringWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
         // If data fits in buffer, just copy it
         if self.buffer_pos + buf.len() <= self.buffer_size {
             self.buffer[self.buffer_pos..self.buffer_pos + buf.len()].copy_from_slice(buf);
@@ -455,11 +652,11 @@ impl Write for IoUringWriter {
         // Flush current buffer
         self.flush_buffer()?;
 
-        // If data is larger than buffer, write directly
+        // If data is larger than buffer, write directly using batched path
         if buf.len() >= self.buffer_size {
-            let n = self.write_at(self.bytes_written, buf)?;
-            self.bytes_written += n as u64;
-            return Ok(n);
+            self.write_all_batched(buf, self.bytes_written)?;
+            self.bytes_written += buf.len() as u64;
+            return Ok(buf.len());
         }
 
         // Otherwise, buffer the data
@@ -483,8 +680,7 @@ impl FileWriter for IoUringWriter {
 
         let fd = types::Fd(self.file.as_raw_fd());
 
-        // Submit fsync
-        let fsync_op = opcode::Fsync::new(fd).build().user_data(0x44);
+        let fsync_op = opcode::Fsync::new(fd).build().user_data(0);
 
         unsafe {
             self.ring
@@ -782,10 +978,12 @@ pub fn writer_from_file(
     buffer_capacity: usize,
     policy: crate::IoUringPolicy,
 ) -> io::Result<IoUringOrStdWriter> {
+    let default_sq = IoUringConfig::default().sq_entries;
+
     match policy {
         crate::IoUringPolicy::Auto => {
             if is_io_uring_available() {
-                if let Ok(ring) = RawIoUring::new(IoUringConfig::default().sq_entries) {
+                if let Ok(ring) = RawIoUring::new(default_sq) {
                     return Ok(IoUringOrStdWriter::IoUring(IoUringWriter {
                         ring,
                         file,
@@ -793,6 +991,7 @@ pub fn writer_from_file(
                         buffer: vec![0u8; buffer_capacity],
                         buffer_pos: 0,
                         buffer_size: buffer_capacity,
+                        sq_entries: default_sq,
                     }));
                 }
             }
@@ -807,7 +1006,7 @@ pub fn writer_from_file(
                     "io_uring requested via --io-uring but not available on this system",
                 ));
             }
-            let ring = RawIoUring::new(IoUringConfig::default().sq_entries)
+            let ring = RawIoUring::new(default_sq)
                 .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
             Ok(IoUringOrStdWriter::IoUring(IoUringWriter {
                 ring,
@@ -816,6 +1015,7 @@ pub fn writer_from_file(
                 buffer: vec![0u8; buffer_capacity],
                 buffer_pos: 0,
                 buffer_size: buffer_capacity,
+                sq_entries: default_sq,
             }))
         }
         crate::IoUringPolicy::Disabled => Ok(IoUringOrStdWriter::Std(
@@ -850,7 +1050,6 @@ mod tests {
 
     #[test]
     fn test_io_uring_availability_check() {
-        // This just tests that the check doesn't panic
         let available = is_io_uring_available();
         println!("io_uring available: {available}");
     }
@@ -880,7 +1079,6 @@ mod tests {
         let path = dir.path().join("test.txt");
         std::fs::write(&path, b"hello world").unwrap();
 
-        // Force fallback
         let factory = IoUringReaderFactory::default().force_fallback(true);
         assert!(!factory.will_use_io_uring());
 
@@ -896,7 +1094,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.txt");
 
-        // Force fallback
         let factory = IoUringWriterFactory::default().force_fallback(true);
         assert!(!factory.will_use_io_uring());
 
@@ -919,7 +1116,10 @@ mod tests {
         assert_eq!(data, b"test data");
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
     // Tests that run only when io_uring is actually available
+    // ─────────────────────────────────────────────────────────────────────────
+
     #[test]
     fn test_io_uring_reader_if_available() {
         if !is_io_uring_available() {
@@ -998,7 +1198,6 @@ mod tests {
         assert_eq!(n, 5);
         assert_eq!(&buf, b"world");
 
-        // Position should not have changed
         assert_eq!(reader.position(), 0);
     }
 
@@ -1015,12 +1214,10 @@ mod tests {
         let config = IoUringConfig::default();
         let mut writer = IoUringWriter::create(&path, &config).unwrap();
 
-        // Write at specific offsets
         writer.write_at(0, b"hello").unwrap();
         writer.write_at(6, b"world").unwrap();
         writer.flush().unwrap();
 
-        // Note: there's a gap at position 5
         let content = std::fs::read(&path).unwrap();
         assert_eq!(&content[0..5], b"hello");
         assert_eq!(&content[6..11], b"world");
@@ -1048,9 +1245,9 @@ mod tests {
         assert_eq!(&buf, b"world");
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
     // Comprehensive io_uring tests with graceful fallback
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_basic_read_with_io_uring_or_fallback() {
@@ -1062,7 +1259,6 @@ mod tests {
         let factory = IoUringReaderFactory::default();
         let mut reader = factory.open(&path).unwrap();
 
-        // Test that we get the correct data regardless of backend
         let data = reader.read_all().unwrap();
         assert_eq!(data, test_data);
         assert_eq!(reader.size(), test_data.len() as u64);
@@ -1080,7 +1276,6 @@ mod tests {
         writer.write_all(test_data).unwrap();
         writer.flush().unwrap();
 
-        // Verify the data was written correctly
         let written = std::fs::read(&path).unwrap();
         assert_eq!(written, test_data);
         assert_eq!(writer.bytes_written(), test_data.len() as u64);
@@ -1091,7 +1286,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("large_read.bin");
 
-        // Create a 1 MB file with a pattern
         let chunk_size = 1024;
         let num_chunks = 1024;
         let mut expected_data = Vec::with_capacity(chunk_size * num_chunks);
@@ -1114,7 +1308,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("large_write.bin");
 
-        // Generate 512 KB of test data
         let chunk_size = 1024;
         let num_chunks = 512;
         let mut test_data = Vec::with_capacity(chunk_size * num_chunks);
@@ -1126,13 +1319,11 @@ mod tests {
         let factory = IoUringWriterFactory::default();
         let mut writer = factory.create(&path).unwrap();
 
-        // Write in chunks to test buffering
         for chunk in test_data.chunks(chunk_size) {
             writer.write_all(chunk).unwrap();
         }
         writer.sync().unwrap();
 
-        // Verify the data
         let written = std::fs::read(&path).unwrap();
         assert_eq!(written.len(), test_data.len());
         assert_eq!(written, test_data);
@@ -1145,7 +1336,6 @@ mod tests {
         let test_data = b"Testing forced fallback";
         std::fs::write(&path, test_data).unwrap();
 
-        // Force fallback even if io_uring is available
         let factory = IoUringReaderFactory::default().force_fallback(true);
         assert!(!factory.will_use_io_uring());
 
@@ -1184,7 +1374,6 @@ mod tests {
         let factory = IoUringReaderFactory::default();
         let mut reader = factory.open(&path).unwrap();
 
-        // Read in small chunks
         let mut buf = [0u8; 3];
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(n, 3);
@@ -1194,7 +1383,6 @@ mod tests {
         assert_eq!(n, 3);
         assert_eq!(&buf, b"345");
 
-        // Seek and read
         reader.seek_to(10).unwrap();
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(n, 3);
@@ -1208,18 +1396,16 @@ mod tests {
 
         let _config = IoUringConfig {
             sq_entries: 32,
-            buffer_size: 128, // Small buffer to test flushing
+            buffer_size: 128,
             direct_io: false,
         };
 
         let factory = IoUringWriterFactory::default().force_fallback(true);
         let mut writer = factory.create(&path).unwrap();
 
-        // Write data that exceeds buffer size
         let data = b"x".repeat(256);
         writer.write_all(&data).unwrap();
 
-        // Don't flush yet - buffering should handle it
         assert_eq!(writer.bytes_written(), 256);
 
         writer.flush().unwrap();
@@ -1239,7 +1425,6 @@ mod tests {
         writer.write_all(b"sync test").unwrap();
         writer.sync().unwrap();
 
-        // Verify data is on disk
         let written = std::fs::read(&path).unwrap();
         assert_eq!(written, b"sync test");
     }
@@ -1282,11 +1467,9 @@ mod tests {
         let factory = IoUringReaderFactory::default();
         let mut reader = factory.open(&path).unwrap();
 
-        // Seek to end
         reader.seek_to(5).unwrap();
         assert_eq!(reader.position(), 5);
 
-        // Try to read - should return 0
         let mut buf = [0u8; 10];
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(n, 0);
@@ -1301,7 +1484,6 @@ mod tests {
         let factory = IoUringReaderFactory::default();
         let mut reader = factory.open(&path).unwrap();
 
-        // Seeking beyond EOF should fail
         let result = reader.seek_to(100);
         assert!(result.is_err());
     }
@@ -1314,7 +1496,6 @@ mod tests {
         let dir = Arc::new(tempdir().unwrap());
         let test_data = b"concurrent test data";
 
-        // Spawn multiple threads that read and write
         let handles: Vec<_> = (0..4)
             .map(|i| {
                 let dir = Arc::clone(&dir);
@@ -1322,13 +1503,11 @@ mod tests {
                 thread::spawn(move || {
                     let path = dir.path().join(format!("thread_{i}.txt"));
 
-                    // Write
                     let factory = IoUringWriterFactory::default();
                     let mut writer = factory.create(&path).unwrap();
                     writer.write_all(&data).unwrap();
                     writer.sync().unwrap();
 
-                    // Read back
                     let factory = IoUringReaderFactory::default();
                     let mut reader = factory.open(&path).unwrap();
                     let read_data = reader.read_all().unwrap();
@@ -1349,10 +1528,8 @@ mod tests {
         let path = dir.path().join("convenience.txt");
         let test_data = b"convenience function test";
 
-        // Test write_file
         write_file(&path, test_data).unwrap();
 
-        // Test read_file
         let data = read_file(&path).unwrap();
         assert_eq!(data, test_data);
     }
@@ -1364,14 +1541,12 @@ mod tests {
 
         let factory = IoUringWriterFactory::default();
 
-        // First write
         {
             let mut writer = factory.create(&path).unwrap();
             writer.write_all(b"first").unwrap();
             writer.flush().unwrap();
         }
 
-        // Read it back
         let factory_read = IoUringReaderFactory::default();
         {
             let mut reader = factory_read.open(&path).unwrap();
@@ -1379,14 +1554,12 @@ mod tests {
             assert_eq!(data, b"first");
         }
 
-        // Overwrite
         {
             let mut writer = factory.create(&path).unwrap();
             writer.write_all(b"second write").unwrap();
             writer.flush().unwrap();
         }
 
-        // Read again
         {
             let mut reader = factory_read.open(&path).unwrap();
             let data = reader.read_all().unwrap();
@@ -1438,7 +1611,6 @@ mod tests {
         let path = dir.path().join("readonly.txt");
         std::fs::write(&path, b"data").unwrap();
 
-        // Make file write-only (no read permission)
         let mut perms = fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o200);
         fs::set_permissions(&path, perms).unwrap();
@@ -1447,7 +1619,6 @@ mod tests {
         let result = factory.open(&path);
         assert!(result.is_err());
 
-        // Restore permissions for cleanup
         let mut perms = fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o644);
         fs::set_permissions(&path, perms).unwrap();
@@ -1463,16 +1634,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("queue_test.txt");
 
-        // Test with minimal queue depth
         let config = IoUringConfig {
-            sq_entries: 4, // Very small queue
+            sq_entries: 4,
             buffer_size: 1024,
             direct_io: false,
         };
 
-        // Should still work with small queue
         let mut writer = IoUringWriter::create(&path, &config).unwrap();
-        let data = b"x".repeat(8192); // Data larger than queue
+        let data = b"x".repeat(8192);
         writer.write_all(&data).unwrap();
         writer.flush().unwrap();
 
@@ -1526,8 +1695,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("batched.txt");
 
-        // Create a file larger than the default buffer size
-        let size = 256 * 1024; // 256 KB
+        let size = 256 * 1024;
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         std::fs::write(&path, &data).unwrap();
 
@@ -1545,11 +1713,101 @@ mod tests {
     }
 
     #[test]
+    fn test_io_uring_batched_read_small_sq() {
+        if !is_io_uring_available() {
+            println!("Skipping batched read small-sq test: io_uring not available");
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("batched_small_sq.bin");
+
+        // 128 KB file with 4 SQ entries and 8 KB buffers = 4 batches of 4 reads
+        let size = 128 * 1024;
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &data).unwrap();
+
+        let config = IoUringConfig {
+            sq_entries: 4,
+            buffer_size: 8 * 1024,
+            direct_io: false,
+        };
+
+        let mut reader = IoUringReader::open(&path, &config).unwrap();
+        let read_data = reader.read_all_batched().unwrap();
+
+        assert_eq!(read_data.len(), data.len());
+        assert_eq!(read_data, data);
+    }
+
+    #[test]
+    fn test_io_uring_batched_write() {
+        if !is_io_uring_available() {
+            println!("Skipping batched write test: io_uring not available");
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("batched_write.bin");
+
+        // Write 512 KB in one shot via write_all_batched
+        let size = 512 * 1024;
+        let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+
+        let config = IoUringConfig {
+            sq_entries: 32,
+            buffer_size: 64 * 1024,
+            direct_io: false,
+        };
+
+        let mut writer = IoUringWriter::create(&path, &config).unwrap();
+        writer.write_all_batched(&data, 0).unwrap();
+        writer.flush().unwrap();
+
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(written.len(), data.len());
+        assert_eq!(written, data);
+    }
+
+    #[test]
+    fn test_io_uring_large_file_batched_roundtrip() {
+        if !is_io_uring_available() {
+            println!("Skipping large batched roundtrip: io_uring not available");
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("roundtrip.bin");
+
+        // 2 MB file
+        let size = 2 * 1024 * 1024;
+        let data: Vec<u8> = (0..size).map(|i| ((i * 7 + 3) % 256) as u8).collect();
+
+        let config = IoUringConfig {
+            sq_entries: 64,
+            buffer_size: 64 * 1024,
+            direct_io: false,
+        };
+
+        {
+            let mut writer = IoUringWriter::create(&path, &config).unwrap();
+            writer.write_all(&data).unwrap();
+            writer.sync().unwrap();
+        }
+
+        {
+            let mut reader = IoUringReader::open(&path, &config).unwrap();
+            let read_data = reader.read_all_batched().unwrap();
+            assert_eq!(read_data.len(), data.len());
+            assert_eq!(read_data, data);
+        }
+    }
+
+    #[test]
     fn test_binary_data_integrity() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("binary.bin");
 
-        // Create binary data with all byte values
         let data: Vec<u8> = (0..=255).cycle().take(4096).collect();
 
         let factory = IoUringWriterFactory::default();
@@ -1575,10 +1833,8 @@ mod tests {
             let factory = IoUringWriterFactory::default();
             let mut writer = factory.create(&path).unwrap();
             writer.write_all(b"data to flush on drop").unwrap();
-            // Don't explicitly flush - drop should do it
         }
 
-        // Verify data was written
         let written = std::fs::read(&path).unwrap();
         assert_eq!(written, b"data to flush on drop");
     }

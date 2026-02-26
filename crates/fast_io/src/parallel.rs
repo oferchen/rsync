@@ -120,14 +120,9 @@ impl ParallelExecutor {
 
     /// Processes items in parallel, returning results for each.
     ///
-    /// # Arguments
-    ///
-    /// * `items` - Items to process
-    /// * `process_fn` - Function to apply to each item
-    ///
-    /// # Returns
-    ///
-    /// A `ParallelResult` containing successes and errors.
+    /// When `thread_count` is non-zero, a dedicated rayon thread pool of that
+    /// size is used. This is important for I/O-bound workloads (HDD, NFS) where
+    /// the default (all logical CPUs) causes contention.
     pub fn process<T, U, F>(&self, items: &[T], process_fn: F) -> ParallelResult<U>
     where
         T: Sync,
@@ -137,17 +132,29 @@ impl ParallelExecutor {
         let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
         let bytes = Arc::new(AtomicU64::new(0));
 
-        let successes: Vec<U> = items
-            .par_iter()
-            .enumerate()
-            .filter_map(|(idx, item)| match process_fn(item) {
-                Ok(result) => Some(result),
-                Err(e) => {
-                    errors.lock().unwrap().push((idx, e));
-                    None
-                }
-            })
-            .collect();
+        let run = |errors: &Arc<std::sync::Mutex<Vec<(usize, io::Error)>>>| -> Vec<U> {
+            items
+                .par_iter()
+                .enumerate()
+                .filter_map(|(idx, item)| match process_fn(item) {
+                    Ok(result) => Some(result),
+                    Err(e) => {
+                        errors.lock().unwrap().push((idx, e));
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        let successes = if self.thread_count > 0 {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(self.thread_count)
+                .build()
+                .expect("failed to build rayon thread pool");
+            pool.install(|| run(&errors))
+        } else {
+            run(&errors)
+        };
 
         ParallelResult {
             successes,
@@ -159,6 +166,7 @@ impl ParallelExecutor {
     /// Processes file paths in parallel.
     ///
     /// Specialized version for file operations that tracks bytes processed.
+    /// Respects `thread_count` for I/O-bound stat workloads.
     pub fn process_files<P, U, F>(&self, paths: &[P], process_fn: F) -> ParallelResult<U>
     where
         P: AsRef<Path> + Sync,
@@ -168,20 +176,34 @@ impl ParallelExecutor {
         let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
         let bytes = Arc::new(AtomicU64::new(0));
 
-        let successes: Vec<U> = paths
-            .par_iter()
-            .enumerate()
-            .filter_map(|(idx, path)| match process_fn(path.as_ref()) {
-                Ok((result, file_bytes)) => {
-                    bytes.fetch_add(file_bytes, AtomicOrdering::Relaxed);
-                    Some(result)
-                }
-                Err(e) => {
-                    errors.lock().unwrap().push((idx, e));
-                    None
-                }
-            })
-            .collect();
+        let run = |errors: &Arc<std::sync::Mutex<Vec<(usize, io::Error)>>>,
+                   bytes: &Arc<AtomicU64>|
+         -> Vec<U> {
+            paths
+                .par_iter()
+                .enumerate()
+                .filter_map(|(idx, path)| match process_fn(path.as_ref()) {
+                    Ok((result, file_bytes)) => {
+                        bytes.fetch_add(file_bytes, AtomicOrdering::Relaxed);
+                        Some(result)
+                    }
+                    Err(e) => {
+                        errors.lock().unwrap().push((idx, e));
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        let successes = if self.thread_count > 0 {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(self.thread_count)
+                .build()
+                .expect("failed to build rayon thread pool");
+            pool.install(|| run(&errors, &bytes))
+        } else {
+            run(&errors, &bytes)
+        };
 
         ParallelResult {
             successes,
@@ -192,13 +214,7 @@ impl ParallelExecutor {
 
     /// Copies multiple files in parallel.
     ///
-    /// # Arguments
-    ///
-    /// * `operations` - List of (source, destination) path pairs
-    ///
-    /// # Returns
-    ///
-    /// A `ParallelResult` with bytes copied for each successful operation.
+    /// Respects `thread_count` configuration.
     pub fn copy_files<P: AsRef<Path> + Sync>(&self, operations: &[(P, P)]) -> ParallelResult<u64> {
         self.process(operations, |(src, dst)| {
             std::fs::copy(src.as_ref(), dst.as_ref())
