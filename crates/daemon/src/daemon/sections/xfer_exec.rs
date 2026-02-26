@@ -320,4 +320,46 @@ mod xfer_exec_tests {
             .expect("sh -c should run");
         assert!(result.is_err());
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_pipes_early_input_to_stdin() {
+        let ctx = test_context();
+        let dir = tempfile::tempdir().unwrap();
+        let out_path = dir.path().join("stdin_capture.txt");
+        // The script reads stdin and writes it to a file so we can verify.
+        let cmd = format!("cat > '{}'", out_path.display());
+        let data = b"early-input-payload-for-pre-xfer";
+        let result = run_pre_xfer_exec(&cmd, &ctx, Some(data))
+            .expect("command should run");
+        assert!(result.is_ok(), "script should exit 0");
+        let captured = std::fs::read(&out_path).expect("output file should exist");
+        assert_eq!(captured, data);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_without_early_input_has_closed_stdin() {
+        let ctx = test_context();
+        // `cat` with no stdin and null redirect exits 0 immediately.
+        let result = run_pre_xfer_exec("cat", &ctx, None)
+            .expect("command should run");
+        assert!(result.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_early_input_binary_data() {
+        let ctx = test_context();
+        let dir = tempfile::tempdir().unwrap();
+        let out_path = dir.path().join("binary_capture.bin");
+        let cmd = format!("cat > '{}'", out_path.display());
+        // All byte values 0x00..=0xFF
+        let data: Vec<u8> = (0..=255u8).collect();
+        let result = run_pre_xfer_exec(&cmd, &ctx, Some(&data))
+            .expect("command should run");
+        assert!(result.is_ok());
+        let captured = std::fs::read(&out_path).expect("output file should exist");
+        assert_eq!(captured, data);
+    }
 }

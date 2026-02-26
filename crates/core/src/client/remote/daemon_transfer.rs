@@ -1203,5 +1203,44 @@ mod tests {
             let data = read_early_input_file(&file_path).unwrap();
             assert_eq!(data.len(), EARLY_INPUT_MAX_SIZE);
         }
+
+        #[test]
+        fn wire_format_header_matches_upstream_protocol() {
+            let data = b"test-payload";
+            let header = format!("{EARLY_INPUT_CMD}{}\n", data.len());
+            assert_eq!(header, "#early_input=12\n");
+        }
+
+        #[test]
+        fn wire_format_uses_decimal_length() {
+            let data = vec![0u8; 256];
+            let header = format!("{EARLY_INPUT_CMD}{}\n", data.len());
+            assert_eq!(header, "#early_input=256\n");
+        }
+
+        #[test]
+        fn wire_format_at_max_size() {
+            let header = format!("{EARLY_INPUT_CMD}{EARLY_INPUT_MAX_SIZE}\n");
+            assert_eq!(header, "#early_input=5120\n");
+        }
+
+        #[test]
+        fn wire_format_complete_message_structure() {
+            let payload = b"auth-token";
+            let header = format!("{EARLY_INPUT_CMD}{}\n", payload.len());
+            let mut wire = header.into_bytes();
+            wire.extend_from_slice(payload);
+
+            // Verify structure: header line ends with \n, followed by raw data
+            let newline_pos = wire.iter().position(|&b| b == b'\n').unwrap();
+            let header_part = std::str::from_utf8(&wire[..newline_pos]).unwrap();
+            assert_eq!(header_part, "#early_input=10");
+            assert_eq!(&wire[newline_pos + 1..], b"auth-token");
+        }
+
+        #[test]
+        fn early_input_cmd_constant_matches_upstream() {
+            assert_eq!(EARLY_INPUT_CMD, "#early_input=");
+        }
     }
 }
