@@ -121,6 +121,22 @@ pub struct IoUringConfig {
     pub buffer_size: usize,
     /// Whether to use direct I/O (O_DIRECT).
     pub direct_io: bool,
+    /// Whether to register the file descriptor with io_uring.
+    ///
+    /// When enabled, the fd is registered via `IORING_REGISTER_FILES` at open
+    /// time, eliminating per-op file table lookups in the kernel. This saves
+    /// ~50ns per SQE on high-fd-count processes.
+    pub register_files: bool,
+    /// Whether to enable kernel-side SQ polling (`IORING_SETUP_SQPOLL`).
+    ///
+    /// When enabled, a kernel thread continuously polls the submission queue,
+    /// eliminating the `io_uring_enter` syscall on submit. Requires elevated
+    /// privileges or `CAP_SYS_NICE` on most kernels. Falls back to normal
+    /// submission if setup fails.
+    pub sqpoll: bool,
+    /// Idle timeout (ms) for the SQPOLL kernel thread before it goes to sleep.
+    /// Only relevant when `sqpoll` is true. Default: 1000ms.
+    pub sqpoll_idle_ms: u32,
 }
 
 impl Default for IoUringConfig {
@@ -129,6 +145,9 @@ impl Default for IoUringConfig {
             sq_entries: 64,
             buffer_size: 64 * 1024, // 64 KB
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         }
     }
 }
@@ -141,6 +160,9 @@ impl IoUringConfig {
             sq_entries: 256,
             buffer_size: 256 * 1024, // 256 KB
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         }
     }
 
@@ -151,7 +173,50 @@ impl IoUringConfig {
             sq_entries: 128,
             buffer_size: 16 * 1024, // 16 KB
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         }
+    }
+
+    /// Builds an `IoUring` instance from this config.
+    ///
+    /// Tries SQPOLL first if requested; falls back to a plain ring on
+    /// `EPERM` / `ENOMEM`.
+    fn build_ring(&self) -> io::Result<RawIoUring> {
+        if self.sqpoll {
+            let builder = io_uring::IoUring::builder().setup_sqpoll(self.sqpoll_idle_ms);
+            match builder.build(self.sq_entries) {
+                Ok(ring) => return Ok(ring),
+                Err(_) => {
+                    // SQPOLL requires privileges — fall through to normal ring
+                }
+            }
+        }
+        RawIoUring::new(self.sq_entries)
+            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))
+    }
+}
+
+/// Sentinel for "no fixed fd"; use raw fd path.
+const NO_FIXED_FD: i32 = -1;
+
+/// Returns the fd `types::Fd` for an SQE, using the fixed-file slot when
+/// registered, or the raw fd otherwise.
+fn sqe_fd(raw_fd: i32, fixed_fd_slot: i32) -> types::Fd {
+    if fixed_fd_slot != NO_FIXED_FD {
+        types::Fd(fixed_fd_slot)
+    } else {
+        types::Fd(raw_fd)
+    }
+}
+
+/// Sets the `IOSQE_FIXED_FILE` flag on an SQE when using registered files.
+fn maybe_fixed_file(entry: io_uring::squeue::Entry, fixed_fd_slot: i32) -> io_uring::squeue::Entry {
+    if fixed_fd_slot != NO_FIXED_FD {
+        entry.flags(io_uring::squeue::Flags::FIXED_FILE)
+    } else {
+        entry
     }
 }
 
@@ -163,6 +228,9 @@ impl IoUringConfig {
 ///
 /// Splits `data` into `chunk_size`-sized pieces, submitting up to `max_sqes` at
 /// a time. Handles short writes by resubmitting the remainder.
+///
+/// When `fixed_fd_slot` is not `NO_FIXED_FD`, SQEs use the registered fixed-file
+/// index and set `IOSQE_FIXED_FILE`.
 fn submit_write_batch(
     ring: &mut RawIoUring,
     fd: types::Fd,
@@ -170,6 +238,7 @@ fn submit_write_batch(
     base_offset: u64,
     chunk_size: usize,
     max_sqes: usize,
+    fixed_fd_slot: i32,
 ) -> io::Result<usize> {
     if data.is_empty() {
         return Ok(0);
@@ -200,14 +269,15 @@ fn submit_write_batch(
                     continue;
                 }
                 let file_off = base_offset + (start + done) as u64;
-                let write_op = opcode::Write::new(fd, data[start + done..].as_ptr(), want as u32)
+                let entry = opcode::Write::new(fd, data[start + done..].as_ptr(), want as u32)
                     .offset(file_off)
                     .build()
                     .user_data(idx as u64);
+                let entry = maybe_fixed_file(entry, fixed_fd_slot);
 
                 unsafe {
                     ring.submission()
-                        .push(&write_op)
+                        .push(&entry)
                         .map_err(|_| io::Error::other("submission queue full"))?;
                 }
                 submitted += 1;
@@ -269,10 +339,16 @@ pub struct IoUringReader {
     position: u64,
     buffer_size: usize,
     sq_entries: u32,
+    /// Fixed-file slot index, or `NO_FIXED_FD` when not registered.
+    fixed_fd_slot: i32,
 }
 
 impl IoUringReader {
     /// Opens a file for reading with io_uring.
+    ///
+    /// When `config.register_files` is true, the fd is registered with the
+    /// ring via `IORING_REGISTER_FILES`, eliminating per-op file-table
+    /// lookups in the kernel.
     ///
     /// # Errors
     ///
@@ -283,8 +359,18 @@ impl IoUringReader {
         let file = File::open(path)?;
         let size = file.metadata()?.len();
 
-        let ring = RawIoUring::new(config.sq_entries)
-            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
+        let mut ring = config.build_ring()?;
+
+        let raw_fd = file.as_raw_fd();
+        let fixed_fd_slot = if config.register_files {
+            let fds = [raw_fd];
+            match ring.submitter().register_files(&fds) {
+                Ok(()) => 0,           // registered at slot 0
+                Err(_) => NO_FIXED_FD, // silent fallback
+            }
+        } else {
+            NO_FIXED_FD
+        };
 
         Ok(Self {
             ring,
@@ -293,6 +379,7 @@ impl IoUringReader {
             position: 0,
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
+            fixed_fd_slot,
         })
     }
 
@@ -310,17 +397,18 @@ impl IoUringReader {
             return Ok(0);
         }
 
-        let fd = types::Fd(self.file.as_raw_fd());
+        let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
 
-        let read_op = opcode::Read::new(fd, buf.as_mut_ptr(), to_read as u32)
+        let entry = opcode::Read::new(fd, buf.as_mut_ptr(), to_read as u32)
             .offset(offset)
             .build()
             .user_data(0);
+        let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
         unsafe {
             self.ring
                 .submission()
-                .push(&read_op)
+                .push(&entry)
                 .map_err(|_| io::Error::other("submission queue full"))?;
         }
 
@@ -355,7 +443,7 @@ impl IoUringReader {
         let chunk_size = self.buffer_size;
         let max_batch = self.sq_entries as usize;
         let total_chunks = size.div_ceil(chunk_size);
-        let fd = types::Fd(self.file.as_raw_fd());
+        let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
 
         let mut chunks_done = 0usize;
 
@@ -394,15 +482,16 @@ impl IoUringReader {
                     }
 
                     let ptr = output[out_start + done..].as_mut_ptr();
-                    let read_op = opcode::Read::new(fd, ptr, clamped as u32)
+                    let entry = opcode::Read::new(fd, ptr, clamped as u32)
                         .offset(file_off)
                         .build()
                         .user_data(idx as u64);
+                    let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
                     unsafe {
                         self.ring
                             .submission()
-                            .push(&read_op)
+                            .push(&entry)
                             .map_err(|_| io::Error::other("submission queue full"))?;
                     }
                     submitted += 1;
@@ -494,6 +583,22 @@ pub struct IoUringWriter {
     buffer_pos: usize,
     buffer_size: usize,
     sq_entries: u32,
+    /// Fixed-file slot index, or `NO_FIXED_FD` when not registered.
+    fixed_fd_slot: i32,
+}
+
+/// Registers `raw_fd` with `ring` if `register` is true. Returns the
+/// fixed-file slot (0) on success, or `NO_FIXED_FD` on failure / opt-out.
+fn try_register_fd(ring: &mut RawIoUring, raw_fd: i32, register: bool) -> i32 {
+    if register {
+        let fds = [raw_fd];
+        match ring.submitter().register_files(&fds) {
+            Ok(()) => 0,
+            Err(_) => NO_FIXED_FD,
+        }
+    } else {
+        NO_FIXED_FD
+    }
 }
 
 impl IoUringWriter {
@@ -506,9 +611,8 @@ impl IoUringWriter {
     /// - io_uring initialization fails
     pub fn create<P: AsRef<Path>>(path: P, config: &IoUringConfig) -> io::Result<Self> {
         let file = File::create(path)?;
-
-        let ring = RawIoUring::new(config.sq_entries)
-            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
+        let mut ring = config.build_ring()?;
+        let fixed_fd_slot = try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
 
         Ok(Self {
             ring,
@@ -518,13 +622,14 @@ impl IoUringWriter {
             buffer_pos: 0,
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
+            fixed_fd_slot,
         })
     }
 
     /// Wraps an existing file handle for writing with io_uring.
     pub fn from_file(file: File, config: &IoUringConfig) -> io::Result<Self> {
-        let ring = RawIoUring::new(config.sq_entries)
-            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
+        let mut ring = config.build_ring()?;
+        let fixed_fd_slot = try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
 
         Ok(Self {
             ring,
@@ -534,6 +639,7 @@ impl IoUringWriter {
             buffer_pos: 0,
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
+            fixed_fd_slot,
         })
     }
 
@@ -545,9 +651,8 @@ impl IoUringWriter {
     ) -> io::Result<Self> {
         let file = File::create(path)?;
         file.set_len(size)?;
-
-        let ring = RawIoUring::new(config.sq_entries)
-            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
+        let mut ring = config.build_ring()?;
+        let fixed_fd_slot = try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
 
         Ok(Self {
             ring,
@@ -557,6 +662,7 @@ impl IoUringWriter {
             buffer_pos: 0,
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
+            fixed_fd_slot,
         })
     }
 
@@ -569,17 +675,18 @@ impl IoUringWriter {
             return Ok(0);
         }
 
-        let fd = types::Fd(self.file.as_raw_fd());
+        let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
 
-        let write_op = opcode::Write::new(fd, buf.as_ptr(), buf.len() as u32)
+        let entry = opcode::Write::new(fd, buf.as_ptr(), buf.len() as u32)
             .offset(offset)
             .build()
             .user_data(0);
+        let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
         unsafe {
             self.ring
                 .submission()
-                .push(&write_op)
+                .push(&entry)
                 .map_err(|_| io::Error::other("submission queue full"))?;
         }
 
@@ -604,7 +711,7 @@ impl IoUringWriter {
     /// Splits `data` into `buffer_size` chunks and submits up to `sq_entries`
     /// writes per `submit_and_wait` call, handling short writes via resubmission.
     pub fn write_all_batched(&mut self, data: &[u8], offset: u64) -> io::Result<()> {
-        let fd = types::Fd(self.file.as_raw_fd());
+        let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
         let written = submit_write_batch(
             &mut self.ring,
             fd,
@@ -612,6 +719,7 @@ impl IoUringWriter {
             offset,
             self.buffer_size,
             self.sq_entries as usize,
+            self.fixed_fd_slot,
         )?;
         if written != data.len() {
             return Err(io::Error::new(
@@ -623,14 +731,32 @@ impl IoUringWriter {
     }
 
     /// Flushes the internal buffer to disk using batched writes.
+    ///
+    /// Passes the buffer slice directly to the batched writer without
+    /// allocating a copy — the SQEs reference the buffer in place and
+    /// the kernel completes all writes before we reset `buffer_pos`.
     fn flush_buffer(&mut self) -> io::Result<()> {
         if self.buffer_pos == 0 {
             return Ok(());
         }
 
-        let pending = self.buffer[..self.buffer_pos].to_vec();
-        self.write_all_batched(&pending, self.bytes_written)?;
-        self.bytes_written += pending.len() as u64;
+        let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
+        let len = self.buffer_pos;
+        let offset = self.bytes_written;
+
+        // Submit directly from the internal buffer — no allocation.
+        // Safety: the buffer is not modified until submit_write_batch returns,
+        // and the kernel only reads from these pointers during submit_and_wait.
+        let written = submit_write_batch(
+            &mut self.ring,
+            fd,
+            &self.buffer[..len],
+            offset,
+            self.buffer_size,
+            self.sq_entries as usize,
+            self.fixed_fd_slot,
+        )?;
+        self.bytes_written += written as u64;
         self.buffer_pos = 0;
         Ok(())
     }
@@ -678,9 +804,10 @@ impl FileWriter for IoUringWriter {
     fn sync(&mut self) -> io::Result<()> {
         self.flush_buffer()?;
 
-        let fd = types::Fd(self.file.as_raw_fd());
+        let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
 
-        let fsync_op = opcode::Fsync::new(fd).build().user_data(0);
+        let entry = opcode::Fsync::new(fd).build().user_data(0);
+        let fsync_op = maybe_fixed_file(entry, self.fixed_fd_slot);
 
         unsafe {
             self.ring
@@ -978,12 +1105,15 @@ pub fn writer_from_file(
     buffer_capacity: usize,
     policy: crate::IoUringPolicy,
 ) -> io::Result<IoUringOrStdWriter> {
-    let default_sq = IoUringConfig::default().sq_entries;
+    let config = IoUringConfig::default();
 
     match policy {
         crate::IoUringPolicy::Auto => {
             if is_io_uring_available() {
-                if let Ok(ring) = RawIoUring::new(default_sq) {
+                // Build ring first — if this fails, `file` is still ours.
+                if let Ok(mut ring) = config.build_ring() {
+                    let fixed_fd_slot =
+                        try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
                     return Ok(IoUringOrStdWriter::IoUring(IoUringWriter {
                         ring,
                         file,
@@ -991,7 +1121,8 @@ pub fn writer_from_file(
                         buffer: vec![0u8; buffer_capacity],
                         buffer_pos: 0,
                         buffer_size: buffer_capacity,
-                        sq_entries: default_sq,
+                        sq_entries: config.sq_entries,
+                        fixed_fd_slot,
                     }));
                 }
             }
@@ -1006,8 +1137,8 @@ pub fn writer_from_file(
                     "io_uring requested via --io-uring but not available on this system",
                 ));
             }
-            let ring = RawIoUring::new(default_sq)
-                .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
+            let mut ring = config.build_ring()?;
+            let fixed_fd_slot = try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
             Ok(IoUringOrStdWriter::IoUring(IoUringWriter {
                 ring,
                 file,
@@ -1015,7 +1146,8 @@ pub fn writer_from_file(
                 buffer: vec![0u8; buffer_capacity],
                 buffer_pos: 0,
                 buffer_size: buffer_capacity,
-                sq_entries: default_sq,
+                sq_entries: config.sq_entries,
+                fixed_fd_slot,
             }))
         }
         crate::IoUringPolicy::Disabled => Ok(IoUringOrStdWriter::Std(
@@ -1398,6 +1530,9 @@ mod tests {
             sq_entries: 32,
             buffer_size: 128,
             direct_io: false,
+            register_files: true,
+            sqpoll: false,
+            sqpoll_idle_ms: 1000,
         };
 
         let factory = IoUringWriterFactory::default().force_fallback(true);
