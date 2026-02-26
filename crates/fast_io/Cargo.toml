@@ -35,7 +35,7 @@ rustix = { version = "0.38", features = ["fs"] }
 io-uring = { version = "0.7", optional = true }
 
 [features]
-default = []
+default = ["io_uring"]
 
 # ============================================================================
 # I/O Optimization Features

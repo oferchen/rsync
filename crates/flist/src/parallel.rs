@@ -17,39 +17,44 @@ use crate::entry::FileListEntry;
 use crate::error::FileListError;
 use crate::file_list_walker::FileListWalker;
 
-/// Collects all file list entries in parallel.
+/// Collects all file list entries sequentially from the walker.
 ///
-/// This function first enumerates all paths using the sequential walker,
-/// then fetches metadata for all entries in parallel using rayon's
-/// thread pool. This approach provides significant speedup for
-/// directories with many files where metadata syscalls dominate.
+/// Enumerates all paths using the sequential walker (traversal order
+/// must be deterministic for protocol compatibility). For parallel
+/// metadata fetching, use [`collect_paths_then_metadata_parallel`] or
+/// [`collect_with_batched_stats`] instead.
 ///
 /// # Errors
 ///
-/// Returns the first error encountered during enumeration or metadata
-/// fetching. Unlike the sequential walker, errors don't stop parallel
-/// processing of other entries.
+/// Returns the first error encountered during enumeration.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use flist::{FileListBuilder, parallel::collect_parallel};
+/// use flist::{FileListBuilder, parallel::collect_entries};
 ///
 /// let walker = FileListBuilder::new("/path/to/dir")
 ///     .follow_symlinks(false)
 ///     .build()?;
 ///
-/// let entries = collect_parallel(walker)?;
+/// let entries = collect_entries(walker)?;
 /// println!("Found {} entries", entries.len());
 /// ```
-pub fn collect_parallel(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
-    // First, collect all entries sequentially (traversal must be sequential
-    // to maintain correct ordering and handle the stack-based approach)
+pub fn collect_entries(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
     let entries: Result<Vec<_>, _> = walker.collect();
     if let Ok(ref list) = entries {
         info_log!(Flist, 1, "built file list with {} entries", list.len());
     }
     entries
+}
+
+/// Collects all file list entries sequentially from the walker.
+#[deprecated(
+    since = "0.6.0",
+    note = "renamed to `collect_entries` — this function is sequential"
+)]
+pub fn collect_parallel(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
+    collect_entries(walker)
 }
 
 /// Processes file entries in parallel, applying a function to each entry.
@@ -405,11 +410,11 @@ mod tests {
     }
 
     #[test]
-    fn collect_parallel_finds_all_entries() {
+    fn collect_entries_finds_all_entries() {
         let temp = create_test_tree();
         let walker = crate::FileListBuilder::new(temp.path()).build().unwrap();
 
-        let entries = collect_parallel(walker).unwrap();
+        let entries = collect_entries(walker).unwrap();
 
         // Should find: root, file1.txt, file2.txt, subdir, subdir/file3.txt
         assert_eq!(entries.len(), 5);
@@ -419,7 +424,7 @@ mod tests {
     fn process_entries_parallel_computes_sizes() {
         let temp = create_test_tree();
         let walker = crate::FileListBuilder::new(temp.path()).build().unwrap();
-        let entries = collect_parallel(walker).unwrap();
+        let entries = collect_entries(walker).unwrap();
 
         let sizes: Vec<u64> = process_entries_parallel(&entries, |e| e.metadata.len());
         assert_eq!(sizes.len(), entries.len());
@@ -429,7 +434,7 @@ mod tests {
     fn filter_entries_indices_selects_files() {
         let temp = create_test_tree();
         let walker = crate::FileListBuilder::new(temp.path()).build().unwrap();
-        let entries = collect_parallel(walker).unwrap();
+        let entries = collect_entries(walker).unwrap();
 
         let file_indices = filter_entries_indices(&entries, |e| e.metadata().is_file());
 

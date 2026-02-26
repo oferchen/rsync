@@ -773,11 +773,20 @@ impl Hasher for Xxh64Hasher {
     }
 }
 
-/// Checks if a buffer contains only zeros.
+/// Checks if a buffer contains only zeros using u128 word-width comparison.
+///
+/// Processes 16 bytes per iteration via native u128 comparison, which compilers
+/// optimize to SIMD instructions on x86-64 (SSE2/AVX2) and aarch64 (NEON).
 #[inline]
 fn is_all_zeros(buf: &[u8]) -> bool {
-    // Use chunks for efficient comparison without unsafe
-    buf.chunks(16).all(|chunk| chunk.iter().all(|&b| b == 0))
+    let mut iter = buf.chunks_exact(16);
+    for chunk in &mut iter {
+        let word: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
+        if u128::from_ne_bytes(*word) != 0 {
+            return false;
+        }
+    }
+    iter.remainder().iter().all(|&b| b == 0)
 }
 
 #[cfg(test)]
