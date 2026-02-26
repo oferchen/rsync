@@ -185,7 +185,8 @@ impl IoUringConfig {
     /// `EPERM` / `ENOMEM`.
     fn build_ring(&self) -> io::Result<RawIoUring> {
         if self.sqpoll {
-            let builder = io_uring::IoUring::builder().setup_sqpoll(self.sqpoll_idle_ms);
+            let mut builder = io_uring::IoUring::builder();
+            builder.setup_sqpoll(self.sqpoll_idle_ms);
             match builder.build(self.sq_entries) {
                 Ok(ring) => return Ok(ring),
                 Err(_) => {
@@ -359,7 +360,7 @@ impl IoUringReader {
         let file = File::open(path)?;
         let size = file.metadata()?.len();
 
-        let mut ring = config.build_ring()?;
+        let ring = config.build_ring()?;
 
         let raw_fd = file.as_raw_fd();
         let fixed_fd_slot = if config.register_files {
@@ -589,7 +590,7 @@ pub struct IoUringWriter {
 
 /// Registers `raw_fd` with `ring` if `register` is true. Returns the
 /// fixed-file slot (0) on success, or `NO_FIXED_FD` on failure / opt-out.
-fn try_register_fd(ring: &mut RawIoUring, raw_fd: i32, register: bool) -> i32 {
+fn try_register_fd(ring: &RawIoUring, raw_fd: i32, register: bool) -> i32 {
     if register {
         let fds = [raw_fd];
         match ring.submitter().register_files(&fds) {
@@ -611,8 +612,8 @@ impl IoUringWriter {
     /// - io_uring initialization fails
     pub fn create<P: AsRef<Path>>(path: P, config: &IoUringConfig) -> io::Result<Self> {
         let file = File::create(path)?;
-        let mut ring = config.build_ring()?;
-        let fixed_fd_slot = try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
+        let ring = config.build_ring()?;
+        let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
 
         Ok(Self {
             ring,
@@ -628,8 +629,8 @@ impl IoUringWriter {
 
     /// Wraps an existing file handle for writing with io_uring.
     pub fn from_file(file: File, config: &IoUringConfig) -> io::Result<Self> {
-        let mut ring = config.build_ring()?;
-        let fixed_fd_slot = try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
+        let ring = config.build_ring()?;
+        let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
 
         Ok(Self {
             ring,
@@ -651,8 +652,8 @@ impl IoUringWriter {
     ) -> io::Result<Self> {
         let file = File::create(path)?;
         file.set_len(size)?;
-        let mut ring = config.build_ring()?;
-        let fixed_fd_slot = try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
+        let ring = config.build_ring()?;
+        let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
 
         Ok(Self {
             ring,
@@ -1111,9 +1112,9 @@ pub fn writer_from_file(
         crate::IoUringPolicy::Auto => {
             if is_io_uring_available() {
                 // Build ring first — if this fails, `file` is still ours.
-                if let Ok(mut ring) = config.build_ring() {
+                if let Ok(ring) = config.build_ring() {
                     let fixed_fd_slot =
-                        try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
+                        try_register_fd(&ring, file.as_raw_fd(), config.register_files);
                     return Ok(IoUringOrStdWriter::IoUring(IoUringWriter {
                         ring,
                         file,
@@ -1137,8 +1138,8 @@ pub fn writer_from_file(
                     "io_uring requested via --io-uring but not available on this system",
                 ));
             }
-            let mut ring = config.build_ring()?;
-            let fixed_fd_slot = try_register_fd(&mut ring, file.as_raw_fd(), config.register_files);
+            let ring = config.build_ring()?;
+            let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
             Ok(IoUringOrStdWriter::IoUring(IoUringWriter {
                 ring,
                 file,
