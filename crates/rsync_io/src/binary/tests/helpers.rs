@@ -127,7 +127,7 @@ impl Write for CountingTransport {
 
 #[must_use]
 pub(super) fn handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
-    u32::from(version.as_u8()).to_be_bytes()
+    u32::from(version.as_u8()).to_le_bytes()
 }
 
 #[must_use]
