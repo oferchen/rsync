@@ -31,6 +31,18 @@ pub struct IdAccess {
     /// Lower 3 bits are permissions (read=4, write=2, execute=1).
     /// Bit 31 (`NAME_IS_USER`) indicates this is a user entry.
     pub access: u32,
+    /// Optional user or group name for wire transmission.
+    ///
+    /// When `include_names` is set in `send_ida_entries`, entries with a name
+    /// will have the `XFLAG_NAME_FOLLOWS` flag set and the name bytes written
+    /// after the access varint.
+    ///
+    /// # Upstream Reference
+    ///
+    /// In upstream rsync, names are resolved from UID/GID via `uid_to_name()`
+    /// and `gid_to_name()` before sending. The receiver uses names for
+    /// UID/GID remapping on the destination system.
+    pub name: Option<Vec<u8>>,
 }
 
 impl IdAccess {
@@ -40,13 +52,38 @@ impl IdAccess {
         Self {
             id: uid,
             access: access | super::constants::NAME_IS_USER,
+            name: None,
         }
     }
 
     /// Creates a new group ACL entry.
     #[must_use]
     pub const fn group(gid: u32, access: u32) -> Self {
-        Self { id: gid, access }
+        Self {
+            id: gid,
+            access,
+            name: None,
+        }
+    }
+
+    /// Creates a new user ACL entry with a resolved name.
+    #[must_use]
+    pub fn user_with_name(uid: u32, access: u32, name: Vec<u8>) -> Self {
+        Self {
+            id: uid,
+            access: access | super::constants::NAME_IS_USER,
+            name: Some(name),
+        }
+    }
+
+    /// Creates a new group ACL entry with a resolved name.
+    #[must_use]
+    pub fn group_with_name(gid: u32, access: u32, name: Vec<u8>) -> Self {
+        Self {
+            id: gid,
+            access,
+            name: Some(name),
+        }
     }
 
     /// Returns `true` if this is a user entry (vs group).
