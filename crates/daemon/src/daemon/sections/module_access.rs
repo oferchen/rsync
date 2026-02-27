@@ -564,20 +564,62 @@ fn handle_authentication(
     }
 }
 
-/// Reads and logs client arguments.
+/// Reads and logs client arguments, handling the two-phase secluded-args
+/// protocol when the client sends `--protect-args` / `-s`.
 ///
-/// Returns the client arguments on success, or sends an error and returns `None`.
+/// Phase 1: read the standard null/newline-terminated argument list.
+/// If phase-1 args contain `-s`, proceed to phase 2.
+/// Phase 2: read the full argument list via `recv_secluded_args()`.
+///
+/// Returns the effective client arguments on success, or sends an error
+/// and returns `None`.
+///
+/// # Upstream Reference
+///
+/// - `clientserver.c:1059-1073` — two-phase `read_args()` for protect_args
 fn read_and_log_client_args(
     ctx: &mut ModuleRequestContext<'_>,
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<Option<Vec<String>>> {
-    let client_args = match read_client_arguments(ctx.reader, negotiated_protocol) {
+    let phase1_args = match read_client_arguments(ctx.reader, negotiated_protocol) {
         Ok(args) => args,
         Err(err) => {
             let payload = format!("@ERROR: failed to read client arguments: {err}");
             send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
             return Ok(None);
         }
+    };
+
+    // Detect secluded-args flag in phase-1 args.
+    // upstream: clientserver.c:1066 — if (protect_args && ret)
+    let has_secluded = phase1_args.iter().any(|a| a == "-s");
+
+    let client_args = if has_secluded {
+        // Phase 2: read the real args via secluded-args wire format.
+        // upstream: clientserver.c:1068-1071 — read_args with rl_nulls=1
+        match protocol::secluded_args::recv_secluded_args(ctx.reader) {
+            Ok(full_args) => {
+                // First element is "rsync" (set by upstream send_protected_args),
+                // skip it to get the actual server arguments.
+                if full_args.first().is_some_and(|a| a == "rsync") {
+                    full_args.into_iter().skip(1).collect()
+                } else {
+                    full_args
+                }
+            }
+            Err(err) => {
+                let payload = format!("@ERROR: failed to read secluded args: {err}");
+                send_error_and_exit(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    ctx.messages,
+                    &payload,
+                )?;
+                return Ok(None);
+            }
+        }
+    } else {
+        phase1_args
     };
 
     if let Some(log) = ctx.log_sink {
@@ -1871,5 +1913,66 @@ mod module_access_tests {
         let result = verify_secret_response(&module, "alice", "challenge", "response", None)
             .expect("should not error on permissions");
         assert!(!result, "auth should fail due to wrong response");
+    }
+
+    // ==================== secluded-args daemon tests ====================
+
+    #[test]
+    fn read_client_arguments_normal_protocol30() {
+        let data = b"--server\0--sender\0-logDtpr\0.\0mod/path\0\0";
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = std::io::BufReader::new(&mut cursor);
+        let args =
+            read_client_arguments(&mut reader, Some(ProtocolVersion::V32)).expect("should parse");
+        assert_eq!(
+            args,
+            vec!["--server", "--sender", "-logDtpr", ".", "mod/path"]
+        );
+    }
+
+    #[test]
+    fn read_client_arguments_with_secluded_flag() {
+        // Phase 1: minimal args with -s
+        // Phase 2: full args via secluded-args wire format
+        let mut data = Vec::new();
+        // Phase 1: --server\0-s\0.\0\0
+        data.extend_from_slice(b"--server\0-s\0.\0\0");
+        // Phase 2: rsync\0--server\0--sender\0-logDtpr\0.\0mod/path\0\0
+        data.extend_from_slice(b"rsync\0--server\0--sender\0-logDtpr\0.\0mod/path\0\0");
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = std::io::BufReader::new(&mut cursor);
+
+        // read_client_arguments only reads phase 1
+        let phase1 =
+            read_client_arguments(&mut reader, Some(ProtocolVersion::V32)).expect("should parse");
+        assert_eq!(phase1, vec!["--server", "-s", "."]);
+
+        // Detect secluded flag
+        let has_secluded = phase1.iter().any(|a| a == "-s");
+        assert!(has_secluded);
+
+        // Read phase 2
+        let full_args = protocol::secluded_args::recv_secluded_args(&mut reader)
+            .expect("should read secluded args");
+        assert_eq!(full_args[0], "rsync");
+        let effective: Vec<&str> = full_args.iter().skip(1).map(String::as_str).collect();
+        assert_eq!(
+            effective,
+            vec!["--server", "--sender", "-logDtpr", ".", "mod/path"]
+        );
+    }
+
+    #[test]
+    fn read_client_arguments_legacy_protocol29() {
+        let data = b"--server\n--sender\n-logDtpr\n.\nmod/path\n\n";
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = std::io::BufReader::new(&mut cursor);
+        let args =
+            read_client_arguments(&mut reader, Some(ProtocolVersion::V29)).expect("should parse");
+        assert_eq!(
+            args,
+            vec!["--server", "--sender", "-logDtpr", ".", "mod/path"]
+        );
     }
 }
