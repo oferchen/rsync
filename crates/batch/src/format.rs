@@ -44,7 +44,8 @@ impl BatchHeader {
     /// 4. Checksum seed (i32)
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         // Write stream flags bitmap first (upstream batch.c:write_stream_flags)
-        self.stream_flags.write_to(writer)?;
+        self.stream_flags
+            .write_to_versioned(writer, self.protocol_version)?;
 
         // Write protocol version (upstream io.c batch initialization)
         write_i32(writer, self.protocol_version)?;
@@ -68,11 +69,14 @@ impl BatchHeader {
     /// 3. Compat flags (varint, if protocol >= 30)
     /// 4. Checksum seed (i32)
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
-        // Read stream flags bitmap first
-        let stream_flags = BatchFlags::read_from(reader)?;
+        // Read raw stream flags bitmap (protocol version not yet known)
+        let raw_bitmap = BatchFlags::read_raw(reader)?;
 
-        // Read protocol version
+        // Read protocol version — needed to interpret the bitmap correctly
         let protocol_version = read_i32(reader)?;
+
+        // Now reconstruct flags with the correct protocol version mask
+        let stream_flags = BatchFlags::from_bitmap(raw_bitmap, protocol_version);
 
         // Read compat flags for protocol >= 30
         let compat_flags = if protocol_version >= 30 {
@@ -220,18 +224,26 @@ impl BatchFlags {
         bitmap
     }
 
-    /// Write flags to a writer.
-    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        // Protocol version is not available here, so we write all flags
-        // The caller should ensure protocol-appropriate flags are set
-        write_i32(writer, self.to_bitmap(30))
+    /// Write flags to a writer, masking bits by protocol version.
+    ///
+    /// Only bits valid for the given protocol version are written.
+    /// Upstream `batch.c:write_stream_flags()` uses the negotiated
+    /// `protocol_version` to decide which bits to set.
+    pub fn write_to_versioned<W: Write>(
+        &self,
+        writer: &mut W,
+        protocol_version: i32,
+    ) -> io::Result<()> {
+        write_i32(writer, self.to_bitmap(protocol_version))
     }
 
-    /// Read flags from a reader.
-    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
-        let bitmap = read_i32(reader)?;
-        // Assume protocol 30+ for maximum compatibility
-        Ok(Self::from_bitmap(bitmap, 30))
+    /// Read the raw bitmap from a reader.
+    ///
+    /// Returns the raw `i32` bitmap without interpreting protocol-gated bits.
+    /// The caller must pass this to [`BatchFlags::from_bitmap`] with the
+    /// correct protocol version (read from the header after the bitmap).
+    pub fn read_raw<R: Read>(reader: &mut R) -> io::Result<i32> {
+        read_i32(reader)
     }
 }
 
@@ -585,12 +597,12 @@ mod tests {
         };
 
         let mut buf = Vec::new();
-        flags.write_to(&mut buf).unwrap();
+        flags.write_to_versioned(&mut buf, 30).unwrap();
 
-        let mut cursor = Cursor::new(buf);
-        let restored = BatchFlags::read_from(&mut cursor).unwrap();
+        let mut cursor = Cursor::new(&buf);
+        let raw = BatchFlags::read_raw(&mut cursor).unwrap();
+        let restored = BatchFlags::from_bitmap(raw, 30);
 
-        // These depend on protocol version in read_from, so just check bitmap
         assert_eq!(flags.to_bitmap(30), restored.to_bitmap(30));
     }
 
@@ -675,5 +687,71 @@ mod tests {
         let debug = format!("{header:?}");
         assert!(debug.contains("BatchHeader"));
         assert!(debug.contains("30"));
+    }
+
+    #[test]
+    fn test_batch_header_protocol28_masks_high_bits() {
+        // Protocol 28 batch should not include bits 7-14 in the bitmap.
+        // Previously, write_to hardcoded to_bitmap(30) which would leak
+        // protocol-30 flag bits into a protocol-28 batch file.
+        let mut header = BatchHeader::new(28, 42);
+        header.stream_flags.xfer_dirs = true; // bit 7 — protocol 29+
+        header.stream_flags.preserve_acls = true; // bit 10 — protocol 30+
+
+        let mut buf = Vec::new();
+        header.write_to(&mut buf).unwrap();
+
+        // Read back — xfer_dirs and preserve_acls should be masked out
+        let mut cursor = Cursor::new(buf);
+        let restored = BatchHeader::read_from(&mut cursor).unwrap();
+
+        assert!(!restored.stream_flags.xfer_dirs);
+        assert!(!restored.stream_flags.preserve_acls);
+        assert_eq!(restored.protocol_version, 28);
+    }
+
+    #[test]
+    fn test_batch_header_protocol29_includes_bits_7_8() {
+        let mut header = BatchHeader::new(29, 100);
+        header.stream_flags.xfer_dirs = true; // bit 7
+        header.stream_flags.do_compression = true; // bit 8
+        header.stream_flags.preserve_acls = true; // bit 10 — protocol 30+
+
+        let mut buf = Vec::new();
+        header.write_to(&mut buf).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let restored = BatchHeader::read_from(&mut cursor).unwrap();
+
+        assert!(restored.stream_flags.xfer_dirs);
+        assert!(restored.stream_flags.do_compression);
+        assert!(!restored.stream_flags.preserve_acls); // masked out for proto 29
+    }
+
+    #[test]
+    fn test_batch_flags_write_versioned_roundtrip() {
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            xfer_dirs: true,
+            preserve_acls: true,
+            ..Default::default()
+        };
+
+        // Write with protocol 30 — all bits preserved
+        let mut buf30 = Vec::new();
+        flags.write_to_versioned(&mut buf30, 30).unwrap();
+        let raw30 = BatchFlags::read_raw(&mut Cursor::new(&buf30)).unwrap();
+        let restored30 = BatchFlags::from_bitmap(raw30, 30);
+        assert!(restored30.xfer_dirs);
+        assert!(restored30.preserve_acls);
+
+        // Write with protocol 28 — bits 7+ masked
+        let mut buf28 = Vec::new();
+        flags.write_to_versioned(&mut buf28, 28).unwrap();
+        let raw28 = BatchFlags::read_raw(&mut Cursor::new(&buf28)).unwrap();
+        let restored28 = BatchFlags::from_bitmap(raw28, 28);
+        assert!(!restored28.xfer_dirs);
+        assert!(!restored28.preserve_acls);
     }
 }
