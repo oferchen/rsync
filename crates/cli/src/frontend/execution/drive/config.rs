@@ -9,7 +9,7 @@ use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
 use core::client::{
     AddressMode, BandwidthLimit, ClientConfig, ClientConfigBuilder, CompressionSetting, DeleteMode,
-    IconvSetting, SkipCompressList, StrongChecksumChoice, TransferTimeout,
+    FilesFromSource, IconvSetting, SkipCompressList, StrongChecksumChoice, TransferTimeout,
 };
 use engine::batch;
 use rsync_io::ssh;
@@ -138,6 +138,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) batch_config: Option<batch::BatchConfig>,
     pub(crate) no_motd: bool,
     pub(crate) daemon_params: Vec<String>,
+    pub(crate) files_from: FilesFromSource,
+    pub(crate) from0: bool,
 }
 
 /// Builds the base [`ClientConfigBuilder`] from the provided inputs.
@@ -324,6 +326,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         || inputs.out_format_template.is_some()
         || inputs.log_file_template.is_some()
         || !matches!(inputs.name_level, NameOutputLevel::Disabled);
+
+    builder = builder.files_from(inputs.files_from).from0(inputs.from0);
 
     builder
         .force_event_collection(force_event_collection)

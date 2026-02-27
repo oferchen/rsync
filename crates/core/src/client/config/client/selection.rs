@@ -142,6 +142,31 @@ impl ClientConfig {
     pub const fn prune_empty_dirs(&self) -> bool {
         self.prune_empty_dirs
     }
+
+    /// Returns the `--files-from` source configuration.
+    ///
+    /// When active, the file list is read from the specified source rather
+    /// than from CLI positional arguments.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2447-2490` — files_from parsing
+    #[must_use]
+    #[doc(alias = "--files-from")]
+    pub fn files_from(&self) -> &FilesFromSource {
+        &self.files_from
+    }
+
+    /// Returns whether NUL-delimited mode is active for `--files-from`.
+    ///
+    /// When true, the file list uses NUL bytes as delimiters instead of
+    /// newlines. This corresponds to `--from0` / `-0`.
+    #[must_use]
+    #[doc(alias = "--from0")]
+    #[doc(alias = "-0")]
+    pub const fn from0(&self) -> bool {
+        self.from0
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +300,19 @@ mod tests {
     fn prune_empty_dirs_default_is_false() {
         let config = default_config();
         assert!(!config.prune_empty_dirs());
+    }
+
+    // Tests for files_from
+    #[test]
+    fn files_from_default_is_none() {
+        let config = default_config();
+        assert!(!config.files_from().is_active());
+    }
+
+    // Tests for from0
+    #[test]
+    fn from0_default_is_false() {
+        let config = default_config();
+        assert!(!config.from0());
     }
 }

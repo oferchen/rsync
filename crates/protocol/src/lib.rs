@@ -20,6 +20,8 @@ mod envelope;
 mod error;
 /// Error recovery and partial transfer handling for rsync protocol operations.
 pub mod error_recovery;
+/// Wire protocol for `--files-from` file list forwarding between client and server.
+pub mod files_from;
 /// Filter list wire protocol encoding and decoding.
 pub mod filters;
 /// File list encoding and decoding.
@@ -59,6 +61,7 @@ pub use envelope::{
     ParseMessageCodeError,
 };
 pub use error::NegotiationError;
+pub use files_from::{forward_files_from, read_files_from_stream};
 pub use fnamecmp::{FnameCmpType, InvalidFnameCmpType};
 pub use iconv::{
     ConversionError, EncodingConverter, EncodingError, EncodingPair, FilenameConverter,

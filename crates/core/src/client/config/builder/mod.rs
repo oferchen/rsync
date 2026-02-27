@@ -58,8 +58,8 @@ macro_rules! builder_setter {
 
 use super::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, CompressionSetting, DeleteMode,
-    FilterRuleSpec, IconvSetting, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumChoice,
-    TransferTimeout,
+    FilesFromSource, FilterRuleSpec, IconvSetting, ReferenceDirectory, ReferenceDirectoryKind,
+    StrongChecksumChoice, TransferTimeout,
 };
 use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
@@ -214,6 +214,8 @@ pub struct ClientConfigBuilder {
     prefer_aes_gcm: Option<bool>,
     protect_args: Option<bool>,
     batch_config: Option<engine::batch::BatchConfig>,
+    files_from: FilesFromSource,
+    from0: bool,
     no_motd: bool,
     daemon_params: Vec<String>,
     #[cfg(all(unix, feature = "acl"))]
@@ -336,6 +338,8 @@ impl ClientConfigBuilder {
             prefer_aes_gcm: self.prefer_aes_gcm,
             protect_args: self.protect_args,
             batch_config: self.batch_config,
+            files_from: self.files_from,
+            from0: self.from0,
             no_motd: self.no_motd,
             daemon_params: self.daemon_params,
             #[cfg(all(unix, feature = "acl"))]
