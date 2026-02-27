@@ -938,6 +938,20 @@ impl GeneratorContext {
             return Ok(());
         }
 
+        // Skip file types that are not being preserved.
+        // upstream: flist.c:send_file_name() / make_file() skips unsupported types.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            let ft = metadata.file_type();
+            if (ft.is_block_device() || ft.is_char_device()) && !self.config.flags.devices {
+                return Ok(());
+            }
+            if (ft.is_fifo() || ft.is_socket()) && !self.config.flags.specials {
+                return Ok(());
+            }
+        }
+
         // Check filters if present
         if let Some(ref filters) = self.filters {
             let is_dir = metadata.is_dir();
@@ -995,6 +1009,12 @@ impl GeneratorContext {
     ///
     /// The `full_path` is used for filesystem operations (e.g., reading symlink targets),
     /// while `relative_path` is stored in the entry for transmission to the receiver.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:make_file()` — determines file type and populates the `file_struct`.
+    /// - Device files (block/char) use `new_block_device`/`new_char_device` with rdev fields.
+    /// - Special files (FIFOs/sockets) use `new_fifo`/`new_socket`.
     fn create_entry(
         &self,
         full_path: &Path,
@@ -1029,8 +1049,29 @@ impl GeneratorContext {
 
             FileEntry::new_symlink(relative_path, target)
         } else {
-            // Other file types (devices, etc.)
-            FileEntry::new_file(relative_path, 0, 0o644)
+            // Device and special file types (Unix only)
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileTypeExt;
+                let mode = metadata.mode() & 0o7777;
+                if file_type.is_block_device() {
+                    let (major, minor) = rdev_to_major_minor(metadata.rdev());
+                    FileEntry::new_block_device(relative_path, mode, major, minor)
+                } else if file_type.is_char_device() {
+                    let (major, minor) = rdev_to_major_minor(metadata.rdev());
+                    FileEntry::new_char_device(relative_path, mode, major, minor)
+                } else if file_type.is_fifo() {
+                    FileEntry::new_fifo(relative_path, mode)
+                } else if file_type.is_socket() {
+                    FileEntry::new_socket(relative_path, mode)
+                } else {
+                    FileEntry::new_file(relative_path, 0, 0o644)
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                FileEntry::new_file(relative_path, 0, 0o644)
+            }
         };
 
         // Set modification time
@@ -1071,12 +1112,18 @@ impl GeneratorContext {
             FileListWriter::new(self.protocol)
         };
 
-        // Configure UID/GID preservation based on server flags
-        // Upstream flist.c uses preserve_uid/preserve_gid globals
+        // Configure preservation flags to match what the receiver expects.
+        // Upstream flist.c uses preserve_uid/preserve_gid/preserve_devices etc. globals.
         let mut flist_writer = flist_writer
             .with_preserve_uid(self.config.flags.owner)
             .with_preserve_gid(self.config.flags.group)
-            .with_preserve_atimes(self.config.flags.atimes);
+            .with_preserve_links(self.config.flags.links)
+            .with_preserve_devices(self.config.flags.devices)
+            .with_preserve_specials(self.config.flags.specials)
+            .with_preserve_hard_links(self.config.flags.hard_links)
+            .with_preserve_atimes(self.config.flags.atimes)
+            .with_preserve_acls(self.config.flags.acls)
+            .with_preserve_xattrs(self.config.flags.xattrs);
 
         // Wire up iconv converter if configured
         if let Some(ref converter) = self.config.iconv {
@@ -1869,6 +1916,31 @@ fn apply_permutation_in_place<A, B>(
             dest_perm.swap(i, j);
         }
     }
+}
+
+/// Extracts major and minor device numbers from a raw `rdev` value.
+///
+/// The layout differs by platform:
+/// - **Linux**: Split encoding where major/minor span non-contiguous bits.
+/// - **macOS/BSD**: Major in high byte, minor in low 24 bits.
+///
+/// # Upstream Reference
+///
+/// Mirrors glibc `major()`/`minor()` macros used by upstream rsync to populate
+/// `rdev_major`/`rdev_minor` in `file_struct`.
+#[cfg(all(unix, target_os = "linux"))]
+fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
+    let major = ((rdev >> 8) & 0xfff) as u32 | (((rdev >> 32) & !0xfff) as u32);
+    let minor = (rdev & 0xff) as u32 | (((rdev >> 12) & !0xff) as u32);
+    (major, minor)
+}
+
+/// Extracts major and minor device numbers from a raw `rdev` value (BSD/macOS).
+#[cfg(all(unix, not(target_os = "linux")))]
+fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
+    let major = (rdev >> 24) as u32;
+    let minor = (rdev & 0xffffff) as u32;
+    (major, minor)
 }
 
 #[cfg(test)]
@@ -3292,5 +3364,134 @@ mod tests {
         assert!(ctx.negotiated_algorithms.is_some());
         let negotiated = ctx.negotiated_algorithms.as_ref().unwrap();
         assert_eq!(negotiated.compression, protocol::CompressionAlgorithm::None);
+    }
+
+    /// Creates a FIFO at the given path using the `mkfifo` command.
+    #[cfg(unix)]
+    fn create_fifo_for_test(path: &Path) {
+        let status = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .expect("mkfifo command failed to start");
+        assert!(status.success(), "mkfifo failed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_skips_fifo_when_preserve_specials_is_false() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        std::fs::write(base_path.join("regular.txt"), b"data").unwrap();
+        create_fifo_for_test(&base_path.join("test.fifo"));
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.specials = false;
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        let count = build_file_list_for(&mut ctx, base_path);
+
+        // FIFO should be skipped, only regular file included
+        assert_eq!(count, 1);
+        assert_eq!(ctx.file_list()[0].name(), "regular.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_includes_fifo_when_preserve_specials_is_true() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        std::fs::write(base_path.join("regular.txt"), b"data").unwrap();
+        create_fifo_for_test(&base_path.join("test.fifo"));
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.specials = true;
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        let count = build_file_list_for(&mut ctx, base_path);
+
+        // Both regular file and FIFO should be included
+        assert_eq!(count, 2);
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(names.contains(&"regular.txt"));
+        assert!(names.contains(&"test.fifo"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_includes_fifo_as_special_entry_type() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        create_fifo_for_test(&base_path.join("my.fifo"));
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.specials = true;
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        build_file_list_for(&mut ctx, base_path);
+
+        assert_eq!(ctx.file_list().len(), 1);
+        assert!(ctx.file_list()[0].is_special());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn send_file_list_passes_preserve_flags_to_writer() {
+        use super::super::receiver::ReceiverContext;
+
+        let handshake = test_handshake();
+        let mut gen_config = test_config();
+        gen_config.flags.specials = true;
+        gen_config.flags.devices = true;
+        let mut generator = GeneratorContext::new(&handshake, gen_config);
+
+        // Add a FIFO entry
+        let mut fifo = FileEntry::new_fifo("test.fifo".into(), 0o644);
+        fifo.set_mtime(1700000000, 0);
+        generator.file_list.push(fifo);
+
+        let mut wire_data = Vec::new();
+        generator.send_file_list(&mut wire_data).unwrap();
+
+        // Receiver should be able to decode when matching flags are set
+        let mut recv_config = test_config();
+        recv_config.flags.specials = true;
+        recv_config.flags.devices = true;
+        let mut receiver = ReceiverContext::new(&handshake, recv_config);
+
+        let mut cursor = Cursor::new(&wire_data[..]);
+        let count = receiver.receive_file_list(&mut cursor).unwrap();
+
+        assert_eq!(count, 1);
+        assert!(receiver.file_list()[0].is_special());
+        assert_eq!(receiver.file_list()[0].name(), "test.fifo");
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn rdev_to_major_minor_extracts_linux_values() {
+        // Linux rdev encoding for major=8, minor=0 (sda)
+        // major low nibble at bits 8-11, minor low byte at bits 0-7
+        let rdev: u64 = (8 << 8) | 0;
+        let (major, minor) = super::rdev_to_major_minor(rdev);
+        assert_eq!(major, 8);
+        assert_eq!(minor, 0);
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    #[test]
+    fn rdev_to_major_minor_extracts_bsd_values() {
+        // BSD/macOS rdev encoding: major in high byte, minor in low 24 bits
+        let rdev: u64 = (8 << 24) | 3;
+        let (major, minor) = super::rdev_to_major_minor(rdev);
+        assert_eq!(major, 8);
+        assert_eq!(minor, 3);
     }
 }
