@@ -2,8 +2,17 @@
 //!
 //! A file entry contains all metadata needed to synchronize a single filesystem
 //! object (regular file, directory, symlink, device, etc.).
+//!
+//! # Path Interning
+//!
+//! Many file entries in a transfer share the same parent directory. The `dirname`
+//! field stores an `Arc<Path>` that can be shared across entries via
+//! [`super::intern::PathInterner`], reducing heap allocations for directory paths.
+//! This mirrors upstream rsync's `file_struct.dirname` which points into a shared
+//! string pool (upstream: flist.c:f_name()).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Type of filesystem entry.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -88,13 +97,28 @@ impl FileType {
 /// the relative path, size, modification time, mode, ownership, and optional
 /// device/symlink information.
 ///
+/// # Path Interning
+///
+/// The `dirname` field holds a reference-counted parent directory path that can
+/// be shared across entries in the same directory. When entries are built through
+/// [`super::read::FileListReader`], the reader's [`super::intern::PathInterner`]
+/// ensures that entries sharing a parent directory point to the same `Arc<Path>`
+/// allocation. This mirrors upstream rsync's `file_struct.dirname` shared pointer
+/// (upstream: flist.c).
+///
 /// Field order is optimized to minimize padding: 8-byte aligned fields first,
 /// then 4-byte, then smaller fields.
-#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FileEntry {
     // 8-byte aligned fields (24 bytes each)
     /// Relative path of the entry within the transfer.
     name: PathBuf,
+    /// Interned parent directory path, shared across entries in the same directory.
+    ///
+    /// For a path like `"src/lib/foo.rs"`, dirname is `"src/lib"`. For root-level
+    /// entries like `"foo.rs"`, dirname is the empty path `""`. When set by the
+    /// `PathInterner`, multiple entries with the same parent share a single
+    /// heap allocation via `Arc`.
+    dirname: Arc<Path>,
     /// Symlink target path (for symlinks).
     link_target: Option<PathBuf>,
     /// User name for cross-system ownership mapping (protocol 30+).
@@ -149,11 +173,113 @@ pub struct FileEntry {
     content_dir: bool,
 }
 
+/// Extracts the parent directory from a path.
+///
+/// Returns the parent component as `Arc<Path>`. For paths without a directory
+/// separator (root-level entries), returns an `Arc` pointing to the empty path.
+fn extract_dirname(path: &Path) -> Arc<Path> {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => Arc::from(parent),
+        _ => Arc::from(Path::new("")),
+    }
+}
+
+impl Clone for FileEntry {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            dirname: Arc::clone(&self.dirname),
+            link_target: self.link_target.clone(),
+            user_name: self.user_name.clone(),
+            group_name: self.group_name.clone(),
+            size: self.size,
+            mtime: self.mtime,
+            atime: self.atime,
+            crtime: self.crtime,
+            uid: self.uid,
+            gid: self.gid,
+            rdev_major: self.rdev_major,
+            rdev_minor: self.rdev_minor,
+            hardlink_idx: self.hardlink_idx,
+            hardlink_dev: self.hardlink_dev,
+            hardlink_ino: self.hardlink_ino,
+            checksum: self.checksum.clone(),
+            acl_ndx: self.acl_ndx,
+            xattr_ndx: self.xattr_ndx,
+            mode: self.mode,
+            mtime_nsec: self.mtime_nsec,
+            flags: self.flags,
+            content_dir: self.content_dir,
+        }
+    }
+}
+
+impl std::fmt::Debug for FileEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileEntry")
+            .field("name", &self.name)
+            .field("dirname", &self.dirname)
+            .field("link_target", &self.link_target)
+            .field("user_name", &self.user_name)
+            .field("group_name", &self.group_name)
+            .field("size", &self.size)
+            .field("mtime", &self.mtime)
+            .field("atime", &self.atime)
+            .field("crtime", &self.crtime)
+            .field("uid", &self.uid)
+            .field("gid", &self.gid)
+            .field("rdev_major", &self.rdev_major)
+            .field("rdev_minor", &self.rdev_minor)
+            .field("hardlink_idx", &self.hardlink_idx)
+            .field("hardlink_dev", &self.hardlink_dev)
+            .field("hardlink_ino", &self.hardlink_ino)
+            .field("checksum", &self.checksum)
+            .field("acl_ndx", &self.acl_ndx)
+            .field("xattr_ndx", &self.xattr_ndx)
+            .field("mode", &self.mode)
+            .field("mtime_nsec", &self.mtime_nsec)
+            .field("flags", &self.flags)
+            .field("content_dir", &self.content_dir)
+            .finish()
+    }
+}
+
+/// `dirname` is derived from `name`, so equality ignores it.
+impl PartialEq for FileEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.link_target == other.link_target
+            && self.user_name == other.user_name
+            && self.group_name == other.group_name
+            && self.size == other.size
+            && self.mtime == other.mtime
+            && self.atime == other.atime
+            && self.crtime == other.crtime
+            && self.uid == other.uid
+            && self.gid == other.gid
+            && self.rdev_major == other.rdev_major
+            && self.rdev_minor == other.rdev_minor
+            && self.hardlink_idx == other.hardlink_idx
+            && self.hardlink_dev == other.hardlink_dev
+            && self.hardlink_ino == other.hardlink_ino
+            && self.checksum == other.checksum
+            && self.acl_ndx == other.acl_ndx
+            && self.xattr_ndx == other.xattr_ndx
+            && self.mode == other.mode
+            && self.mtime_nsec == other.mtime_nsec
+            && self.flags == other.flags
+            && self.content_dir == other.content_dir
+    }
+}
+
+impl Eq for FileEntry {}
+
 impl FileEntry {
     /// Core constructor with all parameters - Template Method pattern.
     ///
     /// All public constructors delegate to this method to ensure consistent
-    /// initialization and reduce code duplication.
+    /// initialization and reduce code duplication. The dirname is extracted
+    /// from the path automatically.
     #[inline]
     fn new_with_type(
         name: PathBuf,
@@ -162,8 +288,10 @@ impl FileEntry {
         permissions: u32,
         link_target: Option<PathBuf>,
     ) -> Self {
+        let dirname = extract_dirname(&name);
         Self {
             name,
+            dirname,
             link_target,
             user_name: None,
             group_name: None,
@@ -240,7 +368,7 @@ impl FileEntry {
     /// `from_raw_bytes` which avoids UTF-8 validation overhead.
     #[cfg(test)]
     #[must_use]
-    pub(crate) const fn from_raw(
+    pub(crate) fn from_raw(
         name: PathBuf,
         size: u64,
         mode: u32,
@@ -248,8 +376,10 @@ impl FileEntry {
         mtime_nsec: u32,
         flags: super::flags::FileFlags,
     ) -> Self {
+        let dirname = extract_dirname(&name);
         Self {
             name,
+            dirname,
             link_target: None,
             user_name: None,
             group_name: None,
@@ -270,7 +400,7 @@ impl FileEntry {
             mode,
             mtime_nsec,
             flags,
-            content_dir: true, // Default to having content
+            content_dir: true,
         }
     }
 
@@ -279,6 +409,10 @@ impl FileEntry {
     /// This avoids UTF-8 validation overhead during protocol decoding
     /// by converting bytes directly to PathBuf on Unix (zero-copy).
     /// UTF-8 validation is deferred until display via `name()`.
+    ///
+    /// The dirname is extracted from the path automatically. For interned
+    /// dirname sharing, use [`Self::set_dirname`] after construction with a
+    /// value from [`super::intern::PathInterner`].
     ///
     /// This is the preferred constructor for wire protocol decoding.
     #[must_use]
@@ -303,8 +437,10 @@ impl FileEntry {
             PathBuf::from(String::from_utf8_lossy(&name).into_owned())
         };
 
+        let dirname = extract_dirname(&path);
         Self {
             name: path,
+            dirname,
             link_target: None,
             user_name: None,
             group_name: None,
@@ -339,6 +475,30 @@ impl FileEntry {
     #[must_use]
     pub const fn path(&self) -> &PathBuf {
         &self.name
+    }
+
+    /// Returns the interned parent directory path.
+    ///
+    /// When the entry was built through [`super::read::FileListReader`] with
+    /// interning enabled, this `Arc<Path>` is shared with other entries in the
+    /// same directory, avoiding redundant heap allocations.
+    ///
+    /// For root-level entries (no directory separator in the name), returns
+    /// an `Arc` pointing to the empty path `""`.
+    #[inline]
+    #[must_use]
+    pub fn dirname(&self) -> &Arc<Path> {
+        &self.dirname
+    }
+
+    /// Replaces the dirname with an interned `Arc<Path>`.
+    ///
+    /// Called by [`super::read::FileListReader`] after constructing the entry
+    /// to replace the per-entry dirname allocation with a shared reference
+    /// from [`super::intern::PathInterner`].
+    #[inline]
+    pub fn set_dirname(&mut self, dirname: Arc<Path>) {
+        self.dirname = dirname;
     }
 
     /// Returns the path as raw bytes without UTF-8 validation.
@@ -907,5 +1067,46 @@ mod tests {
     fn file_entry_flags_accessor() {
         let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
         let _flags = entry.flags(); // Just ensure the accessor works
+    }
+
+    #[test]
+    fn dirname_root_level_entry() {
+        let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        assert_eq!(&**entry.dirname(), Path::new(""));
+    }
+
+    #[test]
+    fn dirname_nested_entry() {
+        let entry = FileEntry::new_file("src/lib/foo.rs".into(), 100, 0o644);
+        assert_eq!(&**entry.dirname(), Path::new("src/lib"));
+    }
+
+    #[test]
+    fn dirname_single_level() {
+        let entry = FileEntry::new_file("dir/file.txt".into(), 100, 0o644);
+        assert_eq!(&**entry.dirname(), Path::new("dir"));
+    }
+
+    #[test]
+    fn set_dirname_replaces_existing() {
+        let mut entry = FileEntry::new_file("dir/file.txt".into(), 100, 0o644);
+        let shared = Arc::from(Path::new("other_dir"));
+        entry.set_dirname(Arc::clone(&shared));
+        assert!(Arc::ptr_eq(entry.dirname(), &shared));
+    }
+
+    #[test]
+    fn dirname_shared_across_entries() {
+        use crate::flist::intern::PathInterner;
+
+        let mut interner = PathInterner::new();
+        let mut entry1 = FileEntry::new_file("dir/a.txt".into(), 100, 0o644);
+        let mut entry2 = FileEntry::new_file("dir/b.txt".into(), 200, 0o644);
+
+        let dir = interner.intern(Path::new("dir"));
+        entry1.set_dirname(Arc::clone(&dir));
+        entry2.set_dirname(Arc::clone(&dir));
+
+        assert!(Arc::ptr_eq(entry1.dirname(), entry2.dirname()));
     }
 }
