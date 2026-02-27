@@ -1168,6 +1168,506 @@ pub fn write_file<P: AsRef<Path>>(path: P, data: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Socket I/O via io_uring (IORING_OP_RECV / IORING_OP_SEND)
+// ─────────────────────────────────────────────────────────────────────────────
+
+use std::os::unix::io::RawFd;
+
+/// Submits a batch of send SQEs from contiguous `data` and collects completions.
+///
+/// Analogous to [`submit_write_batch`] but uses `opcode::Send` instead of
+/// `opcode::Write` and omits file offsets (stream sockets have no position).
+fn submit_send_batch(
+    ring: &mut RawIoUring,
+    fd: types::Fd,
+    data: &[u8],
+    chunk_size: usize,
+    max_sqes: usize,
+    fixed_fd_slot: i32,
+) -> io::Result<usize> {
+    if data.is_empty() {
+        return Ok(0);
+    }
+
+    let total = data.len();
+    let mut global_done = 0usize;
+
+    while global_done < total {
+        let remaining = total - global_done;
+        let n_chunks = remaining.div_ceil(chunk_size).min(max_sqes);
+        let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(n_chunks);
+        for i in 0..n_chunks {
+            let start = global_done + i * chunk_size;
+            let len = chunk_size.min(total - start);
+            slots.push((start, len, 0));
+        }
+
+        let mut batch_complete = false;
+        while !batch_complete {
+            let mut submitted = 0u32;
+            for (idx, &(start, len, done)) in slots.iter().enumerate() {
+                let want = len - done;
+                if want == 0 {
+                    continue;
+                }
+                let entry = opcode::Send::new(
+                    sqe_fd(fd.0, fixed_fd_slot),
+                    data[start + done..].as_ptr(),
+                    want as u32,
+                )
+                .build()
+                .user_data(idx as u64);
+                let entry = maybe_fixed_file(entry, fixed_fd_slot);
+
+                unsafe {
+                    ring.submission()
+                        .push(&entry)
+                        .map_err(|_| io::Error::other("submission queue full"))?;
+                }
+                submitted += 1;
+            }
+
+            if submitted == 0 {
+                break;
+            }
+
+            ring.submit_and_wait(submitted as usize)?;
+
+            let mut completed = 0u32;
+            while completed < submitted {
+                let cqe = ring
+                    .completion()
+                    .next()
+                    .ok_or_else(|| io::Error::other("missing CQE"))?;
+
+                let idx = cqe.user_data() as usize;
+                let result = cqe.result();
+
+                if result < 0 {
+                    return Err(io::Error::from_raw_os_error(-result));
+                }
+                if result == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "send returned 0 bytes",
+                    ));
+                }
+
+                slots[idx].2 += result as usize;
+                completed += 1;
+            }
+
+            batch_complete = slots.iter().all(|&(_, len, done)| done >= len);
+        }
+
+        let batch_sent: usize = slots.iter().map(|&(_, _, done)| done).sum();
+        global_done += batch_sent;
+    }
+
+    Ok(global_done)
+}
+
+/// io_uring-based socket reader using `IORING_OP_RECV`.
+///
+/// Replaces `BufReader<TcpStream>` on Linux 5.6+ by submitting recv
+/// operations through the io_uring ring instead of blocking `read()` syscalls.
+/// Maintains an internal buffer identical in purpose to `BufReader`.
+pub struct IoUringSocketReader {
+    ring: RawIoUring,
+    fd: RawFd,
+    fixed_fd_slot: i32,
+    buffer: Vec<u8>,
+    pos: usize,
+    len: usize,
+    buffer_size: usize,
+}
+
+impl IoUringSocketReader {
+    /// Creates a socket reader from a raw file descriptor.
+    ///
+    /// The caller must ensure `fd` remains valid for the lifetime of this reader.
+    /// The reader does NOT take ownership of the fd — it will not close it on drop.
+    pub fn from_raw_fd(fd: RawFd, config: &IoUringConfig) -> io::Result<Self> {
+        let ring = config.build_ring()?;
+        let fixed_fd_slot = try_register_fd(&ring, fd, config.register_files);
+
+        Ok(Self {
+            ring,
+            fd,
+            fixed_fd_slot,
+            buffer: vec![0u8; config.buffer_size],
+            pos: 0,
+            len: 0,
+            buffer_size: config.buffer_size,
+        })
+    }
+
+    /// Fills the internal buffer by submitting a single `IORING_OP_RECV` SQE.
+    fn fill_buffer(&mut self) -> io::Result<usize> {
+        let fd = sqe_fd(self.fd, self.fixed_fd_slot);
+        let entry = opcode::Recv::new(fd, self.buffer.as_mut_ptr(), self.buffer_size as u32)
+            .build()
+            .user_data(0);
+        let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
+
+        unsafe {
+            self.ring
+                .submission()
+                .push(&entry)
+                .map_err(|_| io::Error::other("submission queue full"))?;
+        }
+
+        self.ring.submit_and_wait(1)?;
+
+        let cqe = self
+            .ring
+            .completion()
+            .next()
+            .ok_or_else(|| io::Error::other("missing CQE"))?;
+
+        let result = cqe.result();
+        if result < 0 {
+            return Err(io::Error::from_raw_os_error(-result));
+        }
+
+        let n = result as usize;
+        self.pos = 0;
+        self.len = n;
+        Ok(n)
+    }
+}
+
+impl Read for IoUringSocketReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.pos >= self.len {
+            if buf.len() >= self.buffer_size {
+                // Large read: bypass internal buffer, recv directly into caller's buffer.
+                let fd = sqe_fd(self.fd, self.fixed_fd_slot);
+                let entry = opcode::Recv::new(fd, buf.as_mut_ptr(), buf.len() as u32)
+                    .build()
+                    .user_data(0);
+                let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
+
+                unsafe {
+                    self.ring
+                        .submission()
+                        .push(&entry)
+                        .map_err(|_| io::Error::other("submission queue full"))?;
+                }
+                self.ring.submit_and_wait(1)?;
+
+                let cqe = self
+                    .ring
+                    .completion()
+                    .next()
+                    .ok_or_else(|| io::Error::other("missing CQE"))?;
+
+                let result = cqe.result();
+                if result < 0 {
+                    return Err(io::Error::from_raw_os_error(-result));
+                }
+                return Ok(result as usize);
+            }
+
+            let n = self.fill_buffer()?;
+            if n == 0 {
+                return Ok(0);
+            }
+        }
+
+        let available = self.len - self.pos;
+        let to_copy = available.min(buf.len());
+        buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
+        self.pos += to_copy;
+        Ok(to_copy)
+    }
+}
+
+/// io_uring-based socket writer using `IORING_OP_SEND`.
+///
+/// Replaces direct `write()` calls on `TcpStream` by batching sends through
+/// the io_uring ring. Maintains an internal write buffer, flushing via
+/// batched send SQEs.
+pub struct IoUringSocketWriter {
+    ring: RawIoUring,
+    fd: RawFd,
+    fixed_fd_slot: i32,
+    buffer: Vec<u8>,
+    buffer_pos: usize,
+    buffer_size: usize,
+    sq_entries: u32,
+}
+
+impl IoUringSocketWriter {
+    /// Creates a socket writer from a raw file descriptor.
+    ///
+    /// The caller must ensure `fd` remains valid for the lifetime of this writer.
+    /// The writer does NOT take ownership of the fd — it will not close it on drop.
+    pub fn from_raw_fd(fd: RawFd, config: &IoUringConfig) -> io::Result<Self> {
+        let ring = config.build_ring()?;
+        let fixed_fd_slot = try_register_fd(&ring, fd, config.register_files);
+
+        Ok(Self {
+            ring,
+            fd,
+            fixed_fd_slot,
+            buffer: vec![0u8; config.buffer_size],
+            buffer_pos: 0,
+            buffer_size: config.buffer_size,
+            sq_entries: config.sq_entries,
+        })
+    }
+
+    /// Flushes the internal buffer via batched `IORING_OP_SEND` submissions.
+    fn flush_buffer(&mut self) -> io::Result<()> {
+        if self.buffer_pos == 0 {
+            return Ok(());
+        }
+
+        let fd = sqe_fd(self.fd, self.fixed_fd_slot);
+        let len = self.buffer_pos;
+
+        let sent = submit_send_batch(
+            &mut self.ring,
+            fd,
+            &self.buffer[..len],
+            self.buffer_size,
+            self.sq_entries as usize,
+            self.fixed_fd_slot,
+        )?;
+
+        if sent != len {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "batched send incomplete",
+            ));
+        }
+
+        self.buffer_pos = 0;
+        Ok(())
+    }
+}
+
+impl Write for IoUringSocketWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        if self.buffer_pos + buf.len() <= self.buffer_size {
+            self.buffer[self.buffer_pos..self.buffer_pos + buf.len()].copy_from_slice(buf);
+            self.buffer_pos += buf.len();
+            return Ok(buf.len());
+        }
+
+        self.flush_buffer()?;
+
+        if buf.len() >= self.buffer_size {
+            let fd = sqe_fd(self.fd, self.fixed_fd_slot);
+            let sent = submit_send_batch(
+                &mut self.ring,
+                fd,
+                buf,
+                self.buffer_size,
+                self.sq_entries as usize,
+                self.fixed_fd_slot,
+            )?;
+            return Ok(sent);
+        }
+
+        self.buffer[..buf.len()].copy_from_slice(buf);
+        self.buffer_pos = buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_buffer()
+    }
+}
+
+impl Drop for IoUringSocketWriter {
+    fn drop(&mut self) {
+        let _ = self.flush_buffer();
+    }
+}
+
+/// Socket reader that uses io_uring when available, falling back to `BufReader`.
+#[allow(clippy::large_enum_variant)]
+pub enum IoUringOrStdSocketReader {
+    /// io_uring-based socket reader.
+    IoUring(IoUringSocketReader),
+    /// Standard buffered reader (fallback).
+    Std(io::BufReader<Box<dyn Read + Send>>),
+}
+
+impl Read for IoUringOrStdSocketReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::IoUring(r) => r.read(buf),
+            Self::Std(r) => r.read(buf),
+        }
+    }
+}
+
+/// Socket writer that uses io_uring when available, falling back to standard `Write`.
+#[allow(clippy::large_enum_variant)]
+pub enum IoUringOrStdSocketWriter {
+    /// io_uring-based socket writer.
+    IoUring(IoUringSocketWriter),
+    /// Standard writer (fallback).
+    Std(Box<dyn Write + Send>),
+}
+
+impl Write for IoUringOrStdSocketWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::IoUring(w) => w.write(buf),
+            Self::Std(w) => w.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::IoUring(w) => w.flush(),
+            Self::Std(w) => w.flush(),
+        }
+    }
+}
+
+/// Creates a socket reader backed by io_uring `RECV` when available.
+///
+/// On Linux 5.6+ with `io_uring` feature enabled and `policy` permitting,
+/// returns an `IoUring` variant that reads via `IORING_OP_RECV`. Otherwise
+/// falls back to `BufReader` wrapping a standard `Read`.
+///
+/// The `fd` must be a valid socket file descriptor. The caller retains
+/// ownership — this function does not close the fd.
+pub fn socket_reader_from_fd(
+    fd: RawFd,
+    buffer_capacity: usize,
+    policy: crate::IoUringPolicy,
+) -> io::Result<IoUringOrStdSocketReader> {
+    let mut config = IoUringConfig::default();
+    config.buffer_size = buffer_capacity;
+
+    match policy {
+        crate::IoUringPolicy::Auto => {
+            if is_io_uring_available() {
+                if let Ok(reader) = IoUringSocketReader::from_raw_fd(fd, &config) {
+                    return Ok(IoUringOrStdSocketReader::IoUring(reader));
+                }
+            }
+            let reader = FdReader(fd);
+            Ok(IoUringOrStdSocketReader::Std(io::BufReader::with_capacity(
+                buffer_capacity,
+                Box::new(reader),
+            )))
+        }
+        crate::IoUringPolicy::Enabled => {
+            if !is_io_uring_available() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "io_uring requested but not available",
+                ));
+            }
+            let reader = IoUringSocketReader::from_raw_fd(fd, &config)?;
+            Ok(IoUringOrStdSocketReader::IoUring(reader))
+        }
+        crate::IoUringPolicy::Disabled => {
+            let reader = FdReader(fd);
+            Ok(IoUringOrStdSocketReader::Std(io::BufReader::with_capacity(
+                buffer_capacity,
+                Box::new(reader),
+            )))
+        }
+    }
+}
+
+/// Creates a socket writer backed by io_uring `SEND` when available.
+///
+/// On Linux 5.6+ with `io_uring` feature enabled and `policy` permitting,
+/// returns an `IoUring` variant that writes via `IORING_OP_SEND`. Otherwise
+/// falls back to a standard `Write` wrapper.
+///
+/// The `fd` must be a valid socket file descriptor. The caller retains
+/// ownership — this function does not close the fd.
+pub fn socket_writer_from_fd(
+    fd: RawFd,
+    buffer_capacity: usize,
+    policy: crate::IoUringPolicy,
+) -> io::Result<IoUringOrStdSocketWriter> {
+    let mut config = IoUringConfig::default();
+    config.buffer_size = buffer_capacity;
+
+    match policy {
+        crate::IoUringPolicy::Auto => {
+            if is_io_uring_available() {
+                if let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config) {
+                    return Ok(IoUringOrStdSocketWriter::IoUring(writer));
+                }
+            }
+            let writer = FdWriter(fd);
+            Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
+        }
+        crate::IoUringPolicy::Enabled => {
+            if !is_io_uring_available() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "io_uring requested but not available",
+                ));
+            }
+            let writer = IoUringSocketWriter::from_raw_fd(fd, &config)?;
+            Ok(IoUringOrStdSocketWriter::IoUring(writer))
+        }
+        crate::IoUringPolicy::Disabled => {
+            let writer = FdWriter(fd);
+            Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
+        }
+    }
+}
+
+/// Thin Read adapter over a raw fd that does NOT take ownership.
+///
+/// Used as the fallback reader when io_uring is unavailable. The caller must
+/// ensure the fd remains valid for the lifetime of this struct.
+struct FdReader(RawFd);
+
+impl Read for FdReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let ret = unsafe { libc::read(self.0, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len()) };
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(ret as usize)
+        }
+    }
+}
+
+// SAFETY: The fd is just an integer; the caller guarantees validity.
+unsafe impl Send for FdReader {}
+
+/// Thin Write adapter over a raw fd that does NOT take ownership.
+struct FdWriter(RawFd);
+
+impl Write for FdWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let ret = unsafe { libc::write(self.0, buf.as_ptr().cast::<libc::c_void>(), buf.len()) };
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(ret as usize)
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+// SAFETY: The fd is just an integer; the caller guarantees validity.
+unsafe impl Send for FdWriter {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1991,5 +2491,120 @@ mod tests {
 
         let written = std::fs::read(&path).unwrap();
         assert_eq!(written, b"data to flush on drop");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Socket I/O tests (exercises io_uring path on Linux, fallback elsewhere)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Creates a Unix socket pair suitable for testing socket read/write.
+    fn make_socket_pair() -> (RawFd, RawFd) {
+        let mut fds = [0i32; 2];
+        let ret =
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+        assert_eq!(ret, 0, "socketpair failed");
+        (fds[0], fds[1])
+    }
+
+    /// Closes a raw file descriptor.
+    fn close_fd(fd: RawFd) {
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
+    #[test]
+    fn test_socket_reader_writer_roundtrip() {
+        let (fd_a, fd_b) = make_socket_pair();
+        let policy = crate::IoUringPolicy::Auto;
+
+        let mut writer = socket_writer_from_fd(fd_a, 64 * 1024, policy).unwrap();
+        let mut reader = socket_reader_from_fd(fd_b, 64 * 1024, policy).unwrap();
+
+        let payload = b"hello from io_uring socket writer";
+        writer.write_all(payload).unwrap();
+        writer.flush().unwrap();
+
+        let mut buf = vec![0u8; payload.len()];
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, payload);
+
+        drop(writer);
+        close_fd(fd_a);
+        close_fd(fd_b);
+    }
+
+    #[test]
+    fn test_socket_large_payload_roundtrip() {
+        let (fd_a, fd_b) = make_socket_pair();
+        let policy = crate::IoUringPolicy::Auto;
+
+        let mut writer = socket_writer_from_fd(fd_a, 8 * 1024, policy).unwrap();
+        let mut reader = socket_reader_from_fd(fd_b, 8 * 1024, policy).unwrap();
+
+        // 128KB payload — larger than internal buffer, forces multiple batches.
+        let payload: Vec<u8> = (0..128 * 1024).map(|i| (i % 251) as u8).collect();
+
+        // Write in a separate thread to avoid deadlock on blocking socket pair.
+        let payload_clone = payload.clone();
+        let write_thread = std::thread::spawn(move || {
+            writer.write_all(&payload_clone).unwrap();
+            writer.flush().unwrap();
+            drop(writer);
+            close_fd(fd_a);
+        });
+
+        let mut received = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => received.extend_from_slice(&buf[..n]),
+                Err(e) => panic!("read error: {e}"),
+            }
+        }
+        close_fd(fd_b);
+
+        write_thread.join().unwrap();
+        assert_eq!(received.len(), payload.len());
+        assert_eq!(received, payload);
+    }
+
+    #[test]
+    fn test_socket_reader_disabled_policy() {
+        let (fd_a, fd_b) = make_socket_pair();
+        let reader =
+            socket_reader_from_fd(fd_b, 64 * 1024, crate::IoUringPolicy::Disabled).unwrap();
+        assert!(matches!(reader, IoUringOrStdSocketReader::Std(_)));
+        close_fd(fd_a);
+        close_fd(fd_b);
+    }
+
+    #[test]
+    fn test_socket_writer_disabled_policy() {
+        let (fd_a, fd_b) = make_socket_pair();
+        let writer =
+            socket_writer_from_fd(fd_a, 64 * 1024, crate::IoUringPolicy::Disabled).unwrap();
+        assert!(matches!(writer, IoUringOrStdSocketWriter::Std(_)));
+        close_fd(fd_a);
+        close_fd(fd_b);
+    }
+
+    #[test]
+    fn test_fd_reader_writer_basic() {
+        let (fd_a, fd_b) = make_socket_pair();
+
+        let mut writer = FdWriter(fd_a);
+        let mut reader = FdReader(fd_b);
+
+        writer.write_all(b"fd adapter test").unwrap();
+        writer.flush().unwrap();
+
+        let mut buf = vec![0u8; 15];
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, b"fd adapter test");
+
+        close_fd(fd_a);
+        close_fd(fd_b);
     }
 }

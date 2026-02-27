@@ -65,6 +65,12 @@ pub use io_uring::{
     IoUringWriter, IoUringWriterFactory, is_io_uring_available, writer_from_file,
 };
 
+#[cfg(unix)]
+pub use io_uring::{
+    IoUringOrStdSocketReader, IoUringOrStdSocketWriter, IoUringSocketReader, IoUringSocketWriter,
+    socket_reader_from_fd, socket_writer_from_fd,
+};
+
 /// Policy controlling io_uring usage for file I/O.
 ///
 /// This enum allows callers to explicitly enable, disable, or auto-detect
