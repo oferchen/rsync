@@ -207,6 +207,7 @@ pub struct ModuleConfig {
     include: Vec<String>,
     filter: Vec<String>,
     timeout: Option<u32>,
+    max_verbosity: i32,
     use_chroot: bool,
     numeric_ids: bool,
     fake_super: bool,
@@ -307,6 +308,14 @@ impl ModuleConfig {
     /// Returns the I/O timeout in seconds, if specified.
     pub fn timeout(&self) -> Option<u32> {
         self.timeout
+    }
+
+    /// Returns the maximum verbosity level a client can request (default: 1).
+    ///
+    /// Caps the client's requested `-v` count to prevent excessive server-side
+    /// output. Upstream: `loadparm.c` — `max verbosity` parameter.
+    pub fn max_verbosity(&self) -> i32 {
+        self.max_verbosity
     }
 
     /// Returns whether to use chroot (default: true).
@@ -636,6 +645,15 @@ impl<'a> Parser<'a> {
                     ConfigError::parse_error(self.path, self.line_number, "invalid timeout value")
                 })?);
             }
+            "max verbosity" => {
+                builder.max_verbosity = Some(value.parse().map_err(|_| {
+                    ConfigError::parse_error(
+                        self.path,
+                        self.line_number,
+                        "invalid max verbosity value",
+                    )
+                })?);
+            }
             "use chroot" => {
                 builder.use_chroot = Some(self.parse_bool(value)?);
             }
@@ -718,6 +736,7 @@ struct ModuleBuilder {
     include: Vec<String>,
     filter: Vec<String>,
     timeout: Option<u32>,
+    max_verbosity: Option<i32>,
     use_chroot: Option<bool>,
     numeric_ids: Option<bool>,
     fake_super: Option<bool>,
@@ -769,6 +788,7 @@ impl ModuleBuilder {
             include: self.include,
             filter: self.filter,
             timeout: self.timeout,
+            max_verbosity: self.max_verbosity.unwrap_or(1),
             use_chroot: self.use_chroot.unwrap_or(true),
             numeric_ids: self.numeric_ids.unwrap_or(false),
             fake_super: self.fake_super.unwrap_or(false),

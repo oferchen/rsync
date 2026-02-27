@@ -608,6 +608,33 @@ fn determine_server_role(client_args: &[String]) -> ServerRole {
     }
 }
 
+/// Clamps `v` (verbose) characters in a compact flag string to respect `max_verbosity`.
+///
+/// When `max_verbosity` is 0 or negative, all `v` characters are removed.
+/// When positive, at most `max_verbosity` occurrences of `v` are retained.
+///
+/// upstream: clientserver.c — the daemon clamps `verbose` to `lp_max_verbosity(i)`
+/// after parsing client args.
+fn clamp_verbose_flags(flag_string: &str, max_verbosity: i32) -> String {
+    if max_verbosity < 0 {
+        return flag_string.replace('v', "");
+    }
+
+    let max = max_verbosity as usize;
+    let mut count = 0usize;
+    flag_string
+        .chars()
+        .filter(|&ch| {
+            if ch == 'v' {
+                count += 1;
+                count <= max
+            } else {
+                true
+            }
+        })
+        .collect()
+}
+
 /// Builds the server configuration from client arguments.
 ///
 /// Returns the configuration on success, or sends an error and returns `None`.
@@ -623,6 +650,9 @@ fn build_server_config(
         .find(|arg| arg.starts_with('-') && !arg.starts_with("--"))
         .cloned()
         .unwrap_or_default();
+
+    // upstream: clientserver.c — clamp verbose to lp_max_verbosity(i)
+    let flag_string = clamp_verbose_flags(&flag_string, module.max_verbosity);
 
     match ServerConfig::from_flag_string_and_args(
         role,
