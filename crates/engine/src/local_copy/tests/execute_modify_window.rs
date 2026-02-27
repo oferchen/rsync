@@ -398,22 +398,19 @@ fn modify_window_with_update_skips_when_dest_newer_outside_window() {
     );
 }
 
-/// When --update and --modify-window are combined, timestamps within the
-/// window are treated as equal. This means --update does NOT consider the
-/// destination as newer, so the normal quick-check proceeds.
-///
-/// Variant A: same size, timestamps within window -> skip (quick-check passes)
+/// When --update and --modify-window are combined, dest is 0.5s newer
+/// than source. Upstream `generator.c:2502` skips because
+/// `source_mtime - dest_mtime < 0 < modify_window`.
 #[test]
-fn modify_window_with_update_treats_within_window_as_equal() {
+fn modify_window_with_update_skips_when_dest_slightly_newer() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Same content and size so the quick-check will pass
     fs::write(&source, b"content").expect("write source");
     fs::write(&destination, b"content").expect("write dest");
 
-    // Dest is 0.5 seconds newer (within 1-second window, so considered "equal")
+    // Dest is 0.5 seconds newer (within 1-second window)
     let base_time = FileTime::from_unix_time(1_700_000_000, 0);
     let slightly_newer = FileTime::from_unix_time(1_700_000_000, 500_000_000);
     set_file_times(&source, base_time, base_time).expect("set source times");
@@ -425,10 +422,7 @@ fn modify_window_with_update_treats_within_window_as_equal() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // With --update and modify-window=1, timestamps within the window are
-    // considered equal so --update does NOT skip (dest is not strictly newer).
-    // Then the normal quick-check runs: size matches and mtime is within
-    // window, so the file is skipped.
+    // upstream: source - dest < 0 < modify_window -> skip (dest is newer)
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
@@ -442,16 +436,16 @@ fn modify_window_with_update_treats_within_window_as_equal() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"content");
 }
 
-/// Variant B: different sizes, timestamps within window -> copy proceeds
-/// because --update sees equal timestamps and the quick-check detects
-/// the size mismatch.
+/// Variant B: different sizes but dest is newer (within window).
+/// Upstream `generator.c:2502` skips unconditionally when
+/// `source_mtime - dest_mtime < modify_window`, regardless of size.
 #[test]
-fn modify_window_with_update_copies_when_sizes_differ_within_window() {
+fn modify_window_with_update_skips_when_dest_newer_within_window_despite_size_diff() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Different sizes so the quick-check will fail
+    // Different sizes — but --update should still skip because dest is newer
     fs::write(&source, b"source data").expect("write source");
     fs::write(&destination, b"dest").expect("write dest");
 
@@ -467,8 +461,7 @@ fn modify_window_with_update_copies_when_sizes_differ_within_window() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // --update does not skip because timestamps are within the window (equal).
-    // The quick-check detects size mismatch, so the file is copied.
+    // upstream: source - dest < 0 < modify_window -> skip (dest is newer)
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
@@ -478,10 +471,11 @@ fn modify_window_with_update_copies_when_sizes_differ_within_window() {
         )
         .expect("copy succeeds");
 
-    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_skipped_newer(), 1);
     assert_eq!(
         fs::read(&destination).expect("read dest"),
-        b"source data"
+        b"dest"
     );
 }
 
@@ -522,6 +516,90 @@ fn modify_window_with_update_copies_when_source_definitively_newer() {
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         b"updated source"
+    );
+}
+
+/// Upstream two-sided clamp: when source is slightly newer than dest but
+/// within the modify window, `--update` still skips (treats as equal).
+/// upstream `generator.c:2502`: `source - dest = 1 < 2 = window` -> skip
+#[test]
+fn modify_window_with_update_skips_when_source_slightly_newer_within_window() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"newer source data").expect("write source");
+    fs::write(&destination, b"old dest").expect("write dest");
+
+    // Source is 1 second newer than dest, window is 2 seconds
+    let older_time = FileTime::from_unix_time(1_700_000_000, 0);
+    let slightly_newer = FileTime::from_unix_time(1_700_000_001, 0);
+    set_file_times(&source, slightly_newer, slightly_newer).expect("set source times");
+    set_file_times(&destination, older_time, older_time).expect("set dest times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // upstream: source - dest = 1 < 2 = modify_window -> skip
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .update(true)
+                .with_modify_window(Duration::from_secs(2)),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_skipped_newer(), 1);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"old dest"
+    );
+}
+
+/// When source is newer than dest by exactly the window, `--update` does
+/// NOT skip — the source is definitively newer.
+/// upstream: `source - dest = 2`, NOT `< 2` -> proceed with copy
+#[test]
+fn modify_window_with_update_copies_when_source_at_exact_window_boundary() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"newer source data").expect("write source");
+    fs::write(&destination, b"old dest").expect("write dest");
+
+    // Source is exactly 2 seconds newer, window is 2 seconds
+    let older_time = FileTime::from_unix_time(1_700_000_000, 0);
+    let at_boundary = FileTime::from_unix_time(1_700_000_002, 0);
+    set_file_times(&source, at_boundary, at_boundary).expect("set source times");
+    set_file_times(&destination, older_time, older_time).expect("set dest times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // upstream: source - dest = 2, NOT < 2 -> don't skip -> copy
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .update(true)
+                .with_modify_window(Duration::from_secs(2)),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.regular_files_skipped_newer(), 0);
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        b"newer source data"
     );
 }
 
