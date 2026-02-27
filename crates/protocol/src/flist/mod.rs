@@ -34,6 +34,7 @@ mod entry;
 mod flags;
 mod hardlink;
 mod incremental;
+mod intern;
 mod macros;
 mod read;
 mod sort;
@@ -51,6 +52,7 @@ pub use incremental::{
     IncrementalFileListIter, OrphanEntry, ReadyEntryAction, StreamingFileList,
     process_ready_entries, process_ready_entry,
 };
+pub use intern::PathInterner;
 pub use read::{FileListReader, read_file_entry};
 pub use sort::{
     CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
