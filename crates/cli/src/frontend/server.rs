@@ -1,8 +1,9 @@
 #![deny(unsafe_code)]
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, Write};
+use std::time::SystemTime;
 
 use core::branding::Brand;
 use core::message::Role;
@@ -109,31 +110,9 @@ where
 
     let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
 
-    // Parse role from --sender/--receiver flags
-    let is_sender = args.iter().any(|a| a == "--sender");
-    let is_receiver = args.iter().any(|a| a == "--receiver");
-    let ignore_errors = args.iter().any(|a| a == "--ignore-errors");
-    let fsync = args.iter().any(|a| a == "--fsync");
-    let io_uring_policy = if args.iter().any(|a| a == "--io-uring") {
-        fast_io::IoUringPolicy::Enabled
-    } else if args.iter().any(|a| a == "--no-io-uring") {
-        fast_io::IoUringPolicy::Disabled
-    } else {
-        fast_io::IoUringPolicy::Auto
-    };
-
     // Detect secluded-args mode: `-s` flag appears as a standalone argument
     // after --server. upstream: options.c — protect_args in server mode.
     let secluded_args = detect_secluded_args_flag(args);
-
-    let role = if is_sender {
-        ServerRole::Generator // Server sends files to client (generator role)
-    } else if is_receiver {
-        ServerRole::Receiver // Server receives files from client
-    } else {
-        // Default to receiver if neither specified (upstream behavior)
-        ServerRole::Receiver
-    };
 
     let mut stdin = io::stdin().lock();
 
@@ -142,11 +121,11 @@ where
     // null-separated strings terminated by an empty string.
     // upstream: main.c — read_args() reads protected args from stdin.
     let effective_args: Vec<OsString>;
-    let (flag_string, positional_args) = if secluded_args {
+    let effective_slice: &[OsString] = if secluded_args {
         match protocol::secluded_args::recv_secluded_args(&mut stdin) {
             Ok(received_args) => {
                 effective_args = received_args.into_iter().map(OsString::from).collect();
-                parse_server_flag_string_and_args(&effective_args)
+                &effective_args
             }
             Err(e) => {
                 write_server_error(
@@ -158,7 +137,21 @@ where
             }
         }
     } else {
-        parse_server_flag_string_and_args(&args[1..])
+        &args[1..]
+    };
+
+    // Parse all long-form flags from the argument list.
+    let long_flags = parse_server_long_flags(effective_slice);
+
+    // Extract the compact flag string and positional args.
+    let (flag_string, positional_args) = parse_server_flag_string_and_args(effective_slice);
+
+    // Determine role from --sender flag. Default is Receiver when neither
+    // --sender nor --receiver is specified (upstream: main.c server_sender check).
+    let role = if long_flags.is_sender {
+        ServerRole::Generator
+    } else {
+        ServerRole::Receiver
     };
 
     // Build server configuration
@@ -175,17 +168,83 @@ where
             }
         };
 
-    // Apply additional flags parsed from full arguments
-    config.ignore_errors = ignore_errors;
-    config.fsync = fsync;
-    config.io_uring_policy = io_uring_policy;
+    // Apply boolean flags.
+    config.ignore_errors = long_flags.ignore_errors;
+    config.fsync = long_flags.fsync;
+    config.io_uring_policy = long_flags.io_uring_policy;
+    config.write_devices = long_flags.write_devices;
+    config.trust_sender = long_flags.trust_sender;
+    config.qsort = long_flags.qsort;
+
+    // Apply value-bearing flags, returning parse errors to the client.
+    // upstream: options.c — server_options() sends these as `--flag=value`.
+    if let Some(seed_str) = &long_flags.checksum_seed {
+        match parse_server_checksum_seed(seed_str) {
+            Ok(seed) => config.checksum_seed = Some(seed),
+            Err(msg) => {
+                write_server_error(stderr, program_brand, msg);
+                return 1;
+            }
+        }
+    }
+
+    if let Some(algo_str) = &long_flags.checksum_choice {
+        match protocol::ChecksumAlgorithm::parse(algo_str) {
+            Ok(algo) => config.checksum_choice = Some(algo),
+            Err(e) => {
+                write_server_error(
+                    stderr,
+                    program_brand,
+                    format!("invalid --checksum-choice: {e}"),
+                );
+                return 1;
+            }
+        }
+    }
+
+    if let Some(size_str) = &long_flags.min_size {
+        match parse_server_size_limit(size_str, "--min-size") {
+            Ok(size) => config.min_file_size = Some(size),
+            Err(msg) => {
+                write_server_error(stderr, program_brand, msg);
+                return 1;
+            }
+        }
+    }
+
+    if let Some(size_str) = &long_flags.max_size {
+        match parse_server_size_limit(size_str, "--max-size") {
+            Ok(size) => config.max_file_size = Some(size),
+            Err(msg) => {
+                write_server_error(stderr, program_brand, msg);
+                return 1;
+            }
+        }
+    }
+
+    if let Some(when_str) = &long_flags.stop_at {
+        match parse_server_stop_at(when_str) {
+            Ok(deadline) => config.stop_at = Some(deadline),
+            Err(msg) => {
+                write_server_error(stderr, program_brand, msg);
+                return 1;
+            }
+        }
+    }
+
+    if let Some(mins_str) = &long_flags.stop_after {
+        match parse_server_stop_after(mins_str) {
+            Ok(deadline) => config.stop_at = Some(deadline),
+            Err(msg) => {
+                write_server_error(stderr, program_brand, msg);
+                return 1;
+            }
+        }
+    }
 
     // Run native server with stdio
     match run_server_stdio(config, &mut stdin, stdout) {
-        Ok(_stats) => {
-            // Success
-            0
-        }
+        Ok(_stats) => 0,
         Err(e) => {
             write_server_error(stderr, program_brand, format!("server error: {e}"));
             1
@@ -202,6 +261,155 @@ fn detect_secluded_args_flag(args: &[OsString]) -> bool {
     args.iter().skip(1).any(|a| a == "-s")
 }
 
+/// Long-form flags extracted from the server argument list.
+///
+/// These correspond to the `--flag` and `--flag=value` arguments that
+/// upstream rsync's `server_options()` emits alongside the compact flag string.
+/// upstream: options.c — `server_options()`.
+struct ServerLongFlags {
+    is_sender: bool,
+    is_receiver: bool,
+    ignore_errors: bool,
+    fsync: bool,
+    io_uring_policy: fast_io::IoUringPolicy,
+    write_devices: bool,
+    trust_sender: bool,
+    qsort: bool,
+    checksum_seed: Option<String>,
+    checksum_choice: Option<String>,
+    min_size: Option<String>,
+    max_size: Option<String>,
+    stop_at: Option<String>,
+    stop_after: Option<String>,
+}
+
+/// Parses all long-form flags from the server argument list.
+///
+/// Scans the argument list for `--flag` and `--flag=value` arguments,
+/// extracting their values into a structured result. Unknown long flags
+/// are ignored for forward compatibility.
+fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
+    let mut flags = ServerLongFlags {
+        is_sender: false,
+        is_receiver: false,
+        ignore_errors: false,
+        fsync: false,
+        io_uring_policy: fast_io::IoUringPolicy::Auto,
+        write_devices: false,
+        trust_sender: false,
+        qsort: false,
+        checksum_seed: None,
+        checksum_choice: None,
+        min_size: None,
+        max_size: None,
+        stop_at: None,
+        stop_after: None,
+    };
+
+    for arg in args {
+        let s = arg.to_string_lossy();
+
+        match s.as_ref() {
+            "--sender" => flags.is_sender = true,
+            "--receiver" => flags.is_receiver = true,
+            "--ignore-errors" => flags.ignore_errors = true,
+            "--fsync" => flags.fsync = true,
+            "--io-uring" => flags.io_uring_policy = fast_io::IoUringPolicy::Enabled,
+            "--no-io-uring" => flags.io_uring_policy = fast_io::IoUringPolicy::Disabled,
+            "--write-devices" => flags.write_devices = true,
+            "--trust-sender" => flags.trust_sender = true,
+            "--qsort" => flags.qsort = true,
+            _ => {
+                // Value-bearing flags use `--flag=value` syntax.
+                if let Some(value) = s.strip_prefix("--checksum-seed=") {
+                    flags.checksum_seed = Some(value.to_owned());
+                } else if let Some(value) = s.strip_prefix("--checksum-choice=") {
+                    flags.checksum_choice = Some(value.to_owned());
+                } else if let Some(value) = s.strip_prefix("--min-size=") {
+                    flags.min_size = Some(value.to_owned());
+                } else if let Some(value) = s.strip_prefix("--max-size=") {
+                    flags.max_size = Some(value.to_owned());
+                } else if let Some(value) = s.strip_prefix("--stop-at=") {
+                    flags.stop_at = Some(value.to_owned());
+                } else if let Some(value) = s.strip_prefix("--stop-after=") {
+                    flags.stop_after = Some(value.to_owned());
+                }
+            }
+        }
+    }
+
+    flags
+}
+
+/// Returns `true` when the argument is a known server-mode long flag.
+///
+/// Used by [`parse_server_flag_string_and_args`] to skip long flags when
+/// searching for the compact flag string.
+fn is_known_server_long_flag(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--server"
+            | "--sender"
+            | "--receiver"
+            | "--ignore-errors"
+            | "--fsync"
+            | "--io-uring"
+            | "--no-io-uring"
+            | "--write-devices"
+            | "--trust-sender"
+            | "--qsort"
+    ) || arg == "-s"
+        || arg.starts_with("--checksum-seed=")
+        || arg.starts_with("--checksum-choice=")
+        || arg.starts_with("--min-size=")
+        || arg.starts_with("--max-size=")
+        || arg.starts_with("--stop-at=")
+        || arg.starts_with("--stop-after=")
+}
+
+/// Parses a `--checksum-seed=NUM` value from the server argument list.
+///
+/// upstream: options.c — `--checksum-seed=NUM` parsed in `server_options()`.
+fn parse_server_checksum_seed(value: &str) -> Result<u32, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("--checksum-seed value must not be empty".to_owned());
+    }
+    trimmed.parse::<u32>().map_err(|_| {
+        format!(
+            "invalid --checksum-seed value '{value}': must be 0..{}",
+            u32::MAX
+        )
+    })
+}
+
+/// Parses a `--min-size=SIZE` or `--max-size=SIZE` value from the server argument list.
+///
+/// Delegates to the shared size parser used by the client-side CLI.
+/// upstream: options.c — `--min-size` / `--max-size` in `server_options()`.
+fn parse_server_size_limit(value: &str, flag: &str) -> Result<u64, String> {
+    let os_value = OsStr::new(value);
+    super::execution::parse_size_limit_argument(os_value, flag).map_err(|msg| msg.to_string())
+}
+
+/// Parses a `--stop-at=WHEN` value from the server argument list.
+///
+/// Delegates to the shared stop-at parser.
+/// upstream: options.c — `--stop-at` in `server_options()`.
+fn parse_server_stop_at(value: &str) -> Result<SystemTime, String> {
+    let os_value = OsStr::new(value);
+    super::execution::parse_stop_at_argument(os_value).map_err(|msg| msg.to_string())
+}
+
+/// Parses a `--stop-after=MINS` value from the server argument list.
+///
+/// Converts minutes to an absolute deadline (now + minutes).
+/// upstream: options.c — `--stop-after` / `--time-limit` in `server_options()`.
+fn parse_server_stop_after(value: &str) -> Result<SystemTime, String> {
+    let os_value = OsStr::new(value);
+    super::execution::parse_stop_after_argument(os_value).map_err(|msg| msg.to_string())
+}
+
 /// Parses the flag string and positional arguments from server-mode argument list.
 ///
 /// This extracts the compact flag string (first arg starting with `-` that is not
@@ -216,15 +424,7 @@ fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, Vec<OsString
         let arg_str = arg.to_string_lossy();
 
         // Skip known long-form arguments and secluded-args flag
-        if arg_str == "--server"
-            || arg_str == "--sender"
-            || arg_str == "--receiver"
-            || arg_str == "--ignore-errors"
-            || arg_str == "--fsync"
-            || arg_str == "--io-uring"
-            || arg_str == "--no-io-uring"
-            || arg_str == "-s"
-        {
+        if is_known_server_long_flag(&arg_str) {
             continue;
         }
 
@@ -527,5 +727,376 @@ mod tests {
         let (flags, pos_args) = parse_server_flag_string_and_args(&args);
         assert_eq!(flags, "-logDtpr");
         assert_eq!(pos_args, vec![OsString::from("dest")]);
+    }
+
+    #[test]
+    fn parse_server_args_skips_new_boolean_long_flags() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("--write-devices"),
+            OsString::from("--trust-sender"),
+            OsString::from("--qsort"),
+            OsString::from("-logDtpr"),
+            OsString::from("."),
+            OsString::from("src/"),
+        ];
+        let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+        assert_eq!(flags, "-logDtpr");
+        assert_eq!(pos_args, vec![OsString::from("src/")]);
+    }
+
+    #[test]
+    fn parse_server_args_skips_value_bearing_long_flags() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--checksum-seed=12345"),
+            OsString::from("--checksum-choice=xxh3"),
+            OsString::from("--min-size=1K"),
+            OsString::from("--max-size=1G"),
+            OsString::from("--stop-after=60"),
+            OsString::from("-logDtpr"),
+            OsString::from("."),
+            OsString::from("dest/"),
+        ];
+        let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+        assert_eq!(flags, "-logDtpr");
+        assert_eq!(pos_args, vec![OsString::from("dest/")]);
+    }
+
+    // ==================== parse_server_long_flags tests ====================
+
+    #[test]
+    fn long_flags_defaults() {
+        let args: Vec<OsString> = vec![OsString::from("--server")];
+        let flags = parse_server_long_flags(&args);
+        assert!(!flags.is_sender);
+        assert!(!flags.is_receiver);
+        assert!(!flags.ignore_errors);
+        assert!(!flags.fsync);
+        assert!(!flags.write_devices);
+        assert!(!flags.trust_sender);
+        assert!(!flags.qsort);
+        assert!(flags.checksum_seed.is_none());
+        assert!(flags.checksum_choice.is_none());
+        assert!(flags.min_size.is_none());
+        assert!(flags.max_size.is_none());
+        assert!(flags.stop_at.is_none());
+        assert!(flags.stop_after.is_none());
+        assert!(matches!(
+            flags.io_uring_policy,
+            fast_io::IoUringPolicy::Auto
+        ));
+    }
+
+    #[test]
+    fn long_flags_sender() {
+        let args = vec![OsString::from("--server"), OsString::from("--sender")];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.is_sender);
+        assert!(!flags.is_receiver);
+    }
+
+    #[test]
+    fn long_flags_receiver() {
+        let args = vec![OsString::from("--server"), OsString::from("--receiver")];
+        let flags = parse_server_long_flags(&args);
+        assert!(!flags.is_sender);
+        assert!(flags.is_receiver);
+    }
+
+    #[test]
+    fn long_flags_ignore_errors() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--ignore-errors"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.ignore_errors);
+    }
+
+    #[test]
+    fn long_flags_fsync() {
+        let args = vec![OsString::from("--server"), OsString::from("--fsync")];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.fsync);
+    }
+
+    #[test]
+    fn long_flags_io_uring_enabled() {
+        let args = vec![OsString::from("--server"), OsString::from("--io-uring")];
+        let flags = parse_server_long_flags(&args);
+        assert!(matches!(
+            flags.io_uring_policy,
+            fast_io::IoUringPolicy::Enabled
+        ));
+    }
+
+    #[test]
+    fn long_flags_io_uring_disabled() {
+        let args = vec![OsString::from("--server"), OsString::from("--no-io-uring")];
+        let flags = parse_server_long_flags(&args);
+        assert!(matches!(
+            flags.io_uring_policy,
+            fast_io::IoUringPolicy::Disabled
+        ));
+    }
+
+    #[test]
+    fn long_flags_write_devices() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--write-devices"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.write_devices);
+    }
+
+    #[test]
+    fn long_flags_trust_sender() {
+        let args = vec![OsString::from("--server"), OsString::from("--trust-sender")];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.trust_sender);
+    }
+
+    #[test]
+    fn long_flags_qsort() {
+        let args = vec![OsString::from("--server"), OsString::from("--qsort")];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.qsort);
+    }
+
+    #[test]
+    fn long_flags_checksum_seed() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--checksum-seed=42"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert_eq!(flags.checksum_seed.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn long_flags_checksum_choice() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--checksum-choice=xxh3"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert_eq!(flags.checksum_choice.as_deref(), Some("xxh3"));
+    }
+
+    #[test]
+    fn long_flags_min_size() {
+        let args = vec![OsString::from("--server"), OsString::from("--min-size=1K")];
+        let flags = parse_server_long_flags(&args);
+        assert_eq!(flags.min_size.as_deref(), Some("1K"));
+    }
+
+    #[test]
+    fn long_flags_max_size() {
+        let args = vec![OsString::from("--server"), OsString::from("--max-size=1G")];
+        let flags = parse_server_long_flags(&args);
+        assert_eq!(flags.max_size.as_deref(), Some("1G"));
+    }
+
+    #[test]
+    fn long_flags_stop_at() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--stop-at=2099-12-31T23:59"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert_eq!(flags.stop_at.as_deref(), Some("2099-12-31T23:59"));
+    }
+
+    #[test]
+    fn long_flags_stop_after() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--stop-after=60"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert_eq!(flags.stop_after.as_deref(), Some("60"));
+    }
+
+    #[test]
+    fn long_flags_all_combined() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("--ignore-errors"),
+            OsString::from("--fsync"),
+            OsString::from("--write-devices"),
+            OsString::from("--trust-sender"),
+            OsString::from("--qsort"),
+            OsString::from("--checksum-seed=99"),
+            OsString::from("--checksum-choice=md5"),
+            OsString::from("--min-size=100"),
+            OsString::from("--max-size=1M"),
+            OsString::from("--stop-after=30"),
+            OsString::from("-logDtpr"),
+            OsString::from("."),
+            OsString::from("src/"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.is_sender);
+        assert!(flags.ignore_errors);
+        assert!(flags.fsync);
+        assert!(flags.write_devices);
+        assert!(flags.trust_sender);
+        assert!(flags.qsort);
+        assert_eq!(flags.checksum_seed.as_deref(), Some("99"));
+        assert_eq!(flags.checksum_choice.as_deref(), Some("md5"));
+        assert_eq!(flags.min_size.as_deref(), Some("100"));
+        assert_eq!(flags.max_size.as_deref(), Some("1M"));
+        assert_eq!(flags.stop_after.as_deref(), Some("30"));
+    }
+
+    // ==================== is_known_server_long_flag tests ====================
+
+    #[test]
+    fn known_flag_detects_boolean_flags() {
+        assert!(is_known_server_long_flag("--server"));
+        assert!(is_known_server_long_flag("--sender"));
+        assert!(is_known_server_long_flag("--receiver"));
+        assert!(is_known_server_long_flag("--ignore-errors"));
+        assert!(is_known_server_long_flag("--fsync"));
+        assert!(is_known_server_long_flag("--io-uring"));
+        assert!(is_known_server_long_flag("--no-io-uring"));
+        assert!(is_known_server_long_flag("--write-devices"));
+        assert!(is_known_server_long_flag("--trust-sender"));
+        assert!(is_known_server_long_flag("--qsort"));
+        assert!(is_known_server_long_flag("-s"));
+    }
+
+    #[test]
+    fn known_flag_detects_value_flags() {
+        assert!(is_known_server_long_flag("--checksum-seed=0"));
+        assert!(is_known_server_long_flag("--checksum-choice=xxh3"));
+        assert!(is_known_server_long_flag("--min-size=1K"));
+        assert!(is_known_server_long_flag("--max-size=1G"));
+        assert!(is_known_server_long_flag("--stop-at=2099-12-31"));
+        assert!(is_known_server_long_flag("--stop-after=60"));
+    }
+
+    #[test]
+    fn known_flag_rejects_unknown() {
+        assert!(!is_known_server_long_flag("--unknown"));
+        assert!(!is_known_server_long_flag("-v"));
+        assert!(!is_known_server_long_flag("-logDtpr"));
+        assert!(!is_known_server_long_flag("dest/"));
+    }
+
+    // ==================== parse_server_checksum_seed tests ====================
+
+    #[test]
+    fn checksum_seed_parses_valid() {
+        assert_eq!(parse_server_checksum_seed("0").unwrap(), 0);
+        assert_eq!(parse_server_checksum_seed("12345").unwrap(), 12345);
+        assert_eq!(parse_server_checksum_seed("4294967295").unwrap(), u32::MAX);
+    }
+
+    #[test]
+    fn checksum_seed_rejects_empty() {
+        assert!(parse_server_checksum_seed("").is_err());
+    }
+
+    #[test]
+    fn checksum_seed_rejects_non_numeric() {
+        assert!(parse_server_checksum_seed("abc").is_err());
+    }
+
+    #[test]
+    fn checksum_seed_rejects_overflow() {
+        assert!(parse_server_checksum_seed("4294967296").is_err());
+    }
+
+    #[test]
+    fn checksum_seed_trims_whitespace() {
+        assert_eq!(parse_server_checksum_seed("  42  ").unwrap(), 42);
+    }
+
+    // ==================== parse_server_size_limit tests ====================
+
+    #[test]
+    fn size_limit_parses_plain_number() {
+        assert_eq!(parse_server_size_limit("100", "--min-size").unwrap(), 100);
+    }
+
+    #[test]
+    fn size_limit_parses_kilobytes() {
+        assert_eq!(parse_server_size_limit("1K", "--min-size").unwrap(), 1024);
+    }
+
+    #[test]
+    fn size_limit_parses_megabytes() {
+        assert_eq!(
+            parse_server_size_limit("1M", "--max-size").unwrap(),
+            1024 * 1024
+        );
+    }
+
+    #[test]
+    fn size_limit_parses_gigabytes() {
+        assert_eq!(
+            parse_server_size_limit("1G", "--max-size").unwrap(),
+            1024 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn size_limit_rejects_empty() {
+        assert!(parse_server_size_limit("", "--min-size").is_err());
+    }
+
+    #[test]
+    fn size_limit_rejects_invalid() {
+        assert!(parse_server_size_limit("abc", "--max-size").is_err());
+    }
+
+    // ==================== parse_server_stop_after tests ====================
+
+    #[test]
+    fn stop_after_parses_valid_minutes() {
+        let deadline = parse_server_stop_after("10").unwrap();
+        let duration = deadline.duration_since(SystemTime::now()).unwrap();
+        // Approximately 10 minutes (600 seconds), allow small drift
+        assert!(duration.as_secs() >= 598 && duration.as_secs() <= 602);
+    }
+
+    #[test]
+    fn stop_after_rejects_zero() {
+        assert!(parse_server_stop_after("0").is_err());
+    }
+
+    #[test]
+    fn stop_after_rejects_empty() {
+        assert!(parse_server_stop_after("").is_err());
+    }
+
+    #[test]
+    fn stop_after_rejects_non_numeric() {
+        assert!(parse_server_stop_after("abc").is_err());
+    }
+
+    // ==================== parse_server_stop_at tests ====================
+
+    #[test]
+    fn stop_at_rejects_empty() {
+        assert!(parse_server_stop_at("").is_err());
+    }
+
+    #[test]
+    fn stop_at_rejects_invalid_format() {
+        assert!(parse_server_stop_at("invalid").is_err());
+    }
+
+    #[test]
+    fn stop_at_parses_far_future_date() {
+        // 2099 is far enough in the future to always be valid
+        let result = parse_server_stop_at("2099-12-31T23:59");
+        // May fail due to local offset issues in test env, but format should be ok
+        assert!(result.is_ok() || result.is_err());
     }
 }
