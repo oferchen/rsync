@@ -10,8 +10,8 @@ use engine::SkipCompressList;
 
 use super::builder::ClientConfigBuilder;
 use super::{
-    AddressMode, BandwidthLimit, BindAddress, CompressionSetting, DeleteMode, FilterRuleSpec,
-    IconvSetting, ReferenceDirectory, StrongChecksumChoice, TransferTimeout,
+    AddressMode, BandwidthLimit, BindAddress, CompressionSetting, DeleteMode, FilesFromSource,
+    FilterRuleSpec, IconvSetting, ReferenceDirectory, StrongChecksumChoice, TransferTimeout,
 };
 
 /// Configuration describing the requested client operation.
@@ -162,6 +162,8 @@ pub struct ClientConfig {
     pub(super) prefer_aes_gcm: Option<bool>,
     pub(super) protect_args: Option<bool>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
+    pub(super) files_from: FilesFromSource,
+    pub(super) from0: bool,
     pub(super) no_motd: bool,
     pub(super) daemon_params: Vec<String>,
     #[cfg(all(unix, feature = "acl"))]
@@ -282,6 +284,8 @@ impl Default for ClientConfig {
             prefer_aes_gcm: None,
             protect_args: None,
             batch_config: None,
+            files_from: FilesFromSource::None,
+            from0: false,
             no_motd: false,
             daemon_params: Vec::new(),
             #[cfg(all(unix, feature = "acl"))]

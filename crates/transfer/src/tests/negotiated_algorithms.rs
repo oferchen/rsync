@@ -53,6 +53,8 @@ fn test_config() -> ServerConfig {
         qsort: false,
         min_file_size: None,
         max_file_size: None,
+        files_from_path: None,
+        from0: false,
     }
 }
 
@@ -80,6 +82,8 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         qsort: false,
         min_file_size: None,
         max_file_size: None,
+        files_from_path: None,
+        from0: false,
     }
 }
 

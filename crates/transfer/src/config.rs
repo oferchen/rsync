@@ -183,6 +183,23 @@ pub struct ServerConfig {
     pub min_file_size: Option<u64>,
     /// Maximum file size in bytes. Files larger than this are skipped.
     pub max_file_size: Option<u64>,
+    /// Path for `--files-from` when the server reads the file list directly.
+    ///
+    /// When set to `Some("-")`, the file list is forwarded by the client over
+    /// the protocol socket. When set to a path, the server opens the file
+    /// locally. When `None`, `--files-from` is not active.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2944-2956` — server_options() sends `--files-from=-` or path
+    /// - `flist.c:2205` — `reading_remotely = filesfrom_host != NULL`
+    pub files_from_path: Option<String>,
+    /// Use NUL bytes as delimiters for `--files-from` input (`--from0`).
+    ///
+    /// When true, the file list uses NUL bytes instead of newlines as
+    /// delimiters. Always true when the client forwards a local file
+    /// (the client sends `--from0` alongside `--files-from=-`).
+    pub from0: bool,
 }
 
 impl ServerConfig {
@@ -230,6 +247,8 @@ impl ServerConfig {
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             min_file_size: None,
             max_file_size: None,
+            files_from_path: None,
+            from0: false,
         })
     }
 }
