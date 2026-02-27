@@ -118,6 +118,28 @@ impl<R: Read> ServerReader<R> {
             Self::Plain(_) => 0,
         }
     }
+
+    /// Returns and drains accumulated `MSG_NO_SEND` file indices from the sender.
+    ///
+    /// When the sender cannot open a file it was asked to transfer, it sends
+    /// `MSG_NO_SEND` with the 4-byte little-endian file index (protocol >= 30).
+    /// The receiver accumulates these indices during normal reads and drains
+    /// them via this method.
+    ///
+    /// Returns an empty `Vec` for plain-mode readers.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1618-1627`: `MSG_NO_SEND` dispatches to `got_flist_entry_status(FES_NO_SEND, val)`
+    ///   on the generator side, or forwards to the generator if on the receiver side.
+    /// - `sender.c:367-368`: sender sends `MSG_NO_SEND` for protocol >= 30 when file open fails.
+    pub fn take_no_send_indices(&mut self) -> Vec<i32> {
+        match self {
+            Self::Multiplex(mux) => mux.take_no_send_indices(),
+            Self::Compressed(compressed) => compressed.get_mut().take_no_send_indices(),
+            Self::Plain(_) => Vec::new(),
+        }
+    }
 }
 
 impl<R: Read> Read for ServerReader<R> {
@@ -139,10 +161,17 @@ impl<R: Read> Read for ServerReader<R> {
 /// is OR'd into an internal accumulator. Callers retrieve and forward the
 /// accumulated value via [`MultiplexReader::take_io_error`].
 ///
+/// When `MSG_NO_SEND` frames are received, the 4-byte little-endian file index
+/// is accumulated into an internal queue. Callers drain the queue via
+/// [`MultiplexReader::take_no_send_indices`].
+///
 /// # Upstream Reference
 ///
 /// - `io.c:1521-1528`: receiver reads `MSG_IO_ERROR`, OR's value into
 ///   `io_error`, and forwards it to the generator when `am_receiver`.
+/// - `io.c:1618-1627`: `MSG_NO_SEND` received on the sender/receiver pipe;
+///   if `am_generator`, calls `got_flist_entry_status(FES_NO_SEND, val)`,
+///   otherwise forwards to the generator.
 pub(super) struct MultiplexReader<R> {
     inner: R,
     buffer: Vec<u8>,
@@ -152,6 +181,14 @@ pub(super) struct MultiplexReader<R> {
     /// Uses the same bitfield constants as [`super::io_error_flags`].
     /// upstream: io.c:1526 `io_error |= val;`
     io_error: i32,
+    /// File indices received via `MSG_NO_SEND` from the sender.
+    ///
+    /// When the sender fails to open a file, it sends `MSG_NO_SEND` with the
+    /// 4-byte little-endian file index. The receiver accumulates these indices
+    /// so it can skip waiting for delta data for those files.
+    ///
+    /// upstream: io.c:1618-1627, sender.c:367-368
+    no_send_indices: Vec<i32>,
 }
 
 /// Default buffer capacity for MultiplexReader.
@@ -169,6 +206,7 @@ impl<R: Read> MultiplexReader<R> {
             buffer: Vec::with_capacity(MULTIPLEX_READER_BUFFER_CAPACITY),
             pos: 0,
             io_error: 0,
+            no_send_indices: Vec::new(),
         }
     }
 
@@ -184,6 +222,22 @@ impl<R: Read> MultiplexReader<R> {
         std::mem::take(&mut self.io_error)
     }
 
+    /// Returns and drains the accumulated `MSG_NO_SEND` file indices.
+    ///
+    /// When the sender cannot open a file, it sends `MSG_NO_SEND` with the
+    /// file index. The receiver accumulates these indices so it can skip
+    /// those files during transfer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1618-1627`: `MSG_NO_SEND` handling — generator calls
+    ///   `got_flist_entry_status(FES_NO_SEND, val)`, receiver forwards to generator.
+    /// - `sender.c:367-368`: sender sends `MSG_NO_SEND` when `protocol_version >= 30`
+    ///   and the source file cannot be opened.
+    fn take_no_send_indices(&mut self) -> Vec<i32> {
+        std::mem::take(&mut self.no_send_indices)
+    }
+
     /// Handles a `MSG_IO_ERROR` payload by accumulating the error flags.
     ///
     /// The payload must be exactly 4 bytes (little-endian `i32`).
@@ -197,6 +251,22 @@ impl<R: Read> MultiplexReader<R> {
                 self.buffer[3],
             ]);
             self.io_error |= val;
+        }
+    }
+
+    /// Handles a `MSG_NO_SEND` payload by recording the file index.
+    ///
+    /// The payload must be exactly 4 bytes (little-endian `i32` file index).
+    /// upstream: io.c:1618-1627 — `val = raw_read_int();` reads 4-byte LE int.
+    fn handle_no_send_msg(&mut self) {
+        if self.buffer.len() == 4 {
+            let ndx = i32::from_le_bytes([
+                self.buffer[0],
+                self.buffer[1],
+                self.buffer[2],
+                self.buffer[3],
+            ]);
+            self.no_send_indices.push(ndx);
         }
     }
 }
@@ -245,6 +315,10 @@ impl<R: Read> MultiplexReader<R> {
                     protocol::MessageCode::IoError => {
                         // upstream: io.c:1521-1526
                         self.handle_io_error_msg();
+                    }
+                    protocol::MessageCode::NoSend => {
+                        // upstream: io.c:1618-1627
+                        self.handle_no_send_msg();
                     }
                     _ => {}
                 }
@@ -324,6 +398,12 @@ impl<R: Read> Read for MultiplexReader<R> {
                     // Accumulate the I/O error flags from the sender.
                     // The receiver will forward these to the generator.
                     self.handle_io_error_msg();
+                }
+                protocol::MessageCode::NoSend => {
+                    // upstream: io.c:1618-1627
+                    // Accumulate the file index from the sender indicating
+                    // it could not open the requested file.
+                    self.handle_no_send_msg();
                 }
                 _ => {
                     // Other message types (Redo, Stats, etc.): silently skip
@@ -720,5 +800,119 @@ mod tests {
         // Verify the exit code mapping
         let exit_code = io_error_flags::to_exit_code(forwarded_flags);
         assert_eq!(exit_code, 23); // RERR_PARTIAL — IOERR_GENERAL takes priority
+    }
+
+    #[test]
+    fn multiplex_reader_accumulates_msg_no_send() {
+        // MSG_NO_SEND carries a 4-byte LE i32 file index.
+        // upstream: io.c:1618-1627, sender.c:367-368
+        let mut stream = Vec::new();
+
+        // MSG_NO_SEND with file index 42
+        let ndx1: i32 = 42;
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::NoSend,
+            &ndx1.to_le_bytes(),
+        )
+        .unwrap();
+
+        // MSG_DATA with some file data
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"hello").unwrap();
+
+        // Another MSG_NO_SEND with file index 99
+        let ndx2: i32 = 99;
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::NoSend,
+            &ndx2.to_le_bytes(),
+        )
+        .unwrap();
+
+        // More MSG_DATA
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"world").unwrap();
+
+        let mut mux = MultiplexReader::new(Cursor::new(stream));
+
+        // Read first data message — should skip over the MSG_NO_SEND
+        let mut buf = [0u8; 5];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(&buf, b"hello");
+
+        // After first read, ndx 42 should be accumulated
+        assert_eq!(mux.no_send_indices, vec![42]);
+
+        // Read second data message — skips second MSG_NO_SEND
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(&buf, b"world");
+
+        // Both indices should be accumulated
+        assert_eq!(mux.no_send_indices, vec![42, 99]);
+
+        // take_no_send_indices returns accumulated values and resets
+        let taken = mux.take_no_send_indices();
+        assert_eq!(taken, vec![42, 99]);
+        assert!(mux.no_send_indices.is_empty());
+    }
+
+    #[test]
+    fn multiplex_reader_no_send_wrong_payload_length_ignored() {
+        // MSG_NO_SEND with wrong payload length (not 4 bytes) should be ignored.
+        // upstream: io.c:1619 `if (msg_bytes != 4) goto invalid_msg;`
+        let mut stream = Vec::new();
+
+        // MSG_NO_SEND with 3 bytes (invalid — should be ignored)
+        protocol::send_msg(&mut stream, protocol::MessageCode::NoSend, &[1, 0, 0]).unwrap();
+
+        // MSG_DATA follows
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"ok").unwrap();
+
+        let mut mux = MultiplexReader::new(Cursor::new(stream));
+        let mut buf = [0u8; 2];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(&buf, b"ok");
+
+        // Invalid payload length should not accumulate any index
+        assert!(mux.no_send_indices.is_empty());
+    }
+
+    #[test]
+    fn server_reader_take_no_send_indices_plain_returns_empty() {
+        let mut reader = ServerReader::new_plain(Cursor::new(vec![]));
+        assert!(reader.take_no_send_indices().is_empty());
+    }
+
+    #[test]
+    fn server_reader_take_no_send_indices_multiplex_accumulates() {
+        // Build a multiplex stream with MSG_NO_SEND + MSG_DATA
+        let mut stream = Vec::new();
+        let ndx: i32 = 7;
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::NoSend,
+            &ndx.to_le_bytes(),
+        )
+        .unwrap();
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"data").unwrap();
+
+        let mut reader = ServerReader::new_plain(Cursor::new(stream))
+            .activate_multiplex()
+            .unwrap();
+
+        // Read the data (which skips the MSG_NO_SEND message)
+        let mut buf = [0u8; 4];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 4);
+        assert_eq!(&buf, b"data");
+
+        // take_no_send_indices should return the accumulated index
+        let indices = reader.take_no_send_indices();
+        assert_eq!(indices, vec![7]);
+
+        // Second call returns empty (reset)
+        assert!(reader.take_no_send_indices().is_empty());
     }
 }
