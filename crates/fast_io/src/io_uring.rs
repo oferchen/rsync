@@ -1548,8 +1548,10 @@ pub fn socket_reader_from_fd(
     buffer_capacity: usize,
     policy: crate::IoUringPolicy,
 ) -> io::Result<IoUringOrStdSocketReader> {
-    let mut config = IoUringConfig::default();
-    config.buffer_size = buffer_capacity;
+    let config = IoUringConfig {
+        buffer_size: buffer_capacity,
+        ..IoUringConfig::default()
+    };
 
     match policy {
         crate::IoUringPolicy::Auto => {
@@ -1597,8 +1599,10 @@ pub fn socket_writer_from_fd(
     buffer_capacity: usize,
     policy: crate::IoUringPolicy,
 ) -> io::Result<IoUringOrStdSocketWriter> {
-    let mut config = IoUringConfig::default();
-    config.buffer_size = buffer_capacity;
+    let config = IoUringConfig {
+        buffer_size: buffer_capacity,
+        ..IoUringConfig::default()
+    };
 
     match policy {
         crate::IoUringPolicy::Auto => {
