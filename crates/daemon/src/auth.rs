@@ -60,7 +60,7 @@
 //!
 //! // Generate challenge
 //! let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-//! let challenge = ChallengeGenerator::generate(peer_ip);
+//! let challenge = ChallengeGenerator::generate(peer_ip, Some(31));
 //!
 //! // Client sends: "alice <response>"
 //! let client_response = "alice dGVzdHJlc3BvbnNl"; // Base64-encoded hash
@@ -132,7 +132,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use checksums::strong::Md5;
+use checksums::strong::{Md4, Md5};
 
 /// Generates authentication challenges for daemon mode.
 ///
@@ -147,11 +147,17 @@ pub struct ChallengeGenerator;
 impl ChallengeGenerator {
     /// Generates a unique authentication challenge for the given peer.
     ///
-    /// The challenge is a base64-encoded MD5 hash of:
+    /// The challenge is a base64-encoded hash of:
     /// - Peer IP address (up to 16 bytes)
     /// - Unix timestamp seconds (4 bytes)
     /// - Timestamp microseconds (4 bytes)
     /// - Process ID (4 bytes)
+    ///
+    /// The digest algorithm depends on the negotiated protocol version:
+    /// - Protocol >= 30: MD5
+    /// - Protocol < 30: MD4
+    ///
+    /// upstream: compat.c:858 -- `protocol_version >= 30 ? "md5" : "md4"`
     ///
     /// # Examples
     ///
@@ -160,13 +166,13 @@ impl ChallengeGenerator {
     /// use std::net::IpAddr;
     ///
     /// let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-    /// let challenge = ChallengeGenerator::generate(peer_ip);
+    /// let challenge = ChallengeGenerator::generate(peer_ip, Some(32));
     ///
-    /// // Challenge is base64-encoded MD5 (22 characters without padding)
+    /// // Challenge is base64-encoded hash (22 characters without padding)
     /// assert_eq!(challenge.len(), 22);
     /// ```
     #[must_use]
-    pub fn generate(peer_ip: IpAddr) -> String {
+    pub fn generate(peer_ip: IpAddr, protocol_version: Option<u8>) -> String {
         let mut input = [0u8; 32];
 
         // First 16 bytes: IP address
@@ -188,10 +194,17 @@ impl ChallengeGenerator {
         let pid = std::process::id();
         input[24..28].copy_from_slice(&pid.to_le_bytes());
 
-        // Hash and encode
-        let mut hasher = Md5::new();
-        hasher.update(&input);
-        let digest = hasher.finalize();
+        // Hash and encode using protocol-appropriate digest
+        let version = protocol_version.unwrap_or(32);
+        let digest = if version >= 30 {
+            let mut hasher = Md5::new();
+            hasher.update(&input);
+            hasher.finalize().to_vec()
+        } else {
+            let mut hasher = Md4::new();
+            hasher.update(&input);
+            hasher.finalize().to_vec()
+        };
         STANDARD_NO_PAD.encode(digest)
     }
 }
@@ -405,7 +418,7 @@ mod tests {
     #[test]
     fn challenge_generator_produces_valid_base64() {
         let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-        let challenge = ChallengeGenerator::generate(peer_ip);
+        let challenge = ChallengeGenerator::generate(peer_ip, Some(32));
 
         // MD5 hash is 16 bytes, base64 without padding is 22 characters
         assert_eq!(challenge.len(), 22);
@@ -419,14 +432,29 @@ mod tests {
     }
 
     #[test]
+    fn challenge_generator_produces_valid_base64_legacy_protocol() {
+        let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
+        let challenge = ChallengeGenerator::generate(peer_ip, Some(29));
+
+        // MD4 hash is also 16 bytes, base64 without padding is 22 characters
+        assert_eq!(challenge.len(), 22);
+
+        assert!(
+            challenge
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '+' || c == '/')
+        );
+    }
+
+    #[test]
     fn challenge_generator_produces_unique_values() {
         let peer_ip: IpAddr = "10.0.0.1".parse().unwrap();
-        let challenge1 = ChallengeGenerator::generate(peer_ip);
+        let challenge1 = ChallengeGenerator::generate(peer_ip, Some(32));
 
         // Small delay to ensure different timestamp
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let challenge2 = ChallengeGenerator::generate(peer_ip);
+        let challenge2 = ChallengeGenerator::generate(peer_ip, Some(32));
 
         // Challenges should differ due to timestamp
         assert_ne!(challenge1, challenge2);
@@ -601,7 +629,7 @@ mod tests {
     #[test]
     fn full_auth_roundtrip_protocol_32_all_digests() {
         let password = b"daemon_secret";
-        let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap());
+        let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), Some(32));
 
         // Digests that should verify at protocol 32: all except MD4
         let verifiable = [
@@ -631,7 +659,7 @@ mod tests {
     #[test]
     fn full_auth_roundtrip_protocol_30() {
         let password = b"p30_secret";
-        let challenge = ChallengeGenerator::generate("172.16.0.1".parse().unwrap());
+        let challenge = ChallengeGenerator::generate("172.16.0.1".parse().unwrap(), Some(30));
 
         // MD5 should succeed
         let md5_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md5);
@@ -666,7 +694,7 @@ mod tests {
     #[test]
     fn full_auth_roundtrip_protocol_29() {
         let password = b"p29_secret";
-        let challenge = ChallengeGenerator::generate("192.168.1.100".parse().unwrap());
+        let challenge = ChallengeGenerator::generate("192.168.1.100".parse().unwrap(), Some(29));
 
         // MD4 should succeed
         let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);

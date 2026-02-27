@@ -44,24 +44,20 @@ fn run_daemon_lists_modules_with_motd_lines() {
     reader.read_line(&mut line).expect("capabilities");
     assert_eq!(line, "@RSYNCD: CAP modules\n");
 
+    // upstream: MOTD lines are sent as raw text, not wrapped in @RSYNCD: MOTD
     line.clear();
     reader.read_line(&mut line).expect("motd line 1");
-    assert_eq!(line.trim_end(), "@RSYNCD: MOTD Welcome to rsyncd");
+    assert_eq!(line.trim_end(), "Welcome to rsyncd");
 
     line.clear();
     reader.read_line(&mut line).expect("motd line 2");
-    assert_eq!(
-        line.trim_end(),
-        "@RSYNCD: MOTD Remember to sync responsibly"
-    );
+    assert_eq!(line.trim_end(), "Remember to sync responsibly");
 
     line.clear();
     reader.read_line(&mut line).expect("motd line 3");
-    assert_eq!(line.trim_end(), "@RSYNCD: MOTD Additional notice");
+    assert_eq!(line.trim_end(), "Additional notice");
 
-    line.clear();
-    reader.read_line(&mut line).expect("ok line");
-    assert_eq!(line, "@RSYNCD: OK\n");
+    // upstream: no @RSYNCD: OK before module listing
 
     line.clear();
     reader.read_line(&mut line).expect("module line");
