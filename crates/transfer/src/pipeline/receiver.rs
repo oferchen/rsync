@@ -327,6 +327,7 @@ mod tests {
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
+                is_inplace: false,
             })))
             .unwrap();
 
