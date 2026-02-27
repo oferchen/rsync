@@ -60,12 +60,19 @@
 //! This is configured via [`PipelineConfig::ack_batch_size`].
 
 pub mod async_signature;
+pub mod job;
 pub mod messages;
 mod pending;
 pub mod receiver;
 pub mod spsc;
 mod state;
 
+#[cfg(feature = "async")]
+pub mod async_dispatch;
+#[cfg(feature = "async")]
+pub mod async_pipeline;
+
+pub use job::{FileJob, FileList, MAX_RETRY_COUNT, TransferFlags};
 pub use pending::PendingTransfer;
 pub use state::PipelineState;
 
@@ -184,6 +191,69 @@ impl PipelineConfig {
         } else {
             AckBatcherConfig::disabled()
         }
+    }
+}
+
+/// Configuration for the async tokio-based transfer pipeline.
+///
+/// Extends [`PipelineConfig`] with async-specific settings for channel
+/// capacity and retry behavior. Used by the `run_pipeline()` async entry point.
+#[derive(Debug, Clone)]
+pub struct AsyncPipelineConfig {
+    /// Base pipeline configuration (window size, ACK batching, etc.).
+    pub pipeline: PipelineConfig,
+    /// Bounded channel capacity for `FileJob` dispatch (default: 32).
+    ///
+    /// Controls backpressure: when the consumer falls behind, the producer
+    /// blocks on `send().await` once this many jobs are in flight.
+    pub job_channel_capacity: usize,
+    /// Whether to enable the retry channel for failed transfers.
+    pub retry_enabled: bool,
+    /// Maximum retry attempts per file (default: 2).
+    pub max_retries: u8,
+}
+
+/// Default channel capacity for `FileJob` dispatch.
+pub const DEFAULT_JOB_CHANNEL_CAPACITY: usize = 32;
+
+impl Default for AsyncPipelineConfig {
+    fn default() -> Self {
+        Self {
+            pipeline: PipelineConfig::default(),
+            job_channel_capacity: DEFAULT_JOB_CHANNEL_CAPACITY,
+            retry_enabled: true,
+            max_retries: job::MAX_RETRY_COUNT,
+        }
+    }
+}
+
+impl AsyncPipelineConfig {
+    /// Sets the job channel capacity for backpressure control.
+    #[must_use]
+    pub const fn with_job_channel_capacity(mut self, capacity: usize) -> Self {
+        self.job_channel_capacity = capacity;
+        self
+    }
+
+    /// Sets the base pipeline configuration.
+    #[must_use]
+    pub fn with_pipeline_config(mut self, config: PipelineConfig) -> Self {
+        self.pipeline = config;
+        self
+    }
+
+    /// Enables or disables the retry channel.
+    #[must_use]
+    pub const fn with_retry(mut self, enabled: bool) -> Self {
+        self.retry_enabled = enabled;
+        self
+    }
+
+    /// Sets the maximum retry count per file.
+    #[must_use]
+    pub const fn with_max_retries(mut self, max: u8) -> Self {
+        self.max_retries = max;
+        self
     }
 }
 
