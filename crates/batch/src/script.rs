@@ -15,7 +15,15 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Generate a minimal shell script for replaying a batch file.
 ///
-/// Creates a simple script that uses --read-batch with the destination placeholder.
+/// Creates a script matching upstream rsync's format: a single command line
+/// without a `#!/bin/sh` shebang. The script uses `--read-batch` with a
+/// destination placeholder that defaults to the current directory.
+///
+/// # Upstream Reference
+///
+/// - `batch.c:255-312`: `write_batch_shell_file()` writes the raw command
+///   without a shebang line. The `.sh` file is opened with mode `S_IRUSR |
+///   S_IWUSR | S_IXUSR` (0o700).
 pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
     let script_path = config.script_file_path();
     let batch_name = config.batch_file_path().to_string_lossy();
@@ -26,26 +34,31 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
         ))
     })?;
 
-    // Write a minimal replay script
-    writeln!(file, "#!/bin/sh")?;
+    // upstream: write_batch_shell_file() writes the command without a shebang
     writeln!(
         file,
-        "oc-rsync --read-batch={} \"${{1:-.}}\"",
+        "oc-rsync --read-batch={} ${{1:-.}}",
         shell_quote(&batch_name)
     )?;
 
     file.flush()?;
 
-    // Make the script executable
-    make_executable(&script_path)?;
+    // upstream: batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
+    set_script_permissions(&script_path)?;
 
     Ok(())
 }
 
 /// Generate a shell script for replaying a batch file with full argument preservation.
 ///
-/// The script converts the --write-batch command to a --read-batch command,
-/// preserving relevant options.
+/// Converts `--write-batch` / `--only-write-batch` arguments to `--read-batch`,
+/// preserves relevant options, and embeds filter rules if present. The output
+/// matches upstream rsync's `batch.c:write_batch_shell_file()` format.
+///
+/// # Upstream Reference
+///
+/// - `batch.c:255-312`: `write_batch_shell_file()` elides filename args,
+///   converts write-batch to read-batch, and embeds filter rules via heredoc.
 pub fn generate_script_with_args(
     config: &BatchConfig,
     original_args: &[String],
@@ -59,8 +72,7 @@ pub fn generate_script_with_args(
         ))
     })?;
 
-    // Write the shebang and initial command
-    writeln!(file, "#!/bin/sh")?;
+    // upstream: write_batch_shell_file() starts with the binary name, no shebang
     write!(file, "{}", original_args[0])?; // rsync binary name
 
     // Process arguments, converting write-batch to read-batch
@@ -94,15 +106,14 @@ pub fn generate_script_with_args(
         }
     }
 
-    // Add the destination placeholder
-    write!(file, " \"${{1:-")?;
-    // Extract destination from original args (last non-option argument)
+    // upstream: write_opt("${1:-", NULL) + write_arg(dest) + "}"
+    write!(file, " ${{1:-")?;
     if let Some(dest) = find_destination(original_args) {
         write!(file, "{}", shell_quote(dest))?;
     }
-    write!(file, "}}\"")?;
+    write!(file, "}}")?;
 
-    // Embed filter rules if present
+    // upstream: write_filter_rules() uses heredoc with #E# delimiter
     if let Some(rules) = filter_rules {
         writeln!(file, " <<'#E#'")?;
         write!(file, "{rules}")?;
@@ -116,8 +127,8 @@ pub fn generate_script_with_args(
 
     file.flush()?;
 
-    // Make the script executable
-    make_executable(&script_path)?;
+    // upstream: batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
+    set_script_permissions(&script_path)?;
 
     Ok(())
 }
@@ -153,21 +164,20 @@ fn find_destination(args: &[String]) -> Option<&str> {
         .map(|s| s.as_str())
 }
 
-/// Make a file executable on Unix systems.
+/// Set script file permissions to match upstream rsync.
+///
+/// Upstream rsync opens the `.sh` file with `S_IRUSR | S_IWUSR | S_IXUSR`
+/// (0o700), granting read/write/execute only to the owner.
 #[cfg(unix)]
-fn make_executable(path: &str) -> BatchResult<()> {
+fn set_script_permissions(path: &str) -> BatchResult<()> {
     use std::fs;
-    let file = fs::File::open(path)?;
-    let metadata = file.metadata()?;
-    let mut permissions = metadata.permissions();
-    permissions.set_mode(permissions.mode() | 0o111); // Add execute bits
+    let permissions = fs::Permissions::from_mode(0o700);
     fs::set_permissions(path, permissions)?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &str) -> BatchResult<()> {
-    // No-op on non-Unix systems
+fn set_script_permissions(_path: &str) -> BatchResult<()> {
     Ok(())
 }
 
@@ -225,9 +235,12 @@ mod tests {
         let script_path = config.script_file_path();
         assert!(Path::new(&script_path).exists());
 
-        // Read and verify script content
+        // Read and verify script content -- upstream has no shebang
         let content = fs::read_to_string(&script_path).unwrap();
-        assert!(content.starts_with("#!/bin/sh\n"));
+        assert!(
+            !content.starts_with("#!/bin/sh"),
+            "Upstream rsync batch scripts have no shebang"
+        );
         assert!(content.contains("--read-batch="));
         assert!(content.contains("oc-rsync"));
     }
@@ -280,6 +293,11 @@ mod tests {
         let script_path = config.script_file_path();
         let metadata = fs::metadata(&script_path).unwrap();
         let permissions = metadata.permissions();
-        assert!(permissions.mode() & 0o111 != 0); // Has execute bits
+        // upstream: batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
+        assert_eq!(
+            permissions.mode() & 0o777,
+            0o700,
+            "Script permissions should be exactly 0o700"
+        );
     }
 }

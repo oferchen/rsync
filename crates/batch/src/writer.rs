@@ -4,7 +4,7 @@
 
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
-use crate::format::{BatchFlags, BatchHeader, FileEntry};
+use crate::format::{BatchFlags, BatchHeader, BatchStats, FileEntry};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
@@ -97,11 +97,49 @@ impl BatchWriter {
         }
     }
 
-    /// Write a file entry to the batch file.
+    /// Write transfer statistics to the end of the batch file.
     ///
-    /// This records a single file/directory/link in the batch file's file
-    /// list section. The entry should be written during the file walk phase
-    /// before any delta operations are recorded for that file.
+    /// Upstream rsync records these statistics at the end of the batch
+    /// file so the `--read-batch` process can display accurate metrics.
+    ///
+    /// The header must be written before calling this method.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:374-383`: stats written with `write_varlong30(batch_fd, ...)`
+    pub fn write_stats(&mut self, stats: &BatchStats) -> BatchResult<()> {
+        if !self.header_written {
+            return Err(BatchError::Io(io::Error::other(
+                "Must write header before stats",
+            )));
+        }
+
+        if let Some(ref mut writer) = self.batch_file {
+            stats
+                .write_to(writer, self.config.protocol_version)
+                .map_err(|e| {
+                    BatchError::Io(io::Error::new(
+                        e.kind(),
+                        format!("Failed to write batch stats: {e}"),
+                    ))
+                })?;
+            Ok(())
+        } else {
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
+        }
+    }
+
+    /// Write a file entry to the batch file using a local encoding.
+    ///
+    /// **Note:** This uses a local serialization format that is not
+    /// compatible with upstream rsync's batch files. Upstream rsync
+    /// batch files contain a raw tee of the protocol stream, not
+    /// separately encoded file entries. This method is provided for
+    /// internal tracking during local copy operations that bypass the
+    /// protocol pipeline.
+    ///
+    /// For protocol-compatible batch files, use [`write_data`](Self::write_data)
+    /// to write raw protocol stream bytes instead.
     ///
     /// The header must be written before calling this method.
     pub fn write_file_entry(&mut self, entry: &FileEntry) -> BatchResult<()> {

@@ -8,6 +8,18 @@
 use std::io::{self, Read, Write};
 
 /// Batch file header containing protocol negotiation information.
+///
+/// The header is written at the very beginning of the batch file and contains
+/// the information needed to replay the batch. The format matches upstream
+/// rsync's `batch.c:write_stream_flags()` + `io.c:start_write_batch()`:
+///
+/// 1. Stream flags bitmap (i32) -- `write_stream_flags(batch_fd)`
+/// 2. Protocol version (i32) -- `write_int(batch_fd, protocol_version)`
+/// 3. Compat flags (varint, protocol >= 30) -- `write_varint(batch_fd, compat_flags)`
+/// 4. Checksum seed (i32) -- `write_int(batch_fd, checksum_seed)`
+///
+/// After the header, the batch file body is a raw tee of the protocol stream
+/// (file list + delta operations), followed by trailing [`BatchStats`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BatchHeader {
     /// Protocol version (i32).
@@ -321,11 +333,80 @@ fn read_u32<R: Read>(reader: &mut R) -> io::Result<u32> {
     Ok(u32::from_le_bytes(buf))
 }
 
-/// File list entry in batch file.
+/// Transfer statistics recorded at the end of a batch file.
 ///
-/// This structure represents a single file/directory/link entry in the batch
-/// file, matching upstream rsync's flist format. The file list is written after
-/// the batch header and before the delta operations.
+/// Upstream rsync writes these statistics at the end of the batch file
+/// so the `--read-batch` process can display accurate transfer metrics.
+///
+/// # Upstream Reference
+///
+/// - `main.c:374-383`: `write_varlong30(batch_fd, total_read, 3)` etc.
+/// - Stats are written using `varlong30` encoding with 3 minimum bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BatchStats {
+    /// Total bytes read from the source during transfer.
+    pub total_read: i64,
+    /// Total bytes written to the destination during transfer.
+    pub total_written: i64,
+    /// Sum of all file sizes in the file list.
+    pub total_size: i64,
+    /// Time spent building the file list (protocol >= 29).
+    pub flist_buildtime: Option<i64>,
+    /// Time spent transferring the file list (protocol >= 29).
+    pub flist_xfertime: Option<i64>,
+}
+
+impl BatchStats {
+    /// Write the statistics to a writer.
+    ///
+    /// Uses `write_varlong30` with `min_bytes=3` to match upstream rsync's
+    /// `main.c` stats serialization.
+    pub fn write_to<W: Write>(&self, writer: &mut W, protocol_version: i32) -> io::Result<()> {
+        protocol::write_varlong30(writer, self.total_read, 3)?;
+        protocol::write_varlong30(writer, self.total_written, 3)?;
+        protocol::write_varlong30(writer, self.total_size, 3)?;
+        if protocol_version >= 29 {
+            protocol::write_varlong30(writer, self.flist_buildtime.unwrap_or(0), 3)?;
+            protocol::write_varlong30(writer, self.flist_xfertime.unwrap_or(0), 3)?;
+        }
+        Ok(())
+    }
+
+    /// Read the statistics from a reader.
+    ///
+    /// Uses `read_varlong30` with `min_bytes=3` to match upstream rsync's
+    /// stats deserialization.
+    pub fn read_from<R: Read>(reader: &mut R, protocol_version: i32) -> io::Result<Self> {
+        let total_read = protocol::read_varlong30(reader, 3)?;
+        let total_written = protocol::read_varlong30(reader, 3)?;
+        let total_size = protocol::read_varlong30(reader, 3)?;
+        let (flist_buildtime, flist_xfertime) = if protocol_version >= 29 {
+            let bt = protocol::read_varlong30(reader, 3)?;
+            let xt = protocol::read_varlong30(reader, 3)?;
+            (Some(bt), Some(xt))
+        } else {
+            (None, None)
+        };
+        Ok(Self {
+            total_read,
+            total_written,
+            total_size,
+            flist_buildtime,
+            flist_xfertime,
+        })
+    }
+}
+
+/// File metadata for batch mode tracking.
+///
+/// This structure holds metadata about a single file/directory/link for
+/// batch mode bookkeeping. Note that upstream rsync's batch file format
+/// does **not** use a custom file-entry serialization -- the batch file
+/// body is a raw tee of the protocol stream (flist + delta bytes).
+///
+/// This type is provided for internal tracking purposes. The `write_to`
+/// and `read_from` methods use a local encoding that is not compatible
+/// with upstream rsync's batch files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
     /// Relative path from source root.
@@ -753,5 +834,97 @@ mod tests {
         let restored28 = BatchFlags::from_bitmap(raw28, 28);
         assert!(!restored28.xfer_dirs);
         assert!(!restored28.preserve_acls);
+    }
+
+    #[test]
+    fn test_batch_stats_roundtrip_protocol_30() {
+        let stats = BatchStats {
+            total_read: 1024,
+            total_written: 2048,
+            total_size: 10_000_000,
+            flist_buildtime: Some(42),
+            flist_xfertime: Some(100),
+        };
+
+        let mut buf = Vec::new();
+        stats.write_to(&mut buf, 30).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let restored = BatchStats::read_from(&mut cursor, 30).unwrap();
+
+        assert_eq!(stats, restored);
+    }
+
+    #[test]
+    fn test_batch_stats_roundtrip_protocol_28() {
+        let stats = BatchStats {
+            total_read: 500,
+            total_written: 1000,
+            total_size: 5_000,
+            flist_buildtime: None,
+            flist_xfertime: None,
+        };
+
+        let mut buf = Vec::new();
+        stats.write_to(&mut buf, 28).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let restored = BatchStats::read_from(&mut cursor, 28).unwrap();
+
+        assert_eq!(stats.total_read, restored.total_read);
+        assert_eq!(stats.total_written, restored.total_written);
+        assert_eq!(stats.total_size, restored.total_size);
+        assert!(restored.flist_buildtime.is_none());
+        assert!(restored.flist_xfertime.is_none());
+    }
+
+    #[test]
+    fn test_batch_stats_default() {
+        let stats = BatchStats::default();
+        assert_eq!(stats.total_read, 0);
+        assert_eq!(stats.total_written, 0);
+        assert_eq!(stats.total_size, 0);
+        assert!(stats.flist_buildtime.is_none());
+        assert!(stats.flist_xfertime.is_none());
+    }
+
+    #[test]
+    fn test_batch_stats_large_values() {
+        // Use terabyte-scale values that are realistic for large transfers
+        // and within the varlong30 representable range
+        let stats = BatchStats {
+            total_read: 10_000_000_000_000,   // ~10 TB
+            total_written: 5_000_000_000_000, // ~5 TB
+            total_size: 50_000_000_000_000,   // ~50 TB
+            flist_buildtime: Some(3_600_000), // 1 hour in ms
+            flist_xfertime: Some(86_400_000), // 1 day in ms
+        };
+
+        let mut buf = Vec::new();
+        stats.write_to(&mut buf, 31).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let restored = BatchStats::read_from(&mut cursor, 31).unwrap();
+
+        assert_eq!(stats, restored);
+    }
+
+    #[test]
+    fn test_batch_stats_zero_values() {
+        let stats = BatchStats {
+            total_read: 0,
+            total_written: 0,
+            total_size: 0,
+            flist_buildtime: Some(0),
+            flist_xfertime: Some(0),
+        };
+
+        let mut buf = Vec::new();
+        stats.write_to(&mut buf, 30).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let restored = BatchStats::read_from(&mut cursor, 30).unwrap();
+
+        assert_eq!(stats, restored);
     }
 }

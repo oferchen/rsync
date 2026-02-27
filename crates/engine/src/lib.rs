@@ -87,7 +87,7 @@ pub mod batch {
     //! Re-exports from the [`batch`] crate for backward compatibility.
     pub use batch::{
         BatchConfig, BatchError, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchResult,
-        BatchWriter, DeltaOp, FileEntry,
+        BatchStats, BatchWriter, DeltaOp, FileEntry,
     };
 
     /// Script generation for batch replay.
@@ -113,7 +113,9 @@ pub mod signature {
 }
 
 /// Batch mode types for offline transfer workflows.
-pub use batch::{BatchConfig, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchWriter};
+pub use batch::{
+    BatchConfig, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchStats, BatchWriter,
+};
 
 /// Delta generation and signature layout for rsync block matching.
 pub use delta::{
