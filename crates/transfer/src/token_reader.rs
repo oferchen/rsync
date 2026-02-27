@@ -69,6 +69,7 @@ pub enum LiteralData {
 /// A `TokenReader` is created per-file (reset between files) because the
 /// compressed token decoder maintains per-file inflate state that must be
 /// reset for each new file transfer.
+#[allow(clippy::large_enum_variant)]
 pub enum TokenReader {
     /// Plain 4-byte LE token format (no compression).
     Plain,
