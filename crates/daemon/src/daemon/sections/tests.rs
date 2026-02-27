@@ -21,6 +21,268 @@ fn canonical_option_trims_prefix_and_normalises_case() {
     assert_eq!(canonical_option("   CHECKSUM=md5"), "checksum");
 }
 
+// ==================== refused_option glob pattern tests ====================
+
+#[test]
+fn refused_option_exact_match() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--delete".to_owned()];
+    assert_eq!(refused_option(&module, &options), Some("--delete"));
+}
+
+#[test]
+fn refused_option_exact_no_match() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--compress".to_owned()];
+    assert_eq!(refused_option(&module, &options), None);
+}
+
+#[test]
+fn refused_option_glob_star_suffix() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--delete-before".to_owned()];
+    assert_eq!(refused_option(&module, &options), Some("--delete-before"));
+}
+
+#[test]
+fn refused_option_glob_star_matches_base() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--delete".to_owned()];
+    assert_eq!(refused_option(&module, &options), Some("--delete"));
+}
+
+#[test]
+fn refused_option_glob_star_matches_multiple_variants() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete*".to_owned()],
+        ..Default::default()
+    };
+    for variant in &["--delete", "--delete-before", "--delete-after", "--delete-during"] {
+        let options = vec![variant.to_string()];
+        assert_eq!(
+            refused_option(&module, &options),
+            Some(*variant),
+            "expected '{variant}' to be refused by 'delete*'"
+        );
+    }
+}
+
+#[test]
+fn refused_option_glob_does_not_overmatch() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--compress".to_owned()];
+    assert_eq!(refused_option(&module, &options), None);
+}
+
+#[test]
+fn refused_option_negation_unrefuses() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete*".to_owned(), "!delete-during".to_owned()],
+        ..Default::default()
+    };
+    let options_refused = vec!["--delete-before".to_owned()];
+    assert_eq!(
+        refused_option(&module, &options_refused),
+        Some("--delete-before")
+    );
+
+    let options_allowed = vec!["--delete-during".to_owned()];
+    assert_eq!(refused_option(&module, &options_allowed), None);
+}
+
+#[test]
+fn refused_option_wildcard_all_refuses_non_vital() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--compress".to_owned()];
+    assert_eq!(refused_option(&module, &options), Some("--compress"));
+}
+
+#[test]
+fn refused_option_wildcard_all_spares_vital_server() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--server".to_owned()];
+    assert_eq!(refused_option(&module, &options), None);
+}
+
+#[test]
+fn refused_option_wildcard_all_spares_vital_sender() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--sender".to_owned()];
+    assert_eq!(refused_option(&module, &options), None);
+}
+
+#[test]
+fn refused_option_wildcard_all_spares_vital_dry_run() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--dry-run".to_owned()];
+    assert_eq!(refused_option(&module, &options), None);
+}
+
+#[test]
+fn refused_option_wildcard_all_spares_vital_short_n() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["-n".to_owned()];
+    assert_eq!(refused_option(&module, &options), None);
+}
+
+#[test]
+fn refused_option_wildcard_all_spares_vital_checksum_seed() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--checksum-seed".to_owned()];
+    assert_eq!(refused_option(&module, &options), None);
+}
+
+#[test]
+fn refused_option_vital_can_be_refused_explicitly() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["dry-run".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--dry-run".to_owned()];
+    assert_eq!(refused_option(&module, &options), Some("--dry-run"));
+}
+
+#[test]
+fn refused_option_wildcard_all_with_negation_allowlist() {
+    let module = ModuleDefinition {
+        refuse_options: vec![
+            "*".to_owned(),
+            "!a".to_owned(),
+            "!v".to_owned(),
+            "!compress".to_owned(),
+        ],
+        ..Default::default()
+    };
+    let options_allowed = vec!["--compress".to_owned()];
+    assert_eq!(refused_option(&module, &options_allowed), None);
+
+    let options_refused = vec!["--delete".to_owned()];
+    assert_eq!(
+        refused_option(&module, &options_refused),
+        Some("--delete")
+    );
+}
+
+#[test]
+fn refused_option_multiple_exact_rules() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete".to_owned(), "compress".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--compress".to_owned()];
+    assert_eq!(refused_option(&module, &options), Some("--compress"));
+}
+
+#[test]
+fn refused_option_empty_list_allows_all() {
+    let module = ModuleDefinition {
+        refuse_options: Vec::new(),
+        ..Default::default()
+    };
+    let options = vec!["--delete".to_owned()];
+    assert_eq!(refused_option(&module, &options), None);
+}
+
+#[test]
+fn refused_option_case_insensitive() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["DELETE".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--delete".to_owned()];
+    assert_eq!(refused_option(&module, &options), Some("--delete"));
+}
+
+#[test]
+fn refused_option_question_mark_glob() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete-?".to_owned()],
+        ..Default::default()
+    };
+    // "delete-before" has more than one char after "delete-", so ? won't match
+    let options_no_match = vec!["--delete-before".to_owned()];
+    assert_eq!(refused_option(&module, &options_no_match), None);
+}
+
+#[test]
+fn refused_option_returns_first_refused() {
+    let module = ModuleDefinition {
+        refuse_options: vec!["compress".to_owned(), "delete".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--delete".to_owned(), "--compress".to_owned()];
+    assert_eq!(refused_option(&module, &options), Some("--delete"));
+}
+
+#[test]
+fn is_option_refused_last_rule_wins() {
+    let refuse = vec![
+        "delete".to_owned(),
+        "!delete".to_owned(),
+    ];
+    assert!(!is_option_refused(&refuse, "delete"));
+}
+
+#[test]
+fn is_option_refused_re_refuse_after_negation() {
+    let refuse = vec![
+        "delete*".to_owned(),
+        "!delete-during".to_owned(),
+        "delete-during".to_owned(),
+    ];
+    assert!(is_option_refused(&refuse, "delete-during"));
+}
+
+#[test]
+fn is_vital_option_recognises_all_vitals() {
+    for &vital in VITAL_OPTIONS {
+        assert!(
+            is_vital_option(vital),
+            "expected '{vital}' to be vital"
+        );
+    }
+}
+
+#[test]
+fn is_vital_option_rejects_non_vitals() {
+    assert!(!is_vital_option("delete"));
+    assert!(!is_vital_option("compress"));
+    assert!(!is_vital_option("archive"));
+}
+
 // ==================== ProgramName tests ====================
 
 #[test]
@@ -239,4 +501,3 @@ fn apply_daemon_param_overrides_empty_params() {
     apply_daemon_param_overrides(&[], &mut module).expect("empty params should succeed");
     assert_eq!(module, original);
 }
-
