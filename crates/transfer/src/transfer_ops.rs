@@ -88,6 +88,16 @@ pub struct RequestConfig<'a> {
     ///
     /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` — open device for writing
     pub write_devices: bool,
+    /// Update destination files in place without temp-file + rename (`--inplace`).
+    ///
+    /// When true, delta data is written directly to the destination file.
+    /// The destination file is opened for writing (create if needed) and
+    /// truncated to the target size after delta application completes.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:855-860`: opens destination directly when inplace
+    pub inplace: bool,
     /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
     pub io_uring_policy: fast_io::IoUringPolicy,
 }
@@ -228,10 +238,23 @@ pub fn process_file_response<R: Read>(
     // Decompose pending transfer
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
-    // Use temp+rename for atomicity, matching upstream rsync's `.filename.XXXXXX`
-    // naming convention so retries succeed even if a previous temp file was not
-    // cleaned up.
-    let (file, mut cleanup_guard) = open_tmpfile(&file_path, None)?;
+    // Inplace: write directly to destination. Otherwise temp+rename for atomicity.
+    let (file, mut cleanup_guard, needs_rename) = if ctx.config.inplace {
+        // upstream: receiver.c:855 — do_open(fname, O_WRONLY|O_CREAT, 0600)
+        let f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&file_path)?;
+        (
+            f,
+            crate::temp_guard::TempFileGuard::new(file_path.clone()),
+            false,
+        )
+    } else {
+        let (f, guard) = open_tmpfile(&file_path, None)?;
+        (f, guard, true)
+    };
 
     // Use io_uring when available (Linux 5.6+), falling back to BufWriter.
     // Buffer capacity is adaptive based on file size:
@@ -389,8 +412,15 @@ pub fn process_file_response<R: Read>(
     }
     drop(output);
 
-    // Atomic rename: temp file to final destination.
-    fs::rename(cleanup_guard.path(), &file_path)?;
+    if needs_rename {
+        // Atomic rename: temp file to final destination.
+        fs::rename(cleanup_guard.path(), &file_path)?;
+    } else if ctx.config.inplace {
+        // Inplace: truncate to final size.
+        // upstream: receiver.c:340 — set_file_length(fd, F_LENGTH(file))
+        let file = fs::OpenOptions::new().write(true).open(&file_path)?;
+        file.set_len(total_bytes)?;
+    }
     cleanup_guard.keep();
 
     Ok(total_bytes)
@@ -492,6 +522,7 @@ pub fn process_file_response_streaming<R: Read>(
         checksum_verifier: Some(disk_verifier),
         file_entry,
         is_device_target,
+        is_inplace: ctx.config.inplace,
     });
 
     // Open basis file for block references
@@ -736,6 +767,7 @@ mod tests {
             use_sparse: false,
             do_fsync: false,
             write_devices: false,
+            inplace: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
         };
         let debug_str = format!("{config:?}");

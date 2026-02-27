@@ -1547,6 +1547,7 @@ impl ReceiverContext {
             do_fsync: self.config.fsync,
 
             write_devices: self.config.write_devices,
+            inplace: self.config.inplace,
             io_uring_policy: self.config.io_uring_policy,
         };
 
@@ -1695,6 +1696,7 @@ impl ReceiverContext {
             do_fsync: self.config.fsync,
 
             write_devices: self.config.write_devices,
+            inplace: self.config.inplace,
             io_uring_policy: self.config.io_uring_policy,
         };
 
@@ -2924,6 +2926,7 @@ mod tests {
             max_file_size: None,
             files_from_path: None,
             from0: false,
+            inplace: false,
         }
     }
 
@@ -3826,6 +3829,7 @@ mod tests {
             max_file_size: None,
             files_from_path: None,
             from0: false,
+            inplace: false,
         }
     }
 
