@@ -239,6 +239,23 @@ impl PipelinedReceiver {
         Ok(())
     }
 
+    /// Drains newly detected redo indices without disabling redo mode.
+    ///
+    /// Call this after `drain_ready_results` or `drain_all_results` to
+    /// retrieve file indices that failed checksum verification since the
+    /// last drain. The caller should send `MSG_REDO` for each index over
+    /// the multiplexed writer to signal the generator.
+    ///
+    /// Unlike [`Self::take_redo_indices`], this does NOT disable redo mode.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:970-974`: `send_msg_int(MSG_REDO, ndx)` sent immediately
+    ///   when a checksum mismatch is detected during phase 1.
+    pub fn drain_new_redo_indices(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.redo_indices)
+    }
+
     /// Returns the list of file indices that need redo (failed checksum in phase 1).
     ///
     /// After calling this, the redo list is empty and `redo_enabled` is set to
