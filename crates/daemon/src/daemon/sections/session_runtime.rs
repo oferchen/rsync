@@ -305,7 +305,8 @@ fn handle_binary_session_internal(
 
     let mut client_bytes = [0u8; 4];
     stream.read_exact(&mut client_bytes)?;
-    let client_raw = u32::from_be_bytes(client_bytes);
+    // upstream: io.c read_int() uses IVAL which is little-endian
+    let client_raw = u32::from_le_bytes(client_bytes);
     ProtocolVersion::from_peer_advertisement(client_raw).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -313,7 +314,8 @@ fn handle_binary_session_internal(
         )
     })?;
 
-    let server_bytes = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
+    // upstream: io.c write_int() uses SIVAL which is little-endian
+    let server_bytes = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
     stream.write_all(&server_bytes)?;
     stream.flush()?;
 

@@ -141,7 +141,7 @@ impl<R> SessionHandshake<R> {
     ///
     /// impl Loopback {
     ///     fn new(advertised: ProtocolVersion) -> Self {
-    ///         let bytes = u32::from(advertised.as_u8()).to_be_bytes();
+    ///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
     ///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
     ///     }
     /// }
@@ -290,14 +290,14 @@ impl<R> SessionHandshake<R> {
     /// }
     ///
     /// let protocol = ProtocolVersion::from_supported(31).unwrap();
-    /// let transport = Loopback::new(u32::from(protocol.as_u8()).to_be_bytes());
+    /// let transport = Loopback::new(u32::from(protocol.as_u8()).to_le_bytes());
     /// let raw = negotiate_session(transport, protocol)
     ///     .unwrap()
     ///     .into_inner();
     ///
     /// // The returned transport is the original stream, including any bytes the
     /// // client wrote while negotiating.
-    /// assert_eq!(raw.writes(), &u32::from(protocol.as_u8()).to_be_bytes());
+    /// assert_eq!(raw.writes(), &u32::from(protocol.as_u8()).to_le_bytes());
     /// ```
     #[must_use]
     pub fn into_inner(self) -> R {
@@ -511,8 +511,8 @@ mod tests {
 
     fn create_binary_handshake() -> BinaryHandshake<Cursor<Vec<u8>>> {
         // Binary negotiation is triggered by first byte != '@'
-        // Protocol 31 as BE u32: 0x00 0x00 0x00 0x1f
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        // Protocol 31 as LE u32: 0x1f 0x00 0x00 0x00
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         BinaryHandshake::from_components(

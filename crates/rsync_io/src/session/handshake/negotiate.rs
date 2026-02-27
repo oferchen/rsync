@@ -163,7 +163,7 @@ where
 ///
 /// impl Loopback {
 ///     fn new(advertised: ProtocolVersion) -> Self {
-///         let bytes = u32::from(advertised.as_u8()).to_be_bytes();
+///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
 ///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
 ///     }
 /// }
