@@ -331,6 +331,11 @@ fn process_file(
                 // Atomic rename (only for temp+rename path).
                 if needs_rename {
                     fs::rename(cleanup_guard.path(), &begin.file_path)?;
+                } else if begin.is_inplace {
+                    // Inplace: truncate to final size.
+                    // upstream: receiver.c:340 — set_file_length(fd, F_LENGTH(file))
+                    let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
+                    file.set_len(bytes_written)?;
                 }
                 cleanup_guard.keep();
 
@@ -445,6 +450,10 @@ fn process_whole_file(
 
     if needs_rename {
         fs::rename(cleanup_guard.path(), &begin.file_path)?;
+    } else if begin.is_inplace {
+        // Inplace: truncate to final size.
+        let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
+        file.set_len(bytes_written)?;
     }
     cleanup_guard.keep();
 
@@ -473,7 +482,7 @@ fn process_whole_file(
     })
 }
 
-/// Opens the output file using device write or temp+rename strategy.
+/// Opens the output file using device write, inplace, or temp+rename strategy.
 ///
 /// Mirrors the logic in [`crate::transfer_ops::process_file_response`].
 ///
@@ -483,14 +492,30 @@ fn process_whole_file(
 /// (no create, no truncate). Device files cannot use temp+rename since you cannot
 /// rename onto a device node.
 ///
+/// # Inplace mode
+///
+/// When `begin.is_inplace` is set, the destination file is opened directly for
+/// writing (created if absent). No temp file or rename. The file is truncated to
+/// target size after delta application by the caller.
+///
 /// # Upstream Reference
 ///
 /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` — inplace write to device
+/// - `receiver.c:855-860`: opens destination directly when inplace
 fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard, bool)> {
     if begin.is_device_target {
         // Device files: open existing device for writing (no create, no truncate).
         // Uses inplace semantics — no temp file + rename.
         let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
+        Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
+    } else if begin.is_inplace {
+        // Inplace: open/create destination directly, no temp file.
+        // upstream: receiver.c:855 — do_open(fname, O_WRONLY|O_CREAT, 0600)
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&begin.file_path)?;
         Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
     } else {
         let (file, guard) = open_tmpfile(&begin.file_path, None)?;
@@ -533,6 +558,7 @@ mod tests {
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
+                is_inplace: false,
             })))
             .unwrap();
 
@@ -568,6 +594,7 @@ mod tests {
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
+                is_inplace: false,
             })))
             .unwrap();
 
@@ -607,6 +634,7 @@ mod tests {
                     checksum_verifier: None,
                     file_entry: None,
                     is_device_target: false,
+                    is_inplace: false,
                 })))
                 .unwrap();
 
@@ -653,6 +681,7 @@ mod tests {
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
+                is_inplace: false,
             })))
             .unwrap();
 
@@ -685,6 +714,7 @@ mod tests {
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
+                is_inplace: false,
             })))
             .unwrap();
 
@@ -726,6 +756,7 @@ mod tests {
                     checksum_verifier: None,
                     file_entry: None,
                     is_device_target: false,
+                    is_inplace: false,
                 }),
                 data: b"whole dat".to_vec(),
             })
