@@ -10,21 +10,32 @@ use crate::signature::{SignatureAlgorithm, SignatureError, generate_file_signatu
 
 use protocol::ProtocolVersion;
 
-/// Returns `true` when the destination modification time is strictly newer
-/// than the source, accounting for the `modify_window` tolerance.
+/// Returns `true` when `--update` should skip this file because the
+/// destination is not older than the source by more than `modify_window`.
 ///
-/// Timestamps that differ by no more than `modify_window` are treated as
-/// equal, so the destination is **not** considered newer in that case.
-/// This matches upstream rsync where `--modify-window` affects `--update`.
+/// Mirrors upstream `generator.c:2502`:
+/// ```c
+/// if (update_only > 0 && statret == 0
+///     && file->modtime - sx.st.st_mtime < modify_window)
+/// ```
+///
+/// With `modify_window == 0` (the default), the destination must be strictly
+/// newer to trigger a skip. With `modify_window > 0`, timestamps within the
+/// tolerance are treated as equal, so the source must be newer by at least
+/// `modify_window` for the copy to proceed.
 pub(crate) fn destination_is_newer(
     source: &fs::Metadata,
     destination: &fs::Metadata,
     modify_window: Duration,
 ) -> bool {
     match (source.modified(), destination.modified()) {
-        (Ok(src), Ok(dst)) => match dst.duration_since(src) {
-            Ok(diff) => diff > modify_window,
-            Err(_) => false,
+        (Ok(src), Ok(dst)) => match src.duration_since(dst) {
+            // Source is newer than destination. Skip only when the
+            // difference is strictly less than the modify window.
+            // upstream: (source - dest) < modify_window
+            Ok(diff) => diff < modify_window,
+            // Source is older than destination — always skip.
+            Err(_) => true,
         },
         _ => false,
     }
@@ -396,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn destination_is_not_newer_when_within_modify_window() {
+    fn destination_is_newer_when_dest_slightly_newer_within_window() {
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
         let dest = temp.path().join("dest.txt");
@@ -411,8 +422,8 @@ mod tests {
 
         let src_meta = fs::metadata(&source).expect("meta");
         let dst_meta = fs::metadata(&dest).expect("meta");
-        // With 1-second window, 0.5s difference should NOT be considered newer
-        assert!(!destination_is_newer(
+        // upstream: source - dest < 0 < window -> skip (dest is genuinely newer)
+        assert!(destination_is_newer(
             &src_meta,
             &dst_meta,
             Duration::from_secs(1)
@@ -420,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn destination_is_newer_when_outside_modify_window() {
+    fn destination_is_newer_when_dest_far_newer_with_window() {
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
         let dest = temp.path().join("dest.txt");
@@ -435,7 +446,7 @@ mod tests {
 
         let src_meta = fs::metadata(&source).expect("meta");
         let dst_meta = fs::metadata(&dest).expect("meta");
-        // With 1-second window, 5s difference IS considered newer
+        // upstream: source - dest = -5 < 1 -> skip (dest is newer)
         assert!(destination_is_newer(
             &src_meta,
             &dst_meta,
@@ -444,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn destination_is_not_newer_at_exact_window_boundary() {
+    fn destination_is_newer_at_exact_window_boundary_dest_ahead() {
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
         let dest = temp.path().join("dest.txt");
@@ -459,7 +470,102 @@ mod tests {
 
         let src_meta = fs::metadata(&source).expect("meta");
         let dst_meta = fs::metadata(&dest).expect("meta");
-        // With 2-second window, exactly 2s difference is NOT newer (at boundary)
+        // upstream: source - dest = -2 < 2 -> skip (dest is newer)
+        assert!(destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            Duration::from_secs(2)
+        ));
+    }
+
+    #[test]
+    fn destination_is_newer_when_equal_with_nonzero_window() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        fs::write(&source, b"s").expect("write");
+        fs::write(&dest, b"d").expect("write");
+
+        // Timestamps are exactly equal
+        let same = FileTime::from_unix_time(1_700_000_000, 0);
+        set_file_mtime(&source, same).expect("set");
+        set_file_mtime(&dest, same).expect("set");
+
+        let src_meta = fs::metadata(&source).expect("meta");
+        let dst_meta = fs::metadata(&dest).expect("meta");
+        // upstream: source - dest = 0 < 2 -> skip (within window, equal)
+        assert!(destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            Duration::from_secs(2)
+        ));
+    }
+
+    #[test]
+    fn destination_is_newer_when_source_slightly_newer_within_window() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        fs::write(&source, b"s").expect("write");
+        fs::write(&dest, b"d").expect("write");
+
+        // Source is 1 second newer than dest, window is 2
+        let older = FileTime::from_unix_time(1_700_000_000, 0);
+        let slightly_newer = FileTime::from_unix_time(1_700_000_001, 0);
+        set_file_mtime(&source, slightly_newer).expect("set");
+        set_file_mtime(&dest, older).expect("set");
+
+        let src_meta = fs::metadata(&source).expect("meta");
+        let dst_meta = fs::metadata(&dest).expect("meta");
+        // upstream: source - dest = 1 < 2 -> skip (within window)
+        assert!(destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            Duration::from_secs(2)
+        ));
+    }
+
+    #[test]
+    fn destination_is_not_newer_when_source_at_exact_window_boundary() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        fs::write(&source, b"s").expect("write");
+        fs::write(&dest, b"d").expect("write");
+
+        // Source is exactly 2 seconds newer than dest, window is 2
+        let older = FileTime::from_unix_time(1_700_000_000, 0);
+        let exactly_at_boundary = FileTime::from_unix_time(1_700_000_002, 0);
+        set_file_mtime(&source, exactly_at_boundary).expect("set");
+        set_file_mtime(&dest, older).expect("set");
+
+        let src_meta = fs::metadata(&source).expect("meta");
+        let dst_meta = fs::metadata(&dest).expect("meta");
+        // upstream: source - dest = 2, NOT < 2 -> don't skip (source definitively newer)
+        assert!(!destination_is_newer(
+            &src_meta,
+            &dst_meta,
+            Duration::from_secs(2)
+        ));
+    }
+
+    #[test]
+    fn destination_is_not_newer_when_source_beyond_window() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        fs::write(&source, b"s").expect("write");
+        fs::write(&dest, b"d").expect("write");
+
+        // Source is 5 seconds newer than dest, window is 2
+        let older = FileTime::from_unix_time(1_700_000_000, 0);
+        let much_newer = FileTime::from_unix_time(1_700_000_005, 0);
+        set_file_mtime(&source, much_newer).expect("set");
+        set_file_mtime(&dest, older).expect("set");
+
+        let src_meta = fs::metadata(&source).expect("meta");
+        let dst_meta = fs::metadata(&dest).expect("meta");
+        // upstream: source - dest = 5, NOT < 2 -> don't skip (source definitively newer)
         assert!(!destination_is_newer(
             &src_meta,
             &dst_meta,
