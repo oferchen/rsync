@@ -26,26 +26,25 @@
 //!
 //! # Batch File Format
 //!
-//! The batch file format matches upstream rsync's binary format for compatibility:
+//! The batch file format matches upstream rsync's binary format for compatibility.
+//! Upstream rsync creates the batch file by teeing (copying) the protocol stream
+//! to a file, not by serializing a custom format.
 //!
 //! 1. **Header** ([`BatchHeader`]):
-//!    - Stream flags bitmap (i32) - see [`BatchFlags`]
-//!    - Protocol version (i32)
+//!    - Stream flags bitmap (i32) -- `batch.c:write_stream_flags()`
+//!    - Protocol version (i32) -- `io.c:start_write_batch()`
 //!    - Compat flags (varint, protocol >= 30)
 //!    - Checksum seed (i32)
 //!
-//! 2. **File list** ([`FileEntry`]):
-//!    - Encoded using the standard flist format
-//!    - Includes all file metadata (path, mode, size, mtime, uid/gid)
+//! 2. **Protocol stream body** (raw tee):
+//!    - File list data in standard flist wire format
+//!    - Delta operations (copy/literal tokens) for each transferred file
+//!    - This is the exact byte stream that would flow over the protocol
+//!      connection, captured via `write_batch_monitor_in`/`_out` in `io.c`
 //!
-//! 3. **Delta operations** ([`DeltaOp`]):
-//!    - Copy and literal operations for each file
-//!    - Checksums for verification
-//!
-//! 4. **Statistics** (at end):
-//!    - Total bytes read/written
-//!    - Transfer size
-//!    - Timing information
+//! 3. **Statistics** ([`BatchStats`], at end):
+//!    - Total bytes read/written/size (varlong30 with min_bytes=3)
+//!    - File list build/transfer time (protocol >= 29)
 //!
 //! # Shell Script
 //!
@@ -207,9 +206,17 @@ pub use format::BatchFlags;
 /// stream flags. Used to validate batch file compatibility before replay.
 pub use format::BatchHeader;
 
-/// Metadata for a single file entry in the batch file list.
+/// Transfer statistics recorded at the end of a batch file.
 ///
-/// Includes path, mode, size, mtime, uid/gid, and other attributes.
+/// Contains total bytes read/written, total file size, and optional
+/// file list timing information. Written using `varlong30` encoding
+/// to match upstream rsync's `main.c` stats serialization.
+pub use format::BatchStats;
+
+/// File metadata for batch mode tracking.
+///
+/// Note: upstream rsync batch files use raw protocol stream bytes, not
+/// custom file entry serialization. This type is for internal tracking.
 pub use format::FileEntry;
 
 /// Reader for replaying recorded batch files.
