@@ -16,7 +16,8 @@ use crate::frontend::{
     arguments::{ParsedArgs, StopRequest},
     execution::{
         chown::ParsedChown, extract_operands, load_file_list_operands, operand_is_remote,
-        parse_chown_argument, resolve_file_list_entries, resolve_iconv_setting,
+        parse_chown_argument, resolve_file_list_entries, resolve_files_from_source,
+        resolve_iconv_setting,
     },
 };
 use core::{client::HumanReadableMode, message::Role, rsync_error};
@@ -656,6 +657,8 @@ where
             .into_iter()
             .map(|s| s.to_string_lossy().into_owned())
             .collect(),
+        files_from: resolve_files_from_source(&files_from),
+        from0,
     };
 
     let builder = config::build_base_config(config_inputs);

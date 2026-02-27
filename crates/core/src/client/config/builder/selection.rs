@@ -48,6 +48,32 @@ impl ClientConfigBuilder {
         self.implied_dirs = Some(implied);
         self
     }
+
+    /// Sets the `--files-from` source configuration.
+    ///
+    /// When active, the file list is read from the specified source rather
+    /// than from CLI positional arguments. For remote transfers, this affects
+    /// how arguments are forwarded to the server process.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2447-2490` — files_from parsing
+    /// - `options.c:2944-2956` — server_options() forwarding
+    #[must_use]
+    pub fn files_from(mut self, source: super::FilesFromSource) -> Self {
+        self.files_from = source;
+        self
+    }
+
+    /// Enables or disables NUL-delimited mode for `--files-from`.
+    ///
+    /// When true, the file list uses NUL bytes as delimiters instead of
+    /// newlines. This corresponds to `--from0` / `-0`.
+    #[must_use]
+    pub const fn from0(mut self, value: bool) -> Self {
+        self.from0 = value;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -235,5 +261,55 @@ mod tests {
     fn default_recursive_is_false() {
         let config = builder().build();
         assert!(!config.recursive());
+    }
+
+    #[test]
+    fn files_from_sets_local_file() {
+        use std::path::PathBuf;
+        let config = builder()
+            .files_from(super::super::FilesFromSource::LocalFile(PathBuf::from(
+                "/tmp/list",
+            )))
+            .build();
+        assert_eq!(
+            *config.files_from(),
+            super::super::FilesFromSource::LocalFile(PathBuf::from("/tmp/list"))
+        );
+    }
+
+    #[test]
+    fn files_from_sets_remote_file() {
+        let config = builder()
+            .files_from(super::super::FilesFromSource::RemoteFile(
+                "/remote/list".to_owned(),
+            ))
+            .build();
+        assert!(config.files_from().is_remote());
+    }
+
+    #[test]
+    fn files_from_sets_stdin() {
+        let config = builder()
+            .files_from(super::super::FilesFromSource::Stdin)
+            .build();
+        assert!(config.files_from().is_active());
+    }
+
+    #[test]
+    fn files_from_default_is_none() {
+        let config = builder().build();
+        assert!(!config.files_from().is_active());
+    }
+
+    #[test]
+    fn from0_sets_flag() {
+        let config = builder().from0(true).build();
+        assert!(config.from0());
+    }
+
+    #[test]
+    fn from0_default_is_false() {
+        let config = builder().build();
+        assert!(!config.from0());
     }
 }

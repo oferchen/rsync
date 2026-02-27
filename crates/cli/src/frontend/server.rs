@@ -175,6 +175,8 @@ where
     config.write_devices = long_flags.write_devices;
     config.trust_sender = long_flags.trust_sender;
     config.qsort = long_flags.qsort;
+    config.files_from_path = long_flags.files_from;
+    config.from0 = long_flags.from0;
 
     // Apply value-bearing flags, returning parse errors to the client.
     // upstream: options.c — server_options() sends these as `--flag=value`.
@@ -281,6 +283,8 @@ struct ServerLongFlags {
     max_size: Option<String>,
     stop_at: Option<String>,
     stop_after: Option<String>,
+    files_from: Option<String>,
+    from0: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -304,6 +308,8 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         max_size: None,
         stop_at: None,
         stop_after: None,
+        files_from: None,
+        from0: false,
     };
 
     for arg in args {
@@ -319,6 +325,7 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--write-devices" => flags.write_devices = true,
             "--trust-sender" => flags.trust_sender = true,
             "--qsort" => flags.qsort = true,
+            "--from0" => flags.from0 = true,
             _ => {
                 // Value-bearing flags use `--flag=value` syntax.
                 if let Some(value) = s.strip_prefix("--checksum-seed=") {
@@ -333,6 +340,8 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
                     flags.stop_at = Some(value.to_owned());
                 } else if let Some(value) = s.strip_prefix("--stop-after=") {
                     flags.stop_after = Some(value.to_owned());
+                } else if let Some(value) = s.strip_prefix("--files-from=") {
+                    flags.files_from = Some(value.to_owned());
                 }
             }
         }
@@ -358,6 +367,7 @@ fn is_known_server_long_flag(arg: &str) -> bool {
             | "--write-devices"
             | "--trust-sender"
             | "--qsort"
+            | "--from0"
     ) || arg == "-s"
         || arg.starts_with("--checksum-seed=")
         || arg.starts_with("--checksum-choice=")
@@ -365,6 +375,7 @@ fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--max-size=")
         || arg.starts_with("--stop-at=")
         || arg.starts_with("--stop-after=")
+        || arg.starts_with("--files-from=")
 }
 
 /// Parses a `--checksum-seed=NUM` value from the server argument list.
@@ -967,6 +978,7 @@ mod tests {
         assert!(is_known_server_long_flag("--write-devices"));
         assert!(is_known_server_long_flag("--trust-sender"));
         assert!(is_known_server_long_flag("--qsort"));
+        assert!(is_known_server_long_flag("--from0"));
         assert!(is_known_server_long_flag("-s"));
     }
 
@@ -978,6 +990,8 @@ mod tests {
         assert!(is_known_server_long_flag("--max-size=1G"));
         assert!(is_known_server_long_flag("--stop-at=2099-12-31"));
         assert!(is_known_server_long_flag("--stop-after=60"));
+        assert!(is_known_server_long_flag("--files-from=-"));
+        assert!(is_known_server_long_flag("--files-from=/path/to/list"));
     }
 
     #[test]
@@ -1098,5 +1112,61 @@ mod tests {
         let result = parse_server_stop_at("2099-12-31T23:59");
         // May fail due to local offset issues in test env, but format should be ok
         assert!(result.is_ok() || result.is_err());
+    }
+
+    // ==================== files-from and from0 flag tests ====================
+
+    #[test]
+    fn long_flags_files_from_stdin() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--files-from=-"),
+            OsString::from("--from0"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert_eq!(flags.files_from.as_deref(), Some("-"));
+        assert!(flags.from0);
+    }
+
+    #[test]
+    fn long_flags_files_from_path() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--files-from=/tmp/list.txt"),
+        ];
+        let flags = parse_server_long_flags(&args);
+        assert_eq!(flags.files_from.as_deref(), Some("/tmp/list.txt"));
+        assert!(!flags.from0);
+    }
+
+    #[test]
+    fn long_flags_from0_without_files_from() {
+        let args = vec![OsString::from("--server"), OsString::from("--from0")];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.from0);
+        assert!(flags.files_from.is_none());
+    }
+
+    #[test]
+    fn long_flags_default_files_from() {
+        let args = vec![OsString::from("--server")];
+        let flags = parse_server_long_flags(&args);
+        assert!(flags.files_from.is_none());
+        assert!(!flags.from0);
+    }
+
+    #[test]
+    fn parse_server_args_skips_files_from_and_from0() {
+        let args = vec![
+            OsString::from("--server"),
+            OsString::from("--files-from=-"),
+            OsString::from("--from0"),
+            OsString::from("-logDtpr"),
+            OsString::from("."),
+            OsString::from("dest/"),
+        ];
+        let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+        assert_eq!(flags, "-logDtpr");
+        assert_eq!(pos_args, vec![OsString::from("dest/")]);
     }
 }
