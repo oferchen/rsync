@@ -59,8 +59,8 @@ mod workspace;
 
 use crate::cli::{Cli, Command, CommandExt};
 use crate::commands::{
-    benchmark, branding, doc_package, docs, enforce_limits, interop, no_binaries, no_placeholders,
-    package, preflight, readme_version, release, sbom, test,
+    benchmark, branding, doc_package, docs, enforce_limits, interop, man_page, no_binaries,
+    no_placeholders, package, preflight, readme_version, release, sbom, test,
 };
 use crate::error::TaskError;
 use crate::task::TreeRenderer;
@@ -107,6 +107,7 @@ fn run_command(cli: Cli) -> Result<(), TaskError> {
         Command::DocPackage(args) => doc_package::execute(&workspace, args.into()),
         Command::EnforceLimits(args) => enforce_limits::execute(&workspace, args.into()),
         Command::Interop(args) => interop::execute(&workspace, args.into()),
+        Command::ManPage => man_page::execute(&workspace),
         Command::NoBinaries => no_binaries::execute(&workspace),
         Command::NoPlaceholders => no_placeholders::execute(&workspace),
         Command::Package(args) => package::execute(&workspace, args.into()),

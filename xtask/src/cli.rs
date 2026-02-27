@@ -46,6 +46,9 @@ pub enum Command {
     /// Validate interoperability with upstream rsync.
     Interop(InteropArgs),
 
+    /// Generate man page from markdown source using pandoc.
+    ManPage,
+
     /// Assert the git index contains no binary artifacts.
     NoBinaries,
 
@@ -394,6 +397,7 @@ impl CommandExt for Command {
             Command::DocPackage(args) => args.as_task(),
             Command::EnforceLimits(_) => Box::new(EnforceLimitsTask),
             Command::Interop(args) => args.as_task(),
+            Command::ManPage => Box::new(ManPageTask),
             Command::NoBinaries => Box::new(NoBinariesTask),
             Command::NoPlaceholders => Box::new(NoPlaceholdersTask),
             Command::Package(args) => args.as_task(),
@@ -507,6 +511,23 @@ impl Task for BrandingTask {
 
     fn explicit_duration(&self) -> Option<Duration> {
         Some(Duration::from_secs(2))
+    }
+}
+
+/// Task for man page generation.
+struct ManPageTask;
+
+impl Task for ManPageTask {
+    fn name(&self) -> &'static str {
+        "man-page"
+    }
+
+    fn description(&self) -> &'static str {
+        "Generate man page from markdown source"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(5))
     }
 }
 
