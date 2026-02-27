@@ -59,7 +59,7 @@ impl<R> SessionHandshakeParts<R> {
     /// }
     ///
     /// let remote = ProtocolVersion::from_supported(31).unwrap();
-    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_be_bytes());
+    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
     /// let parts = negotiate_session(transport, ProtocolVersion::NEWEST)
     ///     .unwrap()
     ///     .into_stream_parts();
@@ -251,7 +251,7 @@ mod tests {
 
     // Helper to create binary handshake parts
     fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         SessionHandshakeParts::from_binary_components(
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn remote_protocol_was_clamped_true_for_unsupported_binary() {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let proto30 = ProtocolVersion::from_supported(30).unwrap();
@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn local_protocol_was_capped_true_when_negotiated_lower() {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let proto30 = ProtocolVersion::from_supported(30).unwrap();

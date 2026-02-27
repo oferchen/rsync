@@ -62,7 +62,7 @@ mod tests {
 
     // Helper to create a BinaryHandshake
     fn create_binary_handshake() -> BinaryHandshake<Cursor<Vec<u8>>> {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         BinaryHandshake::from_components(
@@ -87,7 +87,7 @@ mod tests {
 
     // Helper to create SessionHandshakeParts (binary)
     fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         SessionHandshakeParts::from_binary_components(
