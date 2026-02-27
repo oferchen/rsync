@@ -33,12 +33,16 @@ use protocol::wire::file_entry_decode::decode_rdev;
 /// Roundtrip a single device entry through FileListWriter/FileListReader.
 fn roundtrip_device(entry: &FileEntry, protocol: ProtocolVersion) -> FileEntry {
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
     writer.write_entry(&mut buf, entry).expect("write failed");
     writer.write_end(&mut buf, None).expect("write end failed");
 
     let mut cursor = Cursor::new(&buf);
-    let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+    let mut reader = FileListReader::new(protocol)
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
     reader
         .read_entry(&mut cursor)
         .expect("read failed")
@@ -48,14 +52,18 @@ fn roundtrip_device(entry: &FileEntry, protocol: ProtocolVersion) -> FileEntry {
 /// Roundtrip multiple device entries through FileListWriter/FileListReader.
 fn roundtrip_entries(entries: &[FileEntry], protocol: ProtocolVersion) -> Vec<FileEntry> {
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
     for entry in entries {
         writer.write_entry(&mut buf, entry).expect("write failed");
     }
     writer.write_end(&mut buf, None).expect("write end failed");
 
     let mut cursor = Cursor::new(&buf);
-    let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+    let mut reader = FileListReader::new(protocol)
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
     let mut decoded = Vec::new();
     while let Some(entry) = reader.read_entry(&mut cursor).expect("read failed") {
         decoded.push(entry);
@@ -589,7 +597,9 @@ fn flist_same_major_compression_produces_smaller_encoding() {
     let protocol = ProtocolVersion::NEWEST;
 
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
 
     let entry1 = make_block_device("sda", 8, 0);
     let entry2 = make_block_device("sdb", 8, 16);
