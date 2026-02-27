@@ -40,7 +40,6 @@
 //! }
 //! ```
 
-#[cfg(not(feature = "art"))]
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::ffi::OsString;
@@ -52,197 +51,31 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ART-backed stat cache
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Cache for batched stat operations, backed by a Versioned Adaptive Radix Tree.
-///
-/// Uses prefix-compressed ART storage for better cache locality on
-/// deep directory trees where paths share long common prefixes.
-/// Thread-safe via interior mutability (`Mutex`).
-#[cfg(feature = "art")]
-pub struct BatchedStatCache {
-    tree: Arc<
-        Mutex<
-            rart::versioned_tree::VersionedAdaptiveRadixTree<
-                rart::keys::vector_key::VectorKey,
-                Arc<fs::Metadata>,
-            >,
-        >,
-    >,
-    /// Separate entry count since `VersionedAdaptiveRadixTree` has no `len()`.
-    count: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-#[cfg(feature = "art")]
-impl std::fmt::Debug for BatchedStatCache {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BatchedStatCache")
-            .field(
-                "count",
-                &self.count.load(std::sync::atomic::Ordering::Relaxed),
-            )
-            .finish_non_exhaustive()
-    }
-}
-
-#[cfg(feature = "art")]
-impl Default for BatchedStatCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(feature = "art")]
-impl BatchedStatCache {
-    /// Creates a new empty cache.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            tree: Arc::new(Mutex::new(
-                rart::versioned_tree::VersionedAdaptiveRadixTree::new(),
-            )),
-            count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-        }
-    }
-
-    /// Creates a cache (capacity hint is ignored; ART allocates adaptively).
-    #[must_use]
-    pub fn with_capacity(_capacity: usize) -> Self {
-        Self::new()
-    }
-
-    /// Gets cached metadata for a path, if present.
-    #[must_use]
-    pub fn get(&self, path: &Path) -> Option<Arc<fs::Metadata>> {
-        let key = crate::art_file_list::path_to_art_key(path.as_os_str().as_encoded_bytes());
-        self.tree.lock().unwrap().get_k(&key).cloned()
-    }
-
-    /// Inserts metadata into the cache.
-    pub fn insert(&self, path: PathBuf, metadata: fs::Metadata) {
-        let key = crate::art_file_list::path_to_art_key(path.as_os_str().as_encoded_bytes());
-        let replaced = self.tree.lock().unwrap().insert(key, Arc::new(metadata));
-        if !replaced {
-            self.count
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-
-    /// Checks the cache and fetches if not present.
-    ///
-    /// Returns cached metadata if available, otherwise performs stat and caches.
-    pub fn get_or_fetch(
-        &self,
-        path: &Path,
-        follow_symlinks: bool,
-    ) -> io::Result<Arc<fs::Metadata>> {
-        if let Some(metadata) = self.get(path) {
-            return Ok(metadata);
-        }
-
-        let metadata = if follow_symlinks {
-            fs::metadata(path)?
-        } else {
-            fs::symlink_metadata(path)?
-        };
-
-        let metadata = Arc::new(metadata);
-        let key = crate::art_file_list::path_to_art_key(path.as_os_str().as_encoded_bytes());
-        let replaced = self.tree.lock().unwrap().insert(key, Arc::clone(&metadata));
-        if !replaced {
-            self.count
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        Ok(metadata)
-    }
-
-    /// Fetches metadata for multiple paths in parallel.
-    #[cfg(feature = "parallel")]
-    pub fn stat_batch(
-        &self,
-        paths: &[&Path],
-        follow_symlinks: bool,
-    ) -> Vec<io::Result<Arc<fs::Metadata>>> {
-        paths
-            .par_iter()
-            .map(|path| self.get_or_fetch(path, follow_symlinks))
-            .collect()
-    }
-
-    /// Fetches metadata for multiple paths sequentially.
-    #[cfg(not(feature = "parallel"))]
-    pub fn stat_batch(
-        &self,
-        paths: &[&Path],
-        follow_symlinks: bool,
-    ) -> Vec<io::Result<Arc<fs::Metadata>>> {
-        paths
-            .iter()
-            .map(|path| self.get_or_fetch(path, follow_symlinks))
-            .collect()
-    }
-
-    /// Clears all cached metadata.
-    pub fn clear(&self) {
-        *self.tree.lock().unwrap() = rart::versioned_tree::VersionedAdaptiveRadixTree::new();
-        self.count.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Returns the number of cached entries.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.count.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Returns true if the cache is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-#[cfg(feature = "art")]
-impl Clone for BatchedStatCache {
-    fn clone(&self) -> Self {
-        Self {
-            tree: Arc::clone(&self.tree),
-            count: Arc::clone(&self.count),
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sharded HashMap-backed stat cache (default)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Number of shards for the stat cache.
 ///
 /// 16 shards provides good parallelism without excessive memory overhead.
 /// Must be a power of 2 for efficient modular hashing.
-#[cfg(not(feature = "art"))]
 const SHARD_COUNT: usize = 16;
+
+/// A single shard in the stat cache.
+type StatShard = Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>;
 
 /// Cache for batched stat operations.
 ///
 /// Uses sharded locking (16 independent `Mutex<HashMap>` shards) to reduce
 /// contention under parallel stat workloads. Paths are routed to shards via
 /// a fast hash of their byte representation.
-#[cfg(not(feature = "art"))]
 #[derive(Debug)]
 pub struct BatchedStatCache {
-    shards: Arc<[Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>; SHARD_COUNT]>,
+    shards: Arc<[StatShard; SHARD_COUNT]>,
 }
 
-#[cfg(not(feature = "art"))]
 impl Default for BatchedStatCache {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(not(feature = "art"))]
 impl BatchedStatCache {
     /// Creates a new empty cache with 16 shards.
     #[must_use]
@@ -375,7 +208,6 @@ impl BatchedStatCache {
     }
 }
 
-#[cfg(not(feature = "art"))]
 impl Clone for BatchedStatCache {
     fn clone(&self) -> Self {
         Self {
@@ -586,7 +418,6 @@ pub struct FstatResult {
 #[cfg(unix)]
 impl FstatResult {
     /// Constructs from a raw `libc::stat` buffer.
-    #[allow(clippy::unnecessary_cast)]
     fn from_stat(stat_buf: &libc::stat) -> Self {
         let rdev = stat_buf.st_rdev as u64;
         Self {
@@ -605,21 +436,18 @@ impl FstatResult {
 
     /// Returns true if this entry is a regular file.
     #[must_use]
-    #[allow(clippy::unnecessary_cast)]
     pub fn is_file(&self) -> bool {
         (self.mode & libc::S_IFMT as u32) == libc::S_IFREG as u32
     }
 
     /// Returns true if this entry is a directory.
     #[must_use]
-    #[allow(clippy::unnecessary_cast)]
     pub fn is_dir(&self) -> bool {
         (self.mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32
     }
 
     /// Returns true if this entry is a symbolic link.
     #[must_use]
-    #[allow(clippy::unnecessary_cast)]
     pub fn is_symlink(&self) -> bool {
         (self.mode & libc::S_IFMT as u32) == libc::S_IFLNK as u32
     }
