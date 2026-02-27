@@ -415,13 +415,30 @@ pub struct FstatResult {
     pub rdev_minor: u32,
 }
 
+/// Widens a platform-specific integer to `u32`.
+///
+/// `libc::mode_t` and the `S_IF*` constants are `u16` on macOS but `u32` on
+/// Linux. A bare `.into()` or `u32::from()` triggers `useless_conversion` on
+/// Linux while `as u32` triggers `unnecessary_cast`. This generic helper
+/// avoids both lints because clippy does not resolve the concrete type through
+/// the trait bound.
+#[cfg(unix)]
+#[inline]
+fn to_u32<T: Into<u32>>(v: T) -> u32 {
+    v.into()
+}
+
 #[cfg(unix)]
 impl FstatResult {
     /// Constructs from a raw `libc::stat` buffer.
     fn from_stat(stat_buf: &libc::stat) -> Self {
+        // dev_t is u64 on Linux, i32 on macOS — use cfg to avoid cross-platform lint.
+        #[cfg(target_os = "linux")]
+        let rdev = stat_buf.st_rdev;
+        #[cfg(not(target_os = "linux"))]
         let rdev: u64 = stat_buf.st_rdev.try_into().unwrap_or_default();
         Self {
-            mode: stat_buf.st_mode.into(),
+            mode: to_u32(stat_buf.st_mode),
             size: stat_buf.st_size as u64,
             mtime_sec: stat_buf.st_mtime,
             mtime_nsec: stat_buf.st_mtime_nsec as u32,
@@ -437,19 +454,19 @@ impl FstatResult {
     /// Returns true if this entry is a regular file.
     #[must_use]
     pub fn is_file(&self) -> bool {
-        (self.mode & u32::from(libc::S_IFMT)) == u32::from(libc::S_IFREG)
+        (self.mode & to_u32(libc::S_IFMT)) == to_u32(libc::S_IFREG)
     }
 
     /// Returns true if this entry is a directory.
     #[must_use]
     pub fn is_dir(&self) -> bool {
-        (self.mode & u32::from(libc::S_IFMT)) == u32::from(libc::S_IFDIR)
+        (self.mode & to_u32(libc::S_IFMT)) == to_u32(libc::S_IFDIR)
     }
 
     /// Returns true if this entry is a symbolic link.
     #[must_use]
     pub fn is_symlink(&self) -> bool {
-        (self.mode & u32::from(libc::S_IFMT)) == u32::from(libc::S_IFLNK)
+        (self.mode & to_u32(libc::S_IFMT)) == to_u32(libc::S_IFLNK)
     }
 
     /// Returns the permission bits (lower 12 bits of mode).
