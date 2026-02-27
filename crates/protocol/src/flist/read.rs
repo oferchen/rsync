@@ -9,7 +9,7 @@
 //! See `flist.c:recv_file_entry()` for the canonical wire format decoding.
 
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use logging::debug_log;
 
@@ -24,6 +24,7 @@ use super::flags::{
     FileFlags, XMIT_EXTENDED_FLAGS, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST,
     XMIT_NO_CONTENT_DIR,
 };
+use super::intern::PathInterner;
 use super::state::{FileListCompressionState, FileListStats};
 
 /// Result of reading flags from the wire.
@@ -80,6 +81,12 @@ pub struct FileListReader {
     flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
+    /// Interner for deduplicating parent directory paths across file entries.
+    ///
+    /// When many entries share the same parent directory, the interner ensures
+    /// they all point to a single `Arc<Path>` allocation instead of each holding
+    /// an independent copy.
+    dirname_interner: PathInterner,
 }
 
 /// Result from reading metadata fields.
@@ -135,6 +142,7 @@ impl FileListReader {
             preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
+            dirname_interner: PathInterner::new(),
         }
     }
 
@@ -162,6 +170,7 @@ impl FileListReader {
             preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
+            dirname_interner: PathInterner::new(),
         }
     }
 
@@ -974,6 +983,16 @@ impl FileListReader {
             metadata.nsec,
             flags,
         );
+
+        // Step 9b: Intern the dirname so entries in the same directory share
+        // a single Arc<Path> allocation instead of each holding a separate copy.
+        // This mirrors upstream rsync's shared dirname pointer pool.
+        let parent = entry.path().parent().filter(|p| !p.as_os_str().is_empty());
+        let interned_dirname = match parent {
+            Some(p) => self.dirname_interner.intern(p),
+            None => self.dirname_interner.intern(Path::new("")),
+        };
+        entry.set_dirname(interned_dirname);
 
         // Step 10: Set symlink target if present
         if let Some(target) = link_target {
