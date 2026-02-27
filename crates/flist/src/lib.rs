@@ -100,12 +100,7 @@ pub mod parallel;
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod batched_stat;
 
-/// ART-backed file list with O(k) insertion and prefix range queries.
-#[cfg(feature = "art")]
-#[cfg_attr(docsrs, doc(cfg(feature = "art")))]
-pub mod art_file_list;
-
-/// Sorting strategy dispatch — ART or comparison sort depending on feature flags.
+/// Sorting utilities for file list operations.
 pub(crate) mod sort;
 
 pub use lazy_entry::LazyFileListEntry;
@@ -113,9 +108,6 @@ pub use lazy_metadata::LazyMetadata;
 
 #[cfg(feature = "parallel")]
 pub use batched_stat::BatchedStatCache;
-
-#[cfg(feature = "art")]
-pub use art_file_list::ArtFileList;
 
 #[cfg(test)]
 mod tests;
