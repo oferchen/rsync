@@ -1178,6 +1178,7 @@ impl ReceiverContext {
             directories_created: 0,
             directories_failed: 0,
             files_skipped: 0,
+            redo_count: 0,
         })
     }
 
@@ -1242,15 +1243,42 @@ impl ReceiverContext {
             }
         }
 
-        // Run pipelined transfer with decoupled network/disk I/O
-        let (files_transferred, bytes_received) = self.run_pipeline_loop_decoupled(
-            reader,
-            writer,
-            pipeline_config,
-            &setup,
-            files_to_transfer,
-            &mut metadata_errors,
-        )?;
+        // Run pipelined transfer with decoupled network/disk I/O (phase 1)
+        let redo_config = pipeline_config.clone();
+        let (mut files_transferred, mut bytes_received, redo_indices) = self
+            .run_pipeline_loop_decoupled(
+                reader,
+                writer,
+                pipeline_config,
+                &setup,
+                files_to_transfer,
+                &mut metadata_errors,
+                false,
+            )?;
+
+        // Phase 2: redo pass for files that failed checksum verification.
+        // upstream: receiver.c:580-587 — phase transition, then re-receive redo'd files
+        // upstream: generator.c:2160-2199 — generator re-sends with SUM_LENGTH, no basis
+        let redo_count = redo_indices.len();
+        if !redo_indices.is_empty() {
+            let redo_files: Vec<(usize, &FileEntry)> = redo_indices
+                .iter()
+                .filter_map(|&idx| self.file_list.get(idx).map(|entry| (idx, entry)))
+                .collect();
+
+            let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
+                reader,
+                writer,
+                redo_config,
+                &setup,
+                redo_files,
+                &mut metadata_errors,
+                true,
+            )?;
+
+            files_transferred += redo_transferred;
+            bytes_received += redo_bytes;
+        }
 
         // Print verbose directories
         for file_entry in &self.file_list {
@@ -1282,6 +1310,7 @@ impl ReceiverContext {
             directories_created: 0,
             directories_failed: 0,
             files_skipped: 0,
+            redo_count,
         })
     }
 
@@ -1372,21 +1401,47 @@ impl ReceiverContext {
             }
         }
 
-        // Run pipelined transfer with decoupled network/disk I/O
-        let (files_transferred, bytes_received) = self.run_pipeline_loop_decoupled(
-            reader,
-            writer,
-            pipeline_config,
-            &setup,
-            files_to_transfer,
-            &mut metadata_errors,
-        )?;
+        // Run pipelined transfer with decoupled network/disk I/O (phase 1)
+        let redo_config = pipeline_config.clone();
+        let (mut files_transferred, mut bytes_received, redo_indices) = self
+            .run_pipeline_loop_decoupled(
+                reader,
+                writer,
+                pipeline_config,
+                &setup,
+                files_to_transfer,
+                &mut metadata_errors,
+                false,
+            )?;
+
+        // Phase 2: redo pass for files that failed checksum verification.
+        let redo_count = redo_indices.len();
+        if !redo_indices.is_empty() {
+            let redo_files: Vec<(usize, &FileEntry)> = redo_indices
+                .iter()
+                .filter_map(|&idx| self.file_list.get(idx).map(|entry| (idx, entry)))
+                .collect();
+
+            let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
+                reader,
+                writer,
+                redo_config,
+                &setup,
+                redo_files,
+                &mut metadata_errors,
+                true,
+            )?;
+
+            files_transferred += redo_transferred;
+            bytes_received += redo_bytes;
+        }
 
         // Finalize
         stats.files_transferred = files_transferred;
         stats.bytes_received = bytes_received;
         stats.total_source_bytes = self.file_list.iter().map(|e| e.size()).sum();
         stats.metadata_errors = metadata_errors;
+        stats.redo_count = redo_count;
 
         self.finalize_transfer(reader, writer)?;
 
@@ -1599,6 +1654,16 @@ impl ReceiverContext {
     /// The network thread never blocks on disk I/O, and the disk thread
     /// never blocks on network reads — achieving overlap similar to upstream
     /// rsync's `fork()` model.
+    /// Runs the pipelined transfer loop, returning (files_transferred, bytes, redo_indices).
+    ///
+    /// The `redo_indices` vector contains file list indices for files whose
+    /// whole-file checksum verification failed during this pass. The caller
+    /// should retransmit these files in a redo pass with empty basis.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:554-984` — `recv_files()` main loop
+    /// - `receiver.c:970-974` — `send_msg_int(MSG_REDO, ndx)` on checksum failure
     fn run_pipeline_loop_decoupled<R: Read, W: Write + ?Sized>(
         &self,
         reader: &mut super::reader::ServerReader<R>,
@@ -1607,7 +1672,8 @@ impl ReceiverContext {
         setup: &PipelineSetup,
         files_to_transfer: Vec<(usize, &FileEntry)>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
-    ) -> io::Result<(usize, u64)> {
+        is_redo_pass: bool,
+    ) -> io::Result<(usize, u64, Vec<usize>)> {
         use crate::disk_commit::DiskCommitConfig;
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
@@ -1634,7 +1700,8 @@ impl ReceiverContext {
 
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
-        let mut pending_files_info: Vec<(PathBuf, &FileEntry)> =
+        // (file_list_index, dest_path, file_entry) — index needed for redo tracking
+        let mut pending_files_info: Vec<(usize, PathBuf, &FileEntry)> =
             Vec::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
@@ -1655,8 +1722,12 @@ impl ReceiverContext {
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);
+        if is_redo_pass {
+            // In redo pass, checksum failures are hard errors (not re-queued).
+            let _ = pipelined_receiver.take_redo_indices();
+        }
 
-        let result = (|| -> io::Result<(usize, u64)> {
+        let result = (|| -> io::Result<(usize, u64, Vec<usize>)> {
             loop {
                 // Check deadline at file boundary before requesting more files.
                 // Files already in-flight will finish; we just stop sending new requests.
@@ -1682,33 +1753,41 @@ impl ReceiverContext {
                             eprintln!("{}", relative_path.display());
                         }
 
-                        let basis_config = BasisFileConfig {
-                            file_path: &file_path,
-                            dest_dir: &setup.dest_dir,
-                            relative_path,
-                            target_size: file_entry.size(),
-                            fuzzy_enabled: self.config.flags.fuzzy,
-                            reference_directories: &self.config.reference_directories,
-                            protocol: self.protocol,
-                            checksum_length: setup.checksum_length,
-                            checksum_algorithm: setup.checksum_algorithm,
-                            whole_file: self.config.flags.whole_file,
+                        // In redo pass, use empty basis to force whole-file transfer.
+                        // upstream: generator.c:2163 — csum_length = SUM_LENGTH for redo
+                        // upstream: generator.c:2170 — size_only = -size_only (negated)
+                        let (sig, basis) = if is_redo_pass {
+                            (None, None)
+                        } else {
+                            let basis_config = BasisFileConfig {
+                                file_path: &file_path,
+                                dest_dir: &setup.dest_dir,
+                                relative_path,
+                                target_size: file_entry.size(),
+                                fuzzy_enabled: self.config.flags.fuzzy,
+                                reference_directories: &self.config.reference_directories,
+                                protocol: self.protocol,
+                                checksum_length: setup.checksum_length,
+                                checksum_algorithm: setup.checksum_algorithm,
+                                whole_file: self.config.flags.whole_file,
+                            };
+                            let basis_result = find_basis_file_with_config(&basis_config);
+                            (basis_result.signature, basis_result.basis_path)
                         };
-                        let basis_result = find_basis_file_with_config(&basis_config);
 
                         let pending = send_file_request(
                             writer,
                             &mut ndx_write_codec,
                             file_idx as i32,
                             file_path.clone(),
-                            basis_result.signature,
-                            basis_result.basis_path,
+                            sig,
+                            basis,
                             file_entry.size(),
                             &request_config,
                         )?;
 
                         pipeline.push(pending);
-                        pending_files_info.push((file_path, file_entry));
+                        pending_files_info.push((file_idx, file_path, file_entry));
                     } else {
                         break;
                     }
@@ -1720,7 +1799,7 @@ impl ReceiverContext {
 
                 // Process one response — streams chunks to disk thread.
                 let pending = pipeline.pop().expect("pipeline not empty");
-                let (file_path, file_entry) = pending_files_info.remove(0);
+                let (file_idx, file_path, file_entry) = pending_files_info.remove(0);
 
                 let response_ctx = ResponseContext {
                     config: &request_config,
@@ -1742,6 +1821,7 @@ impl ReceiverContext {
                     result.expected_checksum,
                     result.checksum_len,
                     file_path.clone(),
+                    file_idx,
                 );
 
                 // Non-blocking: collect any ready disk results to detect early errors.
@@ -1759,7 +1839,9 @@ impl ReceiverContext {
             bytes_received += disk_bytes;
             metadata_errors.extend(disk_meta_errors);
 
-            Ok((files_transferred, bytes_received))
+            let redo_indices = pipelined_receiver.take_redo_indices();
+
+            Ok((files_transferred, bytes_received, redo_indices))
         })();
 
         // Graceful shutdown regardless of success or failure.
@@ -2113,6 +2195,18 @@ pub struct TransferStats {
     pub directories_failed: u64,
     /// Files skipped due to failed parent directory (incremental mode).
     pub files_skipped: u64,
+
+    /// Number of files that were retransmitted due to checksum verification failure.
+    ///
+    /// Mirrors upstream rsync's redo mechanism where files that fail whole-file
+    /// checksum after delta application are re-requested with an empty basis
+    /// (whole-file transfer) in phase 2.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:970-974` — `send_msg_int(MSG_REDO, ndx)` queues for redo
+    /// - `generator.c:2160-2199` — generator processes redo queue in phase 2
+    pub redo_count: usize,
 }
 
 /// Statistics received from the remote sender after transfer completion.
@@ -4160,6 +4254,7 @@ mod tests {
             directories_created: 10,
             directories_failed: 2,
             files_skipped: 5,
+            redo_count: 0,
         };
 
         assert_eq!(stats.entries_received, 100);
