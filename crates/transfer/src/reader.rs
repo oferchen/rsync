@@ -140,6 +140,28 @@ impl<R: Read> ServerReader<R> {
             Self::Plain(_) => Vec::new(),
         }
     }
+
+    /// Returns and drains accumulated `MSG_REDO` file indices from the receiver.
+    ///
+    /// When the receiver detects a whole-file checksum failure, it sends
+    /// `MSG_REDO` with the 4-byte little-endian file index. The generator
+    /// accumulates these indices during normal reads and drains them via
+    /// this method.
+    ///
+    /// Returns an empty `Vec` for plain-mode readers.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1514-1519`: `MSG_REDO` dispatches to `got_flist_entry_status(FES_REDO, val)`
+    ///   on the generator side, pushing the NDX to `redo_list`.
+    /// - `receiver.c:970-974`: receiver sends `send_msg_int(MSG_REDO, ndx)` on checksum failure.
+    pub fn take_redo_indices(&mut self) -> Vec<i32> {
+        match self {
+            Self::Multiplex(mux) => mux.take_redo_indices(),
+            Self::Compressed(compressed) => compressed.get_mut().take_redo_indices(),
+            Self::Plain(_) => Vec::new(),
+        }
+    }
 }
 
 impl<R: Read> Read for ServerReader<R> {
@@ -189,6 +211,15 @@ pub(super) struct MultiplexReader<R> {
     ///
     /// upstream: io.c:1618-1627, sender.c:367-368
     no_send_indices: Vec<i32>,
+    /// File indices received via `MSG_REDO` from the receiver.
+    ///
+    /// When the receiver detects a whole-file checksum mismatch, it sends
+    /// `MSG_REDO` with the 4-byte little-endian file index. The generator
+    /// accumulates these indices and re-sends the files with full checksum
+    /// length (no delta basis) in a redo pass.
+    ///
+    /// upstream: io.c:1514-1519, receiver.c:970-974
+    redo_indices: Vec<i32>,
 }
 
 /// Default buffer capacity for MultiplexReader.
@@ -207,6 +238,7 @@ impl<R: Read> MultiplexReader<R> {
             pos: 0,
             io_error: 0,
             no_send_indices: Vec::new(),
+            redo_indices: Vec::new(),
         }
     }
 
@@ -251,6 +283,37 @@ impl<R: Read> MultiplexReader<R> {
                 self.buffer[3],
             ]);
             self.io_error |= val;
+        }
+    }
+
+    /// Returns and drains the accumulated `MSG_REDO` file indices.
+    ///
+    /// When the receiver detects a whole-file checksum failure, it sends
+    /// `MSG_REDO` with the file index. The generator accumulates these
+    /// indices so it can re-send those files with full checksum length.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1514-1519`: `MSG_REDO` received on the sender/receiver pipe;
+    ///   calls `got_flist_entry_status(FES_REDO, val)` which pushes to `redo_list`.
+    /// - `receiver.c:970-974`: receiver sends `MSG_REDO` when `!redoing`.
+    fn take_redo_indices(&mut self) -> Vec<i32> {
+        std::mem::take(&mut self.redo_indices)
+    }
+
+    /// Handles a `MSG_REDO` payload by recording the file index.
+    ///
+    /// The payload must be exactly 4 bytes (little-endian `i32` file index).
+    /// upstream: io.c:1514-1519 — `val = raw_read_int();` reads 4-byte LE int.
+    fn handle_redo_msg(&mut self) {
+        if self.buffer.len() == 4 {
+            let ndx = i32::from_le_bytes([
+                self.buffer[0],
+                self.buffer[1],
+                self.buffer[2],
+                self.buffer[3],
+            ]);
+            self.redo_indices.push(ndx);
         }
     }
 
@@ -319,6 +382,10 @@ impl<R: Read> MultiplexReader<R> {
                     protocol::MessageCode::NoSend => {
                         // upstream: io.c:1618-1627
                         self.handle_no_send_msg();
+                    }
+                    protocol::MessageCode::Redo => {
+                        // upstream: io.c:1514-1519
+                        self.handle_redo_msg();
                     }
                     _ => {}
                 }
@@ -405,8 +472,14 @@ impl<R: Read> Read for MultiplexReader<R> {
                     // it could not open the requested file.
                     self.handle_no_send_msg();
                 }
+                protocol::MessageCode::Redo => {
+                    // upstream: io.c:1514-1519
+                    // Accumulate the file index from the receiver indicating
+                    // a whole-file checksum verification failure.
+                    self.handle_redo_msg();
+                }
                 _ => {
-                    // Other message types (Redo, Stats, etc.): silently skip
+                    // Other message types (Stats, etc.): silently skip
                     // Continue loop to read next message
                 }
             }
@@ -914,5 +987,151 @@ mod tests {
 
         // Second call returns empty (reset)
         assert!(reader.take_no_send_indices().is_empty());
+    }
+
+    #[test]
+    fn multiplex_reader_accumulates_msg_redo() {
+        // MSG_REDO carries a 4-byte LE i32 file index.
+        // upstream: io.c:1514-1519, receiver.c:970-974
+        let mut stream = Vec::new();
+
+        // MSG_REDO with file index 5
+        let ndx1: i32 = 5;
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::Redo,
+            &ndx1.to_le_bytes(),
+        )
+        .unwrap();
+
+        // MSG_DATA with some file data
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"chunk1").unwrap();
+
+        // Another MSG_REDO with file index 17
+        let ndx2: i32 = 17;
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::Redo,
+            &ndx2.to_le_bytes(),
+        )
+        .unwrap();
+
+        // More MSG_DATA
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"chunk2").unwrap();
+
+        let mut mux = MultiplexReader::new(Cursor::new(stream));
+
+        // Read first data message — should skip over the MSG_REDO
+        let mut buf = [0u8; 6];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 6);
+        assert_eq!(&buf, b"chunk1");
+
+        // After first read, ndx 5 should be accumulated
+        assert_eq!(mux.redo_indices, vec![5]);
+
+        // Read second data message — skips second MSG_REDO
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 6);
+        assert_eq!(&buf, b"chunk2");
+
+        // Both indices should be accumulated
+        assert_eq!(mux.redo_indices, vec![5, 17]);
+
+        // take_redo_indices returns accumulated values and resets
+        let taken = mux.take_redo_indices();
+        assert_eq!(taken, vec![5, 17]);
+        assert!(mux.redo_indices.is_empty());
+    }
+
+    #[test]
+    fn multiplex_reader_redo_wrong_payload_length_ignored() {
+        // MSG_REDO with wrong payload length (not 4 bytes) should be ignored.
+        // upstream: io.c:1516 reads exactly 4 bytes for val
+        let mut stream = Vec::new();
+
+        // MSG_REDO with 3 bytes (invalid — should be ignored)
+        protocol::send_msg(&mut stream, protocol::MessageCode::Redo, &[1, 0, 0]).unwrap();
+
+        // MSG_DATA follows
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"ok").unwrap();
+
+        let mut mux = MultiplexReader::new(Cursor::new(stream));
+        let mut buf = [0u8; 2];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(&buf, b"ok");
+
+        // Invalid payload length should not accumulate any index
+        assert!(mux.redo_indices.is_empty());
+    }
+
+    #[test]
+    fn server_reader_take_redo_indices_plain_returns_empty() {
+        let mut reader = ServerReader::new_plain(Cursor::new(vec![]));
+        assert!(reader.take_redo_indices().is_empty());
+    }
+
+    #[test]
+    fn server_reader_take_redo_indices_multiplex_accumulates() {
+        // Build a multiplex stream with MSG_REDO + MSG_DATA
+        let mut stream = Vec::new();
+        let ndx: i32 = 13;
+        protocol::send_msg(&mut stream, protocol::MessageCode::Redo, &ndx.to_le_bytes()).unwrap();
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"data").unwrap();
+
+        let mut reader = ServerReader::new_plain(Cursor::new(stream))
+            .activate_multiplex()
+            .unwrap();
+
+        // Read the data (which skips the MSG_REDO message)
+        let mut buf = [0u8; 4];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 4);
+        assert_eq!(&buf, b"data");
+
+        // take_redo_indices should return the accumulated index
+        let indices = reader.take_redo_indices();
+        assert_eq!(indices, vec![13]);
+
+        // Second call returns empty (reset)
+        assert!(reader.take_redo_indices().is_empty());
+    }
+
+    #[test]
+    fn multiplex_reader_redo_and_no_send_interleaved() {
+        // Verify MSG_REDO and MSG_NO_SEND accumulate independently
+        let mut stream = Vec::new();
+
+        // MSG_REDO with index 3
+        let redo_ndx: i32 = 3;
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::Redo,
+            &redo_ndx.to_le_bytes(),
+        )
+        .unwrap();
+
+        // MSG_NO_SEND with index 7
+        let no_send_ndx: i32 = 7;
+        protocol::send_msg(
+            &mut stream,
+            protocol::MessageCode::NoSend,
+            &no_send_ndx.to_le_bytes(),
+        )
+        .unwrap();
+
+        // MSG_DATA
+        protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"x").unwrap();
+
+        let mut mux = MultiplexReader::new(Cursor::new(stream));
+        let mut buf = [0u8; 1];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(&buf, b"x");
+
+        // Each list accumulates independently
+        assert_eq!(mux.redo_indices, vec![3]);
+        assert_eq!(mux.no_send_indices, vec![7]);
     }
 }
