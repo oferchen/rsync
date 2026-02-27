@@ -68,7 +68,7 @@ impl<R> SessionHandshakeParts<R> {
     ///
     /// impl Loopback {
     ///     fn new(advertised: ProtocolVersion) -> Self {
-    ///         let bytes = u32::from(advertised.as_u8()).to_be_bytes();
+    ///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
     ///         Self { reader: Cursor::new(bytes.to_vec()), writes: Vec::new() }
     ///     }
     /// }
@@ -216,7 +216,7 @@ mod tests {
     // Helper to create binary handshake parts
     fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         // Binary negotiation: protocol 31 as BE u32
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         SessionHandshakeParts::from_binary_components(
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn from_binary_components_preserves_remote_advertised() {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let parts = SessionHandshakeParts::from_binary_components(
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn from_binary_components_preserves_remote_protocol() {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto30 = ProtocolVersion::from_supported(30).unwrap();
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn from_binary_components_preserves_local_advertised() {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto30 = ProtocolVersion::from_supported(30).unwrap();
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn from_binary_components_preserves_negotiated_protocol() {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto30 = ProtocolVersion::from_supported(30).unwrap();
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn from_binary_components_preserves_compatibility_flags() {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let flags = CompatibilityFlags::SYMLINK_TIMES | CompatibilityFlags::SYMLINK_ICONV;

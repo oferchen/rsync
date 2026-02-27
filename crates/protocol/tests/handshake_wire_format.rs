@@ -8,9 +8,9 @@
 //! ## Test Coverage
 //!
 //! ### Binary Negotiation (Protocols 30-32)
-//! - Protocol version advertisement format (u32 big-endian)
+//! - Protocol version advertisement format (u32 little-endian, upstream: io.c write_int/SIVAL)
 //! - Byte-level validation of protocol advertisements
-//! - Round-trip tests (generate → parse → validate)
+//! - Round-trip tests (generate -> parse -> validate)
 //! - Compatibility flags exchange (protocol 30+)
 //!
 //! ### Legacy ASCII Negotiation (Protocols 28-29)
@@ -32,41 +32,42 @@ use protocol::{LEGACY_DAEMON_PREFIX, ProtocolVersion, format_legacy_daemon_greet
 
 #[test]
 fn protocol_32_advertisement_format() {
-    // Protocol 32 should be advertised as 4-byte big-endian u32
+    // Protocol 32 should be advertised as 4-byte little-endian u32
+    // upstream: io.c write_int() uses SIVAL which is little-endian
     let protocol = ProtocolVersion::V32;
-    let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+    let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
     assert_eq!(bytes.len(), 4, "Protocol advertisement must be 4 bytes");
     assert_eq!(
         bytes,
-        [0, 0, 0, 32],
-        "Protocol 32 must be [0, 0, 0, 32] in big-endian"
+        [32, 0, 0, 0],
+        "Protocol 32 must be [32, 0, 0, 0] in little-endian"
     );
 }
 
 #[test]
 fn protocol_31_advertisement_format() {
     let protocol = ProtocolVersion::V31;
-    let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+    let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
     assert_eq!(bytes.len(), 4);
     assert_eq!(
         bytes,
-        [0, 0, 0, 31],
-        "Protocol 31 must be [0, 0, 0, 31] in big-endian"
+        [31, 0, 0, 0],
+        "Protocol 31 must be [31, 0, 0, 0] in little-endian"
     );
 }
 
 #[test]
 fn protocol_30_advertisement_format() {
     let protocol = ProtocolVersion::V30;
-    let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+    let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
     assert_eq!(bytes.len(), 4);
     assert_eq!(
         bytes,
-        [0, 0, 0, 30],
-        "Protocol 30 must be [0, 0, 0, 30] in big-endian"
+        [30, 0, 0, 0],
+        "Protocol 30 must be [30, 0, 0, 0] in little-endian"
     );
 }
 
@@ -77,11 +78,11 @@ fn binary_advertisement_round_trip() {
         let protocol =
             ProtocolVersion::from_supported(protocol_num).expect("protocol must be supported");
 
-        // Generate advertisement
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+        // Generate advertisement (little-endian, matching upstream write_int/SIVAL)
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
         // Parse it back
-        let parsed_value = u32::from_be_bytes(bytes);
+        let parsed_value = u32::from_le_bytes(bytes);
         let parsed_protocol = ProtocolVersion::from_peer_advertisement(parsed_value)
             .expect("round-trip must succeed");
 
@@ -93,23 +94,16 @@ fn binary_advertisement_round_trip() {
 }
 
 #[test]
-fn binary_advertisement_is_big_endian() {
-    // Validate that we use big-endian byte order (network byte order)
+fn binary_advertisement_is_little_endian() {
+    // upstream: io.c write_int() uses SIVAL which stores values in little-endian
     let protocol = ProtocolVersion::from_supported(32).unwrap();
-    let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+    let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
-    // Big-endian: most significant byte first
-    assert_eq!(bytes[0], 0, "MSB must be 0 for protocol 32");
+    // Little-endian: least significant byte first
+    assert_eq!(bytes[0], 32, "LSB must be 32 for protocol 32");
     assert_eq!(bytes[1], 0, "Byte 1 must be 0");
     assert_eq!(bytes[2], 0, "Byte 2 must be 0");
-    assert_eq!(bytes[3], 32, "LSB must be 32");
-
-    // Verify this is NOT little-endian
-    let little_endian_bytes = u32::from(protocol.as_u8()).to_le_bytes();
-    assert_ne!(
-        bytes, little_endian_bytes,
-        "Must use big-endian, not little-endian"
-    );
+    assert_eq!(bytes[3], 0, "MSB must be 0");
 }
 
 #[test]
@@ -117,8 +111,8 @@ fn binary_advertisement_deterministic() {
     // Validate that the same protocol always produces the same bytes
     let protocol = ProtocolVersion::V32;
 
-    let bytes1 = u32::from(protocol.as_u8()).to_be_bytes();
-    let bytes2 = u32::from(protocol.as_u8()).to_be_bytes();
+    let bytes1 = u32::from(protocol.as_u8()).to_le_bytes();
+    let bytes2 = u32::from(protocol.as_u8()).to_le_bytes();
 
     assert_eq!(
         bytes1, bytes2,
@@ -258,8 +252,8 @@ fn all_supported_protocols_have_valid_advertisements() {
     // Validate that all supported protocol versions can generate valid advertisements
     for protocol in ProtocolVersion::supported_versions() {
         if protocol.uses_binary_negotiation() {
-            // Binary protocols use 4-byte u32
-            let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+            // Binary protocols use 4-byte u32 (little-endian)
+            let bytes = u32::from(protocol.as_u8()).to_le_bytes();
             assert_eq!(
                 bytes.len(),
                 4,
@@ -267,7 +261,7 @@ fn all_supported_protocols_have_valid_advertisements() {
             );
 
             // Must be parseable
-            let parsed = u32::from_be_bytes(bytes);
+            let parsed = u32::from_le_bytes(bytes);
             assert_eq!(
                 parsed,
                 u32::from(protocol.as_u8()),
@@ -337,8 +331,8 @@ fn handshake_format_matches_protocol_version() {
                 "Protocol {protocol} should use binary negotiation"
             );
 
-            // Binary format is 4-byte u32
-            let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+            // Binary format is 4-byte u32 (little-endian)
+            let bytes = u32::from(protocol.as_u8()).to_le_bytes();
             assert_eq!(bytes.len(), 4);
         } else {
             // Protocol < 30 should use ASCII format
@@ -378,7 +372,7 @@ fn binary_protocol_wire_format_diagnostic() {
 
     for protocol_num in [30u8, 31, 32] {
         let protocol = ProtocolVersion::from_supported(protocol_num).unwrap();
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
         eprintln!(
             "Protocol {}: {:02x} {:02x} {:02x} {:02x} (decimal: {})",

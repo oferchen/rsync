@@ -48,19 +48,20 @@ mod wire_format {
 
     #[test]
     fn v31_binary_advertisement_format() {
-        // Protocol 31 advertises as 4-byte big-endian u32
+        // Protocol 31 advertises as 4-byte little-endian u32
+        // upstream: io.c write_int() uses SIVAL which is little-endian
         let protocol = ProtocolVersion::V31;
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
         assert_eq!(bytes.len(), 4);
-        assert_eq!(bytes, [0, 0, 0, 31]);
+        assert_eq!(bytes, [31, 0, 0, 0]);
     }
 
     #[test]
     fn v31_advertisement_roundtrip() {
         let protocol = ProtocolVersion::V31;
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
-        let parsed_value = u32::from_be_bytes(bytes);
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
+        let parsed_value = u32::from_le_bytes(bytes);
         let parsed = ProtocolVersion::from_peer_advertisement(parsed_value).unwrap();
         assert_eq!(parsed, protocol);
     }
