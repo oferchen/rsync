@@ -828,3 +828,99 @@ mod wire_format_compatibility {
         assert!(default_result.is_none());
     }
 }
+
+/// Tests for computed_mask and name transmission.
+mod computed_mask_and_names {
+    use super::*;
+
+    #[test]
+    fn recv_rsync_acl_sets_computed_mask_when_no_explicit_mask() {
+        // ACL with named entries but no explicit mask_obj.
+        // upstream: recv_rsync_acl sets mask_obj from computed_mask.
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.names.push(IdAccess::user(1000, 0x05)); // r-x
+        acl.names.push(IdAccess::group(200, 0x03)); // -wx
+        // mask_obj stays NO_ENTRY (not set)
+
+        let mut cache = AclCache::new();
+        let mut buf = Vec::new();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        if let RecvAclResult::Literal(received) = recv_rsync_acl(&mut cursor).unwrap() {
+            // computed_mask = 0x05 | 0x03 = 0x07
+            assert_eq!(received.mask_obj, 0x07);
+        } else {
+            panic!("Expected literal ACL");
+        }
+    }
+
+    #[test]
+    fn recv_rsync_acl_preserves_explicit_mask() {
+        // ACL with named entries AND explicit mask_obj.
+        // upstream: computed_mask should NOT override the explicit mask.
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.mask_obj = 0x04; // explicit r-- mask
+        acl.names.push(IdAccess::user(1000, 0x07));
+
+        let mut cache = AclCache::new();
+        let mut buf = Vec::new();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        if let RecvAclResult::Literal(received) = recv_rsync_acl(&mut cursor).unwrap() {
+            assert_eq!(received.mask_obj, 0x04);
+        } else {
+            panic!("Expected literal ACL");
+        }
+    }
+
+    #[test]
+    fn send_recv_ida_entries_with_names() {
+        let mut entries = IdaEntries::new();
+        entries.push(IdAccess::user_with_name(1000, 0x07, b"testuser".to_vec()));
+        entries.push(IdAccess::group_with_name(100, 0x05, b"staff".to_vec()));
+
+        let mut buf = Vec::new();
+        send_ida_entries(&mut buf, &entries, true).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let (received, mask) = recv_ida_entries(&mut cursor).unwrap();
+
+        assert_eq!(received.len(), 2);
+        let items: Vec<_> = received.iter().collect();
+        assert!(items[0].is_user());
+        assert_eq!(items[0].id, 1000);
+        assert_eq!(items[0].permissions(), 0x07);
+        assert_eq!(items[0].name.as_deref(), Some(b"testuser".as_slice()));
+        assert!(!items[1].is_user());
+        assert_eq!(items[1].id, 100);
+        assert_eq!(items[1].permissions(), 0x05);
+        assert_eq!(items[1].name.as_deref(), Some(b"staff".as_slice()));
+        assert_eq!(mask, 0x07);
+    }
+
+    #[test]
+    fn send_ida_entries_without_names_omits_name_bytes() {
+        // Entries with names but include_names=false should not send names
+        let mut entries = IdaEntries::new();
+        entries.push(IdAccess::user_with_name(1000, 0x07, b"testuser".to_vec()));
+
+        let mut buf_with_names = Vec::new();
+        send_ida_entries(&mut buf_with_names, &entries, true).unwrap();
+
+        let mut buf_without_names = Vec::new();
+        send_ida_entries(&mut buf_without_names, &entries, false).unwrap();
+
+        // With names should be longer (includes name length + bytes)
+        assert!(buf_with_names.len() > buf_without_names.len());
+
+        // Both should decode correctly
+        let mut cursor = Cursor::new(buf_without_names);
+        let (received, _) = recv_ida_entries(&mut cursor).unwrap();
+        assert_eq!(received.len(), 1);
+        assert!(received.iter().next().unwrap().name.is_none());
+    }
+}
