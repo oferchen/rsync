@@ -60,8 +60,10 @@ pub struct FileListReader {
     preserve_gid: bool,
     /// Whether to preserve (and thus read) symlink targets from the wire.
     preserve_links: bool,
-    /// Whether to preserve (and thus read) device numbers from the wire.
+    /// Whether to preserve (and thus read) device numbers (block/char) from the wire.
     preserve_devices: bool,
+    /// Whether to preserve (and thus read) special files (FIFOs/sockets) from the wire.
+    preserve_specials: bool,
     /// Whether to preserve (and thus read) hardlink indices from the wire.
     preserve_hard_links: bool,
     /// Whether to preserve (and thus read) access times from the wire.
@@ -124,6 +126,7 @@ impl FileListReader {
             preserve_gid: false,
             preserve_links: false,
             preserve_devices: false,
+            preserve_specials: false,
             preserve_hard_links: false,
             preserve_atimes: false,
             preserve_crtimes: false,
@@ -150,6 +153,7 @@ impl FileListReader {
             preserve_gid: false,
             preserve_links: false,
             preserve_devices: false,
+            preserve_specials: false,
             preserve_hard_links: false,
             preserve_atimes: false,
             preserve_crtimes: false,
@@ -185,11 +189,24 @@ impl FileListReader {
         self
     }
 
-    /// Sets whether device numbers should be read from the wire.
+    /// Sets whether device numbers (block/char) should be read from the wire.
     #[inline]
     #[must_use]
     pub const fn with_preserve_devices(mut self, preserve: bool) -> Self {
         self.preserve_devices = preserve;
+        self
+    }
+
+    /// Sets whether special files (FIFOs/sockets) should be read from the wire.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Upstream `flist.c` checks `preserve_specials` separately from
+    /// `preserve_devices` for `IS_SPECIAL()` file types.
+    #[inline]
+    #[must_use]
+    pub const fn with_preserve_specials(mut self, preserve: bool) -> Self {
+        self.preserve_specials = preserve;
         self
     }
 
@@ -634,9 +651,10 @@ impl FileListReader {
         let is_device = type_bits == 0o060000 || type_bits == 0o020000; // S_ISBLK or S_ISCHR
         let is_special = type_bits == 0o140000 || type_bits == 0o010000; // S_IFSOCK or S_IFIFO
 
-        // Devices always, special files only for protocol < 31
-        let needs_rdev =
-            self.preserve_devices && (is_device || (is_special && self.protocol.as_u8() < 31));
+        // upstream: flist.c checks preserve_devices for IS_DEVICE and
+        // preserve_specials for IS_SPECIAL separately
+        let needs_rdev = (self.preserve_devices && is_device)
+            || (self.preserve_specials && is_special && self.protocol.as_u8() < 31);
 
         if !needs_rdev {
             return Ok(None);
@@ -1707,7 +1725,9 @@ mod tests {
         // Protocol 29 uses different minor encoding based on XMIT_RDEV_MINOR_8_pre30 flag
         let protocol = ProtocolVersion::try_from(29u8).unwrap();
         let mut data = Vec::new();
-        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         // Block device with small minor (fits in byte)
         let mut entry = FileEntry::new_block_device("dev/sda".into(), 0o644, 8, 0);
@@ -1716,7 +1736,9 @@ mod tests {
         writer.write_entry(&mut data, &entry).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
-        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read_entry.name(), "dev/sda");
@@ -1730,7 +1752,9 @@ mod tests {
 
         let protocol = ProtocolVersion::try_from(29u8).unwrap();
         let mut data = Vec::new();
-        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         // Block device with large minor (needs 4-byte int)
         let mut entry = FileEntry::new_block_device("dev/nvme0n1".into(), 0o644, 259, 65536);
@@ -1739,7 +1763,9 @@ mod tests {
         writer.write_entry(&mut data, &entry).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
-        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read_entry.name(), "dev/nvme0n1");
@@ -1753,7 +1779,9 @@ mod tests {
 
         let protocol = ProtocolVersion::try_from(28u8).unwrap();
         let mut data = Vec::new();
-        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         // Two devices with same major - tests XMIT_SAME_RDEV_MAJOR flag
         let mut entry1 = FileEntry::new_block_device("dev/sda1".into(), 0o644, 8, 1);
@@ -1766,7 +1794,9 @@ mod tests {
         writer.write_entry(&mut data, &entry2).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
-        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read1.rdev_major(), Some(8));
@@ -1784,7 +1814,9 @@ mod tests {
         // Protocol 30+ uses varint for minor
         let protocol = ProtocolVersion::try_from(30u8).unwrap();
         let mut data = Vec::new();
-        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         let mut entry = FileEntry::new_block_device("dev/loop0".into(), 0o644, 7, 12345);
         entry.set_mtime(1700000000, 0);
@@ -1792,7 +1824,9 @@ mod tests {
         writer.write_entry(&mut data, &entry).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
-        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read_entry.rdev_major(), Some(7));
@@ -2252,7 +2286,8 @@ mod tests {
             test_protocol(),
             CompatibilityFlags::VARINT_FLIST_FLAGS,
         )
-        .with_preserve_devices(true);
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
 
         let result = reader.read_entry(&mut cursor);
         assert_unexpected_eof(result, "truncated device major");
@@ -2279,7 +2314,8 @@ mod tests {
             test_protocol(),
             CompatibilityFlags::VARINT_FLIST_FLAGS,
         )
-        .with_preserve_devices(true);
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
 
         let result = reader.read_entry(&mut cursor);
         assert_unexpected_eof(result, "truncated device minor");
@@ -2533,7 +2569,9 @@ mod tests {
         // (the minor field for large values is 4 bytes, truncating to 2)
         let protocol = ProtocolVersion::try_from(29u8).unwrap();
         let mut data = Vec::new();
-        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         // Block device with large minor (needs 4-byte int, not 1-byte)
         let mut entry = FileEntry::new_block_device("dev/nvme0n1".into(), 0o644, 259, 65536);
@@ -2545,7 +2583,9 @@ mod tests {
         let truncated_data = &data[..data.len() - 2];
 
         let mut cursor = Cursor::new(truncated_data);
-        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
 
         let result = reader.read_entry(&mut cursor);
         assert_unexpected_eof(result, "truncated protocol 29 device minor (int)");
