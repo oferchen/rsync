@@ -85,7 +85,7 @@ iconv = ["protocol/iconv"]
 # ============================================================================
 
 # Async runtime support - enables tokio-based async I/O for core operations
-async = ["dep:tokio", "engine/async"]
+async = ["dep:tokio", "engine/async", "transfer/async"]
 
 # systemd sd-notify integration
 sd-notify = []
