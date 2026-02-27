@@ -198,6 +198,7 @@ impl<'a> ProtocolSetupConfig<'a> {
 /// - 'C' - checksum seed order fix
 /// - 'I' - inplace_partial behavior
 /// - 'v' - varint for flist & compat flags
+/// - 'V' - deprecated pre-release varint (implies 'v', uses `write_byte` encoding)
 /// - 'u' - include name of uid 0 & gid 0
 ///
 /// # Arguments
@@ -372,6 +373,61 @@ fn build_compat_flags_from_client_info(
     flags
 }
 
+/// Returns `true` when `client_info` contains the pre-release `'V'` capability.
+///
+/// Upstream rsync pre-release builds once used `'V'` (uppercase) instead of
+/// `'v'` to advertise varint flist support. When a server detects `'V'` it
+/// must implicitly set `CF_VARINT_FLIST_FLAGS` and write the compat flags
+/// as a single byte (`write_byte`) rather than a varint, maintaining
+/// backward compatibility with those older pre-release clients.
+///
+/// # Upstream reference
+///
+/// `compat.c:737` — `if (strchr(client_info, 'V') != NULL)`
+fn client_has_pre_release_v_flag(client_info: &str) -> bool {
+    client_info.contains('V')
+}
+
+/// Writes compatibility flags to the output stream, handling the pre-release
+/// `'V'` capability flag encoding difference.
+///
+/// When the client advertises `'V'` (a deprecated pre-release flag), the
+/// server writes the compat flags as a single byte and implicitly enables
+/// `CF_VARINT_FLIST_FLAGS`. Otherwise, the flags are written using the
+/// standard varint encoding.
+///
+/// The client-side `read_varint()` is compatible with both encodings because
+/// a single byte with the high bit clear decodes identically under both
+/// schemes.
+///
+/// # Upstream reference
+///
+/// `compat.c:737-741`:
+/// ```c
+/// if (strchr(client_info, 'V') != NULL) {
+///     if (!write_batch)
+///         compat_flags |= CF_VARINT_FLIST_FLAGS;
+///     write_byte(f_out, compat_flags);
+/// } else
+///     write_varint(f_out, compat_flags);
+/// ```
+fn write_compat_flags<W: Write + ?Sized>(
+    writer: &mut W,
+    mut flags: CompatibilityFlags,
+    client_info: &str,
+) -> io::Result<CompatibilityFlags> {
+    if client_has_pre_release_v_flag(client_info) {
+        // Pre-release 'V' client: implicitly enable VARINT_FLIST_FLAGS and
+        // write as a single byte (upstream: write_batch is never true here).
+        // upstream: compat.c:738-740
+        flags |= CompatibilityFlags::VARINT_FLIST_FLAGS;
+        writer.write_all(&[flags.bits() as u8])?;
+    } else {
+        protocol::write_varint(writer, flags.bits() as i32)?;
+    }
+    Ok(flags)
+}
+
 /// Exchanges compatibility flags directly on a TcpStream for daemon mode.
 ///
 /// This function performs the compat flags exchange BEFORE any buffering or
@@ -409,10 +465,11 @@ pub fn exchange_compat_flags_direct(
     // advertising INC_RECURSE to the client, causing it to fall back to non-incremental mode.
     let our_flags = build_compat_flags_from_client_info(&client_info, false);
 
-    // Server ONLY WRITES compat flags (upstream compat.c:736-738)
+    // Server ONLY WRITES compat flags (upstream compat.c:736-741)
     // The client reads but DOES NOT send anything back - it's unidirectional!
     // CRITICAL: Write directly to TcpStream, NOT through any trait abstraction!
-    protocol::write_varint(stream, our_flags.bits() as i32)?;
+    // Handle pre-release 'V' flag: use single-byte write instead of varint.
+    let final_flags = write_compat_flags(stream, our_flags, &client_info)?;
 
     // CRITICAL: Flush immediately to ensure data leaves application buffers
     stream.flush()?;
@@ -422,7 +479,7 @@ pub fn exchange_compat_flags_direct(
     // The client (am_server=false) reads the flags but doesn't send anything back.
     // This is a UNIDIRECTIONAL send from server to client.
 
-    Ok(Some(our_flags))
+    Ok(Some(final_flags))
 }
 
 /// Performs protocol setup for the server side.
@@ -506,10 +563,12 @@ pub fn setup_protocol(
             // - Client (am_server=false): READS compat flags
             let compat_flags = if config.is_server {
                 // Server: build and WRITE our compat flags
-                let compat_value = our_flags.bits() as i32;
-                protocol::write_varint(stdout, compat_value)?;
+                // Handle pre-release 'V' flag: use single-byte write instead of varint
+                // (upstream compat.c:737-741).
+                let info_ref = client_info.as_deref().unwrap_or("");
+                let final_flags = write_compat_flags(stdout, our_flags, info_ref)?;
                 stdout.flush()?;
-                our_flags
+                final_flags
             } else {
                 // Client: READ compat flags from server
                 let compat_value = protocol::read_varint(stdin)?;
@@ -556,10 +615,11 @@ pub fn setup_protocol(
             //   "compat_flags = read_varint(f_in);
             //    if (compat_flags & CF_VARINT_FLIST_FLAGS) do_negotiated_strings = 1;"
             let do_negotiation = if config.is_server {
-                // Server: check if client has 'v' capability
-                client_info.as_ref().map_or(
+                // Server: check if client has 'v' or pre-release 'V' capability.
+                // Both imply CF_VARINT_FLIST_FLAGS and enable negotiation.
+                client_info.as_deref().map_or(
                     our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
-                    |info| info.contains('v'),
+                    |info| info.contains('v') || client_has_pre_release_v_flag(info),
                 )
             } else {
                 // Client: check if SERVER's compat flags include VARINT_FLIST_FLAGS
@@ -1352,6 +1412,268 @@ mod tests {
         assert_eq!(
             result.checksum_seed, -1,
             "Client should correctly read negative seed value"
+        );
+    }
+
+    // ===== Pre-release 'V' compat flag tests =====
+
+    #[test]
+    fn client_has_pre_release_v_flag_detects_uppercase_v() {
+        assert!(
+            client_has_pre_release_v_flag("LsfxCIVu"),
+            "'V' in capability string should be detected"
+        );
+    }
+
+    #[test]
+    fn client_has_pre_release_v_flag_ignores_lowercase_v() {
+        assert!(
+            !client_has_pre_release_v_flag("LsfxCIvu"),
+            "lowercase 'v' should not trigger pre-release detection"
+        );
+    }
+
+    #[test]
+    fn client_has_pre_release_v_flag_empty_string() {
+        assert!(
+            !client_has_pre_release_v_flag(""),
+            "empty string should not match"
+        );
+    }
+
+    #[test]
+    fn write_compat_flags_uses_single_byte_for_pre_release_v() {
+        // When 'V' is present, compat flags should be written as a single byte
+        let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::CHECKSUM_SEED_FIX;
+        let mut output = Vec::new();
+
+        let final_flags =
+            write_compat_flags(&mut output, flags, "LsfxCIVu").expect("write should succeed");
+
+        // Should be exactly 1 byte (write_byte, not write_varint)
+        assert_eq!(
+            output.len(),
+            1,
+            "pre-release 'V' should use single-byte encoding"
+        );
+
+        // CF_VARINT_FLIST_FLAGS should be implicitly set
+        assert!(
+            final_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            "V flag should implicitly enable VARINT_FLIST_FLAGS"
+        );
+
+        // The byte should include all original flags plus VARINT_FLIST_FLAGS
+        let expected_bits = flags.bits() | CompatibilityFlags::VARINT_FLIST_FLAGS.bits();
+        assert_eq!(
+            output[0], expected_bits as u8,
+            "written byte should contain original flags plus VARINT_FLIST_FLAGS"
+        );
+    }
+
+    #[test]
+    fn write_compat_flags_uses_varint_for_lowercase_v() {
+        // When only 'v' is present (no 'V'), use standard varint encoding
+        let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::CHECKSUM_SEED_FIX;
+        let mut output = Vec::new();
+
+        let final_flags =
+            write_compat_flags(&mut output, flags, "LsfxCIvu").expect("write should succeed");
+
+        // Should NOT implicitly add VARINT_FLIST_FLAGS (that's done by
+        // build_compat_flags_from_client_info)
+        assert_eq!(
+            final_flags, flags,
+            "lowercase 'v' should not implicitly modify flags"
+        );
+
+        // Verify varint encoding: 0x28 = SAFE_FILE_LIST(0x08) | CHECKSUM_SEED_FIX(0x20)
+        // For values < 128, varint is a single byte matching the value
+        assert_eq!(
+            output,
+            vec![0x28],
+            "varint encoding of 0x28 should be [0x28]"
+        );
+    }
+
+    #[test]
+    fn write_compat_flags_v_flag_single_byte_without_varint_readable() {
+        // When 'V' is present but the total flags value stays below 0x80
+        // (i.e. VARINT_FLIST_FLAGS is not yet set by 'v'), the single-byte
+        // encoding IS compatible with read_varint because the 0x80 bit is off.
+        // However, write_compat_flags always sets CF_VARINT_FLIST_FLAGS (0x80)
+        // for 'V', making the high bit on. A pre-release 'V' client reads
+        // with read_byte(), not read_varint(), so this is by design.
+        // upstream: "read_varint() is compatible with the older write_byte()
+        // when the 0x80 bit isn't on."
+        let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::CHECKSUM_SEED_FIX;
+        let mut output = Vec::new();
+
+        let written_flags =
+            write_compat_flags(&mut output, flags, "LsfxCIVu").expect("write should succeed");
+
+        // The value has CF_VARINT_FLIST_FLAGS set (0x80 bit on), so
+        // read_varint would interpret this as a multi-byte varint and fail.
+        // This is correct because pre-release 'V' clients use read_byte().
+        assert_eq!(output.len(), 1, "should be single byte");
+        assert_eq!(
+            output[0],
+            written_flags.bits() as u8,
+            "byte should match the flag bits"
+        );
+        assert!(
+            output[0] & 0x80 != 0,
+            "high bit is set due to CF_VARINT_FLIST_FLAGS"
+        );
+    }
+
+    #[test]
+    fn write_compat_flags_v_flag_low_value_readable_by_read_varint() {
+        // When write_compat_flags produces a value < 0x80, read_varint can
+        // decode it since the high bit is off and a varint with no extra
+        // bytes is identical to a plain byte.
+        // Use empty flags so the only bit is VARINT_FLIST_FLAGS from 'V'.
+        // CF_VARINT_FLIST_FLAGS itself is 0x80 so this will always set the
+        // high bit. We verify this invariant.
+        let flags = CompatibilityFlags::EMPTY;
+        let mut output = Vec::new();
+
+        let written_flags =
+            write_compat_flags(&mut output, flags, "V").expect("write should succeed");
+
+        // Even with EMPTY input, 'V' sets CF_VARINT_FLIST_FLAGS (0x80)
+        assert_eq!(written_flags.bits(), 0x80);
+        assert_eq!(output, vec![0x80]);
+    }
+
+    #[test]
+    fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
+        // Server with 'V' capability client should use single-byte compat flags encoding
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let mut stdin = &b"\x00"[..]; // empty checksum list
+        let mut stdout = Vec::new();
+
+        // Client has 'V' (pre-release) instead of 'v'
+        let client_args = ["-e.LsfxCIVu".to_owned()];
+        let config = ProtocolSetupConfig {
+            protocol,
+            skip_compat_exchange: false,
+            client_args: Some(&client_args),
+            is_server: true,
+            is_daemon_mode: true,
+            do_compression: false,
+            checksum_seed: None,
+        };
+
+        let result =
+            setup_protocol(&mut stdout, &mut stdin, &config).expect("server setup should succeed");
+
+        let flags = result.compat_flags.unwrap();
+        assert!(
+            flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            "'V' should implicitly set VARINT_FLIST_FLAGS"
+        );
+
+        // First byte of output should be the compat flags (single byte encoding)
+        // Remaining bytes are algorithm negotiation data + checksum seed
+        assert!(
+            !stdout.is_empty(),
+            "Server should have written compat flags"
+        );
+
+        // The first byte is the compat flags in single-byte format
+        let compat_byte = stdout[0];
+        assert_eq!(
+            compat_byte & CompatibilityFlags::VARINT_FLIST_FLAGS.bits() as u8,
+            CompatibilityFlags::VARINT_FLIST_FLAGS.bits() as u8,
+            "First byte should contain VARINT_FLIST_FLAGS"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_server_v_flag_enables_negotiation() {
+        // 'V' should trigger algorithm negotiation just like 'v' does
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let mut stdin = &b"\x00"[..]; // empty checksum list
+        let mut stdout = Vec::new();
+
+        let client_args = ["-e.LsfxCIVu".to_owned()];
+        let config = ProtocolSetupConfig {
+            protocol,
+            skip_compat_exchange: false,
+            client_args: Some(&client_args),
+            is_server: true,
+            is_daemon_mode: true,
+            do_compression: false,
+            checksum_seed: None,
+        };
+
+        let result =
+            setup_protocol(&mut stdout, &mut stdin, &config).expect("server setup should succeed");
+
+        assert!(
+            result.negotiated_algorithms.is_some(),
+            "'V' should enable algorithm negotiation"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
+        // If both 'v' and 'V' are present, 'V' takes precedence for encoding
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let mut stdin = &b"\x00"[..];
+        let mut stdout_v = Vec::new();
+        let mut stdout_both = Vec::new();
+
+        // Only uppercase V
+        let client_args_v = ["-e.LsfxCIVu".to_owned()];
+        let config_v = ProtocolSetupConfig {
+            protocol,
+            skip_compat_exchange: false,
+            client_args: Some(&client_args_v),
+            is_server: true,
+            is_daemon_mode: true,
+            do_compression: false,
+            checksum_seed: Some(42),
+        };
+
+        let result_v = setup_protocol(&mut stdout_v, &mut stdin, &config_v)
+            .expect("V-only setup should succeed");
+
+        // Both v and V
+        let mut stdin = &b"\x00"[..];
+        let client_args_both = ["-e.LsfxCIvVu".to_owned()];
+        let config_both = ProtocolSetupConfig {
+            protocol,
+            skip_compat_exchange: false,
+            client_args: Some(&client_args_both),
+            is_server: true,
+            is_daemon_mode: true,
+            do_compression: false,
+            checksum_seed: Some(42),
+        };
+
+        let result_both = setup_protocol(&mut stdout_both, &mut stdin, &config_both)
+            .expect("vV setup should succeed");
+
+        // Both should have VARINT_FLIST_FLAGS set
+        assert!(
+            result_v
+                .compat_flags
+                .unwrap()
+                .contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
+        );
+        assert!(
+            result_both
+                .compat_flags
+                .unwrap()
+                .contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
+        );
+
+        // Both should use single-byte encoding since 'V' is present in both
+        assert_eq!(
+            stdout_v[0], stdout_both[0],
+            "Both should produce the same compat flags byte"
         );
     }
 }
