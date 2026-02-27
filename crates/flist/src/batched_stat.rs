@@ -214,46 +214,80 @@ impl Clone for BatchedStatCache {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HashMap-backed stat cache (default)
+// Sharded HashMap-backed stat cache (default)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Number of shards for the stat cache.
+///
+/// 16 shards provides good parallelism without excessive memory overhead.
+/// Must be a power of 2 for efficient modular hashing.
+#[cfg(not(feature = "art"))]
+const SHARD_COUNT: usize = 16;
 
 /// Cache for batched stat operations.
 ///
-/// Stores already-fetched metadata to avoid redundant syscalls.
-/// Thread-safe via interior mutability.
+/// Uses sharded locking (16 independent `Mutex<HashMap>` shards) to reduce
+/// contention under parallel stat workloads. Paths are routed to shards via
+/// a fast hash of their byte representation.
 #[cfg(not(feature = "art"))]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BatchedStatCache {
-    cache: Arc<Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>>,
+    shards: Arc<[Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>; SHARD_COUNT]>,
+}
+
+#[cfg(not(feature = "art"))]
+impl Default for BatchedStatCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(not(feature = "art"))]
 impl BatchedStatCache {
-    /// Creates a new empty cache.
+    /// Creates a new empty cache with 16 shards.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            shards: Arc::new(std::array::from_fn(|_| Mutex::new(HashMap::new()))),
         }
     }
 
-    /// Creates a cache with pre-allocated capacity.
+    /// Creates a cache with pre-allocated capacity distributed across shards.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
+        let per_shard = capacity / SHARD_COUNT + 1;
         Self {
-            cache: Arc::new(Mutex::new(HashMap::with_capacity(capacity))),
+            shards: Arc::new(std::array::from_fn(|_| {
+                Mutex::new(HashMap::with_capacity(per_shard))
+            })),
         }
+    }
+
+    /// Routes a path to a shard index using FNV-1a hash.
+    fn shard_index(path: &Path) -> usize {
+        let bytes = path.as_os_str().as_encoded_bytes();
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for &b in bytes {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash as usize & (SHARD_COUNT - 1)
     }
 
     /// Gets cached metadata for a path, if present.
     #[must_use]
     pub fn get(&self, path: &Path) -> Option<Arc<fs::Metadata>> {
-        self.cache.lock().unwrap().get(path).cloned()
+        let idx = Self::shard_index(path);
+        self.shards[idx].lock().unwrap().get(path).cloned()
     }
 
     /// Inserts metadata into the cache.
     pub fn insert(&self, path: PathBuf, metadata: fs::Metadata) {
-        self.cache.lock().unwrap().insert(path, Arc::new(metadata));
+        let idx = Self::shard_index(&path);
+        self.shards[idx]
+            .lock()
+            .unwrap()
+            .insert(path, Arc::new(metadata));
     }
 
     /// Checks the cache and fetches if not present.
@@ -264,12 +298,17 @@ impl BatchedStatCache {
         path: &Path,
         follow_symlinks: bool,
     ) -> io::Result<Arc<fs::Metadata>> {
-        // Fast path: check cache first
-        if let Some(metadata) = self.get(path) {
-            return Ok(metadata);
+        let idx = Self::shard_index(path);
+
+        // Fast path: check shard
+        {
+            let shard = self.shards[idx].lock().unwrap();
+            if let Some(metadata) = shard.get(path) {
+                return Ok(Arc::clone(metadata));
+            }
         }
 
-        // Slow path: fetch and cache
+        // Slow path: fetch outside lock, then insert
         let metadata = if follow_symlinks {
             fs::metadata(path)?
         } else {
@@ -277,7 +316,7 @@ impl BatchedStatCache {
         };
 
         let metadata = Arc::new(metadata);
-        self.cache
+        self.shards[idx]
             .lock()
             .unwrap()
             .insert(path.to_path_buf(), Arc::clone(&metadata));
@@ -287,16 +326,8 @@ impl BatchedStatCache {
     /// Fetches metadata for multiple paths in parallel.
     ///
     /// Uses rayon to parallelize stat syscalls across CPU cores.
-    /// Each result is cached for future lookups.
-    ///
-    /// # Arguments
-    ///
-    /// * `paths` - Slice of paths to stat
-    /// * `follow_symlinks` - Whether to follow symlinks (stat vs lstat)
-    ///
-    /// # Returns
-    ///
-    /// A vector of results in the same order as `paths`.
+    /// Each result is cached for future lookups. Sharded locking
+    /// ensures minimal contention between parallel workers.
     #[cfg(feature = "parallel")]
     pub fn stat_batch(
         &self,
@@ -324,21 +355,23 @@ impl BatchedStatCache {
             .collect()
     }
 
-    /// Clears all cached metadata.
+    /// Clears all cached metadata across all shards.
     pub fn clear(&self) {
-        self.cache.lock().unwrap().clear();
+        for shard in self.shards.iter() {
+            shard.lock().unwrap().clear();
+        }
     }
 
-    /// Returns the number of cached entries.
+    /// Returns the number of cached entries across all shards.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.cache.lock().unwrap().len()
+        self.shards.iter().map(|s| s.lock().unwrap().len()).sum()
     }
 
     /// Returns true if the cache is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.cache.lock().unwrap().is_empty()
+        self.shards.iter().all(|s| s.lock().unwrap().is_empty())
     }
 }
 
@@ -346,7 +379,7 @@ impl BatchedStatCache {
 impl Clone for BatchedStatCache {
     fn clone(&self) -> Self {
         Self {
-            cache: Arc::clone(&self.cache),
+            shards: Arc::clone(&self.shards),
         }
     }
 }
@@ -361,8 +394,8 @@ impl Clone for BatchedStatCache {
 /// fetching metadata for many files in the same directory.
 #[cfg(unix)]
 pub struct DirectoryStatBatch {
+    _dir_file: fs::File,
     dir_fd: std::os::unix::io::RawFd,
-    dir_path: PathBuf,
 }
 
 #[cfg(unix)]
@@ -375,28 +408,24 @@ impl DirectoryStatBatch {
     pub fn open<P: AsRef<Path>>(dir_path: P) -> io::Result<Self> {
         use std::os::unix::io::AsRawFd;
 
-        let dir_path = dir_path.as_ref().to_path_buf();
-        let dir = fs::File::open(&dir_path)?;
+        let dir = fs::File::open(dir_path.as_ref())?;
         let dir_fd = dir.as_raw_fd();
 
-        // Keep the file descriptor alive
-        std::mem::forget(dir);
-
-        Ok(Self { dir_fd, dir_path })
+        Ok(Self {
+            _dir_file: dir,
+            dir_fd,
+        })
     }
 
     /// Stats a file relative to the directory.
     ///
-    /// Uses `fstatat` to avoid full path resolution.
+    /// Uses `fstatat` to avoid full path resolution, returning a lightweight
+    /// [`FstatResult`] constructed directly from the syscall output (no second stat).
     ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be stat'd.
-    pub fn stat_relative(
-        &self,
-        name: &OsString,
-        follow_symlinks: bool,
-    ) -> io::Result<fs::Metadata> {
+    pub fn stat_relative(&self, name: &OsString, follow_symlinks: bool) -> io::Result<FstatResult> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
 
@@ -422,15 +451,7 @@ impl DirectoryStatBatch {
             return Err(io::Error::last_os_error());
         }
 
-        // Convert libc::stat to fs::Metadata
-        // This is a bit tricky as fs::Metadata doesn't have a public constructor
-        // We work around this by stat'ing the full path as fallback
-        let full_path = self.dir_path.join(name);
-        if follow_symlinks {
-            fs::metadata(&full_path)
-        } else {
-            fs::symlink_metadata(&full_path)
-        }
+        Ok(FstatResult::from_stat(&stat_buf))
     }
 
     /// Stats a file relative to the directory using statx (Linux 4.11+).
@@ -507,7 +528,7 @@ impl DirectoryStatBatch {
         &self,
         names: &[OsString],
         follow_symlinks: bool,
-    ) -> Vec<io::Result<fs::Metadata>> {
+    ) -> Vec<io::Result<FstatResult>> {
         names
             .par_iter()
             .map(|name| self.stat_relative(name, follow_symlinks))
@@ -520,7 +541,7 @@ impl DirectoryStatBatch {
         &self,
         names: &[OsString],
         follow_symlinks: bool,
-    ) -> Vec<io::Result<fs::Metadata>> {
+    ) -> Vec<io::Result<FstatResult>> {
         names
             .iter()
             .map(|name| self.stat_relative(name, follow_symlinks))
@@ -528,13 +549,106 @@ impl DirectoryStatBatch {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Lightweight metadata results (avoid fs::Metadata construction overhead)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Lightweight metadata result from fstatat(2).
+///
+/// Contains only the fields rsync needs during file list generation,
+/// constructed directly from the `libc::stat` buffer without a second syscall.
+/// Available on all Unix platforms.
 #[cfg(unix)]
-impl Drop for DirectoryStatBatch {
-    fn drop(&mut self) {
-        unsafe {
-            libc::close(self.dir_fd);
+#[derive(Debug, Clone)]
+pub struct FstatResult {
+    /// File type and permission bits (st_mode).
+    pub mode: u32,
+    /// File size in bytes.
+    pub size: u64,
+    /// Last modification time (seconds since epoch).
+    pub mtime_sec: i64,
+    /// Last modification time (nanoseconds component).
+    pub mtime_nsec: u32,
+    /// User ID of the owner.
+    pub uid: u32,
+    /// Group ID of the owner.
+    pub gid: u32,
+    /// Inode number.
+    pub ino: u64,
+    /// Number of hard links.
+    pub nlink: u32,
+    /// Device major number.
+    pub rdev_major: u32,
+    /// Device minor number.
+    pub rdev_minor: u32,
+}
+
+#[cfg(unix)]
+impl FstatResult {
+    /// Constructs from a raw `libc::stat` buffer.
+    fn from_stat(stat_buf: &libc::stat) -> Self {
+        let rdev = stat_buf.st_rdev as u64;
+        Self {
+            mode: stat_buf.st_mode as u32,
+            size: stat_buf.st_size as u64,
+            mtime_sec: stat_buf.st_mtime,
+            mtime_nsec: stat_buf.st_mtime_nsec as u32,
+            uid: stat_buf.st_uid,
+            gid: stat_buf.st_gid,
+            ino: stat_buf.st_ino,
+            nlink: stat_buf.st_nlink as u32,
+            rdev_major: rdev_major(rdev),
+            rdev_minor: rdev_minor(rdev),
         }
     }
+
+    /// Returns true if this entry is a regular file.
+    #[must_use]
+    pub fn is_file(&self) -> bool {
+        (self.mode & libc::S_IFMT as u32) == libc::S_IFREG as u32
+    }
+
+    /// Returns true if this entry is a directory.
+    #[must_use]
+    pub fn is_dir(&self) -> bool {
+        (self.mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32
+    }
+
+    /// Returns true if this entry is a symbolic link.
+    #[must_use]
+    pub fn is_symlink(&self) -> bool {
+        (self.mode & libc::S_IFMT as u32) == libc::S_IFLNK as u32
+    }
+
+    /// Returns the permission bits (lower 12 bits of mode).
+    #[must_use]
+    pub fn permissions(&self) -> u32 {
+        self.mode & 0o7777
+    }
+}
+
+/// Extracts the major device number from a combined rdev value (Linux glibc encoding).
+#[cfg(all(unix, target_os = "linux"))]
+fn rdev_major(rdev: u64) -> u32 {
+    ((rdev >> 8) & 0xfff) as u32 | (((rdev >> 32) & !0xfff) as u32)
+}
+
+/// Extracts the major device number from a combined rdev value (BSD/macOS encoding).
+#[cfg(all(unix, not(target_os = "linux")))]
+fn rdev_major(rdev: u64) -> u32 {
+    ((rdev >> 24) & 0xff) as u32
+}
+
+/// Extracts the minor device number from a combined rdev value (Linux glibc encoding).
+#[cfg(all(unix, target_os = "linux"))]
+fn rdev_minor(rdev: u64) -> u32 {
+    (rdev & 0xff) as u32 | (((rdev >> 12) & !0xff) as u32)
+}
+
+/// Extracts the minor device number from a combined rdev value (BSD/macOS encoding).
+#[cfg(all(unix, not(target_os = "linux")))]
+fn rdev_minor(rdev: u64) -> u32 {
+    (rdev & 0xffffff) as u32
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
