@@ -43,7 +43,7 @@ use fs2::FileExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use checksums::strong::Md5;
+use checksums::strong::{Md4, Md5};
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use core::{
     auth::{digests_for_protocol, verify_daemon_auth_response},
