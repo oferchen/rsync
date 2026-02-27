@@ -477,6 +477,7 @@ fn build_server_config_for_receiver(
 
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
+    server_config.inplace = config.inplace();
 
     server_config.min_file_size = config.min_file_size();
     server_config.max_file_size = config.max_file_size();
@@ -497,6 +498,7 @@ fn build_server_config_for_generator(
 
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
+    server_config.inplace = config.inplace();
 
     server_config.min_file_size = config.min_file_size();
     server_config.max_file_size = config.max_file_size();
