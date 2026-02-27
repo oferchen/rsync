@@ -2028,6 +2028,7 @@ mod tests {
             max_file_size: None,
             files_from_path: None,
             from0: false,
+            inplace: false,
         }
     }
 
@@ -3263,6 +3264,7 @@ mod tests {
             max_file_size: None,
             files_from_path: None,
             from0: false,
+            inplace: false,
         }
     }
 

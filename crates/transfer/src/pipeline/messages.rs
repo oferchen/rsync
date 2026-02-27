@@ -74,6 +74,12 @@ pub struct BeginMessage {
     ///
     /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)`
     pub is_device_target: bool,
+    /// When true, writes directly to the destination file (`--inplace`).
+    ///
+    /// Bypasses temp-file + rename: the destination is opened for writing
+    /// (created if absent) and truncated to target size after delta
+    /// application. Preserves the destination inode.
+    pub is_inplace: bool,
 }
 
 /// Computed checksum digest returned by the disk thread.

@@ -200,6 +200,23 @@ pub struct ServerConfig {
     /// delimiters. Always true when the client forwards a local file
     /// (the client sends `--from0` alongside `--files-from=-`).
     pub from0: bool,
+    /// Update destination files in place without temp-file + rename (`--inplace`).
+    ///
+    /// When true, the receiver writes directly to the destination file instead
+    /// of creating a temporary file and atomically renaming. This preserves the
+    /// destination inode and is required for read-only directories, device targets,
+    /// and space-constrained scenarios.
+    ///
+    /// The delta application is safe because block copy tokens reference positions
+    /// in the basis file that are at or before the current write head, and the basis
+    /// file is mmap'd before writing begins.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c`: `--inplace` sets `inplace = 1`
+    /// - `receiver.c:855-860`: opens destination directly when inplace
+    /// - `receiver.c:241`: `receive_data` with `inplace_sizing` parameter
+    pub inplace: bool,
 }
 
 impl ServerConfig {
@@ -249,6 +266,7 @@ impl ServerConfig {
             max_file_size: None,
             files_from_path: None,
             from0: false,
+            inplace: false,
         })
     }
 }
