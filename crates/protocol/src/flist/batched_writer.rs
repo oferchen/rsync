@@ -246,10 +246,17 @@ impl BatchedFileListWriter {
         self
     }
 
-    /// Sets whether device numbers should be written to the wire.
+    /// Sets whether device numbers (block/char) should be written to the wire.
     #[must_use]
     pub fn with_preserve_devices(mut self, preserve: bool) -> Self {
         self.writer = self.writer.with_preserve_devices(preserve);
+        self
+    }
+
+    /// Sets whether special files (FIFOs/sockets) should be written to the wire.
+    #[must_use]
+    pub fn with_preserve_specials(mut self, preserve: bool) -> Self {
+        self.writer = self.writer.with_preserve_specials(preserve);
         self
     }
 
@@ -755,6 +762,7 @@ mod tests {
             .with_preserve_gid(true)
             .with_preserve_links(true)
             .with_preserve_devices(true)
+            .with_preserve_specials(true)
             .with_preserve_hard_links(true)
             .with_preserve_atimes(true)
             .with_preserve_crtimes(true)
