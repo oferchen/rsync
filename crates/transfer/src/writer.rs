@@ -189,6 +189,28 @@ impl<W: Write> ServerWriter<W> {
         self.send_message(MessageCode::NoSend, &ndx.to_le_bytes())
     }
 
+    /// Sends a `MSG_REDO` message for the given file index.
+    ///
+    /// Indicates that the receiver detected a whole-file checksum failure and
+    /// the file should be re-transferred with full checksum length (no delta basis).
+    ///
+    /// In upstream rsync's forked architecture, receiver → generator IPC uses this
+    /// message. In our unified model, redo is handled internally, but we send
+    /// `MSG_REDO` for forward-compatibility and protocol completeness.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:970-974`: `send_msg_int(MSG_REDO, ndx)` on checksum failure
+    /// - `io.c:1514-1519`: generator-side handler queues index to `redo_list`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the writer is not in multiplex mode or the underlying
+    /// I/O operation fails.
+    pub fn send_redo(&mut self, ndx: i32) -> io::Result<()> {
+        self.send_message(MessageCode::Redo, &ndx.to_le_bytes())
+    }
+
     /// Writes raw bytes directly to the underlying stream, bypassing multiplexing.
     ///
     /// This is used for protocol exchanges like the final goodbye handshake where
@@ -916,5 +938,30 @@ mod tests {
         }
         assert_eq!(buf.len(), 4 + 10);
         assert_eq!(&buf[4..], b"helloworld");
+    }
+
+    #[test]
+    fn server_writer_send_redo_multiplex() {
+        // send_redo sends MSG_REDO with 4-byte LE file index
+        let mut buf = Vec::new();
+        {
+            let mut writer = ServerWriter::new_plain(&mut buf)
+                .activate_multiplex()
+                .unwrap();
+            writer.send_redo(42).unwrap();
+        }
+        // Verify the frame: 4-byte header (tag | len) + 4-byte payload
+        assert_eq!(buf.len(), 8);
+        let payload = &buf[4..8];
+        assert_eq!(payload, &42_i32.to_le_bytes());
+    }
+
+    #[test]
+    fn server_writer_send_redo_plain_mode_fails() {
+        let mut buf = Vec::new();
+        let mut writer = ServerWriter::new_plain(&mut buf);
+        let result = writer.send_redo(42);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
     }
 }
