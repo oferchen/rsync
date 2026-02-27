@@ -515,7 +515,7 @@ impl GeneratorContext {
     fn run_transfer_loop<R: Read, W: Write>(
         &mut self,
         reader: &mut R,
-        writer: &mut W,
+        writer: &mut super::writer::ServerWriter<W>,
     ) -> io::Result<TransferLoopResult> {
         use super::shared::TransferDeadline;
 
@@ -649,7 +649,19 @@ impl GeneratorContext {
                         adaptive_buffer_size(file_size),
                         f,
                     )),
-                    Err(_e) => continue,
+                    Err(e) => {
+                        // upstream: sender.c:354-369 — when open fails, log the error,
+                        // set io_error flags, and send MSG_NO_SEND for protocol >= 30.
+                        if e.kind() == io::ErrorKind::NotFound {
+                            self.io_error |= io_error_flags::IOERR_VANISHED;
+                        } else {
+                            self.io_error |= io_error_flags::IOERR_GENERAL;
+                        }
+                        if self.protocol.as_u8() >= 30 {
+                            writer.send_no_send(ndx_i32)?;
+                        }
+                        continue;
+                    }
                 };
                 let config = DeltaGeneratorConfig {
                     block_length,
@@ -687,7 +699,21 @@ impl GeneratorContext {
             } else {
                 // Whole-file path: single-pass streaming (read → hash → write).
                 // Pre-open file to fail before sending protocol headers.
-                let source = fs::File::open(source_path)?;
+                // upstream: sender.c:354-369 — send MSG_NO_SEND on open failure.
+                let source = match fs::File::open(source_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        if e.kind() == io::ErrorKind::NotFound {
+                            self.io_error |= io_error_flags::IOERR_VANISHED;
+                        } else {
+                            self.io_error |= io_error_flags::IOERR_GENERAL;
+                        }
+                        if self.protocol.as_u8() >= 30 {
+                            writer.send_no_send(ndx_i32)?;
+                        }
+                        continue;
+                    }
+                };
 
                 // Send ndx, iflags, sum_head (only after successful file open)
                 // upstream: sender.c:180-187 write_ndx_and_attrs()

@@ -169,6 +169,26 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Sends a `MSG_NO_SEND` message for the given file index.
+    ///
+    /// Indicates that the sender could not open the requested file and will
+    /// not be sending delta data for it. The receiver should skip waiting
+    /// for this file's transfer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:367-368`: `send_msg_int(MSG_NO_SEND, ndx)` when file open fails
+    ///   and `protocol_version >= 30`.
+    /// - `io.c:1618-1627`: receiver-side handling of `MSG_NO_SEND`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the writer is not in multiplex mode or the underlying
+    /// I/O operation fails.
+    pub fn send_no_send(&mut self, ndx: i32) -> io::Result<()> {
+        self.send_message(MessageCode::NoSend, &ndx.to_le_bytes())
+    }
+
     /// Writes raw bytes directly to the underlying stream, bypassing multiplexing.
     ///
     /// This is used for protocol exchanges like the final goodbye handshake where
