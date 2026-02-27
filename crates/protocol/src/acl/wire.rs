@@ -118,12 +118,18 @@ pub fn send_ida_entries<W: Write>(
     for entry in entries.iter() {
         write_varint(writer, entry.id as i32)?;
 
-        let encoded = encode_access(entry.access, include_names);
+        let has_name = include_names && entry.name.is_some();
+        let encoded = encode_access(entry.access, has_name);
         write_varint(writer, encoded as i32)?;
 
-        // Name transmission would go here if include_names is true
-        // For now, we don't include names (numeric_ids mode)
-        // This matches upstream behavior when numeric_ids is set
+        // upstream: acls.c send_ida_entries() writes name after access flags
+        if has_name {
+            if let Some(ref name) = entry.name {
+                let len = name.len().min(255);
+                writer.write_all(&[len as u8])?;
+                writer.write_all(&name[..len])?;
+            }
+        }
     }
 
     Ok(())
@@ -149,17 +155,19 @@ pub fn recv_ida_entries<R: Read>(reader: &mut R) -> io::Result<(IdaEntries, u8)>
 
         let (access, name_follows) = decode_access(encoded, true);
 
-        if name_follows {
-            // Read and discard name for now
-            // In full implementation, this would do UID/GID resolution
+        // upstream: acls.c recv_ida_entries() reads name bytes after access
+        let name = if name_follows {
             let mut len_buf = [0u8; 1];
             reader.read_exact(&mut len_buf)?;
             let name_len = len_buf[0] as usize;
             let mut name_buf = vec![0u8; name_len];
             reader.read_exact(&mut name_buf)?;
-        }
+            Some(name_buf)
+        } else {
+            None
+        };
 
-        entries.push(IdAccess { id, access });
+        entries.push(IdAccess { id, access, name });
         computed_mask |= (access & !NAME_IS_USER) as u8;
     }
 
@@ -276,8 +284,14 @@ pub fn recv_rsync_acl<R: Read>(reader: &mut R) -> io::Result<RecvAclResult> {
         acl.other_obj = read_varint(reader)? as u8;
     }
     if flags & XMIT_NAME_LIST != 0 {
-        let (entries, _computed_mask) = recv_ida_entries(reader)?;
+        let (entries, computed_mask) = recv_ida_entries(reader)?;
         acl.names = entries;
+
+        // upstream: acls.c recv_rsync_acl() sets mask_obj from computed_mask
+        // when named entries are present but no explicit mask was transmitted
+        if !acl.names.is_empty() && acl.mask_obj == NO_ENTRY {
+            acl.mask_obj = computed_mask;
+        }
     }
 
     Ok(RecvAclResult::Literal(acl))

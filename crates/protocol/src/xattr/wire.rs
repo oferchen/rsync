@@ -11,6 +11,9 @@ use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrEntry, XattrList};
 
 /// Sends xattr data to the wire.
 ///
+/// The `checksum_seed` is mixed into the hash for abbreviated xattr values,
+/// matching upstream rsync's `sum_init(xattr_sum_nni, checksum_seed)` behavior.
+///
 /// # Wire Format
 ///
 /// ```text
@@ -22,16 +25,20 @@ use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrEntry, XattrList};
 ///     datum_len  : varint  // original value length
 ///     name       : bytes[name_len]
 ///     If datum_len > MAX_FULL_DATUM:
-///       checksum : bytes[MAX_XATTR_DIGEST_LEN]  // MD5 of value
+///       checksum : bytes[MAX_XATTR_DIGEST_LEN]  // seeded hash of value
 ///     Else:
 ///       value    : bytes[datum_len]
 /// ```
 ///
-/// Returns the index assigned to this xattr set (for caching).
+/// # Upstream Reference
+///
+/// See `xattrs.c` - abbreviated values use `sum_init(xattr_sum_nni, checksum_seed)`
+/// to include the negotiated seed in the digest.
 pub fn send_xattr<W: Write>(
     writer: &mut W,
     list: &XattrList,
     cached_index: Option<u32>,
+    checksum_seed: i32,
 ) -> io::Result<()> {
     // Send index + 1. If we have a cached index, send it. Otherwise send 0.
     let ndx = cached_index.map(|i| i as i32).unwrap_or(-1);
@@ -50,8 +57,8 @@ pub fn send_xattr<W: Write>(
             writer.write_all(name)?;
 
             if datum_len > MAX_FULL_DATUM {
-                // Send checksum only
-                let checksum = compute_xattr_checksum(entry.datum());
+                // upstream: sum_init(xattr_sum_nni, checksum_seed)
+                let checksum = compute_xattr_checksum(entry.datum(), checksum_seed);
                 writer.write_all(&checksum)?;
             } else {
                 // Send full value
@@ -118,27 +125,33 @@ pub enum RecvXattrResult {
 /// Called by the receiver after determining which abbreviated values
 /// are actually needed (differ from local values).
 ///
+/// Callers provide 0-based indices. These are converted to 1-based on the
+/// wire to match upstream rsync's `rxa->num` convention, where the first
+/// entry is numbered 1. This avoids ambiguity with the 0 terminator.
+///
 /// # Wire Format
 ///
 /// ```text
 /// For each needed entry:
-///   relative_index : varint  // index relative to previous (or 0 for first)
-/// terminator       : varint  // 0 to signal end of requests
+///   relative_num : varint  // 1-based num minus prior_req
+/// terminator     : varint  // 0 to signal end of requests
 /// ```
+///
+/// # Upstream Reference
+///
+/// See `xattrs.c:send_xattr_request()` - uses 1-based `rxa->num` with
+/// delta encoding: `write_varint(f_out, rxa->num - prior_req)`.
 pub fn send_xattr_request<W: Write>(writer: &mut W, indices: &[usize]) -> io::Result<()> {
-    let mut last_ndx = 0i32;
+    let mut prior_req = 0i32;
 
     for &idx in indices {
-        // Send relative index (difference from last)
-        let rel = idx as i32 - last_ndx;
-        write_varint(writer, rel)?;
-        last_ndx = idx as i32 + 1; // Next relative is from idx+1
+        // upstream: rxa->num is 1-based, convert 0-based index to 1-based
+        let num = idx as i32 + 1;
+        write_varint(writer, num - prior_req)?;
+        prior_req = num;
     }
 
-    // Terminator: negative offset impossible, so 0 with no prior means end
-    // Actually, upstream uses a different termination - let's match it
-    // The upstream sends (idx - last_ndx) and terminates when nothing more needed
-    // For safety, send a 0 to indicate end
+    // upstream: 0 terminates the request list
     write_varint(writer, 0)?;
 
     Ok(())
@@ -148,32 +161,39 @@ pub fn send_xattr_request<W: Write>(writer: &mut W, indices: &[usize]) -> io::Re
 ///
 /// Called by the sender to process receiver's request for abbreviated values.
 ///
+/// Wire format uses 1-based numbering. This function converts back to 0-based
+/// indices for internal use.
+///
 /// # Wire Format
 ///
 /// See [`send_xattr_request`] for format description.
 ///
-/// Returns the indices that were requested.
+/// Returns the 0-based indices that were requested.
+///
+/// # Upstream Reference
+///
+/// See `xattrs.c:recv_xattr_request()` - reads 1-based `num` values with
+/// delta encoding: `ndx = read_varint(f) + prior_req`.
 pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::Result<Vec<usize>> {
     let mut indices = Vec::new();
-    let mut last_ndx = 0i32;
+    let mut prior_req = 0i32;
 
     loop {
         let rel = read_varint(reader)?;
-        if rel == 0 && last_ndx > 0 {
-            // Terminator after at least one request
-            break;
-        }
-        if rel == 0 && last_ndx == 0 {
-            // No requests at all
+        if rel == 0 {
+            // upstream: 0 terminates the request list
             break;
         }
 
-        let idx = (last_ndx + rel) as usize;
+        // upstream: ndx = read_varint(f) + prior_req (1-based)
+        let num = prior_req + rel;
+        // Convert 1-based wire num to 0-based index
+        let idx = (num - 1) as usize;
         if idx < list.len() {
             list.mark_todo(idx);
             indices.push(idx);
         }
-        last_ndx = idx as i32 + 1;
+        prior_req = num;
     }
 
     Ok(indices)
@@ -213,11 +233,19 @@ pub fn recv_xattr_values<R: Read>(reader: &mut R, list: &mut XattrList) -> io::R
     Ok(())
 }
 
-/// Computes the MD5 checksum for an xattr value.
+/// Computes the seeded MD5 checksum for an xattr value.
 ///
-/// Used for abbreviating large xattr values on the wire.
-fn compute_xattr_checksum(data: &[u8]) -> [u8; MAX_XATTR_DIGEST_LEN] {
+/// Includes the `checksum_seed` in the hash to match upstream rsync's
+/// `sum_init(xattr_sum_nni, checksum_seed)` + `sum_update()` + `sum_end()`
+/// pattern. The seed bytes are hashed before the data.
+///
+/// # Upstream Reference
+///
+/// See `xattrs.c` - large xattr values are abbreviated using a seeded hash.
+fn compute_xattr_checksum(data: &[u8], checksum_seed: i32) -> [u8; MAX_XATTR_DIGEST_LEN] {
     let mut hasher = Md5::new();
+    // upstream: sum_init() feeds the seed into the hash first
+    hasher.update(checksum_seed.to_le_bytes());
     hasher.update(data);
     let result = hasher.finalize();
     let mut checksum = [0u8; MAX_XATTR_DIGEST_LEN];
@@ -227,12 +255,14 @@ fn compute_xattr_checksum(data: &[u8]) -> [u8; MAX_XATTR_DIGEST_LEN] {
 
 /// Compares an abbreviated checksum with a local value.
 ///
+/// The `checksum_seed` must match the seed used when the checksum was computed.
+///
 /// Returns true if the checksums match (values are the same).
-pub fn checksum_matches(checksum: &[u8], local_value: &[u8]) -> bool {
+pub fn checksum_matches(checksum: &[u8], local_value: &[u8], checksum_seed: i32) -> bool {
     if checksum.len() != MAX_XATTR_DIGEST_LEN {
         return false;
     }
-    let local_checksum = compute_xattr_checksum(local_value);
+    let local_checksum = compute_xattr_checksum(local_value, checksum_seed);
     checksum == local_checksum
 }
 
@@ -251,7 +281,7 @@ mod tests {
         list.push(XattrEntry::new(b"user.other".to_vec(), b"another".to_vec()));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -274,7 +304,7 @@ mod tests {
         list.push(XattrEntry::new(b"user.large".to_vec(), large_value.clone()));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -287,7 +317,8 @@ mod tests {
                 // Checksum should match
                 assert!(checksum_matches(
                     received.entries()[0].datum(),
-                    &large_value
+                    &large_value,
+                    0
                 ));
             }
             _ => panic!("Expected literal data"),
@@ -299,7 +330,7 @@ mod tests {
         let list = XattrList::new();
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, Some(42)).unwrap();
+        send_xattr(&mut buf, &list, Some(42), 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -312,11 +343,22 @@ mod tests {
 
     #[test]
     fn checksum_verification() {
+        let seed = 12345;
         let value = b"test value for checksum";
-        let checksum = compute_xattr_checksum(value);
+        let checksum = compute_xattr_checksum(value, seed);
 
-        assert!(checksum_matches(&checksum, value));
-        assert!(!checksum_matches(&checksum, b"different value"));
+        assert!(checksum_matches(&checksum, value, seed));
+        assert!(!checksum_matches(&checksum, b"different value", seed));
+    }
+
+    #[test]
+    fn checksum_seed_affects_result() {
+        let value = b"same data different seeds";
+        let checksum_a = compute_xattr_checksum(value, 100);
+        let checksum_b = compute_xattr_checksum(value, 200);
+        assert_ne!(checksum_a, checksum_b);
+        assert!(checksum_matches(&checksum_a, value, 100));
+        assert!(!checksum_matches(&checksum_a, value, 200));
     }
 
     // ==================== Additional Comprehensive Tests ====================
@@ -326,7 +368,7 @@ mod tests {
         let list = XattrList::new();
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -346,7 +388,7 @@ mod tests {
         list.push(XattrEntry::new(b"user.empty".to_vec(), b"".to_vec()));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -373,7 +415,7 @@ mod tests {
         ));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -400,7 +442,7 @@ mod tests {
         ));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -426,7 +468,7 @@ mod tests {
         }
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -469,7 +511,7 @@ mod tests {
         ));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -484,7 +526,8 @@ mod tests {
                 assert!(received.entries()[1].is_abbreviated());
                 assert!(checksum_matches(
                     received.entries()[1].datum(),
-                    &large_value
+                    &large_value,
+                    0
                 ));
                 // small2 - not abbreviated
                 assert!(!received.entries()[2].is_abbreviated());
@@ -506,7 +549,7 @@ mod tests {
         ));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -528,7 +571,7 @@ mod tests {
         list.push(XattrEntry::new(b"user.utf8".to_vec(), utf8_value.clone()));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -556,7 +599,7 @@ mod tests {
         ));
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, None).unwrap();
+        send_xattr(&mut buf, &list, None, 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -565,7 +608,11 @@ mod tests {
             RecvXattrResult::Literal(received) => {
                 assert_eq!(received.len(), 1);
                 assert!(received.entries()[0].is_abbreviated());
-                assert!(checksum_matches(received.entries()[0].datum(), &utf8_value));
+                assert!(checksum_matches(
+                    received.entries()[0].datum(),
+                    &utf8_value,
+                    0
+                ));
             }
             _ => panic!("Expected literal data"),
         }
@@ -573,9 +620,8 @@ mod tests {
 
     #[test]
     fn xattr_request_round_trip() {
-        // Note: indices starting with 0 have a protocol ambiguity with the terminator
-        // Test with indices that don't start at 0
-        let indices = vec![1, 3, 5, 10];
+        // 1-based wire encoding allows index 0 without ambiguity
+        let indices = vec![0, 1, 3, 5, 10];
 
         let mut buf = Vec::new();
         send_xattr_request(&mut buf, &indices).unwrap();
@@ -595,7 +641,7 @@ mod tests {
 
         assert_eq!(received_indices, indices);
         // Verify marked as TODO
-        assert!(!list.entries()[0].state().needs_send());
+        assert!(list.entries()[0].state().needs_send());
         assert!(list.entries()[1].state().needs_send());
         assert!(!list.entries()[2].state().needs_send());
         assert!(list.entries()[3].state().needs_send());
@@ -666,15 +712,15 @@ mod tests {
     #[test]
     fn checksum_matches_empty_value() {
         let empty_value = b"";
-        let checksum = compute_xattr_checksum(empty_value);
-        assert!(checksum_matches(&checksum, empty_value));
+        let checksum = compute_xattr_checksum(empty_value, 0);
+        assert!(checksum_matches(&checksum, empty_value, 0));
     }
 
     #[test]
     fn checksum_length_mismatch_returns_false() {
         let value = b"test value";
         let short_checksum = &[0u8; 8]; // Less than MAX_XATTR_DIGEST_LEN
-        assert!(!checksum_matches(short_checksum, value));
+        assert!(!checksum_matches(short_checksum, value, 0));
     }
 
     #[test]
@@ -683,7 +729,7 @@ mod tests {
         let list = XattrList::new();
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, Some(0)).unwrap();
+        send_xattr(&mut buf, &list, Some(0), 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
@@ -702,7 +748,7 @@ mod tests {
         let large_index = 100_000u32;
 
         let mut buf = Vec::new();
-        send_xattr(&mut buf, &list, Some(large_index)).unwrap();
+        send_xattr(&mut buf, &list, Some(large_index), 0).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_xattr(&mut cursor).unwrap();
