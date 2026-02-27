@@ -716,46 +716,50 @@ impl CompressedTokenDecoder {
             return Ok(CompressedToken::End);
         }
 
-        // Parse token encoding
-        match flag & 0xE0 {
-            0x20 => {
-                // TOKEN_LONG or TOKENRUN_LONG
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                self.rx_token = i32::from_le_bytes(buf);
+        // Parse token encoding.
+        //
+        // Upstream token.c lines 588-598 uses bit 7 to distinguish relative
+        // from absolute tokens, and bit 6 (via `flag >>= 6; if (flag & 1)`)
+        // to detect run counts. The `flag & 0xE0` approach fails for relative
+        // tokens with offsets 32-63 because offset bits bleed into the mask.
+        if flag & TOKEN_REL != 0 {
+            // TOKEN_REL (0x80-0xBF) or TOKENRUN_REL (0xC0-0xFF)
+            let rel = (flag & 0x3F) as i32;
+            self.rx_token += rel;
 
-                if flag == TOKENRUN_LONG {
-                    let mut run_buf = [0u8; 2];
-                    reader.read_exact(&mut run_buf)?;
-                    self.rx_run = u16::from_le_bytes(run_buf) as i32;
-                }
-
-                let token = self.rx_token;
-                self.rx_token += 1;
-                // rx_run will be decremented in subsequent calls at the top of recv_token
-                Ok(CompressedToken::BlockMatch(token as u32))
+            // Upstream: `flag >>= 6; if (flag & 1)` — bit 6 of the original
+            // flag distinguishes TOKEN_REL (bit 6 = 0) from TOKENRUN_REL
+            // (bit 6 = 1).
+            if (flag >> 6) & 1 != 0 {
+                let mut run_buf = [0u8; 2];
+                reader.read_exact(&mut run_buf)?;
+                self.rx_run = u16::from_le_bytes(run_buf) as i32;
             }
-            0x80 | 0xC0 => {
-                // TOKEN_REL or TOKENRUN_REL
-                let rel = (flag & 0x3F) as i32;
-                self.rx_token += rel;
 
-                if (flag & 0xE0) == 0xC0 {
-                    // TOKENRUN_REL
-                    let mut run_buf = [0u8; 2];
-                    reader.read_exact(&mut run_buf)?;
-                    self.rx_run = u16::from_le_bytes(run_buf) as i32;
-                }
+            let token = self.rx_token;
+            self.rx_token += 1;
+            Ok(CompressedToken::BlockMatch(token as u32))
+        } else if flag & 0xE0 == TOKEN_LONG {
+            // TOKEN_LONG (0x20) or TOKENRUN_LONG (0x21)
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            self.rx_token = i32::from_le_bytes(buf);
 
-                let token = self.rx_token;
-                self.rx_token += 1;
-                // rx_run will be decremented in subsequent calls at the top of recv_token
-                Ok(CompressedToken::BlockMatch(token as u32))
+            // Upstream: bit 0 distinguishes TOKEN_LONG from TOKENRUN_LONG
+            if flag & 1 != 0 {
+                let mut run_buf = [0u8; 2];
+                reader.read_exact(&mut run_buf)?;
+                self.rx_run = u16::from_le_bytes(run_buf) as i32;
             }
-            _ => Err(io::Error::new(
+
+            let token = self.rx_token;
+            self.rx_token += 1;
+            Ok(CompressedToken::BlockMatch(token as u32))
+        } else {
+            Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("invalid compressed token flag: 0x{flag:02X}"),
-            )),
+            ))
         }
     }
 }
