@@ -88,7 +88,8 @@ where
 
     let mut advertisement = [0u8; 4];
     let desired = desired_protocol.as_u8();
-    advertisement.copy_from_slice(&u32::from(desired).to_be_bytes());
+    // upstream: io.c write_int() uses SIVAL which is little-endian
+    advertisement.copy_from_slice(&u32::from(desired).to_le_bytes());
     debug_log!(Proto, 2, "sending protocol version {}", desired);
     {
         let inner = stream.inner_mut();
@@ -98,7 +99,8 @@ where
 
     let mut remote_buf = [0u8; 4];
     stream.read_exact(&mut remote_buf)?;
-    let remote_advertised = u32::from_be_bytes(remote_buf);
+    // upstream: io.c read_int() uses IVAL which is little-endian
+    let remote_advertised = u32::from_le_bytes(remote_buf);
 
     let remote_protocol = match ProtocolVersion::from_peer_advertisement(remote_advertised) {
         Ok(protocol) => protocol,

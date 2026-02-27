@@ -44,7 +44,7 @@ fn negotiate_binary_session_exchanges_versions() {
 #[test]
 fn negotiate_binary_session_clamps_future_protocols() {
     let future_version = 40u32;
-    let mut payload = future_version.to_be_bytes().to_vec();
+    let mut payload = future_version.to_le_bytes().to_vec();
     sample_flags()
         .encode_to_vec(&mut payload)
         .expect("compatibility encoding succeeds");
@@ -82,7 +82,7 @@ fn negotiate_binary_session_clamps_future_protocols() {
 #[test]
 fn negotiate_binary_session_clamps_protocols_beyond_u8_range() {
     let future_version = 0x0001_0200u32;
-    let mut payload = future_version.to_be_bytes().to_vec();
+    let mut payload = future_version.to_le_bytes().to_vec();
     sample_flags()
         .encode_to_vec(&mut payload)
         .expect("compatibility encoding succeeds");
@@ -95,7 +95,7 @@ fn negotiate_binary_session_clamps_protocols_beyond_u8_range() {
 
 #[test]
 fn negotiate_binary_session_clamps_u32_max_advertisement() {
-    let mut payload = u32::MAX.to_be_bytes().to_vec();
+    let mut payload = u32::MAX.to_le_bytes().to_vec();
     sample_flags()
         .encode_to_vec(&mut payload)
         .expect("compatibility encoding succeeds");
@@ -151,7 +151,7 @@ fn negotiate_binary_session_rejects_legacy_prefix() {
 #[test]
 fn negotiate_binary_session_rejects_out_of_range_version() {
     let mut bytes = [0u8; 4];
-    bytes.copy_from_slice(&27u32.to_be_bytes());
+    bytes.copy_from_slice(&27u32.to_le_bytes());
     let transport = MemoryTransport::new(&bytes);
     let err = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect_err("unsupported protocol must fail");
