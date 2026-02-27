@@ -1243,4 +1243,232 @@ mod tests {
             assert_eq!(EARLY_INPUT_CMD, "#early_input=");
         }
     }
+
+    /// Integration tests verifying the complete early-input round-trip:
+    /// client reads a file, sends it over a TCP socket, and the daemon-side
+    /// wire format is validated against protocol expectations.
+    mod early_input_roundtrip_tests {
+        use super::*;
+        use std::io::{BufRead, BufReader, Read};
+        use std::net::TcpListener;
+
+        /// Helper: creates a `DaemonTransferRequest` for test use.
+        fn test_request() -> DaemonTransferRequest {
+            DaemonTransferRequest {
+                address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+                module: "test".to_owned(),
+                path: String::new(),
+                username: None,
+            }
+        }
+
+        /// Helper: reads the early-input wire message from a stream, parsing
+        /// the `#early_input=<len>\n` header and the raw payload bytes.
+        ///
+        /// Returns `None` if no data was sent (e.g. empty file case).
+        fn receive_early_input(reader: &mut BufReader<impl Read>) -> Option<Vec<u8>> {
+            let mut line = String::new();
+            let n = reader.read_line(&mut line).unwrap();
+            if n == 0 {
+                return None;
+            }
+
+            let trimmed = line.trim_end_matches('\n');
+            let len_str = trimmed.strip_prefix(EARLY_INPUT_CMD)?;
+            let data_len: usize = len_str.parse().unwrap();
+
+            let mut buf = vec![0u8; data_len];
+            reader.read_exact(&mut buf).unwrap();
+            Some(buf)
+        }
+
+        #[test]
+        fn roundtrip_normal_content() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("early.txt");
+            let content = b"hello early-input roundtrip";
+            std::fs::write(&file_path, content).unwrap();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let mut client = TcpStream::connect(addr).unwrap();
+            let (server, _) = listener.accept().unwrap();
+
+            let request = test_request();
+            send_early_input(&mut client, &file_path, &request).unwrap();
+            drop(client);
+
+            let mut reader = BufReader::new(server);
+            let received = receive_early_input(&mut reader).unwrap();
+            assert_eq!(received, content);
+        }
+
+        #[test]
+        fn roundtrip_empty_file_sends_nothing() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("empty.txt");
+            std::fs::write(&file_path, b"").unwrap();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let mut client = TcpStream::connect(addr).unwrap();
+            let (server, _) = listener.accept().unwrap();
+
+            let request = test_request();
+            send_early_input(&mut client, &file_path, &request).unwrap();
+            drop(client);
+
+            let mut reader = BufReader::new(server);
+            let received = receive_early_input(&mut reader);
+            assert!(
+                received.is_none(),
+                "empty file should not produce any wire data"
+            );
+        }
+
+        #[test]
+        fn roundtrip_file_exactly_at_5k_limit() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("exact.bin");
+            let content = vec![0xABu8; EARLY_INPUT_MAX_SIZE];
+            std::fs::write(&file_path, &content).unwrap();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let mut client = TcpStream::connect(addr).unwrap();
+            let (server, _) = listener.accept().unwrap();
+
+            let request = test_request();
+            send_early_input(&mut client, &file_path, &request).unwrap();
+            drop(client);
+
+            let mut reader = BufReader::new(server);
+            let received = receive_early_input(&mut reader).unwrap();
+            assert_eq!(received.len(), EARLY_INPUT_MAX_SIZE);
+            assert_eq!(received, content);
+        }
+
+        #[test]
+        fn roundtrip_file_over_limit_is_truncated() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("large.bin");
+            let content = vec![0xCDu8; EARLY_INPUT_MAX_SIZE + 2048];
+            std::fs::write(&file_path, &content).unwrap();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let mut client = TcpStream::connect(addr).unwrap();
+            let (server, _) = listener.accept().unwrap();
+
+            let request = test_request();
+            send_early_input(&mut client, &file_path, &request).unwrap();
+            drop(client);
+
+            let mut reader = BufReader::new(server);
+            let received = receive_early_input(&mut reader).unwrap();
+            assert_eq!(received.len(), EARLY_INPUT_MAX_SIZE);
+            assert_eq!(received, &content[..EARLY_INPUT_MAX_SIZE]);
+        }
+
+        #[test]
+        fn roundtrip_binary_content_preserves_all_byte_values() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("binary.bin");
+            let content: Vec<u8> = (0..=255u8).cycle().take(1024).collect();
+            std::fs::write(&file_path, &content).unwrap();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let mut client = TcpStream::connect(addr).unwrap();
+            let (server, _) = listener.accept().unwrap();
+
+            let request = test_request();
+            send_early_input(&mut client, &file_path, &request).unwrap();
+            drop(client);
+
+            let mut reader = BufReader::new(server);
+            let received = receive_early_input(&mut reader).unwrap();
+            assert_eq!(received, content);
+        }
+
+        #[test]
+        fn roundtrip_wire_header_matches_daemon_protocol() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("proto.txt");
+            let content = b"auth-token-data";
+            std::fs::write(&file_path, content).unwrap();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let mut client = TcpStream::connect(addr).unwrap();
+            let (server, _) = listener.accept().unwrap();
+
+            let request = test_request();
+            send_early_input(&mut client, &file_path, &request).unwrap();
+            drop(client);
+
+            // Read the raw wire bytes to validate the exact header format
+            let mut raw = Vec::new();
+            let mut server = server;
+            server.read_to_end(&mut raw).unwrap();
+
+            let expected_header = format!("#early_input={}\n", content.len());
+            let header_len = expected_header.len();
+
+            assert_eq!(
+                std::str::from_utf8(&raw[..header_len]).unwrap(),
+                expected_header
+            );
+            assert_eq!(&raw[header_len..], content);
+        }
+
+        #[test]
+        fn roundtrip_single_byte_file() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("one.bin");
+            std::fs::write(&file_path, [0x42]).unwrap();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let mut client = TcpStream::connect(addr).unwrap();
+            let (server, _) = listener.accept().unwrap();
+
+            let request = test_request();
+            send_early_input(&mut client, &file_path, &request).unwrap();
+            drop(client);
+
+            let mut reader = BufReader::new(server);
+            let received = receive_early_input(&mut reader).unwrap();
+            assert_eq!(received, vec![0x42]);
+        }
+
+        #[test]
+        fn roundtrip_content_with_newlines_and_nulls() {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("special.bin");
+            let content = b"line1\nline2\n\0\0\nline3\n";
+            std::fs::write(&file_path, content).unwrap();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let mut client = TcpStream::connect(addr).unwrap();
+            let (server, _) = listener.accept().unwrap();
+
+            let request = test_request();
+            send_early_input(&mut client, &file_path, &request).unwrap();
+            drop(client);
+
+            let mut reader = BufReader::new(server);
+            let received = receive_early_input(&mut reader).unwrap();
+            assert_eq!(received, content);
+        }
+    }
 }
