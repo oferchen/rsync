@@ -6,8 +6,11 @@
 
 use std::ffi::{OsStr, OsString};
 
-use super::super::config::ClientConfig;
+use super::super::config::{
+    ClientConfig, DeleteMode, ReferenceDirectoryKind, StrongChecksumAlgorithm, TransferTimeout,
+};
 use super::super::error::{ClientError, invalid_argument_error};
+use compress::algorithm::CompressionAlgorithm;
 
 /// Checks if an operand represents a remote path.
 ///
@@ -312,6 +315,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(flags));
         }
 
+        // Long-form options that cannot be expressed as single-char flags.
+        // Order mirrors upstream options.c server_options().
+        self.append_long_form_args(&mut args);
+
         args.push(OsString::from("-e.LsfxCIvu"));
         args.push(OsString::from("."));
 
@@ -320,6 +327,206 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
 
         args
+    }
+
+    /// Appends long-form `--option=value` arguments to the argument vector.
+    ///
+    /// These are options that upstream rsync's `server_options()` emits as separate
+    /// `--key=value` tokens rather than single-character flags. The order mirrors
+    /// upstream for predictable interop testing.
+    fn append_long_form_args(&self, args: &mut Vec<OsString>) {
+        // --delete-* timing variants
+        // upstream: options.c — delete_mode forwarded as --delete-before/during/after/delay
+        match self.config.delete_mode() {
+            DeleteMode::Disabled => {}
+            DeleteMode::Before => args.push(OsString::from("--delete-before")),
+            DeleteMode::During => args.push(OsString::from("--delete-during")),
+            DeleteMode::After => args.push(OsString::from("--delete-after")),
+            DeleteMode::Delay => args.push(OsString::from("--delete-delay")),
+        }
+
+        if self.config.delete_excluded() {
+            args.push(OsString::from("--delete-excluded"));
+        }
+
+        if self.config.force_replacements() {
+            args.push(OsString::from("--force"));
+        }
+
+        // --max-delete=N
+        if let Some(max) = self.config.max_delete() {
+            args.push(OsString::from(format!("--max-delete={max}")));
+        }
+
+        // --max-size / --min-size
+        if let Some(max) = self.config.max_file_size() {
+            args.push(OsString::from(format!("--max-size={max}")));
+        }
+        if let Some(min) = self.config.min_file_size() {
+            args.push(OsString::from(format!("--min-size={min}")));
+        }
+
+        // --modify-window=N
+        if let Some(window) = self.config.modify_window() {
+            args.push(OsString::from(format!("--modify-window={window}")));
+        }
+
+        // --compress-level=N
+        // upstream: options.c — compress_level sent to server when explicitly set
+        if let Some(level) = self.config.compression_level() {
+            let numeric = compression_level_to_numeric(level);
+            args.push(OsString::from(format!("--compress-level={numeric}")));
+        }
+
+        // --compress-choice=ALGO (non-default compression algorithm)
+        // upstream: options.c — compress_choice forwarded when not the default zlib
+        let algo = self.config.compression_algorithm();
+        if algo != CompressionAlgorithm::default_algorithm() {
+            args.push(OsString::from(format!("--compress-choice={}", algo.name())));
+        }
+
+        // --checksum-choice=ALGO
+        // upstream: options.c — checksum_choice forwarded when not auto
+        let checksum_choice = self.config.checksum_choice();
+        if checksum_choice.transfer() != StrongChecksumAlgorithm::Auto
+            || checksum_choice.file() != StrongChecksumAlgorithm::Auto
+        {
+            args.push(OsString::from(format!(
+                "--checksum-choice={}",
+                checksum_choice.to_argument()
+            )));
+        }
+
+        // --block-size=N
+        if let Some(bs) = self.config.block_size_override() {
+            args.push(OsString::from(format!("--block-size={}", bs.get())));
+        }
+
+        // --timeout=N
+        if let TransferTimeout::Seconds(secs) = self.config.timeout() {
+            args.push(OsString::from(format!("--timeout={}", secs.get())));
+        }
+
+        // --bwlimit=N
+        // upstream: options.c — bwlimit forwarded as bytes-per-second
+        if let Some(bwlimit) = self.config.bandwidth_limit() {
+            let mut arg = OsString::from("--bwlimit=");
+            arg.push(bwlimit.fallback_argument());
+            args.push(arg);
+        }
+
+        // --partial-dir=DIR
+        if let Some(dir) = self.config.partial_directory() {
+            let mut arg = OsString::from("--partial-dir=");
+            arg.push(dir.as_os_str());
+            args.push(arg);
+        }
+
+        // --temp-dir=DIR
+        if let Some(dir) = self.config.temp_directory() {
+            let mut arg = OsString::from("--temp-dir=");
+            arg.push(dir.as_os_str());
+            args.push(arg);
+        }
+
+        if self.config.inplace() {
+            args.push(OsString::from("--inplace"));
+        }
+
+        if self.config.append() {
+            args.push(OsString::from("--append"));
+        } else if self.config.append_verify() {
+            args.push(OsString::from("--append-verify"));
+        }
+
+        // --copy-unsafe-links, --safe-links, --munge-links
+        if self.config.copy_unsafe_links() {
+            args.push(OsString::from("--copy-unsafe-links"));
+        }
+        if self.config.safe_links() {
+            args.push(OsString::from("--safe-links"));
+        }
+        if self.config.munge_links() {
+            args.push(OsString::from("--munge-links"));
+        }
+
+        if self.config.size_only() {
+            args.push(OsString::from("--size-only"));
+        }
+        if self.config.ignore_times() {
+            args.push(OsString::from("--ignore-times"));
+        }
+        if self.config.ignore_existing() {
+            args.push(OsString::from("--ignore-existing"));
+        }
+        if self.config.existing_only() {
+            args.push(OsString::from("--existing"));
+        }
+
+        if self.config.remove_source_files() {
+            args.push(OsString::from("--remove-source-files"));
+        }
+
+        if !self.config.implied_dirs() {
+            args.push(OsString::from("--no-implied-dirs"));
+        }
+
+        if self.config.fake_super() {
+            args.push(OsString::from("--fake-super"));
+        }
+
+        if self.config.omit_dir_times() {
+            args.push(OsString::from("--omit-dir-times"));
+        }
+        if self.config.omit_link_times() {
+            args.push(OsString::from("--omit-link-times"));
+        }
+
+        if self.config.delay_updates() {
+            args.push(OsString::from("--delay-updates"));
+        }
+
+        // --backup, --backup-dir=DIR, --suffix=SUFFIX
+        if self.config.backup() {
+            args.push(OsString::from("--backup"));
+            if let Some(dir) = self.config.backup_directory() {
+                let mut arg = OsString::from("--backup-dir=");
+                arg.push(dir.as_os_str());
+                args.push(arg);
+            }
+            if let Some(suffix) = self.config.backup_suffix() {
+                let mut arg = OsString::from("--suffix=");
+                arg.push(suffix);
+                args.push(arg);
+            }
+        }
+
+        // --compare-dest, --copy-dest, --link-dest
+        for ref_dir in self.config.reference_directories() {
+            let flag = match ref_dir.kind() {
+                ReferenceDirectoryKind::Compare => "--compare-dest=",
+                ReferenceDirectoryKind::Copy => "--copy-dest=",
+                ReferenceDirectoryKind::Link => "--link-dest=",
+            };
+            let mut arg = OsString::from(flag);
+            arg.push(ref_dir.path().as_os_str());
+            args.push(arg);
+        }
+
+        if self.config.copy_devices() {
+            args.push(OsString::from("--copy-devices"));
+        }
+        if self.config.write_devices() {
+            args.push(OsString::from("--write-devices"));
+        }
+
+        if self.config.open_noatime() {
+            args.push(OsString::from("--open-noatime"));
+        }
+
+        if self.config.preallocate() {
+            args.push(OsString::from("--preallocate"));
+        }
     }
 
     /// Builds the compact flag string from client configuration.
@@ -333,6 +540,15 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // Transfer flags (order matches upstream server_options())
         if self.config.links() {
             flags.push('l');
+        }
+        if self.config.copy_links() {
+            flags.push('L');
+        }
+        if self.config.copy_dirlinks() {
+            flags.push('k');
+        }
+        if self.config.keep_dirlinks() {
+            flags.push('K');
         }
         if self.config.preserve_owner() {
             flags.push('o');
@@ -351,6 +567,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
         if self.config.preserve_permissions() {
             flags.push('p');
+        }
+        if self.config.preserve_executability() {
+            flags.push('E');
         }
         if self.config.recursive() {
             flags.push('r');
@@ -375,6 +594,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.numeric_ids() {
             flags.push('n');
         }
+        if self.config.dry_run() {
+            flags.push('n');
+        }
         if self.config.delete_mode().is_enabled() || self.config.delete_excluded() {
             flags.push('d');
         }
@@ -383,6 +605,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
         if self.config.sparse() {
             flags.push('S');
+        }
+        if self.config.fuzzy() {
+            flags.push('y');
         }
         for _ in 0..self.config.one_file_system_level() {
             flags.push('x');
@@ -399,12 +624,28 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.preserve_crtimes() {
             flags.push('N');
         }
-
-        // Info flags after '.' separator
-        // For now, we don't send info flags (upstream does this selectively)
-        // flags.push('.');
+        if self.config.prune_empty_dirs() {
+            flags.push('m');
+        }
+        for _ in 0..self.config.verbosity() {
+            flags.push('v');
+        }
 
         flags
+    }
+}
+
+/// Converts a [`CompressionLevel`] into its numeric representation for the wire.
+///
+/// Upstream rsync sends the compression level as an integer in the range 0-9.
+fn compression_level_to_numeric(level: compress::zlib::CompressionLevel) -> u32 {
+    use compress::zlib::CompressionLevel;
+    match level {
+        CompressionLevel::None => 0,
+        CompressionLevel::Fast => 1,
+        CompressionLevel::Default => 6,
+        CompressionLevel::Best => 9,
+        CompressionLevel::Precise(n) => u32::from(n.get()),
     }
 }
 
@@ -910,11 +1151,69 @@ mod tests {
         );
     }
 
-    /// Allowlist of long-form arguments that upstream rsync 3.x recognises in
-    /// `--server` mode.  Any long flag emitted by `RemoteInvocationBuilder`
-    /// that is NOT on this list would break interop with stock rsync.
-    const UPSTREAM_SERVER_LONG_ARGS: &[&str] =
-        &["--server", "--sender", "--ignore-errors", "--fsync"];
+    /// Allowlist of long-form argument prefixes that upstream rsync 3.x recognises
+    /// in `--server` mode.  Any long flag emitted by `RemoteInvocationBuilder`
+    /// whose prefix is NOT on this list would break interop with stock rsync.
+    /// Arguments with `=value` suffixes are matched by prefix (e.g. `--timeout=30`
+    /// matches the `--timeout` prefix).
+    const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
+        "--server",
+        "--sender",
+        "--ignore-errors",
+        "--fsync",
+        "--delete-before",
+        "--delete-during",
+        "--delete-after",
+        "--delete-delay",
+        "--delete-excluded",
+        "--force",
+        "--max-delete",
+        "--max-size",
+        "--min-size",
+        "--modify-window",
+        "--compress-level",
+        "--compress-choice",
+        "--checksum-choice",
+        "--block-size",
+        "--timeout",
+        "--bwlimit",
+        "--partial-dir",
+        "--temp-dir",
+        "--inplace",
+        "--append",
+        "--append-verify",
+        "--copy-unsafe-links",
+        "--safe-links",
+        "--munge-links",
+        "--size-only",
+        "--ignore-times",
+        "--ignore-existing",
+        "--existing",
+        "--remove-source-files",
+        "--no-implied-dirs",
+        "--fake-super",
+        "--omit-dir-times",
+        "--omit-link-times",
+        "--delay-updates",
+        "--backup",
+        "--backup-dir",
+        "--suffix",
+        "--compare-dest",
+        "--copy-dest",
+        "--link-dest",
+        "--copy-devices",
+        "--write-devices",
+        "--open-noatime",
+        "--preallocate",
+    ];
+
+    /// Returns whether a long-form argument matches one of the upstream allowlist
+    /// entries, accounting for `=value` suffixes.
+    fn is_upstream_compatible_long_arg(arg: &str) -> bool {
+        UPSTREAM_SERVER_LONG_ARGS
+            .iter()
+            .any(|&allowed| arg == allowed || arg.starts_with(&format!("{allowed}=")))
+    }
 
     /// Validate that every argument sent to the remote server is compatible
     /// with upstream rsync's `--server` mode.  This catches regressions where
@@ -957,7 +1256,7 @@ mod tests {
 
                 // Long-form args must be on the upstream allowlist
                 assert!(
-                    UPSTREAM_SERVER_LONG_ARGS.contains(&s.as_ref()),
+                    is_upstream_compatible_long_arg(&s),
                     "remote invocation contains non-upstream long arg {s:?} \
                      (role={role:?}, full args={args:?}). \
                      If this is intentional, add it to UPSTREAM_SERVER_LONG_ARGS \
@@ -965,6 +1264,301 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ==================== new option forwarding tests ====================
+
+    #[test]
+    fn includes_delete_before_long_arg() {
+        let config = ClientConfig::builder().delete_before(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--delete-before"),
+            "expected --delete-before in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_delete_after_long_arg() {
+        let config = ClientConfig::builder().delete_after(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--delete-after"),
+            "expected --delete-after in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_delete_excluded_long_arg() {
+        let config = ClientConfig::builder().delete_excluded(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--delete-excluded"),
+            "expected --delete-excluded in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_timeout_long_arg() {
+        use std::num::NonZeroU64;
+        let config = ClientConfig::builder()
+            .timeout(TransferTimeout::Seconds(NonZeroU64::new(30).unwrap()))
+            .build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--timeout=30"),
+            "expected --timeout=30 in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_bwlimit_long_arg() {
+        use crate::client::config::BandwidthLimit;
+        use std::num::NonZeroU64;
+        let config = ClientConfig::builder()
+            .bandwidth_limit(Some(BandwidthLimit::from_bytes_per_second(
+                NonZeroU64::new(1024).unwrap(),
+            )))
+            .build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter()
+                .any(|a| a.to_string_lossy().starts_with("--bwlimit=")),
+            "expected --bwlimit=... in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_inplace_long_arg() {
+        let config = ClientConfig::builder().inplace(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--inplace"),
+            "expected --inplace in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_partial_dir_long_arg() {
+        let config = ClientConfig::builder()
+            .partial_directory(Some(".rsync-partial"))
+            .build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter()
+                .any(|a| a.to_string_lossy() == "--partial-dir=.rsync-partial"),
+            "expected --partial-dir=.rsync-partial in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_checksum_choice_long_arg() {
+        use crate::client::config::StrongChecksumChoice;
+        let choice = StrongChecksumChoice::parse("md5").unwrap();
+        let config = ClientConfig::builder().checksum_choice(choice).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter()
+                .any(|a| a.to_string_lossy().starts_with("--checksum-choice=")),
+            "expected --checksum-choice=... in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_copy_links_flag() {
+        let config = ClientConfig::builder().copy_links(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        let flags = args[2].to_string_lossy();
+        assert!(flags.contains('L'), "expected 'L' in flags: {flags}");
+    }
+
+    #[test]
+    fn includes_keep_dirlinks_flag() {
+        let config = ClientConfig::builder().keep_dirlinks(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        let flags = args[2].to_string_lossy();
+        assert!(flags.contains('K'), "expected 'K' in flags: {flags}");
+    }
+
+    #[test]
+    fn includes_executability_flag() {
+        let config = ClientConfig::builder().executability(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        let flags = args[2].to_string_lossy();
+        assert!(flags.contains('E'), "expected 'E' in flags: {flags}");
+    }
+
+    #[test]
+    fn includes_fuzzy_flag() {
+        let config = ClientConfig::builder().fuzzy(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        let flags = args[2].to_string_lossy();
+        assert!(flags.contains('y'), "expected 'y' in flags: {flags}");
+    }
+
+    #[test]
+    fn includes_prune_empty_dirs_flag() {
+        let config = ClientConfig::builder().prune_empty_dirs(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        let flags = args[2].to_string_lossy();
+        assert!(flags.contains('m'), "expected 'm' in flags: {flags}");
+    }
+
+    #[test]
+    fn includes_verbosity_flags() {
+        let config = ClientConfig::builder().verbosity(3).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        let flags = args[2].to_string_lossy();
+        let v_count = flags.chars().filter(|c| *c == 'v').count();
+        assert_eq!(v_count, 3, "expected 3 'v' chars in flags: {flags}");
+    }
+
+    #[test]
+    fn includes_backup_related_args() {
+        let config = ClientConfig::builder()
+            .backup(true)
+            .backup_directory(Some("/backup"))
+            .backup_suffix(Some(".bak"))
+            .build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--backup"),
+            "expected --backup in args: {args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|a| a.to_string_lossy() == "--backup-dir=/backup"),
+            "expected --backup-dir=/backup in args: {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a.to_string_lossy() == "--suffix=.bak"),
+            "expected --suffix=.bak in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_link_dest_via_reference_directories() {
+        let config = ClientConfig::builder().link_destination("/prev").build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter()
+                .any(|a| a.to_string_lossy() == "--link-dest=/prev"),
+            "expected --link-dest=/prev in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_fake_super_long_arg() {
+        let config = ClientConfig::builder().fake_super(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--fake-super"),
+            "expected --fake-super in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_delay_updates_long_arg() {
+        let config = ClientConfig::builder().delay_updates(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--delay-updates"),
+            "expected --delay-updates in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_remove_source_files_long_arg() {
+        let config = ClientConfig::builder().remove_source_files(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--remove-source-files"),
+            "expected --remove-source-files in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_size_only_long_arg() {
+        let config = ClientConfig::builder().size_only(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--size-only"),
+            "expected --size-only in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_no_implied_dirs_when_disabled() {
+        let config = ClientConfig::builder().implied_dirs(false).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            args.iter().any(|a| a == "--no-implied-dirs"),
+            "expected --no-implied-dirs in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn omits_no_implied_dirs_when_default() {
+        let config = ClientConfig::builder().build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        assert!(
+            !args.iter().any(|a| a == "--no-implied-dirs"),
+            "unexpected --no-implied-dirs in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_dry_run_flag() {
+        let config = ClientConfig::builder().dry_run(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        let flags = args[2].to_string_lossy();
+        assert!(flags.contains('n'), "expected 'n' in flags: {flags}");
     }
 
     // ==================== secluded-args tests ====================
