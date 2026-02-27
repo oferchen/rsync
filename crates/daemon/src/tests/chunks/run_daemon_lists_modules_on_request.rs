@@ -34,9 +34,7 @@ fn run_daemon_lists_modules_on_request() {
     reader.read_line(&mut line).expect("capabilities");
     assert_eq!(line, "@RSYNCD: CAP modules\n");
 
-    line.clear();
-    reader.read_line(&mut line).expect("ok line");
-    assert_eq!(line, "@RSYNCD: OK\n");
+    // upstream: no @RSYNCD: OK before module listing
 
     line.clear();
     reader.read_line(&mut line).expect("first module");

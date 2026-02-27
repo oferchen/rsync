@@ -23,20 +23,16 @@ fn respond_with_module_list(
     reverse_lookup: bool,
     messages: &LegacyMessageCache,
 ) -> io::Result<()> {
+    // upstream: clientserver.c:1246-1252 — MOTD lines are sent as raw text,
+    // not wrapped in @RSYNCD: protocol frames.
     for line in motd_lines {
-        let payload = if line.is_empty() {
-            "MOTD".to_owned()
-        } else {
-            format!("MOTD {line}")
-        };
-        messages.write(
-            stream,
-            limiter,
-            LegacyDaemonMessage::Other(payload.as_str()),
-        )?;
+        write_limited(stream, limiter, line.as_bytes())?;
+        write_limited(stream, limiter, b"\n")?;
     }
 
-    messages.write_ok(stream, limiter)?;
+    // upstream: clientserver.c does NOT send @RSYNCD: OK before the module
+    // listing. The listing goes straight from MOTD/capabilities to module
+    // names followed by @RSYNCD: EXIT.
 
     let mut hostname_cache: Option<Option<String>> = None;
     for module in modules {
@@ -89,7 +85,7 @@ fn perform_module_authentication(
     messages: &LegacyMessageCache,
     protocol_version: Option<ProtocolVersion>,
 ) -> io::Result<AuthenticationStatus> {
-    let challenge = generate_auth_challenge(peer_ip);
+    let challenge = generate_auth_challenge(peer_ip, protocol_version);
     {
         let stream = reader.get_mut();
         messages.write(
@@ -145,9 +141,16 @@ fn perform_module_authentication(
 /// Generates a unique authentication challenge string.
 ///
 /// The challenge is created by combining the peer IP address, current timestamp,
-/// and process ID, then hashing with MD5 and encoding as base64. This produces
-/// a unique, time-sensitive challenge for each authentication attempt.
-fn generate_auth_challenge(peer_ip: IpAddr) -> String {
+/// and process ID, then hashing with the protocol-appropriate digest and encoding
+/// as base64. This produces a unique, time-sensitive challenge for each
+/// authentication attempt.
+///
+/// upstream: compat.c:858 — the digest used for the challenge depends on the
+/// negotiated protocol version: MD5 for protocol >= 30, MD4 for protocol < 30.
+fn generate_auth_challenge(
+    peer_ip: IpAddr,
+    protocol_version: Option<ProtocolVersion>,
+) -> String {
     let mut input = [0u8; 32];
     let address_text = peer_ip.to_string();
     let address_bytes = address_text.as_bytes();
@@ -165,9 +168,16 @@ fn generate_auth_challenge(peer_ip: IpAddr) -> String {
     input[20..24].copy_from_slice(&micros.to_le_bytes());
     input[24..28].copy_from_slice(&pid.to_le_bytes());
 
-    let mut hasher = Md5::new();
-    hasher.update(&input);
-    let digest = hasher.finalize();
+    let version = protocol_version.map_or(32, |v| v.as_u8());
+    let digest = if version >= 30 {
+        let mut hasher = Md5::new();
+        hasher.update(&input);
+        hasher.finalize().to_vec()
+    } else {
+        let mut hasher = Md4::new();
+        hasher.update(&input);
+        hasher.finalize().to_vec()
+    };
     STANDARD_NO_PAD.encode(digest)
 }
 
@@ -1267,9 +1277,21 @@ mod module_access_tests {
     #[test]
     fn generate_auth_challenge_includes_ip_and_timestamp() {
         let peer_ip = "192.168.1.1".parse::<IpAddr>().unwrap();
-        let challenge = generate_auth_challenge(peer_ip);
+        let challenge = generate_auth_challenge(peer_ip, Some(ProtocolVersion::V32));
 
-        // Challenge should be base64-encoded MD5 hash (22 characters without padding)
+        // Challenge should be base64-encoded hash (22 characters without padding)
+        assert_eq!(challenge.len(), 22);
+        assert!(challenge
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '+' || c == '/'));
+    }
+
+    #[test]
+    fn generate_auth_challenge_uses_md4_for_legacy_protocol() {
+        let peer_ip = "192.168.1.1".parse::<IpAddr>().unwrap();
+        let challenge = generate_auth_challenge(peer_ip, Some(ProtocolVersion::V29));
+
+        // MD4 also produces 16-byte hash = 22 base64 characters
         assert_eq!(challenge.len(), 22);
         assert!(challenge
             .chars()
@@ -1279,11 +1301,11 @@ mod module_access_tests {
     #[test]
     fn generate_auth_challenge_produces_different_values() {
         let peer_ip = "10.0.0.1".parse::<IpAddr>().unwrap();
-        let challenge1 = generate_auth_challenge(peer_ip);
+        let challenge1 = generate_auth_challenge(peer_ip, Some(ProtocolVersion::V32));
 
         // Small delay to ensure different timestamp
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let challenge2 = generate_auth_challenge(peer_ip);
+        let challenge2 = generate_auth_challenge(peer_ip, Some(ProtocolVersion::V32));
 
         // Challenges should differ due to timestamp
         assert_ne!(challenge1, challenge2);

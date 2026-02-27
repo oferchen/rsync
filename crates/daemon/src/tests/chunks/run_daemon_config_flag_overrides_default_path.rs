@@ -58,10 +58,7 @@ fn run_daemon_config_flag_overrides_default_path() {
     reader.read_line(&mut line).expect("capabilities");
     assert_eq!(line, "@RSYNCD: CAP modules\n");
 
-    // Read OK
-    line.clear();
-    reader.read_line(&mut line).expect("ok line");
-    assert_eq!(line, "@RSYNCD: OK\n");
+    // upstream: no @RSYNCD: OK before module listing
 
     // Verify the custom module appears in the listing
     line.clear();
