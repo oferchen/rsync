@@ -462,6 +462,20 @@ mod long_options {
     }
 
     #[test]
+    fn specials_sets_independently_from_devices() {
+        let parsed = parse_test_args(["--specials", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.specials, Some(true));
+        assert_eq!(parsed.devices, None);
+    }
+
+    #[test]
+    fn no_specials_only_unsets_specials() {
+        let parsed = parse_test_args(["-D", "--no-specials", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.specials, Some(false));
+        assert_eq!(parsed.devices, Some(true));
+    }
+
+    #[test]
     fn hard_links_long_flag() {
         let parsed = parse_test_args(["--hard-links", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.hard_links, Some(true));
