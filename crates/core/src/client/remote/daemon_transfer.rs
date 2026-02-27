@@ -546,10 +546,14 @@ fn send_early_input(
 
 /// Sends daemon-mode arguments to the server.
 ///
-/// Mirrors upstream clientserver.c:393-405 (send_to_server).
-/// The format is: --server [--sender] <flags> . <module/path>
-/// For protocol ≥30, sends null-terminated strings.
-/// For protocol <30, sends newline-terminated strings.
+/// When `--protect-args` / `-s` is active, uses a two-phase protocol
+/// matching upstream `clientserver.c:393-408`:
+/// - Phase 1: minimal args (`--server [-s] .`) so the daemon knows to
+///   expect protected args
+/// - Phase 2: full argument list via `send_secluded_args()` wire format
+///
+/// Without protect-args, sends all arguments in a single phase as before.
+/// For protocol >= 30, strings are null-terminated; for < 30, newline-terminated.
 fn send_daemon_arguments(
     stream: &mut TcpStream,
     config: &ClientConfig,
@@ -557,6 +561,95 @@ fn send_daemon_arguments(
     protocol: ProtocolVersion,
     is_sender: bool,
 ) -> Result<(), ClientError> {
+    let protect = config.protect_args().unwrap_or(false);
+
+    let full_args = build_full_daemon_args(config, request, protocol, is_sender);
+
+    // Phase 1: send args over the daemon text protocol.
+    // With protect-args, only send the minimal set so the daemon detects `-s`
+    // and expects a phase-2 secluded-args payload.
+    // upstream: clientserver.c:393-405 — stops at the NULL marker in sargs
+    let phase1_args = if protect {
+        build_minimal_daemon_args(is_sender)
+    } else {
+        full_args.clone()
+    };
+
+    let terminator = if protocol.as_u8() >= 30 { b'\0' } else { b'\n' };
+
+    for arg in &phase1_args {
+        stream.write_all(arg.as_bytes()).map_err(|e| {
+            socket_error("send argument to", request.address.socket_addr_display(), e)
+        })?;
+        stream.write_all(&[terminator]).map_err(|e| {
+            socket_error(
+                "send terminator to",
+                request.address.socket_addr_display(),
+                e,
+            )
+        })?;
+    }
+
+    // Empty string signals end of phase-1 argument list.
+    stream.write_all(&[terminator]).map_err(|e| {
+        socket_error(
+            "send final terminator to",
+            request.address.socket_addr_display(),
+            e,
+        )
+    })?;
+
+    // Phase 2: when protect-args is active, send the real arguments via
+    // the secluded-args wire format (null-separated with empty terminator).
+    // upstream: clientserver.c:407-408 — send_protected_args(f_out, sargs)
+    if protect {
+        let mut secluded = vec!["rsync"];
+        secluded.extend(full_args.iter().map(String::as_str));
+        protocol::secluded_args::send_secluded_args(stream, &secluded).map_err(|e| {
+            socket_error(
+                "send secluded args to",
+                request.address.socket_addr_display(),
+                e,
+            )
+        })?;
+    }
+
+    stream.flush().map_err(|e| {
+        socket_error(
+            "flush arguments to",
+            request.address.socket_addr_display(),
+            e,
+        )
+    })?;
+
+    Ok(())
+}
+
+/// Builds the minimal phase-1 argument list for protect-args daemon mode.
+///
+/// The daemon only needs `--server [--sender] -s .` to know that
+/// secluded args follow in phase 2.
+/// upstream: clientserver.c:393-405 — sargs has a NULL marker after `-s .`
+fn build_minimal_daemon_args(is_sender: bool) -> Vec<String> {
+    let mut args = vec!["--server".to_owned()];
+    if is_sender {
+        args.push("--sender".to_owned());
+    }
+    args.push("-s".to_owned());
+    args.push(".".to_owned());
+    args
+}
+
+/// Builds the full argument list for daemon-mode transfer.
+///
+/// This is the complete set of flags, capability string, and module path
+/// that the server needs for the transfer.
+fn build_full_daemon_args(
+    config: &ClientConfig,
+    request: &DaemonTransferRequest,
+    protocol: ProtocolVersion,
+    is_sender: bool,
+) -> Vec<String> {
     let mut args = Vec::new();
     args.push("--server".to_owned());
     if is_sender {
@@ -576,7 +669,6 @@ fn send_daemon_arguments(
     }
 
     // Add capability flags for protocol 30+ (upstream options.c:3010-3037 add_e_flags())
-    // This tells the daemon what features the client supports.
     //
     // Capability flags:
     // - e. = capability prefix (. is placeholder for subprotocol version)
@@ -596,46 +688,14 @@ fn send_daemon_arguments(
         args.push("-e.LsfxCIvu".to_owned());
     }
 
-    // Add dummy argument (upstream requirement - represents CWD)
+    // Dummy argument (upstream requirement - represents CWD)
     args.push(".".to_owned());
 
-    // Add module path
+    // Module path
     let module_path = format!("{}/{}", request.module, request.path);
     args.push(module_path);
 
-    let terminator = if protocol.as_u8() >= 30 { b'\0' } else { b'\n' };
-
-    for arg in &args {
-        stream.write_all(arg.as_bytes()).map_err(|e| {
-            socket_error("send argument to", request.address.socket_addr_display(), e)
-        })?;
-        stream.write_all(&[terminator]).map_err(|e| {
-            socket_error(
-                "send terminator to",
-                request.address.socket_addr_display(),
-                e,
-            )
-        })?;
-    }
-
-    // Empty string signals end of argument list.
-    stream.write_all(&[terminator]).map_err(|e| {
-        socket_error(
-            "send final terminator to",
-            request.address.socket_addr_display(),
-            e,
-        )
-    })?;
-
-    stream.flush().map_err(|e| {
-        socket_error(
-            "flush arguments to",
-            request.address.socket_addr_display(),
-            e,
-        )
-    })?;
-
-    Ok(())
+    args
 }
 
 /// Executes a pull transfer (remote → local).
@@ -1469,6 +1529,75 @@ mod tests {
             let mut reader = BufReader::new(server);
             let received = receive_early_input(&mut reader).unwrap();
             assert_eq!(received, content);
+        }
+    }
+
+    mod protect_args_daemon_tests {
+        use super::*;
+
+        fn test_daemon_request() -> DaemonTransferRequest {
+            DaemonTransferRequest {
+                address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+                module: "test".to_owned(),
+                path: String::new(),
+                username: None,
+            }
+        }
+
+        #[test]
+        fn build_minimal_args_receiver() {
+            let args = build_minimal_daemon_args(false);
+            assert_eq!(args, vec!["--server", "-s", "."]);
+        }
+
+        #[test]
+        fn build_minimal_args_sender() {
+            let args = build_minimal_daemon_args(true);
+            assert_eq!(args, vec!["--server", "--sender", "-s", "."]);
+        }
+
+        #[test]
+        fn build_full_args_includes_module_path() {
+            let config = ClientConfig::default();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert_eq!(args[0], "--server");
+            assert!(args.contains(&".".to_owned()));
+            let last = args.last().unwrap();
+            assert!(last.starts_with(&request.module));
+        }
+
+        #[test]
+        fn build_full_args_sender_flag() {
+            let config = ClientConfig::default();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, true);
+
+            assert_eq!(args[0], "--server");
+            assert_eq!(args[1], "--sender");
+        }
+
+        #[test]
+        fn build_full_args_capability_flags_protocol30() {
+            let config = ClientConfig::default();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(args.iter().any(|a| a.starts_with("-e.")));
+        }
+
+        #[test]
+        fn build_full_args_no_capability_flags_protocol29() {
+            let config = ClientConfig::default();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(29u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(!args.iter().any(|a| a.starts_with("-e.")));
         }
     }
 }
