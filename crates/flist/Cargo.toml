@@ -17,7 +17,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 [dependencies]
 logging = { path = "../logging" }
 rayon = { version = "1.10", optional = true }
-rart = { version = "0.3.1", default-features = false, optional = true }
 serde = { workspace = true, optional = true }
 thiserror = "2.0"
 
@@ -32,7 +31,5 @@ tempfile = "3.15"
 default = []
 # Parallel file list processing using rayon and batched syscalls
 parallel = ["rayon", "dep:libc"]
-# Adaptive Radix Tree for sorted file lists and lock-free caching
-art = ["dep:rart"]
 # Serialization support for file list types
 serde = ["dep:serde"]
