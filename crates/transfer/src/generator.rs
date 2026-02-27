@@ -2026,6 +2026,8 @@ mod tests {
             qsort: false,
             min_file_size: None,
             max_file_size: None,
+            files_from_path: None,
+            from0: false,
         }
     }
 
@@ -3259,6 +3261,8 @@ mod tests {
             qsort: false,
             min_file_size: None,
             max_file_size: None,
+            files_from_path: None,
+            from0: false,
         }
     }
 

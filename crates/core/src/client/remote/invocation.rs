@@ -7,7 +7,8 @@
 use std::ffi::{OsStr, OsString};
 
 use super::super::config::{
-    ClientConfig, DeleteMode, ReferenceDirectoryKind, StrongChecksumAlgorithm, TransferTimeout,
+    ClientConfig, DeleteMode, FilesFromSource, ReferenceDirectoryKind, StrongChecksumAlgorithm,
+    TransferTimeout,
 };
 use super::super::error::{ClientError, invalid_argument_error};
 use compress::algorithm::CompressionAlgorithm;
@@ -526,6 +527,25 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         if self.config.preallocate() {
             args.push(OsString::from("--preallocate"));
+        }
+
+        // --files-from forwarding.
+        // upstream: options.c:2944-2956 — when the file is local (or stdin),
+        // the client reads it and forwards content over the socket, so we tell
+        // the server `--files-from=- --from0`. When the file is remote, we
+        // send `--files-from=<path>` and optionally `--from0`.
+        match self.config.files_from() {
+            FilesFromSource::None => {}
+            FilesFromSource::LocalFile(_) | FilesFromSource::Stdin => {
+                args.push(OsString::from("--files-from=-"));
+                args.push(OsString::from("--from0"));
+            }
+            FilesFromSource::RemoteFile(path) => {
+                args.push(OsString::from(format!("--files-from={path}")));
+                if self.config.from0() {
+                    args.push(OsString::from("--from0"));
+                }
+            }
         }
     }
 
