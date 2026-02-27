@@ -42,6 +42,7 @@ signal-hook = "0.3"
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
+fast_io = { path = "../fast_io" }
 libc = "0.2"
 
 # sd-notify is Linux-only (systemd notification)

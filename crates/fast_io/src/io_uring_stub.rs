@@ -450,3 +450,194 @@ pub fn write_file<P: AsRef<Path>>(path: P, data: &[u8]) -> io::Result<()> {
     writer.flush()?;
     Ok(())
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Socket I/O stubs (Unix only — requires RawFd)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(unix)]
+mod socket_stub {
+    use std::io::{self, BufReader, Read, Write};
+    use std::os::unix::io::RawFd;
+
+    /// Stub io_uring socket reader (not available on this platform).
+    pub struct IoUringSocketReader {
+        _private: (),
+    }
+
+    impl IoUringSocketReader {
+        /// Always returns an `Unsupported` error on this platform.
+        pub fn from_raw_fd(_fd: RawFd, _config: &super::IoUringConfig) -> io::Result<Self> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring is not available on this platform",
+            ))
+        }
+    }
+
+    impl Read for IoUringSocketReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring is not available on this platform",
+            ))
+        }
+    }
+
+    /// Stub io_uring socket writer (not available on this platform).
+    pub struct IoUringSocketWriter {
+        _private: (),
+    }
+
+    impl IoUringSocketWriter {
+        /// Always returns an `Unsupported` error on this platform.
+        pub fn from_raw_fd(_fd: RawFd, _config: &super::IoUringConfig) -> io::Result<Self> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring is not available on this platform",
+            ))
+        }
+    }
+
+    impl Write for IoUringSocketWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring is not available on this platform",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring is not available on this platform",
+            ))
+        }
+    }
+
+    /// Socket reader that falls back to `BufReader` (io_uring unavailable).
+    pub enum IoUringOrStdSocketReader {
+        /// io_uring variant (never constructed on this platform).
+        IoUring(IoUringSocketReader),
+        /// Standard buffered reader.
+        Std(BufReader<Box<dyn Read + Send>>),
+    }
+
+    impl Read for IoUringOrStdSocketReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            match self {
+                Self::IoUring(r) => r.read(buf),
+                Self::Std(r) => r.read(buf),
+            }
+        }
+    }
+
+    /// Socket writer that falls back to standard `Write` (io_uring unavailable).
+    pub enum IoUringOrStdSocketWriter {
+        /// io_uring variant (never constructed on this platform).
+        IoUring(IoUringSocketWriter),
+        /// Standard writer.
+        Std(Box<dyn Write + Send>),
+    }
+
+    impl Write for IoUringOrStdSocketWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            match self {
+                Self::IoUring(w) => w.write(buf),
+                Self::Std(w) => w.write(buf),
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            match self {
+                Self::IoUring(w) => w.flush(),
+                Self::Std(w) => w.flush(),
+            }
+        }
+    }
+
+    /// Thin Read adapter over a raw fd (does not take ownership).
+    struct FdReader(RawFd);
+
+    impl Read for FdReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let ret =
+                unsafe { libc::read(self.0, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len()) };
+            if ret < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(ret as usize)
+            }
+        }
+    }
+
+    // SAFETY: The fd is just an integer; the caller guarantees validity.
+    unsafe impl Send for FdReader {}
+
+    /// Thin Write adapter over a raw fd (does not take ownership).
+    struct FdWriter(RawFd);
+
+    impl Write for FdWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let ret =
+                unsafe { libc::write(self.0, buf.as_ptr().cast::<libc::c_void>(), buf.len()) };
+            if ret < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(ret as usize)
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // SAFETY: The fd is just an integer; the caller guarantees validity.
+    unsafe impl Send for FdWriter {}
+
+    /// Creates a socket reader, always using standard buffered I/O.
+    ///
+    /// On non-Linux platforms, `Enabled` returns an error. `Auto` and `Disabled`
+    /// both return a `BufReader` wrapping the fd.
+    pub fn socket_reader_from_fd(
+        fd: RawFd,
+        buffer_capacity: usize,
+        policy: crate::IoUringPolicy,
+    ) -> io::Result<IoUringOrStdSocketReader> {
+        if matches!(policy, crate::IoUringPolicy::Enabled) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring requested via --io-uring but not available on this platform",
+            ));
+        }
+        let reader = FdReader(fd);
+        Ok(IoUringOrStdSocketReader::Std(BufReader::with_capacity(
+            buffer_capacity,
+            Box::new(reader),
+        )))
+    }
+
+    /// Creates a socket writer, always using standard I/O.
+    ///
+    /// On non-Linux platforms, `Enabled` returns an error. `Auto` and `Disabled`
+    /// both return a standard writer wrapping the fd.
+    pub fn socket_writer_from_fd(
+        fd: RawFd,
+        buffer_capacity: usize,
+        policy: crate::IoUringPolicy,
+    ) -> io::Result<IoUringOrStdSocketWriter> {
+        let _ = buffer_capacity;
+        if matches!(policy, crate::IoUringPolicy::Enabled) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring requested via --io-uring but not available on this platform",
+            ));
+        }
+        let writer = FdWriter(fd);
+        Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
+    }
+}
+
+#[cfg(unix)]
+pub use socket_stub::*;

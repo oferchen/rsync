@@ -784,6 +784,23 @@ fn execute_transfer(
         log_message(log, &message);
     }
 
+    // On Unix, wrap socket fds in io_uring RECV/SEND for batched syscalls.
+    // Auto policy: uses io_uring on Linux 5.6+, falls back to standard I/O elsewhere.
+    #[cfg(unix)]
+    let result = {
+        use std::os::unix::io::AsRawFd;
+        let policy = fast_io::IoUringPolicy::Auto;
+        let reader_res =
+            fast_io::socket_reader_from_fd(read_stream.as_raw_fd(), 64 * 1024, policy);
+        let writer_res =
+            fast_io::socket_writer_from_fd(write_stream.as_raw_fd(), 64 * 1024, policy);
+        if let (Ok(mut reader), Ok(mut writer)) = (reader_res, writer_res) {
+            run_server_with_handshake(config, handshake, &mut reader, &mut writer)
+        } else {
+            run_server_with_handshake(config, handshake, read_stream, write_stream)
+        }
+    };
+    #[cfg(not(unix))]
     let result = run_server_with_handshake(config, handshake, read_stream, write_stream);
 
     match result {
