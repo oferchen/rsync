@@ -36,7 +36,7 @@ fn daemon_negotiation_module_list_sends_capabilities_before_ok() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
-    // Should receive CAP before OK
+    // Should receive CAP line
     line.clear();
     reader.read_line(&mut line).expect("capabilities line");
     assert!(
@@ -44,11 +44,7 @@ fn daemon_negotiation_module_list_sends_capabilities_before_ok() {
         "Expected CAP response, got: {line}"
     );
 
-    // Now should receive OK
-    line.clear();
-    reader.read_line(&mut line).expect("ok line");
-    assert_eq!(line, "@RSYNCD: OK\n");
-
+    // upstream: no @RSYNCD: OK before module listing — go straight to modules.
     // Read module listing — upstream: clientserver.c:1254 uses %-15s\t%s\n format
     line.clear();
     reader.read_line(&mut line).expect("module listing");
@@ -112,11 +108,9 @@ fn daemon_negotiation_module_list_respects_listable_flag() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
-    // Skip CAP and OK lines
+    // Skip CAP line (no OK line before listing in upstream protocol)
     line.clear();
     reader.read_line(&mut line).expect("cap");
-    line.clear();
-    reader.read_line(&mut line).expect("ok");
 
     // Read all module lines until EXIT
     let mut modules = Vec::new();
@@ -174,11 +168,9 @@ fn daemon_negotiation_module_list_includes_comments() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
-    // Skip CAP and OK
+    // Skip CAP line (no OK line before listing in upstream protocol)
     line.clear();
     reader.read_line(&mut line).expect("cap");
-    line.clear();
-    reader.read_line(&mut line).expect("ok");
 
     // Read module line
     line.clear();
@@ -223,16 +215,8 @@ fn daemon_negotiation_module_list_empty_when_no_modules() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
-    // Read response - may be CAP (if modules present) or OK (if no modules)
-    line.clear();
-    reader.read_line(&mut line).expect("response");
-
-    // If CAP line, read the next line (OK)
-    if line.starts_with("@RSYNCD: CAP") {
-        line.clear();
-        reader.read_line(&mut line).expect("ok");
-    }
-    assert_eq!(line, "@RSYNCD: OK\n", "Expected OK, got: {line}");
+    // upstream: no @RSYNCD: OK before module listing. When there are no
+    // modules, the daemon goes straight to EXIT.
 
     // Expect EXIT immediately (no modules)
     line.clear();

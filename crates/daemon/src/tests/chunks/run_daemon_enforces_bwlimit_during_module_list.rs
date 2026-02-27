@@ -43,10 +43,7 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     assert_eq!(line, "@RSYNCD: CAP modules\n");
     total_bytes += line.len();
 
-    line.clear();
-    reader.read_line(&mut line).expect("ok line");
-    assert_eq!(line, "@RSYNCD: OK\n");
-    total_bytes += line.len();
+    // upstream: no @RSYNCD: OK before module listing
 
     line.clear();
     reader.read_line(&mut line).expect("first module");

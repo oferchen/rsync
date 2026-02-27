@@ -43,9 +43,7 @@ fn run_daemon_loads_modules_from_inline_config_flag() {
     reader.read_line(&mut line).expect("capabilities");
     assert_eq!(line, "@RSYNCD: CAP modules\n");
 
-    line.clear();
-    reader.read_line(&mut line).expect("ok line");
-    assert_eq!(line, "@RSYNCD: OK\n");
+    // upstream: no @RSYNCD: OK before module listing
 
     line.clear();
     reader.read_line(&mut line).expect("module listing");
