@@ -43,6 +43,7 @@ xxh3 = { version = "0.1" }
 thiserror = "2.0"
 openssl = { version = "0.10", optional = true }
 rayon = { version = "1.10" }
+fast_io = { path = "../fast_io", default-features = false }
 logging = { path = "../logging" }
 
 # md5-asm requires NASM on Windows and fails under MSVC; enable asm only on unix

@@ -30,6 +30,7 @@
 //! }
 //! ```
 
+use fast_io::mmap_reader::{MMAP_THRESHOLD, MmapReader};
 use rayon::prelude::*;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
@@ -411,6 +412,8 @@ impl FileHashConfig {
 /// Hashes a single file using the specified digest algorithm.
 ///
 /// This is the internal implementation used by parallel file hashing functions.
+/// For files above [`MMAP_THRESHOLD`], memory-mapping is attempted first to
+/// avoid per-chunk read syscalls. Falls back to buffered I/O on mmap failure.
 fn hash_file_internal<D>(path: &Path, config: &FileHashConfig) -> FileHashResult<D::Digest>
 where
     D: StrongDigest,
@@ -429,7 +432,15 @@ where
             return Ok((D::digest(&data), size));
         }
 
-        // For large files, stream in chunks
+        // For large files, try mmap for zero-copy hashing
+        if size >= MMAP_THRESHOLD {
+            if let Ok(mmap) = MmapReader::open(path) {
+                let _ = mmap.advise_sequential();
+                return Ok((D::digest(mmap.as_slice()), size));
+            }
+        }
+
+        // Fallback: stream in chunks via buffered I/O
         let mut hasher = D::new();
         let mut reader = BufReader::with_capacity(config.buffer_size, file);
         let mut buffer = vec![0u8; config.buffer_size];
@@ -581,6 +592,8 @@ where
 }
 
 /// Hashes a single file with a seed value.
+///
+/// Uses the same mmap-first strategy as [`hash_file_internal`].
 fn hash_file_with_seed_internal<D>(
     path: &Path,
     seed: D::Seed,
@@ -603,7 +616,15 @@ where
             return Ok((D::digest_with_seed(seed, &data), size));
         }
 
-        // For large files, stream in chunks
+        // For large files, try mmap for zero-copy hashing
+        if size >= MMAP_THRESHOLD {
+            if let Ok(mmap) = MmapReader::open(path) {
+                let _ = mmap.advise_sequential();
+                return Ok((D::digest_with_seed(seed, mmap.as_slice()), size));
+            }
+        }
+
+        // Fallback: stream in chunks via buffered I/O
         let mut hasher = D::with_seed(seed);
         let mut reader = BufReader::with_capacity(config.buffer_size, file);
         let mut buffer = vec![0u8; config.buffer_size];
@@ -708,6 +729,29 @@ where
         let size = metadata.len();
         let estimated_blocks = (size as usize).div_ceil(block_size);
 
+        // For files above the mmap threshold, map the entire file and slice
+        // blocks directly from mapped memory — zero read syscalls.
+        if size >= MMAP_THRESHOLD {
+            if let Ok(mmap) = MmapReader::open(path) {
+                let _ = mmap.advise_sequential();
+                let data = mmap.as_slice();
+                let mut signatures = Vec::with_capacity(estimated_blocks);
+
+                for chunk in data.chunks(block_size) {
+                    let mut rolling = RollingChecksum::new();
+                    rolling.update(chunk);
+                    signatures.push(BlockSignature {
+                        rolling: rolling.value(),
+                        strong: D::digest(chunk),
+                    });
+                }
+
+                let block_count = signatures.len();
+                return Ok((signatures, size, block_count));
+            }
+        }
+
+        // Fallback: buffered I/O block-by-block
         let mut signatures = Vec::with_capacity(estimated_blocks);
         let mut reader = BufReader::with_capacity(buffer_size, file);
         let mut buffer = vec![0u8; block_size];
@@ -1336,5 +1380,82 @@ mod tests {
             let expected = Xxh3::digest(0, &content);
             assert_eq!(result.digest.as_ref().unwrap().as_ref(), expected.as_ref());
         }
+    }
+
+    #[test]
+    fn mmap_hash_matches_buffered_hash() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("mmap_test.bin");
+
+        // File above MMAP_THRESHOLD (64 KB) triggers the mmap path
+        let size = 128 * 1024;
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &data).unwrap();
+
+        let results = hash_files_parallel::<Sha256>(&[path], 64 * 1024);
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].digest.is_ok());
+
+        let expected = Sha256::digest(&data);
+        assert_eq!(
+            results[0].digest.as_ref().unwrap().as_ref(),
+            expected.as_ref()
+        );
+    }
+
+    #[test]
+    fn mmap_signatures_match_buffered_signatures() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("mmap_sig_test.bin");
+
+        // File above MMAP_THRESHOLD triggers mmap-based signature computation
+        let size: usize = 128 * 1024;
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &data).unwrap();
+
+        let block_size = 8192;
+        let results = compute_file_signatures_parallel::<Md5>(&[path], block_size, 64 * 1024);
+
+        assert_eq!(results.len(), 1);
+        let sigs = results[0].signatures.as_ref().unwrap();
+        let expected_blocks = size.div_ceil(block_size);
+        assert_eq!(sigs.len(), expected_blocks);
+
+        // Verify each block matches manual computation
+        for (i, sig) in sigs.iter().enumerate() {
+            let start = i * block_size;
+            let end = (start + block_size).min(data.len());
+            let block = &data[start..end];
+
+            let mut expected_rolling = RollingChecksum::new();
+            expected_rolling.update(block);
+            assert_eq!(sig.rolling, expected_rolling.value());
+
+            let expected_strong = Md5::digest(block);
+            assert_eq!(sig.strong.as_ref(), expected_strong.as_ref());
+        }
+    }
+
+    #[test]
+    fn mmap_seeded_hash_matches_buffered() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("mmap_seeded.bin");
+
+        let size = 128 * 1024;
+        let data: Vec<u8> = (0..size).map(|i| (i % 199) as u8).collect();
+        std::fs::write(&path, &data).unwrap();
+
+        let seed = 0xCAFEBABEu64;
+        let results = hash_files_with_seed_parallel::<Xxh64>(&[path], seed, 64 * 1024);
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].digest.is_ok());
+
+        let expected = Xxh64::digest(seed, &data);
+        assert_eq!(
+            results[0].digest.as_ref().unwrap().as_ref(),
+            expected.as_ref()
+        );
     }
 }
