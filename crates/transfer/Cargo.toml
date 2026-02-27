@@ -28,6 +28,8 @@ getrandom = "0.3"
 thiserror = "2.0"
 tracing = { workspace = true, optional = true }
 rayon = { workspace = true }
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
@@ -74,6 +76,13 @@ io_uring = ["fast_io/io_uring"]
 
 # Incremental file list processing with failed directory tracking
 incremental-flist = []
+
+# ============================================================================
+# Runtime Features
+# ============================================================================
+
+# Async runtime support - enables tokio-based async pipeline for transfers
+async = ["dep:tokio", "dep:tokio-util"]
 
 # ============================================================================
 # Debugging Features
