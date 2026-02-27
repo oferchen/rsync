@@ -2196,7 +2196,9 @@ fn execute_skip_checksum_with_times_syncs_mtime_on_skip() {
     assert_eq!(final_mtime, source_mtime);
 }
 
-/// Update with modify-window: destination within the tolerance is not considered newer.
+/// Update with modify-window: destination 1s newer with 2s window.
+/// Upstream `generator.c:2502`: `source - dest = -1 < 2` -> skip.
+/// The destination is genuinely newer, so --update skips regardless of window.
 #[test]
 fn execute_skip_update_respects_modify_window() {
     let temp = tempdir().expect("tempdir");
@@ -2206,7 +2208,7 @@ fn execute_skip_update_respects_modify_window() {
     fs::write(&source, b"source data").expect("write source");
     fs::write(&destination, b"dest data!!").expect("write dest");
 
-    // Dest is 1 second newer, but with 2-second window it's "equal"
+    // Dest is 1 second newer
     let source_time = FileTime::from_unix_time(1_700_000_000, 0);
     let dest_time = FileTime::from_unix_time(1_700_000_001, 0);
     set_file_times(&source, source_time, source_time).expect("set source times");
@@ -2227,9 +2229,9 @@ fn execute_skip_update_respects_modify_window() {
         )
         .expect("copy succeeds");
 
-    // Within the modify window, destination is NOT considered newer
-    // so --update does NOT skip the file (it falls through to normal comparison)
-    assert_eq!(summary.regular_files_skipped_newer(), 0);
+    // upstream: source - dest = -1 < 2 -> skip (dest is newer)
+    assert_eq!(summary.regular_files_skipped_newer(), 1);
+    assert_eq!(summary.files_copied(), 0);
 }
 
 /// When all files are skipped, bytes_copied should be zero.
