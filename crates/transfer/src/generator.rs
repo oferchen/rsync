@@ -3479,7 +3479,7 @@ mod tests {
     fn rdev_to_major_minor_extracts_linux_values() {
         // Linux rdev encoding for major=8, minor=0 (sda)
         // major low nibble at bits 8-11, minor low byte at bits 0-7
-        let rdev: u64 = (8 << 8) | 0;
+        let rdev: u64 = 8 << 8;
         let (major, minor) = super::rdev_to_major_minor(rdev);
         assert_eq!(major, 8);
         assert_eq!(minor, 0);

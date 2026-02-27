@@ -586,6 +586,7 @@ pub struct FstatResult {
 #[cfg(unix)]
 impl FstatResult {
     /// Constructs from a raw `libc::stat` buffer.
+    #[allow(clippy::unnecessary_cast)]
     fn from_stat(stat_buf: &libc::stat) -> Self {
         let rdev = stat_buf.st_rdev as u64;
         Self {
@@ -604,18 +605,21 @@ impl FstatResult {
 
     /// Returns true if this entry is a regular file.
     #[must_use]
+    #[allow(clippy::unnecessary_cast)]
     pub fn is_file(&self) -> bool {
         (self.mode & libc::S_IFMT as u32) == libc::S_IFREG as u32
     }
 
     /// Returns true if this entry is a directory.
     #[must_use]
+    #[allow(clippy::unnecessary_cast)]
     pub fn is_dir(&self) -> bool {
         (self.mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32
     }
 
     /// Returns true if this entry is a symbolic link.
     #[must_use]
+    #[allow(clippy::unnecessary_cast)]
     pub fn is_symlink(&self) -> bool {
         (self.mode & libc::S_IFMT as u32) == libc::S_IFLNK as u32
     }
