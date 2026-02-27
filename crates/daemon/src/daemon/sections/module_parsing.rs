@@ -12,18 +12,106 @@ fn parse_daemon_option(payload: &str) -> Option<&str> {
     }
 }
 
+/// Options that cannot be refused via wildcard-only patterns.
+///
+/// upstream: clientserver.c — `parse_refuse_options()` marks certain options as
+/// "vital": they can only be refused by explicit name, not via `*` or other
+/// glob wildcards. This prevents administrators from accidentally breaking the
+/// protocol handshake by refusing all options with `*`.
+const VITAL_OPTIONS: &[&str] = &[
+    "server",
+    "rsh",
+    "e",
+    "out-format",
+    "sender",
+    "dry-run",
+    "n",
+    "seclude-args",
+    "s",
+    "from0",
+    "0",
+    "iconv",
+    "no-iconv",
+    "checksum-seed",
+    "write-devices",
+];
+
+/// Checks whether a client-requested option is refused by the module's refuse list.
+///
+/// The refuse list supports:
+/// - Exact option names: `delete` refuses `--delete`
+/// - Glob patterns: `delete*` refuses `--delete`, `--delete-before`, etc.
+/// - Negation: `!delete-during` un-refuses a previously matched option
+/// - Wildcard-all: `*` refuses everything except vital options
+///
+/// Vital options (e.g., `--server`, `--sender`, `--dry-run`) cannot be refused
+/// by wildcard patterns and require explicit naming.
+///
+/// upstream: clientserver.c — `check_refuse_options()` with fnmatch semantics.
 fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Option<&'a str> {
+    if module.refuse_options.is_empty() {
+        return None;
+    }
+
     options.iter().find_map(|candidate| {
-        let canonical_candidate = canonical_option(candidate);
-        module
-            .refuse_options
-            .iter()
-            .map(String::as_str)
-            .any(|refused| canonical_option(refused) == canonical_candidate)
-            .then_some(candidate.as_str())
+        let canonical = canonical_option(candidate);
+        if is_option_refused(&module.refuse_options, &canonical) {
+            Some(candidate.as_str())
+        } else {
+            None
+        }
     })
 }
 
+/// Evaluates a canonical option name against an ordered refuse list.
+///
+/// Processes rules left-to-right. A rule starting with `!` negates a previous
+/// match, keeping the option allowed. A plain rule (possibly with globs) marks
+/// the option as refused. The last matching rule wins.
+///
+/// When a pattern contains glob metacharacters (`*`, `?`, `[`), vital options
+/// are exempt from matching.
+///
+/// upstream: clientserver.c — refuse list is evaluated with fnmatch(3) semantics;
+/// vital options are skipped during wildcard expansion.
+fn is_option_refused(refuse_list: &[String], canonical: &str) -> bool {
+    let mut refused = false;
+    for rule in refuse_list {
+        let (negated, pattern_raw) = if let Some(rest) = rule.strip_prefix('!') {
+            (true, rest)
+        } else {
+            (false, rule.as_str())
+        };
+        let pattern = canonical_option(pattern_raw);
+
+        let is_glob = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
+
+        // upstream: clientserver.c — vital options are immune to wildcard patterns
+        if is_glob && is_vital_option(canonical) {
+            continue;
+        }
+
+        let matches = if is_glob {
+            wildcard_match(&pattern, canonical)
+        } else {
+            pattern == canonical
+        };
+
+        if matches {
+            refused = !negated;
+        }
+    }
+    refused
+}
+
+/// Returns whether an option is in the vital set that is immune to wildcards.
+fn is_vital_option(canonical: &str) -> bool {
+    VITAL_OPTIONS.contains(&canonical)
+}
+
+/// Extracts the canonical form of an option name for refuse-list matching.
+///
+/// Strips leading dashes, splits at whitespace or `=`, and lowercases.
 fn canonical_option(text: &str) -> String {
     let token = text
         .trim()
