@@ -158,6 +158,42 @@ pub(crate) fn read_file_list_from_reader<R: BufRead>(
     Ok(())
 }
 
+/// Resolves a `--files-from` CLI value into a [`FilesFromSource`].
+///
+/// The resolution mirrors upstream rsync's `options.c:2447-2490`:
+/// - `"-"` means stdin
+/// - `:path` (colon prefix) means a remote file opened by the server
+/// - Otherwise, a local file read by the client
+///
+/// Only the last `--files-from` argument takes effect, matching upstream
+/// behaviour where later options override earlier ones.
+///
+/// # Upstream Reference
+///
+/// - `options.c:2458` — `check_for_hostspec()` detects `:path` prefix
+/// - `options.c:2466-2469` — `:-` (remote stdin) is rejected
+pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client::FilesFromSource {
+    use core::client::FilesFromSource;
+
+    let last = match files_from.last() {
+        Some(v) => v,
+        None => return FilesFromSource::None,
+    };
+
+    let text = last.to_string_lossy();
+
+    if text == "-" {
+        return FilesFromSource::Stdin;
+    }
+
+    // Detect remote file: colon prefix `:path` (upstream check_for_hostspec).
+    if let Some(remote_path) = text.strip_prefix(':') {
+        return FilesFromSource::RemoteFile(remote_path.to_owned());
+    }
+
+    FilesFromSource::LocalFile(PathBuf::from(last))
+}
+
 /// Determines whether the transfer involves any remote operands.
 ///
 /// Returns `true` if any element in `remainder` (the CLI operands) or
@@ -692,5 +728,61 @@ mod tests {
         push_file_list_entry(b"path/to/file.txt", &mut entries);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0], "path/to/file.txt");
+    }
+
+    // ==================== resolve_files_from_source tests ====================
+
+    #[test]
+    fn resolve_files_from_empty_returns_none() {
+        let files: Vec<OsString> = vec![];
+        let source = resolve_files_from_source(&files);
+        assert_eq!(source, core::client::FilesFromSource::None);
+    }
+
+    #[test]
+    fn resolve_files_from_stdin() {
+        let files = vec![OsString::from("-")];
+        let source = resolve_files_from_source(&files);
+        assert_eq!(source, core::client::FilesFromSource::Stdin);
+    }
+
+    #[test]
+    fn resolve_files_from_local_file() {
+        let files = vec![OsString::from("/path/to/file.txt")];
+        let source = resolve_files_from_source(&files);
+        assert_eq!(
+            source,
+            core::client::FilesFromSource::LocalFile(PathBuf::from("/path/to/file.txt"))
+        );
+    }
+
+    #[test]
+    fn resolve_files_from_remote_colon_prefix() {
+        let files = vec![OsString::from(":/remote/path.txt")];
+        let source = resolve_files_from_source(&files);
+        assert_eq!(
+            source,
+            core::client::FilesFromSource::RemoteFile("/remote/path.txt".to_owned())
+        );
+    }
+
+    #[test]
+    fn resolve_files_from_uses_last_value() {
+        let files = vec![OsString::from("/first.txt"), OsString::from("/last.txt")];
+        let source = resolve_files_from_source(&files);
+        assert_eq!(
+            source,
+            core::client::FilesFromSource::LocalFile(PathBuf::from("/last.txt"))
+        );
+    }
+
+    #[test]
+    fn resolve_files_from_relative_path() {
+        let files = vec![OsString::from("relative/path.txt")];
+        let source = resolve_files_from_source(&files);
+        assert_eq!(
+            source,
+            core::client::FilesFromSource::LocalFile(PathBuf::from("relative/path.txt"))
+        );
     }
 }

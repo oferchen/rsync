@@ -24,8 +24,8 @@ pub use builder::ClientConfigBuilder;
 pub use client::ClientConfig;
 pub use compress_env::force_no_compress_from_env;
 pub use enums::{
-    AddressMode, CompressionSetting, DeleteMode, HumanReadableMode, HumanReadableModeParseError,
-    StrongChecksumAlgorithm, StrongChecksumChoice, TransferTimeout,
+    AddressMode, CompressionSetting, DeleteMode, FilesFromSource, HumanReadableMode,
+    HumanReadableModeParseError, StrongChecksumAlgorithm, StrongChecksumChoice, TransferTimeout,
 };
 pub use filters::{FilterRuleKind, FilterRuleSpec};
 pub use iconv::{IconvParseError, IconvSetting};
