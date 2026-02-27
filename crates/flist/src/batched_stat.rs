@@ -419,9 +419,9 @@ pub struct FstatResult {
 impl FstatResult {
     /// Constructs from a raw `libc::stat` buffer.
     fn from_stat(stat_buf: &libc::stat) -> Self {
-        let rdev = stat_buf.st_rdev as u64;
+        let rdev: u64 = stat_buf.st_rdev.try_into().unwrap_or_default();
         Self {
-            mode: stat_buf.st_mode as u32,
+            mode: stat_buf.st_mode.into(),
             size: stat_buf.st_size as u64,
             mtime_sec: stat_buf.st_mtime,
             mtime_nsec: stat_buf.st_mtime_nsec as u32,
@@ -437,19 +437,19 @@ impl FstatResult {
     /// Returns true if this entry is a regular file.
     #[must_use]
     pub fn is_file(&self) -> bool {
-        (self.mode & libc::S_IFMT as u32) == libc::S_IFREG as u32
+        (self.mode & u32::from(libc::S_IFMT)) == u32::from(libc::S_IFREG)
     }
 
     /// Returns true if this entry is a directory.
     #[must_use]
     pub fn is_dir(&self) -> bool {
-        (self.mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32
+        (self.mode & u32::from(libc::S_IFMT)) == u32::from(libc::S_IFDIR)
     }
 
     /// Returns true if this entry is a symbolic link.
     #[must_use]
     pub fn is_symlink(&self) -> bool {
-        (self.mode & libc::S_IFMT as u32) == libc::S_IFLNK as u32
+        (self.mode & u32::from(libc::S_IFMT)) == u32::from(libc::S_IFLNK)
     }
 
     /// Returns the permission bits (lower 12 bits of mode).
