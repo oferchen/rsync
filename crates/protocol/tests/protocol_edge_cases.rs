@@ -140,7 +140,8 @@ fn malformed_truncated_binary_advertisement() {
     for (i, input) in truncated_inputs.iter().enumerate() {
         if input.len() == 4 {
             // Should parse successfully
-            let value = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
+            // upstream: io.c read_int() uses IVAL which is little-endian
+            let value = u32::from_le_bytes([input[0], input[1], input[2], input[3]]);
             let _ = ProtocolVersion::from_peer_advertisement(value);
         } else {
             // Cannot create valid u32 from wrong-sized input

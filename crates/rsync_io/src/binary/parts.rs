@@ -50,7 +50,7 @@ use super::BinaryHandshake;
 /// }
 ///
 /// let protocol = ProtocolVersion::from_supported(31).unwrap();
-/// let transport = Loopback::new(u32::from(protocol.as_u8()).to_be_bytes());
+/// let transport = Loopback::new(u32::from(protocol.as_u8()).to_le_bytes());
 /// let handshake = negotiate_binary_session(transport, protocol).unwrap();
 ///
 /// let parts = handshake.into_parts();
@@ -214,7 +214,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// }
     ///
     /// fn main() -> io::Result<()> {
-    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
+    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
     ///     let transport = Cursor::new(advertisement.to_vec());
     ///     let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)?
     ///         .into_parts();
@@ -295,7 +295,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// }
     ///
     /// let remote = ProtocolVersion::from_supported(31).unwrap();
-    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_be_bytes());
+    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
     /// let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
     ///     .expect("handshake succeeds")
     ///     .into_parts();
@@ -365,7 +365,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// use std::io::{self, Cursor};
     ///
     /// fn main() -> io::Result<()> {
-    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
+    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
     ///     let transport = Cursor::new(advertisement.to_vec());
     ///     let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)?
     ///         .into_parts();
@@ -450,7 +450,8 @@ mod tests {
 
     fn create_test_parts() -> BinaryHandshakeParts<Cursor<Vec<u8>>> {
         // Binary negotiation is triggered by first byte != '@'
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        // Protocol 31 as LE u32: 0x1f 0x00 0x00 0x00
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let remote_adv = RemoteProtocolAdvertisement::from_raw(31, proto31);
@@ -516,7 +517,7 @@ mod tests {
 
     #[test]
     fn local_protocol_was_capped_true_when_reduced() {
-        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let proto29 = ProtocolVersion::from_supported(29).unwrap();

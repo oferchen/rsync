@@ -405,13 +405,14 @@ mod version_30_additions {
 
     #[test]
     fn v30_binary_advertisement_format() {
+        // upstream: io.c write_int() uses SIVAL which is little-endian
         let protocol = ProtocolVersion::V30;
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
         assert_eq!(bytes.len(), 4);
         assert_eq!(
             bytes,
-            [0, 0, 0, 30],
-            "Protocol 30 advertises as 4-byte big-endian"
+            [30, 0, 0, 0],
+            "Protocol 30 advertises as 4-byte little-endian"
         );
     }
 
@@ -564,12 +565,13 @@ mod version_31_additions {
 
     #[test]
     fn v31_binary_advertisement_format() {
+        // upstream: io.c write_int() uses SIVAL which is little-endian
         let protocol = ProtocolVersion::V31;
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
         assert_eq!(
             bytes,
-            [0, 0, 0, 31],
-            "Protocol 31 advertises as 4-byte big-endian"
+            [31, 0, 0, 0],
+            "Protocol 31 advertises as 4-byte little-endian"
         );
     }
 }

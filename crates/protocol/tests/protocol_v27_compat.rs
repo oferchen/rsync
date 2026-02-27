@@ -199,9 +199,10 @@ mod wire_format {
     /// Binary advertisement for v27 (if it were supported).
     #[test]
     fn version_27_binary_advertisement_format() {
-        // If protocol 27 were in the binary range, it would be:
-        let bytes = 27u32.to_be_bytes();
-        assert_eq!(bytes, [0, 0, 0, 27]);
+        // If protocol 27 were in the binary range, it would be little-endian:
+        // upstream: io.c write_int() uses SIVAL which is little-endian
+        let bytes = 27u32.to_le_bytes();
+        assert_eq!(bytes, [27, 0, 0, 0]);
 
         // Note: v27 is below binary negotiation boundary (27 < 30)
     }

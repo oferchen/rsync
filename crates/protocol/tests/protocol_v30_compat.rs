@@ -1203,17 +1203,18 @@ mod protocol_30_wire_format {
 mod protocol_30_binary_advertisement {
     use super::*;
 
-    /// Protocol 30 advertisement is 4 bytes big-endian.
+    /// Protocol 30 advertisement is 4 bytes little-endian.
+    /// upstream: io.c write_int() uses SIVAL which is little-endian
     #[test]
     fn version_30_advertisement_wire_format() {
         let protocol = ProtocolVersion::V30;
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
         assert_eq!(bytes.len(), 4, "Advertisement must be 4 bytes");
         assert_eq!(
             bytes,
-            [0, 0, 0, 30],
-            "Protocol 30 must be [0, 0, 0, 30] in big-endian"
+            [30, 0, 0, 0],
+            "Protocol 30 must be [30, 0, 0, 0] in little-endian"
         );
     }
 
@@ -1222,37 +1223,34 @@ mod protocol_30_binary_advertisement {
     fn version_30_advertisement_roundtrip() {
         let protocol = ProtocolVersion::V30;
 
-        // Generate advertisement
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+        // Generate advertisement (little-endian, matching upstream write_int/SIVAL)
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
         // Parse it back
-        let parsed_value = u32::from_be_bytes(bytes);
+        let parsed_value = u32::from_le_bytes(bytes);
         let parsed_protocol =
             ProtocolVersion::from_peer_advertisement(parsed_value).expect("roundtrip must succeed");
 
         assert_eq!(parsed_protocol, protocol);
     }
 
-    /// Protocol 30 advertisement is big-endian (network byte order).
+    /// Protocol 30 advertisement is little-endian (upstream SIVAL format).
+    /// upstream: io.c write_int() uses SIVAL which is little-endian
     #[test]
-    fn version_30_advertisement_is_big_endian() {
+    fn version_30_advertisement_is_little_endian() {
         let protocol = ProtocolVersion::V30;
-        let bytes = u32::from(protocol.as_u8()).to_be_bytes();
+        let bytes = u32::from(protocol.as_u8()).to_le_bytes();
 
-        // Big-endian: MSB first
-        assert_eq!(bytes[0], 0, "MSB must be 0");
-        assert_eq!(bytes[3], 30, "LSB must be 30");
-
-        // Verify this differs from little-endian
-        let le_bytes = u32::from(protocol.as_u8()).to_le_bytes();
-        assert_ne!(bytes, le_bytes, "Must use big-endian, not little-endian");
+        // Little-endian: LSB first
+        assert_eq!(bytes[0], 30, "LSB must be 30");
+        assert_eq!(bytes[3], 0, "MSB must be 0");
     }
 
     /// Protocol 30 advertisement is deterministic.
     #[test]
     fn version_30_advertisement_deterministic() {
-        let bytes1 = u32::from(ProtocolVersion::V30.as_u8()).to_be_bytes();
-        let bytes2 = u32::from(ProtocolVersion::V30.as_u8()).to_be_bytes();
+        let bytes1 = u32::from(ProtocolVersion::V30.as_u8()).to_le_bytes();
+        let bytes2 = u32::from(ProtocolVersion::V30.as_u8()).to_le_bytes();
 
         assert_eq!(bytes1, bytes2, "Advertisement must be deterministic");
     }

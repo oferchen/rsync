@@ -79,5 +79,5 @@ impl Write for InstrumentedTransport {
 }
 
 pub(crate) fn binary_handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
-    u32::from(version.as_u8()).to_be_bytes()
+    u32::from(version.as_u8()).to_le_bytes()
 }

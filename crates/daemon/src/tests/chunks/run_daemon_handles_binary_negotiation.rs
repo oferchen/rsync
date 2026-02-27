@@ -28,7 +28,7 @@ fn run_daemon_handles_binary_negotiation() {
         .expect("set write timeout");
 
     // Even if client sends binary data, daemon sends @RSYNCD greeting
-    let binary_data = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
+    let binary_data = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
     stream
         .write_all(&binary_data)
         .expect("send binary data");

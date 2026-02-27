@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn session_reports_clamped_binary_future_version() {
     let future_version = 40u32;
-    let transport = MemoryTransport::new(&future_version.to_be_bytes());
+    let transport = MemoryTransport::new(&future_version.to_le_bytes());
 
     let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
         .expect("binary handshake clamps future versions");
