@@ -1600,8 +1600,8 @@ mod script_generation {
         let content = fs::read_to_string(&script_path).unwrap();
 
         assert!(
-            content.starts_with("#!/bin/sh\n"),
-            "Script should start with shebang"
+            !content.starts_with("#!/bin/sh"),
+            "Upstream rsync batch scripts have no shebang"
         );
         assert!(
             content.contains("--read-batch="),
@@ -1633,7 +1633,12 @@ mod script_generation {
         let metadata = fs::metadata(&script_path).unwrap();
         let mode = metadata.permissions().mode();
 
-        assert_ne!(mode & 0o111, 0, "Script should be executable");
+        // upstream: batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
+        assert_eq!(
+            mode & 0o777,
+            0o700,
+            "Script permissions should be exactly 0o700"
+        );
     }
 
     #[test]
