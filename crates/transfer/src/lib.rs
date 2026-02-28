@@ -123,6 +123,8 @@ pub mod disk_commit;
 pub mod map_file;
 /// Request pipelining for reduced latency in file transfers.
 pub mod pipeline;
+/// Progress reporting for server-side transfer operations.
+pub mod progress;
 /// Reusable buffer for delta token data.
 pub mod token_buffer;
 /// Strategy-based reader for plain and compressed delta token formats.
@@ -154,6 +156,7 @@ pub use pipeline::{
     DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW, MIN_PIPELINE_WINDOW, PendingTransfer,
     PipelineConfig, PipelineState,
 };
+pub use progress::{TransferProgressCallback, TransferProgressEvent};
 
 #[cfg(test)]
 mod tests;
@@ -192,15 +195,16 @@ pub type ServerResult = io::Result<ServerStats>;
 /// - The protocol handshake fails (incompatible version or I/O error)
 /// - Reading from or writing to the streams fails
 /// - The receiver or generator role encounters a transfer error
-#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout), fields(role = ?config.role)))]
+#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress), fields(role = ?config.role)))]
 pub fn run_server_stdio(
     config: ServerConfig,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
+    progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
     // Perform protocol handshake
     let handshake = perform_handshake(stdin, stdout)?;
-    run_server_with_handshake(config, handshake, stdin, stdout)
+    run_server_with_handshake(config, handshake, stdin, stdout, progress)
 }
 
 /// Executes the native server with a pre-negotiated protocol version.
@@ -222,12 +226,13 @@ pub fn run_server_stdio(
 /// - Multiplex activation fails
 /// - Sending the MSG_IO_TIMEOUT message fails (for daemon mode)
 /// - The receiver or generator role encounters a transfer error
-#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout), fields(role = ?config.role, protocol = %handshake.protocol)))]
+#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake<W: Write>(
     config: ServerConfig,
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
     mut stdout: W,
+    progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
     // Protocol has already been negotiated via:
     // - perform_handshake() for SSH mode (binary exchange)
@@ -482,7 +487,7 @@ pub fn run_server_with_handshake<W: Write>(
             // Wrap writer in CountingWriter to track bytes sent back to sender
             // This mirrors upstream rsync's stats.total_written tracking in io.c:859
             let mut counting_writer = writer::CountingWriter::new(&mut writer);
-            let mut stats = ctx.run(chained_reader, &mut counting_writer)?;
+            let mut stats = ctx.run(chained_reader, &mut counting_writer, progress)?;
             // Record the bytes sent to the sender (signatures, indices, etc.)
             stats.bytes_sent = counting_writer.bytes_written();
 
@@ -495,7 +500,7 @@ pub fn run_server_with_handshake<W: Write>(
 
             let mut ctx = GeneratorContext::new(&handshake, config);
             // Pass reader by value - GeneratorContext::run now takes ownership and activates multiplex internally
-            let stats = ctx.run(chained_reader, &mut writer, &paths)?;
+            let stats = ctx.run(chained_reader, &mut writer, &paths, progress)?;
 
             Ok(ServerStats::Generator(stats))
         }

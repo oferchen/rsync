@@ -837,13 +837,13 @@ fn execute_transfer(
         let writer_res =
             fast_io::socket_writer_from_fd(write_stream.as_raw_fd(), 64 * 1024, policy);
         if let (Ok(mut reader), Ok(mut writer)) = (reader_res, writer_res) {
-            run_server_with_handshake(config, handshake, &mut reader, &mut writer)
+            run_server_with_handshake(config, handshake, &mut reader, &mut writer, None)
         } else {
-            run_server_with_handshake(config, handshake, read_stream, write_stream)
+            run_server_with_handshake(config, handshake, read_stream, write_stream, None)
         }
     };
     #[cfg(not(unix))]
-    let result = run_server_with_handshake(config, handshake, read_stream, write_stream);
+    let result = run_server_with_handshake(config, handshake, read_stream, write_stream, None);
 
     match result {
         Ok(_server_stats) => {

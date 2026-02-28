@@ -750,7 +750,7 @@ fn run_pull_transfer(
     let server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
     let start = Instant::now();
     let server_stats =
-        run_server_with_handshake_over_stream(server_config, handshake, &mut stream)?;
+        run_server_with_handshake_over_stream(server_config, handshake, &mut stream, None)?;
     let elapsed = start.elapsed();
 
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
@@ -811,7 +811,7 @@ fn run_push_transfer(
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let start = Instant::now();
     let server_stats =
-        run_server_with_handshake_over_stream(server_config, handshake, &mut stream)?;
+        run_server_with_handshake_over_stream(server_config, handshake, &mut stream, None)?;
     let elapsed = start.elapsed();
 
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
@@ -877,12 +877,13 @@ fn run_server_with_handshake_over_stream(
     config: ServerConfig,
     handshake: HandshakeResult,
     stream: &mut TcpStream,
+    progress: Option<&mut dyn crate::server::TransferProgressCallback>,
 ) -> Result<crate::server::ServerStats, ClientError> {
     let mut reader = stream
         .try_clone()
         .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
 
-    crate::server::run_server_with_handshake(config, handshake, &mut reader, stream)
+    crate::server::run_server_with_handshake(config, handshake, &mut reader, stream, progress)
         .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
 }
 
