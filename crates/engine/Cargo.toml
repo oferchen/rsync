@@ -32,8 +32,6 @@ jwalk = { workspace = true }
 rustc-hash = { workspace = true }
 rustix = { version = "0.38", features = ["fs", "process"] }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
-md5 = { version = "0.7", optional = true }
-xxhash-rust = { version = "0.8", features = ["xxh64"], optional = true }
 filetime = { version = "0.2", optional = true }
 
 [target.'cfg(not(windows))'.dependencies]
@@ -84,7 +82,7 @@ parallel = []
 # ============================================================================
 
 # Async runtime support - enables tokio-based async I/O for file operations
-async = ["dep:tokio", "dep:md5", "dep:xxhash-rust", "dep:filetime"]
+async = ["dep:tokio", "dep:filetime"]
 
 # ============================================================================
 # Debugging Features
