@@ -792,16 +792,18 @@ impl ReceiverContext {
         &mut self,
         reader: super::reader::ServerReader<R>,
         writer: &mut W,
+        progress: Option<&mut dyn super::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
         // Use pipelined transfer by default for improved performance.
         // When incremental-flist feature is enabled, use incremental mode
         // which provides failed directory tracking and better error recovery.
         #[cfg(feature = "incremental-flist")]
         {
-            self.run_pipelined_incremental(reader, writer, PipelineConfig::default())
+            self.run_pipelined_incremental(reader, writer, PipelineConfig::default(), progress)
         }
         #[cfg(not(feature = "incremental-flist"))]
         {
+            let _ = progress;
             self.run_pipelined(reader, writer, PipelineConfig::default())
         }
     }
@@ -1244,7 +1246,9 @@ impl ReceiverContext {
         }
 
         // Run pipelined transfer with decoupled network/disk I/O (phase 1)
+        let total_files = files_to_transfer.len();
         let redo_config = pipeline_config.clone();
+        let mut no_progress: Option<&mut dyn super::TransferProgressCallback> = None;
         let (mut files_transferred, mut bytes_received, redo_indices) = self
             .run_pipeline_loop_decoupled(
                 reader,
@@ -1254,6 +1258,8 @@ impl ReceiverContext {
                 files_to_transfer,
                 &mut metadata_errors,
                 false,
+                total_files,
+                &mut no_progress,
             )?;
 
         // Phase 2: redo pass for files that failed checksum verification.
@@ -1274,6 +1280,8 @@ impl ReceiverContext {
                 redo_files,
                 &mut metadata_errors,
                 true,
+                total_files,
+                &mut no_progress,
             )?;
 
             files_transferred += redo_transferred;
@@ -1335,6 +1343,7 @@ impl ReceiverContext {
         reader: super::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
+        mut progress: Option<&mut dyn super::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
         let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
@@ -1402,6 +1411,7 @@ impl ReceiverContext {
         }
 
         // Run pipelined transfer with decoupled network/disk I/O (phase 1)
+        let total_files = files_to_transfer.len();
         let redo_config = pipeline_config.clone();
         let (mut files_transferred, mut bytes_received, redo_indices) = self
             .run_pipeline_loop_decoupled(
@@ -1412,6 +1422,8 @@ impl ReceiverContext {
                 files_to_transfer,
                 &mut metadata_errors,
                 false,
+                total_files,
+                &mut progress,
             )?;
 
         // Phase 2: redo pass for files that failed checksum verification.
@@ -1430,6 +1442,8 @@ impl ReceiverContext {
                 redo_files,
                 &mut metadata_errors,
                 true,
+                total_files,
+                &mut progress,
             )?;
 
             files_transferred += redo_transferred;
@@ -1535,6 +1549,7 @@ impl ReceiverContext {
     ///
     /// - `receiver.c:554-984` — `recv_files()` main loop
     /// - `receiver.c:970-974` — `send_msg_int(MSG_REDO, ndx)` on checksum failure
+    #[allow(clippy::too_many_arguments)]
     fn run_pipeline_loop_decoupled<R: Read, W: Write + ?Sized>(
         &self,
         reader: &mut super::reader::ServerReader<R>,
@@ -1544,6 +1559,8 @@ impl ReceiverContext {
         files_to_transfer: Vec<(usize, &FileEntry)>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         is_redo_pass: bool,
+        total_files: usize,
+        progress: &mut Option<&mut dyn super::TransferProgressCallback>,
     ) -> io::Result<(usize, u64, Vec<usize>)> {
         use crate::disk_commit::DiskCommitConfig;
         use crate::pipeline::receiver::PipelinedReceiver;
@@ -1704,6 +1721,17 @@ impl ReceiverContext {
 
                 bytes_received += result.total_bytes;
                 files_transferred += 1;
+
+                if let Some(cb) = progress.as_mut() {
+                    let event = super::TransferProgressEvent {
+                        path: file_entry.path(),
+                        file_bytes: result.total_bytes,
+                        total_file_bytes: Some(file_entry.size()),
+                        files_done: files_transferred,
+                        total_files,
+                    };
+                    cb.on_file_transferred(&event);
+                }
             }
 
             // Drain all remaining disk results — blocks until every file is
@@ -4576,7 +4604,7 @@ mod tests {
             reader: super::super::reader::ServerReader<R>,
             writer: &mut W,
         ) {
-            let _ = ctx.run_pipelined_incremental(reader, writer, PipelineConfig::default());
+            let _ = ctx.run_pipelined_incremental(reader, writer, PipelineConfig::default(), None);
         }
     }
 
