@@ -516,6 +516,7 @@ impl GeneratorContext {
         &mut self,
         reader: &mut R,
         writer: &mut super::writer::ServerWriter<W>,
+        progress: &mut Option<&mut dyn super::TransferProgressCallback>,
     ) -> io::Result<TransferLoopResult> {
         use super::shared::TransferDeadline;
 
@@ -741,6 +742,17 @@ impl GeneratorContext {
                 bytes_sent += result.total_bytes;
             }
             files_transferred += 1;
+
+            if let Some(cb) = progress.as_mut() {
+                let event = super::TransferProgressEvent {
+                    path: file_entry.path(),
+                    file_bytes: bytes_sent,
+                    total_file_bytes: Some(file_entry.size()),
+                    files_done: files_transferred,
+                    total_files: self.file_list.len(),
+                };
+                cb.on_file_transferred(&event);
+            }
 
             // Check deadline at file boundary after sending each file.
             // Upstream rsync (io.c:825) hard-exits via exit_cleanup(RERR_TIMEOUT).
@@ -1163,6 +1175,7 @@ impl GeneratorContext {
         mut reader: super::reader::ServerReader<R>,
         writer: &mut super::writer::ServerWriter<W>,
         paths: &[PathBuf],
+        mut progress: Option<&mut dyn super::TransferProgressCallback>,
     ) -> io::Result<GeneratorStats> {
         // Step 1: Activate input multiplex if needed (mode and protocol dependent)
         if self.should_activate_input_multiplex() {
@@ -1194,7 +1207,7 @@ impl GeneratorContext {
         self.send_flist_eof_if_inc_recurse(writer)?;
 
         // Step 7: Run main transfer loop
-        let transfer_result = self.run_transfer_loop(reader, writer)?;
+        let transfer_result = self.run_transfer_loop(reader, writer, &mut progress)?;
 
         // Step 8: Handle goodbye handshake
         //

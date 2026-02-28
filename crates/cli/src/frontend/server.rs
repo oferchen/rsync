@@ -246,7 +246,7 @@ where
     }
 
     // Run native server with stdio
-    match run_server_stdio(config, &mut stdin, stdout) {
+    match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
         Err(e) => {
             write_server_error(stderr, program_brand, format!("server error: {e}"));

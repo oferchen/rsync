@@ -301,7 +301,7 @@ where
     R: std::io::Read,
     W: std::io::Write,
 {
-    run_server_stdio(config, stdin, stdout)
+    run_server_stdio(config, stdin, stdout, None)
 }
 
 fn run_with_capture<I, S, Runner>(
