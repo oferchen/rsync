@@ -1525,7 +1525,7 @@ impl ReceiverContext {
     /// thread. The network thread never blocks on disk I/O, and the disk thread
     /// never blocks on network reads — achieving overlap similar to upstream
     /// rsync's `fork()` model.
-    /// Runs the pipelined transfer loop, returning (files_transferred, bytes, redo_indices).
+    /// Returns (files_transferred, bytes, redo_indices).
     ///
     /// The `redo_indices` vector contains file list indices for files whose
     /// whole-file checksum verification failed during this pass. The caller
@@ -2686,13 +2686,14 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
     signature: &FileSignature,
     s2length: u32,
 ) -> io::Result<()> {
+    let mut sum_buf = vec![0u8; s2length as usize];
     for block in signature.blocks() {
         // Write rolling_sum as int32 LE
         writer.write_all(&(block.rolling().value() as i32).to_le_bytes())?;
 
         // Write strong_sum, truncated or padded to s2length
         let strong_bytes = block.strong();
-        let mut sum_buf = vec![0u8; s2length as usize];
+        sum_buf.fill(0);
         let copy_len = std::cmp::min(strong_bytes.len(), s2length as usize);
         sum_buf[..copy_len].copy_from_slice(&strong_bytes[..copy_len]);
         writer.write_all(&sum_buf)?;
