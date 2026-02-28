@@ -1,13 +1,13 @@
 //! Batch async file copying with bounded concurrency.
 //!
-//! Uses a producer-consumer architecture with a bounded channel to ensure
-//! that at most `max_concurrent` file copy operations are in flight at any
-//! time, regardless of the total number of files.
+//! Uses a semaphore-gated spawning loop to ensure that at most
+//! `max_concurrent` file copy operations are in flight at any time,
+//! regardless of the total number of files.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tokio::sync::Semaphore;
 
 use super::copier::AsyncFileCopier;
 use super::error::AsyncIoError;
@@ -43,10 +43,10 @@ fn resolve_max_concurrent(explicit: Option<usize>) -> usize {
 
 /// Batch async file copier with bounded concurrency.
 ///
-/// Uses a producer–consumer architecture with a bounded channel to ensure
-/// that at most `max_concurrent` file copy operations are in flight at any
-/// time, regardless of the total number of files. This avoids the O(N) task
-/// spawn overhead of a semaphore-gated approach.
+/// Uses a semaphore to ensure that at most `max_concurrent` file copy
+/// operations are in flight at any time. Each file pair spawns its own
+/// task, but the semaphore blocks the spawning loop until a permit is
+/// available, providing natural backpressure without shared-mutex contention.
 ///
 /// # Example
 ///
@@ -103,12 +103,11 @@ impl AsyncBatchCopier {
         self
     }
 
-    /// Copies multiple files concurrently using a bounded worker pool.
+    /// Copies multiple files concurrently using a bounded semaphore.
     ///
     /// At most `max_concurrent` copy operations execute simultaneously.
-    /// The input iterator is consumed lazily — pairs are only materialized
-    /// as workers become available, providing natural backpressure for
-    /// arbitrarily large file sets.
+    /// A semaphore gates task spawning so that backpressure is applied
+    /// naturally without shared-mutex contention on a channel receiver.
     ///
     /// Results are returned in the same order as the input iterator.
     pub async fn copy_files<I, P, Q>(&self, files: I) -> Vec<Result<CopyResult, AsyncIoError>>
@@ -117,84 +116,45 @@ impl AsyncBatchCopier {
         P: AsRef<Path> + Send + 'static,
         Q: AsRef<Path> + Send + 'static,
     {
-        let max_concurrent = self.max_concurrent;
         let copier = Arc::new(self.copier.clone());
+        let semaphore = Arc::new(Semaphore::new(self.max_concurrent));
 
-        let pairs: Vec<(usize, PathBuf, PathBuf)> = files
+        let pairs: Vec<(PathBuf, PathBuf)> = files
             .into_iter()
-            .enumerate()
-            .map(|(idx, (src, dst))| (idx, src.as_ref().to_path_buf(), dst.as_ref().to_path_buf()))
+            .map(|(src, dst)| (src.as_ref().to_path_buf(), dst.as_ref().to_path_buf()))
             .collect();
 
         if pairs.is_empty() {
             return Vec::new();
         }
 
-        let total = pairs.len();
+        let mut handles = Vec::with_capacity(pairs.len());
 
-        let (work_tx, work_rx) =
-            tokio::sync::mpsc::channel::<(usize, PathBuf, PathBuf)>(max_concurrent);
-
-        let (result_tx, mut result_rx) =
-            tokio::sync::mpsc::unbounded_channel::<(usize, Result<CopyResult, AsyncIoError>)>();
-
-        let work_rx = Arc::new(Mutex::new(work_rx));
-
-        let producer = tokio::spawn(async move {
-            for (idx, src, dst) in pairs {
-                if work_tx.send((idx, src, dst)).await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        let mut workers = Vec::with_capacity(max_concurrent);
-        for _ in 0..max_concurrent {
-            let rx = work_rx.clone();
-            let tx = result_tx.clone();
+        for (src, dst) in pairs {
+            let permit = semaphore.clone().acquire_owned().await;
             let copier = copier.clone();
+            let src_path = src.clone();
 
-            workers.push(tokio::spawn(async move {
-                loop {
-                    let item = {
-                        let mut guard = rx.lock().await;
-                        guard.recv().await
-                    };
-
-                    let Some((idx, src, dst)) = item else {
-                        break;
-                    };
-
-                    let result = copier.copy_file(&src, &dst).await;
-                    if tx.send((idx, result)).is_err() {
-                        break;
+            handles.push(tokio::spawn(async move {
+                let _permit = match permit {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return Err(AsyncIoError::Cancelled(src_path));
                     }
-                }
+                };
+                copier.copy_file(&src, &dst).await
             }));
         }
 
-        drop(result_tx);
-
-        let mut results: Vec<Option<Result<CopyResult, AsyncIoError>>> =
-            (0..total).map(|_| None).collect();
-
-        while let Some((idx, result)) = result_rx.recv().await {
-            results[idx] = Some(result);
-        }
-
-        let _ = producer.await;
-        for worker in workers {
-            if let Err(e) = worker.await {
-                if let Some(slot) = results.iter_mut().find(|s| s.is_none()) {
-                    *slot = Some(Err(AsyncIoError::JoinError(e)));
-                }
-            }
+        let mut results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            results.push(match handle.await {
+                Ok(result) => result,
+                Err(e) => Err(AsyncIoError::JoinError(e)),
+            });
         }
 
         results
-            .into_iter()
-            .map(|slot| slot.unwrap_or(Err(AsyncIoError::Cancelled)))
-            .collect()
     }
 }
 
@@ -260,7 +220,7 @@ mod tests {
     fn test_async_batch_copier_with_copier() {
         let file_copier = AsyncFileCopier::new().with_buffer_size(16384);
         let batch = AsyncBatchCopier::new().with_copier(file_copier);
-        assert_eq!(batch.copier.buffer_size, 16384);
+        assert_eq!(batch.copier.buffer_size(), 16384);
     }
 
     #[test]
