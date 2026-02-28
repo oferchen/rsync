@@ -675,11 +675,10 @@ fn build_full_daemon_args(
     // - v = varint for flist flags (VARINT_FLIST_FLAGS)
     // - u = include uid 0 & gid 0 names (ID0_NAMES)
     //
-    // NOTE: 'i' (INC_RECURSE) is NOT included because we send a complete
-    // file list in one batch. With INC_RECURSE, the daemon expects separate
-    // file lists for each directory level, which we don't implement yet.
+    // 'i' (INC_RECURSE) advertises incremental recursion support.
+    // upstream: compat.c:161-179 set_allow_inc_recurse()
     if protocol.as_u8() >= 30 {
-        args.push("-e.LsfxCIvu".to_owned());
+        args.push("-e.iLsfxCIvu".to_owned());
     }
 
     // Dummy argument (upstream requirement - represents CWD)

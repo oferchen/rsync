@@ -32,6 +32,8 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, Read, Write};
+
+use logging::debug_log;
 use std::num::NonZeroU8;
 use std::path::{Component, Path, PathBuf};
 
@@ -41,7 +43,10 @@ use std::path::{Component, Path, PathBuf};
 /// sufficient collision resistance for file integrity verification.
 const DEFAULT_CHECKSUM_LENGTH: NonZeroU8 = NonZeroU8::new(16).unwrap();
 
-use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
+use protocol::codec::{
+    NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, ProtocolCodec, create_ndx_codec,
+    create_protocol_codec,
+};
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader, IncrementalFileListBuilder, sort_file_list};
 use protocol::idlist::IdList;
@@ -211,6 +216,93 @@ impl ReceiverContext {
         sort_file_list(&mut self.file_list, self.config.qsort);
 
         Ok(count)
+    }
+
+    /// Receives incremental file list segments sent after the initial file list.
+    ///
+    /// When INC_RECURSE is negotiated, the sender sends per-directory sub-lists
+    /// framed by `NDX_FLIST_OFFSET - dir_ndx` values, terminated by `NDX_FLIST_EOF`.
+    /// Each sub-list contains file entries sorted within that directory.
+    ///
+    /// Entries are appended to `self.file_list` in the order received, maintaining
+    /// the sender's NDX ordering (NDX = index in the combined list).
+    ///
+    /// Returns the total number of entries received across all sub-lists.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:recv_file_list()` — reads entries for each sub-list
+    /// - `io.c:read_ndx_and_attrs()` — detects NDX_FLIST_OFFSET framing
+    fn receive_extra_file_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+        if !inc_recurse {
+            return Ok(0);
+        }
+
+        let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut flist_reader = if let Some(flags) = self.compat_flags {
+            FileListReader::with_compat_flags(self.protocol, flags)
+        } else {
+            FileListReader::new(self.protocol)
+        }
+        .with_preserve_uid(self.config.flags.owner)
+        .with_preserve_gid(self.config.flags.group)
+        .with_preserve_links(self.config.flags.links)
+        .with_preserve_devices(self.config.flags.devices)
+        .with_preserve_specials(self.config.flags.specials)
+        .with_preserve_hard_links(self.config.flags.hard_links)
+        .with_preserve_acls(self.config.flags.acls)
+        .with_preserve_xattrs(self.config.flags.xattrs)
+        .with_preserve_atimes(self.config.flags.atimes);
+
+        if let Some(ref converter) = self.config.iconv {
+            flist_reader = flist_reader.with_iconv(converter.clone());
+        }
+
+        let mut total_extra = 0;
+
+        loop {
+            let ndx = ndx_codec.read_ndx(reader)?;
+
+            if ndx == NDX_FLIST_EOF {
+                debug_log!(Flist, 2, "received NDX_FLIST_EOF, file list complete");
+                break;
+            }
+
+            if ndx > NDX_FLIST_OFFSET {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("expected NDX_FLIST_OFFSET or NDX_FLIST_EOF, got {ndx}"),
+                ));
+            }
+
+            let dir_ndx = NDX_FLIST_OFFSET - ndx;
+            let mut segment_count = 0;
+
+            while let Some(entry) = flist_reader.read_entry(reader)? {
+                self.file_list.push(entry);
+                segment_count += 1;
+            }
+
+            debug_log!(
+                Flist,
+                2,
+                "received sub-list for dir_ndx={}, {} entries",
+                dir_ndx,
+                segment_count
+            );
+            total_extra += segment_count;
+        }
+
+        debug_log!(
+            Flist,
+            2,
+            "received {} extra entries across all sub-lists",
+            total_extra
+        );
+        Ok(total_extra)
     }
 
     /// Creates an incremental file list receiver for streaming processing.
@@ -1490,6 +1582,12 @@ impl ReceiverContext {
         }
 
         let file_count = self.receive_file_list(&mut reader)?;
+
+        // Receive incremental file list segments (INC_RECURSE).
+        // The sender sends all sub-lists immediately after the initial file list,
+        // before entering the transfer loop. Entries are appended to self.file_list.
+        let extra_count = self.receive_extra_file_lists(&mut reader)?;
+        let file_count = file_count + extra_count;
 
         // Validate received file list for path safety (--trust-sender enforcement).
         // Removes entries with absolute paths, `..` components, or unsafe symlink
