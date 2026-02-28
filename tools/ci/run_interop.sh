@@ -64,6 +64,7 @@ up_pid=""
 oc_pid_file_current=""
 up_pid_file_current=""
 workdir=""
+hard_timeout=30
 
 detect_deb_arch() {
   local u
@@ -555,11 +556,6 @@ run_interop_case() {
   write_rust_daemon_conf "$oc_conf" "$oc_pid_file" "$oc_port" "$oc_dest" "oc interop target (${version})"
   write_upstream_conf "$up_conf" "$up_pid_file" "$upstream_port" "$up_dest" "upstream interop target (${version})" "$up_identity"
 
-  # Hard timeout per transfer (seconds). The rsync --timeout flag only
-  # covers I/O inactivity; protocol negotiation hangs (e.g., incremental
-  # recursion with older clients) can stall indefinitely without this.
-  local hard_timeout=30
-
   echo "Testing upstream rsync ${version} client -> oc-rsync --daemon"
   start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file" "$oc_port"
 
@@ -602,6 +598,270 @@ run_interop_case() {
 
   stop_upstream_daemon
   return 0
+}
+
+# ============================================================================
+# Comprehensive Interop Test Framework
+# Covers all protocols (28-32), major rsync options, bidirectional transfers.
+# ============================================================================
+
+# Rich test data: multiple file types, sizes, metadata, symlinks, hardlinks
+setup_comprehensive_src() {
+  local dir=$1
+  rm -rf "$dir"
+  mkdir -p "$dir/subdir/nested" "$dir/empty_dir"
+  echo "hello world" > "$dir/hello.txt"
+  printf 'line1\nline2\nline3\n' > "$dir/multiline.txt"
+  dd if=/dev/urandom of="$dir/binary.dat" bs=1K count=50 2>/dev/null
+  dd if=/dev/urandom of="$dir/large.dat" bs=1K count=200 2>/dev/null
+  echo "nested content" > "$dir/subdir/file.txt"
+  echo "deep content" > "$dir/subdir/nested/deep.txt"
+  touch "$dir/empty.txt"
+  ln -sf hello.txt "$dir/link.txt"
+  ln "$dir/hello.txt" "$dir/hardlink.txt"
+  printf '#!/bin/sh\necho test\n' > "$dir/script.sh"
+  chmod 755 "$dir/script.sh"
+  echo "should be excluded" > "$dir/excluded.log"
+  echo "also excluded" > "$dir/subdir/debug.log"
+}
+
+# Verify core files transferred with correct content
+comp_verify_transfer() {
+  local s=$1 d=$2
+  for f in hello.txt multiline.txt binary.dat large.dat \
+           subdir/file.txt subdir/nested/deep.txt empty.txt; do
+    if [[ ! -f "$d/$f" ]]; then
+      echo "    Missing: $f"
+      return 1
+    fi
+    if ! cmp -s "$s/$f" "$d/$f"; then
+      echo "    Content mismatch: $f"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Verify symlink target preserved
+comp_verify_symlink() {
+  local s=$1 d=$2
+  if [[ ! -L "$d/link.txt" ]]; then
+    echo "    Symlink not preserved"
+    return 1
+  fi
+  local st dt
+  st=$(readlink "$s/link.txt")
+  dt=$(readlink "$d/link.txt")
+  if [[ "$st" != "$dt" ]]; then
+    echo "    Symlink target: $st vs $dt"
+    return 1
+  fi
+  return 0
+}
+
+# Verify hard links share inode
+comp_verify_hardlink() {
+  local d=$1
+  if [[ ! -f "$d/hello.txt" || ! -f "$d/hardlink.txt" ]]; then
+    echo "    Hardlink files missing"
+    return 1
+  fi
+  local i1 i2
+  if stat --version >/dev/null 2>&1; then
+    i1=$(stat -c %i "$d/hello.txt")
+    i2=$(stat -c %i "$d/hardlink.txt")
+  else
+    i1=$(stat -f %i "$d/hello.txt")
+    i2=$(stat -f %i "$d/hardlink.txt")
+  fi
+  if [[ "$i1" != "$i2" ]]; then
+    echo "    Hardlinks not preserved ($i1 vs $i2)"
+    return 1
+  fi
+  return 0
+}
+
+# Verify file permissions match between src and dest
+comp_verify_perms() {
+  local s=$1 d=$2
+  for f in script.sh hello.txt; do
+    if [[ -f "$d/$f" ]]; then
+      local sp dp
+      if stat --version >/dev/null 2>&1; then
+        sp=$(stat -c %a "$s/$f"); dp=$(stat -c %a "$d/$f")
+      else
+        sp=$(stat -f %Lp "$s/$f"); dp=$(stat -f %Lp "$d/$f")
+      fi
+      if [[ "$sp" != "$dp" ]]; then
+        echo "    Perms mismatch $f: $sp vs $dp"
+        return 1
+      fi
+    fi
+  done
+  return 0
+}
+
+# Run a single test scenario: prepare dest, transfer, verify.
+# Flags are word-split intentionally (no glob-expandable patterns at word start).
+comp_run_scenario() {
+  local label=$1 client=$2 flags=$3 sdir=$4 url=$5 ddir=$6 log=$7 vtype=$8
+
+  # Prepare destination per scenario requirements
+  case "$vtype" in
+    delete)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      echo "extra" > "$ddir/extra_file.txt"
+      ;;
+    delta)
+      rm -rf "$ddir"/*
+      mkdir -p "$ddir/subdir/nested"
+      for f in hello.txt multiline.txt empty.txt subdir/file.txt subdir/nested/deep.txt; do
+        [[ -f "$sdir/$f" ]] && cp "$sdir/$f" "$ddir/$f"
+      done
+      # Replace binary data so delta has work to do
+      dd if=/dev/zero of="$ddir/binary.dat" bs=1K count=50 2>/dev/null
+      dd if=/dev/zero of="$ddir/large.dat" bs=1K count=200 2>/dev/null
+      ;;
+    *)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+  esac
+
+  # shellcheck disable=SC2086
+  if ! timeout "$hard_timeout" $client $flags --timeout=10 \
+      "${sdir}/" "$url" >/dev/null 2>>"$log"; then
+    echo "    FAIL (transfer error)"
+    return 1
+  fi
+
+  # Verify per scenario type
+  case "$vtype" in
+    basic|compress|whole-file|inplace|numeric-ids|recursive|size-only|inc-recursive|delta)
+      comp_verify_transfer "$sdir" "$ddir"
+      ;;
+    symlinks)
+      comp_verify_transfer "$sdir" "$ddir" && comp_verify_symlink "$sdir" "$ddir"
+      ;;
+    hardlinks)
+      comp_verify_transfer "$sdir" "$ddir" && comp_verify_hardlink "$ddir"
+      ;;
+    delete)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      if [[ -f "$ddir/extra_file.txt" ]]; then
+        echo "    --delete: extra file not removed"
+        return 1
+      fi
+      return 0
+      ;;
+    exclude)
+      for f in hello.txt multiline.txt binary.dat large.dat; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    Missing: $f"
+          return 1
+        fi
+        if ! cmp -s "$sdir/$f" "$ddir/$f"; then
+          echo "    Mismatch: $f"
+          return 1
+        fi
+      done
+      if [[ -f "$ddir/excluded.log" || -f "$ddir/subdir/debug.log" ]]; then
+        echo "    Excluded files transferred"
+        return 1
+      fi
+      return 0
+      ;;
+    perms)
+      comp_verify_transfer "$sdir" "$ddir" && comp_verify_perms "$sdir" "$ddir"
+      ;;
+  esac
+}
+
+# Run all comprehensive scenarios for one upstream version, optionally forcing protocol.
+# Uses global $comp_src, $oc_client, $up_identity, $hard_timeout.
+run_comprehensive_interop_case() {
+  local version=$1 upstream_binary=$2 oc_port=$3 upstream_port=$4
+  local protocol_flag="${5:-}"
+  local vtag=${version//./-}
+  local ptag=""; [[ -n "$protocol_flag" ]] && ptag="_p${protocol_flag##*=}"
+  local tag="${vtag}${ptag}"
+  local sfx=""; [[ -n "$protocol_flag" ]] && sfx=" (${protocol_flag})"
+
+  local od="${workdir}/co-${tag}" ud="${workdir}/cu-${tag}"
+  local opf="${workdir}/co-${tag}.pid" upf="${workdir}/cu-${tag}.pid"
+  local ocf="${workdir}/co-${tag}.conf" ucf="${workdir}/cu-${tag}.conf"
+  local olf="${workdir}/co-${tag}.log" ulf="${workdir}/cu-${tag}.log"
+
+  rm -rf "$od" "$ud"; mkdir -p "$od" "$ud"
+
+  write_rust_daemon_conf "$ocf" "$opf" "$oc_port" "$od" "c-${tag}"
+  write_upstream_conf "$ucf" "$upf" "$upstream_port" "$ud" "c-${tag}" "$up_identity"
+
+  # Scenario table: name|flags|verify_type
+  local -a scenarios=(
+    "archive|-av|basic"
+    "checksum|-avc|basic"
+    "compress|-avz|compress"
+    "whole-file|-avW|whole-file"
+    "delta|-av --no-whole-file -I|delta"
+    "inplace|-av --inplace|inplace"
+    "numeric-ids|-av --numeric-ids|numeric-ids"
+    "recursive-only|-rv|recursive"
+    "symlinks|-rlptv|symlinks"
+    "hardlinks|-avH|hardlinks"
+    "delete|-av --delete|delete"
+    "exclude|-av --exclude=*.log|exclude"
+    "permissions|-rlpv|perms"
+    "size-only|-av --size-only|size-only"
+  )
+
+  # Incremental recursion only supported on protocol 30+
+  local fp=""; [[ -n "$protocol_flag" ]] && fp="${protocol_flag##*=}"
+  if [[ -z "$fp" || "$fp" -ge 30 ]]; then
+    scenarios+=("inc-recursive|-av --inc-recursive|inc-recursive")
+  fi
+
+  local total=0 passed=0 fail=0
+
+  # Direction 1: upstream client -> oc-rsync daemon
+  start_oc_daemon "$ocf" "$olf" "$upstream_binary" "$opf" "$oc_port"
+
+  for spec in "${scenarios[@]}"; do
+    IFS='|' read -r name flags vtype <<< "$spec"
+    [[ -n "$protocol_flag" ]] && flags="$flags $protocol_flag"
+    total=$((total + 1))
+    echo "  [upstream ${version}→oc] ${name}${sfx}"
+    if comp_run_scenario "$name" "$upstream_binary" "$flags" "$comp_src" \
+        "rsync://127.0.0.1:${oc_port}/interop" "$od" "$olf" "$vtype"; then
+      echo "    PASS"
+      passed=$((passed + 1))
+    else
+      fail=$((fail + 1))
+    fi
+  done
+
+  stop_oc_daemon
+
+  # Direction 2: oc-rsync client -> upstream daemon
+  start_upstream_daemon "$upstream_binary" "$ucf" "$ulf" "$upf"
+
+  for spec in "${scenarios[@]}"; do
+    IFS='|' read -r name flags vtype <<< "$spec"
+    [[ -n "$protocol_flag" ]] && flags="$flags $protocol_flag"
+    total=$((total + 1))
+    echo "  [oc→upstream ${version}] ${name}${sfx}"
+    if comp_run_scenario "$name" "$oc_client" "$flags" "$comp_src" \
+        "rsync://127.0.0.1:${upstream_port}/interop" "$ud" "$ulf" "$vtype"; then
+      echo "    PASS"
+      passed=$((passed + 1))
+    else
+      fail=$((fail + 1))
+    fi
+  done
+
+  stop_upstream_daemon
+
+  echo "  === ${version}${sfx}: ${passed}/${total} passed, ${fail} failed ==="
+  return $fail
 }
 
 # ------------------ main ------------------
@@ -679,9 +939,54 @@ for version in "${versions[@]}"; do
   port_base=$((port_base + 2))
 done
 
+# =====================================================================
+# Comprehensive interop tests: all protocols (28-32), all major options
+# =====================================================================
+echo ""
+echo "=== Comprehensive Interop Tests ==="
+
+comp_src="${workdir}/comp-source"
+setup_comprehensive_src "$comp_src"
+
+# Test each version at its native protocol with all scenarios
+for version in "${versions[@]}"; do
+  upstream_binary="${upstream_install_root}/${version}/bin/rsync"
+  if [[ ! -x "$upstream_binary" ]]; then
+    failed+=("${version}-comprehensive (missing)")
+    continue
+  fi
+
+  echo ""
+  echo "=== Comprehensive: upstream ${version} (native protocol) ==="
+  if ! run_comprehensive_interop_case "$version" "$upstream_binary" \
+      "$port_base" $((port_base + 1)); then
+    failed+=("${version}-comprehensive")
+  fi
+  port_base=$((port_base + 2))
+done
+
+# Protocol version forcing tests: all 5 protocols via upstream 3.4.1
+newest_binary="${upstream_install_root}/3.4.1/bin/rsync"
+if [[ -x "$newest_binary" ]]; then
+  for proto in 28 29 30 31 32; do
+    echo ""
+    echo "=== Protocol ${proto} (forced via --protocol=${proto}) ==="
+    if ! run_comprehensive_interop_case "3.4.1" "$newest_binary" \
+        "$port_base" $((port_base + 1)) "--protocol=${proto}"; then
+      failed+=("proto${proto}")
+    fi
+    port_base=$((port_base + 2))
+  done
+else
+  echo "Skipping protocol forcing tests (3.4.1 binary unavailable)"
+fi
+
+# Final report
 if (( ${#failed[@]} > 0 )); then
+  echo ""
   echo "Interop failures: ${failed[*]}" >&2
   exit 1
 fi
 
-echo "All interoperability checks succeeded."
+echo ""
+echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32)."
