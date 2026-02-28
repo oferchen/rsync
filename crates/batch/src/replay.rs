@@ -25,9 +25,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
 use crate::reader::BatchReader;
-use crate::BatchConfig;
 
 /// Result of a batch replay operation.
 ///
