@@ -309,6 +309,14 @@ pub fn run_server_with_handshake<W: Write>(
         false
     };
 
+    // Compute allow_inc_recurse matching upstream compat.c:161-179.
+    // Requires recursive mode and not qsort. For receivers, also disallows
+    // delete and prune_empty_dirs (which need the complete file list upfront).
+    let allow_inc_recurse = config.flags.recursive
+        && !config.qsort
+        && (config.role == ServerRole::Generator
+            || (!config.flags.delete && !config.flags.prune_empty_dirs));
+
     let setup_config = setup::ProtocolSetupConfig {
         protocol: handshake.protocol,
         skip_compat_exchange: handshake.compat_exchanged,
@@ -317,6 +325,7 @@ pub fn run_server_with_handshake<W: Write>(
         is_daemon_mode,
         do_compression,
         checksum_seed: config.checksum_seed,
+        allow_inc_recurse,
     };
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
 
