@@ -676,6 +676,8 @@ fn build_full_daemon_args(
     // - u = include uid 0 & gid 0 names (ID0_NAMES)
     //
     // 'i' (INC_RECURSE) advertises incremental recursion support.
+    // Advertise for all protocol >= 30 to match upstream behavior.
+    // upstream: options.c:3003-3050 maybe_add_e_option()
     // upstream: compat.c:161-179 set_allow_inc_recurse()
     if protocol.as_u8() >= 30 {
         args.push("-e.iLsfxCIvu".to_owned());

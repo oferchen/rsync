@@ -663,45 +663,25 @@ fi
 
 port_base=2873
 failed=()
-warned=()
-
-# Only 3.4.1 is required to pass; older versions are informational.
-# Older upstream rsync versions have known daemon protocol incompatibilities
-# (e.g., rsync 3.0.9 rejects our file list encoding, rsync 3.1.3 hangs on
-# protocol negotiation with incremental recursion).
-REQUIRED_VERSION="3.4.1"
 
 for version in "${versions[@]}"; do
   upstream_binary="${upstream_install_root}/${version}/bin/rsync"
   if [[ ! -x "$upstream_binary" ]]; then
     echo "Missing upstream rsync binary for version ${version}" >&2
-    if [[ "$version" == "$REQUIRED_VERSION" ]]; then
-      failed+=("$version (missing binary)")
-    else
-      warned+=("$version (missing binary)")
-    fi
+    failed+=("$version (missing binary)")
     continue
   fi
 
   echo "Running interoperability checks against upstream rsync ${version}"
   if ! run_interop_case "$version" "$upstream_binary" "$port_base" $((port_base + 1)); then
-    if [[ "$version" == "$REQUIRED_VERSION" ]]; then
-      failed+=("$version")
-    else
-      echo "WARNING: upstream rsync ${version} interop failed (informational, not blocking)"
-      warned+=("$version")
-    fi
+    failed+=("$version")
   fi
   port_base=$((port_base + 2))
 done
 
-if (( ${#warned[@]} > 0 )); then
-  echo "Informational interop warnings (not blocking): ${warned[*]}"
-fi
-
 if (( ${#failed[@]} > 0 )); then
-  echo "Required interop failures: ${failed[*]}" >&2
+  echo "Interop failures: ${failed[*]}" >&2
   exit 1
 fi
 
-echo "All required interoperability checks succeeded."
+echo "All interoperability checks succeeded."
