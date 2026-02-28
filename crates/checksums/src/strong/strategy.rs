@@ -692,6 +692,15 @@ impl From<Md5SeedConfig> for SeedConfig {
     }
 }
 
+/// Extracts a `u64` seed from a `SeedConfig`, falling back to 0 for unseeded configs.
+fn extract_u64_seed(seed: &SeedConfig) -> u64 {
+    match seed {
+        SeedConfig::Seed64(s) => *s,
+        SeedConfig::Md5(Md5SeedConfig::Proper(s) | Md5SeedConfig::Legacy(s)) => *s as u64,
+        _ => 0,
+    }
+}
+
 /// Factory for creating checksum strategies based on algorithm selection.
 ///
 /// This selector provides the Strategy pattern's context, allowing runtime
@@ -829,35 +838,10 @@ impl ChecksumStrategySelector {
             ChecksumAlgorithmKind::Sha1 => Box::new(Sha1Strategy::new()),
             ChecksumAlgorithmKind::Sha256 => Box::new(Sha256Strategy::new()),
             ChecksumAlgorithmKind::Sha512 => Box::new(Sha512Strategy::new()),
-            ChecksumAlgorithmKind::Xxh64 => {
-                let s = match seed {
-                    SeedConfig::Seed64(s) => s,
-                    SeedConfig::Md5(Md5SeedConfig::Proper(s) | Md5SeedConfig::Legacy(s)) => {
-                        s as u64
-                    }
-                    _ => 0,
-                };
-                Box::new(Xxh64Strategy::new(s))
-            }
-            ChecksumAlgorithmKind::Xxh3 => {
-                let s = match seed {
-                    SeedConfig::Seed64(s) => s,
-                    SeedConfig::Md5(Md5SeedConfig::Proper(s) | Md5SeedConfig::Legacy(s)) => {
-                        s as u64
-                    }
-                    _ => 0,
-                };
-                Box::new(Xxh3Strategy::new(s))
-            }
+            ChecksumAlgorithmKind::Xxh64 => Box::new(Xxh64Strategy::new(extract_u64_seed(&seed))),
+            ChecksumAlgorithmKind::Xxh3 => Box::new(Xxh3Strategy::new(extract_u64_seed(&seed))),
             ChecksumAlgorithmKind::Xxh3_128 => {
-                let s = match seed {
-                    SeedConfig::Seed64(s) => s,
-                    SeedConfig::Md5(Md5SeedConfig::Proper(s) | Md5SeedConfig::Legacy(s)) => {
-                        s as u64
-                    }
-                    _ => 0,
-                };
-                Box::new(Xxh3_128Strategy::new(s))
+                Box::new(Xxh3_128Strategy::new(extract_u64_seed(&seed)))
             }
         }
     }

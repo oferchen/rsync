@@ -9,6 +9,8 @@
 //! - `flist.c:send_extra_file_list()` — sends one segment per directory
 //! - `rsync.h:285-288` — NDX_FLIST_OFFSET constant
 
+#![allow(dead_code)]
+
 use super::FileEntry;
 
 /// A single file list segment corresponding to one directory's contents.
