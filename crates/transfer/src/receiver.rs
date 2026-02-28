@@ -29,6 +29,7 @@
 //! - [`metadata::apply_metadata_from_file_entry`] - Metadata preservation
 //! - [`protocol::wire`] - Wire format for signatures and deltas
 
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::num::NonZeroU8;
@@ -70,8 +71,7 @@ use super::shared::ChecksumFactory;
 use super::temp_guard::TempFileGuard;
 use super::temp_guard::open_tmpfile;
 use super::transfer_ops::{
-    RequestConfig, ResponseContext, process_file_response, process_file_response_streaming,
-    send_file_request,
+    RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
 };
 
 use metadata::{MetadataOptions, apply_metadata_from_file_entry, apply_metadata_with_cached_stat};
@@ -1519,143 +1519,13 @@ impl ReceiverContext {
         ))
     }
 
-    /// Runs the core pipelined transfer loop over a list of files.
-    ///
-    /// Returns `(files_transferred, bytes_received)`.
-    #[allow(dead_code)]
-    fn run_pipeline_loop<R: Read, W: Write + ?Sized>(
-        &self,
-        reader: &mut super::reader::ServerReader<R>,
-        writer: &mut W,
-        pipeline_config: PipelineConfig,
-        setup: &PipelineSetup,
-        files_to_transfer: Vec<(usize, &FileEntry)>,
-        metadata_errors: &mut Vec<(PathBuf, String)>,
-    ) -> io::Result<(usize, u64)> {
-        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
-        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
-
-        let request_config = RequestConfig {
-            protocol: self.protocol,
-            write_iflags: self.protocol.as_u8() >= 29,
-            checksum_length: setup.checksum_length,
-            checksum_algorithm: setup.checksum_algorithm,
-            negotiated_algorithms: self.negotiated_algorithms.as_ref(),
-            compat_flags: self.compat_flags.as_ref(),
-            checksum_seed: self.checksum_seed,
-            use_sparse: self.config.flags.sparse,
-            do_fsync: self.config.fsync,
-
-            write_devices: self.config.write_devices,
-            inplace: self.config.inplace,
-            io_uring_policy: self.config.io_uring_policy,
-        };
-
-        let mut pipeline = PipelineState::new(pipeline_config);
-        let mut file_iter = files_to_transfer.into_iter();
-        let mut pending_files_info: Vec<(PathBuf, &FileEntry)> =
-            Vec::with_capacity(pipeline.window_size());
-        let mut files_transferred = 0usize;
-        let mut bytes_received = 0u64;
-
-        // Reusable per-file resources — created once, reset between files
-        let mut checksum_verifier = ChecksumVerifier::new(
-            self.negotiated_algorithms.as_ref(),
-            self.protocol,
-            self.checksum_seed,
-            self.compat_flags.as_ref(),
-        );
-        let mut token_buffer = TokenBuffer::with_default_capacity();
-
-        loop {
-            // Fill the pipeline with requests
-            while pipeline.can_send() {
-                if let Some((file_idx, file_entry)) = file_iter.next() {
-                    let relative_path = file_entry.path();
-                    let file_path = if relative_path.as_os_str() == "." {
-                        setup.dest_dir.clone()
-                    } else {
-                        setup.dest_dir.join(relative_path)
-                    };
-
-                    if self.config.flags.verbose && self.config.client_mode {
-                        eprintln!("{}", relative_path.display());
-                    }
-
-                    let basis_config = BasisFileConfig {
-                        file_path: &file_path,
-                        dest_dir: &setup.dest_dir,
-                        relative_path,
-                        target_size: file_entry.size(),
-                        fuzzy_enabled: self.config.flags.fuzzy,
-                        reference_directories: &self.config.reference_directories,
-                        protocol: self.protocol,
-                        checksum_length: setup.checksum_length,
-                        checksum_algorithm: setup.checksum_algorithm,
-                        whole_file: self.config.flags.whole_file,
-                    };
-                    let basis_result = find_basis_file_with_config(&basis_config);
-
-                    let pending = send_file_request(
-                        writer,
-                        &mut ndx_write_codec,
-                        file_idx as i32,
-                        file_path.clone(),
-                        basis_result.signature,
-                        basis_result.basis_path,
-                        file_entry.size(),
-                        &request_config,
-                    )?;
-
-                    pipeline.push(pending);
-                    pending_files_info.push((file_path, file_entry));
-                } else {
-                    break;
-                }
-            }
-
-            if pipeline.is_empty() {
-                break;
-            }
-
-            // Process one response
-            let pending = pipeline.pop().expect("pipeline not empty");
-            let (file_path, file_entry) = pending_files_info.remove(0);
-
-            let response_ctx = ResponseContext {
-                config: &request_config,
-            };
-
-            let total_bytes = process_file_response(
-                reader,
-                &mut ndx_read_codec,
-                pending,
-                &response_ctx,
-                &mut checksum_verifier,
-                &mut token_buffer,
-            )?;
-
-            if let Err(meta_err) =
-                apply_metadata_from_file_entry(&file_path, file_entry, &setup.metadata_opts)
-            {
-                metadata_errors.push((file_path, meta_err.to_string()));
-            }
-
-            bytes_received += total_bytes;
-            files_transferred += 1;
-        }
-
-        Ok((files_transferred, bytes_received))
-    }
-
     /// Pipelined transfer loop with decoupled network/disk I/O.
     ///
-    /// Same protocol flow as [`Self::run_pipeline_loop`], but streams delta
-    /// data through a bounded channel to a dedicated disk commit thread.
-    /// The network thread never blocks on disk I/O, and the disk thread
+    /// Streams delta data through a bounded channel to a dedicated disk commit
+    /// thread. The network thread never blocks on disk I/O, and the disk thread
     /// never blocks on network reads — achieving overlap similar to upstream
     /// rsync's `fork()` model.
-    /// Runs the pipelined transfer loop, returning (files_transferred, bytes, redo_indices).
+    /// Returns (files_transferred, bytes, redo_indices).
     ///
     /// The `redo_indices` vector contains file list indices for files whose
     /// whole-file checksum verification failed during this pass. The caller
@@ -1703,8 +1573,8 @@ impl ReceiverContext {
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
         // (file_list_index, dest_path, file_entry) — index needed for redo tracking
-        let mut pending_files_info: Vec<(usize, PathBuf, &FileEntry)> =
-            Vec::with_capacity(pipeline.window_size());
+        let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry)> =
+            VecDeque::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
 
@@ -1789,7 +1659,7 @@ impl ReceiverContext {
                         )?;
 
                         pipeline.push(pending);
-                        pending_files_info.push((file_idx, file_path, file_entry));
+                        pending_files_info.push_back((file_idx, file_path, file_entry));
                     } else {
                         break;
                     }
@@ -1801,7 +1671,7 @@ impl ReceiverContext {
 
                 // Process one response — streams chunks to disk thread.
                 let pending = pipeline.pop().expect("pipeline not empty");
-                let (file_idx, file_path, file_entry) = pending_files_info.remove(0);
+                let (file_idx, file_path, file_entry) = pending_files_info.pop_front().unwrap();
 
                 let response_ctx = ResponseContext {
                     config: &request_config,
@@ -2815,13 +2685,14 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
     signature: &FileSignature,
     s2length: u32,
 ) -> io::Result<()> {
+    let mut sum_buf = vec![0u8; s2length as usize];
     for block in signature.blocks() {
         // Write rolling_sum as int32 LE
         writer.write_all(&(block.rolling().value() as i32).to_le_bytes())?;
 
         // Write strong_sum, truncated or padded to s2length
         let strong_bytes = block.strong();
-        let mut sum_buf = vec![0u8; s2length as usize];
+        sum_buf.fill(0);
         let copy_len = std::cmp::min(strong_bytes.len(), s2length as usize);
         sum_buf[..copy_len].copy_from_slice(&strong_bytes[..copy_len]);
         writer.write_all(&sum_buf)?;
