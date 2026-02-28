@@ -357,6 +357,27 @@ const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
     },
 ];
 
+/// Builds the `-e.xxx` capability string from [`CAPABILITY_MAPPINGS`].
+///
+/// This is the single source of truth for which capability characters we
+/// advertise. Both SSH (`invocation.rs`) and daemon (`daemon_transfer.rs`)
+/// callers use this instead of hardcoding the string.
+///
+/// Mirrors upstream `options.c:3003-3050 maybe_add_e_option()`.
+pub fn build_capability_string(allow_inc_recurse: bool) -> String {
+    let mut result = String::from("-e.");
+    for mapping in CAPABILITY_MAPPINGS {
+        if !mapping.platform_ok {
+            continue;
+        }
+        if mapping.requires_inc_recurse && !allow_inc_recurse {
+            continue;
+        }
+        result.push(mapping.char);
+    }
+    result
+}
+
 /// Builds compatibility flags based on client capabilities.
 ///
 /// Uses table-driven approach for maintainability. This mirrors upstream
@@ -1711,5 +1732,36 @@ mod tests {
             stdout_v[0], stdout_both[0],
             "Both should produce the same compat flags byte"
         );
+    }
+
+    #[test]
+    fn build_capability_string_without_inc_recurse() {
+        let s = build_capability_string(false);
+        assert!(s.starts_with("-e."), "must start with -e. prefix");
+        assert!(!s.contains('i'), "must not contain 'i' without inc_recurse");
+        // All non-conditional platform chars must be present
+        for ch in ['s', 'f', 'x', 'C', 'I', 'v', 'u'] {
+            assert!(s.contains(ch), "missing capability char '{ch}'");
+        }
+    }
+
+    #[test]
+    fn build_capability_string_with_inc_recurse() {
+        let s = build_capability_string(true);
+        assert!(s.starts_with("-e."), "must start with -e. prefix");
+        assert!(s.contains('i'), "must contain 'i' with inc_recurse");
+    }
+
+    #[test]
+    fn build_capability_string_matches_mapping_order() {
+        let s = build_capability_string(true);
+        let chars: String = s.strip_prefix("-e.").unwrap().to_owned();
+        // Verify order matches CAPABILITY_MAPPINGS table
+        let expected: String = CAPABILITY_MAPPINGS
+            .iter()
+            .filter(|m| m.platform_ok)
+            .map(|m| m.char)
+            .collect();
+        assert_eq!(chars, expected);
     }
 }
