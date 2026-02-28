@@ -83,6 +83,18 @@ pub struct ProtocolSetupConfig<'a> {
     /// A value of `0` means "use current time" in upstream rsync, which is
     /// equivalent to `None` (the default random seed generation).
     pub checksum_seed: Option<u32>,
+
+    /// Whether incremental recursion is allowed for this transfer.
+    ///
+    /// When `true`, the `INC_RECURSE` compat flag may be negotiated if the
+    /// peer also supports it. When `false`, `INC_RECURSE` is never advertised.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `allow_inc_recurse` in upstream `compat.c:161-179`.
+    /// Disabled when: `!recurse`, `use_qsort`, or receiver with
+    /// `delete_before`/`delete_after`/`delay_updates`/`prune_empty_dirs`.
+    pub allow_inc_recurse: bool,
 }
 
 impl<'a> ProtocolSetupConfig<'a> {
@@ -114,6 +126,7 @@ impl<'a> ProtocolSetupConfig<'a> {
             is_daemon_mode: false,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         }
     }
 
@@ -179,6 +192,15 @@ impl<'a> ProtocolSetupConfig<'a> {
     #[must_use]
     pub const fn with_checksum_seed(mut self, seed: Option<u32>) -> Self {
         self.checksum_seed = seed;
+        self
+    }
+
+    /// Sets whether incremental recursion is allowed.
+    ///
+    /// Default: `false`
+    #[must_use]
+    pub const fn with_inc_recurse(mut self, allow: bool) -> Self {
+        self.allow_inc_recurse = allow;
         self
     }
 }
@@ -450,6 +472,7 @@ pub fn exchange_compat_flags_direct(
     protocol: ProtocolVersion,
     stream: &mut TcpStream,
     client_args: &[String],
+    allow_inc_recurse: bool,
 ) -> io::Result<Option<CompatibilityFlags>> {
     if protocol.as_u8() < 30 {
         return Ok(None);
@@ -458,12 +481,10 @@ pub fn exchange_compat_flags_direct(
     // Parse client capabilities from -e option (mirrors upstream compat.c:712-732)
     let client_info = parse_client_info(client_args);
 
-    // Build compat flags based on client capabilities
-    // DISABLED: allow_inc_recurse=false because we don't implement incremental file lists yet.
-    // With INC_RECURSE, the server sends file lists in segments as directories are traversed,
-    // but we currently send the entire file list at once. Setting this to false prevents
-    // advertising INC_RECURSE to the client, causing it to fall back to non-incremental mode.
-    let our_flags = build_compat_flags_from_client_info(&client_info, false);
+    // Build compat flags based on client capabilities.
+    // allow_inc_recurse is passed through from the caller; when true and the client
+    // advertises 'i', the CF_INC_RECURSE flag will be set.
+    let our_flags = build_compat_flags_from_client_info(&client_info, allow_inc_recurse);
 
     // Server ONLY WRITES compat flags (upstream compat.c:736-741)
     // The client reads but DOES NOT send anything back - it's unidirectional!
@@ -522,136 +543,138 @@ pub fn setup_protocol(
 
     // Build compat flags and perform negotiation for protocol >= 30
     // This mirrors upstream compat.c:710-743 which happens INSIDE setup_protocol()
-    let (compat_flags, negotiated_algorithms) =
-        if config.protocol.as_u8() >= 30 && !config.skip_compat_exchange {
-            // Build our compat flags (server side)
-            // This mirrors upstream compat.c:712-732 which builds flags from client_info string
-            let (our_flags, client_info) = if let Some(args) = config.client_args {
-                // Daemon server mode: parse client capabilities from -e option
-                let client_info = parse_client_info(args);
-                // DISABLED: allow_inc_recurse=false - see comment in exchange_compat_flags_direct
-                let flags = build_compat_flags_from_client_info(&client_info, false);
-                (flags, Some(client_info))
-            } else {
-                // SSH/client mode: use default flags based on platform capabilities
-                // NOTE: INC_RECURSE is intentionally NOT included - we don't support
-                // incremental file lists yet. See daemon_transfer.rs line 475-477.
-                #[cfg(unix)]
-                let mut flags =
-                    CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS;
-                #[cfg(not(unix))]
-                let flags =
-                    CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS;
-
-                // Advertise symlink timestamp support on Unix platforms
-                // (mirrors upstream CAN_SET_SYMLINK_TIMES at compat.c:713-714)
-                #[cfg(unix)]
-                {
-                    flags |= CompatibilityFlags::SYMLINK_TIMES;
-                }
-
-                (flags, None)
-            };
-
-            // Compression negotiation is controlled by the `do_compression` parameter
-            // which is passed from the caller based on whether -z flag was used.
-            // Both sides MUST have the same value for this to work correctly.
-            let send_compression = config.do_compression;
-
-            // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
-            // - Server (am_server=true): WRITES compat flags
-            // - Client (am_server=false): READS compat flags
-            let compat_flags = if config.is_server {
-                // Server: build and WRITE our compat flags
-                // Handle pre-release 'V' flag: use single-byte write instead of varint
-                // (upstream compat.c:737-741).
-                let info_ref = client_info.as_deref().unwrap_or("");
-                let final_flags = write_compat_flags(stdout, our_flags, info_ref)?;
-                stdout.flush()?;
-                final_flags
-            } else {
-                // Client: READ compat flags from server
-                let compat_value = protocol::read_varint(stdin)?;
-                let mut flags = CompatibilityFlags::from_bits(compat_value as u32);
-
-                // CRITICAL: Mask off INC_RECURSE - we don't support incremental file lists yet.
-                // The server may send INC_RECURSE in its compat flags regardless of whether
-                // we advertised 'i' in our capability string. We must clear this flag to
-                // prevent the receiver from trying to handle incremental file lists.
-                // See daemon_transfer.rs which deliberately omits 'i' from -e.LsfxCIvu.
-                flags &= !CompatibilityFlags::INC_RECURSE;
-
-                flags
-            };
-
-            // Protocol 30+ capability negotiation (upstream compat.c:534-585)
-            // This MUST happen inside setup_protocol(), BEFORE the function returns,
-            // so negotiation completes in RAW mode BEFORE multiplex activation.
-            //
-            // The negotiation implementation is in protocol::negotiate_capabilities(),
-            // which mirrors upstream's negotiate_the_strings() function.
-            //
-            // Negotiation only happens if client has VARINT_FLIST_FLAGS ('v') capability.
-            // This matches upstream's do_negotiated_strings check.
-
-            // CRITICAL: Daemon mode and SSH mode have different negotiation flows!
-            // - SSH mode: Bidirectional - both sides exchange algorithm lists
-            // - Daemon mode: Unidirectional - server advertises, client selects silently
-            //
-            // For daemon mode, capability negotiation happens during @RSYNCD handshake,
-            // NOT here in setup_protocol. The client never sends algorithm responses back
-            // during setup_protocol in daemon mode.
-            //
-            // Upstream reference:
-            // - SSH mode: negotiate_the_strings() in compat.c (bidirectional)
-            // - Daemon mode: output_daemon_greeting() advertises, no response expected
-            //
-            // Protocol 30+ capability negotiation (upstream compat.c:534-585)
-            // This is called in BOTH daemon and SSH modes.
-            // The do_negotiation flag controls whether actual string exchange happens.
-            //
-            // CRITICAL: When acting as CLIENT (is_server=false), we must check the SERVER's
-            // compat flags (compat_flags), not our own flags! Upstream compat.c:740-742:
-            //   "compat_flags = read_varint(f_in);
-            //    if (compat_flags & CF_VARINT_FLIST_FLAGS) do_negotiated_strings = 1;"
-            let do_negotiation = if config.is_server {
-                // Server: check if client has 'v' or pre-release 'V' capability.
-                // Both imply CF_VARINT_FLIST_FLAGS and enable negotiation.
-                client_info.as_deref().map_or(
-                    our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
-                    |info| info.contains('v') || client_has_pre_release_v_flag(info),
-                )
-            } else {
-                // Client: check if SERVER's compat flags include VARINT_FLIST_FLAGS
-                // This mirrors upstream compat.c:740-742 where client reads server's flags
-                compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
-            };
-
-            // Daemon mode uses unidirectional negotiation (server sends, client reads silently)
-            // SSH mode uses bidirectional negotiation (both sides exchange)
-            // The caller tells us which mode via the is_daemon_mode parameter
-
-            // CRITICAL: Both daemon and SSH modes need to call negotiate_capabilities when
-            // do_negotiation is true (client has 'v' capability). The difference is:
-            // - Daemon mode (is_daemon_mode=true): Server sends lists, client doesn't respond back
-            // - SSH mode (is_daemon_mode=false): Both sides send lists, then both read each other's
-            //
-            // The is_daemon_mode flag inside negotiate_capabilities controls whether we read
-            // the client's response after sending our lists.
-            let algorithms = protocol::negotiate_capabilities(
-                config.protocol,
-                stdin,
-                stdout,
-                do_negotiation,
-                send_compression,
-                config.is_daemon_mode,
-                config.is_server,
-            )?;
-
-            (Some(compat_flags), Some(algorithms))
+    let (compat_flags, negotiated_algorithms) = if config.protocol.as_u8() >= 30
+        && !config.skip_compat_exchange
+    {
+        // Build our compat flags (server side)
+        // This mirrors upstream compat.c:712-732 which builds flags from client_info string
+        let (our_flags, client_info) = if let Some(args) = config.client_args {
+            // Daemon server mode: parse client capabilities from -e option
+            let client_info = parse_client_info(args);
+            let flags = build_compat_flags_from_client_info(&client_info, config.allow_inc_recurse);
+            (flags, Some(client_info))
         } else {
-            (None, None) // Protocol < 30 uses default algorithms and no compat flags
+            // SSH/client mode: use default flags based on platform capabilities
+            #[cfg(unix)]
+            let mut flags =
+                CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS;
+            #[cfg(not(unix))]
+            let mut flags =
+                CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+            // Advertise symlink timestamp support on Unix platforms
+            // (mirrors upstream CAN_SET_SYMLINK_TIMES at compat.c:713-714)
+            #[cfg(unix)]
+            {
+                flags |= CompatibilityFlags::SYMLINK_TIMES;
+            }
+
+            // Advertise INC_RECURSE when incremental recursion is allowed
+            if config.allow_inc_recurse {
+                flags |= CompatibilityFlags::INC_RECURSE;
+            }
+
+            (flags, None)
         };
+
+        // Compression negotiation is controlled by the `do_compression` parameter
+        // which is passed from the caller based on whether -z flag was used.
+        // Both sides MUST have the same value for this to work correctly.
+        let send_compression = config.do_compression;
+
+        // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
+        // - Server (am_server=true): WRITES compat flags
+        // - Client (am_server=false): READS compat flags
+        let compat_flags = if config.is_server {
+            // Server: build and WRITE our compat flags
+            // Handle pre-release 'V' flag: use single-byte write instead of varint
+            // (upstream compat.c:737-741).
+            let info_ref = client_info.as_deref().unwrap_or("");
+            let final_flags = write_compat_flags(stdout, our_flags, info_ref)?;
+            stdout.flush()?;
+            final_flags
+        } else {
+            // Client: READ compat flags from server
+            let compat_value = protocol::read_varint(stdin)?;
+            let mut flags = CompatibilityFlags::from_bits(compat_value as u32);
+
+            // Mask off INC_RECURSE if we don't support it for this transfer.
+            // upstream: compat.c:720 — client clears INC_RECURSE when not allowed.
+            if !config.allow_inc_recurse {
+                flags &= !CompatibilityFlags::INC_RECURSE;
+            }
+
+            flags
+        };
+
+        // Protocol 30+ capability negotiation (upstream compat.c:534-585)
+        // This MUST happen inside setup_protocol(), BEFORE the function returns,
+        // so negotiation completes in RAW mode BEFORE multiplex activation.
+        //
+        // The negotiation implementation is in protocol::negotiate_capabilities(),
+        // which mirrors upstream's negotiate_the_strings() function.
+        //
+        // Negotiation only happens if client has VARINT_FLIST_FLAGS ('v') capability.
+        // This matches upstream's do_negotiated_strings check.
+
+        // CRITICAL: Daemon mode and SSH mode have different negotiation flows!
+        // - SSH mode: Bidirectional - both sides exchange algorithm lists
+        // - Daemon mode: Unidirectional - server advertises, client selects silently
+        //
+        // For daemon mode, capability negotiation happens during @RSYNCD handshake,
+        // NOT here in setup_protocol. The client never sends algorithm responses back
+        // during setup_protocol in daemon mode.
+        //
+        // Upstream reference:
+        // - SSH mode: negotiate_the_strings() in compat.c (bidirectional)
+        // - Daemon mode: output_daemon_greeting() advertises, no response expected
+        //
+        // Protocol 30+ capability negotiation (upstream compat.c:534-585)
+        // This is called in BOTH daemon and SSH modes.
+        // The do_negotiation flag controls whether actual string exchange happens.
+        //
+        // CRITICAL: When acting as CLIENT (is_server=false), we must check the SERVER's
+        // compat flags (compat_flags), not our own flags! Upstream compat.c:740-742:
+        //   "compat_flags = read_varint(f_in);
+        //    if (compat_flags & CF_VARINT_FLIST_FLAGS) do_negotiated_strings = 1;"
+        let do_negotiation = if config.is_server {
+            // Server: check if client has 'v' or pre-release 'V' capability.
+            // Both imply CF_VARINT_FLIST_FLAGS and enable negotiation.
+            client_info.as_deref().map_or(
+                our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+                |info| info.contains('v') || client_has_pre_release_v_flag(info),
+            )
+        } else {
+            // Client: check if SERVER's compat flags include VARINT_FLIST_FLAGS
+            // This mirrors upstream compat.c:740-742 where client reads server's flags
+            compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
+        };
+
+        // Daemon mode uses unidirectional negotiation (server sends, client reads silently)
+        // SSH mode uses bidirectional negotiation (both sides exchange)
+        // The caller tells us which mode via the is_daemon_mode parameter
+
+        // CRITICAL: Both daemon and SSH modes need to call negotiate_capabilities when
+        // do_negotiation is true (client has 'v' capability). The difference is:
+        // - Daemon mode (is_daemon_mode=true): Server sends lists, client doesn't respond back
+        // - SSH mode (is_daemon_mode=false): Both sides send lists, then both read each other's
+        //
+        // The is_daemon_mode flag inside negotiate_capabilities controls whether we read
+        // the client's response after sending our lists.
+        let algorithms = protocol::negotiate_capabilities(
+            config.protocol,
+            stdin,
+            stdout,
+            do_negotiation,
+            send_compression,
+            config.is_daemon_mode,
+            config.is_server,
+        )?;
+
+        (Some(compat_flags), Some(algorithms))
+    } else {
+        (None, None) // Protocol < 30 uses default algorithms and no compat flags
+    };
 
     // Checksum seed exchange (ALL protocols, upstream compat.c:750)
     // - Server: generates and WRITES the seed
@@ -853,6 +876,7 @@ mod tests {
             is_daemon_mode: false,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -889,6 +913,7 @@ mod tests {
             is_daemon_mode: false,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -928,6 +953,7 @@ mod tests {
             is_daemon_mode: true, // server advertises, client reads
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result =
@@ -980,6 +1006,7 @@ mod tests {
             is_daemon_mode: true,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result =
@@ -1020,6 +1047,7 @@ mod tests {
             is_daemon_mode: false,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let mut stdout1 = Vec::new();
@@ -1067,6 +1095,7 @@ mod tests {
             is_daemon_mode: false,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -1107,6 +1136,7 @@ mod tests {
             is_daemon_mode: true,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result_minimal = setup_protocol(&mut stdout, &mut stdin, &config_minimal)
@@ -1135,6 +1165,7 @@ mod tests {
             is_daemon_mode: true,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result_full = setup_protocol(&mut stdout, &mut stdin, &config_full)
@@ -1175,6 +1206,7 @@ mod tests {
             is_daemon_mode: true,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result = setup_protocol(&mut stdout, &mut stdin, &config)
@@ -1563,6 +1595,7 @@ mod tests {
             is_daemon_mode: true,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result =
@@ -1606,6 +1639,7 @@ mod tests {
             is_daemon_mode: true,
             do_compression: false,
             checksum_seed: None,
+            allow_inc_recurse: false,
         };
 
         let result =
@@ -1635,6 +1669,7 @@ mod tests {
             is_daemon_mode: true,
             do_compression: false,
             checksum_seed: Some(42),
+            allow_inc_recurse: false,
         };
 
         let result_v = setup_protocol(&mut stdout_v, &mut stdin, &config_v)
@@ -1651,6 +1686,7 @@ mod tests {
             is_daemon_mode: true,
             do_compression: false,
             checksum_seed: Some(42),
+            allow_inc_recurse: false,
         };
 
         let result_both = setup_protocol(&mut stdout_both, &mut stdin, &config_both)

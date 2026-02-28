@@ -30,6 +30,7 @@
 //! ```
 
 mod batched_writer;
+mod dir_tree;
 mod entry;
 mod flags;
 mod hardlink;
@@ -37,6 +38,7 @@ mod incremental;
 mod intern;
 mod macros;
 mod read;
+mod segment;
 mod sort;
 mod state;
 mod trace;
@@ -44,6 +46,7 @@ mod wire_mode;
 mod write;
 
 pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
+pub use dir_tree::DirectoryTree;
 pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_SAME_RDEV_PRE28};
 pub use hardlink::{DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable};
@@ -54,6 +57,8 @@ pub use incremental::{
 };
 pub use intern::PathInterner;
 pub use read::{FileListReader, read_file_entry};
+/// File list segments for incremental recursion mode.
+pub use segment::{FileListSegment, SegmentedFileList};
 pub use sort::{
     CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
 };
