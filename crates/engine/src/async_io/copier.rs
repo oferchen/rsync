@@ -10,11 +10,12 @@ use tokio::task;
 use super::DEFAULT_BUFFER_SIZE;
 use super::error::{AsyncIoError, IoResultExt};
 use super::progress::{CopyProgress, CopyResult};
+use crate::local_copy::SparseDetector;
 
 /// Builder for async file copy operations.
 #[derive(Debug, Clone)]
 pub struct AsyncFileCopier {
-    pub(super) buffer_size: usize,
+    buffer_size: usize,
     preserve_permissions: bool,
     preserve_timestamps: bool,
     sparse_detection: bool,
@@ -38,6 +39,12 @@ impl AsyncFileCopier {
             sparse_detection: false,
             fsync: false,
         }
+    }
+
+    /// Returns the configured buffer size.
+    #[must_use]
+    pub const fn buffer_size(&self) -> usize {
+        self.buffer_size
     }
 
     /// Sets the buffer size for copy operations.
@@ -140,7 +147,7 @@ impl AsyncFileCopier {
 
             let chunk = &buffer[..n];
 
-            if self.sparse_detection && is_all_zeros(chunk) {
+            if self.sparse_detection && SparseDetector::is_all_zeros(chunk) {
                 writer
                     .seek(SeekFrom::Current(n as i64))
                     .await
@@ -203,22 +210,6 @@ impl AsyncFileCopier {
             destination: destination.to_path_buf(),
         })
     }
-}
-
-/// Checks if a buffer contains only zeros using u128 word-width comparison.
-///
-/// Processes 16 bytes per iteration via native u128 comparison, which compilers
-/// optimize to SIMD instructions on x86-64 (SSE2/AVX2) and aarch64 (NEON).
-#[inline]
-fn is_all_zeros(buf: &[u8]) -> bool {
-    let mut iter = buf.chunks_exact(16);
-    for chunk in &mut iter {
-        let word: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
-        if u128::from_ne_bytes(*word) != 0 {
-            return false;
-        }
-    }
-    iter.remainder().iter().all(|&b| b == 0)
 }
 
 #[cfg(test)]
@@ -289,7 +280,7 @@ mod tests {
     #[test]
     fn test_async_file_copier_default() {
         let copier = AsyncFileCopier::default();
-        assert_eq!(copier.buffer_size, DEFAULT_BUFFER_SIZE);
+        assert_eq!(copier.buffer_size(), DEFAULT_BUFFER_SIZE);
     }
 
     #[test]
@@ -300,7 +291,7 @@ mod tests {
             .preserve_timestamps(false)
             .sparse_detection(true)
             .fsync(true);
-        assert_eq!(copier.buffer_size, 8192);
+        assert_eq!(copier.buffer_size(), 8192);
         assert!(!copier.preserve_permissions);
         assert!(!copier.preserve_timestamps);
         assert!(copier.sparse_detection);
@@ -310,14 +301,14 @@ mod tests {
     #[test]
     fn test_async_file_copier_buffer_size_min() {
         let copier = AsyncFileCopier::new().with_buffer_size(1);
-        assert_eq!(copier.buffer_size, 4096);
+        assert_eq!(copier.buffer_size(), 4096);
     }
 
     #[test]
     fn test_async_file_copier_clone() {
         let copier = AsyncFileCopier::new().with_buffer_size(8192);
         let cloned = copier.clone();
-        assert_eq!(copier.buffer_size, cloned.buffer_size);
+        assert_eq!(copier.buffer_size(), cloned.buffer_size());
     }
 
     #[test]
@@ -325,39 +316,5 @@ mod tests {
         let copier = AsyncFileCopier::new();
         let debug = format!("{copier:?}");
         assert!(debug.contains("AsyncFileCopier"));
-    }
-
-    #[test]
-    fn test_is_all_zeros() {
-        assert!(is_all_zeros(&[0; 100]));
-        assert!(!is_all_zeros(&[0, 0, 1, 0]));
-        assert!(is_all_zeros(&[]));
-        assert!(!is_all_zeros(&[1]));
-    }
-
-    #[test]
-    fn test_is_all_zeros_large_buffer() {
-        assert!(is_all_zeros(&vec![0u8; 4096]));
-    }
-
-    #[test]
-    fn test_is_all_zeros_last_byte_nonzero() {
-        let mut buf = vec![0u8; 100];
-        buf[99] = 1;
-        assert!(!is_all_zeros(&buf));
-    }
-
-    #[test]
-    fn test_is_all_zeros_first_byte_nonzero() {
-        let mut buf = vec![0u8; 100];
-        buf[0] = 1;
-        assert!(!is_all_zeros(&buf));
-    }
-
-    #[test]
-    fn test_is_all_zeros_middle_byte_nonzero() {
-        let mut buf = vec![0u8; 100];
-        buf[50] = 255;
-        assert!(!is_all_zeros(&buf));
     }
 }
