@@ -38,9 +38,7 @@ use crate::server::{ServerConfig, ServerRole};
 struct DaemonTransferRequest {
     address: DaemonAddress,
     module: String,
-    #[allow(dead_code)] // Used in future server execution
     path: String,
-    #[allow(dead_code)] // Used in future authentication
     username: Option<String>,
 }
 
