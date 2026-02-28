@@ -187,6 +187,23 @@ fn run_client_internal(
     // Handle batch mode configuration
     let batch_writer = if let Some(batch_cfg) = config.batch_config() {
         if batch_cfg.is_read_mode() {
+            // upstream: main.c:1464-1473 — reject remote destinations with --read-batch
+            let has_remote_dest = config.transfer_args().iter().any(|arg| {
+                let s = arg.to_string_lossy();
+                s.starts_with("rsync://") || s.contains("::") || remote::operand_is_remote(arg)
+            });
+            if has_remote_dest {
+                use crate::message::Role;
+                use crate::rsync_error;
+                return Err(ClientError::new(
+                    super::FEATURE_UNAVAILABLE_EXIT_CODE,
+                    rsync_error!(
+                        super::FEATURE_UNAVAILABLE_EXIT_CODE,
+                        "remote destination is not allowed with --read-batch"
+                    )
+                    .with_role(Role::Client),
+                ));
+            }
             // Replay the batch file instead of performing a normal transfer
             return replay_batch(batch_cfg, &config);
         }
