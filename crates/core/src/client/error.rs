@@ -279,14 +279,6 @@ pub(crate) fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientErr
     ClientError::with_code(code, message)
 }
 
-/// Creates a daemon error with a typed exit code.
-#[cold]
-#[allow(dead_code)] // Reserved for future use
-pub(crate) fn daemon_error_typed(text: impl Into<String>, exit_code: ExitCode) -> ClientError {
-    let message = rsync_error!(exit_code.as_i32(), "{}", text.into()).with_role(Role::Client);
-    ClientError::with_code(exit_code, message)
-}
-
 #[cold]
 pub(crate) fn daemon_protocol_error(text: &str) -> ClientError {
     daemon_error(
@@ -571,13 +563,6 @@ mod tests {
             let error = daemon_error("unknown daemon error", 999);
             assert_eq!(error.code(), ExitCode::PartialTransfer);
             assert!(error.to_string().contains("unknown daemon error"));
-        }
-
-        #[test]
-        fn daemon_error_typed_uses_exit_code() {
-            let error = daemon_error_typed("typed daemon error", ExitCode::Protocol);
-            assert_eq!(error.code(), ExitCode::Protocol);
-            assert!(error.to_string().contains("typed daemon error"));
         }
 
         #[test]
