@@ -4,6 +4,7 @@
 //! remote connections, including SSH and rsync daemon protocols.
 
 pub mod daemon_transfer;
+pub(crate) mod flags;
 pub mod invocation;
 pub mod remote_to_remote;
 pub mod ssh_transfer;
