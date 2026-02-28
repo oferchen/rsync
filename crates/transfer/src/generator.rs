@@ -104,6 +104,20 @@ pub mod io_error_flags {
     }
 }
 
+/// A pending file list sub-segment for incremental recursion sending.
+///
+/// References entries in `GeneratorContext::file_list` by range rather than
+/// storing cloned entries, avoiding double allocation.
+#[derive(Debug)]
+struct PendingSegment {
+    /// Global NDX of the parent directory.
+    parent_dir_ndx: i32,
+    /// Start index into `GeneratorContext::file_list`.
+    flist_start: usize,
+    /// Number of entries in this segment.
+    count: usize,
+}
+
 /// Context for the generator role during a transfer.
 ///
 /// Holds protocol state, configuration, file list, and filter rules needed
@@ -158,6 +172,19 @@ pub struct GeneratorContext {
     /// I/O error flags accumulated during file list building and transfer.
     /// Uses [`io_error_flags`] constants (IOERR_GENERAL, IOERR_VANISHED, etc.).
     io_error: i32,
+    /// Pending file list segments for incremental recursion (INC_RECURSE).
+    ///
+    /// When INC_RECURSE is negotiated, the initial `send_file_list()` sends
+    /// only top-level entries. Remaining per-directory segments are queued here
+    /// and drained by `send_extra_file_lists()` during the transfer loop.
+    pending_segments: Vec<PendingSegment>,
+    /// Whether all incremental file list segments have been sent.
+    flist_eof_sent: bool,
+    /// Number of entries in the initial segment when INC_RECURSE is active.
+    ///
+    /// When set, `send_file_list()` only sends the first `initial_segment_count`
+    /// entries. The remaining entries are sent via `send_extra_file_lists()`.
+    initial_segment_count: Option<usize>,
 }
 
 impl GeneratorContext {
@@ -177,6 +204,9 @@ impl GeneratorContext {
             flist_build_end: None,
             flist_xfer_start: None,
             flist_xfer_end: None,
+            pending_segments: Vec::new(),
+            flist_eof_sent: false,
+            initial_segment_count: None,
             total_bytes_read: 0,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
@@ -204,6 +234,12 @@ impl GeneratorContext {
     #[must_use]
     pub const fn compat_flags(&self) -> Option<protocol::CompatibilityFlags> {
         self.compat_flags
+    }
+
+    /// Returns `true` when incremental recursion is negotiated.
+    fn inc_recurse(&self) -> bool {
+        self.compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
     }
 
     /// Returns the generated file list.
@@ -459,14 +495,17 @@ impl GeneratorContext {
     ///       }
     ///   }
     ///   ```
-    fn send_flist_eof_if_inc_recurse<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+    fn send_flist_eof_if_inc_recurse<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        if self.flist_eof_sent {
+            return Ok(());
+        }
         if let Some(flags) = self.compat_flags
             && flags.contains(CompatibilityFlags::INC_RECURSE)
         {
-            // Use NdxCodec for protocol-version-aware encoding of NDX_FLIST_EOF
             let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
             ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
             writer.flush()?;
+            self.flist_eof_sent = true;
         }
         Ok(())
     }
@@ -903,6 +942,193 @@ impl GeneratorContext {
         Ok(count)
     }
 
+    /// Partitions the sorted file list into segments for incremental recursion.
+    ///
+    /// Reorders `file_list` and `full_paths` so that initial (top-level) entries
+    /// come first, followed by sub-directory entries in depth-first order. This
+    /// makes NDX values correspond directly to indices in the reordered list.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:add_dirs_to_tree()` — organizes dirs into traversal tree
+    /// - `flist.c:send_extra_file_list()` — sends one segment per directory
+    /// - `flist.c:recv_file_list()` — `ndx_start = cur_flist->ndx_start + cur_flist->used`
+    fn partition_file_list_for_inc_recurse(&mut self) {
+        use protocol::flist::DirectoryTree;
+
+        if !self.inc_recurse() || self.file_list.is_empty() {
+            return;
+        }
+
+        let mut tree = DirectoryTree::new();
+        // Map: directory path → (tree_node_idx, segment_data_idx)
+        let mut dir_map: std::collections::HashMap<String, (usize, usize)> =
+            std::collections::HashMap::new();
+
+        // Track original file_list indices per segment
+        let mut initial_indices: Vec<usize> = Vec::new();
+        // (dir_ndx, original file_list indices for this directory's children)
+        let mut segment_data: Vec<(usize, Vec<usize>)> = Vec::new();
+        let mut dir_ndx_counter: usize = 0;
+
+        for (i, entry) in self.file_list.iter().enumerate() {
+            let name = entry.name();
+            let parent = std::path::Path::new(name)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let is_top_level = parent.is_empty() || parent == ".";
+
+            if is_top_level {
+                initial_indices.push(i);
+                if entry.is_dir() && name != "." {
+                    let node = tree.add_directory(dir_ndx_counter, name.to_string(), None);
+                    let seg_idx = segment_data.len();
+                    segment_data.push((dir_ndx_counter, Vec::new()));
+                    dir_map.insert(name.to_string(), (node, seg_idx));
+                    dir_ndx_counter += 1;
+                }
+            } else if let Some(&(_, seg_idx)) = dir_map.get(parent.as_str()) {
+                segment_data[seg_idx].1.push(i);
+                if entry.is_dir() {
+                    let parent_node = dir_map.get(parent.as_str()).map(|&(n, _)| n);
+                    let node = tree.add_directory(dir_ndx_counter, name.to_string(), parent_node);
+                    let new_seg_idx = segment_data.len();
+                    segment_data.push((dir_ndx_counter, Vec::new()));
+                    dir_map.insert(name.to_string(), (node, new_seg_idx));
+                    dir_ndx_counter += 1;
+                }
+            } else {
+                initial_indices.push(i);
+            }
+        }
+
+        // Reorder file_list and full_paths to match segment send order.
+        // After reordering, NDX = index into self.file_list (contiguous, no gaps).
+        let old_file_list = std::mem::take(&mut self.file_list);
+        let old_full_paths = std::mem::take(&mut self.full_paths);
+        self.file_list = Vec::with_capacity(old_file_list.len());
+        self.full_paths = Vec::with_capacity(old_full_paths.len());
+
+        // Initial segment: top-level entries
+        for &idx in &initial_indices {
+            self.file_list.push(old_file_list[idx].clone());
+            self.full_paths.push(old_full_paths[idx].clone());
+        }
+        let initial_count = initial_indices.len();
+        self.initial_segment_count = Some(initial_count);
+
+        // Build dir_ndx → segment_data index mapping for O(1) lookup
+        let dir_ndx_to_seg: std::collections::HashMap<usize, usize> = segment_data
+            .iter()
+            .enumerate()
+            .map(|(seg_idx, (dn, _))| (*dn, seg_idx))
+            .collect();
+
+        // Sub-segments in depth-first traversal order
+        let mut pending = Vec::new();
+        while let Some((dir_ndx, _path)) = tree.next_directory() {
+            if let Some(&seg_idx) = dir_ndx_to_seg.get(&dir_ndx) {
+                let (dn, ref indices) = segment_data[seg_idx];
+                let flist_start = self.file_list.len();
+                for &idx in indices {
+                    self.file_list.push(old_file_list[idx].clone());
+                    self.full_paths.push(old_full_paths[idx].clone());
+                }
+                pending.push(PendingSegment {
+                    parent_dir_ndx: dn as i32,
+                    flist_start,
+                    count: indices.len(),
+                });
+            }
+        }
+
+        self.pending_segments = pending;
+
+        debug_log!(
+            Flist,
+            2,
+            "partitioned file list: {} initial entries, {} sub-segments",
+            initial_count,
+            self.pending_segments.len()
+        );
+    }
+
+    /// Sends pending file list segments during the transfer loop.
+    ///
+    /// Called before reading each NDX request from the receiver. Since we eagerly
+    /// scanned all files, this sends all pending segments at once on the first call.
+    /// Subsequent calls are no-ops.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:send_files()` line 250: `send_extra_file_list(f, MIN_FILECNT_LOOKAHEAD)`
+    /// - `flist.c:send_extra_file_list()` — sends one directory's entries
+    fn send_extra_file_lists<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        if !self.inc_recurse() || self.flist_eof_sent || self.pending_segments.is_empty() {
+            return Ok(());
+        }
+
+        let mut flist_writer = if let Some(flags) = self.compat_flags {
+            FileListWriter::with_compat_flags(self.protocol, flags)
+        } else {
+            FileListWriter::new(self.protocol)
+        }
+        .with_preserve_uid(self.config.flags.owner)
+        .with_preserve_gid(self.config.flags.group)
+        .with_preserve_links(self.config.flags.links)
+        .with_preserve_devices(self.config.flags.devices)
+        .with_preserve_specials(self.config.flags.specials)
+        .with_preserve_hard_links(self.config.flags.hard_links)
+        .with_preserve_atimes(self.config.flags.atimes)
+        .with_preserve_acls(self.config.flags.acls)
+        .with_preserve_xattrs(self.config.flags.xattrs);
+
+        // Send all pending segments. Since we eagerly scanned, send them all at once
+        // (upstream uses MIN_FILECNT_LOOKAHEAD=1000 for throttling with lazy scanning).
+        let segments = std::mem::take(&mut self.pending_segments);
+        let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
+
+        for segment in &segments {
+            if segment.count == 0 {
+                continue;
+            }
+
+            // Write NDX_FLIST_OFFSET - dir_ndx to signal a new sub-list
+            ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
+
+            // Write file entries from the reordered file_list
+            let end = segment.flist_start + segment.count;
+            for entry in &self.file_list[segment.flist_start..end] {
+                flist_writer.write_entry(writer, entry)?;
+            }
+
+            // Write end-of-flist marker (zero byte)
+            flist_writer.write_end(writer, None)?;
+
+            debug_log!(
+                Flist,
+                2,
+                "sent sub-list for dir_ndx={}, {} entries",
+                segment.parent_dir_ndx,
+                segment.count
+            );
+        }
+
+        // All segments sent — send NDX_FLIST_EOF
+        ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
+        writer.flush()?;
+        self.flist_eof_sent = true;
+        debug_log!(
+            Flist,
+            2,
+            "sent NDX_FLIST_EOF, all {} sub-lists dispatched",
+            segments.len()
+        );
+
+        Ok(())
+    }
+
     /// Recursively walks a path and adds entries to the file list.
     ///
     /// # Upstream Reference
@@ -1142,7 +1368,14 @@ impl GeneratorContext {
             flist_writer = flist_writer.with_iconv(converter.clone());
         }
 
-        for entry in &self.file_list {
+        // When INC_RECURSE, only send initial segment entries; the rest
+        // are sent via send_extra_file_lists() during the transfer loop.
+        let entries_to_send = if let Some(count) = self.initial_segment_count {
+            &self.file_list[..count]
+        } else {
+            &self.file_list
+        };
+        for entry in entries_to_send {
             flist_writer.write_entry(writer, entry)?;
         }
 
@@ -1195,6 +1428,7 @@ impl GeneratorContext {
 
         // Step 3: Build and send file list
         self.build_file_list(paths)?;
+        self.partition_file_list_for_inc_recurse();
         let file_count = self.send_file_list(writer)?;
 
         // Step 4: Send ID lists for non-INC_RECURSE protocols
@@ -1203,7 +1437,11 @@ impl GeneratorContext {
         // Step 5: Send io_error flag for protocol < 30
         self.send_io_error_flag(writer)?;
 
-        // Step 6: Send NDX_FLIST_EOF if incremental recursion is enabled
+        // Step 6: Send incremental file list segments and NDX_FLIST_EOF.
+        // Sub-lists are sent before the transfer loop (not interleaved) because
+        // we eagerly scanned all files upfront. This simplifies the receiver —
+        // it reads all sub-lists before entering its transfer loop.
+        self.send_extra_file_lists(writer)?;
         self.send_flist_eof_if_inc_recurse(writer)?;
 
         // Step 7: Run main transfer loop
