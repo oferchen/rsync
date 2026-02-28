@@ -21,7 +21,6 @@ use protocol::filters::FilterRuleWireFormat;
 use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_digest};
 
 use super::super::config::ClientConfig;
-use super::flags;
 use super::super::error::{ClientError, daemon_error, invalid_argument_error, socket_error};
 use super::super::module_list::{
     DaemonAddress, DaemonAuthContext, apply_socket_options, connect_direct, load_daemon_password,
@@ -30,6 +29,7 @@ use super::super::module_list::{
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::super::{CLIENT_SERVER_PROTOCOL_EXIT_CODE, DAEMON_SOCKET_TIMEOUT};
+use super::flags;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 use crate::server::handshake::HandshakeResult;
 use crate::server::{ServerConfig, ServerRole};
