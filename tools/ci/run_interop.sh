@@ -555,10 +555,15 @@ run_interop_case() {
   write_rust_daemon_conf "$oc_conf" "$oc_pid_file" "$oc_port" "$oc_dest" "oc interop target (${version})"
   write_upstream_conf "$up_conf" "$up_pid_file" "$upstream_port" "$up_dest" "upstream interop target (${version})" "$up_identity"
 
+  # Hard timeout per transfer (seconds). The rsync --timeout flag only
+  # covers I/O inactivity; protocol negotiation hangs (e.g., incremental
+  # recursion with older clients) can stall indefinitely without this.
+  local hard_timeout=30
+
   echo "Testing upstream rsync ${version} client -> oc-rsync --daemon"
   start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file" "$oc_port"
 
-  if ! "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null 2>>"$oc_log"; then
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null 2>>"$oc_log"; then
     echo "FAIL: upstream rsync ${version} -> oc-rsync --daemon"
     echo "--- oc-rsync --daemon log (${oc_log}) ---"
     cat "$oc_log" || true
@@ -579,7 +584,7 @@ run_interop_case() {
   echo "Testing oc-rsync client -> upstream rsync ${version} daemon"
   start_upstream_daemon "$upstream_binary" "$up_conf" "$up_log" "$up_pid_file"
 
-  if ! "$oc_client" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${upstream_port}/interop" >/dev/null 2>>"$up_log"; then
+  if ! timeout "$hard_timeout" "$oc_client" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${upstream_port}/interop" >/dev/null 2>>"$up_log"; then
     echo "FAIL: oc-rsync -> upstream rsync ${version} daemon"
     echo "--- upstream rsyncd log (${up_log}) ---"
     cat "$up_log" || true
