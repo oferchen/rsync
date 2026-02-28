@@ -149,7 +149,4 @@ pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError
 
 /// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
-pub use async_io::{
-    AsyncBatchCopier, AsyncFileCopier, AsyncFileReader, AsyncFileWriter, AsyncIoError,
-    ChecksumAlgorithm, CopyProgress, CopyResult, compute_file_checksum,
-};
+pub use async_io::{AsyncBatchCopier, AsyncFileCopier, AsyncIoError, CopyProgress, CopyResult};
