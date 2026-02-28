@@ -710,8 +710,8 @@ fn replay_batch(
         PathBuf::from(&config.transfer_args()[0])
     };
 
-    let result =
-        engine::batch::replay::replay(batch_cfg, &dest_root, config.verbosity().into()).map_err(|e| {
+    let result = engine::batch::replay::replay(batch_cfg, &dest_root, config.verbosity().into())
+        .map_err(|e| {
             let msg = format!("batch replay failed: {e}");
             ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
         })?;

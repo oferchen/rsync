@@ -278,12 +278,29 @@ impl<'a> CopyContext<'a> {
             );
         }
 
+        let expected_remaining = total_size.saturating_sub(initial_bytes);
+
+        // Fast path: use copy_file_range for simple whole-file copies.
+        // Requires no sparse detection, no compression, no bandwidth limiter.
+        if !sparse && !compress && self.limiter.is_none() {
+            let copied = fast_io::copy_file_range::copy_file_contents(
+                reader,
+                writer,
+                expected_remaining,
+            )
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+            if self.observer.is_some() {
+                let progressed = initial_bytes.saturating_add(copied);
+                self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
+            }
+            return Ok(FileCopyOutcome::new(copied, None));
+        }
+
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
         let mut sparse_state = SparseWriteState::default();
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
-        let expected_remaining = total_size.saturating_sub(initial_bytes);
         // Check timeout every 1MB to reduce clock_gettime syscalls
         const TIMEOUT_CHECK_INTERVAL: u64 = 1024 * 1024;
         let mut bytes_since_timeout_check: u64 = 0;
