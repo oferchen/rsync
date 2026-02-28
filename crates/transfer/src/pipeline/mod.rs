@@ -102,8 +102,6 @@ pub const MAX_PIPELINE_WINDOW: usize = 256;
 pub struct PipelineConfig {
     /// Number of concurrent requests to keep in flight.
     pub window_size: usize,
-    /// Whether to generate signatures asynchronously during pipeline waits.
-    pub async_signatures: bool,
     /// Number of ACKs to batch before sending (0 = disabled).
     pub ack_batch_size: usize,
     /// Timeout in milliseconds before flushing ACK batch (0 = no timeout).
@@ -116,7 +114,6 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             window_size: DEFAULT_PIPELINE_WINDOW,
-            async_signatures: true,
             ack_batch_size: DEFAULT_BATCH_SIZE,
             ack_batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
             ack_batching_enabled: true,
@@ -129,13 +126,6 @@ impl PipelineConfig {
     #[must_use]
     pub fn with_window_size(mut self, window_size: usize) -> Self {
         self.window_size = window_size.clamp(MIN_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW);
-        self
-    }
-
-    /// Sets whether to generate signatures asynchronously.
-    #[must_use]
-    pub const fn with_async_signatures(mut self, enabled: bool) -> Self {
-        self.async_signatures = enabled;
         self
     }
 
@@ -174,7 +164,6 @@ impl PipelineConfig {
     pub fn synchronous() -> Self {
         Self {
             window_size: 1,
-            async_signatures: false,
             ack_batch_size: 1,
             ack_batch_timeout_ms: 0,
             ack_batching_enabled: false,
@@ -265,7 +254,6 @@ mod tests {
     fn default_config_uses_default_window() {
         let config = PipelineConfig::default();
         assert_eq!(config.window_size, DEFAULT_PIPELINE_WINDOW);
-        assert!(config.async_signatures);
     }
 
     #[test]
@@ -284,7 +272,6 @@ mod tests {
     fn synchronous_config() {
         let config = PipelineConfig::synchronous();
         assert_eq!(config.window_size, 1);
-        assert!(!config.async_signatures);
         assert!(!config.ack_batching_enabled);
         assert_eq!(config.ack_batch_size, 1);
     }
@@ -338,18 +325,6 @@ mod tests {
     }
 
     #[test]
-    fn with_async_signatures_enables() {
-        let config = PipelineConfig::default().with_async_signatures(true);
-        assert!(config.async_signatures);
-    }
-
-    #[test]
-    fn with_async_signatures_disables() {
-        let config = PipelineConfig::default().with_async_signatures(false);
-        assert!(!config.async_signatures);
-    }
-
-    #[test]
     fn with_window_size_accepts_valid_value() {
         let config = PipelineConfig::default().with_window_size(128);
         assert_eq!(config.window_size, 128);
@@ -371,13 +346,11 @@ mod tests {
     fn builder_method_chaining() {
         let config = PipelineConfig::default()
             .with_window_size(100)
-            .with_async_signatures(false)
             .with_ack_batch_size(64)
             .with_ack_batch_timeout_ms(200)
             .with_ack_batching(true);
 
         assert_eq!(config.window_size, 100);
-        assert!(!config.async_signatures);
         assert_eq!(config.ack_batch_size, 64);
         assert_eq!(config.ack_batch_timeout_ms, 200);
         assert!(config.ack_batching_enabled);

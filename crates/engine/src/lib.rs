@@ -87,8 +87,13 @@ pub mod batch {
     //! Re-exports from the [`batch`] crate for backward compatibility.
     pub use batch::{
         BatchConfig, BatchError, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchResult,
-        BatchWriter, DeltaOp, FileEntry,
+        BatchWriter, DeltaOp, FileEntry, ReplayResult,
     };
+
+    /// Batch replay functions for applying recorded delta operations.
+    pub mod replay {
+        pub use batch::replay::{apply_delta_ops, replay};
+    }
 
     /// Script generation for batch replay.
     pub mod script {
@@ -149,7 +154,4 @@ pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError
 
 /// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
-pub use async_io::{
-    AsyncBatchCopier, AsyncFileCopier, AsyncFileReader, AsyncFileWriter, AsyncIoError,
-    ChecksumAlgorithm, CopyProgress, CopyResult, compute_file_checksum,
-};
+pub use async_io::{AsyncBatchCopier, AsyncFileCopier, AsyncIoError, CopyProgress, CopyResult};

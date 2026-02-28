@@ -1671,7 +1671,8 @@ impl ReceiverContext {
 
                 // Process one response — streams chunks to disk thread.
                 let pending = pipeline.pop().expect("pipeline not empty");
-                let (file_idx, file_path, file_entry) = pending_files_info.pop_front().unwrap();
+                let (file_idx, file_path, file_entry) =
+                    pending_files_info.pop_front().expect("pipeline not empty");
 
                 let response_ctx = ResponseContext {
                     config: &request_config,

@@ -6,11 +6,6 @@
 //! connecting to rsync daemons, performing handshakes, and executing transfers
 //! using the server infrastructure.
 
-// Note: This module uses the same TcpStream for both read and write.
-// We use unsafe code to split the borrow for stdin/stdout, matching the
-// pattern in ssh_transfer.rs
-#![allow(unsafe_code)]
-
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -21,11 +16,12 @@ use std::time::{Duration, Instant};
 use tracing::instrument;
 
 use protocol::ProtocolVersion;
-use protocol::filters::{FilterRuleWireFormat, RuleType};
+use protocol::filters::FilterRuleWireFormat;
 
 use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_digest};
 
-use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
+use super::super::config::ClientConfig;
+use super::flags;
 use super::super::error::{ClientError, daemon_error, invalid_argument_error, socket_error};
 use super::super::module_list::{
     DaemonAddress, DaemonAuthContext, apply_socket_options, connect_direct, load_daemon_password,
@@ -43,9 +39,7 @@ use crate::server::{ServerConfig, ServerRole};
 struct DaemonTransferRequest {
     address: DaemonAddress,
     module: String,
-    #[allow(dead_code)] // Used in future server execution
     path: String,
-    #[allow(dead_code)] // Used in future authentication
     username: Option<String>,
 }
 
@@ -663,7 +657,7 @@ fn build_full_daemon_args(
         args.push(format!("--checksum-choice={}", override_algo.as_str()));
     }
 
-    let flag_string = build_server_flag_string(config);
+    let flag_string = flags::build_server_flag_string(config);
     if !flag_string.is_empty() {
         args.push(flag_string);
     }
@@ -737,7 +731,7 @@ fn run_pull_transfer(
         .set_write_timeout(transfer_timeout)
         .map_err(|e| socket_error("set write timeout on", "daemon socket", e))?;
 
-    let filter_rules = build_wire_format_rules(config.filter_rules())?;
+    let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
 
     // Protocol was negotiated via @RSYNCD text exchange, not binary 4-byte exchange.
     // setup_protocol() will skip the binary exchange because remote_protocol != 0
@@ -798,7 +792,7 @@ fn run_push_transfer(
         .set_write_timeout(transfer_timeout)
         .map_err(|e| socket_error("set write timeout on", "daemon socket", e))?;
 
-    let filter_rules = build_wire_format_rules(config.filter_rules())?;
+    let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
 
     // Protocol was negotiated via @RSYNCD text exchange, not binary 4-byte exchange.
     // setup_protocol() will skip the binary exchange because remote_protocol != 0
@@ -884,18 +878,12 @@ fn run_server_with_handshake_over_stream(
     handshake: HandshakeResult,
     stream: &mut TcpStream,
 ) -> Result<crate::server::ServerStats, ClientError> {
-    use std::io::Read;
+    let mut reader = stream
+        .try_clone()
+        .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
 
-    // SAFETY: We create two mutable references to the same stream, which is safe
-    // because TcpStream internally manages separate read/write buffers.
-    let stream_ptr = stream as *mut TcpStream;
-    let result = unsafe {
-        let stdin: &mut dyn Read = &mut *stream_ptr;
-        let stdout = &mut *stream_ptr;
-        crate::server::run_server_with_handshake(config, handshake, stdin, stdout)
-    };
-
-    result.map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
+    crate::server::run_server_with_handshake(config, handshake, &mut reader, stream)
+        .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
 }
 
 /// Builds server configuration for receiver role (pull transfer).
@@ -904,7 +892,7 @@ fn build_server_config_for_receiver(
     local_paths: &[String],
     filter_rules: Vec<FilterRuleWireFormat>,
 ) -> Result<ServerConfig, ClientError> {
-    let flag_string = build_server_flag_string(config);
+    let flag_string = flags::build_server_flag_string(config);
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
     let mut server_config =
@@ -925,13 +913,9 @@ fn build_server_config_for_receiver(
     server_config.fsync = config.fsync();
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
-    server_config.trust_sender = config.trust_sender();
     server_config.stop_at = config.stop_at();
-    server_config.qsort = config.qsort();
-    server_config.inplace = config.inplace();
 
-    server_config.min_file_size = config.min_file_size();
-    server_config.max_file_size = config.max_file_size();
+    flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
 }
 
@@ -941,7 +925,7 @@ fn build_server_config_for_generator(
     local_paths: &[String],
     filter_rules: Vec<FilterRuleWireFormat>,
 ) -> Result<ServerConfig, ClientError> {
-    let flag_string = build_server_flag_string(config);
+    let flag_string = flags::build_server_flag_string(config);
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
     let mut server_config =
@@ -962,164 +946,10 @@ fn build_server_config_for_generator(
     server_config.fsync = config.fsync();
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
-    server_config.trust_sender = config.trust_sender();
     server_config.stop_at = config.stop_at();
-    server_config.qsort = config.qsort();
-    server_config.inplace = config.inplace();
 
-    server_config.min_file_size = config.min_file_size();
-    server_config.max_file_size = config.max_file_size();
+    flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
-}
-
-/// Builds the compact server flag string from client configuration.
-///
-/// This mirrors ssh_transfer.rs:build_server_flag_string().
-fn build_server_flag_string(config: &ClientConfig) -> String {
-    let mut flags = String::from("-");
-
-    // Order matches upstream server_options().
-    if config.links() {
-        flags.push('l');
-    }
-    if config.preserve_owner() {
-        flags.push('o');
-    }
-    if config.preserve_group() {
-        flags.push('g');
-    }
-    if config.preserve_devices() || config.preserve_specials() {
-        flags.push('D');
-    }
-    if config.preserve_times() {
-        flags.push('t');
-    }
-    if config.preserve_atimes() {
-        flags.push('U');
-    }
-    if config.preserve_permissions() {
-        flags.push('p');
-    }
-    if config.recursive() {
-        flags.push('r');
-    }
-    if config.compress() {
-        flags.push('z');
-    }
-    if config.checksum() {
-        flags.push('c');
-    }
-    if config.preserve_hard_links() {
-        flags.push('H');
-    }
-    #[cfg(all(unix, feature = "acl"))]
-    if config.preserve_acls() {
-        flags.push('A');
-    }
-    #[cfg(all(unix, feature = "xattr"))]
-    if config.preserve_xattrs() {
-        flags.push('X');
-    }
-    if config.numeric_ids() {
-        flags.push('n');
-    }
-    if config.delete_mode().is_enabled() || config.delete_excluded() {
-        flags.push('d');
-    }
-    if config.whole_file() {
-        flags.push('W');
-    }
-    if config.sparse() {
-        flags.push('S');
-    }
-    for _ in 0..config.one_file_system_level() {
-        flags.push('x');
-    }
-    if config.relative_paths() {
-        flags.push('R');
-    }
-    if config.partial() {
-        flags.push('P');
-    }
-    if config.update() {
-        flags.push('u');
-    }
-    if config.preserve_crtimes() {
-        flags.push('N');
-    }
-    // Note: verbose flag ('v') is not passed to daemon in server flag string.
-    // It's a local output option that doesn't affect protocol behavior.
-    // The ServerConfig.flags.verbose is set separately from server_flag_string parsing.
-
-    flags
-}
-
-/// Converts client filter rules to wire format.
-///
-/// Maps FilterRuleSpec (client-side representation) to FilterRuleWireFormat
-/// (protocol wire representation) for transmission to the remote server.
-fn build_wire_format_rules(
-    client_rules: &[FilterRuleSpec],
-) -> Result<Vec<FilterRuleWireFormat>, ClientError> {
-    let mut wire_rules = Vec::new();
-
-    for spec in client_rules {
-        let rule_type = match spec.kind() {
-            FilterRuleKind::Include => RuleType::Include,
-            FilterRuleKind::Exclude => RuleType::Exclude,
-            FilterRuleKind::Clear => RuleType::Clear,
-            FilterRuleKind::Protect => RuleType::Protect,
-            FilterRuleKind::Risk => RuleType::Risk,
-            FilterRuleKind::DirMerge => RuleType::DirMerge,
-            FilterRuleKind::ExcludeIfPresent => {
-                // ExcludeIfPresent is transmitted as Exclude with 'e' flag
-                // (FILTRULE_EXCLUDE_SELF in upstream rsync)
-                wire_rules.push(FilterRuleWireFormat {
-                    rule_type: RuleType::Exclude,
-                    pattern: spec.pattern().to_owned(),
-                    anchored: spec.pattern().starts_with('/'),
-                    directory_only: spec.pattern().ends_with('/'),
-                    no_inherit: false,
-                    cvs_exclude: false,
-                    word_split: false,
-                    exclude_from_merge: true, // 'e' flag = EXCLUDE_SELF
-                    xattr_only: spec.is_xattr_only(),
-                    sender_side: spec.applies_to_sender(),
-                    receiver_side: spec.applies_to_receiver(),
-                    perishable: spec.is_perishable(),
-                    negate: false,
-                });
-                continue;
-            }
-        };
-
-        let mut wire_rule = FilterRuleWireFormat {
-            rule_type,
-            pattern: spec.pattern().to_owned(),
-            anchored: spec.pattern().starts_with('/'),
-            directory_only: spec.pattern().ends_with('/'),
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: spec.is_xattr_only(),
-            sender_side: spec.applies_to_sender(),
-            receiver_side: spec.applies_to_receiver(),
-            perishable: spec.is_perishable(),
-            negate: false,
-        };
-
-        // Handle dir_merge options if present
-        if let Some(options) = spec.dir_merge_options() {
-            wire_rule.no_inherit = !options.inherit_rules();
-            wire_rule.word_split = options.uses_whitespace();
-            wire_rule.exclude_from_merge = options.excludes_self();
-        }
-
-        wire_rules.push(wire_rule);
-    }
-
-    Ok(wire_rules)
 }
 
 #[cfg(test)]
