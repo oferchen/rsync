@@ -5,7 +5,7 @@ use std::io::{self, Seek, SeekFrom, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
-use io_uring::{IoUring as RawIoUring, opcode, types};
+use io_uring::{IoUring as RawIoUring, opcode};
 
 use super::batching::{maybe_fixed_file, sqe_fd, submit_write_batch, try_register_fd};
 use super::config::IoUringConfig;
