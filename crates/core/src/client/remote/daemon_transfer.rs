@@ -6,11 +6,6 @@
 //! connecting to rsync daemons, performing handshakes, and executing transfers
 //! using the server infrastructure.
 
-// Note: This module uses the same TcpStream for both read and write.
-// We use unsafe code to split the borrow for stdin/stdout, matching the
-// pattern in ssh_transfer.rs
-#![allow(unsafe_code)]
-
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -884,18 +879,12 @@ fn run_server_with_handshake_over_stream(
     handshake: HandshakeResult,
     stream: &mut TcpStream,
 ) -> Result<crate::server::ServerStats, ClientError> {
-    use std::io::Read;
+    let mut reader = stream
+        .try_clone()
+        .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
 
-    // SAFETY: We create two mutable references to the same stream, which is safe
-    // because TcpStream internally manages separate read/write buffers.
-    let stream_ptr = stream as *mut TcpStream;
-    let result = unsafe {
-        let stdin: &mut dyn Read = &mut *stream_ptr;
-        let stdout = &mut *stream_ptr;
-        crate::server::run_server_with_handshake(config, handshake, stdin, stdout)
-    };
-
-    result.map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
+    crate::server::run_server_with_handshake(config, handshake, &mut reader, stream)
+        .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
 }
 
 /// Builds server configuration for receiver role (pull transfer).
