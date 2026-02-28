@@ -26,7 +26,55 @@ use super::invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
 };
 use crate::exit_code::ExitCode;
-use crate::server::{ServerConfig, ServerRole};
+use crate::server::{ServerConfig, ServerRole, TransferProgressCallback, TransferProgressEvent};
+
+/// Adapts a [`ClientProgressObserver`] to [`TransferProgressCallback`].
+///
+/// Converts server-side per-file progress events into client-side progress
+/// updates, enabling live progress display during SSH and daemon transfers.
+struct ServerProgressAdapter<'a> {
+    observer: &'a mut dyn ClientProgressObserver,
+    start: Instant,
+    overall_transferred: u64,
+}
+
+impl<'a> ServerProgressAdapter<'a> {
+    fn new(observer: &'a mut dyn ClientProgressObserver, start: Instant) -> Self {
+        Self {
+            observer,
+            start,
+            overall_transferred: 0,
+        }
+    }
+}
+
+impl TransferProgressCallback for ServerProgressAdapter<'_> {
+    fn on_file_transferred(&mut self, event: &TransferProgressEvent<'_>) {
+        use std::path::Path;
+        use std::sync::Arc;
+
+        self.overall_transferred += event.file_bytes;
+
+        let client_event = super::super::summary::ClientEvent::from_progress(
+            event.path,
+            event.file_bytes,
+            event.total_file_bytes,
+            self.start.elapsed(),
+            Arc::from(Path::new("")),
+        );
+
+        let update = super::super::progress::ClientProgressUpdate::from_transfer_event(
+            client_event,
+            event.files_done,
+            event.total_files,
+            event.total_file_bytes,
+            self.overall_transferred,
+            self.start.elapsed(),
+        );
+
+        self.observer.on_progress(&update);
+    }
+}
 
 /// SSH invocation result containing args, host, optional user, optional port, and stdin args.
 ///
@@ -267,7 +315,7 @@ fn run_pull_transfer(
     config: &ClientConfig,
     connection: SshConnection,
     local_paths: &[String],
-    _observer: Option<&mut dyn ClientProgressObserver>,
+    observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     // Build server config for receiver role with client_mode enabled.
     // client_mode = true tells the server flow to send the filter list at the
@@ -280,7 +328,11 @@ fn run_pull_transfer(
     server_config.stop_at = config.stop_at();
 
     let start = Instant::now();
-    let server_stats = run_server_over_ssh_connection(server_config, connection)?;
+    let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));
+    let progress: Option<&mut dyn TransferProgressCallback> = adapter
+        .as_mut()
+        .map(|a| a as &mut dyn TransferProgressCallback);
+    let server_stats = run_server_over_ssh_connection(server_config, connection, progress)?;
     let elapsed = start.elapsed();
 
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
@@ -294,7 +346,7 @@ fn run_push_transfer(
     config: &ClientConfig,
     connection: SshConnection,
     local_paths: &[String],
-    _observer: Option<&mut dyn ClientProgressObserver>,
+    observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     // Build server config for generator (sender) role with client_mode enabled.
     // client_mode = true ensures the filter list is sent at the correct point
@@ -306,7 +358,11 @@ fn run_push_transfer(
     server_config.stop_at = config.stop_at();
 
     let start = Instant::now();
-    let server_stats = run_server_over_ssh_connection(server_config, connection)?;
+    let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));
+    let progress: Option<&mut dyn TransferProgressCallback> = adapter
+        .as_mut()
+        .map(|a| a as &mut dyn TransferProgressCallback);
+    let server_stats = run_server_over_ssh_connection(server_config, connection, progress)?;
     let elapsed = start.elapsed();
 
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
@@ -411,12 +467,14 @@ pub(super) fn map_child_exit_status(status: std::process::ExitStatus) -> ExitCod
 fn run_server_over_ssh_connection(
     config: ServerConfig,
     connection: SshConnection,
+    progress: Option<&mut dyn crate::server::TransferProgressCallback>,
 ) -> Result<crate::server::ServerStats, ClientError> {
     let (mut reader, mut writer, child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
 
-    let transfer_result = crate::server::run_server_stdio(config, &mut reader, &mut writer);
+    let transfer_result =
+        crate::server::run_server_stdio(config, &mut reader, &mut writer, progress);
 
     // Close the writer to signal EOF to the remote process, allowing it to exit.
     drop(writer);

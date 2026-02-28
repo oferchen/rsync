@@ -114,6 +114,33 @@ pub trait ClientProgressObserver {
     fn on_progress(&mut self, update: &ClientProgressUpdate);
 }
 
+impl ClientProgressUpdate {
+    /// Creates a progress update from a server-side transfer event.
+    ///
+    /// Used by the SSH/daemon transfer adapter to convert per-file progress
+    /// events from the transfer crate into client progress updates.
+    pub(crate) fn from_transfer_event(
+        event: ClientEvent,
+        files_done: usize,
+        total_files: usize,
+        total_bytes: Option<u64>,
+        overall_transferred: u64,
+        overall_elapsed: Duration,
+    ) -> Self {
+        Self {
+            event,
+            total: total_files,
+            remaining: total_files.saturating_sub(files_done),
+            index: files_done,
+            total_bytes,
+            final_update: true,
+            overall_transferred,
+            overall_total_bytes: None,
+            overall_elapsed,
+        }
+    }
+}
+
 impl<F> ClientProgressObserver for F
 where
     F: FnMut(&ClientProgressUpdate),
