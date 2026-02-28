@@ -16,10 +16,11 @@
 
 mod strategy;
 
+#[cfg(test)]
+pub(crate) use strategy::apply_deletion_strategy;
 pub use strategy::{
-    DeleteAfterStrategy, DeleteBeforeStrategy, DeleteDelayStrategy, DeleteDuringStrategy,
-    DeletionContext, DeletionError, DeletionResult, DeletionStrategy, apply_deletion_strategy,
-    build_keep_set, is_extraneous_entry, should_delete_entry,
+    DeletionContext, DeletionError, DeletionResult, build_keep_set, is_extraneous_entry,
+    should_delete_entry,
 };
 
 #[cfg(test)]

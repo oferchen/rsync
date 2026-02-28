@@ -116,6 +116,7 @@ pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
 };
 pub use engine::SkipCompressList;
+pub use engine::batch::{BatchConfig, BatchMode};
 pub use engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 
 use std::time::Duration;

@@ -474,7 +474,7 @@ pub fn exchange_compat_flags_direct(
     client_args: &[String],
     allow_inc_recurse: bool,
 ) -> io::Result<Option<CompatibilityFlags>> {
-    if protocol.as_u8() < 30 {
+    if !protocol.uses_binary_negotiation() {
         return Ok(None);
     }
 
@@ -543,7 +543,7 @@ pub fn setup_protocol(
 
     // Build compat flags and perform negotiation for protocol >= 30
     // This mirrors upstream compat.c:710-743 which happens INSIDE setup_protocol()
-    let (compat_flags, negotiated_algorithms) = if config.protocol.as_u8() >= 30
+    let (compat_flags, negotiated_algorithms) = if config.protocol.uses_binary_negotiation()
         && !config.skip_compat_exchange
     {
         // Build our compat flags (server side)
