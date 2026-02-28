@@ -45,8 +45,6 @@
 //! ```
 
 use std::ffi::OsStr;
-use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -54,7 +52,7 @@ use std::time::Duration;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use engine::batch::{BatchReader, BatchWriter};
+use engine::batch::BatchWriter;
 use engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyExecution,
     LocalCopyOptions, LocalCopyPlan, ReferenceDirectory as EngineReferenceDirectory,
@@ -695,104 +693,10 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
         .map_err(|error| compile_filter_error(error.pattern(), &error))
 }
 
-/// Apply delta operations to a file.
-///
-/// Takes delta operations from the batch file and applies them to transform
-/// the basis file into the target file. This mirrors upstream rsync's batch
-/// replay logic.
-fn apply_batch_delta_ops(
-    basis_path: &Path,
-    dest_path: &Path,
-    delta_ops: Vec<protocol::wire::delta::DeltaOp>,
-    block_length: usize,
-) -> Result<(), ClientError> {
-    use crate::message::Role;
-    use crate::rsync_error;
-    use std::io::{Read, Seek, SeekFrom};
-
-    // Open basis file for reading
-    let basis_file = File::open(basis_path).map_err(|e| {
-        let msg = format!(
-            "failed to open basis file '{}': {}",
-            basis_path.display(),
-            e
-        );
-        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-    })?;
-    let mut basis = BufReader::new(basis_file);
-
-    // Create output file
-    let output_file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(dest_path)
-        .map_err(|e| {
-            let msg = format!(
-                "failed to create output file '{}': {}",
-                dest_path.display(),
-                e
-            );
-            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-        })?;
-    let mut output = BufWriter::new(output_file);
-
-    // Apply delta operations directly without signature machinery
-    // This is simpler for batch mode since we already have all the operations
-    let mut buffer = vec![0u8; 8192];
-    for op in delta_ops {
-        match op {
-            protocol::wire::delta::DeltaOp::Literal(data) => {
-                // Write literal data directly
-                output.write_all(&data).map_err(|e| {
-                    let msg = format!("failed to write literal data: {e}");
-                    ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-                })?;
-            }
-            protocol::wire::delta::DeltaOp::Copy {
-                block_index,
-                length,
-            } => {
-                // Calculate offset in basis file
-                let offset = u64::from(block_index) * (block_length as u64);
-
-                // Seek to the block position
-                basis.seek(SeekFrom::Start(offset)).map_err(|e| {
-                    let msg = format!("failed to seek to offset {offset}: {e}");
-                    ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-                })?;
-
-                // Copy data from basis to output
-                let mut remaining = length as usize;
-                while remaining > 0 {
-                    let chunk_size = remaining.min(buffer.len());
-                    basis.read_exact(&mut buffer[..chunk_size]).map_err(|e| {
-                        let msg = format!("failed to read from basis file: {e}");
-                        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-                    })?;
-                    output.write_all(&buffer[..chunk_size]).map_err(|e| {
-                        let msg = format!("failed to write to output file: {e}");
-                        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-                    })?;
-                    remaining -= chunk_size;
-                }
-            }
-        }
-    }
-
-    // Flush output
-    output.flush().map_err(|e| {
-        let msg = format!("failed to flush output file: {e}");
-        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-    })?;
-
-    Ok(())
-}
-
 /// Replay a batch file to reconstruct the transfer at the destination.
 ///
-/// This function reads a previously recorded batch file and applies the
-/// recorded operations to create/update files in the destination directory.
+/// Delegates to [`batch::replay::replay`] for the actual delta-application
+/// logic, then wraps the result in a [`ClientSummary`].
 fn replay_batch(
     batch_cfg: &engine::batch::BatchConfig,
     config: &ClientConfig,
@@ -800,103 +704,31 @@ fn replay_batch(
     use crate::message::Role;
     use crate::rsync_error;
 
-    // Get destination directory from transfer arguments
-    // For batch replay: `oc-rsync --read-batch=FILE destination/`
     let dest_root = if config.transfer_args().is_empty() {
         PathBuf::from(".")
     } else {
         PathBuf::from(&config.transfer_args()[0])
     };
 
-    // Open the batch file for reading
-    let mut reader = BatchReader::new((*batch_cfg).clone()).map_err(|e| {
-        let msg = format!(
-            "failed to open batch file '{}': {}",
-            batch_cfg.batch_file_path().display(),
-            e
-        );
-        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-    })?;
-
-    // Read and validate the batch header
-    let _flags = reader.read_header().map_err(|e| {
-        let msg = format!("failed to read batch header: {e}");
-        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-    })?;
-
-    // Read file entries and apply delta operations
-    // Format: Header, FileEntry1, DeltaOps1, FileEntry2, DeltaOps2, ..., EmptyPath
-    let mut _file_count = 0u64;
-    let mut _total_size = 0u64;
-
-    while let Some(entry) = reader.read_file_entry().map_err(|e| {
-        let msg = format!("failed to read file entry: {e}");
-        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-    })? {
-        _file_count += 1;
-        _total_size += entry.size;
-
-        // Log the file being processed
-        if config.verbosity() > 0 {
-            println!("{}", entry.path);
-        }
-
-        // Read all delta operations for this file
-        // Note: This reads until EOF, suitable for single-file batches
-        // Multi-file batches need more sophisticated boundary detection
-        let delta_ops = reader.read_all_delta_ops().map_err(|e| {
-            let msg = format!("failed to read delta operations for '{}': {e}", entry.path);
+    let result =
+        engine::batch::replay::replay(batch_cfg, &dest_root, config.verbosity().into()).map_err(|e| {
+            let msg = format!("batch replay failed: {e}");
             ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
         })?;
 
-        if config.verbosity() > 0 {
-            println!("  {} delta operations", delta_ops.len());
-        }
-
-        // Build file path in destination directory
-        let dest_path = dest_root.join(&entry.path);
-
-        // For batch replay, the basis file is the existing file at the destination
-        // (This is what we're transforming)
-        let basis_path = dest_path.clone();
-
-        // Apply delta operations to create/update the file
-        // Block length is typically 700 bytes for files ~100KB
-        // Implementation note: Upstream rsync calculates block_length dynamically based on
-        // file size (see match.c:365, choose_block_size()). For batch mode, this value
-        // should ideally be stored in the batch header or calculated from the signature.
-        // Current implementation uses a fixed default that works for typical file sizes.
-        const DEFAULT_BLOCK_LENGTH: usize = 700;
-        apply_batch_delta_ops(&basis_path, &dest_path, delta_ops, DEFAULT_BLOCK_LENGTH)?;
-    }
-
-    // Implementation status: Batch mode MVP complete for single-file validation.
-    //
-    // Full batch mode implementation scope (for future enhancement):
-    // 1. Multi-file batch processing:
-    //    a. Read delta operations (COPY/LITERAL) for each file from batch
-    //    b. Apply operations to destination directory
-    //    c. Set file metadata (mode, mtime, uid, gid)
-    // 2. Special file handling: directories, symlinks, devices
-    // 3. Preservation flag application from batch header
-    //
-    // Current implementation: Successfully reads and validates batch file format,
-    // reports file count and total size, handles single-file delta application.
-
-    // Report what was read
     #[cfg(feature = "tracing")]
     {
-        if _flags.recurse {
+        if result.recurse {
             tracing::info!("Batch mode enabled: recurse");
         }
         tracing::info!(
-            file_count = _file_count,
-            total_size = _total_size,
+            file_count = result.file_count,
+            total_size = result.total_size,
             "Batch replay complete"
         );
     }
+    let _ = &result;
 
-    // Return a summary with the file count
     use engine::local_copy::LocalCopySummary;
     Ok(ClientSummary::from_summary(LocalCopySummary::default()))
 }

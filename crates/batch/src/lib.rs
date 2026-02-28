@@ -173,6 +173,13 @@ pub mod reader;
 /// [`script::generate_script_with_args`].
 pub mod script;
 
+/// Batch replay logic for applying recorded delta operations.
+///
+/// This module contains [`replay::replay`] for full batch-file replay and
+/// [`replay::apply_delta_ops`] for applying individual delta operation
+/// sequences to a file.
+pub mod replay;
+
 /// Batch file writer for recording transfers.
 ///
 /// See [`BatchWriter`] for the main writer type.
@@ -237,6 +244,9 @@ pub use writer::BatchWriter;
 /// from a combination of existing data (copy operations) and new data
 /// (literal operations).
 pub use protocol::wire::DeltaOp;
+
+/// Result of a batch replay operation containing aggregate statistics.
+pub use replay::ReplayResult;
 
 use std::path::Path;
 
