@@ -297,8 +297,8 @@ pub fn run_server_with_handshake<W: Write>(
     // - For client mode: check our config for compression_level
     // - For server mode: check if client passed -z in their args
     let do_compression = if config.client_mode {
-        // Daemon client: check our own compression setting
-        config.compression_level.is_some()
+        // Daemon client: check -z flag (always present when compress is requested)
+        config.flags.compress
     } else if let Some(args) = handshake.client_args.as_deref() {
         // Daemon server: check if client has -z in their args
         args.iter()

@@ -28,6 +28,7 @@ fn transfer_stats_incremental_fields_exist() {
         directories_created: 3,
         directories_failed: 1,
         files_skipped: 2,
+        files_deleted: 0,
         redo_count: 0,
     };
 
