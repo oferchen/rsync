@@ -195,17 +195,39 @@ pub struct GeneratorContext {
     pending_segments: Vec<PendingSegment>,
     /// Whether all incremental file list segments have been sent.
     flist_eof_sent: bool,
+    /// Cached file list writer for compression state continuity across sub-lists.
+    ///
+    /// Upstream rsync uses `static` variables in `send_file_entry()` that persist
+    /// across `send_file_list()` calls. This field preserves the same state
+    /// (prev_name, prev_mode, prev_uid, prev_gid) between `send_file_list()`
+    /// and `send_extra_file_lists()`.
+    flist_writer_cache: Option<FileListWriter>,
     /// Number of entries in the initial segment when INC_RECURSE is active.
     ///
     /// When set, `send_file_list()` only sends the first `initial_segment_count`
     /// entries. The remaining entries are sent via `send_extra_file_lists()`.
     initial_segment_count: Option<usize>,
+    /// Segment boundary table for mapping wire NDX values to flat array indices.
+    ///
+    /// With INC_RECURSE, the sender sends segmented file lists with +1 gaps
+    /// between segments (upstream `flist.c:2931`). When the receiver sends
+    /// wire NDX values back, this table maps them to flat array indices.
+    /// Each entry is `(flat_start, ndx_start)`.
+    ///
+    /// Without INC_RECURSE, this contains a single entry `(0, 0)`.
+    ndx_segments: Vec<(usize, i32)>,
 }
 
 impl GeneratorContext {
     /// Creates a new generator context from handshake result and config.
     #[must_use]
     pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+        // upstream: flist.c:2923 — ndx_start = inc_recurse ? 1 : 0
+        let inc_recurse = handshake
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+        let initial_ndx_start = if inc_recurse { 1 } else { 0 };
+
         Self {
             protocol: handshake.protocol,
             config,
@@ -221,12 +243,42 @@ impl GeneratorContext {
             flist_xfer_end: None,
             pending_segments: Vec::new(),
             flist_eof_sent: false,
+            flist_writer_cache: None,
             initial_segment_count: None,
             total_bytes_read: 0,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             io_error: 0,
+            ndx_segments: vec![(0, initial_ndx_start)],
         }
+    }
+
+    /// Converts a wire NDX value to a flat file list array index.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:424` — `i = ndx - cur_flist->ndx_start`
+    fn wire_to_flat_ndx(&self, wire_ndx: i32) -> usize {
+        for &(flat_start, ndx_start) in self.ndx_segments.iter().rev() {
+            if wire_ndx >= ndx_start {
+                return flat_start + (wire_ndx - ndx_start) as usize;
+            }
+        }
+        wire_ndx as usize
+    }
+
+    /// Converts a flat file list array index to a wire NDX value.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2321` — `ndx = i + cur_flist->ndx_start`
+    fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
+        let seg_idx = self
+            .ndx_segments
+            .partition_point(|&(start, _)| start <= flat_idx)
+            - 1;
+        let (flat_start, ndx_start) = self.ndx_segments[seg_idx];
+        ndx_start + (flat_idx - flat_start) as i32
     }
 
     /// Returns the negotiated protocol version.
@@ -700,7 +752,9 @@ impl GeneratorContext {
                 }
             }
 
-            let ndx = ndx as usize;
+            // Convert wire NDX to array index using segment boundary table.
+            // upstream: rsync.c:424 — i = ndx - cur_flist->ndx_start
+            let ndx = self.wire_to_flat_ndx(ndx);
 
             // Read item flags using ItemFlags helper
             let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
@@ -760,7 +814,9 @@ impl GeneratorContext {
             // this gives openat + read + close = 3 syscalls per file, matching
             // upstream's pattern (upstream does openat + fstat + read + close = 4).
             let file_size = file_entry.size();
-            let ndx_i32 = ndx as i32;
+            // Echo the wire NDX back to the receiver using segment boundary table.
+            // upstream: sender.c:389 — write_ndx(f_out, ndx) uses the original wire ndx
+            let ndx_i32 = self.flat_to_wire_ndx(ndx);
 
             if has_basis {
                 // Delta path: build DeltaScript (needs random access for block matching),
@@ -1167,7 +1223,13 @@ impl GeneratorContext {
             return Ok(());
         }
 
-        let mut flist_writer = self.build_flist_writer();
+        // Reuse the cached writer from send_file_list() to preserve compression
+        // state across sub-lists, matching upstream's static variables in
+        // send_file_entry() (prev_name, prev_mode, prev_uid, prev_gid).
+        let mut flist_writer = self
+            .flist_writer_cache
+            .take()
+            .unwrap_or_else(|| self.build_flist_writer());
 
         // Send all pending segments. Since we eagerly scanned, send them all at once
         // (upstream uses MIN_FILECNT_LOOKAHEAD=1000 for throttling with lazy scanning).
@@ -1178,6 +1240,14 @@ impl GeneratorContext {
             if segment.count == 0 {
                 continue;
             }
+
+            // Build ndx_segments entry for this sub-list.
+            // upstream: flist.c:2931 — flist->ndx_start = prev->ndx_start + prev->used + 1
+            let &(prev_flat_start, prev_ndx_start) =
+                self.ndx_segments.last().expect("initial segment exists");
+            let prev_used = (segment.flist_start - prev_flat_start) as i32;
+            let seg_ndx_start = prev_ndx_start + prev_used + 1;
+            self.ndx_segments.push((segment.flist_start, seg_ndx_start));
 
             // Write NDX_FLIST_OFFSET - dir_ndx to signal a new sub-list
             ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
@@ -1194,9 +1264,10 @@ impl GeneratorContext {
             debug_log!(
                 Flist,
                 2,
-                "sent sub-list for dir_ndx={}, {} entries",
+                "sent sub-list for dir_ndx={}, {} entries (ndx_start={})",
                 segment.parent_dir_ndx,
-                segment.count
+                segment.count,
+                seg_ndx_start
             );
         }
 
@@ -1450,6 +1521,10 @@ impl GeneratorContext {
         };
         flist_writer.write_end(writer, io_error_for_end)?;
         writer.flush()?;
+
+        // Cache the writer so send_extra_file_lists() inherits the compression
+        // state (prev_name, prev_mode, etc.), matching upstream's static variables.
+        self.flist_writer_cache = Some(flist_writer);
 
         // Record end time for flist_xfertime statistic
         self.flist_xfer_end = Some(Instant::now());

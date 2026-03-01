@@ -107,6 +107,21 @@ pub struct ReceiverContext {
     compat_flags: Option<CompatibilityFlags>,
     /// Checksum seed for XXHash algorithms.
     checksum_seed: i32,
+    /// Segment boundary table for mapping flat array indices to wire NDX values.
+    ///
+    /// With INC_RECURSE, each segment has `ndx_start = prev_ndx_start + prev_used + 1`.
+    /// Each entry is `(flat_start, ndx_start)`.
+    /// Without INC_RECURSE, contains a single entry `(0, 0)`.
+    ///
+    /// upstream: flist.c:2931 — `flist->ndx_start = prev->ndx_start + prev->used + 1`
+    ndx_segments: Vec<(usize, i32)>,
+    /// Cached file list reader for compression state continuity across sub-lists.
+    ///
+    /// Upstream rsync uses `static` variables in `recv_file_entry()` that persist
+    /// across `recv_file_list()` calls. This field preserves the same state
+    /// (prev_name, prev_mode, prev_uid, prev_gid) between `receive_file_list()`
+    /// and `receive_extra_file_lists()`.
+    flist_reader_cache: Option<FileListReader>,
     /// UID mappings from remote to local IDs.
     uid_list: IdList,
     /// GID mappings from remote to local IDs.
@@ -117,6 +132,12 @@ impl ReceiverContext {
     /// Creates a new receiver context from handshake result and config.
     #[must_use]
     pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+        // upstream: flist.c:2923 — ndx_start = inc_recurse ? 1 : 0
+        let inc_recurse = handshake
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+        let initial_ndx_start = if inc_recurse { 1 } else { 0 };
+
         Self {
             protocol: handshake.protocol,
             config,
@@ -124,9 +145,25 @@ impl ReceiverContext {
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
+            ndx_segments: vec![(0, initial_ndx_start)],
+            flist_reader_cache: None,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
         }
+    }
+
+    /// Converts a flat file list array index to a wire NDX value.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2321` — `ndx = i + cur_flist->ndx_start`
+    fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
+        let seg_idx = self
+            .ndx_segments
+            .partition_point(|&(start, _)| start <= flat_idx)
+            - 1;
+        let (flat_start, ndx_start) = self.ndx_segments[seg_idx];
+        ndx_start + (flat_idx - flat_start) as i32
     }
 
     /// Returns the negotiated protocol version.
@@ -241,6 +278,10 @@ impl ReceiverContext {
         // See flist.c:2736 - both sides must sort to ensure matching NDX indices.
         sort_file_list(&mut self.file_list, self.config.qsort);
 
+        // Cache the reader so receive_extra_file_lists() inherits the compression
+        // state (prev_name, prev_mode, etc.), matching upstream's static variables.
+        self.flist_reader_cache = Some(flist_reader);
+
         Ok(count)
     }
 
@@ -268,7 +309,13 @@ impl ReceiverContext {
         }
 
         let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
-        let mut flist_reader = self.build_flist_reader();
+        // Reuse the cached reader from receive_file_list() to preserve compression
+        // state across sub-lists, matching upstream's static variables in
+        // recv_file_entry() (prev_name, prev_mode, prev_uid, prev_gid).
+        let mut flist_reader = self
+            .flist_reader_cache
+            .take()
+            .unwrap_or_else(|| self.build_flist_reader());
         let mut total_extra = 0;
 
         loop {
@@ -287,6 +334,7 @@ impl ReceiverContext {
             }
 
             let dir_ndx = NDX_FLIST_OFFSET - ndx;
+            let flat_start = self.file_list.len();
             let mut segment_count = 0;
 
             while let Some(entry) = flist_reader.read_entry(reader)? {
@@ -294,12 +342,21 @@ impl ReceiverContext {
                 segment_count += 1;
             }
 
+            // Build ndx_segments entry for this sub-list.
+            // upstream: flist.c:2931 — flist->ndx_start = prev->ndx_start + prev->used + 1
+            let &(prev_flat_start, prev_ndx_start) =
+                self.ndx_segments.last().expect("initial segment exists");
+            let prev_used = (flat_start - prev_flat_start) as i32;
+            let seg_ndx_start = prev_ndx_start + prev_used + 1;
+            self.ndx_segments.push((flat_start, seg_ndx_start));
+
             debug_log!(
                 Flist,
                 2,
-                "received sub-list for dir_ndx={}, {} entries",
+                "received sub-list for dir_ndx={}, {} entries (ndx_start={})",
                 dir_ndx,
-                segment_count
+                segment_count,
+                seg_ndx_start
             );
             total_extra += segment_count;
         }
@@ -722,52 +779,96 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         // Exchange NDX_DONE markers to complete the transfer phases.
         //
-        // The sender's generate_files() loop reads NDX_DONE from us for each phase
-        // transition and sends NDX_DONE back. It needs max_phase + 1 NDX_DONEs to
-        // break out of the loop (phases 1..=max_phase transition, then phase > max_phase
-        // triggers break).
+        // The sender's send_files() loop (sender.c:225-462) reads NDX_DONE from
+        // us and either frees a file list segment or transitions to the next phase.
+        // After breaking out of the loop, it writes a final NDX_DONE (sender.c:462).
         //
-        // Upstream reference: send.c generate_files() phase transition loop
+        // With INC_RECURSE, the sender maintains a linked list of file list segments
+        // (first_flist). Each NDX_DONE we send causes the sender to free one segment.
+        // When all segments are freed (first_flist becomes NULL), subsequent NDX_DONEs
+        // trigger phase transitions (++phase). The sender breaks when phase > max_phase.
+        //
+        // Without INC_RECURSE, there are no segments to free — all NDX_DONEs go
+        // directly to phase transitions.
+        //
+        // upstream: sender.c:236-258 — NDX_DONE handling in send_files()
+        // upstream: sender.c:462 — final NDX_DONE after loop exit
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+
         let max_phase: i32 = if self.protocol.supports_multi_phase() {
             2
         } else {
             1
         };
-        let mut phase: i32 = 0;
 
-        loop {
-            // Send NDX_DONE to signal end of current phase
+        if inc_recurse {
+            // Send one NDX_DONE per file list segment. The sender frees one
+            // segment per NDX_DONE and echoes each back:
+            //   - Segments 0..N-2: frees segment, first_flist non-NULL → echo
+            //   - Segment N-1 (last): frees segment, first_flist NULL →
+            //     falls through to phase transition (++phase → 1) → echo
+            //
+            // upstream: sender.c:242-250 — segment freeing with echo
+            let num_segments = self.ndx_segments.len();
+            for _ in 0..num_segments {
+                ndx_write_codec.write_ndx_done(&mut *writer)?;
+                writer.flush()?;
+                self.read_expected_ndx_done(ndx_read_codec, reader, "segment completion")?;
+            }
+            // Sender is now at phase 1 (incremented during last segment free).
+
+            // Send remaining phase transitions. The sender is at phase 1 after
+            // the segment completions, so we need phases 2..=max_phase (each
+            // echoed) plus one final NDX_DONE that triggers break (no echo).
+            //
+            // upstream: sender.c:252-257 — phase transition with echo
+            for _phase in 2..=max_phase {
+                ndx_write_codec.write_ndx_done(&mut *writer)?;
+                writer.flush()?;
+                self.read_expected_ndx_done(ndx_read_codec, reader, "phase transition")?;
+            }
+
+            // Final NDX_DONE that causes sender to break (++phase > max_phase).
             ndx_write_codec.write_ndx_done(&mut *writer)?;
             writer.flush()?;
-
-            phase += 1;
-
-            if phase > max_phase {
-                break;
-            }
-
-            // Read echoed NDX_DONE from sender
-            let ndx = ndx_read_codec.read_ndx(reader)?;
-            if ndx != -1 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "expected NDX_DONE (-1) from sender during phase transition, got {ndx}"
-                    ),
-                ));
+        } else {
+            // Without INC_RECURSE: all NDX_DONEs are phase transitions.
+            // Phases 1..=max_phase each get an echo; the last (> max_phase) breaks.
+            let mut phase: i32 = 0;
+            loop {
+                ndx_write_codec.write_ndx_done(&mut *writer)?;
+                writer.flush()?;
+                phase += 1;
+                if phase > max_phase {
+                    break;
+                }
+                self.read_expected_ndx_done(ndx_read_codec, reader, "phase transition")?;
             }
         }
 
-        // Read final NDX_DONE from sender (sender's generate_files sends this
-        // before breaking out of its loop)
-        let final_ndx = ndx_read_codec.read_ndx(reader)?;
-        if final_ndx != -1 {
+        // Read the final NDX_DONE that the sender writes after exiting its
+        // send_files() loop (sender.c:462: `write_ndx(f_out, NDX_DONE)`).
+        self.read_expected_ndx_done(ndx_read_codec, reader, "sender final")?;
+
+        Ok(())
+    }
+
+    /// Reads an NDX and validates it is NDX_DONE (-1).
+    fn read_expected_ndx_done<R: Read>(
+        &self,
+        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
+        reader: &mut R,
+        context: &str,
+    ) -> io::Result<()> {
+        let ndx = ndx_read_codec.read_ndx(reader)?;
+        if ndx != -1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("expected final NDX_DONE (-1) from sender, got {final_ndx}"),
+                format!("expected NDX_DONE (-1) from sender during {context}, got {ndx}"),
             ));
         }
-
         Ok(())
     }
 
@@ -1017,8 +1118,9 @@ impl ReceiverContext {
                 info_log!(Name, 1, "{}", relative_path.display());
             }
 
-            // Send file index using NDX encoding via NdxCodec Strategy pattern.
-            let ndx = file_idx as i32;
+            // Convert flat index to wire NDX using segment boundary table.
+            // upstream: generator.c:2321 — ndx = i + cur_flist->ndx_start
+            let ndx = self.flat_to_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, ndx)?;
 
             // For protocol >= 29, sender expects iflags after NDX
@@ -1770,7 +1872,7 @@ impl ReceiverContext {
                         let pending = send_file_request(
                             writer,
                             &mut ndx_write_codec,
-                            file_idx as i32,
+                            self.flat_to_wire_ndx(file_idx),
                             file_path.clone(),
                             sig,
                             basis,
