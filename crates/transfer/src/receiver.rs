@@ -342,6 +342,12 @@ impl ReceiverContext {
                 segment_count += 1;
             }
 
+            // Sort sub-list segment to match sender's sorted order.
+            // upstream: flist.c:2155 — sender calls flist_sort_and_clean() after sending
+            // upstream: flist.c:2736 — receiver calls flist_sort_and_clean() after receiving
+            // Entries arrive in readdir() order; both sides must sort independently.
+            sort_file_list(&mut self.file_list[flat_start..], self.config.qsort);
+
             // Build ndx_segments entry for this sub-list.
             // upstream: flist.c:2931 — flist->ndx_start = prev->ndx_start + prev->used + 1
             let &(prev_flat_start, prev_ndx_start) =
