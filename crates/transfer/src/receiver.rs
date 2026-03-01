@@ -848,6 +848,64 @@ impl ReceiverContext {
         Ok(deleted)
     }
 
+    /// Creates symbolic links from the file list entries.
+    ///
+    /// Iterates through the received file list, finds symlink entries with
+    /// `preserve_links` enabled, and creates them on the destination filesystem.
+    /// Existing symlinks pointing to the correct target are skipped (quick-check).
+    /// Existing files/symlinks at the destination path are removed before creation.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1544` — `if (preserve_links && ftype == FT_SYMLINK)`
+    /// - `generator.c:1591` — `atomic_create(file, fname, sl, ...)`
+    #[cfg(unix)]
+    fn create_symlinks(&self, dest_dir: &Path) {
+        if !self.config.flags.links {
+            return;
+        }
+
+        for entry in &self.file_list {
+            if !entry.is_symlink() {
+                continue;
+            }
+
+            let target = match entry.link_target() {
+                Some(t) => t,
+                None => continue,
+            };
+
+            let relative_path = entry.path();
+            let link_path = dest_dir.join(relative_path);
+
+            // upstream: generator.c:1561 — quick_check_ok(FT_SYMLINK, ...)
+            if let Ok(existing_target) = std::fs::read_link(&link_path) {
+                if existing_target == *target {
+                    continue;
+                }
+                let _ = std::fs::remove_file(&link_path);
+            } else if link_path.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(&link_path);
+            }
+
+            // upstream: generator.c:1591 — atomic_create() → do_symlink()
+            if let Err(e) = std::os::unix::fs::symlink(target, &link_path) {
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to create symlink {} -> {}: {}",
+                    link_path.display(),
+                    target.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    /// No-op on non-Unix platforms where symlinks are not supported.
+    #[cfg(not(unix))]
+    fn create_symlinks(&self, _dest_dir: &Path) {}
+
     /// Builds the list of files that need transfer, applying quick-check to skip
     /// unchanged files and respecting size bounds and failed directory tracking.
     ///
@@ -1300,8 +1358,9 @@ impl ReceiverContext {
         let mut files_transferred = 0;
         let mut bytes_received = 0u64;
 
-        // First pass: create directories from file list
+        // First pass: create directories and symlinks from file list
         let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
+        self.create_symlinks(&dest_dir);
 
         // Transfer loop: iterate through file list and request each file from sender
         // The receiver (generator side) drives the transfer by sending file indices
@@ -1680,8 +1739,9 @@ impl ReceiverContext {
         let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
-        // Batch directory creation
+        // Batch directory and symlink creation
         let mut metadata_errors = self.create_directories(&setup.dest_dir, &setup.metadata_opts)?;
+        self.create_symlinks(&setup.dest_dir);
 
         // Delete extraneous files at destination (--delete-before pass).
         // upstream: generator.c:do_delete_pass() — full tree walk deletion
@@ -1822,6 +1882,9 @@ impl ReceiverContext {
                 }
             }
         }
+
+        // Create symlinks after directories are in place
+        self.create_symlinks(&setup.dest_dir);
 
         let files_to_transfer = self.build_files_to_transfer(
             &setup.dest_dir,

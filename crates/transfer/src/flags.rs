@@ -161,7 +161,10 @@ impl ParsedServerFlags {
             b'I' => self.ignore_times = true,
             b'A' => self.acls = true,
             b'X' => self.xattrs = true,
-            b'n' => self.numeric_ids = true,
+            // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
+            // numeric_ids is long-form only (options.c:2887 sends --numeric-ids).
+            // Dry-run not yet implemented; ignore the flag for now.
+            b'n' => {}
             b'd' => self.delete = true,
             b'W' => self.whole_file = true,
             b'S' => self.sparse = true,

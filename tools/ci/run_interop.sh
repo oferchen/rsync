@@ -785,14 +785,14 @@ comp_run_scenario() {
 # Resolved since initial tracking:
 # - up:checksum, oc:checksum (always-checksum mode implemented)
 # - up:delete (apply_long_form_args now parses --delete/--delete-before)
+# - up:symlinks, oc:symlinks (create_symlinks() in receiver)
+# - up:size-only (was already working; stale binary caused false failure)
 #
 # Remaining known failures — features not yet fully wired into daemon transfer path:
 KNOWN_FAILURES=(
-  "up:symlinks"   "oc:symlinks"
   "up:hardlinks"
   "up:compress"   "oc:compress"
   "oc:delete"
-  "up:size-only"
   "oc:numeric-ids"
   "oc:exclude"
 )
