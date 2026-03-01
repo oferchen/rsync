@@ -326,6 +326,17 @@ impl GeneratorContext {
         .with_preserve_acls(self.config.flags.acls)
         .with_preserve_xattrs(self.config.flags.xattrs);
 
+        // upstream: flist.c — always_checksum includes per-file checksums in the file list
+        if self.config.flags.checksum {
+            let factory = ChecksumFactory::from_negotiation(
+                self.negotiated_algorithms.as_ref(),
+                self.protocol,
+                self.checksum_seed,
+                self.compat_flags.as_ref(),
+            );
+            writer = writer.with_always_checksum(factory.digest_length());
+        }
+
         if let Some(ref converter) = self.config.iconv {
             writer = writer.with_iconv(converter.clone());
         }

@@ -279,6 +279,17 @@ impl ReceiverContext {
         .with_preserve_xattrs(self.config.flags.xattrs)
         .with_preserve_atimes(self.config.flags.atimes);
 
+        // upstream: flist.c — always_checksum includes per-file checksums in the file list
+        if self.config.flags.checksum {
+            let factory = ChecksumFactory::from_negotiation(
+                self.negotiated_algorithms.as_ref(),
+                self.protocol,
+                self.checksum_seed,
+                self.compat_flags.as_ref(),
+            );
+            reader = reader.with_always_checksum(factory.digest_length());
+        }
+
         if let Some(ref converter) = self.config.iconv {
             reader = reader.with_iconv(converter.clone());
         }
