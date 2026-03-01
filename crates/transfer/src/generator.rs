@@ -2497,6 +2497,7 @@ mod tests {
             files_from_path: None,
             from0: false,
             inplace: false,
+            size_only: false,
         }
     }
 
@@ -3733,6 +3734,7 @@ mod tests {
             files_from_path: None,
             from0: false,
             inplace: false,
+            size_only: false,
         }
     }
 

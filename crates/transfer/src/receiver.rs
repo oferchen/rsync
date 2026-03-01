@@ -91,19 +91,27 @@ use metadata::{MetadataOptions, apply_metadata_from_file_entry, apply_metadata_w
 /// Returns `Some(metadata)` when the destination already matches (skip transfer),
 /// `None` when the file needs transfer. Thread-safe for use with `rayon::par_iter`.
 ///
+/// When `size_only` is true, only sizes are compared (mtime is ignored).
+/// When `preserve_times` is false and `size_only` is false, all files need transfer.
+///
 /// Mirrors upstream `generator.c:617 quick_check_ok()` for `FT_REG`.
 fn quick_check_ok_stateless(
     entry: &FileEntry,
     dest_dir: &Path,
     preserve_times: bool,
+    size_only: bool,
 ) -> Option<fs::Metadata> {
-    if !preserve_times {
+    if !preserve_times && !size_only {
         return None;
     }
     let file_path = dest_dir.join(entry.path());
     let dest_meta = fs::metadata(&file_path).ok()?;
     if dest_meta.len() != entry.size() {
         return None;
+    }
+    // upstream: generator.c:617 — `if (size_only) return 1;` after size match
+    if size_only {
+        return Some(dest_meta);
     }
     #[cfg(unix)]
     {
@@ -891,9 +899,10 @@ impl ReceiverContext {
             })
             .collect();
 
-        // Quick-check requires preserve_times and no --ignore-times.
+        // Quick-check requires preserve_times and no --ignore-times (or --size-only).
         // upstream: generator.c:617 — quick_check_ok() is skipped when ignore_times
         let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
+        let size_only = self.config.size_only;
 
         // Phase B: Stat each candidate to determine quick-check status.
         // Parallel when above threshold, sequential otherwise.
@@ -901,7 +910,7 @@ impl ReceiverContext {
             let results: Vec<_> = candidates
                 .par_iter()
                 .map(|&(idx, entry)| {
-                    let meta = quick_check_ok_stateless(entry, dest_dir, preserve_times);
+                    let meta = quick_check_ok_stateless(entry, dest_dir, preserve_times, size_only);
                     (idx, entry, meta)
                 })
                 .collect();
@@ -926,7 +935,8 @@ impl ReceiverContext {
         } else {
             let mut files_to_transfer = Vec::with_capacity(candidates.len());
             for (idx, entry) in candidates {
-                if let Some(cached_meta) = quick_check_ok_stateless(entry, dest_dir, preserve_times)
+                if let Some(cached_meta) =
+                    quick_check_ok_stateless(entry, dest_dir, preserve_times, size_only)
                 {
                     let file_path = dest_dir.join(entry.path());
                     if let Err(e) = apply_metadata_with_cached_stat(
@@ -3243,6 +3253,7 @@ mod tests {
             files_from_path: None,
             from0: false,
             inplace: false,
+            size_only: false,
         }
     }
 
@@ -4146,6 +4157,7 @@ mod tests {
             files_from_path: None,
             from0: false,
             inplace: false,
+            size_only: false,
         }
     }
 

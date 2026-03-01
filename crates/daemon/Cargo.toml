@@ -27,6 +27,7 @@ tracing = ["dep:tracing", "core/tracing"]
 clap = { version = "4.5.49", features = ["std"] }
 base64 = "0.22"
 dns-lookup = "2.0"
+compress = { path = "../compress" }
 core = { path = "../core", default-features = false }
 metadata = { path = "../metadata", default-features = false }
 protocol = { path = "../protocol" }
