@@ -491,6 +491,21 @@ impl FileEntry {
         &self.dirname
     }
 
+    /// Prepends a parent directory prefix to this entry's path.
+    ///
+    /// Used when receiving incremental file list segments (INC_RECURSE) where
+    /// entries arrive with paths relative to their parent directory. This
+    /// reconstructs the full relative path by joining the parent prefix.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:recv_file_list()` — entries in sub-lists use basename-only paths
+    /// - `flist.c:f_name()` — reconstructs full path by prepending `dirname`
+    pub fn prepend_dir(&mut self, parent: &Path) {
+        self.name = parent.join(&self.name);
+        self.dirname = extract_dirname(&self.name);
+    }
+
     /// Replaces the dirname with an interned `Arc<Path>`.
     ///
     /// Called by [`super::read::FileListReader`] after constructing the entry
