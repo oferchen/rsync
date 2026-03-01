@@ -668,11 +668,12 @@ fn build_full_daemon_args(
     // Uses CAPABILITY_MAPPINGS as single source of truth (mirrors upstream
     // options.c:3003-3050 maybe_add_e_option()).
     //
-    // INC_RECURSE is only advertised for pull transfers (receiver role).
-    // The sender-side incremental file list sending needs further interop
-    // validation before enabling with upstream daemons.
+    // is_sender here means "daemon is sender" (pull = true, push = false).
+    // INC_RECURSE is advertised for pull transfers where our receiver handles
+    // incremental file lists from the daemon sender. For push transfers,
+    // sender-side INC_RECURSE is not advertised until fully validated.
     if protocol.as_u8() >= 30 {
-        args.push(build_capability_string(!is_sender));
+        args.push(build_capability_string(is_sender));
     }
 
     // Dummy argument (upstream requirement - represents CWD)
