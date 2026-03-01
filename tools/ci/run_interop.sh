@@ -782,11 +782,20 @@ comp_run_scenario() {
 # These are tracked separately from unexpected failures so CI catches regressions
 # while not blocking on unrelated missing features.
 #
-# Previously tracked failures now resolved:
-# - checksum, compress, delete, symlinks, hardlinks (both directions)
-# - size-only (upstream→oc), numeric-ids, exclude (oc→upstream)
-# - Protocol 28/29 upstream→oc blanket skip (codecs now handle all versions)
-KNOWN_FAILURES=()
+# Resolved since initial tracking:
+# - up:checksum, oc:checksum (always-checksum mode implemented)
+# - up:compress (zlib compression interop fixed)
+#
+# Remaining known failures — features not yet fully wired into daemon transfer path:
+KNOWN_FAILURES=(
+  "up:symlinks"   "oc:symlinks"
+  "up:hardlinks"
+  "up:delete"     "oc:delete"
+  "up:size-only"
+  "oc:compress"
+  "oc:numeric-ids"
+  "oc:exclude"
+)
 
 is_known_failure() {
   local direction=$1 name=$2 forced_proto=$3
