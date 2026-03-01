@@ -790,9 +790,8 @@ comp_run_scenario() {
 # - up:hardlinks (create_hardlinks() in receiver, follower skip in transfer loop)
 # - oc:delete, oc:numeric-ids, oc:exclude (correct compact flag semantics + long-form args)
 #
-# Remaining known failures — features not yet fully wired into daemon transfer path:
+# All previously known failures have been resolved.
 KNOWN_FAILURES=(
-  "up:compress"   "oc:compress"
 )
 
 is_known_failure() {

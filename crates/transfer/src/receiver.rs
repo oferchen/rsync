@@ -66,6 +66,7 @@ use super::adaptive_buffer::adaptive_writer_capacity;
 use super::delta_apply::{ChecksumVerifier, SparseWriteState};
 use super::map_file::MapFile;
 use super::token_buffer::TokenBuffer;
+use super::token_reader::{DeltaToken as TokenReaderDeltaToken, LiteralData, TokenReader};
 
 #[cfg(test)]
 use engine::delta::{DeltaScript, DeltaToken};
@@ -1721,126 +1722,131 @@ impl ReceiverContext {
                 None
             };
 
-            // Read tokens in a loop
+            // Read and apply delta tokens.
+            // TokenReader handles both plain (4-byte LE) and compressed (flag-byte)
+            // token formats transparently, matching upstream token.c:recv_token().
+            let compression = self.negotiated_algorithms.map(|n| n.compression);
+            let mut token_reader = TokenReader::new(compression);
+
             loop {
-                let mut token_buf = [0u8; 4];
-                reader.read_exact(&mut token_buf)?;
-                let token = i32::from_le_bytes(token_buf);
+                match token_reader.read_token(reader)? {
+                    TokenReaderDeltaToken::End => {
+                        // End of file — verify checksum using stack buffers.
+                        let checksum_len = checksum_verifier.digest_len();
+                        let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                        reader.read_exact(&mut expected_buf[..checksum_len])?;
 
-                if token == 0 {
-                    // End of file — verify checksum using stack buffers.
-                    // Use mem::replace to reset the verifier for the next file.
-                    let checksum_len = checksum_verifier.digest_len();
-                    let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-                    reader.read_exact(&mut expected_buf[..checksum_len])?;
-
-                    let algo = checksum_verifier.algorithm();
-                    let old_verifier = std::mem::replace(
-                        &mut checksum_verifier,
-                        ChecksumVerifier::for_algorithm(algo),
-                    );
-                    let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-                    let computed_len = old_verifier.finalize_into(&mut computed);
-                    if computed_len != checksum_len {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "checksum length mismatch for {file_path:?}: expected {checksum_len} bytes, got {computed_len} bytes",
-                            ),
-                        ));
-                    }
-                    if computed[..computed_len] != expected_buf[..checksum_len] {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
-                                &expected_buf[..checksum_len],
-                                &computed[..computed_len]
-                            ),
-                        ));
-                    }
-                    break;
-                } else if token > 0 {
-                    // Literal data — try zero-copy from multiplex frame buffer,
-                    // falling back to TokenBuffer when data spans frame boundaries.
-                    let len = token as usize;
-
-                    if let Some(data) = reader.try_borrow_exact(len)? {
-                        if let Some(ref mut sparse) = sparse_state {
-                            sparse.write(&mut output, data)?;
-                        } else {
-                            output.write_all(data)?;
-                        }
-                        checksum_verifier.update(data);
-                    } else {
-                        token_buffer.resize_for(len);
-                        reader.read_exact(token_buffer.as_mut_slice())?;
-                        let data = token_buffer.as_slice();
-                        if let Some(ref mut sparse) = sparse_state {
-                            sparse.write(&mut output, data)?;
-                        } else {
-                            output.write_all(data)?;
-                        }
-                        checksum_verifier.update(data);
-                    }
-                    total_bytes += len as u64;
-                } else {
-                    // Negative: block reference = -(token+1)
-                    // For new files (no basis), this shouldn't happen
-                    let block_idx = -(token + 1) as usize;
-                    if let (Some(sig), Some(basis_map)) = (&signature_opt, basis_map.as_mut()) {
-                        // We have a basis file - copy the block using cached MapFile
-                        // Mirrors upstream receiver.c receive_data() block copy logic
-                        let layout = sig.layout();
-                        let block_count = layout.block_count() as usize;
-
-                        // Validate block index bounds (upstream receiver.c doesn't send invalid indices)
-                        if block_idx >= block_count {
+                        let algo = checksum_verifier.algorithm();
+                        let old_verifier = std::mem::replace(
+                            &mut checksum_verifier,
+                            ChecksumVerifier::for_algorithm(algo),
+                        );
+                        let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                        let computed_len = old_verifier.finalize_into(&mut computed);
+                        if computed_len != checksum_len {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
                                 format!(
-                                    "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                                    "checksum length mismatch for {file_path:?}: expected {checksum_len} bytes, got {computed_len} bytes",
                                 ),
                             ));
                         }
+                        if computed[..computed_len] != expected_buf[..checksum_len] {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
+                                    &expected_buf[..checksum_len],
+                                    &computed[..computed_len]
+                                ),
+                            ));
+                        }
+                        break;
+                    }
+                    TokenReaderDeltaToken::Literal(literal) => {
+                        // Write literal data to output and update checksum.
+                        match literal {
+                            LiteralData::Ready(data) => {
+                                let len = data.len();
+                                if let Some(ref mut sparse) = sparse_state {
+                                    sparse.write(&mut output, &data)?;
+                                } else {
+                                    output.write_all(&data)?;
+                                }
+                                checksum_verifier.update(&data);
+                                total_bytes += len as u64;
+                            }
+                            LiteralData::Pending(len) => {
+                                if let Some(data) = reader.try_borrow_exact(len)? {
+                                    if let Some(ref mut sparse) = sparse_state {
+                                        sparse.write(&mut output, data)?;
+                                    } else {
+                                        output.write_all(data)?;
+                                    }
+                                    checksum_verifier.update(data);
+                                } else {
+                                    token_buffer.resize_for(len);
+                                    reader.read_exact(token_buffer.as_mut_slice())?;
+                                    let data = token_buffer.as_slice();
+                                    if let Some(ref mut sparse) = sparse_state {
+                                        sparse.write(&mut output, data)?;
+                                    } else {
+                                        output.write_all(data)?;
+                                    }
+                                    checksum_verifier.update(data);
+                                }
+                                total_bytes += len as u64;
+                            }
+                        }
+                    }
+                    TokenReaderDeltaToken::BlockRef(block_idx) => {
+                        if let (Some(sig), Some(basis_map)) = (&signature_opt, basis_map.as_mut()) {
+                            let layout = sig.layout();
+                            let block_count = layout.block_count() as usize;
 
-                        let block_len = layout.block_length().get() as u64;
-                        let offset = block_idx as u64 * block_len;
+                            if block_idx >= block_count {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    format!(
+                                        "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                                    ),
+                                ));
+                            }
 
-                        // Calculate actual bytes to copy for this block
-                        // Last block may be shorter (remainder)
-                        let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-                            // Last block uses remainder size
-                            let remainder = layout.remainder();
-                            if remainder > 0 {
-                                remainder as usize
+                            let block_len = layout.block_length().get() as u64;
+                            let offset = block_idx as u64 * block_len;
+
+                            let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
+                                let remainder = layout.remainder();
+                                if remainder > 0 {
+                                    remainder as usize
+                                } else {
+                                    block_len as usize
+                                }
                             } else {
                                 block_len as usize
+                            };
+
+                            let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+
+                            if let Some(ref mut sparse) = sparse_state {
+                                sparse.write(&mut output, block_data)?;
+                            } else {
+                                output.write_all(block_data)?;
                             }
-                        } else {
-                            block_len as usize
-                        };
+                            checksum_verifier.update(block_data);
 
-                        // Use cached MapFile with 256KB sliding window
-                        // This avoids ~23,000 open/seek/read syscalls for a typical 16MB file
-                        let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+                            // upstream: token.c:631 — see_deflate_token() keeps the
+                            // decompressor dictionary in sync after block matches.
+                            token_reader.see_token(block_data)?;
 
-                        // Use sparse writing if enabled
-                        if let Some(ref mut sparse) = sparse_state {
-                            sparse.write(&mut output, block_data)?;
+                            total_bytes += bytes_to_copy as u64;
                         } else {
-                            output.write_all(block_data)?;
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("block reference {block_idx} without basis file"),
+                            ));
                         }
-
-                        // Update checksum with copied data
-                        checksum_verifier.update(block_data);
-
-                        total_bytes += bytes_to_copy as u64;
-                    } else {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("block reference {block_idx} without basis file"),
-                        ));
                     }
                 }
             }
