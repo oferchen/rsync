@@ -677,7 +677,8 @@ fn build_full_daemon_args(
     //
     // is_sender means "daemon is sender" (pull = true, push = false).
     // INC_RECURSE is advertised for pull transfers where our receiver handles
-    // incremental file lists from the daemon sender.
+    // incremental file lists from the daemon sender. For push transfers,
+    // sender-side INC_RECURSE is not advertised until fully validated.
     if protocol.as_u8() >= 30 {
         args.push(build_capability_string(is_sender));
     }
