@@ -409,7 +409,15 @@ impl GeneratorContext {
     /// - Client mode: `send_filter_list()` at `main.c:1308` (done in mod.rs)
     fn receive_filter_list_if_server<R: Read>(&mut self, reader: &mut R) -> io::Result<()> {
         if self.config.client_mode {
-            return Ok(()); // Client mode: already sent filter list in mod.rs
+            // Client mode: apply filters from config for local file list building.
+            // Filter rules were already sent to the daemon in mod.rs.
+            // upstream: flist.c:1332 — is_excluded() applied during make_file()
+            if !self.config.filter_rules.is_empty() {
+                let filter_set =
+                    self.parse_received_filters(&self.config.filter_rules.clone())?;
+                self.filters = Some(filter_set);
+            }
+            return Ok(());
         }
 
         // Server mode: read filter list from client (MULTIPLEXED for protocol >= 30)

@@ -689,7 +689,10 @@ fn build_full_daemon_args(
     // --compress-level=N — upstream: options.c:2737-2740
     // Only sent when compression is active and an explicit level was specified.
     if let Some(level) = config.compression_level() {
-        args.push(format!("--compress-level={}", compression_level_numeric(level)));
+        args.push(format!(
+            "--compress-level={}",
+            compression_level_numeric(level)
+        ));
     }
 
     // Sender-specific args — upstream: options.c:2807-2839
