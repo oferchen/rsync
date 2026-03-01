@@ -12,6 +12,7 @@ use super::super::config::{
 };
 use super::super::error::{ClientError, invalid_argument_error};
 use compress::algorithm::CompressionAlgorithm;
+use transfer::setup::build_capability_string;
 
 /// Checks if an operand represents a remote path.
 ///
@@ -320,7 +321,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // Order mirrors upstream options.c server_options().
         self.append_long_form_args(&mut args);
 
-        args.push(OsString::from("-e.LsfxCIvu"));
+        // SSH transfers don't advertise INC_RECURSE in the capability string;
+        // incremental recursion is negotiated via compat flags exchange instead.
+        args.push(OsString::from(build_capability_string(false)));
         args.push(OsString::from("."));
 
         for path in remote_paths {
@@ -551,7 +554,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
     /// Builds the compact flag string from client configuration.
     ///
-    /// Format: `-logDtpre.iLsfxC` where:
+    /// Format: `-logDtpre.LsfxC` where:
     /// - Transfer flags before `.` separator
     /// - Info/debug flags after `.` separator
     fn build_flag_string(&self) -> String {
@@ -912,7 +915,8 @@ mod tests {
         assert_eq!(args[2], "--sender");
         let flags = args[3].to_string_lossy();
         assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-        assert_eq!(args[4], "-e.LsfxCIvu");
+        let expected_caps = build_capability_string(false);
+        assert_eq!(args[4], *expected_caps);
         assert_eq!(args[5], ".");
         assert_eq!(args[6], "/remote/path");
     }
@@ -929,7 +933,8 @@ mod tests {
         // No --sender flag for push - flags come next
         let flags = args[2].to_string_lossy();
         assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-        assert_eq!(args[3], "-e.LsfxCIvu");
+        let expected_caps = build_capability_string(false);
+        assert_eq!(args[3], *expected_caps);
         assert_eq!(args[4], ".");
         assert_eq!(args[5], "/remote/path");
     }
@@ -1718,7 +1723,7 @@ mod tests {
     /// Helper: finds the compact flag string in an args vector.
     ///
     /// The flag string starts with `-` but not `--`, and is not the capability
-    /// string (`-e.LsfxCIvu`). This handles variable positioning caused by
+    /// string (`-e.xxx`). This handles variable positioning caused by
     /// `--ignore-errors` and `--fsync` appearing before the flag string.
     fn find_flag_string(args: &[String]) -> &str {
         args.iter()
@@ -2341,9 +2346,10 @@ mod tests {
     fn capability_string_present_in_sender_args() {
         let config = ClientConfig::builder().build();
         let args = build_sender_args(&config);
+        let expected = build_capability_string(false);
         assert!(
-            args.iter().any(|a| a == "-e.LsfxCIvu"),
-            "expected capability string -e.LsfxCIvu in args: {args:?}"
+            args.iter().any(|a| a == &expected),
+            "expected capability string {expected} in args: {args:?}"
         );
     }
 
@@ -2351,9 +2357,10 @@ mod tests {
     fn capability_string_present_in_receiver_args() {
         let config = ClientConfig::builder().build();
         let args = build_receiver_args(&config);
+        let expected = build_capability_string(false);
         assert!(
-            args.iter().any(|a| a == "-e.LsfxCIvu"),
-            "expected capability string -e.LsfxCIvu in args: {args:?}"
+            args.iter().any(|a| a == &expected),
+            "expected capability string {expected} in args: {args:?}"
         );
     }
 
@@ -2867,7 +2874,7 @@ mod tests {
         }
 
         // Verify capability string and structural elements
-        assert!(args.contains(&"-e.LsfxCIvu".to_owned()));
+        assert!(args.contains(&build_capability_string(false)));
         assert!(args.contains(&".".to_owned()));
         assert!(args.contains(&"/path".to_owned()));
     }

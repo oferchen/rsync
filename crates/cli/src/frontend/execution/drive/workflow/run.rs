@@ -20,8 +20,8 @@ use crate::frontend::{
         resolve_iconv_setting,
     },
 };
-use core::{client::HumanReadableMode, message::Role, rsync_error};
-use engine::batch;
+use core::client::{BatchConfig, BatchMode, HumanReadableMode};
+use core::{message::Role, rsync_error};
 use logging::VerbosityConfig;
 use logging_sink::MessageSink;
 use std::fs::{File, OpenOptions};
@@ -401,21 +401,21 @@ where
 
     // Create batch configuration if batch mode was requested
     let batch_config = if let Some(ref path) = write_batch {
-        Some(batch::BatchConfig::new(
-            batch::BatchMode::Write,
+        Some(BatchConfig::new(
+            BatchMode::Write,
             path.to_string_lossy().into_owned(),
             32, // Default protocol version
         ))
     } else if let Some(ref path) = only_write_batch {
-        Some(batch::BatchConfig::new(
-            batch::BatchMode::OnlyWrite,
+        Some(BatchConfig::new(
+            BatchMode::OnlyWrite,
             path.to_string_lossy().into_owned(),
             32, // Default protocol version
         ))
     } else {
         read_batch.as_ref().map(|path| {
-            batch::BatchConfig::new(
-                batch::BatchMode::Read,
+            BatchConfig::new(
+                BatchMode::Read,
                 path.to_string_lossy().into_owned(),
                 32, // Default protocol version
             )

@@ -263,6 +263,32 @@ impl ProtocolVersion {
         self.as_u8() >= 29
     }
 
+    /// Returns `true` if this protocol version sends iflags after NDX.
+    ///
+    /// - Protocol < 29: iflags default to `ITEM_TRANSFER`
+    /// - Protocol >= 29: 2-byte iflags follow each NDX on the wire
+    ///
+    /// # Upstream Reference
+    ///
+    /// `sender.c:180-187` — write_ndx_and_attrs() sends iflags for protocol >= 29
+    #[must_use]
+    pub const fn supports_iflags(self) -> bool {
+        self.as_u8() >= 29
+    }
+
+    /// Returns `true` if this protocol version supports multi-phase transfers.
+    ///
+    /// - Protocol < 29: Single phase (max_phase = 1)
+    /// - Protocol >= 29: Two phases (max_phase = 2)
+    ///
+    /// # Upstream Reference
+    ///
+    /// `generator.c` / `receiver.c` — `max_phase = protocol >= 29 ? 2 : 1`
+    #[must_use]
+    pub const fn supports_multi_phase(self) -> bool {
+        self.as_u8() >= 29
+    }
+
     /// Returns `true` if this protocol version supports extended file flags.
     ///
     /// - Protocol < 28: Returns `false`
@@ -304,6 +330,65 @@ impl ProtocolVersion {
     /// compatibility flags.
     #[must_use]
     pub const fn safe_file_list_always_enabled(self) -> bool {
+        self.as_u8() >= 31
+    }
+
+    /// Returns `true` if this protocol version supports basic I/O multiplexing.
+    ///
+    /// - Protocol < 23: Returns `false`
+    /// - Protocol >= 23: Returns `true`
+    ///
+    /// # Upstream Reference
+    ///
+    /// `main.c:1304-1305` — client activates input multiplex for protocol >= 23;
+    /// server activates output multiplex for protocol >= 23.
+    #[must_use]
+    pub const fn supports_multiplex_io(self) -> bool {
+        self.as_u8() >= 23
+    }
+
+    /// Returns `true` if this protocol version supports the goodbye (NDX_DONE) exchange.
+    ///
+    /// - Protocol < 24: Returns `false` (no goodbye handshake)
+    /// - Protocol >= 24: Returns `true`
+    ///
+    /// # Upstream Reference
+    ///
+    /// `main.c:880-905` — `read_final_goodbye()` skips for protocol < 24.
+    #[must_use]
+    pub const fn supports_goodbye_exchange(self) -> bool {
+        self.as_u8() >= 24
+    }
+
+    /// Returns `true` if this protocol version supports generator-to-sender messages.
+    ///
+    /// - Protocol < 30: Returns `false`
+    /// - Protocol >= 30: Returns `true`
+    ///
+    /// When true, the generator can send messages (including `send_no_send`) via
+    /// the multiplexed stream, and both client/server activate their respective
+    /// multiplex channels for bidirectional communication.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `io.c` — `need_messages_from_generator` is true for protocol >= 30.
+    #[must_use]
+    pub const fn supports_generator_messages(self) -> bool {
+        self.as_u8() >= 30
+    }
+
+    /// Returns `true` if this protocol version uses the extended 3-way goodbye exchange.
+    ///
+    /// - Protocol < 31: Returns `false` (simple NDX_DONE exchange)
+    /// - Protocol >= 31: Returns `true` (sender echoes NDX_DONE, expects another)
+    ///
+    /// Also used for MSG_IO_TIMEOUT delivery from server to client.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `main.c:880-905` — protocol >= 31 performs extra NDX_DONE round-trip.
+    #[must_use]
+    pub const fn supports_extended_goodbye(self) -> bool {
         self.as_u8() >= 31
     }
 

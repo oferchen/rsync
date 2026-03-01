@@ -29,6 +29,7 @@
 //! - [`engine::signature`] - Signature reconstruction from wire format
 //! - [`protocol::wire`] - Wire format for signatures and deltas
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -38,7 +39,8 @@ use super::delta_apply::ChecksumVerifier;
 use filters::{FilterRule, FilterSet};
 use logging::{debug_log, info_log};
 use protocol::codec::{
-    NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec,
+    NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum,
+    create_ndx_codec,
 };
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
@@ -116,6 +118,19 @@ struct PendingSegment {
     flist_start: usize,
     /// Number of entries in this segment.
     count: usize,
+}
+
+/// Classification of a directory's children for incremental recursion.
+///
+/// Groups the original file list indices belonging to a single directory
+/// segment, along with the directory's NDX used as parent reference when
+/// sending the segment over the wire.
+#[derive(Debug)]
+struct SegmentClassification {
+    /// Directory NDX assigned to this directory.
+    dir_ndx: usize,
+    /// Original file list indices of entries belonging to this directory.
+    child_indices: Vec<usize>,
 }
 
 /// Context for the generator role during a transfer.
@@ -242,6 +257,29 @@ impl GeneratorContext {
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
     }
 
+    /// Creates a configured `FileListWriter` matching the current protocol and flags.
+    fn build_flist_writer(&self) -> FileListWriter {
+        let mut writer = if let Some(flags) = self.compat_flags {
+            FileListWriter::with_compat_flags(self.protocol, flags)
+        } else {
+            FileListWriter::new(self.protocol)
+        }
+        .with_preserve_uid(self.config.flags.owner)
+        .with_preserve_gid(self.config.flags.group)
+        .with_preserve_links(self.config.flags.links)
+        .with_preserve_devices(self.config.flags.devices)
+        .with_preserve_specials(self.config.flags.specials)
+        .with_preserve_hard_links(self.config.flags.hard_links)
+        .with_preserve_atimes(self.config.flags.atimes)
+        .with_preserve_acls(self.config.flags.acls)
+        .with_preserve_xattrs(self.config.flags.xattrs);
+
+        if let Some(ref converter) = self.config.iconv {
+            writer = writer.with_iconv(converter.clone());
+        }
+        writer
+    }
+
     /// Returns the generated file list.
     #[must_use]
     pub fn file_list(&self) -> &[FileEntry] {
@@ -290,10 +328,10 @@ impl GeneratorContext {
     const fn should_activate_input_multiplex(&self) -> bool {
         if self.config.client_mode {
             // Client mode: >= 23 (upstream main.c:1304-1305, no filesfrom)
-            self.protocol.as_u8() >= 23
+            self.protocol.supports_multiplex_io()
         } else {
             // Server mode: >= 30 (need_messages_from_generator)
-            self.protocol.as_u8() >= 30
+            self.protocol.supports_generator_messages()
         }
     }
 
@@ -464,7 +502,7 @@ impl GeneratorContext {
     ///
     /// - `flist.c:2517-2518`: `write_int(f, ignore_errors ? 0 : io_error);`
     fn send_io_error_flag<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        if self.protocol.as_u8() < 30 {
+        if self.protocol.uses_fixed_encoding() {
             // For protocol < 30, send io_error as 4-byte int
             // If ignore_errors is set, send 0 instead of actual io_error
             let value = if self.config.ignore_errors {
@@ -474,6 +512,45 @@ impl GeneratorContext {
             };
             writer.write_all(&value.to_le_bytes())?;
             writer.flush()?;
+        }
+        Ok(())
+    }
+
+    /// Writes NDX, iflags, and sum_head for one file.
+    ///
+    /// upstream: sender.c:180-187 write_ndx_and_attrs()
+    fn write_ndx_and_attrs<W: Write>(
+        &self,
+        writer: &mut W,
+        ndx_codec: &mut NdxCodecEnum,
+        ndx: i32,
+        iflags: &ItemFlags,
+        sum_head: &SumHead,
+    ) -> io::Result<()> {
+        ndx_codec.write_ndx(writer, ndx)?;
+        if self.protocol.supports_iflags() {
+            writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
+        }
+        sum_head.write(writer)?;
+        Ok(())
+    }
+
+    /// Records an I/O error and sends MSG_NO_SEND for protocol >= 30.
+    ///
+    /// upstream: sender.c:354-369
+    fn record_open_failure<W: Write>(
+        &mut self,
+        writer: &mut super::writer::ServerWriter<W>,
+        ndx: i32,
+        error: &io::Error,
+    ) -> io::Result<()> {
+        if error.kind() == io::ErrorKind::NotFound {
+            self.io_error |= io_error_flags::IOERR_VANISHED;
+        } else {
+            self.io_error |= io_error_flags::IOERR_GENERAL;
+        }
+        if self.protocol.supports_generator_messages() {
+            writer.send_no_send(ndx)?;
         }
         Ok(())
     }
@@ -520,7 +597,7 @@ impl GeneratorContext {
     const fn get_checksum_algorithm(&self) -> ChecksumAlgorithm {
         if let Some(negotiated) = &self.negotiated_algorithms {
             negotiated.checksum
-        } else if self.protocol.as_u8() >= 30 {
+        } else if self.protocol.uses_varint_encoding() {
             ChecksumAlgorithm::MD5
         } else {
             ChecksumAlgorithm::MD4
@@ -561,7 +638,11 @@ impl GeneratorContext {
 
         // Phase handling: upstream sender.c line 210: max_phase = protocol_version >= 29 ? 2 : 1
         let mut phase: i32 = 0;
-        let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
+        let max_phase: i32 = if self.protocol.supports_iflags() {
+            2
+        } else {
+            1
+        };
 
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
 
@@ -623,7 +704,7 @@ impl GeneratorContext {
 
             // Read item flags using ItemFlags helper
             let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
-            if self.protocol.as_u8() >= 29 {
+            if self.protocol.supports_iflags() {
                 self.total_bytes_read += 2;
             }
 
@@ -690,16 +771,7 @@ impl GeneratorContext {
                         f,
                     )),
                     Err(e) => {
-                        // upstream: sender.c:354-369 — when open fails, log the error,
-                        // set io_error flags, and send MSG_NO_SEND for protocol >= 30.
-                        if e.kind() == io::ErrorKind::NotFound {
-                            self.io_error |= io_error_flags::IOERR_VANISHED;
-                        } else {
-                            self.io_error |= io_error_flags::IOERR_GENERAL;
-                        }
-                        if self.protocol.as_u8() >= 30 {
-                            writer.send_no_send(ndx_i32)?;
-                        }
+                        self.record_open_failure(&mut *writer, ndx_i32, &e)?;
                         continue;
                     }
                 };
@@ -714,13 +786,13 @@ impl GeneratorContext {
                 };
                 let delta_script = generate_delta_from_signature(source, config)?;
 
-                // Send ndx, iflags, sum_head
-                // upstream: sender.c:180-187 write_ndx_and_attrs()
-                ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
-                if self.protocol.as_u8() >= 29 {
-                    writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
-                }
-                sum_head.write(&mut *writer)?;
+                self.write_ndx_and_attrs(
+                    &mut *writer,
+                    &mut ndx_write_codec,
+                    ndx_i32,
+                    &iflags,
+                    &sum_head,
+                )?;
 
                 // Compute checksum, convert to wire ops, write
                 let checksum_algorithm = self.get_checksum_algorithm();
@@ -743,25 +815,18 @@ impl GeneratorContext {
                 let source = match fs::File::open(source_path) {
                     Ok(f) => f,
                     Err(e) => {
-                        if e.kind() == io::ErrorKind::NotFound {
-                            self.io_error |= io_error_flags::IOERR_VANISHED;
-                        } else {
-                            self.io_error |= io_error_flags::IOERR_GENERAL;
-                        }
-                        if self.protocol.as_u8() >= 30 {
-                            writer.send_no_send(ndx_i32)?;
-                        }
+                        self.record_open_failure(&mut *writer, ndx_i32, &e)?;
                         continue;
                     }
                 };
 
-                // Send ndx, iflags, sum_head (only after successful file open)
-                // upstream: sender.c:180-187 write_ndx_and_attrs()
-                ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
-                if self.protocol.as_u8() >= 29 {
-                    writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
-                }
-                sum_head.write(&mut *writer)?;
+                self.write_ndx_and_attrs(
+                    &mut *writer,
+                    &mut ndx_write_codec,
+                    ndx_i32,
+                    &iflags,
+                    &sum_head,
+                )?;
 
                 // Stream: read → hash → write in one pass (no DeltaScript intermediate).
                 // No flush here — data accumulates in MultiplexWriter's 64KB buffer,
@@ -822,7 +887,7 @@ impl GeneratorContext {
     ///
     /// - `main.c:880-905` - `read_final_goodbye()`
     fn handle_goodbye<R: Read, W: Write>(&self, reader: &mut R, writer: &mut W) -> io::Result<()> {
-        if self.protocol.as_u8() < 24 {
+        if !self.protocol.supports_goodbye_exchange() {
             return Ok(());
         }
 
@@ -843,7 +908,7 @@ impl GeneratorContext {
         }
 
         // For protocol 31+: write NDX_DONE back, then read again
-        if self.protocol.as_u8() >= 31 {
+        if self.protocol.supports_extended_goodbye() {
             writer.write_all(&[0x00])?;
             writer.flush()?;
 
@@ -954,26 +1019,52 @@ impl GeneratorContext {
     /// - `flist.c:send_extra_file_list()` — sends one segment per directory
     /// - `flist.c:recv_file_list()` — `ndx_start = cur_flist->ndx_start + cur_flist->used`
     fn partition_file_list_for_inc_recurse(&mut self) {
-        use protocol::flist::DirectoryTree;
-
         if !self.inc_recurse() || self.file_list.is_empty() {
             return;
         }
 
-        let mut tree = DirectoryTree::new();
-        // Map: directory path → (tree_node_idx, segment_data_idx)
-        let mut dir_map: std::collections::HashMap<String, (usize, usize)> =
-            std::collections::HashMap::new();
+        let (initial_indices, segment_data, tree) =
+            Self::classify_file_list_entries(&self.file_list);
 
-        // Track original file_list indices per segment
+        self.reorder_and_build_segments(initial_indices, segment_data, tree);
+
+        debug_log!(
+            Flist,
+            2,
+            "partitioned file list: {} initial entries, {} sub-segments",
+            self.initial_segment_count.unwrap_or(0),
+            self.pending_segments.len()
+        );
+    }
+
+    /// Classifies file list entries as top-level or nested directory children.
+    ///
+    /// Walks the file list and assigns each entry to either the initial (top-level)
+    /// segment or to a per-directory segment. Directories are registered in a
+    /// `DirectoryTree` for later depth-first traversal.
+    ///
+    /// Returns:
+    /// - `initial_indices`: original file list indices for the top-level segment
+    /// - `segment_data`: per-directory classification with child indices
+    /// - `tree`: directory tree for depth-first traversal ordering
+    fn classify_file_list_entries(
+        file_list: &[FileEntry],
+    ) -> (
+        Vec<usize>,
+        Vec<SegmentClassification>,
+        protocol::flist::DirectoryTree,
+    ) {
+        use protocol::flist::DirectoryTree;
+
+        let mut tree = DirectoryTree::new();
+        let mut dir_map: HashMap<String, (usize, usize)> = HashMap::new();
         let mut initial_indices: Vec<usize> = Vec::new();
-        // (dir_ndx, original file_list indices for this directory's children)
-        let mut segment_data: Vec<(usize, Vec<usize>)> = Vec::new();
+        let mut segment_data: Vec<SegmentClassification> = Vec::new();
         let mut dir_ndx_counter: usize = 0;
 
-        for (i, entry) in self.file_list.iter().enumerate() {
+        for (i, entry) in file_list.iter().enumerate() {
             let name = entry.name();
-            let parent = std::path::Path::new(name)
+            let parent = Path::new(name)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
@@ -984,17 +1075,23 @@ impl GeneratorContext {
                 if entry.is_dir() && name != "." {
                     let node = tree.add_directory(dir_ndx_counter, name.to_string(), None);
                     let seg_idx = segment_data.len();
-                    segment_data.push((dir_ndx_counter, Vec::new()));
+                    segment_data.push(SegmentClassification {
+                        dir_ndx: dir_ndx_counter,
+                        child_indices: Vec::new(),
+                    });
                     dir_map.insert(name.to_string(), (node, seg_idx));
                     dir_ndx_counter += 1;
                 }
             } else if let Some(&(_, seg_idx)) = dir_map.get(parent.as_str()) {
-                segment_data[seg_idx].1.push(i);
+                segment_data[seg_idx].child_indices.push(i);
                 if entry.is_dir() {
                     let parent_node = dir_map.get(parent.as_str()).map(|&(n, _)| n);
                     let node = tree.add_directory(dir_ndx_counter, name.to_string(), parent_node);
                     let new_seg_idx = segment_data.len();
-                    segment_data.push((dir_ndx_counter, Vec::new()));
+                    segment_data.push(SegmentClassification {
+                        dir_ndx: dir_ndx_counter,
+                        child_indices: Vec::new(),
+                    });
                     dir_map.insert(name.to_string(), (node, new_seg_idx));
                     dir_ndx_counter += 1;
                 }
@@ -1003,55 +1100,56 @@ impl GeneratorContext {
             }
         }
 
-        // Reorder file_list and full_paths to match segment send order.
-        // After reordering, NDX = index into self.file_list (contiguous, no gaps).
+        (initial_indices, segment_data, tree)
+    }
+
+    /// Reorders file_list/full_paths and builds pending segments from classification results.
+    ///
+    /// The initial (top-level) entries are placed first, then sub-segments are appended
+    /// in depth-first traversal order from the directory tree. This produces a contiguous
+    /// layout where NDX = index into `self.file_list`.
+    fn reorder_and_build_segments(
+        &mut self,
+        initial_indices: Vec<usize>,
+        segment_data: Vec<SegmentClassification>,
+        mut tree: protocol::flist::DirectoryTree,
+    ) {
         let old_file_list = std::mem::take(&mut self.file_list);
         let old_full_paths = std::mem::take(&mut self.full_paths);
         self.file_list = Vec::with_capacity(old_file_list.len());
         self.full_paths = Vec::with_capacity(old_full_paths.len());
 
-        // Initial segment: top-level entries
         for &idx in &initial_indices {
             self.file_list.push(old_file_list[idx].clone());
             self.full_paths.push(old_full_paths[idx].clone());
         }
-        let initial_count = initial_indices.len();
-        self.initial_segment_count = Some(initial_count);
+        self.initial_segment_count = Some(initial_indices.len());
 
-        // Build dir_ndx → segment_data index mapping for O(1) lookup
-        let dir_ndx_to_seg: std::collections::HashMap<usize, usize> = segment_data
+        // Build dir_ndx -> segment_data index mapping for O(1) lookup
+        let dir_ndx_to_seg: HashMap<usize, usize> = segment_data
             .iter()
             .enumerate()
-            .map(|(seg_idx, (dn, _))| (*dn, seg_idx))
+            .map(|(seg_idx, seg)| (seg.dir_ndx, seg_idx))
             .collect();
 
-        // Sub-segments in depth-first traversal order
         let mut pending = Vec::new();
         while let Some((dir_ndx, _path)) = tree.next_directory() {
             if let Some(&seg_idx) = dir_ndx_to_seg.get(&dir_ndx) {
-                let (dn, ref indices) = segment_data[seg_idx];
+                let seg = &segment_data[seg_idx];
                 let flist_start = self.file_list.len();
-                for &idx in indices {
+                for &idx in &seg.child_indices {
                     self.file_list.push(old_file_list[idx].clone());
                     self.full_paths.push(old_full_paths[idx].clone());
                 }
                 pending.push(PendingSegment {
-                    parent_dir_ndx: dn as i32,
+                    parent_dir_ndx: seg.dir_ndx as i32,
                     flist_start,
-                    count: indices.len(),
+                    count: seg.child_indices.len(),
                 });
             }
         }
 
         self.pending_segments = pending;
-
-        debug_log!(
-            Flist,
-            2,
-            "partitioned file list: {} initial entries, {} sub-segments",
-            initial_count,
-            self.pending_segments.len()
-        );
     }
 
     /// Sends pending file list segments during the transfer loop.
@@ -1069,20 +1167,7 @@ impl GeneratorContext {
             return Ok(());
         }
 
-        let mut flist_writer = if let Some(flags) = self.compat_flags {
-            FileListWriter::with_compat_flags(self.protocol, flags)
-        } else {
-            FileListWriter::new(self.protocol)
-        }
-        .with_preserve_uid(self.config.flags.owner)
-        .with_preserve_gid(self.config.flags.group)
-        .with_preserve_links(self.config.flags.links)
-        .with_preserve_devices(self.config.flags.devices)
-        .with_preserve_specials(self.config.flags.specials)
-        .with_preserve_hard_links(self.config.flags.hard_links)
-        .with_preserve_atimes(self.config.flags.atimes)
-        .with_preserve_acls(self.config.flags.acls)
-        .with_preserve_xattrs(self.config.flags.xattrs);
+        let mut flist_writer = self.build_flist_writer();
 
         // Send all pending segments. Since we eagerly scanned, send them all at once
         // (upstream uses MIN_FILECNT_LOOKAHEAD=1000 for throttling with lazy scanning).
@@ -1344,29 +1429,7 @@ impl GeneratorContext {
         // Track timing for flist_xfertime statistic (upstream stats.flist_xfertime)
         self.flist_xfer_start = Some(Instant::now());
 
-        let flist_writer = if let Some(flags) = self.compat_flags {
-            FileListWriter::with_compat_flags(self.protocol, flags)
-        } else {
-            FileListWriter::new(self.protocol)
-        };
-
-        // Configure preservation flags to match what the receiver expects.
-        // Upstream flist.c uses preserve_uid/preserve_gid/preserve_devices etc. globals.
-        let mut flist_writer = flist_writer
-            .with_preserve_uid(self.config.flags.owner)
-            .with_preserve_gid(self.config.flags.group)
-            .with_preserve_links(self.config.flags.links)
-            .with_preserve_devices(self.config.flags.devices)
-            .with_preserve_specials(self.config.flags.specials)
-            .with_preserve_hard_links(self.config.flags.hard_links)
-            .with_preserve_atimes(self.config.flags.atimes)
-            .with_preserve_acls(self.config.flags.acls)
-            .with_preserve_xattrs(self.config.flags.xattrs);
-
-        // Wire up iconv converter if configured
-        if let Some(ref converter) = self.config.iconv {
-            flist_writer = flist_writer.with_iconv(converter.clone());
-        }
+        let mut flist_writer = self.build_flist_writer();
 
         // When INC_RECURSE, only send initial segment entries; the rest
         // are sent via send_extra_file_lists() during the transfer loop.
