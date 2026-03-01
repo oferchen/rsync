@@ -667,8 +667,12 @@ fn build_full_daemon_args(
     // Add capability flags for protocol 30+.
     // Uses CAPABILITY_MAPPINGS as single source of truth (mirrors upstream
     // options.c:3003-3050 maybe_add_e_option()).
+    //
+    // INC_RECURSE is only advertised for pull transfers (receiver role).
+    // The sender-side incremental file list sending needs further interop
+    // validation before enabling with upstream daemons.
     if protocol.as_u8() >= 30 {
-        args.push(build_capability_string(true));
+        args.push(build_capability_string(!is_sender));
     }
 
     // Dummy argument (upstream requirement - represents CWD)
