@@ -781,27 +781,15 @@ comp_run_scenario() {
 # Format: "direction:name" where direction is "up" (upstream→oc) or "oc" (oc→upstream).
 # These are tracked separately from unexpected failures so CI catches regressions
 # while not blocking on unrelated missing features.
-KNOWN_FAILURES=(
-  # Both directions: checksum transfer mode, zlib compression, --delete
-  "up:checksum"   "oc:checksum"
-  "up:compress"   "oc:compress"
-  "up:delete"     "oc:delete"
-  # Both directions: symlink/hardlink preservation in daemon mode
-  "up:symlinks"   "oc:symlinks"
-  "up:hardlinks"  "oc:hardlinks"
-  # upstream→oc: --size-only quick-check (3.4.1+)
-  "up:size-only"
-  # oc→upstream: --numeric-ids forwarding, --exclude filter passing
-  "oc:numeric-ids"
-  "oc:exclude"
-)
+#
+# Previously tracked failures now resolved:
+# - checksum, compress, delete, symlinks, hardlinks (both directions)
+# - size-only (upstream→oc), numeric-ids, exclude (oc→upstream)
+# - Protocol 28/29 upstream→oc blanket skip (codecs now handle all versions)
+KNOWN_FAILURES=()
 
 is_known_failure() {
   local direction=$1 name=$2 forced_proto=$3
-  # Protocol 28/29 upstream→oc: blanket known limitation
-  if [[ "$direction" == "up" && -n "$forced_proto" && "$forced_proto" -le 29 ]]; then
-    return 0
-  fi
   local key="${direction}:${name}"
   for kf in "${KNOWN_FAILURES[@]}"; do
     [[ "$kf" == "$key" ]] && return 0
