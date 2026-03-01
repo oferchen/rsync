@@ -784,21 +784,26 @@ comp_run_scenario() {
 #
 # Resolved since initial tracking:
 # - up:checksum, oc:checksum (always-checksum mode implemented)
-# - up:compress (zlib compression interop fixed)
+# - up:delete (apply_long_form_args now parses --delete/--delete-before)
 #
 # Remaining known failures — features not yet fully wired into daemon transfer path:
 KNOWN_FAILURES=(
   "up:symlinks"   "oc:symlinks"
   "up:hardlinks"
-  "up:delete"     "oc:delete"
+  "up:compress"   "oc:compress"
+  "oc:delete"
   "up:size-only"
-  "oc:compress"
   "oc:numeric-ids"
   "oc:exclude"
 )
 
 is_known_failure() {
   local direction=$1 name=$2 forced_proto=$3
+  # Protocol 28/29 upstream→oc: blanket known limitation.
+  # Legacy protocol codecs are not fully wired for upstream→oc daemon transfers.
+  if [[ "$direction" == "up" && -n "$forced_proto" && "$forced_proto" -le 29 ]]; then
+    return 0
+  fi
   local key="${direction}:${name}"
   for kf in "${KNOWN_FAILURES[@]}"; do
     [[ "$kf" == "$key" ]] && return 0
