@@ -43,6 +43,8 @@ use protocol::codec::{
     create_ndx_codec,
 };
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
+#[cfg(unix)]
+use protocol::flist::{DevIno, HardlinkLookup, HardlinkTable};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
 use protocol::idlist::IdList;
 use protocol::wire::{
@@ -376,6 +378,50 @@ impl GeneratorContext {
         self.full_paths.clear();
     }
 
+    /// Assigns hardlink indices to entries sharing the same (dev, ino) pair.
+    ///
+    /// Must be called after sorting since indices are post-sort file list positions.
+    /// The first occurrence in sorted order becomes the leader (`u32::MAX`); subsequent
+    /// occurrences become followers pointing to the leader's index.
+    ///
+    /// Entries with `hardlink_dev`/`hardlink_ino` set during `create_entry()` are
+    /// matched here. After assignment, the temporary dev/ino fields are cleared for
+    /// protocol >= 30 (which uses index-based hardlink encoding on the wire).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `hlink.c:match_hard_links()` — called after `sort_file_list()`
+    /// - `hlink.c:idev_find()` — two-level (dev, ino) hashtable lookup
+    #[cfg(unix)]
+    fn assign_hardlink_indices(&mut self) {
+        let mut table = HardlinkTable::new();
+
+        for i in 0..self.file_list.len() {
+            let entry = &self.file_list[i];
+            let (Some(dev), Some(ino)) = (entry.hardlink_dev(), entry.hardlink_ino()) else {
+                continue;
+            };
+
+            let dev_ino = DevIno::new(dev as u64, ino as u64);
+            match table.find_or_insert(dev_ino, i as u32) {
+                HardlinkLookup::First(_) => {
+                    // Leader: mark with u32::MAX (XMIT_HLINK_FIRST on wire)
+                    self.file_list[i].set_hardlink_idx(u32::MAX);
+                }
+                HardlinkLookup::LinkTo(leader_ndx) => {
+                    // Follower: point to leader's sorted index
+                    self.file_list[i].set_hardlink_idx(leader_ndx);
+                }
+            }
+
+            // Clear temporary dev/ino for proto 30+ (not sent on wire)
+            if self.protocol.as_u8() >= 30 {
+                self.file_list[i].set_hardlink_dev(0);
+                self.file_list[i].set_hardlink_ino(0);
+            }
+        }
+    }
+
     /// Determines if input multiplex should be activated based on mode and protocol.
     ///
     /// The activation threshold differs by mode:
@@ -413,8 +459,7 @@ impl GeneratorContext {
             // Filter rules were already sent to the daemon in mod.rs.
             // upstream: flist.c:1332 — is_excluded() applied during make_file()
             if !self.config.filter_rules.is_empty() {
-                let filter_set =
-                    self.parse_received_filters(&self.config.filter_rules.clone())?;
+                let filter_set = self.parse_received_filters(&self.config.filter_rules.clone())?;
                 self.filters = Some(filter_set);
             }
             return Ok(());
@@ -1065,6 +1110,13 @@ impl GeneratorContext {
         // This avoids cloning every element - O(n) swaps instead of O(n) clones.
         apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
 
+        // Assign hardlink indices after sort (indices are post-sort file list positions).
+        // upstream: hlink.c:match_hard_links() called after sort_file_list()
+        #[cfg(unix)]
+        if self.config.flags.hard_links {
+            self.assign_hardlink_indices();
+        }
+
         // Record end time for flist_buildtime statistic
         self.flist_build_end = Some(Instant::now());
 
@@ -1509,6 +1561,14 @@ impl GeneratorContext {
         #[cfg(unix)]
         if self.config.flags.group {
             entry.set_gid(metadata.gid());
+        }
+
+        // Store dev/ino for hardlink detection (post-sort assignment).
+        // upstream: flist.c:make_file() stores tmp_dev/tmp_ino when preserve_hard_links
+        #[cfg(unix)]
+        if self.config.flags.hard_links && metadata.nlink() > 1 && !metadata.is_dir() {
+            entry.set_hardlink_dev(metadata.dev() as i64);
+            entry.set_hardlink_ino(metadata.ino() as i64);
         }
 
         Ok(entry)

@@ -63,6 +63,8 @@ pub struct ParsedServerFlags {
     pub update: bool,
     /// Preserve creation times (`N` flag, `--crtimes`).
     pub crtimes: bool,
+    /// Ignore modification times for quick-check (`I` flag, `--ignore-times`).
+    pub ignore_times: bool,
     /// Fuzzy basis file matching (`y` flag, `--fuzzy`).
     pub fuzzy: bool,
     /// Prune empty directories from destination (`m` flag, `--prune-empty-dirs`).
@@ -156,6 +158,7 @@ impl ParsedServerFlags {
             b'z' => self.compress = true,
             b'c' => self.checksum = true,
             b'H' => self.hard_links = true,
+            b'I' => self.ignore_times = true,
             b'A' => self.acls = true,
             b'X' => self.xattrs = true,
             b'n' => self.numeric_ids = true,

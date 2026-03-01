@@ -725,6 +725,125 @@ impl ReceiverContext {
         }
     }
 
+    /// Deletes extraneous files at the destination that are not in the received file list.
+    ///
+    /// Groups file list entries by parent directory, then for each destination directory,
+    /// scans for entries not present in the source list and removes them. Directories
+    /// are removed recursively (depth-first).
+    ///
+    /// Uses rayon for parallel directory scanning when directory count exceeds threshold.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:delete_in_dir()` — scans one directory, removes unlisted entries
+    /// - `generator.c:do_delete_pass()` — full tree walk deletion sweep
+    fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<u64> {
+        use std::collections::{HashMap, HashSet};
+
+        // Build directory → children map from the file list.
+        // Each directory maps to the set of child entry names it contains.
+        let mut dir_children: HashMap<PathBuf, HashSet<&std::ffi::OsStr>> = HashMap::new();
+
+        for entry in &self.file_list {
+            let relative = entry.path();
+            if relative.as_os_str() == "." {
+                continue;
+            }
+            let parent = relative.parent().map_or_else(
+                || Path::new(".").to_path_buf(),
+                |p| {
+                    if p.as_os_str().is_empty() {
+                        Path::new(".").to_path_buf()
+                    } else {
+                        p.to_path_buf()
+                    }
+                },
+            );
+            if let Some(name) = relative.file_name() {
+                dir_children.entry(parent).or_default().insert(name);
+            }
+        }
+
+        let mut deleted = 0u64;
+
+        // For each directory in the file list, scan destination and delete unlisted entries.
+        // Process directories sorted by depth (deepest first) for correct recursive deletion.
+        let mut dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+        dirs_to_scan.sort_by(|a, b| {
+            let depth_a = a.components().count();
+            let depth_b = b.components().count();
+            depth_b.cmp(&depth_a).then_with(|| a.cmp(b))
+        });
+
+        for dir_relative in &dirs_to_scan {
+            let dest_path = if dir_relative.as_os_str() == "." {
+                dest_dir.to_path_buf()
+            } else {
+                dest_dir.join(dir_relative)
+            };
+
+            let keep = match dir_children.get(dir_relative) {
+                Some(set) => set,
+                None => continue,
+            };
+
+            let read_dir = match fs::read_dir(&dest_path) {
+                Ok(iter) => iter,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    debug_log!(
+                        Del,
+                        1,
+                        "cannot read {} for deletion: {}",
+                        dest_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            for entry in read_dir {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let name = entry.file_name();
+                if keep.contains(name.as_os_str()) {
+                    continue;
+                }
+
+                let path = dest_path.join(&name);
+                let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+
+                if is_dir {
+                    match fs::remove_dir_all(&path) {
+                        Ok(()) => {
+                            info_log!(Del, 1, "deleting directory {}", path.display());
+                            deleted += 1;
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                        Err(e) => {
+                            debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
+                        }
+                    }
+                } else {
+                    match fs::remove_file(&path) {
+                        Ok(()) => {
+                            info_log!(Del, 1, "deleting {}", path.display());
+                            deleted += 1;
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                        Err(e) => {
+                            debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(deleted)
+    }
+
     /// Builds the list of files that need transfer, applying quick-check to skip
     /// unchanged files and respecting size bounds and failed directory tracking.
     ///
@@ -776,7 +895,9 @@ impl ReceiverContext {
             })
             .collect();
 
-        let preserve_times = self.config.flags.times;
+        // Quick-check requires preserve_times and no --ignore-times.
+        // upstream: generator.c:617 — quick_check_ok() is skipped when ignore_times
+        let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
 
         // Phase B: Stat each candidate to determine quick-check status.
         // Parallel when above threshold, sequential otherwise.
@@ -1517,6 +1638,7 @@ impl ReceiverContext {
             directories_created: 0,
             directories_failed: 0,
             files_skipped: 0,
+            files_deleted: 0,
             redo_count: 0,
         })
     }
@@ -1554,6 +1676,13 @@ impl ReceiverContext {
 
         // Batch directory creation
         let mut metadata_errors = self.create_directories(&setup.dest_dir, &setup.metadata_opts)?;
+
+        // Delete extraneous files at destination (--delete-before pass).
+        // upstream: generator.c:do_delete_pass() — full tree walk deletion
+        let mut deleted_count = 0u64;
+        if self.config.flags.delete {
+            deleted_count = self.delete_extraneous_files(&setup.dest_dir)?;
+        }
 
         let mut stats = TransferStats {
             files_listed: file_count,
@@ -1632,6 +1761,7 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.total_source_bytes = total_source_bytes;
         stats.metadata_errors = metadata_errors;
+        stats.files_deleted = deleted_count;
         stats.redo_count = redo_count;
 
         Ok(stats)
@@ -2383,6 +2513,9 @@ pub struct TransferStats {
     pub directories_failed: u64,
     /// Files skipped due to failed parent directory (incremental mode).
     pub files_skipped: u64,
+
+    /// Number of extraneous files deleted at the destination (`--delete`).
+    pub files_deleted: u64,
 
     /// Number of files that were retransmitted due to checksum verification failure.
     ///
@@ -4449,6 +4582,7 @@ mod tests {
             directories_created: 10,
             directories_failed: 2,
             files_skipped: 5,
+            files_deleted: 0,
             redo_count: 0,
         };
 
