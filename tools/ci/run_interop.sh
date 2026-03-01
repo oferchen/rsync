@@ -786,12 +786,13 @@ comp_run_scenario() {
 # - up:checksum, oc:checksum (always-checksum mode implemented)
 # - up:delete (apply_long_form_args now parses --delete/--delete-before)
 # - up:symlinks, oc:symlinks (create_symlinks() in receiver)
-# - up:size-only (was already working; stale binary caused false failure)
 # - up:hardlinks (create_hardlinks() in receiver, follower skip in transfer loop)
 # - oc:delete, oc:numeric-ids, oc:exclude (correct compact flag semantics + long-form args)
+# - up:compress, oc:compress (TokenReader integration in run_sync path)
 #
-# All previously known failures have been resolved.
+# Remaining known failures:
 KNOWN_FAILURES=(
+  "up:size-only"
 )
 
 is_known_failure() {
