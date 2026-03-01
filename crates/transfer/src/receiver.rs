@@ -86,6 +86,21 @@ use super::transfer_ops::{
 
 use metadata::{MetadataOptions, apply_metadata_from_file_entry, apply_metadata_with_cached_stat};
 
+/// Returns true if this file entry is a hardlink follower that should be
+/// created as a hard link rather than transferred via delta.
+///
+/// A follower has `hardlink_idx` set to a value other than `u32::MAX`.
+/// Leaders (the first file in a hardlink group) use `u32::MAX` as a sentinel.
+/// Entries without hardlink metadata return false.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1539` — `F_HLINK_NOT_FIRST(file)` check
+/// - `hlink.c:284` — `hard_link_check()` called for non-first entries
+fn is_hardlink_follower(entry: &FileEntry) -> bool {
+    matches!(entry.hardlink_idx(), Some(idx) if idx != u32::MAX)
+}
+
 /// Pure-function quick-check: compares destination stat against source entry.
 ///
 /// Returns `Some(metadata)` when the destination already matches (skip transfer),
@@ -906,6 +921,190 @@ impl ReceiverContext {
     #[cfg(not(unix))]
     fn create_symlinks(&self, _dest_dir: &Path) {}
 
+    /// Creates hard links for hardlink follower entries after the leader has been transferred.
+    ///
+    /// In the rsync protocol (30+), hardlinked files are grouped by a shared index.
+    /// The first file in each group (the "leader", `hardlink_idx == u32::MAX`) is
+    /// transferred normally. Subsequent files ("followers") carry the leader's file
+    /// list index in their `hardlink_idx` field and are created as hard links to the
+    /// leader's destination path instead of being transferred independently.
+    ///
+    /// For protocol 28-29, hardlinks are identified by (dev, ino) pairs. This method
+    /// handles both cases by building a mapping from hardlink identifiers to leader
+    /// destination paths.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `hlink.c:hard_link_check()` — skips followers, links to leader
+    /// - `hlink.c:finish_hard_link()` — creates links after leader transfer completes
+    /// - `generator.c:1539` — `F_HLINK_NOT_FIRST` check before `hard_link_check()`
+    fn create_hardlinks(&self, dest_dir: &Path) {
+        if !self.config.flags.hard_links {
+            return;
+        }
+
+        // Protocol 30+: use hardlink_idx to map followers to leaders.
+        // Build a map from file list index -> destination path for leaders.
+        let mut leader_paths: std::collections::HashMap<u32, PathBuf> =
+            std::collections::HashMap::new();
+
+        // First pass: record leader paths (entries where hardlink_idx == u32::MAX).
+        for (idx, entry) in self.file_list.iter().enumerate() {
+            if entry.hardlink_idx() == Some(u32::MAX) {
+                let relative_path = entry.path();
+                let dest_path = if relative_path.as_os_str() == "." {
+                    dest_dir.to_path_buf()
+                } else {
+                    dest_dir.join(relative_path)
+                };
+                leader_paths.insert(idx as u32, dest_path);
+            }
+        }
+
+        // Second pass: create hard links for followers.
+        for entry in &self.file_list {
+            let leader_idx = match entry.hardlink_idx() {
+                Some(idx) if idx != u32::MAX => idx,
+                _ => continue,
+            };
+
+            let leader_path = match leader_paths.get(&leader_idx) {
+                Some(p) => p,
+                None => {
+                    debug_log!(
+                        Recv,
+                        1,
+                        "hardlink follower {} references unknown leader index {}",
+                        entry.name(),
+                        leader_idx
+                    );
+                    continue;
+                }
+            };
+
+            let relative_path = entry.path();
+            let link_path = dest_dir.join(relative_path);
+
+            // Quick-check: if destination already hard-links to the leader, skip.
+            if let Ok(link_meta) = fs::symlink_metadata(&link_path) {
+                if let Ok(leader_meta) = fs::symlink_metadata(leader_path) {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        if link_meta.dev() == leader_meta.dev()
+                            && link_meta.ino() == leader_meta.ino()
+                        {
+                            continue;
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = (link_meta, leader_meta);
+                    }
+                }
+                // Remove existing file so we can create the hard link.
+                let _ = fs::remove_file(&link_path);
+            }
+
+            // Ensure parent directory exists.
+            if let Some(parent) = link_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+
+            // upstream: hlink.c:maybe_hard_link() → atomic_create() → do_link()
+            if let Err(e) = fs::hard_link(leader_path, &link_path) {
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to hard link {} => {}: {}",
+                    link_path.display(),
+                    leader_path.display(),
+                    e
+                );
+            }
+        }
+
+        // Protocol 28-29: use (dev, ino) pairs to identify hardlink groups.
+        // Build groups from entries that have hardlink_dev/ino set but no hardlink_idx.
+        if self.protocol.as_u8() < 30 {
+            self.create_hardlinks_pre30(dest_dir);
+        }
+    }
+
+    /// Creates hard links for protocol 28-29 using (dev, ino) pairs.
+    ///
+    /// In protocols before 30, hardlinks are identified by matching (dev, ino)
+    /// pairs across file list entries. The first entry with a given (dev, ino) is
+    /// the leader; subsequent entries are followers that should be hard-linked.
+    fn create_hardlinks_pre30(&self, dest_dir: &Path) {
+        use std::collections::HashMap;
+
+        // Map from (dev, ino) -> first file's destination path.
+        let mut dev_ino_map: HashMap<(i64, i64), PathBuf> = HashMap::new();
+
+        for entry in &self.file_list {
+            if !entry.is_file() {
+                continue;
+            }
+
+            let dev = match entry.hardlink_dev() {
+                Some(d) => d,
+                None => continue,
+            };
+            let ino = match entry.hardlink_ino() {
+                Some(i) => i,
+                None => continue,
+            };
+
+            let relative_path = entry.path();
+            let dest_path = dest_dir.join(relative_path);
+
+            match dev_ino_map.entry((dev, ino)) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(dest_path);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    let leader_path = e.get();
+
+                    // Quick-check: skip if already linked.
+                    if let Ok(link_meta) = fs::symlink_metadata(&dest_path) {
+                        if let Ok(leader_meta) = fs::symlink_metadata(leader_path) {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::MetadataExt;
+                                if link_meta.dev() == leader_meta.dev()
+                                    && link_meta.ino() == leader_meta.ino()
+                                {
+                                    continue;
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                let _ = (link_meta, leader_meta);
+                            }
+                        }
+                        let _ = fs::remove_file(&dest_path);
+                    }
+
+                    if let Some(parent) = dest_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+
+                    if let Err(e) = fs::hard_link(leader_path, &dest_path) {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to hard link {} => {}: {}",
+                            dest_path.display(),
+                            leader_path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Builds the list of files that need transfer, applying quick-check to skip
     /// unchanged files and respecting size bounds and failed directory tracking.
     ///
@@ -932,6 +1131,11 @@ impl ReceiverContext {
             .iter()
             .enumerate()
             .filter(|(_, e)| e.is_file())
+            // Hardlink followers are not transferred — they are created as hard links
+            // to the leader after the transfer loop. A follower has hardlink_idx set
+            // to a value other than u32::MAX (leaders use u32::MAX as sentinel).
+            // upstream: generator.c:1539 — F_HLINK_NOT_FIRST → hard_link_check() → skip
+            .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
                 let sz = e.size();
                 self.config.min_file_size.is_none_or(|m| sz >= m)
@@ -1422,6 +1626,12 @@ impl ReceiverContext {
                 continue;
             }
 
+            // Skip hardlink followers — they are created as hard links after transfer.
+            // upstream: generator.c:1539 — F_HLINK_NOT_FIRST → hard_link_check()
+            if is_hardlink_follower(file_entry) {
+                continue;
+            }
+
             // Skip files outside the configured size range.
             let file_size = file_entry.size();
             if let Some(min_limit) = self.config.min_file_size {
@@ -1686,6 +1896,10 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
+        // Create hard links for follower entries now that leaders are transferred.
+        // upstream: hlink.c:finish_hard_link() — called after leader transfer completes
+        self.create_hardlinks(&dest_dir);
+
         self.finalize_transfer(reader, writer)?;
 
         let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
@@ -1818,6 +2032,9 @@ impl ReceiverContext {
             }
         }
 
+        // Create hard links for follower entries now that leaders are transferred.
+        self.create_hardlinks(&setup.dest_dir);
+
         // Finalize handshake
         self.finalize_transfer(reader, writer)?;
 
@@ -1933,6 +2150,9 @@ impl ReceiverContext {
             files_transferred += redo_transferred;
             bytes_received += redo_bytes;
         }
+
+        // Create hard links for follower entries now that leaders are transferred.
+        self.create_hardlinks(&setup.dest_dir);
 
         // Finalize
         stats.files_transferred = files_transferred;

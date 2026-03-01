@@ -787,10 +787,10 @@ comp_run_scenario() {
 # - up:delete (apply_long_form_args now parses --delete/--delete-before)
 # - up:symlinks, oc:symlinks (create_symlinks() in receiver)
 # - up:size-only (was already working; stale binary caused false failure)
+# - up:hardlinks (create_hardlinks() in receiver, follower skip in transfer loop)
 #
 # Remaining known failures — features not yet fully wired into daemon transfer path:
 KNOWN_FAILURES=(
-  "up:hardlinks"
   "up:compress"   "oc:compress"
   "oc:delete"
   "oc:numeric-ids"
