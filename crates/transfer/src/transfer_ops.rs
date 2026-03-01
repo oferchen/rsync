@@ -144,8 +144,7 @@ pub fn send_file_request<W: Write + ?Sized>(
     // For protocol >= 29, sender expects iflags after NDX
     // ITEM_TRANSFER (0x8000) tells sender to read sum_head and send delta
     if config.write_iflags {
-        const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
-        writer.write_all(&ITEM_TRANSFER.to_le_bytes())?;
+        writer.write_all(&SenderAttrs::ITEM_TRANSFER.to_le_bytes())?;
     }
 
     // Send sum_head (signature header)

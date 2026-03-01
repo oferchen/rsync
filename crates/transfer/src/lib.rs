@@ -404,10 +404,10 @@ pub fn run_server_with_handshake<W: Write>(
     // For server: multiplex is activated BEFORE filter list (protocol >= 23)
     let should_activate_output_multiplex = if config.client_mode {
         // Client mode: activate for protocol >= 30
-        handshake.protocol.as_u8() >= 30
+        handshake.protocol.supports_generator_messages()
     } else {
         // Server mode: activate for protocol >= 23
-        handshake.protocol.as_u8() >= 23
+        handshake.protocol.supports_multiplex_io()
     };
 
     if should_activate_output_multiplex {
@@ -475,7 +475,7 @@ pub fn run_server_with_handshake<W: Write>(
     // Only for server mode, not client mode
     if !config.client_mode
         && let Some(timeout_secs) = handshake.io_timeout
-        && handshake.protocol.as_u8() >= 31
+        && handshake.protocol.supports_extended_goodbye()
     {
         // Send MSG_IO_TIMEOUT with 4-byte little-endian timeout value
         // Upstream uses SIVAL(numbuf, 0, num) which stores as little-endian

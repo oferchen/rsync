@@ -17,7 +17,7 @@ use super::socket_factory::{
     socket_writer_from_fd,
 };
 use super::{read_file, write_file};
-use crate::traits::FileReader;
+use crate::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory};
 
 #[test]
 fn test_kernel_version_parsing() {

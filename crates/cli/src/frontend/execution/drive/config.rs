@@ -8,10 +8,10 @@ use std::time::SystemTime;
 use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
 use core::client::{
-    AddressMode, BandwidthLimit, ClientConfig, ClientConfigBuilder, CompressionSetting, DeleteMode,
-    FilesFromSource, IconvSetting, SkipCompressList, StrongChecksumChoice, TransferTimeout,
+    AddressMode, BandwidthLimit, BatchConfig, ClientConfig, ClientConfigBuilder,
+    CompressionSetting, DeleteMode, FilesFromSource, IconvSetting, SkipCompressList,
+    StrongChecksumChoice, TransferTimeout,
 };
-use engine::batch;
 use rsync_io::ssh;
 
 use crate::frontend::progress::{NameOutputLevel, ProgressMode};
@@ -135,7 +135,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) early_input: Option<PathBuf>,
     pub(crate) prefer_aes_gcm: Option<bool>,
     pub(crate) protect_args: Option<bool>,
-    pub(crate) batch_config: Option<batch::BatchConfig>,
+    pub(crate) batch_config: Option<BatchConfig>,
     pub(crate) no_motd: bool,
     pub(crate) daemon_params: Vec<String>,
     pub(crate) files_from: FilesFromSource,
