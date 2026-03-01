@@ -55,15 +55,11 @@ use tracing::instrument;
 use engine::batch::BatchWriter;
 use engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyExecution,
-    LocalCopyOptions, LocalCopyPlan, ReferenceDirectory as EngineReferenceDirectory,
-    ReferenceDirectoryKind as EngineReferenceDirectoryKind,
+    LocalCopyOptions, LocalCopyPlan,
 };
 use filters::FilterRule as EngineFilterRule;
 
-use super::config::{
-    BandwidthLimit, ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec,
-    ReferenceDirectoryKind,
-};
+use super::config::{BandwidthLimit, ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec};
 use super::error::{
     ClientError, compile_filter_error, map_local_copy_error, missing_operands_error,
 };
@@ -631,15 +627,8 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         config: &ClientConfig,
     ) -> LocalCopyOptions {
         if !config.reference_directories().is_empty() {
-            let references = config.reference_directories().iter().map(|reference| {
-                let kind = match reference.kind() {
-                    ReferenceDirectoryKind::Compare => EngineReferenceDirectoryKind::Compare,
-                    ReferenceDirectoryKind::Copy => EngineReferenceDirectoryKind::Copy,
-                    ReferenceDirectoryKind::Link => EngineReferenceDirectoryKind::Link,
-                };
-                EngineReferenceDirectory::new(kind, reference.path().to_path_buf())
-            });
-            options = options.extend_reference_directories(references);
+            options = options
+                .extend_reference_directories(config.reference_directories().iter().cloned());
         }
         options
     }

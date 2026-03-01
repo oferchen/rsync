@@ -81,7 +81,7 @@ impl ChecksumFactory {
     ) -> Self {
         let algorithm = if let Some(neg) = negotiated {
             neg.checksum
-        } else if protocol.as_u8() >= 30 {
+        } else if protocol.uses_varint_encoding() {
             ChecksumAlgorithm::MD5
         } else {
             ChecksumAlgorithm::MD4

@@ -38,6 +38,7 @@ mod incremental;
 mod intern;
 mod macros;
 mod read;
+#[cfg(test)]
 mod segment;
 mod sort;
 mod state;
@@ -57,8 +58,6 @@ pub use incremental::{
 };
 pub use intern::PathInterner;
 pub use read::{FileListReader, read_file_entry};
-/// File list segments for incremental recursion mode.
-pub use segment::{FileListSegment, SegmentedFileList};
 pub use sort::{
     CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
 };

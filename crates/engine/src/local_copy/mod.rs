@@ -69,12 +69,11 @@ mod debug_recv;
 #[cfg(test)]
 mod debug_send;
 mod deferred_sync;
-/// Deletion strategy implementations for rsync `--delete` variants.
+/// Deletion logic for rsync `--delete` variants.
 ///
-/// Provides [`DeletionStrategy`](deletion::DeletionStrategy) implementations
-/// for `--delete-before`, `--delete-during`, `--delete-after`, and
-/// `--delete-delay` timing modes. Use [`apply_deletion_strategy`](deletion::apply_deletion_strategy)
-/// to obtain the appropriate strategy for a given [`DeleteTiming`].
+/// Provides helpers for `--delete-before`, `--delete-during`, `--delete-after`,
+/// and `--delete-delay` timing modes including `DeletionContext`,
+/// `should_delete_entry`, and `build_keep_set`.
 pub mod deletion;
 mod dir_merge;
 mod error;

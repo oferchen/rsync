@@ -56,7 +56,7 @@ pub use socket_factory::{
 pub use socket_reader::IoUringSocketReader;
 pub use socket_writer::IoUringSocketWriter;
 
-use crate::traits::FileReader;
+use crate::traits::{FileReader, FileReaderFactory, FileWriterFactory};
 use batching::try_register_fd;
 
 /// Reads an entire file using io_uring if available, falling back to standard I/O.

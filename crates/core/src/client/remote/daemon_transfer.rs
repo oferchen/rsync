@@ -31,6 +31,8 @@ use super::super::summary::ClientSummary;
 use super::super::{CLIENT_SERVER_PROTOCOL_EXIT_CODE, DAEMON_SOCKET_TIMEOUT};
 use super::flags;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
+use transfer::setup::build_capability_string;
+
 use crate::server::handshake::HandshakeResult;
 use crate::server::{ServerConfig, ServerRole};
 
@@ -662,23 +664,11 @@ fn build_full_daemon_args(
         args.push(flag_string);
     }
 
-    // Add capability flags for protocol 30+ (upstream options.c:3010-3037 add_e_flags())
-    //
-    // Capability flags:
-    // - e. = capability prefix (. is placeholder for subprotocol version)
-    // - L = symlink time-setting support (SYMLINK_TIMES)
-    // - s = symlink iconv translation support (SYMLINK_ICONV)
-    // - f = flist I/O-error safety support (SAFE_FILE_LIST)
-    // - x = avoid xattr hardlink optimization (AVOID_XATTR_OPTIMIZATION)
-    // - C = checksum seed order fix (CHECKSUM_SEED_FIX)
-    // - I = inplace_partial behavior (INPLACE_PARTIAL_DIR)
-    // - v = varint for flist flags (VARINT_FLIST_FLAGS)
-    // - u = include uid 0 & gid 0 names (ID0_NAMES)
-    //
-    // 'i' (INC_RECURSE) advertises incremental recursion support.
-    // upstream: compat.c:161-179 set_allow_inc_recurse()
+    // Add capability flags for protocol 30+.
+    // Uses CAPABILITY_MAPPINGS as single source of truth (mirrors upstream
+    // options.c:3003-3050 maybe_add_e_option()).
     if protocol.as_u8() >= 30 {
-        args.push("-e.iLsfxCIvu".to_owned());
+        args.push(build_capability_string(true));
     }
 
     // Dummy argument (upstream requirement - represents CWD)

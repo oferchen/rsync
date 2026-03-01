@@ -10,8 +10,6 @@
 //! - `flist.c:send_extra_file_list()` — traverses tree depth-first via
 //!   `DIR_FIRST_CHILD`, `DIR_NEXT_SIBLING`, `DIR_PARENT` macros
 
-use std::path::Path;
-
 /// A node in the directory tree representing a directory whose contents
 /// may need to be sent as a separate file list segment.
 #[derive(Debug)]
@@ -156,36 +154,32 @@ impl DirectoryTree {
 
         Some((dir_ndx, &self.nodes[cursor].path))
     }
+}
 
+#[cfg(test)]
+impl DirectoryTree {
     /// Returns `true` when all directories have been sent.
-    #[must_use]
-    pub fn is_exhausted(&self) -> bool {
+    fn is_exhausted(&self) -> bool {
         self.cursor.is_none()
     }
 
     /// Returns the number of directories in the tree (excluding virtual root).
     #[must_use]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.nodes.len() - 1 // Exclude virtual root
     }
 
     /// Returns `true` if the tree has no directories (excluding virtual root).
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.nodes.len() <= 1
-    }
-
-    /// Returns the current traversal depth.
-    #[must_use]
-    pub fn depth(&self) -> usize {
-        self.depth
     }
 
     /// Finds the node index for a directory by its path.
     ///
     /// Used when adding child directories to find the parent node.
     /// Skips the virtual root node at index 0.
-    pub fn find_by_path(&self, path: &str) -> Option<usize> {
+    fn find_by_path(&self, path: &str) -> Option<usize> {
         self.nodes
             .iter()
             .enumerate()
@@ -197,7 +191,8 @@ impl DirectoryTree {
     /// Finds the node index for a directory by its parent path.
     ///
     /// Looks up the parent directory of `child_path` in the tree.
-    pub fn find_parent_of(&self, child_path: &str) -> Option<usize> {
+    fn find_parent_of(&self, child_path: &str) -> Option<usize> {
+        use std::path::Path;
         let parent_path = Path::new(child_path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
