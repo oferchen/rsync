@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
-use io_uring::{IoUring as RawIoUring, opcode, types};
+use io_uring::{IoUring as RawIoUring, opcode};
 
 use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd};
 use super::config::IoUringConfig;

@@ -186,7 +186,7 @@ impl ChecksumVerifier {
         negotiated
             .map(|n| Self::for_algorithm(n.checksum))
             .unwrap_or_else(|| {
-                if protocol.as_u8() >= 30 {
+                if protocol.uses_varint_encoding() {
                     Self::Md5(Md5::new())
                 } else {
                     Self::Md4(Md4::new())

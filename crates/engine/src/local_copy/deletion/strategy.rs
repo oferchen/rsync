@@ -127,7 +127,8 @@ impl<'a> DeletionContext<'a> {
 /// This trait defines the interface for different deletion timing strategies.
 /// Each strategy determines when deletions should be applied during the
 /// transfer process.
-pub trait DeletionStrategy {
+#[cfg(test)]
+pub(crate) trait DeletionStrategy {
     /// Returns the timing for this strategy.
     fn timing(&self) -> DeleteTiming;
 
@@ -150,9 +151,11 @@ pub trait DeletionStrategy {
 ///
 /// Removes extraneous files from the destination before any transfers begin.
 /// This ensures maximum free space is available during the transfer.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
-pub struct DeleteBeforeStrategy;
+pub(crate) struct DeleteBeforeStrategy;
 
+#[cfg(test)]
 impl DeletionStrategy for DeleteBeforeStrategy {
     fn timing(&self) -> DeleteTiming {
         DeleteTiming::Before
@@ -163,9 +166,11 @@ impl DeletionStrategy for DeleteBeforeStrategy {
 ///
 /// Removes extraneous files as each directory is processed. This is the
 /// default and most memory-efficient approach.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
-pub struct DeleteDuringStrategy;
+pub(crate) struct DeleteDuringStrategy;
 
+#[cfg(test)]
 impl DeletionStrategy for DeleteDuringStrategy {
     fn timing(&self) -> DeleteTiming {
         DeleteTiming::During
@@ -177,9 +182,11 @@ impl DeletionStrategy for DeleteDuringStrategy {
 /// Defers all deletions until after the transfer completes. This ensures
 /// that files remain available during the transfer in case the transfer
 /// is interrupted.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
-pub struct DeleteAfterStrategy;
+pub(crate) struct DeleteAfterStrategy;
 
+#[cfg(test)]
 impl DeletionStrategy for DeleteAfterStrategy {
     fn timing(&self) -> DeleteTiming {
         DeleteTiming::After
@@ -190,9 +197,11 @@ impl DeletionStrategy for DeleteAfterStrategy {
 ///
 /// Like --delete-after but with a separate deletion queue accumulated
 /// during the walk. Useful with --delay-updates to ensure consistency.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
-pub struct DeleteDelayStrategy;
+pub(crate) struct DeleteDelayStrategy;
 
+#[cfg(test)]
 impl DeletionStrategy for DeleteDelayStrategy {
     fn timing(&self) -> DeleteTiming {
         DeleteTiming::Delay
@@ -291,7 +300,8 @@ where
 ///     // Perform deletions now
 /// }
 /// ```
-pub fn apply_deletion_strategy(timing: DeleteTiming) -> Box<dyn DeletionStrategy> {
+#[cfg(test)]
+pub(crate) fn apply_deletion_strategy(timing: DeleteTiming) -> Box<dyn DeletionStrategy> {
     match timing {
         DeleteTiming::Before => Box::new(DeleteBeforeStrategy),
         DeleteTiming::During => Box::new(DeleteDuringStrategy),

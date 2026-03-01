@@ -33,7 +33,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, Read, Write};
 
-use logging::debug_log;
+use logging::{debug_log, info_log};
 use std::num::NonZeroU8;
 use std::path::{Component, Path, PathBuf};
 
@@ -141,6 +141,30 @@ impl ReceiverContext {
         &self.config
     }
 
+    /// Builds a [`BasisFileConfig`] for a single file, pulling shared state from `self`.
+    fn build_basis_file_config<'a>(
+        &'a self,
+        file_path: &'a Path,
+        dest_dir: &'a Path,
+        relative_path: &'a Path,
+        target_size: u64,
+        checksum_length: NonZeroU8,
+        checksum_algorithm: engine::signature::SignatureAlgorithm,
+    ) -> BasisFileConfig<'a> {
+        BasisFileConfig {
+            file_path,
+            dest_dir,
+            relative_path,
+            target_size,
+            fuzzy_enabled: self.config.flags.fuzzy,
+            reference_directories: &self.config.reference_directories,
+            protocol: self.protocol,
+            checksum_length,
+            checksum_algorithm,
+            whole_file: self.config.flags.whole_file,
+        }
+    }
+
     /// Returns the negotiated compatibility flags.
     ///
     /// Returns `None` for protocols < 30 or when compat exchange was skipped.
@@ -157,6 +181,29 @@ impl ReceiverContext {
         &self.file_list
     }
 
+    /// Creates a configured `FileListReader` matching the current protocol and flags.
+    fn build_flist_reader(&self) -> FileListReader {
+        let mut reader = if let Some(flags) = self.compat_flags {
+            FileListReader::with_compat_flags(self.protocol, flags)
+        } else {
+            FileListReader::new(self.protocol)
+        }
+        .with_preserve_uid(self.config.flags.owner)
+        .with_preserve_gid(self.config.flags.group)
+        .with_preserve_links(self.config.flags.links)
+        .with_preserve_devices(self.config.flags.devices)
+        .with_preserve_specials(self.config.flags.specials)
+        .with_preserve_hard_links(self.config.flags.hard_links)
+        .with_preserve_acls(self.config.flags.acls)
+        .with_preserve_xattrs(self.config.flags.xattrs)
+        .with_preserve_atimes(self.config.flags.atimes);
+
+        if let Some(ref converter) = self.config.iconv {
+            reader = reader.with_iconv(converter.clone());
+        }
+        reader
+    }
+
     /// Receives the file list from the sender.
     ///
     /// The file list is sent by the client in the rsync wire format with
@@ -169,28 +216,7 @@ impl ReceiverContext {
     /// After the file list entries, this also consumes the UID/GID lists that follow
     /// (unless using incremental recursion). See upstream `recv_id_list()` in uidlist.c.
     pub fn receive_file_list<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
-        let mut flist_reader = if let Some(flags) = self.compat_flags {
-            FileListReader::with_compat_flags(self.protocol, flags)
-        } else {
-            FileListReader::new(self.protocol)
-        }
-        // Wire up preserve flags from server config.
-        // These MUST match what the sender is sending - if sender uses flags like -o/-g/-l,
-        // corresponding data is included in the file list and we must consume it.
-        .with_preserve_uid(self.config.flags.owner)
-        .with_preserve_gid(self.config.flags.group)
-        .with_preserve_links(self.config.flags.links)
-        .with_preserve_devices(self.config.flags.devices)
-        .with_preserve_specials(self.config.flags.specials)
-        .with_preserve_hard_links(self.config.flags.hard_links)
-        .with_preserve_acls(self.config.flags.acls)
-        .with_preserve_xattrs(self.config.flags.xattrs)
-        .with_preserve_atimes(self.config.flags.atimes);
-
-        // Wire up iconv converter if configured
-        if let Some(ref converter) = self.config.iconv {
-            flist_reader = flist_reader.with_iconv(converter.clone());
-        }
+        let mut flist_reader = self.build_flist_reader();
         let mut count = 0;
 
         // Read entries until end marker or error
@@ -242,25 +268,7 @@ impl ReceiverContext {
         }
 
         let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
-        let mut flist_reader = if let Some(flags) = self.compat_flags {
-            FileListReader::with_compat_flags(self.protocol, flags)
-        } else {
-            FileListReader::new(self.protocol)
-        }
-        .with_preserve_uid(self.config.flags.owner)
-        .with_preserve_gid(self.config.flags.group)
-        .with_preserve_links(self.config.flags.links)
-        .with_preserve_devices(self.config.flags.devices)
-        .with_preserve_specials(self.config.flags.specials)
-        .with_preserve_hard_links(self.config.flags.hard_links)
-        .with_preserve_acls(self.config.flags.acls)
-        .with_preserve_xattrs(self.config.flags.xattrs)
-        .with_preserve_atimes(self.config.flags.atimes);
-
-        if let Some(ref converter) = self.config.iconv {
-            flist_reader = flist_reader.with_iconv(converter.clone());
-        }
-
+        let mut flist_reader = self.build_flist_reader();
         let mut total_extra = 0;
 
         loop {
@@ -329,24 +337,7 @@ impl ReceiverContext {
         &self,
         reader: R,
     ) -> IncrementalFileListReceiver<R> {
-        let mut flist_reader = if let Some(flags) = self.compat_flags {
-            FileListReader::with_compat_flags(self.protocol, flags)
-        } else {
-            FileListReader::new(self.protocol)
-        }
-        .with_preserve_uid(self.config.flags.owner)
-        .with_preserve_gid(self.config.flags.group)
-        .with_preserve_links(self.config.flags.links)
-        .with_preserve_devices(self.config.flags.devices)
-        .with_preserve_specials(self.config.flags.specials)
-        .with_preserve_hard_links(self.config.flags.hard_links)
-        .with_preserve_acls(self.config.flags.acls)
-        .with_preserve_xattrs(self.config.flags.xattrs)
-        .with_preserve_atimes(self.config.flags.atimes);
-
-        if let Some(ref converter) = self.config.iconv {
-            flist_reader = flist_reader.with_iconv(converter.clone());
-        }
+        let flist_reader = self.build_flist_reader();
 
         // Build incremental processor with pre-existing destination directories
         let incremental = IncrementalFileListBuilder::new()
@@ -515,7 +506,9 @@ impl ReceiverContext {
             // Check for absolute paths (reject unless --relative is active).
             // upstream: flist.c:757 `!relative_paths && *thisname == '/'`
             if !relative_paths && path.has_root() {
-                eprintln!(
+                info_log!(
+                    Misc,
+                    1,
                     "ERROR: rejecting file-list entry with absolute path from sender: {}",
                     path.display()
                 );
@@ -525,7 +518,9 @@ impl ReceiverContext {
             // Check for `..` path components (always rejected).
             // upstream: flist.c:757 `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0`
             if path_contains_dot_dot(path) {
-                eprintln!(
+                info_log!(
+                    Misc,
+                    1,
                     "ERROR: rejecting file-list entry with \"..\" component from sender: {}",
                     path.display()
                 );
@@ -537,7 +532,9 @@ impl ReceiverContext {
             if entry.is_symlink() {
                 if let Some(target) = entry.link_target() {
                     if !symlink_target_is_safe_for_transfer(target, path) {
-                        eprintln!(
+                        info_log!(
+                            Misc,
+                            1,
                             "ERROR: rejecting symlink with unsafe target from sender: {} -> {}",
                             path.display(),
                             target.display()
@@ -659,7 +656,9 @@ impl ReceiverContext {
         // Check if parent is under a failed directory
         if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
             if self.config.flags.verbose && self.config.client_mode {
-                eprintln!(
+                info_log!(
+                    Skip,
+                    1,
                     "skipping directory {} (parent {} failed)",
                     entry.name(),
                     failed_parent
@@ -673,7 +672,13 @@ impl ReceiverContext {
         if !dir_path.exists() {
             if let Err(e) = fs::create_dir_all(&dir_path) {
                 if self.config.flags.verbose && self.config.client_mode {
-                    eprintln!("failed to create directory {}: {}", dir_path.display(), e);
+                    info_log!(
+                        Misc,
+                        1,
+                        "failed to create directory {}: {}",
+                        dir_path.display(),
+                        e
+                    );
                 }
                 failed_dirs.mark_failed(entry.name());
                 return Ok(false);
@@ -683,17 +688,21 @@ impl ReceiverContext {
         // Apply metadata (non-fatal errors)
         if let Err(e) = apply_metadata_from_file_entry(&dir_path, entry, metadata_opts) {
             if self.config.flags.verbose && self.config.client_mode {
-                eprintln!("warning: metadata error for {}: {}", dir_path.display(), e);
+                info_log!(
+                    Misc,
+                    1,
+                    "warning: metadata error for {}: {}",
+                    dir_path.display(),
+                    e
+                );
             }
-            // Don't mark as failed - directory exists, just metadata issue
         }
 
-        // Verbose output
         if self.config.flags.verbose && self.config.client_mode {
             if relative_path.as_os_str() == "." {
-                eprintln!("./");
+                info_log!(Name, 1, "./");
             } else {
-                eprintln!("{}/", relative_path.display());
+                info_log!(Name, 1, "{}/", relative_path.display());
             }
         }
 
@@ -719,7 +728,11 @@ impl ReceiverContext {
         // triggers break).
         //
         // Upstream reference: send.c generate_files() phase transition loop
-        let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
+        let max_phase: i32 = if self.protocol.supports_multi_phase() {
+            2
+        } else {
+            1
+        };
         let mut phase: i32 = 0;
 
         loop {
@@ -770,7 +783,7 @@ impl ReceiverContext {
         ndx_write_codec: &mut protocol::codec::NdxCodecEnum,
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
     ) -> io::Result<()> {
-        if self.protocol.as_u8() < 24 {
+        if !self.protocol.supports_goodbye_exchange() {
             return Ok(());
         }
 
@@ -779,7 +792,7 @@ impl ReceiverContext {
         writer.flush()?;
 
         // For protocol >= 31, sender echoes NDX_DONE and expects another
-        if self.protocol.as_u8() >= 31 {
+        if self.protocol.supports_extended_goodbye() {
             // Read echoed NDX_DONE from sender
             let goodbye_echo = ndx_read_codec.read_ndx(reader)?;
             if goodbye_echo != -1 {
@@ -820,7 +833,7 @@ impl ReceiverContext {
         let total_written = stats_codec.read_stat(reader)? as u64;
         let total_size = stats_codec.read_stat(reader)? as u64;
 
-        let (flist_buildtime_ms, flist_xfertime_ms) = if self.protocol.as_u8() >= 29 {
+        let (flist_buildtime_ms, flist_xfertime_ms) = if self.protocol.supports_flist_times() {
             let buildtime = stats_codec.read_stat(reader)? as u64;
             let xfertime = stats_codec.read_stat(reader)? as u64;
             (Some(buildtime), Some(xfertime))
@@ -875,7 +888,7 @@ impl ReceiverContext {
     /// // Run receiver role with stdin/stdout
     /// let reader = ServerReader::Plain(stdin().lock());
     /// let stats = ctx.run(reader, &mut stdout().lock())?;
-    /// eprintln!("Transferred {} files ({} bytes)",
+    /// info_log!(Stats, 1, "Transferred {} files ({} bytes)",
     ///           stats.files_transferred, stats.bytes_received);
     /// # Ok(())
     /// # }
@@ -978,9 +991,9 @@ impl ReceiverContext {
             if !file_entry.is_file() {
                 if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
                     if relative_path.as_os_str() == "." {
-                        eprintln!("./");
+                        info_log!(Name, 1, "./");
                     } else {
-                        eprintln!("{}/", relative_path.display());
+                        info_log!(Name, 1, "{}/", relative_path.display());
                     }
                 }
                 continue;
@@ -999,9 +1012,9 @@ impl ReceiverContext {
                 }
             }
 
-            // Output file name in verbose mode (mirrors upstream rsync.c:674)
+            // upstream: rsync.c:674
             if self.config.flags.verbose && self.config.client_mode {
-                eprintln!("{}", relative_path.display());
+                info_log!(Name, 1, "{}", relative_path.display());
             }
 
             // Send file index using NDX encoding via NdxCodec Strategy pattern.
@@ -1009,25 +1022,19 @@ impl ReceiverContext {
             ndx_write_codec.write_ndx(&mut *writer, ndx)?;
 
             // For protocol >= 29, sender expects iflags after NDX
-            // ITEM_TRANSFER (0x8000) tells sender to read sum_head and send delta
-            if self.protocol.as_u8() >= 29 {
-                const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
-                writer.write_all(&ITEM_TRANSFER.to_le_bytes())?;
+            if self.protocol.supports_iflags() {
+                writer.write_all(&SenderAttrs::ITEM_TRANSFER.to_le_bytes())?;
             }
 
             // Generate signature if basis file exists
-            let basis_config = BasisFileConfig {
-                file_path: &file_path,
-                dest_dir: &dest_dir,
+            let basis_config = self.build_basis_file_config(
+                &file_path,
+                &dest_dir,
                 relative_path,
-                target_size: file_entry.size(),
-                fuzzy_enabled: self.config.flags.fuzzy,
-                reference_directories: &self.config.reference_directories,
-                protocol: self.protocol,
+                file_entry.size(),
                 checksum_length,
                 checksum_algorithm,
-                whole_file: self.config.flags.whole_file,
-            };
+            );
             let basis_result = find_basis_file_with_config(&basis_config);
             let signature_opt = basis_result.signature;
             let basis_path_opt = basis_result.basis_path;
@@ -1385,9 +1392,9 @@ impl ReceiverContext {
             if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
                 let relative_path = file_entry.path();
                 if relative_path.as_os_str() == "." {
-                    eprintln!("./");
+                    info_log!(Name, 1, "./");
                 } else {
-                    eprintln!("{}/", relative_path.display());
+                    info_log!(Name, 1, "{}/", relative_path.display());
                 }
             }
         }
@@ -1478,7 +1485,9 @@ impl ReceiverContext {
                 }
                 if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
                     if self.config.flags.verbose && self.config.client_mode {
-                        eprintln!(
+                        info_log!(
+                            Skip,
+                            1,
                             "skipping {} (parent {} failed)",
                             entry.name(),
                             failed_parent
@@ -1563,7 +1572,7 @@ impl ReceiverContext {
         &mut self,
         reader: super::reader::ServerReader<R>,
     ) -> io::Result<(super::reader::ServerReader<R>, usize, PipelineSetup)> {
-        let mut reader = if self.protocol.as_u8() >= 30 {
+        let mut reader = if self.protocol.uses_binary_negotiation() {
             reader.activate_multiplex().map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
             })?
@@ -1578,7 +1587,7 @@ impl ReceiverContext {
         }
 
         if self.config.flags.verbose && self.config.client_mode {
-            eprintln!("receiving incremental file list");
+            info_log!(Flist, 1, "receiving incremental file list");
         }
 
         let file_count = self.receive_file_list(&mut reader)?;
@@ -1671,7 +1680,7 @@ impl ReceiverContext {
 
         let request_config = RequestConfig {
             protocol: self.protocol,
-            write_iflags: self.protocol.as_u8() >= 29,
+            write_iflags: self.protocol.supports_iflags(),
             checksum_length: setup.checksum_length,
             checksum_algorithm: setup.checksum_algorithm,
             negotiated_algorithms: self.negotiated_algorithms.as_ref(),
@@ -1737,7 +1746,7 @@ impl ReceiverContext {
                         };
 
                         if self.config.flags.verbose && self.config.client_mode {
-                            eprintln!("{}", relative_path.display());
+                            info_log!(Name, 1, "{}", relative_path.display());
                         }
 
                         // In redo pass, use empty basis to force whole-file transfer.
@@ -1746,18 +1755,14 @@ impl ReceiverContext {
                         let (sig, basis) = if is_redo_pass {
                             (None, None)
                         } else {
-                            let basis_config = BasisFileConfig {
-                                file_path: &file_path,
-                                dest_dir: &setup.dest_dir,
+                            let basis_config = self.build_basis_file_config(
+                                &file_path,
+                                &setup.dest_dir,
                                 relative_path,
-                                target_size: file_entry.size(),
-                                fuzzy_enabled: self.config.flags.fuzzy,
-                                reference_directories: &self.config.reference_directories,
-                                protocol: self.protocol,
-                                checksum_length: setup.checksum_length,
-                                checksum_algorithm: setup.checksum_algorithm,
-                                whole_file: self.config.flags.whole_file,
-                            };
+                                file_entry.size(),
+                                setup.checksum_length,
+                                setup.checksum_algorithm,
+                            );
                             let basis_result = find_basis_file_with_config(&basis_config);
                             (basis_result.signature, basis_result.basis_path)
                         };
