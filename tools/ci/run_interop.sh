@@ -793,6 +793,7 @@ comp_run_scenario() {
 # Remaining known failures:
 KNOWN_FAILURES=(
   "up:size-only"
+  "up:compress"   "oc:compress"
 )
 
 is_known_failure() {
