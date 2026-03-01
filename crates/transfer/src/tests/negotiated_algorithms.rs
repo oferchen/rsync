@@ -56,6 +56,7 @@ fn test_config() -> ServerConfig {
         files_from_path: None,
         from0: false,
         inplace: false,
+        size_only: false,
     }
 }
 
@@ -86,6 +87,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         files_from_path: None,
         from0: false,
         inplace: false,
+        size_only: false,
     }
 }
 
