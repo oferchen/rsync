@@ -701,11 +701,69 @@ fn build_server_config(
         flag_string,
         vec![OsString::from(&module.path)],
     ) {
-        Ok(cfg) => Ok(Some(cfg)),
+        Ok(mut cfg) => {
+            // Parse long-form arguments that upstream rsync sends via server_options()
+            // (options.c:2737-2980). The compact flag string only covers single-char
+            // flags; these long-form options must be parsed separately.
+            apply_long_form_args(client_args, &mut cfg);
+            Ok(Some(cfg))
+        }
         Err(err) => {
             let payload = format!("@ERROR: failed to configure server: {err}");
             send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
             Ok(None)
+        }
+    }
+}
+
+/// Applies long-form arguments from the client to the server configuration.
+///
+/// Upstream rsync's `server_options()` (options.c:2737-2980) sends many options
+/// as long-form arguments that are not encoded in the compact flag string.
+/// The daemon must parse these to correctly configure the transfer.
+///
+/// # Upstream Reference
+///
+/// - `options.c:2818-2829` — delete mode variants
+/// - `options.c:2836-2837` — `--size-only`
+/// - `options.c:2878-2879` — `--ignore-errors`
+/// - `options.c:2888` — `--numeric-ids`
+/// - `options.c:2891` — `--use-qsort`
+/// - `options.c:2737-2740` — `--compress-level=N`
+fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
+    for arg in client_args {
+        match arg.as_str() {
+            "--delete" | "--delete-before" | "--delete-during" | "--delete-after"
+            | "--delete-delay" | "--delete-excluded" => {
+                config.flags.delete = true;
+            }
+            "--size-only" => {
+                config.size_only = true;
+            }
+            "--ignore-errors" => {
+                config.ignore_errors = true;
+            }
+            "--numeric-ids" => {
+                config.flags.numeric_ids = true;
+            }
+            "--use-qsort" => {
+                config.qsort = true;
+            }
+            "--inplace" => {
+                config.inplace = true;
+            }
+            "--fsync" => {
+                config.fsync = true;
+            }
+            _ => {
+                if let Some(level_str) = arg.strip_prefix("--compress-level=") {
+                    if let Ok(level) = level_str.parse::<u32>() {
+                        if let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level) {
+                            config.compression_level = Some(cl);
+                        }
+                    }
+                }
+            }
         }
     }
 }

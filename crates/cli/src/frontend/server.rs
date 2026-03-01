@@ -178,6 +178,7 @@ where
     config.files_from_path = long_flags.files_from;
     config.from0 = long_flags.from0;
     config.inplace = long_flags.inplace;
+    config.size_only = long_flags.size_only;
 
     // Apply value-bearing flags, returning parse errors to the client.
     // upstream: options.c — server_options() sends these as `--flag=value`.
@@ -287,6 +288,7 @@ struct ServerLongFlags {
     files_from: Option<String>,
     from0: bool,
     inplace: bool,
+    size_only: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -313,6 +315,7 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         files_from: None,
         from0: false,
         inplace: false,
+        size_only: false,
     };
 
     for arg in args {
@@ -330,6 +333,7 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--qsort" => flags.qsort = true,
             "--from0" => flags.from0 = true,
             "--inplace" => flags.inplace = true,
+            "--size-only" => flags.size_only = true,
             _ => {
                 // Value-bearing flags use `--flag=value` syntax.
                 if let Some(value) = s.strip_prefix("--checksum-seed=") {
@@ -373,6 +377,7 @@ fn is_known_server_long_flag(arg: &str) -> bool {
             | "--qsort"
             | "--from0"
             | "--inplace"
+            | "--size-only"
     ) || arg == "-s"
         || arg.starts_with("--checksum-seed=")
         || arg.starts_with("--checksum-choice=")

@@ -51,6 +51,9 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_hard_links() {
         flags.push('H');
     }
+    if config.ignore_times() {
+        flags.push('I');
+    }
     #[cfg(all(unix, feature = "acl"))]
     if config.preserve_acls() {
         flags.push('A');

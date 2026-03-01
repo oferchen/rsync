@@ -91,19 +91,27 @@ use metadata::{MetadataOptions, apply_metadata_from_file_entry, apply_metadata_w
 /// Returns `Some(metadata)` when the destination already matches (skip transfer),
 /// `None` when the file needs transfer. Thread-safe for use with `rayon::par_iter`.
 ///
+/// When `size_only` is true, only sizes are compared (mtime is ignored).
+/// When `preserve_times` is false and `size_only` is false, all files need transfer.
+///
 /// Mirrors upstream `generator.c:617 quick_check_ok()` for `FT_REG`.
 fn quick_check_ok_stateless(
     entry: &FileEntry,
     dest_dir: &Path,
     preserve_times: bool,
+    size_only: bool,
 ) -> Option<fs::Metadata> {
-    if !preserve_times {
+    if !preserve_times && !size_only {
         return None;
     }
     let file_path = dest_dir.join(entry.path());
     let dest_meta = fs::metadata(&file_path).ok()?;
     if dest_meta.len() != entry.size() {
         return None;
+    }
+    // upstream: generator.c:617 — `if (size_only) return 1;` after size match
+    if size_only {
+        return Some(dest_meta);
     }
     #[cfg(unix)]
     {
@@ -278,6 +286,17 @@ impl ReceiverContext {
         .with_preserve_acls(self.config.flags.acls)
         .with_preserve_xattrs(self.config.flags.xattrs)
         .with_preserve_atimes(self.config.flags.atimes);
+
+        // upstream: flist.c — always_checksum includes per-file checksums in the file list
+        if self.config.flags.checksum {
+            let factory = ChecksumFactory::from_negotiation(
+                self.negotiated_algorithms.as_ref(),
+                self.protocol,
+                self.checksum_seed,
+                self.compat_flags.as_ref(),
+            );
+            reader = reader.with_always_checksum(factory.digest_length());
+        }
 
         if let Some(ref converter) = self.config.iconv {
             reader = reader.with_iconv(converter.clone());
@@ -714,6 +733,121 @@ impl ReceiverContext {
         }
     }
 
+    /// Deletes extraneous files at the destination that are not in the received file list.
+    ///
+    /// Groups file list entries by parent directory, then for each destination directory,
+    /// scans for entries not present in the source list and removes them. Directories
+    /// are removed recursively (depth-first).
+    ///
+    /// Uses rayon for parallel directory scanning when directory count exceeds threshold.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:delete_in_dir()` — scans one directory, removes unlisted entries
+    /// - `generator.c:do_delete_pass()` — full tree walk deletion sweep
+    fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<u64> {
+        use std::collections::{HashMap, HashSet};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        use rayon::prelude::*;
+
+        // Build directory → children map from the file list.
+        // Each directory maps to the set of child entry names it contains.
+        let mut dir_children: HashMap<PathBuf, HashSet<&std::ffi::OsStr>> = HashMap::new();
+
+        for entry in &self.file_list {
+            let relative = entry.path();
+            if relative.as_os_str() == "." {
+                continue;
+            }
+            let parent = relative.parent().map_or_else(
+                || Path::new(".").to_path_buf(),
+                |p| {
+                    if p.as_os_str().is_empty() {
+                        Path::new(".").to_path_buf()
+                    } else {
+                        p.to_path_buf()
+                    }
+                },
+            );
+            if let Some(name) = relative.file_name() {
+                dir_children.entry(parent).or_default().insert(name);
+            }
+        }
+
+        let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+
+        // Per-directory deletion: scan one directory, delete unlisted entries.
+        // Each directory is independent — remove_dir_all handles subtree deletion.
+        let delete_in_dir = |dir_relative: &PathBuf| -> u64 {
+            let dest_path = if dir_relative.as_os_str() == "." {
+                dest_dir.to_path_buf()
+            } else {
+                dest_dir.join(dir_relative)
+            };
+
+            let keep = match dir_children.get(dir_relative) {
+                Some(set) => set,
+                None => return 0,
+            };
+
+            let read_dir = match fs::read_dir(&dest_path) {
+                Ok(iter) => iter,
+                Err(_) => return 0,
+            };
+
+            let mut count = 0u64;
+            for entry in read_dir {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let name = entry.file_name();
+                if keep.contains(name.as_os_str()) {
+                    continue;
+                }
+
+                let path = dest_path.join(&name);
+                let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+
+                let result = if is_dir {
+                    fs::remove_dir_all(&path)
+                } else {
+                    fs::remove_file(&path)
+                };
+
+                match result {
+                    Ok(()) => {
+                        if is_dir {
+                            info_log!(Del, 1, "deleting directory {}", path.display());
+                        } else {
+                            info_log!(Del, 1, "deleting {}", path.display());
+                        }
+                        count += 1;
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
+                    }
+                }
+            }
+            count
+        };
+
+        // Parallel directory scanning when above threshold, sequential otherwise.
+        let deleted = if dirs_to_scan.len() >= PARALLEL_STAT_THRESHOLD {
+            let total = AtomicU64::new(0);
+            dirs_to_scan.par_iter().for_each(|dir| {
+                total.fetch_add(delete_in_dir(dir), Ordering::Relaxed);
+            });
+            total.load(Ordering::Relaxed)
+        } else {
+            dirs_to_scan.iter().map(delete_in_dir).sum()
+        };
+
+        Ok(deleted)
+    }
+
     /// Builds the list of files that need transfer, applying quick-check to skip
     /// unchanged files and respecting size bounds and failed directory tracking.
     ///
@@ -765,7 +899,10 @@ impl ReceiverContext {
             })
             .collect();
 
-        let preserve_times = self.config.flags.times;
+        // Quick-check requires preserve_times and no --ignore-times (or --size-only).
+        // upstream: generator.c:617 — quick_check_ok() is skipped when ignore_times
+        let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
+        let size_only = self.config.size_only;
 
         // Phase B: Stat each candidate to determine quick-check status.
         // Parallel when above threshold, sequential otherwise.
@@ -773,7 +910,7 @@ impl ReceiverContext {
             let results: Vec<_> = candidates
                 .par_iter()
                 .map(|&(idx, entry)| {
-                    let meta = quick_check_ok_stateless(entry, dest_dir, preserve_times);
+                    let meta = quick_check_ok_stateless(entry, dest_dir, preserve_times, size_only);
                     (idx, entry, meta)
                 })
                 .collect();
@@ -798,7 +935,8 @@ impl ReceiverContext {
         } else {
             let mut files_to_transfer = Vec::with_capacity(candidates.len());
             for (idx, entry) in candidates {
-                if let Some(cached_meta) = quick_check_ok_stateless(entry, dest_dir, preserve_times)
+                if let Some(cached_meta) =
+                    quick_check_ok_stateless(entry, dest_dir, preserve_times, size_only)
                 {
                     let file_path = dest_dir.join(entry.path());
                     if let Err(e) = apply_metadata_with_cached_stat(
@@ -1506,6 +1644,7 @@ impl ReceiverContext {
             directories_created: 0,
             directories_failed: 0,
             files_skipped: 0,
+            files_deleted: 0,
             redo_count: 0,
         })
     }
@@ -1543,6 +1682,13 @@ impl ReceiverContext {
 
         // Batch directory creation
         let mut metadata_errors = self.create_directories(&setup.dest_dir, &setup.metadata_opts)?;
+
+        // Delete extraneous files at destination (--delete-before pass).
+        // upstream: generator.c:do_delete_pass() — full tree walk deletion
+        let mut deleted_count = 0u64;
+        if self.config.flags.delete {
+            deleted_count = self.delete_extraneous_files(&setup.dest_dir)?;
+        }
 
         let mut stats = TransferStats {
             files_listed: file_count,
@@ -1621,6 +1767,7 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.total_source_bytes = total_source_bytes;
         stats.metadata_errors = metadata_errors;
+        stats.files_deleted = deleted_count;
         stats.redo_count = redo_count;
 
         Ok(stats)
@@ -2373,6 +2520,9 @@ pub struct TransferStats {
     /// Files skipped due to failed parent directory (incremental mode).
     pub files_skipped: u64,
 
+    /// Number of extraneous files deleted at the destination (`--delete`).
+    pub files_deleted: u64,
+
     /// Number of files that were retransmitted due to checksum verification failure.
     ///
     /// Mirrors upstream rsync's redo mechanism where files that fail whole-file
@@ -3103,6 +3253,7 @@ mod tests {
             files_from_path: None,
             from0: false,
             inplace: false,
+            size_only: false,
         }
     }
 
@@ -4006,6 +4157,7 @@ mod tests {
             files_from_path: None,
             from0: false,
             inplace: false,
+            size_only: false,
         }
     }
 
@@ -4438,6 +4590,7 @@ mod tests {
             directories_created: 10,
             directories_failed: 2,
             files_skipped: 5,
+            files_deleted: 0,
             redo_count: 0,
         };
 
