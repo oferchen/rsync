@@ -217,6 +217,17 @@ pub struct ServerConfig {
     /// - `receiver.c:855-860`: opens destination directly when inplace
     /// - `receiver.c:241`: `receive_data` with `inplace_sizing` parameter
     pub inplace: bool,
+    /// Compare only file sizes during quick-check, ignoring modification times (`--size-only`).
+    ///
+    /// When true, the generator's quick-check skips the mtime comparison and considers
+    /// files up-to-date if their sizes match. This is useful when synchronising from
+    /// a filesystem that does not preserve timestamps (e.g., FAT32).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:617`: `quick_check_ok()` — `if (size_only) return 1;` after size match
+    /// - `options.c:2836-2837`: `--size-only` sent as long-form arg in `server_options()`
+    pub size_only: bool,
 }
 
 impl ServerConfig {
@@ -267,6 +278,7 @@ impl ServerConfig {
             files_from_path: None,
             from0: false,
             inplace: false,
+            size_only: false,
         })
     }
 }

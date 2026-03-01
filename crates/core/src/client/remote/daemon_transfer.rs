@@ -20,7 +20,7 @@ use protocol::filters::FilterRuleWireFormat;
 
 use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_digest};
 
-use super::super::config::ClientConfig;
+use super::super::config::{ClientConfig, DeleteMode};
 use super::super::error::{ClientError, daemon_error, invalid_argument_error, socket_error};
 use super::super::module_list::{
     DaemonAddress, DaemonAuthContext, apply_socket_options, connect_direct, load_daemon_password,
@@ -638,8 +638,13 @@ fn build_minimal_daemon_args(is_sender: bool) -> Vec<String> {
 
 /// Builds the full argument list for daemon-mode transfer.
 ///
-/// This is the complete set of flags, capability string, and module path
-/// that the server needs for the transfer.
+/// Mirrors upstream `server_options()` (options.c:2590-2997) which builds
+/// the argument list sent from client to server. The order of arguments
+/// follows the upstream order for compatibility.
+///
+/// In upstream, `am_sender` refers to the CLIENT being the sender (push).
+/// In our code, `is_sender` means "daemon is sender" (pull). So upstream's
+/// `am_sender` corresponds to `!is_sender` here.
 fn build_full_daemon_args(
     config: &ClientConfig,
     request: &DaemonTransferRequest,
@@ -647,28 +652,30 @@ fn build_full_daemon_args(
     is_sender: bool,
 ) -> Vec<String> {
     let mut args = Vec::new();
+    // upstream: options.c:2590-2592
     args.push("--server".to_owned());
     if is_sender {
         args.push("--sender".to_owned());
     }
 
-    // Forward --checksum-choice to the daemon so both sides agree on the
-    // checksum algorithm (upstream options.c server_options()).
+    // Forward --checksum-choice so both sides agree on the checksum algorithm.
+    // upstream: options.c:2797-2798
     let checksum_choice = config.checksum_choice();
     if let Some(override_algo) = checksum_choice.transfer_protocol_override() {
         args.push(format!("--checksum-choice={}", override_algo.as_str()));
     }
 
+    // Single-character flag string (e.g., "-logDtprzc").
+    // upstream: options.c:2594-2713
     let flag_string = flags::build_server_flag_string(config);
     if !flag_string.is_empty() {
         args.push(flag_string);
     }
 
-    // Add capability flags for protocol 30+.
-    // Uses CAPABILITY_MAPPINGS as single source of truth (mirrors upstream
-    // options.c:3003-3050 maybe_add_e_option()).
+    // Capability flags for protocol 30+.
+    // upstream: options.c:2707-2713 (via maybe_add_e_option appended to argstr)
     //
-    // is_sender here means "daemon is sender" (pull = true, push = false).
+    // is_sender means "daemon is sender" (pull = true, push = false).
     // INC_RECURSE is advertised for pull transfers where our receiver handles
     // incremental file lists from the daemon sender. For push transfers,
     // sender-side INC_RECURSE is not advertised until fully validated.
@@ -676,7 +683,103 @@ fn build_full_daemon_args(
         args.push(build_capability_string(is_sender));
     }
 
-    // Dummy argument (upstream requirement - represents CWD)
+    // --- Long-form arguments (upstream server_options() options.c:2737-2980) ---
+    let we_are_sender = !is_sender;
+
+    // --compress-level=N — upstream: options.c:2737-2740
+    // Only sent when compression is active and an explicit level was specified.
+    if let Some(level) = config.compression_level() {
+        args.push(format!(
+            "--compress-level={}",
+            compression_level_numeric(level)
+        ));
+    }
+
+    // Sender-specific args — upstream: options.c:2807-2839
+    if we_are_sender {
+        if let Some(max_delete) = config.max_delete() {
+            if max_delete > 0 {
+                args.push(format!("--max-delete={max_delete}"));
+            } else {
+                args.push("--max-delete=-1".to_owned());
+            }
+        }
+
+        // Delete mode variants — upstream: options.c:2818-2829
+        match config.delete_mode() {
+            DeleteMode::Before => args.push("--delete-before".to_owned()),
+            DeleteMode::Delay => args.push("--delete-delay".to_owned()),
+            DeleteMode::During => args.push("--delete-during".to_owned()),
+            DeleteMode::After => args.push("--delete-after".to_owned()),
+            DeleteMode::Disabled => {}
+        }
+        if config.delete_excluded() {
+            args.push("--delete-excluded".to_owned());
+        }
+        if config.force_replacements() {
+            args.push("--force".to_owned());
+        }
+
+        // --size-only — upstream: options.c:2836-2837
+        if config.size_only() {
+            args.push("--size-only".to_owned());
+        }
+    }
+
+    // --ignore-errors — upstream: options.c:2878-2879
+    if config.ignore_errors() {
+        args.push("--ignore-errors".to_owned());
+    }
+
+    // --copy-unsafe-links — upstream: options.c:2881-2882
+    if config.copy_unsafe_links() {
+        args.push("--copy-unsafe-links".to_owned());
+    }
+
+    // --safe-links — upstream: options.c:2884-2885
+    if config.safe_links() {
+        args.push("--safe-links".to_owned());
+    }
+
+    // --numeric-ids — upstream: options.c:2887-2888
+    if config.numeric_ids() {
+        args.push("--numeric-ids".to_owned());
+    }
+
+    // --use-qsort — upstream: options.c:2890-2891
+    if config.qsort() {
+        args.push("--use-qsort".to_owned());
+    }
+
+    // Sender-only long-form args — upstream: options.c:2893-2925
+    if we_are_sender {
+        if config.ignore_existing() {
+            args.push("--ignore-existing".to_owned());
+        }
+        if config.existing_only() {
+            args.push("--existing".to_owned());
+        }
+        if config.fsync() {
+            args.push("--fsync".to_owned());
+        }
+    }
+
+    // --append / --inplace — upstream: options.c:2933-2942
+    if config.append() {
+        args.push("--append".to_owned());
+        if config.append_verify() {
+            args.push("--append".to_owned());
+        }
+    } else if config.inplace() {
+        args.push("--inplace".to_owned());
+    }
+
+    // --remove-source-files — upstream: options.c:2964-2965
+    if config.remove_source_files() {
+        args.push("--remove-source-files".to_owned());
+    }
+
+    // Dummy argument (upstream requirement — represents CWD)
     args.push(".".to_owned());
 
     // Module path
@@ -684,6 +787,20 @@ fn build_full_daemon_args(
     args.push(module_path);
 
     args
+}
+
+/// Converts a [`compress::zlib::CompressionLevel`] to its numeric zlib value.
+///
+/// Maps named levels to their zlib equivalents for wire transmission.
+fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> u32 {
+    use compress::zlib::CompressionLevel;
+    match level {
+        CompressionLevel::None => 0,
+        CompressionLevel::Fast => 1,
+        CompressionLevel::Default => 6,
+        CompressionLevel::Best => 9,
+        CompressionLevel::Precise(n) => u32::from(n.get()),
+    }
 }
 
 /// Executes a pull transfer (remote → local).
@@ -908,6 +1025,7 @@ fn build_server_config_for_receiver(
     server_config.fsync = config.fsync();
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
+    server_config.compression_level = config.compression_level();
     server_config.stop_at = config.stop_at();
 
     flags::apply_common_server_flags(config, &mut server_config);
@@ -941,6 +1059,7 @@ fn build_server_config_for_generator(
     server_config.fsync = config.fsync();
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
+    server_config.compression_level = config.compression_level();
     server_config.stop_at = config.stop_at();
 
     flags::apply_common_server_flags(config, &mut server_config);
