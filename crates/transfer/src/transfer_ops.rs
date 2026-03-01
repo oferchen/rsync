@@ -113,9 +113,7 @@ impl RequestConfig<'_> {
     ///
     /// - `token.c:271` - `recv_token()` selects plain or compressed based on `-z`
     fn token_reader(&self) -> TokenReader {
-        let compression = self
-            .negotiated_algorithms
-            .map(|n| n.compression);
+        let compression = self.negotiated_algorithms.map(|n| n.compression);
         TokenReader::new(compression)
     }
 }
@@ -600,10 +598,7 @@ pub fn process_file_response_streaming<R: Read>(
                         data: buf,
                     })
                     .map_err(|_| {
-                        io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            "disk commit thread disconnected",
-                        )
+                        io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
                     })?;
 
                 return Ok(StreamingResult {
