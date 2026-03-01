@@ -739,6 +739,9 @@ impl ReceiverContext {
     /// - `generator.c:do_delete_pass()` — full tree walk deletion sweep
     fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<u64> {
         use std::collections::{HashMap, HashSet};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        use rayon::prelude::*;
 
         // Build directory → children map from the file list.
         // Each directory maps to the set of child entry names it contains.
@@ -764,18 +767,11 @@ impl ReceiverContext {
             }
         }
 
-        let mut deleted = 0u64;
+        let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
 
-        // For each directory in the file list, scan destination and delete unlisted entries.
-        // Process directories sorted by depth (deepest first) for correct recursive deletion.
-        let mut dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
-        dirs_to_scan.sort_by(|a, b| {
-            let depth_a = a.components().count();
-            let depth_b = b.components().count();
-            depth_b.cmp(&depth_a).then_with(|| a.cmp(b))
-        });
-
-        for dir_relative in &dirs_to_scan {
+        // Per-directory deletion: scan one directory, delete unlisted entries.
+        // Each directory is independent — remove_dir_all handles subtree deletion.
+        let delete_in_dir = |dir_relative: &PathBuf| -> u64 {
             let dest_path = if dir_relative.as_os_str() == "." {
                 dest_dir.to_path_buf()
             } else {
@@ -784,24 +780,15 @@ impl ReceiverContext {
 
             let keep = match dir_children.get(dir_relative) {
                 Some(set) => set,
-                None => continue,
+                None => return 0,
             };
 
             let read_dir = match fs::read_dir(&dest_path) {
                 Ok(iter) => iter,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-                Err(e) => {
-                    debug_log!(
-                        Del,
-                        1,
-                        "cannot read {} for deletion: {}",
-                        dest_path.display(),
-                        e
-                    );
-                    continue;
-                }
+                Err(_) => return 0,
             };
 
+            let mut count = 0u64;
             for entry in read_dir {
                 let entry = match entry {
                     Ok(e) => e,
@@ -815,31 +802,40 @@ impl ReceiverContext {
                 let path = dest_path.join(&name);
                 let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 
-                if is_dir {
-                    match fs::remove_dir_all(&path) {
-                        Ok(()) => {
-                            info_log!(Del, 1, "deleting directory {}", path.display());
-                            deleted += 1;
-                        }
-                        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                        Err(e) => {
-                            debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
-                        }
-                    }
+                let result = if is_dir {
+                    fs::remove_dir_all(&path)
                 } else {
-                    match fs::remove_file(&path) {
-                        Ok(()) => {
+                    fs::remove_file(&path)
+                };
+
+                match result {
+                    Ok(()) => {
+                        if is_dir {
+                            info_log!(Del, 1, "deleting directory {}", path.display());
+                        } else {
                             info_log!(Del, 1, "deleting {}", path.display());
-                            deleted += 1;
                         }
-                        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                        Err(e) => {
-                            debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
-                        }
+                        count += 1;
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
                     }
                 }
             }
-        }
+            count
+        };
+
+        // Parallel directory scanning when above threshold, sequential otherwise.
+        let deleted = if dirs_to_scan.len() >= PARALLEL_STAT_THRESHOLD {
+            let total = AtomicU64::new(0);
+            dirs_to_scan.par_iter().for_each(|dir| {
+                total.fetch_add(delete_in_dir(dir), Ordering::Relaxed);
+            });
+            total.load(Ordering::Relaxed)
+        } else {
+            dirs_to_scan.iter().map(delete_in_dir).sum()
+        };
 
         Ok(deleted)
     }
