@@ -533,6 +533,12 @@ fn build_server_config_for_receiver(
         ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
+    // Propagate long-form-only flags that aren't part of the compact flag string.
+    // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
+    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
+    server_config.size_only = config.size_only();
+
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
 }
@@ -548,6 +554,12 @@ fn build_server_config_for_generator(
     let mut server_config =
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
+
+    // Propagate long-form-only flags that aren't part of the compact flag string.
+    // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
+    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
+    server_config.size_only = config.size_only();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)

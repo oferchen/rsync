@@ -422,7 +422,9 @@ pub fn run_server_with_handshake<W: Write>(
     //   Upstream exclude.c:send_filter_list() logic:
     //     receiver_wants_list = prune_empty_dirs || (delete_mode && ...)
     //     if (am_sender && !receiver_wants_list) f_out = -1;  // Skip sending
-    //   For a basic push (no delete), the sender SKIPS sending the filter list.
+    //   For a basic push (no delete/prune), the sender SKIPS sending the filter
+    //   list. Exclusion rules are applied locally by the generator when building
+    //   the file list -- no wire exchange needed.
     //
     // CLIENT RECEIVER (pull from daemon):
     //   Upstream main.c:start_server() when daemon is sender (am_sender=1):
@@ -431,7 +433,11 @@ pub fn run_server_with_handshake<W: Write>(
     //   (even if empty, we send the terminator).
     //
     // SERVER mode: we receive, never send.
-    let receiver_wants_filter_list = config.flags.delete || !config.filter_rules.is_empty();
+    // upstream: exclude.c:1650 — am_sender && !receiver_wants_list skips sending.
+    // Filter-based exclusion in push mode is applied locally by the generator when
+    // building the file list, without wire exchange. The receiver only needs the
+    // filter list for delete pruning or prune-empty-dirs.
+    let receiver_wants_filter_list = config.flags.delete || config.flags.prune_empty_dirs;
 
     let should_send_filter_list = if config.client_mode {
         match config.role {

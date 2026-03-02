@@ -1021,7 +1021,12 @@ fn build_server_config_for_receiver(
     // Set verbose flag for local output (not sent to daemon in server protocol string)
     server_config.flags.verbose = config.verbosity() > 0;
 
-    // Propagate long-form-only flags that aren't part of the server flag string
+    // Propagate long-form-only flags that aren't part of the compact flag string.
+    // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
+    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
+    server_config.size_only = config.size_only();
+
     server_config.fsync = config.fsync();
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
@@ -1055,7 +1060,12 @@ fn build_server_config_for_generator(
     // Set verbose flag for local output (not sent to daemon in server protocol string)
     server_config.flags.verbose = config.verbosity() > 0;
 
-    // Propagate long-form-only flags that aren't part of the server flag string
+    // Propagate long-form-only flags that aren't part of the compact flag string.
+    // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
+    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
+    server_config.size_only = config.size_only();
+
     server_config.fsync = config.fsync();
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();

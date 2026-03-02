@@ -435,6 +435,7 @@ write_upstream_conf() {
 pid file = ${pid_file}
 port = ${port}
 use chroot = false
+munge symlinks = false
 ${identity}numeric ids = yes
 [interop]
     path = ${dest}
@@ -785,16 +786,16 @@ comp_run_scenario() {
 # Resolved since initial tracking:
 # - up:checksum, oc:checksum (always-checksum mode implemented)
 # - up:delete (apply_long_form_args now parses --delete/--delete-before)
+# - up:symlinks, oc:symlinks (create_symlinks() in receiver)
+# - up:hardlinks (create_hardlinks() in receiver, follower skip in transfer loop)
+# - oc:delete, oc:numeric-ids, oc:exclude (correct compact flag semantics + long-form args)
+# - up:compress, oc:compress (TokenReader integration in run_sync path)
 #
-# Remaining known failures — features not yet fully wired into daemon transfer path:
+# Remaining known failures:
 KNOWN_FAILURES=(
-  "up:symlinks"   "oc:symlinks"
-  "up:hardlinks"
-  "up:compress"   "oc:compress"
-  "oc:delete"
   "up:size-only"
-  "oc:numeric-ids"
-  "oc:exclude"
+  "up:compress"   "oc:compress"
+  "oc:delete"     # upstream daemon doesn't delete; args correct, needs protocol investigation
 )
 
 is_known_failure() {

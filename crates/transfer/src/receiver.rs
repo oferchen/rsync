@@ -66,6 +66,7 @@ use super::adaptive_buffer::adaptive_writer_capacity;
 use super::delta_apply::{ChecksumVerifier, SparseWriteState};
 use super::map_file::MapFile;
 use super::token_buffer::TokenBuffer;
+use super::token_reader::{DeltaToken as TokenReaderDeltaToken, LiteralData, TokenReader};
 
 #[cfg(test)]
 use engine::delta::{DeltaScript, DeltaToken};
@@ -85,6 +86,21 @@ use super::transfer_ops::{
 };
 
 use metadata::{MetadataOptions, apply_metadata_from_file_entry, apply_metadata_with_cached_stat};
+
+/// Returns true if this file entry is a hardlink follower that should be
+/// created as a hard link rather than transferred via delta.
+///
+/// A follower has `hardlink_idx` set to a value other than `u32::MAX`.
+/// Leaders (the first file in a hardlink group) use `u32::MAX` as a sentinel.
+/// Entries without hardlink metadata return false.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1539` — `F_HLINK_NOT_FIRST(file)` check
+/// - `hlink.c:284` — `hard_link_check()` called for non-first entries
+fn is_hardlink_follower(entry: &FileEntry) -> bool {
+    matches!(entry.hardlink_idx(), Some(idx) if idx != u32::MAX)
+}
 
 /// Pure-function quick-check: compares destination stat against source entry.
 ///
@@ -848,6 +864,252 @@ impl ReceiverContext {
         Ok(deleted)
     }
 
+    /// Creates symbolic links from the file list entries.
+    ///
+    /// Iterates through the received file list, finds symlink entries with
+    /// `preserve_links` enabled, and creates them on the destination filesystem.
+    /// Existing symlinks pointing to the correct target are skipped (quick-check).
+    /// Existing files/symlinks at the destination path are removed before creation.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1544` — `if (preserve_links && ftype == FT_SYMLINK)`
+    /// - `generator.c:1591` — `atomic_create(file, fname, sl, ...)`
+    #[cfg(unix)]
+    fn create_symlinks(&self, dest_dir: &Path) {
+        if !self.config.flags.links {
+            return;
+        }
+
+        for entry in &self.file_list {
+            if !entry.is_symlink() {
+                continue;
+            }
+
+            let target = match entry.link_target() {
+                Some(t) => t,
+                None => continue,
+            };
+
+            let relative_path = entry.path();
+            let link_path = dest_dir.join(relative_path);
+
+            // upstream: generator.c:1561 — quick_check_ok(FT_SYMLINK, ...)
+            if let Ok(existing_target) = std::fs::read_link(&link_path) {
+                if existing_target == *target {
+                    continue;
+                }
+                let _ = std::fs::remove_file(&link_path);
+            } else if link_path.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(&link_path);
+            }
+
+            // upstream: generator.c:1591 — atomic_create() → do_symlink()
+            if let Err(e) = std::os::unix::fs::symlink(target, &link_path) {
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to create symlink {} -> {}: {}",
+                    link_path.display(),
+                    target.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    /// No-op on non-Unix platforms where symlinks are not supported.
+    #[cfg(not(unix))]
+    fn create_symlinks(&self, _dest_dir: &Path) {}
+
+    /// Creates hard links for hardlink follower entries after the leader has been transferred.
+    ///
+    /// In the rsync protocol (30+), hardlinked files are grouped by a shared index.
+    /// The first file in each group (the "leader", `hardlink_idx == u32::MAX`) is
+    /// transferred normally. Subsequent files ("followers") carry the leader's file
+    /// list index in their `hardlink_idx` field and are created as hard links to the
+    /// leader's destination path instead of being transferred independently.
+    ///
+    /// For protocol 28-29, hardlinks are identified by (dev, ino) pairs. This method
+    /// handles both cases by building a mapping from hardlink identifiers to leader
+    /// destination paths.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `hlink.c:hard_link_check()` — skips followers, links to leader
+    /// - `hlink.c:finish_hard_link()` — creates links after leader transfer completes
+    /// - `generator.c:1539` — `F_HLINK_NOT_FIRST` check before `hard_link_check()`
+    fn create_hardlinks(&self, dest_dir: &Path) {
+        if !self.config.flags.hard_links {
+            return;
+        }
+
+        // Protocol 30+: use hardlink_idx to map followers to leaders.
+        // Build a map from file list index -> destination path for leaders.
+        let mut leader_paths: std::collections::HashMap<u32, PathBuf> =
+            std::collections::HashMap::new();
+
+        // First pass: record leader paths (entries where hardlink_idx == u32::MAX).
+        // Use wire NDX (not array index) as the key because followers' hardlink_idx
+        // values are wire NDX values. With INC_RECURSE, ndx_start=1, so wire NDX
+        // differs from the array index.
+        // upstream: flist.c — F_HL_GNUM stores the wire NDX of the leader
+        for (idx, entry) in self.file_list.iter().enumerate() {
+            if entry.hardlink_idx() == Some(u32::MAX) {
+                let relative_path = entry.path();
+                let dest_path = if relative_path.as_os_str() == "." {
+                    dest_dir.to_path_buf()
+                } else {
+                    dest_dir.join(relative_path)
+                };
+                leader_paths.insert(self.flat_to_wire_ndx(idx) as u32, dest_path);
+            }
+        }
+
+        // Second pass: create hard links for followers.
+        for entry in &self.file_list {
+            let leader_idx = match entry.hardlink_idx() {
+                Some(idx) if idx != u32::MAX => idx,
+                _ => continue,
+            };
+
+            let leader_path = match leader_paths.get(&leader_idx) {
+                Some(p) => p,
+                None => {
+                    debug_log!(
+                        Recv,
+                        1,
+                        "hardlink follower {} references unknown leader index {}",
+                        entry.name(),
+                        leader_idx
+                    );
+                    continue;
+                }
+            };
+
+            let relative_path = entry.path();
+            let link_path = dest_dir.join(relative_path);
+
+            // Quick-check: if destination already hard-links to the leader, skip.
+            if let Ok(link_meta) = fs::symlink_metadata(&link_path) {
+                if let Ok(leader_meta) = fs::symlink_metadata(leader_path) {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        if link_meta.dev() == leader_meta.dev()
+                            && link_meta.ino() == leader_meta.ino()
+                        {
+                            continue;
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = (link_meta, leader_meta);
+                    }
+                }
+                // Remove existing file so we can create the hard link.
+                let _ = fs::remove_file(&link_path);
+            }
+
+            // Ensure parent directory exists.
+            if let Some(parent) = link_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+
+            // upstream: hlink.c:maybe_hard_link() → atomic_create() → do_link()
+            if let Err(e) = fs::hard_link(leader_path, &link_path) {
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to hard link {} => {}: {}",
+                    link_path.display(),
+                    leader_path.display(),
+                    e
+                );
+            }
+        }
+
+        // Protocol 28-29: use (dev, ino) pairs to identify hardlink groups.
+        // Build groups from entries that have hardlink_dev/ino set but no hardlink_idx.
+        if self.protocol.as_u8() < 30 {
+            self.create_hardlinks_pre30(dest_dir);
+        }
+    }
+
+    /// Creates hard links for protocol 28-29 using (dev, ino) pairs.
+    ///
+    /// In protocols before 30, hardlinks are identified by matching (dev, ino)
+    /// pairs across file list entries. The first entry with a given (dev, ino) is
+    /// the leader; subsequent entries are followers that should be hard-linked.
+    fn create_hardlinks_pre30(&self, dest_dir: &Path) {
+        use std::collections::HashMap;
+
+        // Map from (dev, ino) -> first file's destination path.
+        let mut dev_ino_map: HashMap<(i64, i64), PathBuf> = HashMap::new();
+
+        for entry in &self.file_list {
+            if !entry.is_file() {
+                continue;
+            }
+
+            let dev = match entry.hardlink_dev() {
+                Some(d) => d,
+                None => continue,
+            };
+            let ino = match entry.hardlink_ino() {
+                Some(i) => i,
+                None => continue,
+            };
+
+            let relative_path = entry.path();
+            let dest_path = dest_dir.join(relative_path);
+
+            match dev_ino_map.entry((dev, ino)) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(dest_path);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    let leader_path = e.get();
+
+                    // Quick-check: skip if already linked.
+                    if let Ok(link_meta) = fs::symlink_metadata(&dest_path) {
+                        if let Ok(leader_meta) = fs::symlink_metadata(leader_path) {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::MetadataExt;
+                                if link_meta.dev() == leader_meta.dev()
+                                    && link_meta.ino() == leader_meta.ino()
+                                {
+                                    continue;
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                let _ = (link_meta, leader_meta);
+                            }
+                        }
+                        let _ = fs::remove_file(&dest_path);
+                    }
+
+                    if let Some(parent) = dest_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+
+                    if let Err(e) = fs::hard_link(leader_path, &dest_path) {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to hard link {} => {}: {}",
+                            dest_path.display(),
+                            leader_path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Builds the list of files that need transfer, applying quick-check to skip
     /// unchanged files and respecting size bounds and failed directory tracking.
     ///
@@ -874,6 +1136,11 @@ impl ReceiverContext {
             .iter()
             .enumerate()
             .filter(|(_, e)| e.is_file())
+            // Hardlink followers are not transferred — they are created as hard links
+            // to the leader after the transfer loop. A follower has hardlink_idx set
+            // to a value other than u32::MAX (leaders use u32::MAX as sentinel).
+            // upstream: generator.c:1539 — F_HLINK_NOT_FIRST → hard_link_check() → skip
+            .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
                 let sz = e.size();
                 self.config.min_file_size.is_none_or(|m| sz >= m)
@@ -1300,8 +1567,9 @@ impl ReceiverContext {
         let mut files_transferred = 0;
         let mut bytes_received = 0u64;
 
-        // First pass: create directories from file list
+        // First pass: create directories and symlinks from file list
         let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
+        self.create_symlinks(&dest_dir);
 
         // Transfer loop: iterate through file list and request each file from sender
         // The receiver (generator side) drives the transfer by sending file indices
@@ -1360,6 +1628,12 @@ impl ReceiverContext {
                         info_log!(Name, 1, "{}/", relative_path.display());
                     }
                 }
+                continue;
+            }
+
+            // Skip hardlink followers — they are created as hard links after transfer.
+            // upstream: generator.c:1539 — F_HLINK_NOT_FIRST → hard_link_check()
+            if is_hardlink_follower(file_entry) {
                 continue;
             }
 
@@ -1452,126 +1726,131 @@ impl ReceiverContext {
                 None
             };
 
-            // Read tokens in a loop
+            // Read and apply delta tokens.
+            // TokenReader handles both plain (4-byte LE) and compressed (flag-byte)
+            // token formats transparently, matching upstream token.c:recv_token().
+            let compression = self.negotiated_algorithms.map(|n| n.compression);
+            let mut token_reader = TokenReader::new(compression);
+
             loop {
-                let mut token_buf = [0u8; 4];
-                reader.read_exact(&mut token_buf)?;
-                let token = i32::from_le_bytes(token_buf);
+                match token_reader.read_token(reader)? {
+                    TokenReaderDeltaToken::End => {
+                        // End of file — verify checksum using stack buffers.
+                        let checksum_len = checksum_verifier.digest_len();
+                        let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                        reader.read_exact(&mut expected_buf[..checksum_len])?;
 
-                if token == 0 {
-                    // End of file — verify checksum using stack buffers.
-                    // Use mem::replace to reset the verifier for the next file.
-                    let checksum_len = checksum_verifier.digest_len();
-                    let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-                    reader.read_exact(&mut expected_buf[..checksum_len])?;
-
-                    let algo = checksum_verifier.algorithm();
-                    let old_verifier = std::mem::replace(
-                        &mut checksum_verifier,
-                        ChecksumVerifier::for_algorithm(algo),
-                    );
-                    let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-                    let computed_len = old_verifier.finalize_into(&mut computed);
-                    if computed_len != checksum_len {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "checksum length mismatch for {file_path:?}: expected {checksum_len} bytes, got {computed_len} bytes",
-                            ),
-                        ));
-                    }
-                    if computed[..computed_len] != expected_buf[..checksum_len] {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
-                                &expected_buf[..checksum_len],
-                                &computed[..computed_len]
-                            ),
-                        ));
-                    }
-                    break;
-                } else if token > 0 {
-                    // Literal data — try zero-copy from multiplex frame buffer,
-                    // falling back to TokenBuffer when data spans frame boundaries.
-                    let len = token as usize;
-
-                    if let Some(data) = reader.try_borrow_exact(len)? {
-                        if let Some(ref mut sparse) = sparse_state {
-                            sparse.write(&mut output, data)?;
-                        } else {
-                            output.write_all(data)?;
-                        }
-                        checksum_verifier.update(data);
-                    } else {
-                        token_buffer.resize_for(len);
-                        reader.read_exact(token_buffer.as_mut_slice())?;
-                        let data = token_buffer.as_slice();
-                        if let Some(ref mut sparse) = sparse_state {
-                            sparse.write(&mut output, data)?;
-                        } else {
-                            output.write_all(data)?;
-                        }
-                        checksum_verifier.update(data);
-                    }
-                    total_bytes += len as u64;
-                } else {
-                    // Negative: block reference = -(token+1)
-                    // For new files (no basis), this shouldn't happen
-                    let block_idx = -(token + 1) as usize;
-                    if let (Some(sig), Some(basis_map)) = (&signature_opt, basis_map.as_mut()) {
-                        // We have a basis file - copy the block using cached MapFile
-                        // Mirrors upstream receiver.c receive_data() block copy logic
-                        let layout = sig.layout();
-                        let block_count = layout.block_count() as usize;
-
-                        // Validate block index bounds (upstream receiver.c doesn't send invalid indices)
-                        if block_idx >= block_count {
+                        let algo = checksum_verifier.algorithm();
+                        let old_verifier = std::mem::replace(
+                            &mut checksum_verifier,
+                            ChecksumVerifier::for_algorithm(algo),
+                        );
+                        let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                        let computed_len = old_verifier.finalize_into(&mut computed);
+                        if computed_len != checksum_len {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
                                 format!(
-                                    "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                                    "checksum length mismatch for {file_path:?}: expected {checksum_len} bytes, got {computed_len} bytes",
                                 ),
                             ));
                         }
+                        if computed[..computed_len] != expected_buf[..checksum_len] {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
+                                    &expected_buf[..checksum_len],
+                                    &computed[..computed_len]
+                                ),
+                            ));
+                        }
+                        break;
+                    }
+                    TokenReaderDeltaToken::Literal(literal) => {
+                        // Write literal data to output and update checksum.
+                        match literal {
+                            LiteralData::Ready(data) => {
+                                let len = data.len();
+                                if let Some(ref mut sparse) = sparse_state {
+                                    sparse.write(&mut output, &data)?;
+                                } else {
+                                    output.write_all(&data)?;
+                                }
+                                checksum_verifier.update(&data);
+                                total_bytes += len as u64;
+                            }
+                            LiteralData::Pending(len) => {
+                                if let Some(data) = reader.try_borrow_exact(len)? {
+                                    if let Some(ref mut sparse) = sparse_state {
+                                        sparse.write(&mut output, data)?;
+                                    } else {
+                                        output.write_all(data)?;
+                                    }
+                                    checksum_verifier.update(data);
+                                } else {
+                                    token_buffer.resize_for(len);
+                                    reader.read_exact(token_buffer.as_mut_slice())?;
+                                    let data = token_buffer.as_slice();
+                                    if let Some(ref mut sparse) = sparse_state {
+                                        sparse.write(&mut output, data)?;
+                                    } else {
+                                        output.write_all(data)?;
+                                    }
+                                    checksum_verifier.update(data);
+                                }
+                                total_bytes += len as u64;
+                            }
+                        }
+                    }
+                    TokenReaderDeltaToken::BlockRef(block_idx) => {
+                        if let (Some(sig), Some(basis_map)) = (&signature_opt, basis_map.as_mut()) {
+                            let layout = sig.layout();
+                            let block_count = layout.block_count() as usize;
 
-                        let block_len = layout.block_length().get() as u64;
-                        let offset = block_idx as u64 * block_len;
+                            if block_idx >= block_count {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    format!(
+                                        "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                                    ),
+                                ));
+                            }
 
-                        // Calculate actual bytes to copy for this block
-                        // Last block may be shorter (remainder)
-                        let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-                            // Last block uses remainder size
-                            let remainder = layout.remainder();
-                            if remainder > 0 {
-                                remainder as usize
+                            let block_len = layout.block_length().get() as u64;
+                            let offset = block_idx as u64 * block_len;
+
+                            let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
+                                let remainder = layout.remainder();
+                                if remainder > 0 {
+                                    remainder as usize
+                                } else {
+                                    block_len as usize
+                                }
                             } else {
                                 block_len as usize
+                            };
+
+                            let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+
+                            if let Some(ref mut sparse) = sparse_state {
+                                sparse.write(&mut output, block_data)?;
+                            } else {
+                                output.write_all(block_data)?;
                             }
-                        } else {
-                            block_len as usize
-                        };
+                            checksum_verifier.update(block_data);
 
-                        // Use cached MapFile with 256KB sliding window
-                        // This avoids ~23,000 open/seek/read syscalls for a typical 16MB file
-                        let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+                            // upstream: token.c:631 — see_deflate_token() keeps the
+                            // decompressor dictionary in sync after block matches.
+                            token_reader.see_token(block_data)?;
 
-                        // Use sparse writing if enabled
-                        if let Some(ref mut sparse) = sparse_state {
-                            sparse.write(&mut output, block_data)?;
+                            total_bytes += bytes_to_copy as u64;
                         } else {
-                            output.write_all(block_data)?;
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("block reference {block_idx} without basis file"),
+                            ));
                         }
-
-                        // Update checksum with copied data
-                        checksum_verifier.update(block_data);
-
-                        total_bytes += bytes_to_copy as u64;
-                    } else {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("block reference {block_idx} without basis file"),
-                        ));
                     }
                 }
             }
@@ -1627,6 +1906,10 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
+        // Create hard links for follower entries now that leaders are transferred.
+        // upstream: hlink.c:finish_hard_link() — called after leader transfer completes
+        self.create_hardlinks(&dest_dir);
+
         self.finalize_transfer(reader, writer)?;
 
         let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
@@ -1680,8 +1963,9 @@ impl ReceiverContext {
         let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
-        // Batch directory creation
+        // Batch directory and symlink creation
         let mut metadata_errors = self.create_directories(&setup.dest_dir, &setup.metadata_opts)?;
+        self.create_symlinks(&setup.dest_dir);
 
         // Delete extraneous files at destination (--delete-before pass).
         // upstream: generator.c:do_delete_pass() — full tree walk deletion
@@ -1758,6 +2042,9 @@ impl ReceiverContext {
             }
         }
 
+        // Create hard links for follower entries now that leaders are transferred.
+        self.create_hardlinks(&setup.dest_dir);
+
         // Finalize handshake
         self.finalize_transfer(reader, writer)?;
 
@@ -1823,6 +2110,9 @@ impl ReceiverContext {
             }
         }
 
+        // Create symlinks after directories are in place
+        self.create_symlinks(&setup.dest_dir);
+
         let files_to_transfer = self.build_files_to_transfer(
             &setup.dest_dir,
             &setup.metadata_opts,
@@ -1870,6 +2160,9 @@ impl ReceiverContext {
             files_transferred += redo_transferred;
             bytes_received += redo_bytes;
         }
+
+        // Create hard links for follower entries now that leaders are transferred.
+        self.create_hardlinks(&setup.dest_dir);
 
         // Finalize
         stats.files_transferred = files_transferred;
