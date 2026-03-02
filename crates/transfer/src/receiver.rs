@@ -950,6 +950,10 @@ impl ReceiverContext {
             std::collections::HashMap::new();
 
         // First pass: record leader paths (entries where hardlink_idx == u32::MAX).
+        // Use wire NDX (not array index) as the key because followers' hardlink_idx
+        // values are wire NDX values. With INC_RECURSE, ndx_start=1, so wire NDX
+        // differs from the array index.
+        // upstream: flist.c — F_HL_GNUM stores the wire NDX of the leader
         for (idx, entry) in self.file_list.iter().enumerate() {
             if entry.hardlink_idx() == Some(u32::MAX) {
                 let relative_path = entry.path();
@@ -958,7 +962,7 @@ impl ReceiverContext {
                 } else {
                     dest_dir.join(relative_path)
                 };
-                leader_paths.insert(idx as u32, dest_path);
+                leader_paths.insert(self.flat_to_wire_ndx(idx) as u32, dest_path);
             }
         }
 
