@@ -1031,6 +1031,14 @@ fn build_server_config_for_receiver(
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
     server_config.compression_level = config.compression_level();
+    // When -z is active but no explicit --compress-level=N was given, default to
+    // level 6 (upstream rsync default). Without this, compression_level stays None
+    // and setup_protocol won't activate token-level Zlib compression, causing the
+    // TokenReader to run in plain mode while the remote sends compressed tokens.
+    // upstream: options.c:2737-2740 — compress_level defaults to 6 when -z is set.
+    if server_config.flags.compress && server_config.compression_level.is_none() {
+        server_config.compression_level = Some(compress::zlib::CompressionLevel::Default);
+    }
     server_config.stop_at = config.stop_at();
 
     flags::apply_common_server_flags(config, &mut server_config);
@@ -1070,6 +1078,14 @@ fn build_server_config_for_generator(
     server_config.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
     server_config.compression_level = config.compression_level();
+    // When -z is active but no explicit --compress-level=N was given, default to
+    // level 6 (upstream rsync default). Without this, compression_level stays None
+    // and setup_protocol won't activate token-level Zlib compression, causing the
+    // TokenReader to run in plain mode while the remote sends compressed tokens.
+    // upstream: options.c:2737-2740 — compress_level defaults to 6 when -z is set.
+    if server_config.flags.compress && server_config.compression_level.is_none() {
+        server_config.compression_level = Some(compress::zlib::CompressionLevel::Default);
+    }
     server_config.stop_at = config.stop_at();
 
     flags::apply_common_server_flags(config, &mut server_config);
