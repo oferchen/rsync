@@ -234,78 +234,39 @@ pub fn run_server_with_handshake<W: Write>(
     mut stdout: W,
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
-    // Protocol has already been negotiated via:
-    // - perform_handshake() for SSH mode (binary exchange)
-    // - @RSYNCD exchange for daemon mode
-    // So we just use the protocol from handshake and activate multiplex if needed.
-    // This mirrors upstream's setup_protocol() which skips the exchange when
-    // remote_protocol != 0 (already set by @RSYNCD).
-
-    // Extract buffered data before calling setup_protocol.
-    // This is critical for daemon mode where the handshake reader may have read ahead.
+    // upstream: setup_protocol() skips binary exchange when remote_protocol != 0
+    // (already set by @RSYNCD greeting or SSH handshake).
     let buffered_data = std::mem::take(&mut handshake.buffered);
 
-    // IMPORTANT: In daemon mode, the buffered data from the handshake may contain
-    // garbage or premature binary data that was read ahead during argument parsing.
-    // This data is NOT meant for setup_protocol - it should be discarded.
-    //
-    // The vstring negotiation happens AFTER compat flags exchange:
-    // 1. Server sends compat flags
-    // 2. Client reads compat flags, determines do_negotiated_strings
-    // 3. THEN client sends its vstring
-    //
-    // Any data in the buffer at this point is from BEFORE the client knew
-    // whether to send vstrings, so it's not valid vstring data.
-    //
-    // For daemon mode (client_args is Some), discard the buffered data.
+    // Daemon mode: discard buffered data from handshake reader. The vstring
+    // negotiation follows compat flags exchange, so any buffered bytes predate
+    // the client's knowledge of whether to send vstrings.
     let mut chained_stdin: Box<dyn std::io::Read> =
         if handshake.client_args.is_some() && !buffered_data.is_empty() {
-            // Daemon mode: don't use buffered data, read fresh from socket
             Box::new(stdin)
         } else {
-            // SSH mode or no buffered data: chain as before
             let buffered = std::io::Cursor::new(buffered_data);
             Box::new(buffered.chain(stdin))
         };
 
-    // Call setup_protocol() - mirrors upstream main.c:1245
-    // This is the FIRST thing start_server() does after setting file descriptors
-    // IMPORTANT: Parameter order matches upstream: f_out first, f_in second!
-    // For SSH mode, compat_exchanged is false (do compat exchange here).
-    // For daemon mode, compat_exchanged is false (do compat exchange with client capabilities).
-    //
-    // This call performs:
-    // 1. Compatibility flags exchange (protocol >= 30)
-    // 2. Capability negotiation for checksums and compression (protocol >= 30)
-    // Both happen in RAW mode, BEFORE multiplex activation.
-    //
-    // is_server controls compat flags + checksum seed direction:
-    // - Normal server mode (client_mode=false): we are server, WRITE compat/seed
-    // - Daemon client mode (client_mode=true): we act as client, READ compat/seed
+    // upstream: main.c:1245 start_server() → setup_protocol(f_out, f_in)
+    // Performs compat flags exchange + capability negotiation in RAW mode,
+    // before multiplex activation.
     let is_server = !config.client_mode;
 
-    // is_daemon_mode controls capability negotiation direction:
-    // - Daemon mode: unidirectional (server sends lists, client reads silently)
-    // - SSH mode: bidirectional (both sides exchange)
-    // We're in daemon mode if:
-    // - We're a daemon client (client_mode=true, connecting to remote daemon) OR
-    // - We're a server receiving from a daemon client (client_args is Some)
+    // upstream: daemon mode uses unidirectional negotiation (server sends,
+    // client reads silently); SSH mode uses bidirectional exchange.
     let is_daemon_mode = config.client_mode || handshake.client_args.is_some();
 
-    // do_compression controls whether compression algorithm negotiation happens.
-    // Both sides must have the same value (based on -z flag).
-    // - For client mode: check our config for compression_level
-    // - For server mode: check if client passed -z in their args
+    // upstream: compat.c — do_compression is set by the -z short option.
+    // Only check compact flag strings (single-dash args like "-avz"), not
+    // long-form args like "--size-only" which contain 'z' but don't mean compression.
     let do_compression = if config.client_mode {
-        // Daemon client: check -z flag (always present when compress is requested)
         config.flags.compress
     } else if let Some(args) = handshake.client_args.as_deref() {
-        // Daemon server: check if client has -z in their args
         args.iter()
-            .any(|arg| arg.contains('z') && arg.starts_with('-'))
+            .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z'))
     } else {
-        // SSH server mode: assume no compression by default
-        // (will be refined when we parse client's -z flag properly)
         false
     };
 
@@ -329,84 +290,25 @@ pub fn run_server_with_handshake<W: Write>(
     };
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
 
-    // Store negotiated algorithms, compat flags, and checksum seed in handshake for use by role contexts
-    // The role contexts will extract these and use them for checksum/compression operations
     handshake.negotiated_algorithms = setup_result.negotiated_algorithms;
     handshake.compat_flags = setup_result.compat_flags;
     handshake.checksum_seed = setup_result.checksum_seed;
 
-    // CRITICAL: Flush stdout BEFORE wrapping it in ServerWriter!
+    // Flush raw-mode data before wrapping in multiplexed writer.
     stdout.flush()?;
 
-    // Activate multiplex (mirrors upstream main.c:1247-1260 and do_server_recv:1167)
-    //
-    // For NORMAL SERVER mode (not client_mode):
-    // - Server always activates OUTPUT multiplex for protocol >= 23 (start_server line 1248)
-    // - For receiver: do_server_recv() activates INPUT multiplex at protocol >= 30
-    // - For sender: start_server() conditionally activates INPUT
-    //
-    // For CLIENT MODE (daemon client connecting to remote daemon):
-    // - Client does NOT activate OUTPUT multiplex (client_run doesn't call io_start_multiplex_out)
-    // - Client activates INPUT multiplex to receive multiplexed data from server
-    // - Filter list is sent through PLAIN output (not multiplexed)
-    // - The remote daemon (server) will have OUTPUT multiplex active and send us multiplexed data
-    //
-    // Socket-level BufReader batches small reads (4-byte multiplex headers) into
-    // fewer recvfrom syscalls — mirrors upstream rsync's 32KB iobuf.in circular
-    // buffer (io.c). MultiplexReader's 64KB buffer only holds one frame's payload;
-    // without BufReader each recv_msg_into header read hits the raw socket.
-    // BufReader::read_exact bypasses the cache for payloads larger than the
-    // remaining buffer, so large frames don't get double-copied.
+    // upstream: io.c iobuf.in is 32KB circular; BufReader serves the same role,
+    // batching small reads (4-byte multiplex headers) into fewer recvfrom syscalls.
     let reader =
         reader::ServerReader::new_plain(io::BufReader::with_capacity(64 * 1024, chained_stdin));
-    // No BufWriter: MultiplexWriter provides all buffering (64KB, matching upstream
-    // rsync's iobuf_out). Removing BufWriter eliminates one memcpy layer — data
-    // goes from MultiplexWriter's buffer directly to the socket via writev().
+    // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
-    // Activate OUTPUT multiplex based on mode and protocol version.
-    //
-    // Upstream rsync multiplex activation differs by mode:
-    //
-    // SERVER mode (main.c:1246-1248 start_server):
-    //   if (protocol_version >= 23)
-    //       io_start_multiplex_out(f_out);
-    //
-    // CLIENT SENDER mode (main.c:1296-1299 client_run am_sender):
-    //   if (protocol_version >= 30)
-    //       io_start_multiplex_out(f_out);
-    //   else
-    //       io_start_buffering_out(f_out);
-    //
-    // CLIENT RECEIVER mode (main.c:1340-1345):
-    //   if (need_messages_from_generator)
-    //       io_start_multiplex_out(f_out);
-    //   else
-    //       io_start_buffering_out(f_out);
-    //
-    // Multiplex activation timing for client and server modes.
-    //
-    // For protocol >= 30, need_messages_from_generator = 1 (compat.c:776), so BOTH
-    // client and daemon use multiplexed I/O.
-    //
-    // CLIENT mode (main.c:1341-1352 client_run):
-    //   io_start_multiplex_in(f_in);   // Line 1343 - for proto >= 23
-    //   io_start_multiplex_out(f_out); // Line 1345 - for need_messages (proto >= 30)
-    //   send_filter_list(f_out);       // Line 1352 - AFTER multiplex for proto >= 30
-    //   recv_file_list(f_in);          // Line 1361
-    //
-    // DAEMON sender (main.c:1252-1259 start_server):
-    //   io_start_multiplex_in(f_in);   // Line 1255 - for need_messages (proto >= 30)
-    //   recv_filter_list(f_in);        // Line 1258 - reads multiplexed filter list
-    //   do_server_sender();            // Line 1259
-    //
-    // For client sender: multiplex is activated BEFORE filter/file list (protocol >= 30)
-    // For server: multiplex is activated BEFORE filter list (protocol >= 23)
+    // upstream: main.c:1246-1248 — server activates multiplex_out for proto >= 23.
+    // upstream: main.c:1296-1345 — client activates for proto >= 30 (need_messages).
     let should_activate_output_multiplex = if config.client_mode {
-        // Client mode: activate for protocol >= 30
         handshake.protocol.supports_generator_messages()
     } else {
-        // Server mode: activate for protocol >= 23
         handshake.protocol.supports_multiplex_io()
     };
 
@@ -414,39 +316,18 @@ pub fn run_server_with_handshake<W: Write>(
         writer = writer.activate_multiplex()?;
     }
 
-    // Filter list handling for client mode.
-    //
-    // The filter list exchange depends on role and mode:
-    //
-    // CLIENT GENERATOR (push to daemon):
-    //   Upstream exclude.c:send_filter_list() logic:
-    //     receiver_wants_list = prune_empty_dirs || (delete_mode && ...)
-    //     if (am_sender && !receiver_wants_list) f_out = -1;  // Skip sending
-    //   For a basic push (no delete), the sender SKIPS sending the filter list.
-    //
-    // CLIENT RECEIVER (pull from daemon):
-    //   Upstream main.c:start_server() when daemon is sender (am_sender=1):
-    //     recv_filter_list(f_in);  // Daemon ALWAYS reads filter list from client!
-    //   The daemon expects to read filter list from us, so we MUST send one
-    //   (even if empty, we send the terminator).
-    //
-    // SERVER mode: we receive, never send.
-    let receiver_wants_filter_list = config.flags.delete || !config.filter_rules.is_empty();
+    // upstream: exclude.c:1650 — am_sender && !receiver_wants_list skips sending.
+    // Push mode applies exclusion locally in the generator; only delete/prune
+    // needs the filter list on the wire.
+    let receiver_wants_filter_list = config.flags.delete || config.flags.prune_empty_dirs;
 
+    // upstream: main.c:1258 — daemon sender always calls recv_filter_list(f_in).
     let should_send_filter_list = if config.client_mode {
         match config.role {
-            ServerRole::Generator => {
-                // Client sender (push): only send if receiver wants it
-                receiver_wants_filter_list
-            }
-            ServerRole::Receiver => {
-                // Client receiver (pull): daemon sender ALWAYS reads filter list from us
-                // We must send at least the empty terminator
-                true
-            }
+            ServerRole::Generator => receiver_wants_filter_list,
+            ServerRole::Receiver => true,
         }
     } else {
-        // Server mode: never send (we receive)
         false
     };
 
@@ -458,46 +339,25 @@ pub fn run_server_with_handshake<W: Write>(
         )?;
         writer.flush()?;
     }
-    // NOTE: Compression is NOT applied at the stream level.
-    //
-    // Upstream rsync applies compression at the TOKEN level during delta transfer only:
-    // - token.c:send_token() calls send_deflated_token() when compression is enabled
-    // - token.c:recv_token() calls recv_deflated_token() to decompress
-    //
-    // The file list and other protocol data are sent as PLAIN data.
-    // Stream-level compression would corrupt the protocol.
-    //
-    // Token-level compression is handled in the delta transfer code via
-    // protocol::wire::compressed_token module.
-
-    // Send MSG_IO_TIMEOUT for daemon mode with configured timeout (main.c:1249-1250)
-    // This tells the client about the server's I/O timeout value
-    // Only for server mode, not client mode
+    // upstream: main.c:1249-1250 — server sends MSG_IO_TIMEOUT to client.
     if !config.client_mode
         && let Some(timeout_secs) = handshake.io_timeout
         && handshake.protocol.supports_extended_goodbye()
     {
-        // Send MSG_IO_TIMEOUT with 4-byte little-endian timeout value
-        // Upstream uses SIVAL(numbuf, 0, num) which stores as little-endian
         use protocol::MessageCode;
         let timeout_bytes = (timeout_secs as i32).to_le_bytes();
         writer.send_message(MessageCode::IoTimeout, &timeout_bytes)?;
     }
 
-    // NOTE: INPUT multiplex activation is now handled by each role AFTER reading filter list.
-    // This prevents trying to read plain filter list data through a multiplexed stream.
-    // See receiver.rs and generator.rs for the activation points.
-
+    // Input multiplex activation deferred to each role after reading filter list.
     let chained_reader = reader;
 
     match config.role {
         ServerRole::Receiver => {
             let mut ctx = ReceiverContext::new(&handshake, config);
-            // Wrap writer in CountingWriter to track bytes sent back to sender
-            // This mirrors upstream rsync's stats.total_written tracking in io.c:859
+            // upstream: io.c:859 — stats.total_written tracking
             let mut counting_writer = writer::CountingWriter::new(&mut writer);
             let mut stats = ctx.run(chained_reader, &mut counting_writer, progress)?;
-            // Record the bytes sent to the sender (signatures, indices, etc.)
             stats.bytes_sent = counting_writer.bytes_written();
 
             Ok(ServerStats::Receiver(stats))

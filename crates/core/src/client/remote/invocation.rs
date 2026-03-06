@@ -454,6 +454,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--munge-links"));
         }
 
+        // --numeric-ids — upstream: options.c:2887-2888 (long-form only)
+        if self.config.numeric_ids() {
+            args.push(OsString::from("--numeric-ids"));
+        }
+
         if self.config.size_only() {
             args.push(OsString::from("--size-only"));
         }
@@ -614,13 +619,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.preserve_xattrs() {
             flags.push('X');
         }
-        if self.config.numeric_ids() {
-            flags.push('n');
-        }
+        // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
+        // numeric_ids is always sent as long-form --numeric-ids (options.c:2887-2888).
         if self.config.dry_run() {
             flags.push('n');
         }
-        if self.config.delete_mode().is_enabled() || self.config.delete_excluded() {
+        // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
+        // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
+        if self.config.dirs() && !self.config.recursive() {
             flags.push('d');
         }
         if self.config.whole_file() {
@@ -1210,6 +1216,7 @@ mod tests {
         "--copy-unsafe-links",
         "--safe-links",
         "--munge-links",
+        "--numeric-ids",
         "--size-only",
         "--ignore-times",
         "--ignore-existing",
@@ -1868,10 +1875,20 @@ mod tests {
     }
 
     #[test]
-    fn includes_numeric_ids_flag() {
+    fn numeric_ids_is_long_form_not_in_flag_string() {
+        // upstream: numeric_ids is sent as --numeric-ids long-form arg, never as 'n' flag.
+        // 'n' in compact flags means dry_run.
         let config = ClientConfig::builder().numeric_ids(true).build();
         let flags = sender_flag_string(&config);
-        assert!(flags.contains('n'), "expected 'n' in flags: {flags}");
+        assert!(
+            !flags.contains('n'),
+            "'n' should NOT appear for numeric_ids: {flags}"
+        );
+        let args = build_sender_args(&config);
+        assert!(
+            args.iter().any(|a| a == "--numeric-ids"),
+            "expected --numeric-ids in long-form args: {args:?}"
+        );
     }
 
     #[test]
@@ -1940,22 +1957,25 @@ mod tests {
     }
 
     #[test]
-    fn delete_mode_sets_d_flag_in_flag_string() {
+    fn delete_mode_is_long_form_not_in_flag_string() {
+        // upstream: delete is sent as --delete-* long-form arg, never as 'd' flag.
+        // 'd' in compact flags means --dirs (xfer_dirs without recursion).
         let config = ClientConfig::builder().delete_before(true).build();
         let flags = sender_flag_string(&config);
         assert!(
-            flags.contains('d'),
-            "delete mode should set 'd' in flag string: {flags}"
+            !flags.contains('d'),
+            "'d' should NOT appear for delete mode: {flags}"
         );
     }
 
     #[test]
-    fn delete_excluded_sets_d_flag_in_flag_string() {
+    fn delete_excluded_is_long_form_not_in_flag_string() {
+        // upstream: delete_excluded is sent as --delete-excluded long-form arg.
         let config = ClientConfig::builder().delete_excluded(true).build();
         let flags = sender_flag_string(&config);
         assert!(
-            flags.contains('d'),
-            "delete_excluded should set 'd' in flag string: {flags}"
+            !flags.contains('d'),
+            "'d' should NOT appear for delete_excluded: {flags}"
         );
     }
 
@@ -2788,8 +2808,7 @@ mod tests {
             ('z', "compress"),
             ('c', "checksum"),
             ('H', "hard_links"),
-            ('n', "numeric_ids/dry_run"),
-            ('d', "delete"),
+            ('n', "dry_run"),
             ('W', "whole_file"),
             ('S', "sparse"),
             ('y', "fuzzy"),
@@ -2818,6 +2837,7 @@ mod tests {
             "--delete-before",
             "--delete-excluded",
             "--force",
+            "--numeric-ids",
             "--max-delete=50",
             "--max-size=1000000",
             "--min-size=100",

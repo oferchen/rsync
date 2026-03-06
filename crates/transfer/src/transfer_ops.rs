@@ -44,6 +44,7 @@ use crate::pipeline::spsc;
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
+use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
 use protocol::flist::FileEntry;
 
 use crate::pipeline::PendingTransfer;
@@ -100,6 +101,21 @@ pub struct RequestConfig<'a> {
     pub inplace: bool,
     /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
     pub io_uring_policy: fast_io::IoUringPolicy,
+}
+
+impl RequestConfig<'_> {
+    /// Creates a [`TokenReader`] matching the negotiated compression algorithm.
+    ///
+    /// Returns a compressed token reader when the negotiated algorithms include
+    /// Zlib or ZlibX compression, otherwise a plain 4-byte LE token reader.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `token.c:271` - `recv_token()` selects plain or compressed based on `-z`
+    fn token_reader(&self) -> TokenReader {
+        let compression = self.negotiated_algorithms.map(|n| n.compression);
+        TokenReader::new(compression)
+    }
 }
 
 /// Sends a file transfer request to the sender.
@@ -280,114 +296,133 @@ pub fn process_file_response<R: Read>(
         None
     };
 
-    // Read and apply delta tokens
+    // Read and apply delta tokens.
+    // TokenReader handles both plain (4-byte LE) and compressed (flag-byte)
+    // token formats transparently, matching upstream token.c:recv_token().
+    let mut token_reader = ctx.config.token_reader();
+
     loop {
-        let mut token_buf = [0u8; 4];
-        reader.read_exact(&mut token_buf)?;
-        let token = i32::from_le_bytes(token_buf);
+        match token_reader.read_token(reader)? {
+            DeltaToken::End => {
+                // End of file — verify checksum using stack buffers.
+                // Use mem::replace to consume the verifier for finalization while
+                // resetting it for the next file (avoids per-file construction).
+                let checksum_len = checksum_verifier.digest_len();
+                let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                reader.read_exact(&mut expected[..checksum_len])?;
 
-        if token == 0 {
-            // End of file — verify checksum using stack buffers.
-            // Use mem::replace to consume the verifier for finalization while
-            // resetting it for the next file (avoids per-file construction).
-            let checksum_len = checksum_verifier.digest_len();
-            let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-            reader.read_exact(&mut expected[..checksum_len])?;
-
-            let algo = checksum_verifier.algorithm();
-            let old_verifier =
-                std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
-            let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-            let computed_len = old_verifier.finalize_into(&mut computed);
-            if computed_len != checksum_len {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "checksum length mismatch for {file_path:?}: expected {checksum_len}, got {computed_len}",
-                    ),
-                ));
-            }
-            if computed[..computed_len] != expected[..checksum_len] {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
-                        &expected[..checksum_len],
-                        &computed[..computed_len]
-                    ),
-                ));
-            }
-            break;
-        } else if token > 0 {
-            // Literal data — try zero-copy from the multiplex frame buffer,
-            // falling back to TokenBuffer when the token spans frame boundaries.
-            let len = token as usize;
-
-            if let Some(data) = reader.try_borrow_exact(len)? {
-                // Zero-copy path: data borrowed directly from MultiplexReader buffer
-                if let Some(ref mut sparse) = sparse_state {
-                    sparse.write(&mut output, data)?;
-                } else {
-                    output.write_all(data)?;
-                }
-                checksum_verifier.update(data);
-            } else {
-                // Fallback: token spans frame boundary, copy into TokenBuffer
-                token_buffer.resize_for(len);
-                reader.read_exact(token_buffer.as_mut_slice())?;
-                let data = token_buffer.as_slice();
-                if let Some(ref mut sparse) = sparse_state {
-                    sparse.write(&mut output, data)?;
-                } else {
-                    output.write_all(data)?;
-                }
-                checksum_verifier.update(data);
-            }
-            total_bytes += len as u64;
-        } else {
-            // Block reference
-            let block_idx = -(token + 1) as usize;
-            if let (Some(sig), Some(basis_map)) = (&signature, basis_map.as_mut()) {
-                let layout = sig.layout();
-                let block_count = layout.block_count() as usize;
-
-                if block_idx >= block_count {
+                let algo = checksum_verifier.algorithm();
+                let old_verifier =
+                    std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
+                let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                let computed_len = old_verifier.finalize_into(&mut computed);
+                if computed_len != checksum_len {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!(
-                            "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                            "checksum length mismatch for {file_path:?}: expected {checksum_len}, got {computed_len}",
                         ),
                     ));
                 }
+                if computed[..computed_len] != expected[..checksum_len] {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
+                            &expected[..checksum_len],
+                            &computed[..computed_len]
+                        ),
+                    ));
+                }
+                break;
+            }
+            DeltaToken::Literal(literal) => {
+                // Write literal data to output and update checksum.
+                // LiteralData::Ready = decompressed data from compressed stream.
+                // LiteralData::Pending = plain mode, caller reads data from stream.
+                match literal {
+                    LiteralData::Ready(data) => {
+                        let len = data.len();
+                        if let Some(ref mut sparse) = sparse_state {
+                            sparse.write(&mut output, &data)?;
+                        } else {
+                            output.write_all(&data)?;
+                        }
+                        checksum_verifier.update(&data);
+                        total_bytes += len as u64;
+                    }
+                    LiteralData::Pending(len) => {
+                        // Plain token: read data from stream.
+                        if let Some(data) = reader.try_borrow_exact(len)? {
+                            if let Some(ref mut sparse) = sparse_state {
+                                sparse.write(&mut output, data)?;
+                            } else {
+                                output.write_all(data)?;
+                            }
+                            checksum_verifier.update(data);
+                        } else {
+                            token_buffer.resize_for(len);
+                            reader.read_exact(token_buffer.as_mut_slice())?;
+                            let data = token_buffer.as_slice();
+                            if let Some(ref mut sparse) = sparse_state {
+                                sparse.write(&mut output, data)?;
+                            } else {
+                                output.write_all(data)?;
+                            }
+                            checksum_verifier.update(data);
+                        }
+                        total_bytes += len as u64;
+                    }
+                }
+            }
+            DeltaToken::BlockRef(block_idx) => {
+                if let (Some(sig), Some(basis_map)) = (&signature, basis_map.as_mut()) {
+                    let layout = sig.layout();
+                    let block_count = layout.block_count() as usize;
 
-                let block_len = layout.block_length().get() as u64;
-                let offset = block_idx as u64 * block_len;
+                    if block_idx >= block_count {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                            ),
+                        ));
+                    }
 
-                let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-                    let remainder = layout.remainder();
-                    if remainder > 0 {
-                        remainder as usize
+                    let block_len = layout.block_length().get() as u64;
+                    let offset = block_idx as u64 * block_len;
+
+                    let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
+                        let remainder = layout.remainder();
+                        if remainder > 0 {
+                            remainder as usize
+                        } else {
+                            block_len as usize
+                        }
                     } else {
                         block_len as usize
+                    };
+
+                    let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+
+                    if let Some(ref mut sparse) = sparse_state {
+                        sparse.write(&mut output, block_data)?;
+                    } else {
+                        output.write_all(block_data)?;
                     }
-                } else {
-                    block_len as usize
-                };
+                    checksum_verifier.update(block_data);
 
-                let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+                    // upstream: token.c:631 — see_deflate_token() keeps the
+                    // decompressor dictionary in sync after block matches.
+                    token_reader.see_token(block_data)?;
 
-                if let Some(ref mut sparse) = sparse_state {
-                    sparse.write(&mut output, block_data)?;
+                    total_bytes += bytes_to_copy as u64;
                 } else {
-                    output.write_all(block_data)?;
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("block reference {block_idx} without basis file"),
+                    ));
                 }
-                checksum_verifier.update(block_data);
-                total_bytes += bytes_to_copy as u64;
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("block reference {block_idx} without basis file"),
-                ));
             }
         }
     }
@@ -534,102 +569,121 @@ pub fn process_file_response_streaming<R: Read>(
     };
 
     let mut total_bytes: u64 = 0;
+    let mut token_reader = ctx.config.token_reader();
 
     // Read the first token to determine if this is a single-chunk file.
-    let mut token_buf = [0u8; 4];
-    reader.read_exact(&mut token_buf)?;
-    let first_token = i32::from_le_bytes(token_buf);
+    let first_delta = token_reader.read_token(reader)?;
 
     // Try single-chunk coalescing: if the first token is a literal and the
-    // next token is end-of-file (0), send one WholeFile message instead of
+    // next token is end-of-file, send one WholeFile message instead of
     // Begin + Chunk + Commit (3 sends → 1).
-    if first_token > 0 && basis_map.is_none() {
-        let len = first_token as usize;
-        let mut buf = recycle_or_alloc(buf_return_rx, len);
+    match first_delta {
+        DeltaToken::Literal(literal_data) if basis_map.is_none() => {
+            let buf = literal_to_buf(literal_data, reader, buf_return_rx)?;
+            let len = buf.len();
 
-        if let Some(borrowed) = reader.try_borrow_exact(len)? {
-            buf.extend_from_slice(borrowed);
-        } else {
-            let start = buf.len();
-            buf.resize(start + len, 0);
-            reader.read_exact(&mut buf[start..])?;
-        }
+            // Peek at the next token.
+            let next_delta = token_reader.read_token(reader)?;
 
-        // Peek at the next token.
-        reader.read_exact(&mut token_buf)?;
-        let next_token = i32::from_le_bytes(token_buf);
+            if matches!(next_delta, DeltaToken::End) {
+                // Single-chunk file — coalesce into WholeFile.
+                total_bytes = len as u64;
+                let checksum_len = checksum_verifier.digest_len();
+                let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                reader.read_exact(&mut expected_checksum[..checksum_len])?;
 
-        if next_token == 0 {
-            // Single-chunk file — coalesce into WholeFile.
+                file_tx
+                    .send(FileMessage::WholeFile {
+                        begin: begin_msg,
+                        data: buf,
+                    })
+                    .map_err(|_| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
+                    })?;
+
+                return Ok(StreamingResult {
+                    total_bytes,
+                    expected_checksum,
+                    checksum_len,
+                });
+            }
+
+            // Not a single-chunk file — send Begin + first Chunk,
+            // then continue the regular loop starting with the peeked token.
+            file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
+            })?;
+            file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "disk commit thread disconnected during chunk send",
+                )
+            })?;
             total_bytes = len as u64;
-            let checksum_len = checksum_verifier.digest_len();
-            let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-            reader.read_exact(&mut expected_checksum[..checksum_len])?;
 
-            file_tx
-                .send(FileMessage::WholeFile {
-                    begin: begin_msg,
-                    data: buf,
-                })
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
-                })?;
-
-            return Ok(StreamingResult {
+            process_remaining_tokens(
+                reader,
+                file_tx,
+                buf_return_rx,
+                checksum_verifier,
+                &signature,
+                &mut basis_map,
                 total_bytes,
-                expected_checksum,
-                checksum_len,
-            });
-        }
-
-        // Not a single-chunk file — fall through: send Begin + first Chunk,
-        // then continue the regular loop starting with the peeked token.
-        file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
-        })?;
-        file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "disk commit thread disconnected during chunk send",
+                Some(next_delta),
+                &mut token_reader,
             )
-        })?;
-        total_bytes = len as u64;
+        }
+        first_delta => {
+            // First token was not a simple literal — send Begin and process normally.
+            file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
+            })?;
 
-        // Process the peeked token as the current token in the loop below.
-        // We set `pending_token` so the loop body processes it first.
-        return process_remaining_tokens(
-            reader,
-            file_tx,
-            buf_return_rx,
-            checksum_verifier,
-            &signature,
-            &mut basis_map,
-            total_bytes,
-            Some(next_token),
-        );
+            process_remaining_tokens(
+                reader,
+                file_tx,
+                buf_return_rx,
+                checksum_verifier,
+                &signature,
+                &mut basis_map,
+                total_bytes,
+                Some(first_delta),
+                &mut token_reader,
+            )
+        }
     }
+}
 
-    // First token was not a simple literal — send Begin and process normally.
-    file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
-        io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
-    })?;
-
-    process_remaining_tokens(
-        reader,
-        file_tx,
-        buf_return_rx,
-        checksum_verifier,
-        &signature,
-        &mut basis_map,
-        total_bytes,
-        Some(first_token),
-    )
+/// Converts a [`LiteralData`] to a buffer, reading pending bytes from the stream.
+///
+/// For `Ready` data (compressed mode), wraps the decompressed data directly.
+/// For `Pending` data (plain mode), reads the specified number of bytes from `reader`,
+/// using a recycled buffer when available.
+fn literal_to_buf<R: Read>(
+    literal: LiteralData,
+    reader: &mut ServerReader<R>,
+    buf_return_rx: &spsc::Receiver<Vec<u8>>,
+) -> io::Result<Vec<u8>> {
+    match literal {
+        LiteralData::Ready(data) => Ok(data),
+        LiteralData::Pending(len) => {
+            let mut buf = recycle_or_alloc(buf_return_rx, len);
+            if let Some(borrowed) = reader.try_borrow_exact(len)? {
+                buf.extend_from_slice(borrowed);
+            } else {
+                let start = buf.len();
+                buf.resize(start + len, 0);
+                reader.read_exact(&mut buf[start..])?;
+            }
+            Ok(buf)
+        }
+    }
 }
 
 /// Processes remaining delta tokens after the initial coalescing check.
 ///
-/// If `pending_token` is `Some`, it is processed first without reading from
-/// the wire. Then the regular token loop continues until end-of-file (token 0).
+/// If `pending_delta` is `Some`, it is processed first without reading from
+/// the wire. Then the regular token loop continues until end-of-file.
 #[allow(clippy::too_many_arguments)]
 fn process_remaining_tokens<R: Read>(
     reader: &mut ServerReader<R>,
@@ -639,109 +693,114 @@ fn process_remaining_tokens<R: Read>(
     signature: &Option<FileSignature>,
     basis_map: &mut Option<MapFile>,
     mut total_bytes: u64,
-    pending_token: Option<i32>,
+    pending_delta: Option<DeltaToken>,
+    token_reader: &mut TokenReader,
 ) -> io::Result<StreamingResult> {
     let send_abort = |tx: &spsc::Sender<FileMessage>, reason: String| {
         let _ = tx.send(FileMessage::Abort { reason });
     };
 
-    let mut next_token = pending_token;
+    let mut next_delta = pending_delta;
 
     loop {
-        let token = match next_token.take() {
-            Some(t) => t,
-            None => {
-                let mut token_buf = [0u8; 4];
-                if let Err(e) = reader.read_exact(&mut token_buf) {
+        let delta = match next_delta.take() {
+            Some(d) => d,
+            None => match token_reader.read_token(reader) {
+                Ok(d) => d,
+                Err(e) => {
                     send_abort(file_tx, format!("network read error: {e}"));
                     return Err(e);
                 }
-                i32::from_le_bytes(token_buf)
-            }
+            },
         };
 
-        if token == 0 {
-            let checksum_len = checksum_verifier.digest_len();
-            let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-            if let Err(e) = reader.read_exact(&mut expected_checksum[..checksum_len]) {
-                send_abort(file_tx, format!("failed to read checksum: {e}"));
-                return Err(e);
-            }
-
-            file_tx.send(FileMessage::Commit).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "disk commit thread disconnected during commit",
-                )
-            })?;
-
-            return Ok(StreamingResult {
-                total_bytes,
-                expected_checksum,
-                checksum_len,
-            });
-        } else if token > 0 {
-            let len = token as usize;
-            let mut buf = recycle_or_alloc(buf_return_rx, len);
-
-            if let Some(borrowed) = reader.try_borrow_exact(len)? {
-                buf.extend_from_slice(borrowed);
-            } else {
-                let start = buf.len();
-                buf.resize(start + len, 0);
-                reader.read_exact(&mut buf[start..])?;
-            };
-
-            file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "disk commit thread disconnected during chunk send",
-                )
-            })?;
-            total_bytes += len as u64;
-        } else {
-            let block_idx = -(token + 1) as usize;
-            if let (Some(sig), Some(basis_map)) = (signature, basis_map.as_mut()) {
-                let layout = sig.layout();
-                let block_count = layout.block_count() as usize;
-
-                if block_idx >= block_count {
-                    let msg = format!(
-                        "block index {block_idx} out of bounds (file has {block_count} blocks)"
-                    );
-                    send_abort(file_tx, msg.clone());
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+        match delta {
+            DeltaToken::End => {
+                let checksum_len = checksum_verifier.digest_len();
+                let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+                if let Err(e) = reader.read_exact(&mut expected_checksum[..checksum_len]) {
+                    send_abort(file_tx, format!("failed to read checksum: {e}"));
+                    return Err(e);
                 }
 
-                let block_len = layout.block_length().get() as u64;
-                let offset = block_idx as u64 * block_len;
+                file_tx.send(FileMessage::Commit).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "disk commit thread disconnected during commit",
+                    )
+                })?;
 
-                let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-                    let remainder = layout.remainder();
-                    if remainder > 0 {
-                        remainder as usize
-                    } else {
-                        block_len as usize
+                return Ok(StreamingResult {
+                    total_bytes,
+                    expected_checksum,
+                    checksum_len,
+                });
+            }
+            DeltaToken::Literal(literal_data) => {
+                let buf = match literal_to_buf(literal_data, reader, buf_return_rx) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        send_abort(file_tx, format!("network read error: {e}"));
+                        return Err(e);
                     }
-                } else {
-                    block_len as usize
                 };
+                let len = buf.len();
 
-                let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
-
-                let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
-                buf.extend_from_slice(block_data);
                 file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
                     io::Error::new(
                         io::ErrorKind::BrokenPipe,
-                        "disk commit thread disconnected during block send",
+                        "disk commit thread disconnected during chunk send",
                     )
                 })?;
-                total_bytes += bytes_to_copy as u64;
-            } else {
-                let msg = format!("block reference {block_idx} without basis file");
-                send_abort(file_tx, msg.clone());
-                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+                total_bytes += len as u64;
+            }
+            DeltaToken::BlockRef(block_idx) => {
+                if let (Some(sig), Some(basis_map)) = (signature, basis_map.as_mut()) {
+                    let layout = sig.layout();
+                    let block_count = layout.block_count() as usize;
+
+                    if block_idx >= block_count {
+                        let msg = format!(
+                            "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                        );
+                        send_abort(file_tx, msg.clone());
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+                    }
+
+                    let block_len = layout.block_length().get() as u64;
+                    let offset = block_idx as u64 * block_len;
+
+                    let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
+                        let remainder = layout.remainder();
+                        if remainder > 0 {
+                            remainder as usize
+                        } else {
+                            block_len as usize
+                        }
+                    } else {
+                        block_len as usize
+                    };
+
+                    let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+
+                    // upstream: token.c:631 — see_deflate_token() keeps the
+                    // decompressor dictionary in sync after block matches.
+                    token_reader.see_token(block_data)?;
+
+                    let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
+                    buf.extend_from_slice(block_data);
+                    file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "disk commit thread disconnected during block send",
+                        )
+                    })?;
+                    total_bytes += bytes_to_copy as u64;
+                } else {
+                    let msg = format!("block reference {block_idx} without basis file");
+                    send_abort(file_tx, msg.clone());
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+                }
             }
         }
     }
