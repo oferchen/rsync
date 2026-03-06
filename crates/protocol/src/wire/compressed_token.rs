@@ -153,6 +153,13 @@ pub struct CompressedTokenEncoder {
     /// In zlibx mode block-match tokens do not update the compressor
     /// dictionary; only literal bytes flow through the deflate context.
     is_zlibx: bool,
+    /// Tracks whether data has been fed to the deflate compressor since the
+    /// last sync flush. Needed because `compress_chunk_no_flush` may drain
+    /// `literal_buf` (e.g. from `send_literal` at chunk boundaries) while
+    /// buffering compressed output inside the deflate context — a subsequent
+    /// `flush_all_literals` must still issue `sync_flush` even though
+    /// `literal_buf` is empty.
+    needs_flush: bool,
 }
 
 impl CompressedTokenEncoder {
@@ -201,6 +208,7 @@ impl CompressedTokenEncoder {
             last_run_end: 0,
             protocol_version,
             is_zlibx: false,
+            needs_flush: false,
         }
     }
 
@@ -216,6 +224,7 @@ impl CompressedTokenEncoder {
         self.last_token = -1;
         self.run_start = 0;
         self.last_run_end = 0;
+        self.needs_flush = false;
     }
 
     /// Sends literal data with compression.
@@ -323,6 +332,7 @@ impl CompressedTokenEncoder {
         }
 
         let chunk_len = self.literal_buf.len().min(CHUNK_SIZE);
+        self.needs_flush = true;
 
         let mut consumed_total = 0;
         while consumed_total < chunk_len {
@@ -397,6 +407,7 @@ impl CompressedTokenEncoder {
             write_deflated_data_pieces(writer, &self.flush_buf)?;
         }
 
+        self.needs_flush = false;
         Ok(())
     }
 
@@ -409,7 +420,13 @@ impl CompressedTokenEncoder {
         while !self.literal_buf.is_empty() {
             self.compress_chunk_no_flush(writer)?;
         }
-        self.sync_flush(writer)?;
+        // Only sync flush if data was actually fed to the compressor.
+        // `needs_flush` tracks this across calls — `send_literal` may drain
+        // `literal_buf` via `compress_chunk_no_flush` at chunk boundaries,
+        // leaving `literal_buf` empty here while deflate still holds output.
+        if self.needs_flush {
+            self.sync_flush(writer)?;
+        }
         Ok(())
     }
 
