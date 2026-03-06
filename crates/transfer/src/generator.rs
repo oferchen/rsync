@@ -1378,9 +1378,9 @@ impl GeneratorContext {
         // Calculate relative path
         let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
-        // upstream: flist.c — the root transfer directory is always sent as "."
-        // with XMIT_TOP_DIR set. This entry enables delete_in_dir() for the
-        // root directory when --delete is active on daemon connections.
+        // upstream: flist.c:send_file_name() — the root transfer directory is
+        // always sent as "." with XMIT_TOP_DIR set. This entry enables
+        // delete_in_dir() for the root directory when --delete is active.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
             if self.config.is_daemon_connection {
                 let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
