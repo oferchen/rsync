@@ -435,6 +435,7 @@ write_upstream_conf() {
 pid file = ${pid_file}
 port = ${port}
 use chroot = false
+munge symlinks = false
 ${identity}numeric ids = yes
 [interop]
     path = ${dest}
@@ -728,16 +729,26 @@ comp_run_scenario() {
   esac
 
   # shellcheck disable=SC2086
-  if ! timeout "$hard_timeout" $client $flags --timeout=10 \
-      "${sdir}/" "$url" >/dev/null 2>>"$log"; then
-    echo "    FAIL (transfer error)"
+  local transfer_log="${log}.transfer"
+  timeout "$hard_timeout" $client $flags --timeout=10 \
+      "${sdir}/" "$url" >"$transfer_log.out" 2>"$transfer_log.err"
+  local rc=$?
+  cat "$transfer_log.err" >> "$log"
+  if [[ $rc -ne 0 ]]; then
+    echo "    FAIL (transfer error, exit=$rc)"
+    echo "    stderr: $(head -5 "$transfer_log.err")"
     return 1
   fi
 
   # Verify per scenario type
   case "$vtype" in
     basic|compress|whole-file|inplace|numeric-ids|recursive|size-only|inc-recursive|delta)
-      comp_verify_transfer "$sdir" "$ddir"
+      if ! comp_verify_transfer "$sdir" "$ddir"; then
+        echo "    dest contents: $(find "$ddir" -type f | sort | head -20)"
+        echo "    daemon log tail: $(tail -5 "$log" 2>/dev/null)"
+        return 1
+      fi
+      return 0
       ;;
     symlinks)
       comp_verify_transfer "$sdir" "$ddir" && comp_verify_symlink "$sdir" "$ddir"
@@ -785,16 +796,13 @@ comp_run_scenario() {
 # Resolved since initial tracking:
 # - up:checksum, oc:checksum (always-checksum mode implemented)
 # - up:delete (apply_long_form_args now parses --delete/--delete-before)
+# - up:symlinks, oc:symlinks (create_symlinks() in receiver)
+# - oc:delete, oc:numeric-ids, oc:exclude (correct compact flag semantics + long-form args)
+# - up:compress, oc:compress (TokenReader integration in run_sync path)
+# - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
 #
-# Remaining known failures — features not yet fully wired into daemon transfer path:
+# Remaining known failures:
 KNOWN_FAILURES=(
-  "up:symlinks"   "oc:symlinks"
-  "up:hardlinks"
-  "up:compress"   "oc:compress"
-  "oc:delete"
-  "up:size-only"
-  "oc:numeric-ids"
-  "oc:exclude"
 )
 
 is_known_failure() {

@@ -153,6 +153,13 @@ pub struct CompressedTokenEncoder {
     /// In zlibx mode block-match tokens do not update the compressor
     /// dictionary; only literal bytes flow through the deflate context.
     is_zlibx: bool,
+    /// Tracks whether data has been fed to the deflate compressor since the
+    /// last sync flush. Needed because `compress_chunk_no_flush` may drain
+    /// `literal_buf` (e.g. from `send_literal` at chunk boundaries) while
+    /// buffering compressed output inside the deflate context — a subsequent
+    /// `flush_all_literals` must still issue `sync_flush` even though
+    /// `literal_buf` is empty.
+    needs_flush: bool,
 }
 
 impl CompressedTokenEncoder {
@@ -201,6 +208,7 @@ impl CompressedTokenEncoder {
             last_run_end: 0,
             protocol_version,
             is_zlibx: false,
+            needs_flush: false,
         }
     }
 
@@ -216,6 +224,7 @@ impl CompressedTokenEncoder {
         self.last_token = -1;
         self.run_start = 0;
         self.last_run_end = 0;
+        self.needs_flush = false;
     }
 
     /// Sends literal data with compression.
@@ -235,9 +244,9 @@ impl CompressedTokenEncoder {
     pub fn send_literal<W: Write>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<()> {
         self.literal_buf.extend_from_slice(data);
 
-        // Flush if buffer is large enough
+        // upstream: compress full chunks with Z_NO_FLUSH as data accumulates
         while self.literal_buf.len() >= CHUNK_SIZE {
-            self.flush_chunk(writer)?;
+            self.compress_chunk_no_flush(writer)?;
         }
 
         Ok(())
@@ -263,16 +272,17 @@ impl CompressedTokenEncoder {
         block_index: u32,
     ) -> io::Result<()> {
         let token = block_index as i32;
+        let has_literals = !self.literal_buf.is_empty();
 
-        // Flush pending literal data
-        self.flush_all_literals(writer)?;
-
-        // Write token using run-length encoding
+        // upstream token.c lines 363-400: write previous token run BEFORE
+        // flushing literals, so DEFLATED_DATA always follows a token on
+        // the wire (never two DEFLATED_DATA groups from separate flushes).
         if self.last_token == -1 || self.last_token == -2 {
+            self.flush_all_literals(writer)?;
             self.run_start = token;
-        } else if token != self.last_token + 1 || token >= self.run_start + 65536 {
-            // Output previous run
+        } else if has_literals || token != self.last_token + 1 || token >= self.run_start + 65536 {
             self.write_token_run(writer)?;
+            self.flush_all_literals(writer)?;
             self.run_start = token;
         }
 
@@ -294,41 +304,36 @@ impl CompressedTokenEncoder {
     ///
     /// Returns an error if flushing or writing the end marker fails.
     pub fn finish<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        // Flush any pending literal data
-        self.flush_all_literals(writer)?;
-
-        // Output final token run if any
+        // upstream token.c lines 460-462: output token run BEFORE literal
+        // data, matching the wire ordering where DEFLATED_DATA always
+        // follows a token (never precedes it without a separator).
         if self.last_token >= 0 {
             self.write_token_run(writer)?;
         }
 
-        // Write end marker
+        self.flush_all_literals(writer)?;
+
         writer.write_all(&[END_FLAG])?;
 
         self.reset();
         Ok(())
     }
 
-    /// Flushes one chunk of literal data using Z_SYNC_FLUSH.
+    /// Compresses one chunk of literal data with `Z_NO_FLUSH`.
     ///
-    /// Uses the persistent deflate stream and strips the trailing 4-byte
-    /// sync marker (0x00 0x00 0xFF 0xFF) from output. The receiver adds
-    /// the marker back before inflating.
+    /// Upstream token.c feeds `CHUNK_SIZE` blocks to deflate with `Z_NO_FLUSH`,
+    /// writing any produced output as `DEFLATED_DATA` blocks. The sync flush
+    /// only happens in [`Self::sync_flush`] when a token or end marker follows.
     ///
-    /// Reuses `self.flush_buf` across calls to avoid per-block allocation,
-    /// matching upstream's static `obuf` buffer (token.c lines 346-354).
-    fn flush_chunk<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+    /// Reference: upstream token.c lines 409-418 (input feeding loop).
+    fn compress_chunk_no_flush<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         if self.literal_buf.is_empty() {
             return Ok(());
         }
 
         let chunk_len = self.literal_buf.len().min(CHUNK_SIZE);
+        self.needs_flush = true;
 
-        // Reuse flush_buf instead of allocating a new Vec per call
-        self.flush_buf.clear();
-
-        // Compress directly from literal_buf without copying to an intermediate Vec.
-        // We track how far we've consumed, then drain afterward.
         let mut consumed_total = 0;
         while consumed_total < chunk_len {
             let input = &self.literal_buf[consumed_total..chunk_len];
@@ -342,19 +347,33 @@ impl CompressedTokenEncoder {
             let consumed = (self.compressor.total_in() - before_in) as usize;
             let produced = (self.compressor.total_out() - before_out) as usize;
 
-            self.flush_buf
-                .extend_from_slice(&self.compress_buf[..produced]);
-            consumed_total += consumed;
+            // upstream: writes DEFLATED_DATA when output buffer fills
+            if produced > 0 {
+                write_deflated_data_pieces(writer, &self.compress_buf[..produced])?;
+            }
 
+            consumed_total += consumed;
             if consumed == 0 && produced < self.compress_buf.len() {
                 break;
             }
         }
 
-        // Drain the consumed input from literal_buf
         self.literal_buf.drain(..chunk_len);
+        Ok(())
+    }
 
-        // Flush with Z_SYNC_FLUSH
+    /// Performs `Z_SYNC_FLUSH` and writes remaining compressed output.
+    ///
+    /// Upstream token.c sets `flush = Z_SYNC_FLUSH` when all literal input has
+    /// been consumed (`nb == 0`) and the token is not a continuation (`-2`).
+    /// The trailing 4-byte sync marker (`0x00 0x00 0xFF 0xFF`) is stripped
+    /// from the final output; the receiver's inflate state machine re-inserts
+    /// it when transitioning from compressed data to a non-DEFLATED_DATA flag.
+    ///
+    /// Reference: upstream token.c lines 433-454.
+    fn sync_flush<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.flush_buf.clear();
+
         loop {
             let before_out = self.compressor.total_out();
 
@@ -369,14 +388,14 @@ impl CompressedTokenEncoder {
                     .extend_from_slice(&self.compress_buf[..produced]);
             }
 
-            // Stop when sync flush is complete
-            if status == flate2::Status::Ok {
+            // Z_SYNC_FLUSH is complete when deflate returns Ok, or when
+            // no more output is produced (BufError with 0 output).
+            if status == flate2::Status::Ok || produced == 0 {
                 break;
             }
         }
 
-        // Strip the trailing 4-byte sync marker (0x00 0x00 0xFF 0xFF)
-        // The receiver will add it back before inflating
+        // upstream: strips the trailing sync marker from the last DEFLATED_DATA
         if self.flush_buf.len() >= 4 {
             let len = self.flush_buf.len();
             if self.flush_buf[len - 4..] == [0x00, 0x00, 0xFF, 0xFF] {
@@ -384,22 +403,29 @@ impl CompressedTokenEncoder {
             }
         }
 
-        // Write in MAX_DATA_COUNT pieces with DEFLATED_DATA headers
-        let mut offset = 0;
-        while offset < self.flush_buf.len() {
-            let piece_len = (self.flush_buf.len() - offset).min(MAX_DATA_COUNT);
-            write_deflated_data_header(writer, piece_len)?;
-            writer.write_all(&self.flush_buf[offset..offset + piece_len])?;
-            offset += piece_len;
+        if !self.flush_buf.is_empty() {
+            write_deflated_data_pieces(writer, &self.flush_buf)?;
         }
 
+        self.needs_flush = false;
         Ok(())
     }
 
-    /// Flushes all pending literal data.
+    /// Flushes all pending literal data with a final `Z_SYNC_FLUSH`.
+    ///
+    /// Compresses remaining data with `Z_NO_FLUSH`, then performs a sync
+    /// flush to produce a decompressible boundary. This matches upstream's
+    /// pattern of only sync-flushing at token/end boundaries.
     fn flush_all_literals<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         while !self.literal_buf.is_empty() {
-            self.flush_chunk(writer)?;
+            self.compress_chunk_no_flush(writer)?;
+        }
+        // Only sync flush if data was actually fed to the compressor.
+        // `needs_flush` tracks this across calls — `send_literal` may drain
+        // `literal_buf` via `compress_chunk_no_flush` at chunk boundaries,
+        // leaving `literal_buf` empty here while deflate still holds output.
+        if self.needs_flush {
+            self.sync_flush(writer)?;
         }
         Ok(())
     }
@@ -550,7 +576,6 @@ pub struct CompressedTokenDecoder {
     /// Output buffer for decompression (scratch space for inflate output).
     output_buf: Vec<u8>,
     /// Reusable buffer for compressed input data read from the wire.
-    /// Replaces per-block `vec![0u8; len]` allocation in `recv_token`.
     /// Upstream: static `cbuf` in token.c (line 493).
     compressed_input_buf: Vec<u8>,
     /// Current token index.
@@ -560,9 +585,12 @@ pub struct CompressedTokenDecoder {
     /// Decoder initialized flag.
     initialized: bool,
     /// When `true`, [`Self::see_token`] is a no-op (CPRES_ZLIBX mode).
-    ///
-    /// Must mirror the paired encoder's flag.
     is_zlibx: bool,
+    /// Flag byte saved from a previous read, to be re-processed on the next
+    /// call. Used when the peek-ahead loop reads a non-DEFLATED_DATA flag
+    /// after accumulating consecutive compressed blocks.
+    /// Upstream: `saved_flag` in token.c line 503.
+    saved_flag: Option<u8>,
 }
 
 impl Default for CompressedTokenDecoder {
@@ -581,13 +609,14 @@ impl CompressedTokenDecoder {
         Self {
             decompress_buf: Vec::new(),
             decompress_pos: 0,
-            decompressor: Decompress::new(false), // false = raw deflate (-15 window)
+            decompressor: Decompress::new(false), // raw deflate (-15 window)
             output_buf: vec![0u8; CHUNK_SIZE * 2],
             compressed_input_buf: Vec::with_capacity(MAX_DATA_COUNT + 4),
             rx_token: 0,
             rx_run: 0,
             initialized: false,
             is_zlibx: false,
+            saved_flag: None,
         }
     }
 
@@ -603,6 +632,7 @@ impl CompressedTokenDecoder {
         self.rx_token = 0;
         self.rx_run = 0;
         self.initialized = false;
+        self.saved_flag = None;
     }
 
     /// Receives the next token from the stream.
@@ -617,19 +647,20 @@ impl CompressedTokenDecoder {
     /// - `Ok(CompressedToken::BlockMatch(index))` - Copy from block index in basis file
     /// - `Ok(CompressedToken::End)` - End of file marker
     ///
-    /// # Errors
+    /// Receives the next compressed token from the stream.
     ///
-    /// Returns an error if:
-    /// - Reading from the stream fails
-    /// - Decompression fails
-    /// - An invalid flag byte is encountered
+    /// Mirrors upstream `recv_deflated_token()` (token.c lines 500-625).
+    ///
+    /// Consecutive DEFLATED_DATA blocks are accumulated into a single buffer.
+    /// The sync marker (`0x00 0x00 0xFF 0xFF`) stripped by the encoder is
+    /// appended only when the next flag is not DEFLATED_DATA, matching
+    /// upstream's state transition from `r_inflated` to `r_idle`.
     pub fn recv_token<R: Read>(&mut self, reader: &mut R) -> io::Result<CompressedToken> {
-        // Initialize on first call
         if !self.initialized {
             self.initialized = true;
         }
 
-        // Return buffered decompressed data if available
+        // Return buffered decompressed data
         if self.decompress_pos < self.decompress_buf.len() {
             let remaining = &self.decompress_buf[self.decompress_pos..];
             let chunk_len = remaining.len().min(CHUNK_SIZE);
@@ -638,7 +669,7 @@ impl CompressedTokenDecoder {
             return Ok(CompressedToken::Literal(data));
         }
 
-        // Check for pending token run
+        // upstream: r_running — emit pending run tokens
         if self.rx_run > 0 {
             self.rx_run -= 1;
             let token = self.rx_token;
@@ -646,28 +677,49 @@ impl CompressedTokenDecoder {
             return Ok(CompressedToken::BlockMatch(token as u32));
         }
 
-        // Read next flag byte
-        let mut flag_buf = [0u8; 1];
-        reader.read_exact(&mut flag_buf)?;
-        let flag = flag_buf[0];
+        // Read next flag (or re-process saved flag)
+        let flag = if let Some(f) = self.saved_flag.take() {
+            f
+        } else {
+            let mut buf = [0u8; 1];
+            reader.read_exact(&mut buf)?;
+            buf[0]
+        };
 
-        // Check for DEFLATED_DATA
         if (flag & 0xC0) == DEFLATED_DATA {
-            let len = read_deflated_data_length(reader, flag)?;
-
-            // Reuse compressed_input_buf instead of allocating per block.
-            // Upstream: reads into static `cbuf` then appends sync marker
-            // (token.c lines 536-539).
+            // Accumulate all consecutive DEFLATED_DATA blocks, then append
+            // the sync marker once at the boundary — matching upstream's
+            // pattern where the sync marker is only restored when
+            // transitioning from compressed data to a non-compressed flag.
             self.compressed_input_buf.clear();
-            self.compressed_input_buf.resize(len, 0);
-            reader.read_exact(&mut self.compressed_input_buf[..len])?;
+            let len = read_deflated_data_length(reader, flag)?;
+            let start = self.compressed_input_buf.len();
+            self.compressed_input_buf.resize(start + len, 0);
+            reader.read_exact(&mut self.compressed_input_buf[start..start + len])?;
 
-            // Add the sync marker back that the encoder stripped
-            // (0x00 0x00 0xFF 0xFF)
+            // Peek ahead: read more DEFLATED_DATA blocks if consecutive
+            loop {
+                let mut peek = [0u8; 1];
+                reader.read_exact(&mut peek)?;
+                let next_flag = peek[0];
+
+                if (next_flag & 0xC0) == DEFLATED_DATA {
+                    let next_len = read_deflated_data_length(reader, next_flag)?;
+                    let s = self.compressed_input_buf.len();
+                    self.compressed_input_buf.resize(s + next_len, 0);
+                    reader.read_exact(&mut self.compressed_input_buf[s..s + next_len])?;
+                } else {
+                    // Save the non-DEFLATED_DATA flag for the next call
+                    self.saved_flag = Some(next_flag);
+                    break;
+                }
+            }
+
+            // Append the sync marker stripped by the encoder
             self.compressed_input_buf
                 .extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
 
-            // Decompress using persistent decompressor with sync flush
+            // Decompress the complete segment
             self.decompress_buf.clear();
             let mut input = &self.compressed_input_buf[..];
 
@@ -691,15 +743,13 @@ impl CompressedTokenDecoder {
                     input = &input[consumed..];
                 }
 
-                // Done when all input consumed and no more output
-                if input.is_empty() && produced == 0 {
+                if input.is_empty() || (consumed == 0 && produced == 0) {
                     break;
                 }
             }
 
             self.decompress_pos = 0;
 
-            // Return first chunk
             if !self.decompress_buf.is_empty() {
                 let chunk_len = self.decompress_buf.len().min(CHUNK_SIZE);
                 let data = self.decompress_buf[..chunk_len].to_vec();
@@ -707,29 +757,19 @@ impl CompressedTokenDecoder {
                 return Ok(CompressedToken::Literal(data));
             }
 
-            // Empty compressed data - read next token
             return self.recv_token(reader);
         }
 
-        // Check for END_FLAG
         if flag == END_FLAG {
             return Ok(CompressedToken::End);
         }
 
-        // Parse token encoding.
-        //
-        // Upstream token.c lines 588-598 uses bit 7 to distinguish relative
-        // from absolute tokens, and bit 6 (via `flag >>= 6; if (flag & 1)`)
-        // to detect run counts. The `flag & 0xE0` approach fails for relative
-        // tokens with offsets 32-63 because offset bits bleed into the mask.
+        // upstream: token.c lines 588-598 — parse token encoding
         if flag & TOKEN_REL != 0 {
-            // TOKEN_REL (0x80-0xBF) or TOKENRUN_REL (0xC0-0xFF)
             let rel = (flag & 0x3F) as i32;
             self.rx_token += rel;
 
-            // Upstream: `flag >>= 6; if (flag & 1)` — bit 6 of the original
-            // flag distinguishes TOKEN_REL (bit 6 = 0) from TOKENRUN_REL
-            // (bit 6 = 1).
+            // upstream: bit 6 distinguishes TOKEN_REL from TOKENRUN_REL
             if (flag >> 6) & 1 != 0 {
                 let mut run_buf = [0u8; 2];
                 reader.read_exact(&mut run_buf)?;
@@ -740,12 +780,10 @@ impl CompressedTokenDecoder {
             self.rx_token += 1;
             Ok(CompressedToken::BlockMatch(token as u32))
         } else if flag & 0xE0 == TOKEN_LONG {
-            // TOKEN_LONG (0x20) or TOKENRUN_LONG (0x21)
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf)?;
             self.rx_token = i32::from_le_bytes(buf);
 
-            // Upstream: bit 0 distinguishes TOKEN_LONG from TOKENRUN_LONG
             if flag & 1 != 0 {
                 let mut run_buf = [0u8; 2];
                 reader.read_exact(&mut run_buf)?;
@@ -870,19 +908,31 @@ pub enum CompressedToken {
 
 /// Writes a DEFLATED_DATA header.
 ///
-/// Encodes the length into a 2-byte header where the first byte contains
-/// the DEFLATED_DATA flag (0x40) plus the upper 6 bits of the length,
-/// and the second byte contains the lower 8 bits.
+/// Encodes the length into a 2-byte header: first byte is `DEFLATED_DATA | (len >> 8)`,
+/// second byte is `len & 0xFF`. Maximum length is [`MAX_DATA_COUNT`] (14 bits).
 ///
-/// # Arguments
-///
-/// * `writer` - The output stream to write to
-/// * `len` - The length of compressed data that follows (must be ≤ MAX_DATA_COUNT)
+/// Reference: upstream token.c lines 451-453.
 #[inline]
 fn write_deflated_data_header<W: Write>(writer: &mut W, len: usize) -> io::Result<()> {
     debug_assert!(len <= MAX_DATA_COUNT);
     let header = [DEFLATED_DATA | ((len >> 8) as u8), (len & 0xFF) as u8];
     writer.write_all(&header)
+}
+
+/// Writes compressed data as one or more DEFLATED_DATA blocks.
+///
+/// Splits `data` into [`MAX_DATA_COUNT`]-sized pieces, each prefixed with
+/// a DEFLATED_DATA header. Upstream token.c writes output in the same
+/// chunked fashion (lines 440-455).
+fn write_deflated_data_pieces<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
+    let mut offset = 0;
+    while offset < data.len() {
+        let piece_len = (data.len() - offset).min(MAX_DATA_COUNT);
+        write_deflated_data_header(writer, piece_len)?;
+        writer.write_all(&data[offset..offset + piece_len])?;
+        offset += piece_len;
+    }
+    Ok(())
 }
 
 /// Reads the length from a DEFLATED_DATA header.

@@ -616,6 +616,13 @@ impl FileEntry {
         self.flags
     }
 
+    /// Sets the wire format flags.
+    ///
+    /// Used by the generator to mark top-level directories with `XMIT_TOP_DIR`.
+    pub fn set_flags(&mut self, flags: super::flags::FileFlags) {
+        self.flags = flags;
+    }
+
     /// Returns true if this entry is a directory.
     #[inline]
     #[must_use]

@@ -44,10 +44,20 @@ pub struct ParsedServerFlags {
     pub acls: bool,
     /// Preserve extended attributes (`X` flag, `--xattrs`).
     pub xattrs: bool,
-    /// Numeric IDs only (`n` flag, but this conflicts with dry-run).
+    /// Numeric IDs only (long-form `--numeric-ids`).
+    ///
+    /// Not part of the compact flag string; set via long-form args or explicit
+    /// propagation. In upstream, `'n'` means dry-run, not numeric-ids.
     pub numeric_ids: bool,
-    /// Delete extraneous files (`d` flag for delete).
+    /// Delete extraneous files (long-form `--delete-*` variants).
+    ///
+    /// Not part of the compact flag string; set via long-form args or explicit
+    /// propagation. In upstream, `'d'` means `--dirs`, not delete.
     pub delete: bool,
+    /// Dry-run / no-transfer mode (`n` flag, upstream: `!do_xfers`).
+    pub dry_run: bool,
+    /// Transfer directories without recursion (`d` flag, `--dirs`).
+    pub dirs: bool,
     /// Whole file transfer, no delta (`W` flag, `--whole-file`).
     pub whole_file: bool,
     /// Sparse file handling (`S` flag, `--sparse`).
@@ -161,8 +171,12 @@ impl ParsedServerFlags {
             b'I' => self.ignore_times = true,
             b'A' => self.acls = true,
             b'X' => self.xattrs = true,
-            b'n' => self.numeric_ids = true,
-            b'd' => self.delete = true,
+            // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
+            // numeric_ids is long-form only (options.c:2887 sends --numeric-ids).
+            b'n' => self.dry_run = true,
+            // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
+            // delete is long-form only (options.c:2818-2827 sends --delete-*).
+            b'd' => self.dirs = true,
             b'W' => self.whole_file = true,
             b'S' => self.sparse = true,
             b'x' => self.one_file_system = self.one_file_system.saturating_add(1),
