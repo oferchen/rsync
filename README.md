@@ -29,13 +29,18 @@ Local, SSH, and daemon transfers are fully functional with native delta algorith
 | Sparse files, hardlinks, symlinks | Complete |
 | ACLs (-A), xattrs (-X) | Unix only |
 | --compress (zlib, zstd, lz4) | Complete |
-| Batch files | Local only; remote replay pending |
+| Batch files | Complete |
 | Incremental recursion | Complete |
 | Daemon daemonization (--detach) | Complete |
 | Daemon syslog | Pending |
 | SIMD checksums (AVX2, SSE2, NEON) | Complete |
+| Hardlink preservation | Complete |
 | Linux, macOS | Full support |
 | Windows | Partial (no ACLs/xattrs) |
+
+### Interop Testing
+
+Tested against upstream rsync **3.0.9**, **3.1.3**, and **3.4.1** in CI. Both push and pull directions are verified for daemon transfers with options including `--delete`, `--compress`, `--checksum`, `--size-only`, `--hard-links`, `--numeric-ids`, `--exclude`, and `--inplace`.
 
 ### Performance
 
@@ -152,6 +157,23 @@ crates/windows-gnu-eh/  # Windows GNU exception handling shims
 ```
 
 See `cargo doc --workspace --no-deps --open` for API documentation.
+
+### Architecture
+
+```text
+cli -> core -> engine, daemon, transport, logging
+                core -> protocol -> checksums, filters, compress, bandwidth -> metadata
+```
+
+- **cli** - CLI parsing (Clap v4), help text, output formatting
+- **core** - Orchestration facade; all transfers go through `core::session()` and `CoreConfig`
+- **protocol** - Wire protocol (v28-32), multiplex MSG_* framing, version negotiation
+- **transfer** - Generator (sender) and receiver roles, delta transfer pipeline
+- **engine** - Local copy executor, sparse writes, temp-file commit, buffer pool
+- **checksums** - Rolling rsum + strong checksums (MD4/MD5/XXH3) with SIMD fast paths
+- **daemon** - TCP listener, @RSYNCD: negotiation, auth, module access control
+
+Design patterns used throughout: Strategy (checksum/compression selection), Builder (config objects), State Machine (connection lifecycle), Chain of Responsibility (filter rules), Dependency Inversion (trait-based abstractions).
 
 ---
 
