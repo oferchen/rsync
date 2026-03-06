@@ -1387,7 +1387,7 @@ impl GeneratorContext {
                 protocol::flist::XMIT_TOP_DIR,
                 0,
             ));
-            self.file_list.push(dot_entry);
+            self.push_file_item(dot_entry, path.clone());
 
             match std::fs::read_dir(&path) {
                 Ok(entries) => {
