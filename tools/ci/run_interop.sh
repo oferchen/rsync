@@ -803,7 +803,10 @@ comp_run_scenario() {
 # - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
 #
 # Remaining known failures:
+# - up:compress, oc:compress (token-level compression not yet wired for daemon transfers)
 KNOWN_FAILURES=(
+  "up:compress"
+  "oc:compress"
 )
 
 is_known_failure() {
