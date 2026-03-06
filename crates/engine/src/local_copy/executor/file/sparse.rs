@@ -604,8 +604,8 @@ impl SparseWriter {
 /// * `pos` - Starting position for the hole
 /// * `len` - Length of the hole in bytes
 ///
-/// # TODO
-/// Currently only used in tests. Will be used for delta transfer in-place updates.
+/// Not yet wired into the production delta transfer path (test-only).
+/// See task #677 for in-place update integration.
 #[cfg(target_os = "linux")]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn punch_hole(
@@ -669,8 +669,8 @@ pub(crate) fn punch_hole(
 /// After a successful call, the file position will be at `pos + len`,
 /// matching the Linux implementation's behavior.
 ///
-/// # TODO
-/// Currently only used in tests. Will be used for delta transfer in-place updates.
+/// Not yet wired into the production delta transfer path (test-only).
+/// See task #677 for in-place update integration.
 #[cfg(not(target_os = "linux"))]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn punch_hole(
