@@ -6,7 +6,7 @@
 
 `rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.1 (protocol 32), works as a drop-in replacement.
 
-Binary name: **`oc-rsync`** — installs alongside system `rsync` without conflict.
+Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict.
 
 ---
 
