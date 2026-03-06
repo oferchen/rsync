@@ -729,16 +729,26 @@ comp_run_scenario() {
   esac
 
   # shellcheck disable=SC2086
-  if ! timeout "$hard_timeout" $client $flags --timeout=10 \
-      "${sdir}/" "$url" >/dev/null 2>>"$log"; then
-    echo "    FAIL (transfer error)"
+  local transfer_log="${log}.transfer"
+  timeout "$hard_timeout" $client $flags --timeout=10 \
+      "${sdir}/" "$url" >"$transfer_log.out" 2>"$transfer_log.err"
+  local rc=$?
+  cat "$transfer_log.err" >> "$log"
+  if [[ $rc -ne 0 ]]; then
+    echo "    FAIL (transfer error, exit=$rc)"
+    echo "    stderr: $(head -5 "$transfer_log.err")"
     return 1
   fi
 
   # Verify per scenario type
   case "$vtype" in
     basic|compress|whole-file|inplace|numeric-ids|recursive|size-only|inc-recursive|delta)
-      comp_verify_transfer "$sdir" "$ddir"
+      if ! comp_verify_transfer "$sdir" "$ddir"; then
+        echo "    dest contents: $(find "$ddir" -type f | sort | head -20)"
+        echo "    daemon log tail: $(tail -5 "$log" 2>/dev/null)"
+        return 1
+      fi
+      return 0
       ;;
     symlinks)
       comp_verify_transfer "$sdir" "$ddir" && comp_verify_symlink "$sdir" "$ddir"
@@ -793,7 +803,6 @@ comp_run_scenario() {
 #
 # Remaining known failures:
 KNOWN_FAILURES=(
-  "up:size-only"
 )
 
 is_known_failure() {
