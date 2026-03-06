@@ -794,8 +794,6 @@ comp_run_scenario() {
 # Remaining known failures:
 KNOWN_FAILURES=(
   "up:size-only"
-  "up:compress"   "oc:compress"
-  "oc:delete"     # upstream daemon doesn't delete; args correct, needs protocol investigation
 )
 
 is_known_failure() {

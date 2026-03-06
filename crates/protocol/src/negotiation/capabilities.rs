@@ -359,18 +359,25 @@ pub fn negotiate_capabilities_with_override(
     // negotiate_the_strings is ONLY CALLED when do_negotiated_strings is TRUE.
     // When FALSE, upstream uses pre-filled defaults without any wire protocol exchange.
     if !do_negotiation {
-        // Use protocol 30+ defaults without sending or reading anything
-        // Upstream default when compression is not negotiated is CPRES_NONE (compat.c:234)
+        // Use protocol 30+ defaults without sending or reading anything.
+        // upstream: compat.c:194 — when -z is active but no vstring negotiation,
+        // parse_compress_choice() defaults to CPRES_ZLIB.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD5);
+        let compression = if send_compression {
+            CompressionAlgorithm::Zlib
+        } else {
+            CompressionAlgorithm::None
+        };
         debug_log!(
             Proto,
             1,
-            "client lacks VARINT_FLIST_FLAGS, using checksum={} compression=None",
-            checksum.as_str()
+            "client lacks VARINT_FLIST_FLAGS, using checksum={} compression={}",
+            checksum.as_str(),
+            compression.as_str()
         );
         return Ok(NegotiationResult {
             checksum,
-            compression: CompressionAlgorithm::None,
+            compression,
         });
     }
 

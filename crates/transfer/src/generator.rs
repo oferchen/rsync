@@ -1378,10 +1378,17 @@ impl GeneratorContext {
         // Calculate relative path
         let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
-        // For the base directory, skip the "." entry and just walk children
-        // Some clients may not expect/handle the "." entry correctly
+        // upstream: flist.c — the root transfer directory is always sent as "."
+        // with XMIT_TOP_DIR set. This entry enables delete_in_dir() for the
+        // root directory when --delete is active.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
-            // Walk children of the base directory (no "." entry)
+            let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
+            dot_entry.set_flags(protocol::flist::FileFlags::new(
+                protocol::flist::XMIT_TOP_DIR,
+                0,
+            ));
+            self.file_list.push(dot_entry);
+
             match std::fs::read_dir(&path) {
                 Ok(entries) => {
                     for entry in entries {
