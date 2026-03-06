@@ -300,9 +300,13 @@ pub fn run_server_with_handshake<W: Write>(
         // Daemon client: check -z flag (always present when compress is requested)
         config.flags.compress
     } else if let Some(args) = handshake.client_args.as_deref() {
-        // Daemon server: check if client has -z in their args
-        args.iter()
-            .any(|arg| arg.contains('z') && arg.starts_with('-'))
+        // Daemon server: check if client has -z in their compact flag string.
+        // Only check single-dash args (e.g. "-avz"), NOT long-form args like
+        // "--size-only" which also contain 'z' but don't indicate compression.
+        // upstream: options.c — `-z` sets do_compression via the short option parser.
+        args.iter().any(|arg| {
+            arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z')
+        })
     } else {
         // SSH server mode: assume no compression by default
         // (will be refined when we parse client's -z flag properly)

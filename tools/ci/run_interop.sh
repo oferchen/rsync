@@ -800,6 +800,7 @@ comp_run_scenario() {
 # - up:hardlinks (create_hardlinks() in receiver, follower skip in transfer loop)
 # - oc:delete, oc:numeric-ids, oc:exclude (correct compact flag semantics + long-form args)
 # - up:compress, oc:compress (TokenReader integration in run_sync path)
+# - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
 #
 # Remaining known failures:
 KNOWN_FAILURES=(
