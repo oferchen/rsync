@@ -1380,14 +1380,16 @@ impl GeneratorContext {
 
         // upstream: flist.c — the root transfer directory is always sent as "."
         // with XMIT_TOP_DIR set. This entry enables delete_in_dir() for the
-        // root directory when --delete is active.
+        // root directory when --delete is active on daemon connections.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
-            let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
-            dot_entry.set_flags(protocol::flist::FileFlags::new(
-                protocol::flist::XMIT_TOP_DIR,
-                0,
-            ));
-            self.push_file_item(dot_entry, path.clone());
+            if self.config.is_daemon_connection {
+                let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
+                dot_entry.set_flags(protocol::flist::FileFlags::new(
+                    protocol::flist::XMIT_TOP_DIR,
+                    0,
+                ));
+                self.push_file_item(dot_entry, path.clone());
+            }
 
             match std::fs::read_dir(&path) {
                 Ok(entries) => {
