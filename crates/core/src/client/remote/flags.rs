@@ -62,10 +62,14 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_xattrs() {
         flags.push('X');
     }
-    if config.numeric_ids() {
+    // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
+    // numeric_ids is always sent as long-form --numeric-ids (options.c:2887-2888).
+    if config.dry_run() {
         flags.push('n');
     }
-    if config.delete_mode().is_enabled() || config.delete_excluded() {
+    // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
+    // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
+    if config.dirs() && !config.recursive() {
         flags.push('d');
     }
     if config.whole_file() {

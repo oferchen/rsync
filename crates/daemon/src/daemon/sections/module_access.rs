@@ -706,6 +706,15 @@ fn build_server_config(
             // (options.c:2737-2980). The compact flag string only covers single-char
             // flags; these long-form options must be parsed separately.
             apply_long_form_args(client_args, &mut cfg);
+
+            // upstream: options.c:2737-2740 — when -z is in the compact flag string
+            // but no explicit --compress-level=N was sent, default to level 6 (the
+            // upstream default). Without this, compression_level stays None and the
+            // transfer pipeline won't activate token-level compression.
+            if cfg.flags.compress && cfg.compression_level.is_none() {
+                cfg.compression_level = Some(compress::zlib::CompressionLevel::Default);
+            }
+
             Ok(Some(cfg))
         }
         Err(err) => {

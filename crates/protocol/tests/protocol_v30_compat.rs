@@ -524,10 +524,11 @@ mod protocol_30_capability_negotiation {
 
         assert!(result.is_ok(), "Should fall back gracefully: {result:?}");
 
-        // Should use MD5 default and None compression
+        // Should use MD5 default and Zlib when send_compression=true
+        // upstream: compat.c:194 defaults to CPRES_ZLIB when -z active without negotiation
         let negotiated = result.unwrap();
         assert_eq!(negotiated.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(negotiated.compression, CompressionAlgorithm::None);
+        assert_eq!(negotiated.compression, CompressionAlgorithm::Zlib);
         assert!(stdout.is_empty(), "No data should be sent");
     }
 }

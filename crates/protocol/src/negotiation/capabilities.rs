@@ -265,7 +265,7 @@ pub struct NegotiationResult {
 /// # Errors
 ///
 /// - Protocol < 30: Not an error, returns default algorithms (MD4, Zlib)
-/// - `do_negotiation=false`: Returns defaults (MD5, None) without I/O
+/// - `do_negotiation=false`: Returns defaults (MD5, Zlib if `-z`) without I/O
 /// - Peer chooses unsupported algorithm: InvalidData error
 /// - I/O errors during send/receive
 ///
@@ -359,18 +359,25 @@ pub fn negotiate_capabilities_with_override(
     // negotiate_the_strings is ONLY CALLED when do_negotiated_strings is TRUE.
     // When FALSE, upstream uses pre-filled defaults without any wire protocol exchange.
     if !do_negotiation {
-        // Use protocol 30+ defaults without sending or reading anything
-        // Upstream default when compression is not negotiated is CPRES_NONE (compat.c:234)
+        // Use protocol 30+ defaults without sending or reading anything.
+        // upstream: compat.c:194 — when -z is active but no vstring negotiation,
+        // parse_compress_choice() defaults to CPRES_ZLIB.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD5);
+        let compression = if send_compression {
+            CompressionAlgorithm::Zlib
+        } else {
+            CompressionAlgorithm::None
+        };
         debug_log!(
             Proto,
             1,
-            "client lacks VARINT_FLIST_FLAGS, using checksum={} compression=None",
-            checksum.as_str()
+            "client lacks VARINT_FLIST_FLAGS, using checksum={} compression={}",
+            checksum.as_str(),
+            compression.as_str()
         );
         return Ok(NegotiationResult {
             checksum,
-            compression: CompressionAlgorithm::None,
+            compression,
         });
     }
 
@@ -838,9 +845,10 @@ mod tests {
         )
         .unwrap();
 
-        // Should use MD5 (protocol 30+ default) and None (no compression)
+        // Should use MD5 (protocol 30+ default) and Zlib when send_compression=true
+        // upstream: compat.c:194 defaults to CPRES_ZLIB when -z active without negotiation
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::None);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
         // No I/O should have occurred
         assert!(
             stdout.is_empty(),
@@ -1336,9 +1344,9 @@ mod tests {
         )
         .unwrap();
 
-        // Should use MD5/None defaults without I/O
+        // Should use MD5/Zlib defaults without I/O (send_compression=true)
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::None);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
         assert!(stdout.is_empty(), "no I/O when do_negotiation=false");
     }
 
@@ -2783,9 +2791,10 @@ mod tests {
         )
         .unwrap();
 
-        // Should use MD5 (protocol 30+ default) and None (safe default)
+        // Should use MD5 (protocol 30+ default) and Zlib (upstream: compat.c:194
+        // defaults to CPRES_ZLIB when -z is active but no vstring negotiation)
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::None);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
         // No data should be sent when do_negotiation is false
         assert!(stdout.is_empty());
     }
