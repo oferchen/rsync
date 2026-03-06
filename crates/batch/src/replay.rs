@@ -12,7 +12,7 @@
 //! 1. **Header validation**: The batch header is read and the stream flags
 //!    bitmap is verified against the protocol version.
 //! 2. **File iteration**: Each file entry is read from the batch, its delta
-//!    operations are decoded, and [`apply_delta_ops`] reconstructs the target
+//!    operations are decoded, and `apply_delta_ops` reconstructs the target
 //!    file by combining basis data with literal insertions.
 //!
 //! # Upstream Reference

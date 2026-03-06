@@ -179,6 +179,8 @@ where
     config.from0 = long_flags.from0;
     config.inplace = long_flags.inplace;
     config.size_only = long_flags.size_only;
+    config.flags.numeric_ids = long_flags.numeric_ids;
+    config.flags.delete = long_flags.delete;
 
     // Apply value-bearing flags, returning parse errors to the client.
     // upstream: options.c — server_options() sends these as `--flag=value`.
@@ -289,6 +291,10 @@ struct ServerLongFlags {
     from0: bool,
     inplace: bool,
     size_only: bool,
+    /// Numeric IDs only (upstream: `--numeric-ids`, long-form only).
+    numeric_ids: bool,
+    /// Delete extraneous files (upstream: `--delete-*` variants, long-form only).
+    delete: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -316,6 +322,8 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         from0: false,
         inplace: false,
         size_only: false,
+        numeric_ids: false,
+        delete: false,
     };
 
     for arg in args {
@@ -334,6 +342,11 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--from0" => flags.from0 = true,
             "--inplace" => flags.inplace = true,
             "--size-only" => flags.size_only = true,
+            // upstream: --numeric-ids is long-form only (options.c:2887-2888)
+            "--numeric-ids" => flags.numeric_ids = true,
+            // upstream: --delete variants are long-form only (options.c:2818-2827)
+            "--delete" | "--delete-before" | "--delete-during" | "--delete-after"
+            | "--delete-delay" | "--delete-excluded" => flags.delete = true,
             _ => {
                 // Value-bearing flags use `--flag=value` syntax.
                 if let Some(value) = s.strip_prefix("--checksum-seed=") {
@@ -378,6 +391,13 @@ fn is_known_server_long_flag(arg: &str) -> bool {
             | "--from0"
             | "--inplace"
             | "--size-only"
+            | "--numeric-ids"
+            | "--delete"
+            | "--delete-before"
+            | "--delete-during"
+            | "--delete-after"
+            | "--delete-delay"
+            | "--delete-excluded"
     ) || arg == "-s"
         || arg.starts_with("--checksum-seed=")
         || arg.starts_with("--checksum-choice=")
