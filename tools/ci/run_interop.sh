@@ -803,7 +803,6 @@ comp_run_scenario() {
 #
 # Remaining known failures:
 KNOWN_FAILURES=(
-  "up:hardlinks"
 )
 
 is_known_failure() {

@@ -90,16 +90,15 @@ use metadata::{MetadataOptions, apply_metadata_from_file_entry, apply_metadata_w
 /// Returns true if this file entry is a hardlink follower that should be
 /// created as a hard link rather than transferred via delta.
 ///
-/// A follower has `hardlink_idx` set to a value other than `u32::MAX`.
-/// Leaders (the first file in a hardlink group) use `u32::MAX` as a sentinel.
-/// Entries without hardlink metadata return false.
+/// A follower has XMIT_HLINKED set but NOT XMIT_HLINK_FIRST. Leaders have
+/// both flags set. Entries without hardlink flags return false.
 ///
 /// # Upstream Reference
 ///
 /// - `generator.c:1539` — `F_HLINK_NOT_FIRST(file)` check
 /// - `hlink.c:284` — `hard_link_check()` called for non-first entries
 fn is_hardlink_follower(entry: &FileEntry) -> bool {
-    matches!(entry.hardlink_idx(), Some(idx) if idx != u32::MAX)
+    entry.flags().hlinked() && !entry.flags().hlink_first()
 }
 
 /// Pure-function quick-check: compares destination stat against source entry.
@@ -352,6 +351,21 @@ impl ReceiverContext {
             self.receive_id_lists(reader)?;
         }
 
+        // upstream: flist.c:1646 — send_file_entry() is called with flist->used
+        // (readdir-order position) BEFORE flist_sort_and_clean(). Leader GNUM values
+        // (F_HL_GNUM) are readdir-order wire NDXes. Replace the u32::MAX sentinel
+        // with the actual readdir-order wire NDX so followers can find their leader
+        // after sorting reorders entries.
+        if self.config.flags.hard_links {
+            let &(_flat_start, ndx_start) =
+                self.ndx_segments.last().expect("initial segment exists");
+            for (i, entry) in self.file_list.iter_mut().enumerate() {
+                if entry.flags().hlink_first() {
+                    entry.set_hardlink_idx((ndx_start + i as i32) as u32);
+                }
+            }
+        }
+
         // Sort file list to match sender's sorted order.
         // Upstream: flist_sort_and_clean() is called after recv_id_list()
         // See flist.c:2736 - both sides must sort to ensure matching NDX indices.
@@ -421,6 +435,22 @@ impl ReceiverContext {
                 segment_count += 1;
             }
 
+            // upstream: flist.c:1646 — leader GNUM is readdir-order wire NDX,
+            // assigned before sorting. Compute sub-list ndx_start first so we can
+            // stamp leaders with their readdir-order wire NDX before sorting.
+            let &(prev_flat_start, prev_ndx_start) =
+                self.ndx_segments.last().expect("initial segment exists");
+            let prev_used = (flat_start - prev_flat_start) as i32;
+            let seg_ndx_start = prev_ndx_start + prev_used + 1;
+
+            if self.config.flags.hard_links {
+                for (i, entry) in self.file_list[flat_start..].iter_mut().enumerate() {
+                    if entry.flags().hlink_first() {
+                        entry.set_hardlink_idx((seg_ndx_start + i as i32) as u32);
+                    }
+                }
+            }
+
             // Sort sub-list segment to match sender's sorted order.
             // upstream: flist.c:2155 — sender calls flist_sort_and_clean() after sending
             // upstream: flist.c:2736 — receiver calls flist_sort_and_clean() after receiving
@@ -429,12 +459,7 @@ impl ReceiverContext {
             // a directory, so stability is irrelevant and unstable is ~15% faster.
             sort_file_list(&mut self.file_list[flat_start..], true);
 
-            // Build ndx_segments entry for this sub-list.
-            // upstream: flist.c:2931 — flist->ndx_start = prev->ndx_start + prev->used + 1
-            let &(prev_flat_start, prev_ndx_start) =
-                self.ndx_segments.last().expect("initial segment exists");
-            let prev_used = (flat_start - prev_flat_start) as i32;
-            let seg_ndx_start = prev_ndx_start + prev_used + 1;
+            // Record ndx_segments entry for this sub-list (already computed above).
             self.ndx_segments.push((flat_start, seg_ndx_start));
 
             debug_log!(
@@ -949,28 +974,33 @@ impl ReceiverContext {
         let mut leader_paths: std::collections::HashMap<u32, PathBuf> =
             std::collections::HashMap::new();
 
-        // First pass: record leader paths (entries where hardlink_idx == u32::MAX).
-        // Use wire NDX (not array index) as the key because followers' hardlink_idx
-        // values are wire NDX values. With INC_RECURSE, ndx_start=1, so wire NDX
-        // differs from the array index.
-        // upstream: flist.c — F_HL_GNUM stores the wire NDX of the leader
-        for (idx, entry) in self.file_list.iter().enumerate() {
-            if entry.hardlink_idx() == Some(u32::MAX) {
+        // First pass: record leader paths keyed by their readdir-order wire NDX
+        // (stored in hardlink_idx during receive_file_list before sorting).
+        // upstream: flist.c — F_HL_GNUM stores the readdir-order wire NDX of the leader
+        for entry in &self.file_list {
+            if entry.flags().hlink_first() {
+                let leader_gnum = match entry.hardlink_idx() {
+                    Some(idx) => idx,
+                    None => continue,
+                };
                 let relative_path = entry.path();
                 let dest_path = if relative_path.as_os_str() == "." {
                     dest_dir.to_path_buf()
                 } else {
                     dest_dir.join(relative_path)
                 };
-                leader_paths.insert(self.flat_to_wire_ndx(idx) as u32, dest_path);
+                leader_paths.insert(leader_gnum, dest_path);
             }
         }
 
-        // Second pass: create hard links for followers.
+        // Second pass: create hard links for followers (hlinked but NOT hlink_first).
         for entry in &self.file_list {
+            if !entry.flags().hlinked() || entry.flags().hlink_first() {
+                continue;
+            }
             let leader_idx = match entry.hardlink_idx() {
-                Some(idx) if idx != u32::MAX => idx,
-                _ => continue,
+                Some(idx) => idx,
+                None => continue,
             };
 
             let leader_path = match leader_paths.get(&leader_idx) {
@@ -1137,8 +1167,7 @@ impl ReceiverContext {
             .enumerate()
             .filter(|(_, e)| e.is_file())
             // Hardlink followers are not transferred — they are created as hard links
-            // to the leader after the transfer loop. A follower has hardlink_idx set
-            // to a value other than u32::MAX (leaders use u32::MAX as sentinel).
+            // to the leader after the transfer loop.
             // upstream: generator.c:1539 — F_HLINK_NOT_FIRST → hard_link_check() → skip
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
