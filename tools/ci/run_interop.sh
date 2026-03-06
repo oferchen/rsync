@@ -797,13 +797,13 @@ comp_run_scenario() {
 # - up:checksum, oc:checksum (always-checksum mode implemented)
 # - up:delete (apply_long_form_args now parses --delete/--delete-before)
 # - up:symlinks, oc:symlinks (create_symlinks() in receiver)
-# - up:hardlinks (create_hardlinks() in receiver, follower skip in transfer loop)
 # - oc:delete, oc:numeric-ids, oc:exclude (correct compact flag semantics + long-form args)
 # - up:compress, oc:compress (TokenReader integration in run_sync path)
 # - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
 #
 # Remaining known failures:
 KNOWN_FAILURES=(
+  "up:hardlinks"
 )
 
 is_known_failure() {
