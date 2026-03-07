@@ -117,48 +117,41 @@ fn is_hardlink_follower(entry: &FileEntry) -> bool {
 
 /// Pure-function quick-check: compares destination stat against source entry.
 ///
-/// Returns `Some(metadata)` when the destination already matches (skip transfer),
-/// `None` when the file needs transfer. Thread-safe for use with `rayon::par_iter`.
+/// Returns `true` when the destination file matches the source entry (skip transfer).
+/// Thread-safe for use with `rayon::par_iter`.
 ///
 /// When `size_only` is true, only sizes are compared (mtime is ignored).
 /// When `preserve_times` is false and `size_only` is false, all files need transfer.
 ///
 /// Mirrors upstream `generator.c:617 quick_check_ok()` for `FT_REG`.
-fn quick_check_ok_stateless(
+fn quick_check_matches(
     entry: &FileEntry,
-    dest_dir: &Path,
+    dest_meta: &fs::Metadata,
     preserve_times: bool,
     size_only: bool,
-) -> Option<fs::Metadata> {
+) -> bool {
     if !preserve_times && !size_only {
-        return None;
+        return false;
     }
-    let file_path = dest_dir.join(entry.path());
-    let dest_meta = fs::metadata(&file_path).ok()?;
     if dest_meta.len() != entry.size() {
-        return None;
+        return false;
     }
     // upstream: generator.c:617 — `if (size_only) return 1;` after size match
     if size_only {
-        return Some(dest_meta);
+        return true;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if dest_meta.mtime() == entry.mtime() {
-            Some(dest_meta)
-        } else {
-            None
-        }
+        dest_meta.mtime() == entry.mtime()
     }
     #[cfg(not(unix))]
     {
-        let mtime_matches = dest_meta
+        dest_meta
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(false, |d| d.as_secs() as i64 == entry.mtime());
-        if mtime_matches { Some(dest_meta) } else { None }
+            .map_or(false, |d| d.as_secs() as i64 == entry.mtime())
     }
 }
 
@@ -1229,53 +1222,72 @@ impl ReceiverContext {
         // upstream: generator.c:617 — quick_check_ok() is skipped when ignore_times
         let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
         let size_only = self.config.size_only;
+        let ignore_existing = self.config.ignore_existing;
+        let existing_only = self.config.existing_only;
 
         // Phase B: Stat each candidate to determine quick-check status.
+        // Also applies --ignore-existing and --existing filters.
+        // upstream: generator.c:1562 — ignore_existing skips when file exists
+        // upstream: generator.c:1571 — existing_only (--existing) skips when file absent
         // Parallel when above threshold, sequential otherwise.
         if candidates.len() >= PARALLEL_STAT_THRESHOLD {
             let results: Vec<_> = candidates
                 .par_iter()
                 .map(|&(idx, entry)| {
-                    let meta = quick_check_ok_stateless(entry, dest_dir, preserve_times, size_only);
-                    (idx, entry, meta)
+                    let file_path = dest_dir.join(entry.path());
+                    let dest_meta = fs::metadata(&file_path).ok();
+                    (idx, entry, dest_meta)
                 })
                 .collect();
 
             let mut files_to_transfer = Vec::with_capacity(results.len());
-            for (idx, entry, meta) in results {
-                if let Some(cached_meta) = meta {
-                    let file_path = dest_dir.join(entry.path());
-                    if let Err(e) = apply_metadata_with_cached_stat(
-                        &file_path,
-                        entry,
-                        metadata_opts,
-                        Some(cached_meta),
-                    ) {
-                        metadata_errors.push((file_path, e.to_string()));
+            for (idx, entry, dest_meta) in results {
+                if let Some(ref meta) = dest_meta {
+                    if ignore_existing {
+                        continue;
                     }
-                } else {
-                    files_to_transfer.push((idx, entry));
+                    if quick_check_matches(entry, meta, preserve_times, size_only) {
+                        let file_path = dest_dir.join(entry.path());
+                        if let Err(e) = apply_metadata_with_cached_stat(
+                            &file_path,
+                            entry,
+                            metadata_opts,
+                            dest_meta,
+                        ) {
+                            metadata_errors.push((file_path, e.to_string()));
+                        }
+                        continue;
+                    }
+                } else if existing_only {
+                    continue;
                 }
+                files_to_transfer.push((idx, entry));
             }
             files_to_transfer
         } else {
             let mut files_to_transfer = Vec::with_capacity(candidates.len());
             for (idx, entry) in candidates {
-                if let Some(cached_meta) =
-                    quick_check_ok_stateless(entry, dest_dir, preserve_times, size_only)
-                {
-                    let file_path = dest_dir.join(entry.path());
-                    if let Err(e) = apply_metadata_with_cached_stat(
-                        &file_path,
-                        entry,
-                        metadata_opts,
-                        Some(cached_meta),
-                    ) {
-                        metadata_errors.push((file_path, e.to_string()));
+                let file_path = dest_dir.join(entry.path());
+                let dest_meta = fs::metadata(&file_path).ok();
+                if let Some(ref meta) = dest_meta {
+                    if ignore_existing {
+                        continue;
                     }
-                } else {
-                    files_to_transfer.push((idx, entry));
+                    if quick_check_matches(entry, meta, preserve_times, size_only) {
+                        if let Err(e) = apply_metadata_with_cached_stat(
+                            &file_path,
+                            entry,
+                            metadata_opts,
+                            dest_meta,
+                        ) {
+                            metadata_errors.push((file_path, e.to_string()));
+                        }
+                        continue;
+                    }
+                } else if existing_only {
+                    continue;
                 }
+                files_to_transfer.push((idx, entry));
             }
             files_to_transfer
         }
@@ -3616,6 +3628,9 @@ mod tests {
             from0: false,
             inplace: false,
             size_only: false,
+            ignore_existing: false,
+            existing_only: false,
+            max_delete: None,
         }
     }
 
@@ -4520,6 +4535,9 @@ mod tests {
             from0: false,
             inplace: false,
             size_only: false,
+            ignore_existing: false,
+            existing_only: false,
+            max_delete: None,
         }
     }
 
