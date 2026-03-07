@@ -5574,6 +5574,29 @@ mod tests {
         }
 
         #[test]
+        fn checksum_length_phase1_equals_short_sum_length() {
+            assert_eq!(
+                PHASE1_CHECKSUM_LENGTH.get(),
+                signature::block_size::SHORT_SUM_LENGTH,
+            );
+            assert_eq!(PHASE1_CHECKSUM_LENGTH.get(), 2);
+        }
+
+        #[test]
+        fn checksum_length_redo_equals_max_sum_length() {
+            assert_eq!(
+                REDO_CHECKSUM_LENGTH.get(),
+                signature::block_size::MAX_SUM_LENGTH,
+            );
+            assert_eq!(REDO_CHECKSUM_LENGTH.get(), 16);
+        }
+
+        #[test]
+        fn checksum_length_phase1_less_than_redo() {
+            assert!(PHASE1_CHECKSUM_LENGTH < REDO_CHECKSUM_LENGTH);
+        }
+
+        #[test]
         fn transfer_stats_default_values() {
             let stats = TransferStats::default();
 
