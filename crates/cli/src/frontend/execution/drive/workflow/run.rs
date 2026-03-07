@@ -677,6 +677,11 @@ where
         Err(code) => return code,
     };
 
+    if let Err(conflict) = builder.validate() {
+        let message = rsync_error!(1, "{}", conflict).with_role(Role::Client);
+        return fail_with_message(message, stderr);
+    }
+
     let config = builder.build();
 
     summary::execute_transfer(
