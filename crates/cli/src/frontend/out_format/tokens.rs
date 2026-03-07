@@ -150,6 +150,12 @@ pub(crate) struct OutFormatContext {
     pub(super) remote_address: Option<String>,
     pub(super) module_name: Option<String>,
     pub(super) module_path: Option<String>,
+    /// Whether the local side is the sender (push transfer).
+    ///
+    /// Controls the direction indicator in itemized output:
+    /// `<` for sender (push), `>` for receiver (pull).
+    /// (upstream: log.c:704 - uses `<` when am_sender && !am_server)
+    pub(super) is_sender: bool,
 }
 
 #[cfg(test)]
@@ -285,6 +291,7 @@ mod tests {
             remote_address: Some("192.168.1.1".to_owned()),
             module_name: Some("backup".to_owned()),
             module_path: Some("/var/backup".to_owned()),
+            is_sender: false,
         };
         assert_eq!(ctx.remote_host.as_deref(), Some("server.example.com"));
         assert_eq!(ctx.remote_address.as_deref(), Some("192.168.1.1"));
