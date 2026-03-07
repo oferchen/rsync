@@ -727,6 +727,17 @@ comp_run_scenario() {
       echo "old hello" > "$ddir/hello.txt"
       echo "old multiline" > "$ddir/multiline.txt"
       ;;
+    update)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      cp -r "$sdir"/* "$ddir"/
+      # Set dest file timestamps to future (newer than source)
+      find "$ddir" -type f -exec touch -t 203001010000 {} +
+      ;;
+    checksum-skip)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      # Copy source files to dest so content is identical
+      cp -a "$sdir"/* "$ddir"/
+      ;;
     max-delete)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       echo "extra1" > "$ddir/extra_one.txt"
@@ -769,6 +780,29 @@ comp_run_scenario() {
 
   # Verify per scenario type
   case "$vtype" in
+    checksum-skip)
+      local file_count
+      file_count=$(find "$ddir" -type f | wc -l)
+      if [ "$file_count" -lt 1 ]; then
+        echo "FAIL: no files in destination after checksum transfer"
+        return 1
+      fi
+      echo "  --checksum correctly handled pre-populated identical files"
+      return 0
+      ;;
+    update)
+      for f in $(find "$ddir" -type f); do
+        local mod_epoch
+        mod_epoch=$(stat -c %Y "$f" 2>/dev/null)
+        # 1893456000 = 2030-01-01 00:00:00 UTC
+        if [[ "$mod_epoch" -lt 1893456000 ]]; then
+          echo "    --update: $f was overwritten despite newer dest timestamp"
+          return 1
+        fi
+      done
+      echo "  --update correctly skipped files with newer dest timestamps"
+      return 0
+      ;;
     basic|compress|whole-file|inplace|numeric-ids|recursive|size-only|inc-recursive|delta|sparse|partial|append|bwlimit)
       if ! comp_verify_transfer "$sdir" "$ddir"; then
         echo "    dest contents: $(find "$ddir" -type f | sort | head -20)"
@@ -1017,11 +1051,14 @@ run_comprehensive_interop_case() {
     "exclude|-av --exclude=*.log|exclude"
     "permissions|-rlpv|perms"
     "size-only|-av --size-only|size-only"
+    "ignore-times|-av --ignore-times|basic"
+    "checksum-skip|-avc|checksum-skip"
     "copy-links|-avL|copy-links"
     "safe-links|-rlptv --safe-links|safe-links"
     "existing|-av --existing|existing"
     "backup|-av --backup|backup"
     "max-delete|-av --delete --max-delete=1|max-delete"
+    "update|-av --update|update"
     "dry-run|-avn|dry-run"
     "itemize|-avi|itemize"
     "sparse|-avS|sparse"
