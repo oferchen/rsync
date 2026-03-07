@@ -54,7 +54,7 @@
 //! let change = ItemizeChange::new()
 //!     .with_update_type(cli::UpdateType::NotUpdated)
 //!     .with_file_type(cli::FileType::RegularFile);
-//! assert_eq!(change.format(), ".f.........");
+//! assert_eq!(change.format(), ".f         ");
 //! ```
 
 /// Update type indicator (position 0).
@@ -138,6 +138,7 @@ pub struct ItemizeChange {
     ctime_changed: bool,
     acl_changed: bool,
     xattr_changed: bool,
+    missing_data: bool,
 }
 
 impl ItemizeChange {
@@ -162,6 +163,7 @@ impl ItemizeChange {
             ctime_changed: false,
             acl_changed: false,
             xattr_changed: false,
+            missing_data: false,
         }
     }
 
@@ -271,10 +273,25 @@ impl ItemizeChange {
         self
     }
 
+    /// Sets whether the entry has missing data.
+    ///
+    /// When set, all attribute positions (2-10) show `?` instead of their
+    /// normal values, mirroring upstream rsync's `ITEM_MISSING_DATA` flag.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `log.c:730-734` — `ITEM_MISSING_DATA` fills attribute positions with `?`.
+    #[must_use]
+    pub const fn with_missing_data(mut self, missing: bool) -> Self {
+        self.missing_data = missing;
+        self
+    }
+
     /// Returns `true` if all attributes are unchanged (all dots except type indicators).
     #[must_use]
     pub const fn is_unchanged(&self) -> bool {
         !self.new_file
+            && !self.missing_data
             && !self.checksum_changed
             && !self.size_changed
             && !self.time_changed
@@ -320,7 +337,7 @@ impl Default for ItemizeChange {
 ///
 /// This is the core formatting function that produces strings like:
 /// - `>f+++++++++` - new file received
-/// - `.f.........` - unchanged file
+/// - `.f         ` - unchanged file (all-dots collapsed to spaces)
 /// - `>fcst......` - file with checksum, size, and time changes
 ///
 /// # Examples
@@ -339,16 +356,20 @@ impl Default for ItemizeChange {
 pub fn format_itemize(change: &ItemizeChange) -> String {
     let mut result = String::with_capacity(11);
 
+    let update_char = change.update_type.as_char();
+
     // Position 0: Update type
-    result.push(change.update_type.as_char());
+    result.push(update_char);
 
     // Position 1: File type
     result.push(change.file_type.as_char());
 
     // Positions 2-10: Attributes
+    // upstream: log.c:730-734 — ITEM_IS_NEW fills with '+', ITEM_MISSING_DATA fills with '?'
     if change.new_file {
-        // New files show '+' for all attribute positions
         result.push_str("+++++++++");
+    } else if change.missing_data {
+        result.push_str("?????????");
     } else {
         // Position 2: Checksum
         result.push(if change.checksum_changed { 'c' } else { '.' });
@@ -387,6 +408,12 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
 
         // Position 10: Extended attributes
         result.push(if change.xattr_changed { 'x' } else { '.' });
+
+        // upstream: log.c:735-744 — when update type is '.', 'h', or 'c' and all
+        // attribute positions (2-10) are dots, collapse them to spaces.
+        if matches!(update_char, '.' | 'h' | 'c') && change.is_unchanged() {
+            result.replace_range(2.., "         ");
+        }
     }
 
     result
@@ -478,7 +505,7 @@ mod tests {
         let change = ItemizeChange::new()
             .with_update_type(UpdateType::NotUpdated)
             .with_file_type(FileType::RegularFile);
-        assert_eq!(change.format(), ".f.........");
+        assert_eq!(change.format(), ".f         ");
     }
 
     // ---- Basic formatting: new file ----
@@ -521,7 +548,7 @@ mod tests {
         let change = ItemizeChange::new()
             .with_update_type(UpdateType::NotUpdated)
             .with_file_type(FileType::Directory);
-        assert_eq!(change.format(), ".d.........");
+        assert_eq!(change.format(), ".d         ");
     }
 
     // ---- Basic formatting: symlink ----
@@ -531,7 +558,7 @@ mod tests {
         let change = ItemizeChange::new()
             .with_update_type(UpdateType::NotUpdated)
             .with_file_type(FileType::Symlink);
-        assert_eq!(change.format(), ".L.........");
+        assert_eq!(change.format(), ".L         ");
     }
 
     // ---- All flags changed ----
@@ -827,5 +854,53 @@ mod tests {
             .with_file_type(FileType::Directory)
             .with_time_changed(true);
         assert_eq!(change.format(), ">d..t......");
+    }
+
+    // ---- Missing data fills attribute positions with '?' ----
+
+    #[test]
+    fn format_missing_data_shows_question_marks() {
+        let change = ItemizeChange::new()
+            .with_update_type(UpdateType::Received)
+            .with_file_type(FileType::RegularFile)
+            .with_missing_data(true);
+        assert_eq!(change.format(), ">f?????????");
+    }
+
+    #[test]
+    fn missing_data_overrides_individual_flags() {
+        let change = ItemizeChange::new()
+            .with_update_type(UpdateType::Received)
+            .with_file_type(FileType::RegularFile)
+            .with_missing_data(true)
+            .with_checksum_changed(true)
+            .with_size_changed(true)
+            .with_time_changed(true);
+        assert_eq!(change.format(), ">f?????????");
+    }
+
+    #[test]
+    fn missing_data_length_is_eleven() {
+        let change = ItemizeChange::new()
+            .with_update_type(UpdateType::Received)
+            .with_file_type(FileType::RegularFile)
+            .with_missing_data(true);
+        assert_eq!(change.format().len(), 11);
+    }
+
+    #[test]
+    fn is_unchanged_returns_false_when_missing_data() {
+        let change = ItemizeChange::new().with_missing_data(true);
+        assert!(!change.is_unchanged());
+    }
+
+    #[test]
+    fn new_file_takes_precedence_over_missing_data() {
+        let change = ItemizeChange::new()
+            .with_update_type(UpdateType::Received)
+            .with_file_type(FileType::RegularFile)
+            .with_new_file(true)
+            .with_missing_data(true);
+        assert_eq!(change.format(), ">f+++++++++");
     }
 }

@@ -998,46 +998,60 @@ impl GeneratorContext {
         Ok(TransferLoopResult {
             files_transferred,
             bytes_sent,
+            ndx_read_codec,
+            ndx_write_codec,
         })
     }
 
     /// Handles the goodbye handshake at end of transfer.
     ///
+    /// Protocol 31+ introduces NDX_DEL_STATS during the goodbye phase. The receiver
+    /// may send deletion statistics before the final NDX_DONE. This mirrors upstream's
+    /// `read_ndx_and_attrs()` which loops over NDX_DEL_STATS, reading 5 varints of
+    /// deletion counts before continuing to expect NDX_DONE.
+    ///
     /// # Upstream Reference
     ///
-    /// - `main.c:880-905` - `read_final_goodbye()`
-    fn handle_goodbye<R: Read, W: Write>(&self, reader: &mut R, writer: &mut W) -> io::Result<()> {
+    /// - `main.c:875-906` - `read_final_goodbye()`
+    /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
+    /// - `main.c:240-247` - `read_del_stats()` format
+    fn handle_goodbye<R: Read, W: Write>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+        ndx_read_codec: &mut NdxCodecEnum,
+        ndx_write_codec: &mut NdxCodecEnum,
+    ) -> io::Result<()> {
         if !self.protocol.supports_goodbye_exchange() {
             return Ok(());
         }
 
-        let mut goodbye_byte = [0u8; 1];
-
-        // Read first NDX_DONE from receiver
-        reader.read_exact(&mut goodbye_byte)?;
-
-        // Handle both write_ndx(0x00) and write_int(0xFFFFFFFF) formats
-        if goodbye_byte[0] == 0xFF {
-            let mut extra = [0u8; 3];
-            reader.read_exact(&mut extra)?;
-        } else if goodbye_byte[0] != 0 {
+        // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS
+        // upstream: main.c:886 — read_ndx_and_attrs() handles NDX_DEL_STATS internally
+        let ndx = Self::read_ndx_skipping_del_stats(reader, ndx_read_codec)?;
+        if ndx != NDX_DONE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("expected NDX_DONE, got 0x{:02x}", goodbye_byte[0]),
+                format!("expected goodbye NDX_DONE (-1) from receiver, got {ndx}"),
             ));
         }
 
-        // For protocol 31+: write NDX_DONE back, then read again
+        // For protocol 31+: echo NDX_DONE back, then read final NDX_DONE
+        // upstream: main.c:887-898
         if self.protocol.supports_extended_goodbye() {
-            writer.write_all(&[0x00])?;
+            ndx_write_codec.write_ndx_done(writer)?;
             writer.flush()?;
 
             // Read final NDX_DONE - may fail if daemon kills receiver child early
-            match reader.read_exact(&mut goodbye_byte) {
-                Ok(()) => {
-                    if goodbye_byte[0] == 0xFF {
-                        let mut extra = [0u8; 3];
-                        let _ = reader.read_exact(&mut extra);
+            match Self::read_ndx_skipping_del_stats(reader, ndx_read_codec) {
+                Ok(final_ndx) => {
+                    if final_ndx != NDX_DONE {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx}"
+                            ),
+                        ));
                     }
                 }
                 Err(e)
@@ -1055,6 +1069,34 @@ impl GeneratorContext {
         }
 
         Ok(())
+    }
+
+    /// Reads the next NDX value, consuming and discarding any NDX_DEL_STATS messages.
+    ///
+    /// Upstream `read_ndx_and_attrs()` (rsync.c:337-342) loops over NDX_DEL_STATS,
+    /// calling `read_del_stats()` which reads 5 varints of deletion counts
+    /// (regular files, dirs, symlinks, devices, specials).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:337-342` - NDX_DEL_STATS loop in `read_ndx_and_attrs()`
+    /// - `main.c:240-247` - `read_del_stats()` format
+    fn read_ndx_skipping_del_stats<R: Read>(
+        reader: &mut R,
+        ndx_read_codec: &mut NdxCodecEnum,
+    ) -> io::Result<i32> {
+        loop {
+            let ndx = ndx_read_codec.read_ndx(reader)?;
+            if ndx == NDX_DEL_STATS {
+                // upstream: main.c:240-247 — read_del_stats() reads 5 varints
+                for _ in 0..5 {
+                    protocol::read_varint(reader)?;
+                }
+                debug_log!(Flist, 2, "consumed NDX_DEL_STATS during goodbye phase");
+                continue;
+            }
+            return Ok(ndx);
+        }
     }
 
     /// Builds the file list from the specified paths.
@@ -1679,7 +1721,9 @@ impl GeneratorContext {
         // which is a no-op (main.c:360-384). Stats are only written by the
         // server-sender (am_server && am_sender) path. The client already has
         // all stats locally via GeneratorStats.
-        self.handle_goodbye(reader, writer)?;
+        let mut ndx_read_codec = transfer_result.ndx_read_codec;
+        let mut ndx_write_codec = transfer_result.ndx_write_codec;
+        self.handle_goodbye(reader, writer, &mut ndx_read_codec, &mut ndx_write_codec)?;
 
         // Calculate timing stats for return value
         let flist_buildtime = calculate_duration_ms(self.flist_build_start, self.flist_build_end);
@@ -1772,12 +1816,16 @@ impl GeneratorContext {
 /// Result from the transfer loop phase of the generator.
 ///
 /// Contains statistics from processing file transfer requests.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct TransferLoopResult {
     /// Number of files actually transferred.
     files_transferred: usize,
     /// Total bytes sent during transfer.
     bytes_sent: u64,
+    /// NDX read codec state carried over for the goodbye handshake.
+    ndx_read_codec: NdxCodecEnum,
+    /// NDX write codec state carried over for the goodbye handshake.
+    ndx_write_codec: NdxCodecEnum,
 }
 
 /// Statistics from a generator (sender) transfer operation.

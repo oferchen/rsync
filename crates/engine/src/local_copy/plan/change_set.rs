@@ -16,6 +16,7 @@ pub struct LocalCopyChangeSet {
     create_time_changed: bool,
     acl_changed: bool,
     xattr_changed: bool,
+    missing_data: bool,
 }
 
 /// Describes how the modification time was adjusted for an entry.
@@ -42,6 +43,7 @@ impl LocalCopyChangeSet {
             create_time_changed: false,
             acl_changed: false,
             xattr_changed: false,
+            missing_data: false,
         }
     }
 
@@ -115,6 +117,20 @@ impl LocalCopyChangeSet {
         self
     }
 
+    /// Marks whether the entry has missing data.
+    ///
+    /// When set, all attribute positions (2-10) in the itemize string display
+    /// `?` instead of their normal values.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `log.c:730-734` — `ITEM_MISSING_DATA` fills attribute positions with `?`.
+    #[must_use]
+    pub const fn with_missing_data(mut self, missing: bool) -> Self {
+        self.missing_data = missing;
+        self
+    }
+
     /// Reports whether the file contents or equivalent metadata changed.
     #[must_use]
     pub const fn checksum_changed(&self) -> bool {
@@ -183,6 +199,14 @@ impl LocalCopyChangeSet {
     #[must_use]
     pub const fn xattr_changed(&self) -> bool {
         self.xattr_changed
+    }
+
+    /// Reports whether the entry has missing data.
+    ///
+    /// When `true`, all attribute positions in the itemize string show `?`.
+    #[must_use]
+    pub const fn missing_data(&self) -> bool {
+        self.missing_data
     }
 
     /// Computes a change set for a file-like entry (regular files and symlinks).
@@ -519,6 +543,26 @@ mod tests {
     fn with_xattr_changed_true() {
         let cs = LocalCopyChangeSet::new().with_xattr_changed(true);
         assert!(cs.xattr_changed());
+    }
+
+    #[test]
+    fn with_missing_data_true() {
+        let cs = LocalCopyChangeSet::new().with_missing_data(true);
+        assert!(cs.missing_data());
+    }
+
+    #[test]
+    fn with_missing_data_false() {
+        let cs = LocalCopyChangeSet::new()
+            .with_missing_data(true)
+            .with_missing_data(false);
+        assert!(!cs.missing_data());
+    }
+
+    #[test]
+    fn missing_data_not_set_by_default() {
+        let cs = LocalCopyChangeSet::new();
+        assert!(!cs.missing_data());
     }
 
     #[test]
