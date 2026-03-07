@@ -169,18 +169,18 @@ where
         };
 
     // Apply boolean flags.
-    config.ignore_errors = long_flags.ignore_errors;
-    config.fsync = long_flags.fsync;
-    config.io_uring_policy = long_flags.io_uring_policy;
-    config.write_devices = long_flags.write_devices;
+    config.deletion.ignore_errors = long_flags.ignore_errors;
+    config.write.fsync = long_flags.fsync;
+    config.write.io_uring_policy = long_flags.io_uring_policy;
+    config.write.write_devices = long_flags.write_devices;
     config.trust_sender = long_flags.trust_sender;
     config.qsort = long_flags.qsort;
-    config.files_from_path = long_flags.files_from;
-    config.from0 = long_flags.from0;
-    config.inplace = long_flags.inplace;
-    config.size_only = long_flags.size_only;
-    config.ignore_existing = long_flags.ignore_existing;
-    config.existing_only = long_flags.existing_only;
+    config.file_selection.files_from_path = long_flags.files_from;
+    config.file_selection.from0 = long_flags.from0;
+    config.write.inplace = long_flags.inplace;
+    config.file_selection.size_only = long_flags.size_only;
+    config.file_selection.ignore_existing = long_flags.ignore_existing;
+    config.file_selection.existing_only = long_flags.existing_only;
     config.flags.numeric_ids = long_flags.numeric_ids;
     config.flags.delete = long_flags.delete;
 
@@ -212,7 +212,7 @@ where
 
     if let Some(size_str) = &long_flags.min_size {
         match parse_server_size_limit(size_str, "--min-size") {
-            Ok(size) => config.min_file_size = Some(size),
+            Ok(size) => config.file_selection.min_file_size = Some(size),
             Err(msg) => {
                 write_server_error(stderr, program_brand, msg);
                 return 1;
@@ -222,7 +222,7 @@ where
 
     if let Some(size_str) = &long_flags.max_size {
         match parse_server_size_limit(size_str, "--max-size") {
-            Ok(size) => config.max_file_size = Some(size),
+            Ok(size) => config.file_selection.max_file_size = Some(size),
             Err(msg) => {
                 write_server_error(stderr, program_brand, msg);
                 return 1;
@@ -252,7 +252,7 @@ where
 
     if let Some(max_del_str) = &long_flags.max_delete {
         match max_del_str.parse::<u64>() {
-            Ok(limit) => config.max_delete = Some(limit),
+            Ok(limit) => config.deletion.max_delete = Some(limit),
             Err(_) => {
                 write_server_error(
                     stderr,

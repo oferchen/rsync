@@ -30,6 +30,7 @@ fn transfer_stats_incremental_fields_exist() {
         directories_failed: 1,
         files_skipped: 2,
         delete_stats: DeleteStats::new(),
+        delete_limit_exceeded: false,
         redo_count: 0,
     };
 
