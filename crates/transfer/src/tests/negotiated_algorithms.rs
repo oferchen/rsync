@@ -6,7 +6,6 @@
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm, NegotiationResult, ProtocolVersion};
 
 use crate::config::ServerConfig;
-use crate::flags::ParsedServerFlags;
 use crate::generator::GeneratorContext;
 use crate::handshake::HandshakeResult;
 use crate::receiver::ReceiverContext;
@@ -31,69 +30,24 @@ fn create_handshake(
 
 fn test_config() -> ServerConfig {
     ServerConfig {
-        role: ServerRole::Receiver,
         protocol: ProtocolVersion::try_from(32u8).unwrap(),
         flag_string: "-a".to_owned(),
-        flags: ParsedServerFlags::default(),
         args: vec![std::ffi::OsString::from(".")],
-        compression_level: None,
-        client_mode: false,
-        filter_rules: Vec::new(),
-        reference_directories: Vec::new(),
-        iconv: None,
-        ignore_errors: false,
-        fsync: false,
-        io_uring_policy: fast_io::IoUringPolicy::Auto,
-        checksum_seed: None,
-        is_daemon_connection: false,
-        checksum_choice: None,
-        write_devices: false,
-        trust_sender: false,
-        stop_at: None,
-        qsort: false,
-        min_file_size: None,
-        max_file_size: None,
-        files_from_path: None,
-        from0: false,
-        inplace: false,
-        size_only: false,
-        ignore_existing: false,
-        existing_only: false,
-        max_delete: None,
+        ..Default::default()
     }
 }
 
 fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -> ServerConfig {
+    use crate::config::ConnectionConfig;
     ServerConfig {
-        role: ServerRole::Receiver,
         protocol: ProtocolVersion::try_from(32u8).unwrap(),
         flag_string: "-az".to_owned(),
-        flags: ParsedServerFlags::default(),
         args: vec![std::ffi::OsString::from(".")],
-        compression_level: Some(level),
-        client_mode: false,
-        filter_rules: Vec::new(),
-        reference_directories: Vec::new(),
-        iconv: None,
-        ignore_errors: false,
-        fsync: false,
-        io_uring_policy: fast_io::IoUringPolicy::Auto,
-        checksum_seed: None,
-        is_daemon_connection: false,
-        checksum_choice: None,
-        write_devices: false,
-        trust_sender: false,
-        stop_at: None,
-        qsort: false,
-        min_file_size: None,
-        max_file_size: None,
-        files_from_path: None,
-        from0: false,
-        inplace: false,
-        size_only: false,
-        ignore_existing: false,
-        existing_only: false,
-        max_delete: None,
+        connection: ConnectionConfig {
+            compression_level: Some(level),
+            ..Default::default()
+        },
+        ..Default::default()
     }
 }
 
@@ -394,7 +348,7 @@ fn test_compat_flags_none_for_protocol_29() {
 fn test_compression_level_none_defaults_to_level_6() {
     // When compression_level is None, server should use Default (level 6)
     let config = test_config();
-    assert_eq!(config.compression_level, None);
+    assert_eq!(config.connection.compression_level, None);
 
     // Verify default variant matches upstream behavior
     let default_level = compress::zlib::CompressionLevel::Default;
@@ -408,8 +362,10 @@ fn test_compression_level_configured() {
     let level_1 = compress::zlib::CompressionLevel::precise(NonZeroU8::new(1).unwrap());
     let config = test_config_with_compression_level(level_1);
 
-    assert!(config.compression_level.is_some());
-    if let Some(compress::zlib::CompressionLevel::Precise(val)) = config.compression_level {
+    assert!(config.connection.compression_level.is_some());
+    if let Some(compress::zlib::CompressionLevel::Precise(val)) =
+        config.connection.compression_level
+    {
         assert_eq!(val.get(), 1);
     } else {
         panic!("Expected Precise compression level");
@@ -423,8 +379,10 @@ fn test_compression_level_maximum() {
     let level_9 = compress::zlib::CompressionLevel::precise(NonZeroU8::new(9).unwrap());
     let config = test_config_with_compression_level(level_9);
 
-    assert!(config.compression_level.is_some());
-    if let Some(compress::zlib::CompressionLevel::Precise(val)) = config.compression_level {
+    assert!(config.connection.compression_level.is_some());
+    if let Some(compress::zlib::CompressionLevel::Precise(val)) =
+        config.connection.compression_level
+    {
         assert_eq!(val.get(), 9);
     } else {
         panic!("Expected Precise compression level");

@@ -345,7 +345,7 @@ impl GeneratorContext {
             writer = writer.with_always_checksum(factory.digest_length());
         }
 
-        if let Some(ref converter) = self.config.iconv {
+        if let Some(ref converter) = self.config.connection.iconv {
             writer = writer.with_iconv(converter.clone());
         }
         writer
@@ -441,7 +441,7 @@ impl GeneratorContext {
     /// - We don't support filesfrom, so this simplifies to >= 23
     #[must_use]
     const fn should_activate_input_multiplex(&self) -> bool {
-        if self.config.client_mode {
+        if self.config.connection.client_mode {
             // Client mode: >= 23 (upstream main.c:1304-1305, no filesfrom)
             self.protocol.supports_multiplex_io()
         } else {
@@ -460,12 +460,13 @@ impl GeneratorContext {
     /// - Server mode: `recv_filter_list()` at `main.c:1258`
     /// - Client mode: `send_filter_list()` at `main.c:1308` (done in mod.rs)
     fn receive_filter_list_if_server<R: Read>(&mut self, reader: &mut R) -> io::Result<()> {
-        if self.config.client_mode {
+        if self.config.connection.client_mode {
             // Client mode: apply filters from config for local file list building.
             // Filter rules were already sent to the daemon in mod.rs.
             // upstream: flist.c:1332 — is_excluded() applied during make_file()
-            if !self.config.filter_rules.is_empty() {
-                let filter_set = self.parse_received_filters(&self.config.filter_rules.clone())?;
+            if !self.config.connection.filter_rules.is_empty() {
+                let filter_set =
+                    self.parse_received_filters(&self.config.connection.filter_rules.clone())?;
                 self.filters = Some(filter_set);
             }
             return Ok(());
@@ -627,7 +628,7 @@ impl GeneratorContext {
         if self.protocol.uses_fixed_encoding() {
             // For protocol < 30, send io_error as 4-byte int
             // If ignore_errors is set, send 0 instead of actual io_error
-            let value = if self.config.ignore_errors {
+            let value = if self.config.deletion.ignore_errors {
                 0
             } else {
                 self.io_error
@@ -1456,7 +1457,7 @@ impl GeneratorContext {
         // always sent as "." with XMIT_TOP_DIR set. This entry enables
         // delete_in_dir() for the root directory when --delete is active.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
-            if self.config.is_daemon_connection {
+            if self.config.connection.is_daemon_connection {
                 let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
                 dot_entry.set_flags(protocol::flist::FileFlags::new(
                     protocol::flist::XMIT_TOP_DIR,
@@ -2590,32 +2591,8 @@ mod tests {
             role: ServerRole::Generator,
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
             flag_string: "-logDtpre.".to_owned(),
-            flags: ParsedServerFlags::default(),
             args: vec![OsString::from(".")],
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-            io_uring_policy: fast_io::IoUringPolicy::Auto,
-            checksum_seed: None,
-            is_daemon_connection: false,
-            checksum_choice: None,
-            write_devices: false,
-            trust_sender: false,
-            stop_at: None,
-            qsort: false,
-            min_file_size: None,
-            max_file_size: None,
-            files_from_path: None,
-            from0: false,
-            inplace: false,
-            size_only: false,
-            ignore_existing: false,
-            existing_only: false,
-            max_delete: None,
+            ..Default::default()
         }
     }
 
@@ -3534,7 +3511,7 @@ mod tests {
         // Client mode activates at protocol >= 23, so 28 should activate
         let handshake = test_handshake_with_protocol(28);
         let mut config = test_config();
-        config.client_mode = true;
+        config.connection.client_mode = true;
 
         let ctx = GeneratorContext::new(&handshake, config);
         // Protocol 28 >= 23, so should activate in client mode
@@ -3546,7 +3523,7 @@ mod tests {
         // Test with higher protocol version
         let handshake = test_handshake_with_protocol(32);
         let mut config = test_config();
-        config.client_mode = true;
+        config.connection.client_mode = true;
 
         let ctx = GeneratorContext::new(&handshake, config);
         assert!(ctx.should_activate_input_multiplex());
@@ -3556,7 +3533,7 @@ mod tests {
     fn should_activate_input_multiplex_server_mode_protocol_30() {
         let handshake = test_handshake_with_protocol(30);
         let mut config = test_config();
-        config.client_mode = false;
+        config.connection.client_mode = false;
 
         let ctx = GeneratorContext::new(&handshake, config);
         assert!(ctx.should_activate_input_multiplex());
@@ -3566,7 +3543,7 @@ mod tests {
     fn should_activate_input_multiplex_server_mode_protocol_29() {
         let handshake = test_handshake_with_protocol(29);
         let mut config = test_config();
-        config.client_mode = false;
+        config.connection.client_mode = false;
 
         let ctx = GeneratorContext::new(&handshake, config);
         assert!(!ctx.should_activate_input_multiplex());
@@ -3744,7 +3721,7 @@ mod tests {
         // Tests upstream behavior: flist.c:2518: write_int(f, ignore_errors ? 0 : io_error);
         let handshake = test_handshake_with_protocol(29);
         let mut config = test_config();
-        config.ignore_errors = true;
+        config.deletion.ignore_errors = true;
 
         let mut ctx = GeneratorContext::new(&handshake, config);
         ctx.add_io_error(io_error_flags::IOERR_GENERAL);
@@ -3832,30 +3809,7 @@ mod tests {
                 ..ParsedServerFlags::default()
             },
             args: vec![OsString::from(".")],
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-            io_uring_policy: fast_io::IoUringPolicy::Auto,
-            checksum_seed: None,
-            is_daemon_connection: false,
-            checksum_choice: None,
-            write_devices: false,
-            trust_sender: false,
-            stop_at: None,
-            qsort: false,
-            min_file_size: None,
-            max_file_size: None,
-            files_from_path: None,
-            from0: false,
-            inplace: false,
-            size_only: false,
-            ignore_existing: false,
-            existing_only: false,
-            max_delete: None,
+            ..Default::default()
         }
     }
 

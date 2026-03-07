@@ -320,7 +320,7 @@ impl ReceiverContext {
             reader = reader.with_always_checksum(factory.digest_length());
         }
 
-        if let Some(ref converter) = self.config.iconv {
+        if let Some(ref converter) = self.config.connection.iconv {
             reader = reader.with_iconv(converter.clone());
         }
         reader
@@ -649,7 +649,7 @@ impl ReceiverContext {
     #[must_use]
     const fn should_read_filter_list(&self) -> bool {
         let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
-        !self.config.client_mode && receiver_wants_list
+        !self.config.connection.client_mode && receiver_wants_list
     }
 
     /// Sanitizes the received file list by removing entries with unsafe paths.
@@ -805,7 +805,7 @@ impl ReceiverContext {
 
         use rayon::prelude::*;
 
-        let max_delete = self.config.max_delete;
+        let max_delete = self.config.deletion.max_delete;
 
         // Build directory → children map from the file list.
         // Each directory maps to the set of child entry names it contains.
@@ -1223,13 +1223,20 @@ impl ReceiverContext {
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
                 let sz = e.size();
-                self.config.min_file_size.is_none_or(|m| sz >= m)
-                    && self.config.max_file_size.is_none_or(|m| sz <= m)
+                self.config
+                    .file_selection
+                    .min_file_size
+                    .is_none_or(|m| sz >= m)
+                    && self
+                        .config
+                        .file_selection
+                        .max_file_size
+                        .is_none_or(|m| sz <= m)
             })
             .filter(|(_, e)| {
                 if let Some(fd) = failed_dirs {
                     if let Some(failed_parent) = fd.failed_ancestor(e.name()) {
-                        if self.config.flags.verbose && self.config.client_mode {
+                        if self.config.flags.verbose && self.config.connection.client_mode {
                             info_log!(
                                 Skip,
                                 1,
@@ -1249,9 +1256,9 @@ impl ReceiverContext {
         // Quick-check requires preserve_times and no --ignore-times (or --size-only).
         // upstream: generator.c:617 — quick_check_ok() is skipped when ignore_times
         let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
-        let size_only = self.config.size_only;
-        let ignore_existing = self.config.ignore_existing;
-        let existing_only = self.config.existing_only;
+        let size_only = self.config.file_selection.size_only;
+        let ignore_existing = self.config.file_selection.ignore_existing;
+        let existing_only = self.config.file_selection.existing_only;
 
         // Phase B: Stat each candidate to determine quick-check status.
         // Also applies --ignore-existing and --existing filters.
@@ -1341,7 +1348,7 @@ impl ReceiverContext {
 
         // Check if parent is under a failed directory
         if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
-            if self.config.flags.verbose && self.config.client_mode {
+            if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Skip,
                     1,
@@ -1357,7 +1364,7 @@ impl ReceiverContext {
         // Try to create the directory
         if !dir_path.exists() {
             if let Err(e) = fs::create_dir_all(&dir_path) {
-                if self.config.flags.verbose && self.config.client_mode {
+                if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(
                         Misc,
                         1,
@@ -1373,7 +1380,7 @@ impl ReceiverContext {
 
         // Apply metadata (non-fatal errors)
         if let Err(e) = apply_metadata_from_file_entry(&dir_path, entry, metadata_opts) {
-            if self.config.flags.verbose && self.config.client_mode {
+            if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Misc,
                     1,
@@ -1384,7 +1391,7 @@ impl ReceiverContext {
             }
         }
 
-        if self.config.flags.verbose && self.config.client_mode {
+        if self.config.flags.verbose && self.config.connection.client_mode {
             if relative_path.as_os_str() == "." {
                 info_log!(Name, 1, "./");
             } else {
@@ -1720,7 +1727,10 @@ impl ReceiverContext {
 
             // Skip non-regular files (directories, symlinks, devices, etc.)
             if !file_entry.is_file() {
-                if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
+                if file_entry.is_dir()
+                    && self.config.flags.verbose
+                    && self.config.connection.client_mode
+                {
                     if relative_path.as_os_str() == "." {
                         info_log!(Name, 1, "./");
                     } else {
@@ -1738,19 +1748,19 @@ impl ReceiverContext {
 
             // Skip files outside the configured size range.
             let file_size = file_entry.size();
-            if let Some(min_limit) = self.config.min_file_size {
+            if let Some(min_limit) = self.config.file_selection.min_file_size {
                 if file_size < min_limit {
                     continue;
                 }
             }
-            if let Some(max_limit) = self.config.max_file_size {
+            if let Some(max_limit) = self.config.file_selection.max_file_size {
                 if file_size > max_limit {
                     continue;
                 }
             }
 
             // upstream: rsync.c:674
-            if self.config.flags.verbose && self.config.client_mode {
+            if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(Name, 1, "{}", relative_path.display());
             }
 
@@ -1981,7 +1991,7 @@ impl ReceiverContext {
                     "failed to flush output buffer for {file_path:?}: {e}"
                 ))
             })?;
-            if self.config.fsync {
+            if self.config.write.fsync {
                 file.sync_all().map_err(|e| {
                     io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
                 })?;
@@ -2140,7 +2150,10 @@ impl ReceiverContext {
 
         // Print verbose directories
         for file_entry in &self.file_list {
-            if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
+            if file_entry.is_dir()
+                && self.config.flags.verbose
+                && self.config.connection.client_mode
+            {
                 let relative_path = file_entry.path();
                 if relative_path.as_os_str() == "." {
                     info_log!(Name, 1, "./");
@@ -2313,7 +2326,7 @@ impl ReceiverContext {
             })?;
         }
 
-        if self.config.flags.verbose && self.config.client_mode {
+        if self.config.flags.verbose && self.config.connection.client_mode {
             info_log!(Flist, 1, "receiving incremental file list");
         }
 
@@ -2414,11 +2427,11 @@ impl ReceiverContext {
             compat_flags: self.compat_flags.as_ref(),
             checksum_seed: self.checksum_seed,
             use_sparse: self.config.flags.sparse,
-            do_fsync: self.config.fsync,
+            do_fsync: self.config.write.fsync,
 
-            write_devices: self.config.write_devices,
-            inplace: self.config.inplace,
-            io_uring_policy: self.config.io_uring_policy,
+            write_devices: self.config.write.write_devices,
+            inplace: self.config.write.inplace,
+            io_uring_policy: self.config.write.io_uring_policy,
         };
 
         let mut pipeline = PipelineState::new(pipeline_config);
@@ -2440,7 +2453,7 @@ impl ReceiverContext {
         // mtime/perms/ownership immediately after rename — mirroring upstream
         // finish_transfer() → set_file_attrs() in receiver.c.
         let disk_config = DiskCommitConfig {
-            do_fsync: self.config.fsync,
+            do_fsync: self.config.write.fsync,
             metadata_opts: Some(setup.metadata_opts.clone()),
             ..DiskCommitConfig::default()
         };
@@ -2472,7 +2485,7 @@ impl ReceiverContext {
                             setup.dest_dir.join(relative_path)
                         };
 
-                        if self.config.flags.verbose && self.config.client_mode {
+                        if self.config.flags.verbose && self.config.connection.client_mode {
                             info_log!(Name, 1, "{}", relative_path.display());
                         }
 
@@ -2594,7 +2607,7 @@ impl ReceiverContext {
 
         // Only read stats in client mode: daemon sender writes stats over the wire,
         // but in server mode the client sender returns without writing stats.
-        if self.config.client_mode {
+        if self.config.connection.client_mode {
             let _sender_stats = self.receive_stats(reader)?;
         }
 
@@ -3646,33 +3659,8 @@ mod tests {
             role: ServerRole::Receiver,
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
             flag_string: "-logDtpre.".to_owned(),
-            flags: ParsedServerFlags::default(),
             args: vec![OsString::from(".")],
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-
-            io_uring_policy: fast_io::IoUringPolicy::Auto,
-            checksum_seed: None,
-            is_daemon_connection: false,
-            checksum_choice: None,
-            write_devices: false,
-            trust_sender: false,
-            stop_at: None,
-            qsort: false,
-            min_file_size: None,
-            max_file_size: None,
-            files_from_path: None,
-            from0: false,
-            inplace: false,
-            size_only: false,
-            ignore_existing: false,
-            existing_only: false,
-            max_delete: None,
+            ..Default::default()
         }
     }
 
@@ -4555,31 +4543,7 @@ mod tests {
                 ..ParsedServerFlags::default()
             },
             args: vec![OsString::from(".")],
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-
-            io_uring_policy: fast_io::IoUringPolicy::Auto,
-            checksum_seed: None,
-            is_daemon_connection: false,
-            checksum_choice: None,
-            write_devices: false,
-            trust_sender: false,
-            stop_at: None,
-            qsort: false,
-            min_file_size: None,
-            max_file_size: None,
-            files_from_path: None,
-            from0: false,
-            inplace: false,
-            size_only: false,
-            ignore_existing: false,
-            existing_only: false,
-            max_delete: None,
+            ..Default::default()
         }
     }
 
