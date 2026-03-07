@@ -624,6 +624,8 @@ setup_comprehensive_src() {
   chmod 755 "$dir/script.sh"
   echo "should be excluded" > "$dir/excluded.log"
   echo "also excluded" > "$dir/subdir/debug.log"
+  # File with zero blocks for sparse testing
+  dd if=/dev/zero bs=4096 count=16 2>/dev/null > "$dir/sparse_test.bin"
   # Unsafe symlink (absolute path outside tree) for safe-links test
   ln -sf /etc/hostname "$dir/unsafe_link.txt" 2>/dev/null || true
 }
@@ -767,7 +769,7 @@ comp_run_scenario() {
 
   # Verify per scenario type
   case "$vtype" in
-    basic|compress|whole-file|inplace|numeric-ids|recursive|size-only|inc-recursive|delta)
+    basic|compress|whole-file|inplace|numeric-ids|recursive|size-only|inc-recursive|delta|sparse|partial|append|bwlimit)
       if ! comp_verify_transfer "$sdir" "$ddir"; then
         echo "    dest contents: $(find "$ddir" -type f | sort | head -20)"
         echo "    daemon log tail: $(tail -5 "$log" 2>/dev/null)"
@@ -991,6 +993,8 @@ run_comprehensive_interop_case() {
     "partial|-av --partial|partial"
     "append|-av --append|append"
     "bwlimit|-av --bwlimit=10000|bwlimit"
+    "compress-level-1|-avz --compress-level=1|basic"
+    "compress-level-9|-avz --compress-level=9|basic"
   )
 
   # Incremental recursion only supported on protocol 30+
