@@ -47,11 +47,11 @@ use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{DevIno, HardlinkLookup, HardlinkTable};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
 use protocol::idlist::IdList;
+use protocol::stats::DeleteStats;
 use protocol::wire::{
     CHUNK_SIZE, CompressedTokenEncoder, DeltaOp, SignatureBlock, write_token_end,
     write_token_stream,
 };
-use protocol::stats::DeleteStats;
 use protocol::{
     ChecksumAlgorithm, CompatibilityFlags, CompressionAlgorithm, NegotiationResult, ProtocolVersion,
 };
@@ -803,7 +803,12 @@ impl GeneratorContext {
                         // Deletion statistics (upstream main.c:238-247)
                         let stats = DeleteStats::read_from(&mut *reader)?;
                         self.accumulate_delete_stats(&stats);
-                        debug_log!(Flist, 2, "received NDX_DEL_STATS: {} deletions", stats.total());
+                        debug_log!(
+                            Flist,
+                            2,
+                            "received NDX_DEL_STATS: {} deletions",
+                            stats.total()
+                        );
                         continue;
                     }
                     _ if ndx <= NDX_FLIST_OFFSET => {
@@ -1093,7 +1098,12 @@ impl GeneratorContext {
             if ndx == NDX_DEL_STATS {
                 let stats = DeleteStats::read_from(reader)?;
                 self.accumulate_delete_stats(&stats);
-                debug_log!(Flist, 2, "consumed NDX_DEL_STATS during goodbye: {} deletions", stats.total());
+                debug_log!(
+                    Flist,
+                    2,
+                    "consumed NDX_DEL_STATS during goodbye: {} deletions",
+                    stats.total()
+                );
                 continue;
             }
             return Ok(ndx);
