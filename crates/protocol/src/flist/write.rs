@@ -644,6 +644,9 @@ impl FileListWriter {
     }
 
     /// Writes atime field if preserving and different (non-directories only).
+    ///
+    /// For protocol >= 32, also writes atime nanoseconds as a varint
+    /// after the atime seconds value.
     #[inline]
     fn write_atime<W: Write + ?Sized>(
         &mut self,
@@ -656,6 +659,9 @@ impl FileListWriter {
             && (xflags & ((XMIT_SAME_ATIME as u32) << 8)) == 0
         {
             crate::write_varlong(writer, entry.atime(), 4)?;
+            if self.protocol.as_u8() >= 32 {
+                write_varint(writer, entry.atime_nsec() as i32)?;
+            }
             self.state.update_atime(entry.atime());
         }
         Ok(())
