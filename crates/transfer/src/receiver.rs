@@ -37,11 +37,24 @@ use logging::{debug_log, info_log};
 use std::num::NonZeroU8;
 use std::path::{Component, Path, PathBuf};
 
-/// Default checksum length for delta verification (16 bytes = 128 bits).
+/// Phase 1 checksum length (2 bytes) - reduced signature overhead.
 ///
-/// This matches upstream rsync's default MD5 digest length and provides
-/// sufficient collision resistance for file integrity verification.
-const DEFAULT_CHECKSUM_LENGTH: NonZeroU8 = NonZeroU8::new(16).unwrap();
+/// Upstream rsync uses `SHORT_SUM_LENGTH` (2) during phase 1 to reduce
+/// signature wire size. The `derive_strong_sum_length()` heuristic computes
+/// a dynamic length between 2-16 bytes based on file and block sizes.
+///
+/// (upstream: generator.c:2157 `csum_length = SHORT_SUM_LENGTH`)
+const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
+    NonZeroU8::new(signature::block_size::SHORT_SUM_LENGTH).unwrap();
+
+/// Phase 2 redo checksum length (16 bytes) - full collision resistance.
+///
+/// Upstream rsync switches to `SUM_LENGTH` (16) for phase 2 redo to ensure
+/// maximum integrity after a whole-file checksum failure.
+///
+/// (upstream: generator.c:2163 `csum_length = SUM_LENGTH`)
+const REDO_CHECKSUM_LENGTH: NonZeroU8 =
+    NonZeroU8::new(signature::block_size::MAX_SUM_LENGTH).unwrap();
 
 /// Minimum candidate count to justify rayon thread-pool overhead for
 /// parallel stat() calls in the quick-check phase. Below this threshold,
@@ -1989,7 +2002,7 @@ impl ReceiverContext {
         writer: &mut W,
         pipeline_config: PipelineConfig,
     ) -> io::Result<TransferStats> {
-        let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
+        let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
         // Batch directory and symlink creation
@@ -2039,6 +2052,10 @@ impl ReceiverContext {
         // upstream: generator.c:2160-2199 — generator re-sends with SUM_LENGTH, no basis
         let redo_count = redo_indices.len();
         if !redo_indices.is_empty() {
+            // Switch to full-length checksums for redo pass
+            // (upstream: generator.c:2163 `csum_length = SUM_LENGTH`)
+            setup.checksum_length = REDO_CHECKSUM_LENGTH;
+
             let redo_files: Vec<(usize, &FileEntry)> = redo_indices
                 .iter()
                 .filter_map(|&idx| self.file_list.get(idx).map(|entry| (idx, entry)))
@@ -2113,7 +2130,7 @@ impl ReceiverContext {
         pipeline_config: PipelineConfig,
         mut progress: Option<&mut dyn super::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
-        let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
+        let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
         // Incremental directory creation with failure tracking
@@ -2171,6 +2188,10 @@ impl ReceiverContext {
         // Phase 2: redo pass for files that failed checksum verification.
         let redo_count = redo_indices.len();
         if !redo_indices.is_empty() {
+            // Switch to full-length checksums for redo pass
+            // (upstream: generator.c:2163 `csum_length = SUM_LENGTH`)
+            setup.checksum_length = REDO_CHECKSUM_LENGTH;
+
             let redo_files: Vec<(usize, &FileEntry)> = redo_indices
                 .iter()
                 .filter_map(|&idx| self.file_list.get(idx).map(|entry| (idx, entry)))
@@ -2255,7 +2276,7 @@ impl ReceiverContext {
             self.compat_flags.as_ref(),
         );
         let checksum_algorithm = checksum_factory.signature_algorithm();
-        let checksum_length = DEFAULT_CHECKSUM_LENGTH;
+        let checksum_length = PHASE1_CHECKSUM_LENGTH;
 
         let metadata_opts = MetadataOptions::new()
             .preserve_permissions(self.config.flags.perms)
@@ -4339,7 +4360,7 @@ mod tests {
             NonZeroU32::new(512).unwrap(),
             0,
             0,
-            DEFAULT_CHECKSUM_LENGTH,
+            REDO_CHECKSUM_LENGTH,
         );
         let signature = FileSignature::from_raw_parts(layout, vec![], 0);
 
