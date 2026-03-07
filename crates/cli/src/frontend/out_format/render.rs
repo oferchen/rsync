@@ -324,7 +324,13 @@ fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> String {
 
     // upstream: log.c:704 — '<' when am_sender && !am_server, '>' otherwise
     fields[0] = match event.kind() {
-        DataCopied => if is_sender { '<' } else { '>' },
+        DataCopied => {
+            if is_sender {
+                '<'
+            } else {
+                '>'
+            }
+        }
         HardLink => 'h',
         DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
         MetadataReused
