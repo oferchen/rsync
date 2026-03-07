@@ -588,9 +588,9 @@ mod tests {
         // Upstream io.c:read_varlong uses a 9-byte union `{ char b[9]; int64 x; }`
         // so min_bytes=3 can encode up to i64::MAX correctly.
         let test_cases = [
-            (i64::MAX, 3u8),                    // Maximum positive value
+            (i64::MAX, 3u8), // Maximum positive value
             (i64::MAX / 2, 3u8),
-            (0x03FF_FFFF_FFFF_FFFFi64, 3u8),   // ~288 PB
+            (0x03FF_FFFF_FFFF_FFFFi64, 3u8), // ~288 PB
             (1_000_000_000_000_000i64, 3u8), // 1 PB - realistic large transfer
             (100_000_000_000_000i64, 3u8),   // 100 TB
             (1_000_000_000_000i64, 3u8),     // 1 TB
@@ -1161,7 +1161,8 @@ mod tests {
             let mut cursor = Cursor::new(&encoded);
             let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
             assert_eq!(
-                decoded, i64::MAX,
+                decoded,
+                i64::MAX,
                 "i64::MAX failed for min_bytes={min_bytes}"
             );
             assert_eq!(
