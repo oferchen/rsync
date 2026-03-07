@@ -69,10 +69,19 @@ pub const MIN_BLOCK_SIZE: u32 = 64;
 /// Mirrors `BLOCKSUM_BIAS` in upstream rsync.
 const BLOCKSUM_BIAS: i32 = 10;
 
+/// Abbreviated strong checksum length used during phase 1 of the transfer.
+///
+/// Upstream rsync uses 2-byte checksums in the initial phase to reduce
+/// signature size, then switches to full `MAX_SUM_LENGTH` (16 bytes) for
+/// phase 2 redo passes where correctness is critical.
+/// (upstream: rsync.h:714-715 `SHORT_SUM_LENGTH`)
+pub const SHORT_SUM_LENGTH: u8 = 2;
+
 /// Maximum strong checksum length supported by the protocol.
 ///
 /// This is 16 bytes (128 bits), matching MD4/MD5 digest size.
-const MAX_SUM_LENGTH: u8 = 16;
+/// Used as the full checksum length in phase 2 redo passes.
+pub const MAX_SUM_LENGTH: u8 = 16;
 
 /// Calculates the block length for a given file size and protocol version.
 ///
