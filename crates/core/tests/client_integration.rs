@@ -8,6 +8,56 @@ use core::client::{
 };
 use tempfile::tempdir;
 
+/// Sets the creation time (birth time) of a file via `setattrlist(2)`.
+#[cfg(target_os = "macos")]
+fn set_birthtime(path: &Path, secs: i64) {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[repr(C)]
+    struct AttrBuf {
+        timespec: libc::timespec,
+    }
+
+    let c_path = CString::new(path.as_os_str().as_bytes()).expect("valid path");
+
+    let mut attrlist: libc::attrlist = unsafe { std::mem::zeroed() };
+    attrlist.bitmapcount = libc::ATTR_BIT_MAP_COUNT;
+    attrlist.commonattr = libc::ATTR_CMN_CRTIME;
+
+    let buf = AttrBuf {
+        timespec: libc::timespec {
+            tv_sec: secs,
+            tv_nsec: 0,
+        },
+    };
+
+    let ret = unsafe {
+        libc::setattrlist(
+            c_path.as_ptr(),
+            &attrlist as *const _ as *mut _,
+            &buf as *const _ as *mut libc::c_void,
+            std::mem::size_of::<AttrBuf>(),
+            0,
+        )
+    };
+    assert_eq!(
+        ret,
+        0,
+        "setattrlist failed: {}",
+        std::io::Error::last_os_error()
+    );
+}
+
+/// Reads the creation time (birth time) of a file as seconds since the Unix epoch.
+#[cfg(target_os = "macos")]
+fn get_birthtime_secs(path: &Path) -> i64 {
+    use std::os::darwin::fs::MetadataExt;
+
+    let meta = fs::metadata(path).expect("read metadata");
+    meta.st_birthtime()
+}
+
 fn touch(path: &Path, contents: &[u8]) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create parent directories");
@@ -242,7 +292,73 @@ fn test_atimes_preservation() {
     assert_time_close(subdir_mtime, src_dir_mtime, "subdir mtime");
 }
 
-// Note: crtimes (birthtime) preservation test is deferred until the local copy
-// engine wires crtime from source metadata into FileEntry. The server/transfer
-// path supports it (apply_crtime_from_entry in metadata crate), but the local
-// copy engine's apply_file_metadata_with_options does not yet apply crtimes.
+/// Verifies that `crtimes(true)` preserves file creation times end-to-end.
+///
+/// Sets a known birthtime on source files via `setattrlist(2)`, transfers with
+/// crtime preservation enabled, then confirms destination files have the same
+/// creation time.
+#[cfg(target_os = "macos")]
+#[test]
+fn test_crtimes_preservation() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("crtime-src");
+    let dest_root = temp.path().join("crtime-dst");
+
+    fs::create_dir_all(&source_root).expect("source root");
+
+    touch(&source_root.join("alpha.txt"), b"alpha content");
+    touch(&source_root.join("nested/beta.txt"), b"beta content here");
+
+    let alpha_crtime: i64 = 1_600_000_000; // 2020-09-13
+    let beta_crtime: i64 = 1_500_000_000; // 2017-07-14
+    set_birthtime(&source_root.join("alpha.txt"), alpha_crtime);
+    set_birthtime(&source_root.join("nested/beta.txt"), beta_crtime);
+
+    assert_eq!(
+        get_birthtime_secs(&source_root.join("alpha.txt")),
+        alpha_crtime,
+        "source alpha birthtime must match the value we set"
+    );
+    assert_eq!(
+        get_birthtime_secs(&source_root.join("nested/beta.txt")),
+        beta_crtime,
+        "source beta birthtime must match the value we set"
+    );
+
+    let mut source_arg = source_root.into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let config = ClientConfig::builder()
+        .transfer_args([source_arg, dest_root.clone().into_os_string()])
+        .mkpath(true)
+        .times(true)
+        .crtimes(true)
+        .build();
+
+    let summary = run_client(config).expect("run client with crtimes");
+
+    assert!(
+        summary.files_copied() >= 2,
+        "both files should be transferred"
+    );
+
+    assert_eq!(
+        fs::read(dest_root.join("alpha.txt")).unwrap(),
+        b"alpha content"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("nested/beta.txt")).unwrap(),
+        b"beta content here"
+    );
+
+    assert_eq!(
+        get_birthtime_secs(&dest_root.join("alpha.txt")),
+        alpha_crtime,
+        "destination alpha birthtime should match source"
+    );
+    assert_eq!(
+        get_birthtime_secs(&dest_root.join("nested/beta.txt")),
+        beta_crtime,
+        "destination beta birthtime should match source"
+    );
+}
