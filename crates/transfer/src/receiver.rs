@@ -120,25 +120,41 @@ fn is_hardlink_follower(entry: &FileEntry) -> bool {
 /// Returns `true` when the destination file matches the source entry (skip transfer).
 /// Thread-safe for use with `rayon::par_iter`.
 ///
-/// When `size_only` is true, only sizes are compared (mtime is ignored).
-/// When `preserve_times` is false and `size_only` is false, all files need transfer.
-///
-/// Mirrors upstream `generator.c:617 quick_check_ok()` for `FT_REG`.
+/// Follows upstream `generator.c:617 quick_check_ok()` evaluation order:
+/// 1. Size mismatch - always needs transfer
+/// 2. `always_checksum` - compute file checksum and compare (ignores mtime)
+/// 3. `size_only` - size matched, skip transfer
+/// 4. `!preserve_times` (implies `ignore_times`) - force transfer
+/// 5. mtime comparison
 fn quick_check_matches(
     entry: &FileEntry,
+    dest_path: &Path,
     dest_meta: &fs::Metadata,
     preserve_times: bool,
     size_only: bool,
+    always_checksum: Option<protocol::ChecksumAlgorithm>,
 ) -> bool {
-    if !preserve_times && !size_only {
-        return false;
-    }
+    // upstream: generator.c:621 - size check first
     if dest_meta.len() != entry.size() {
         return false;
     }
-    // upstream: generator.c:617 — `if (size_only) return 1;` after size match
+    // upstream: generator.c:626 - always_checksum compares file checksums
+    // instead of relying on mtime. Takes priority over size_only and ignore_times.
+    if let Some(algorithm) = always_checksum {
+        return match entry.checksum() {
+            Some(expected) => {
+                file_checksum_matches(dest_path, dest_meta.len(), algorithm, expected)
+            }
+            None => false,
+        };
+    }
+    // upstream: generator.c:632 — `if (size_only) return 1;` after size match
     if size_only {
         return true;
+    }
+    // upstream: generator.c:635 - ignore_times forces transfer
+    if !preserve_times {
+        return false;
     }
     #[cfg(unix)]
     {
@@ -153,6 +169,39 @@ fn quick_check_matches(
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(false, |d| d.as_secs() as i64 == entry.mtime())
     }
+}
+
+/// Computes a file's checksum and compares it against an expected value.
+///
+/// Used by `--checksum` (`-c`) mode to compare file contents instead of
+/// mtime+size quick-check. Returns `true` when checksums match (skip transfer).
+///
+/// upstream: checksum.c:402 `file_checksum()` - plain hash, no seed
+fn file_checksum_matches(
+    path: &Path,
+    file_size: u64,
+    algorithm: protocol::ChecksumAlgorithm,
+    expected: &[u8],
+) -> bool {
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut hasher = ChecksumVerifier::for_algorithm(algorithm);
+    let mut buf = [0u8; 64 * 1024];
+    let mut remaining = file_size;
+    while remaining > 0 {
+        let to_read = buf.len().min(remaining as usize);
+        if file.read_exact(&mut buf[..to_read]).is_err() {
+            return false;
+        }
+        hasher.update(&buf[..to_read]);
+        remaining -= to_read as u64;
+    }
+    let mut digest = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len = hasher.finalize_into(&mut digest);
+    // upstream: flist_csum_len determines comparison length
+    let cmp_len = expected.len().min(len);
+    digest[..cmp_len] == expected[..cmp_len]
 }
 
 /// Context for the receiver role during a transfer.
@@ -250,6 +299,20 @@ impl ReceiverContext {
     #[must_use]
     pub const fn config(&self) -> &ServerConfig {
         &self.config
+    }
+
+    /// Returns the file-list checksum algorithm based on negotiation and protocol.
+    ///
+    /// upstream: checksum.c - `file_sum_nni` selects algorithm for file checksums
+    #[must_use]
+    const fn get_checksum_algorithm(&self) -> protocol::ChecksumAlgorithm {
+        if let Some(negotiated) = &self.negotiated_algorithms {
+            negotiated.checksum
+        } else if self.protocol.uses_varint_encoding() {
+            protocol::ChecksumAlgorithm::MD5
+        } else {
+            protocol::ChecksumAlgorithm::MD4
+        }
     }
 
     /// Builds a [`BasisFileConfig`] for a single file, pulling shared state from `self`.
@@ -1253,12 +1316,18 @@ impl ReceiverContext {
             })
             .collect();
 
-        // Quick-check requires preserve_times and no --ignore-times (or --size-only).
-        // upstream: generator.c:617 — quick_check_ok() is skipped when ignore_times
+        // Quick-check parameters mirror upstream generator.c:617 quick_check_ok().
+        // preserve_times is false when ignore_times is set, forcing transfer.
         let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
         let size_only = self.config.file_selection.size_only;
         let ignore_existing = self.config.file_selection.ignore_existing;
         let existing_only = self.config.file_selection.existing_only;
+        // upstream: generator.c:626 - always_checksum uses file checksums instead of mtime
+        let always_checksum = if self.config.flags.checksum {
+            Some(self.get_checksum_algorithm())
+        } else {
+            None
+        };
 
         // Phase B: Stat each candidate to determine quick-check status.
         // Also applies --ignore-existing and --existing filters.
@@ -1281,8 +1350,15 @@ impl ReceiverContext {
                     if ignore_existing {
                         continue;
                     }
-                    if quick_check_matches(entry, meta, preserve_times, size_only) {
-                        let file_path = dest_dir.join(entry.path());
+                    let file_path = dest_dir.join(entry.path());
+                    if quick_check_matches(
+                        entry,
+                        &file_path,
+                        meta,
+                        preserve_times,
+                        size_only,
+                        always_checksum,
+                    ) {
                         if let Err(e) = apply_metadata_with_cached_stat(
                             &file_path,
                             entry,
@@ -1308,7 +1384,14 @@ impl ReceiverContext {
                     if ignore_existing {
                         continue;
                     }
-                    if quick_check_matches(entry, meta, preserve_times, size_only) {
+                    if quick_check_matches(
+                        entry,
+                        &file_path,
+                        meta,
+                        preserve_times,
+                        size_only,
+                        always_checksum,
+                    ) {
                         if let Err(e) = apply_metadata_with_cached_stat(
                             &file_path,
                             entry,
