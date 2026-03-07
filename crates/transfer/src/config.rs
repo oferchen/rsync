@@ -48,6 +48,15 @@ pub struct DeletionConfig {
     pub max_delete: Option<u64>,
     /// Delete files even if there are I/O errors (`--ignore-errors`).
     pub ignore_errors: bool,
+    /// Whether deletions are deferred until after the transfer completes.
+    ///
+    /// True when the delete mode is `--delete-delay` or `--delete-after`.
+    /// Controls timing of NDX_DEL_STATS in the goodbye phase.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:124`: `#define EARLY_DELETE_DONE_MSG() (!(delete_during == 2 || delete_after))`
+    pub late_delete: bool,
 }
 
 /// Connection and protocol context configuration.
@@ -174,6 +183,16 @@ pub struct ServerConfig {
     pub qsort: bool,
     /// File selection and filtering configuration.
     pub file_selection: FileSelectionConfig,
+    /// Whether `--stats` was requested, enabling detailed transfer statistics.
+    ///
+    /// Maps to upstream's `INFO_GTE(STATS, 2)` condition. When true, deletion
+    /// statistics (NDX_DEL_STATS) are sent during the goodbye phase.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2046-2048`: `do_stats` sets `info_levels[INFO_STATS]` to 2+
+    /// - `generator.c:2377,2422`: `INFO_GTE(STATS, 2)` gates `write_del_stats()`
+    pub do_stats: bool,
 }
 
 impl Default for ServerConfig {
@@ -194,6 +213,7 @@ impl Default for ServerConfig {
             stop_at: None,
             qsort: false,
             file_selection: FileSelectionConfig::default(),
+            do_stats: false,
         }
     }
 }

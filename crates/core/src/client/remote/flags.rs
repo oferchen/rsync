@@ -5,7 +5,7 @@
 
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 
-use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
+use super::super::config::{ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec};
 use super::super::error::ClientError;
 use crate::server::ServerConfig;
 
@@ -168,13 +168,18 @@ pub(crate) fn build_wire_format_rules(
 ///
 /// Sets the fields that are shared across both SSH and daemon transfer paths
 /// for both receiver and generator roles: `trust_sender`, `qsort`, `inplace`,
-/// `min_file_size`, and `max_file_size`.
+/// `min_file_size`, `max_file_size`, `do_stats`, and `late_delete`.
 pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &mut ServerConfig) {
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
     server_config.write.inplace = config.inplace();
     server_config.file_selection.min_file_size = config.min_file_size();
     server_config.file_selection.max_file_size = config.max_file_size();
+    // upstream: options.c:2046-2048 - do_stats sets INFO_STATS to level 2+
+    server_config.do_stats = config.stats();
+    // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)
+    server_config.deletion.late_delete =
+        matches!(config.delete_mode(), DeleteMode::Delay | DeleteMode::After);
 }
 
 #[cfg(test)]

@@ -1020,11 +1020,18 @@ impl GeneratorContext {
     /// `read_ndx_and_attrs()` which loops over NDX_DEL_STATS, reading 5 varints of
     /// deletion counts before continuing to expect NDX_DONE.
     ///
+    /// Deletion statistics are only sent when `--stats` is active (INFO_GTE(STATS, 2))
+    /// and follow upstream's early/late timing:
+    /// - **Early** (delete_during or delete_before): sent when `do_stats && delete_mode`.
+    /// - **Late** (delete_delay or delete_after): sent when `do_stats`.
+    ///
     /// # Upstream Reference
     ///
     /// - `main.c:875-906` - `read_final_goodbye()`
     /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
-    /// - `main.c:240-247` - `read_del_stats()` format
+    /// - `main.c:225-238` - `write_del_stats()` format
+    /// - `generator.c:2376-2381` - early del_stats path
+    /// - `generator.c:2420-2425` - late del_stats path
     fn handle_goodbye<R: Read, W: Write>(
         &mut self,
         reader: &mut R,
@@ -1037,7 +1044,7 @@ impl GeneratorContext {
         }
 
         // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS
-        // upstream: main.c:886 — read_ndx_and_attrs() handles NDX_DEL_STATS internally
+        // upstream: main.c:886 - read_ndx_and_attrs() handles NDX_DEL_STATS internally
         let ndx = self.read_ndx_skipping_del_stats(reader, ndx_read_codec)?;
         if ndx != NDX_DONE {
             return Err(io::Error::new(
@@ -1046,10 +1053,16 @@ impl GeneratorContext {
             ));
         }
 
-        // For protocol 31+: send del_stats (if any), echo NDX_DONE, read final NDX_DONE
-        // upstream: generator.c:2420-2424 — write_del_stats before final NDX_DONE
+        // For protocol 31+: conditionally send del_stats, echo NDX_DONE, read final NDX_DONE.
+        //
+        // Upstream gates del_stats sending on INFO_GTE(STATS, 2) (i.e. --stats was passed)
+        // and splits it into early vs late paths depending on deletion timing:
+        // - Early (generator.c:2376-2381): !(delete_during==2 || delete_after) =>
+        //   send del_stats only when (do_stats && (delete_mode || force_delete))
+        // - Late (generator.c:2420-2425): (delete_during==2 || delete_after) =>
+        //   send del_stats when do_stats
         if self.protocol.supports_extended_goodbye() {
-            if self.delete_stats.total() > 0 {
+            if self.should_send_del_stats() {
                 ndx_write_codec.write_ndx(writer, NDX_DEL_STATS)?;
                 self.delete_stats.write_to(writer)?;
                 debug_log!(
@@ -1089,6 +1102,29 @@ impl GeneratorContext {
         }
 
         Ok(())
+    }
+
+    /// Determines whether del_stats should be sent during the goodbye phase.
+    ///
+    /// Mirrors upstream's conditional logic for `write_del_stats()` in the
+    /// generator goodbye sequence. The conditions differ for early vs late
+    /// deletion timing:
+    ///
+    /// - **Early** (`!late_delete`): `do_stats && flags.delete`
+    ///   (upstream: generator.c:2377 - `INFO_GTE(STATS, 2) && (delete_mode || force_delete)`)
+    /// - **Late** (`late_delete`): `do_stats`
+    ///   (upstream: generator.c:2422 - `INFO_GTE(STATS, 2)`)
+    fn should_send_del_stats(&self) -> bool {
+        if !self.config.do_stats {
+            return false;
+        }
+        if self.config.deletion.late_delete {
+            // upstream: generator.c:2422 - INFO_GTE(STATS, 2) (already checked above)
+            true
+        } else {
+            // upstream: generator.c:2377 - INFO_GTE(STATS, 2) && (delete_mode || force_delete)
+            self.config.flags.delete
+        }
     }
 
     /// Reads the next NDX value, consuming any NDX_DEL_STATS messages.
@@ -4247,5 +4283,79 @@ mod tests {
         .unwrap();
 
         assert!(!encoded.is_empty());
+    }
+
+    // ---- should_send_del_stats tests ----
+
+    #[test]
+    fn del_stats_not_sent_without_do_stats() {
+        // upstream: INFO_GTE(STATS, 2) is false => never send del_stats
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.do_stats = false;
+        config.flags.delete = true;
+        config.deletion.late_delete = false;
+        let ctx = GeneratorContext::new(&handshake, config);
+        assert!(!ctx.should_send_del_stats());
+    }
+
+    #[test]
+    fn del_stats_early_sent_with_do_stats_and_delete() {
+        // upstream: generator.c:2377 - early path: INFO_GTE(STATS, 2) && delete_mode
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.do_stats = true;
+        config.flags.delete = true;
+        config.deletion.late_delete = false;
+        let ctx = GeneratorContext::new(&handshake, config);
+        assert!(ctx.should_send_del_stats());
+    }
+
+    #[test]
+    fn del_stats_early_not_sent_without_delete() {
+        // upstream: generator.c:2377 - early path requires delete_mode || force_delete
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.do_stats = true;
+        config.flags.delete = false;
+        config.deletion.late_delete = false;
+        let ctx = GeneratorContext::new(&handshake, config);
+        assert!(!ctx.should_send_del_stats());
+    }
+
+    #[test]
+    fn del_stats_late_sent_with_do_stats_only() {
+        // upstream: generator.c:2422 - late path: INFO_GTE(STATS, 2) is sufficient
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.do_stats = true;
+        config.flags.delete = false;
+        config.deletion.late_delete = true;
+        let ctx = GeneratorContext::new(&handshake, config);
+        assert!(ctx.should_send_del_stats());
+    }
+
+    #[test]
+    fn del_stats_late_not_sent_without_do_stats() {
+        // upstream: INFO_GTE(STATS, 2) is false => even late path skips del_stats
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.do_stats = false;
+        config.flags.delete = true;
+        config.deletion.late_delete = true;
+        let ctx = GeneratorContext::new(&handshake, config);
+        assert!(!ctx.should_send_del_stats());
+    }
+
+    #[test]
+    fn del_stats_late_with_delete_and_stats() {
+        // upstream: late path with both delete_mode and stats - should send
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.do_stats = true;
+        config.flags.delete = true;
+        config.deletion.late_delete = true;
+        let ctx = GeneratorContext::new(&handshake, config);
+        assert!(ctx.should_send_del_stats());
     }
 }
