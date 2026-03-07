@@ -589,6 +589,59 @@ mod tests {
     }
 
     #[test]
+    fn sum_length_constants_match_upstream() {
+        // upstream: rsync.h:714 `#define SHORT_SUM_LENGTH 2`
+        assert_eq!(SHORT_SUM_LENGTH, 2);
+        // upstream: rsync.h:715 `#define SUM_LENGTH 16`
+        assert_eq!(MAX_SUM_LENGTH, 16);
+        assert!(usize::from(SHORT_SUM_LENGTH) < usize::from(MAX_SUM_LENGTH));
+    }
+
+    #[test]
+    fn sum_length_phase1_uses_dynamic_checksum() {
+        // Phase 1 passes SHORT_SUM_LENGTH; the heuristic computes a dynamic
+        // value that may differ from the input for larger files.
+        let len = calculate_checksum_length(100 * 1024 * 1024, 10_240, 31, SHORT_SUM_LENGTH);
+        assert!(len >= SHORT_SUM_LENGTH);
+        assert!(len <= MAX_SUM_LENGTH);
+        // For a 100 MB file the heuristic should produce a value above the
+        // minimum SHORT_SUM_LENGTH of 2.
+        assert!(len > SHORT_SUM_LENGTH);
+    }
+
+    #[test]
+    fn sum_length_phase2_redo_returns_max_immediately() {
+        // Phase 2 redo passes MAX_SUM_LENGTH; the function short-circuits
+        // and always returns 16 regardless of file or block size.
+        for &(file_size, block_len) in &[
+            (1024u64, 700u32),
+            (1_048_576, 1024),
+            (100 * 1024 * 1024, 10_240),
+            (1u64 << 30, 32768),
+        ] {
+            let len = calculate_checksum_length(file_size, block_len, 31, MAX_SUM_LENGTH);
+            assert_eq!(
+                len, MAX_SUM_LENGTH,
+                "redo pass must return MAX_SUM_LENGTH for file_size={file_size}"
+            );
+        }
+    }
+
+    #[test]
+    fn sum_length_short_vs_max_differ_for_small_files() {
+        // For small files, phase 1 (SHORT_SUM_LENGTH) should produce a shorter
+        // checksum than phase 2 (MAX_SUM_LENGTH), demonstrating the toggle.
+        let file_size = 1024u64;
+        let block_len = 700u32;
+        let phase1 = calculate_checksum_length(file_size, block_len, 31, SHORT_SUM_LENGTH);
+        let phase2 = calculate_checksum_length(file_size, block_len, 31, MAX_SUM_LENGTH);
+
+        assert_eq!(phase1, SHORT_SUM_LENGTH);
+        assert_eq!(phase2, MAX_SUM_LENGTH);
+        assert!(phase1 < phase2);
+    }
+
+    #[test]
     fn specific_upstream_compatibility_values() {
         // These values should match upstream rsync 3.4.1 exactly
         // Based on generator.c:sum_sizes_sqroot()
