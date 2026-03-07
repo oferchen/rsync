@@ -1004,6 +1004,66 @@ mod tests {
         assert_eq!(stats, decoded);
     }
 
+    #[test]
+    fn delete_stats_wire_roundtrip_zeros() {
+        let stats = DeleteStats::new();
+        let mut buf = Vec::new();
+        stats.write_to(&mut buf).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let decoded = DeleteStats::read_from(&mut cursor).unwrap();
+        assert_eq!(stats, decoded);
+    }
+
+    #[test]
+    fn delete_stats_wire_roundtrip_realistic() {
+        let stats = DeleteStats {
+            files: 42,
+            dirs: 5,
+            symlinks: 3,
+            devices: 1,
+            specials: 2,
+        };
+        let mut buf = Vec::new();
+        stats.write_to(&mut buf).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let decoded = DeleteStats::read_from(&mut cursor).unwrap();
+        assert_eq!(stats, decoded);
+    }
+
+    #[test]
+    fn delete_stats_wire_roundtrip_large_values() {
+        let stats = DeleteStats {
+            files: 100_000,
+            dirs: 50_000,
+            symlinks: 10_000,
+            devices: 500,
+            specials: 200,
+        };
+        let mut buf = Vec::new();
+        stats.write_to(&mut buf).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let decoded = DeleteStats::read_from(&mut cursor).unwrap();
+        assert_eq!(stats, decoded);
+    }
+
+    #[test]
+    fn delete_stats_total() {
+        let stats = DeleteStats {
+            files: 10,
+            dirs: 5,
+            symlinks: 3,
+            devices: 2,
+            specials: 1,
+        };
+        assert_eq!(stats.total(), 21);
+
+        let empty = DeleteStats::new();
+        assert_eq!(empty.total(), 0);
+    }
+
     #[cfg(feature = "serde")]
     mod serde_tests {
         use super::*;
