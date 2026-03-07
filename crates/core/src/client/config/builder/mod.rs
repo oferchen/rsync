@@ -1,7 +1,31 @@
 use std::ffi::OsString;
+use std::fmt;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::SystemTime;
+
+/// Error returned when mutually exclusive options are combined.
+///
+/// Mirrors upstream rsync's `RERR_SYNTAX` (exit code 1) validation in `options.c`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigConflict {
+    /// The first conflicting option (e.g. `--inplace`).
+    pub option1: &'static str,
+    /// The second conflicting option (e.g. `--partial-dir`).
+    pub option2: &'static str,
+}
+
+impl fmt::Display for ConfigConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "--{} cannot be used with --{}",
+            self.option1, self.option2
+        )
+    }
+}
+
+impl std::error::Error for ConfigConflict {}
 
 /// Generates chainable builder setter methods.
 ///
@@ -225,6 +249,34 @@ pub struct ClientConfigBuilder {
 }
 
 impl ClientConfigBuilder {
+    /// Checks for mutually exclusive option combinations.
+    ///
+    /// Mirrors upstream rsync `options.c` validation:
+    /// - `--inplace` conflicts with `--partial-dir` and `--delay-updates`
+    /// - `--append` conflicts with `--partial-dir` and `--delay-updates`
+    ///   (upstream: `--append` sets `inplace = 1`, then the `inplace && partial_dir` check fires)
+    pub fn validate(&self) -> Result<(), ConfigConflict> {
+        let is_inplace = self.inplace || self.append;
+        if is_inplace {
+            let mode = if self.append { "append" } else { "inplace" };
+
+            if self.delay_updates {
+                return Err(ConfigConflict {
+                    option1: mode,
+                    option2: "delay-updates",
+                });
+            }
+
+            if self.partial_dir.is_some() {
+                return Err(ConfigConflict {
+                    option1: mode,
+                    option2: "partial-dir",
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
