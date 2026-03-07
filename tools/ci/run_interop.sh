@@ -769,6 +769,15 @@ comp_run_scenario() {
       dd if=/dev/zero of="$ddir/binary.dat" bs=1K count=50 2>/dev/null
       dd if=/dev/zero of="$ddir/large.dat" bs=1K count=200 2>/dev/null
       ;;
+    compare-dest)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/compare_ref"
+      cp "$sdir/hello.txt" "$ddir/compare_ref/"
+      ;;
+    link-dest)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/link_ref"
+      # Copy source files to reference dir so link-dest can hardlink them
+      cp -a "$sdir"/* "$ddir/link_ref"/
+      ;;
     itemize)
       rm -rf "$ddir"/*
       mkdir -p "$ddir/subdir/nested"
@@ -953,6 +962,33 @@ comp_run_scenario() {
       comp_verify_transfer "$sdir" "$ddir" || return 1
       return 0
       ;;
+    compare-dest)
+      # Files matching compare_ref should be skipped; others should transfer
+      if [[ ! -f "$ddir/multiline.txt" ]]; then
+        echo "    --compare-dest: multiline.txt not transferred (should not match ref)"
+        return 1
+      fi
+      if [[ -f "$ddir/hello.txt" ]]; then
+        echo "    --compare-dest: hello.txt was transferred despite matching ref"
+        return 1
+      fi
+      return 0
+      ;;
+    link-dest)
+      # With --link-dest, unchanged files should be hardlinked to reference
+      if [[ ! -f "$ddir/hello.txt" ]]; then
+        echo "    --link-dest: hello.txt missing from dest"
+        return 1
+      fi
+      # Check that hello.txt is a hardlink (link count > 1)
+      local link_count
+      link_count=$(stat -c %h "$ddir/hello.txt" 2>/dev/null || stat -f %l "$ddir/hello.txt" 2>/dev/null)
+      if [[ "$link_count" -le 1 ]]; then
+        echo "    --link-dest: hello.txt not hardlinked (count=$link_count)"
+        return 1
+      fi
+      return 0
+      ;;
     itemize)
       comp_verify_transfer "$sdir" "$ddir" || return 1
       local item_out="$transfer_log.out"
@@ -1078,6 +1114,7 @@ run_comprehensive_interop_case() {
     "safe-links|-rlptv --safe-links|safe-links"
     "existing|-av --existing|existing"
     "backup|-av --backup|backup"
+    "link-dest|-av --link-dest=link_ref|link-dest"
     "max-delete|-av --delete --max-delete=1|max-delete"
     "update|-av --update|update"
     "dry-run|-avn|dry-run"
@@ -1093,6 +1130,7 @@ run_comprehensive_interop_case() {
     "compress-delta|-avz --no-whole-file -I|delta"
     "devices|-avD|basic"
     "acls|-avA|acls"
+    "compare-dest|-av --compare-dest=compare_ref|compare-dest"
   )
 
   # Incremental recursion only supported on protocol 30+
