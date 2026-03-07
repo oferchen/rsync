@@ -374,6 +374,7 @@ fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> String {
         return fields.iter().collect();
     }
 
+    let is_symlink = fields[1] == 'L';
     let change_set = event.change_set();
 
     // upstream: log.c:730-734 — ITEM_MISSING_DATA fills attribute positions with '?'
@@ -388,12 +389,16 @@ fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> String {
     if change_set.checksum_changed() {
         attr[0] = 'c';
     }
-    if change_set.size_changed() {
+
+    // upstream: log.c:706 — symlinks never report size changes
+    if !is_symlink && change_set.size_changed() {
         attr[1] = 's';
     }
+
     if let Some(marker) = change_set.time_change_marker() {
         attr[2] = marker;
     }
+
     if change_set.permissions_changed() {
         attr[3] = 'p';
     }
@@ -1880,6 +1885,125 @@ mod tests {
         );
         let result = format_itemized_changes(&event, false);
         assert_eq!(result.len(), 11);
+    }
+
+    // ---- Symlink-specific positions (upstream: log.c:705-710) ----
+
+    #[test]
+    fn itemize_symlink_size_always_dot_even_when_size_changed() {
+        // upstream: log.c:706 — c[3] = '.' unconditionally for symlinks
+        // After dots-to-spaces collapse, '.' becomes ' ' when all subsequent positions are also dots
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            false,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new().with_size_changed(true),
+        );
+        let result = format_itemized_changes(&event, false);
+        assert_ne!(
+            result.chars().nth(3),
+            Some('s'),
+            "symlink should never report size change: {result:?}"
+        );
+    }
+
+    #[test]
+    fn itemize_symlink_size_dot_with_multiple_changes() {
+        // Size must stay '.' for symlinks even when other attributes change
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            false,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new()
+                .with_size_changed(true)
+                .with_checksum_changed(true)
+                .with_permissions_changed(true),
+        );
+        let result = format_itemized_changes(&event, false);
+        assert_eq!(result, "cLc..p.....");
+    }
+
+    #[test]
+    fn itemize_symlink_time_transfer_time_shows_uppercase_t() {
+        // upstream: log.c:708-710 — 'T' when symlink times not preserved
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            false,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new().with_time_change(Some(TimeChange::TransferTime)),
+        );
+        let result = format_itemized_changes(&event, false);
+        assert_eq!(
+            result.chars().nth(4),
+            Some('T'),
+            "symlink time should be 'T' for TransferTime: {result:?}"
+        );
+    }
+
+    #[test]
+    fn itemize_symlink_time_modified_shows_lowercase_t() {
+        // upstream: log.c:710 — 't' when preserve_mtimes and receiver_symlink_times
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            false,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new().with_time_change(Some(TimeChange::Modified)),
+        );
+        let result = format_itemized_changes(&event, false);
+        assert_eq!(
+            result.chars().nth(4),
+            Some('t'),
+            "symlink time should be 't' for Modified: {result:?}"
+        );
+    }
+
+    #[test]
+    fn itemize_symlink_time_unchanged_shows_dot() {
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            false,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event, false);
+        assert_eq!(
+            result.chars().nth(4),
+            Some(' '),
+            "symlink time should be space (collapsed) when unchanged: {result:?}"
+        );
+    }
+
+    #[test]
+    fn itemize_symlink_full_pattern_with_transfer_time() {
+        // Typical symlink update: size always dot, time 'T', other changes reported
+        let event = make_event(
+            ClientEventKind::SymlinkCopied,
+            false,
+            Some(ClientEntryKind::Symlink),
+            LocalCopyChangeSet::new()
+                .with_time_change(Some(TimeChange::TransferTime))
+                .with_owner_changed(true)
+                .with_group_changed(true),
+        );
+        let result = format_itemized_changes(&event, false);
+        assert_eq!(result, "cL..T.og...");
+    }
+
+    #[test]
+    fn itemize_file_size_still_reports_when_changed() {
+        // Verify that non-symlink files still report size changes
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new().with_size_changed(true),
+        );
+        let result = format_itemized_changes(&event, false);
+        assert_eq!(
+            result.chars().nth(3),
+            Some('s'),
+            "regular file should report size change: {result:?}"
+        );
     }
 
     use super::super::parser::parse_out_format;
