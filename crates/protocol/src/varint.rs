@@ -205,14 +205,10 @@ pub fn write_varlong<W: Write + ?Sized>(
 
 /// Reads a variable-length 64-bit integer using rsync's varlong format.
 ///
-/// This is the inverse of `write_varlong`, mirroring upstream's `read_varlong(int f, uchar min_bytes)` from io.c.
-/// The function reads a leading byte that encodes the total byte count, then reads the remaining bytes.
-///
-/// The encoding pattern:
-/// - When cnt == min_bytes: leading byte < (1 << 7), all 8 bits are data
-/// - When cnt == min_bytes+1: leading byte has bit 7 set, bits 0-5 are data
-/// - When cnt == min_bytes+2: leading byte has bits 7-6 set, bits 0-4 are data
-/// - And so on...
+/// This is the inverse of `write_varlong`, mirroring upstream's
+/// `read_varlong(int f, uchar min_bytes)` from `io.c`. The function first reads
+/// `min_bytes` bytes (a leading tag byte plus `min_bytes - 1` initial data bytes),
+/// then uses `INT_BYTE_EXTRA` to determine how many additional bytes follow.
 ///
 /// # Arguments
 ///
@@ -220,36 +216,38 @@ pub fn write_varlong<W: Write + ?Sized>(
 /// * `min_bytes` - Minimum number of bytes used in encoding (must match the write call)
 #[inline]
 pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
-    let mut leading_buf = [0u8; 1];
-    reader.read_exact(&mut leading_buf)?;
-    let leading = leading_buf[0];
+    // upstream: io.c:read_varlong() — read min_bytes first, then extra.
+    let min = min_bytes as usize;
 
-    // Count consecutive high bits to determine total byte count.
-    // Each set bit beyond min_bytes indicates one additional byte.
-    let mut cnt = min_bytes as usize;
-    let mut bit = 1u8 << 7;
+    let mut initial = [0u8; 8];
+    reader.read_exact(&mut initial[..min])?;
 
-    while cnt < 8 && (leading & bit) != 0 {
-        cnt += 1;
-        bit >>= 1;
-    }
+    let leading = initial[0];
 
-    // When no flag bits were set (cnt == min_bytes), all 8 bits are data.
-    // Otherwise (bit - 1) masks out the flag prefix, keeping only data bits.
-    let mask = if cnt == min_bytes as usize {
-        0xFF
+    // Place the initial data bytes (after the leading tag) into the result
+    // buffer at positions 0..min-1, mirroring `memcpy(u.b, b2+1, min_bytes-1)`.
+    let mut result = [0u8; 9];
+    result[..min - 1].copy_from_slice(&initial[1..min]);
+
+    let extra = INT_BYTE_EXTRA[(leading / 4) as usize] as usize;
+
+    if extra > 0 {
+        let bit = 1u8 << (8 - extra as u32);
+        // upstream: `if (min_bytes + extra > (int)sizeof u.b)` where sizeof u.b = 9
+        if min + extra > 9 {
+            return Err(invalid_data("overflow in read_varlong"));
+        }
+        reader.read_exact(&mut result[min - 1..min - 1 + extra])?;
+        // The masked leading byte goes into position min+extra-1
+        result[min + extra - 1] = leading & (bit - 1);
     } else {
-        bit - 1
-    };
-
-    let mut bytes = [0u8; 8];
-    if cnt > 1 {
-        reader.read_exact(&mut bytes[..cnt - 1])?;
+        // No extra bytes — all 8 bits of the leading byte are data
+        result[min - 1] = leading;
     }
 
-    bytes[cnt - 1] = leading & mask;
-
-    Ok(i64::from_le_bytes(bytes))
+    Ok(i64::from_le_bytes([
+        result[0], result[1], result[2], result[3], result[4], result[5], result[6], result[7],
+    ]))
 }
 
 /// Writes a 64-bit integer using rsync's legacy longint format (protocol < 30).
@@ -561,7 +559,8 @@ mod tests {
             (16777215i64, 3u8),   // Max value that fits in 3 bytes
             (16777216i64, 3u8),   // Requires 4 bytes
             (1700000000i64, 4u8), // Typical Unix timestamp
-            (i64::MAX, 8u8),      // Maximum positive value
+            (i64::MAX, 3u8),      // Maximum positive value with min_bytes=3
+            (i64::MAX, 8u8),      // Maximum positive value with min_bytes=8
         ];
 
         for (value, min_bytes) in test_cases {
@@ -585,15 +584,13 @@ mod tests {
 
     #[test]
     fn varlong_large_values_with_min_bytes_3() {
-        // Test large values with min_bytes=3 (used for stats)
-        // Note: With min_bytes=3, the maximum encodable value that round-trips
-        // correctly is ~2.88e17 (288 PB). This matches upstream rsync's limitation.
-        // Values larger than this would require 9 bytes but the decoder only
-        // handles 8 bytes total (matching upstream io.c:read_varlong).
-        let max_safe_for_min3: i64 = 0x03FF_FFFF_FFFF_FFFF; // ~288 PB
+        // Test large values with min_bytes=3 (used for stats).
+        // Upstream io.c:read_varlong uses a 9-byte union `{ char b[9]; int64 x; }`
+        // so min_bytes=3 can encode up to i64::MAX correctly.
         let test_cases = [
-            (max_safe_for_min3, 3u8), // Maximum safe value for min_bytes=3
-            (max_safe_for_min3 / 2, 3u8),
+            (i64::MAX, 3u8),                    // Maximum positive value
+            (i64::MAX / 2, 3u8),
+            (0x03FF_FFFF_FFFF_FFFFi64, 3u8),   // ~288 PB
             (1_000_000_000_000_000i64, 3u8), // 1 PB - realistic large transfer
             (100_000_000_000_000i64, 3u8),   // 100 TB
             (1_000_000_000_000i64, 3u8),     // 1 TB
@@ -1133,6 +1130,75 @@ mod tests {
             let mut cursor = Cursor::new(&encoded);
             let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
             assert_eq!(decoded, 0i64, "zero failed for min_bytes={min_bytes}");
+        }
+    }
+
+    #[test]
+    fn varlong_u32_max_plus_one_roundtrip() {
+        // Values exceeding u32::MAX are critical for large file support.
+        let value = u32::MAX as i64 + 1; // 0x1_0000_0000
+        for min_bytes in [1u8, 2, 3, 4] {
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, value, min_bytes).expect("write succeeds");
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
+            assert_eq!(
+                decoded, value,
+                "u32::MAX+1 failed for min_bytes={min_bytes}"
+            );
+        }
+    }
+
+    #[test]
+    fn varlong_i64_max_min_bytes_3_through_8() {
+        // With min_bytes >= 3 upstream's 9-byte union `{ char b[9]; int64 x; }`
+        // allows the full 8 data bytes to be stored, so i64::MAX round-trips.
+        // min_bytes 1-2 have a representation ceiling because INT_BYTE_EXTRA
+        // maxes at 6, limiting total bytes to < 9.
+        for min_bytes in 3u8..=8 {
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, i64::MAX, min_bytes).expect("write succeeds");
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
+            assert_eq!(
+                decoded, i64::MAX,
+                "i64::MAX failed for min_bytes={min_bytes}"
+            );
+            assert_eq!(
+                cursor.position() as usize,
+                encoded.len(),
+                "cursor did not consume all bytes for min_bytes={min_bytes}"
+            );
+        }
+    }
+
+    #[test]
+    fn varlong_64bit_boundary_values() {
+        // Boundary values specifically around the 32-bit / 64-bit divide
+        let boundary_values: &[i64] = &[
+            0,
+            1,
+            127,
+            128,
+            255,
+            256,
+            u16::MAX as i64,
+            u32::MAX as i64,
+            u32::MAX as i64 + 1,
+            i64::MAX,
+        ];
+
+        for &value in boundary_values {
+            for min_bytes in [3u8, 4] {
+                let mut encoded = Vec::new();
+                write_varlong(&mut encoded, value, min_bytes).expect("write succeeds");
+                let mut cursor = Cursor::new(&encoded);
+                let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
+                assert_eq!(
+                    decoded, value,
+                    "value={value:#x} min_bytes={min_bytes} failed"
+                );
+            }
         }
     }
 
