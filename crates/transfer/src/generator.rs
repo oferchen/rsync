@@ -136,6 +136,79 @@ struct SegmentClassification {
     child_indices: Vec<usize>,
 }
 
+/// Timing and byte-count statistics collected during the transfer.
+#[derive(Debug)]
+struct TransferTiming {
+    /// When file list building started (for flist_buildtime statistic).
+    flist_build_start: Option<Instant>,
+    /// When file list building ended (for flist_buildtime statistic).
+    flist_build_end: Option<Instant>,
+    /// When file list transfer started (for flist_xfertime statistic).
+    flist_xfer_start: Option<Instant>,
+    /// When file list transfer ended (for flist_xfertime statistic).
+    flist_xfer_end: Option<Instant>,
+    /// Total bytes read from network during transfer (for total_read statistic).
+    total_bytes_read: u64,
+}
+
+impl TransferTiming {
+    fn new() -> Self {
+        Self {
+            flist_build_start: None,
+            flist_build_end: None,
+            flist_xfer_start: None,
+            flist_xfer_end: None,
+            total_bytes_read: 0,
+        }
+    }
+}
+
+/// Mutable state for INC_RECURSE segmented file list sending.
+#[derive(Debug)]
+struct IncrementalState {
+    /// Pending file list segments for incremental recursion (INC_RECURSE).
+    ///
+    /// When INC_RECURSE is negotiated, the initial `send_file_list()` sends
+    /// only top-level entries. Remaining per-directory segments are queued here
+    /// and drained by `send_extra_file_lists()` during the transfer loop.
+    pending_segments: Vec<PendingSegment>,
+    /// Whether all incremental file list segments have been sent.
+    flist_eof_sent: bool,
+    /// Cached file list writer for compression state continuity across sub-lists.
+    ///
+    /// Upstream rsync uses `static` variables in `send_file_entry()` that persist
+    /// across `send_file_list()` calls. This field preserves the same state
+    /// (prev_name, prev_mode, prev_uid, prev_gid) between `send_file_list()`
+    /// and `send_extra_file_lists()`.
+    flist_writer_cache: Option<FileListWriter>,
+    /// Number of entries in the initial segment when INC_RECURSE is active.
+    ///
+    /// When set, `send_file_list()` only sends the first `initial_segment_count`
+    /// entries. The remaining entries are sent via `send_extra_file_lists()`.
+    initial_segment_count: Option<usize>,
+    /// Segment boundary table for mapping wire NDX values to flat array indices.
+    ///
+    /// With INC_RECURSE, the sender sends segmented file lists with +1 gaps
+    /// between segments (upstream `flist.c:2931`). When the receiver sends
+    /// wire NDX values back, this table maps them to flat array indices.
+    /// Each entry is `(flat_start, ndx_start)`.
+    ///
+    /// Without INC_RECURSE, this contains a single entry `(0, 0)`.
+    ndx_segments: Vec<(usize, i32)>,
+}
+
+impl IncrementalState {
+    fn new(initial_ndx_start: i32) -> Self {
+        Self {
+            pending_segments: Vec::new(),
+            flist_eof_sent: false,
+            flist_writer_cache: None,
+            initial_segment_count: None,
+            ndx_segments: vec![(0, initial_ndx_start)],
+        }
+    }
+}
+
 /// Context for the generator role during a transfer.
 ///
 /// Holds protocol state, configuration, file list, and filter rules needed
@@ -173,16 +246,8 @@ pub struct GeneratorContext {
     compat_flags: Option<CompatibilityFlags>,
     /// Checksum seed for XXHash algorithms.
     checksum_seed: i32,
-    /// When file list building started (for flist_buildtime statistic).
-    flist_build_start: Option<Instant>,
-    /// When file list building ended (for flist_buildtime statistic).
-    flist_build_end: Option<Instant>,
-    /// When file list transfer started (for flist_xfertime statistic).
-    flist_xfer_start: Option<Instant>,
-    /// When file list transfer ended (for flist_xfertime statistic).
-    flist_xfer_end: Option<Instant>,
-    /// Total bytes read from network during transfer (for total_read statistic).
-    total_bytes_read: u64,
+    /// Timing and byte-count statistics for the transfer.
+    timing: TransferTiming,
     /// Collected UID mappings for name-based ownership transfer.
     uid_list: IdList,
     /// Collected GID mappings for name-based ownership transfer.
@@ -190,35 +255,8 @@ pub struct GeneratorContext {
     /// I/O error flags accumulated during file list building and transfer.
     /// Uses [`io_error_flags`] constants (IOERR_GENERAL, IOERR_VANISHED, etc.).
     io_error: i32,
-    /// Pending file list segments for incremental recursion (INC_RECURSE).
-    ///
-    /// When INC_RECURSE is negotiated, the initial `send_file_list()` sends
-    /// only top-level entries. Remaining per-directory segments are queued here
-    /// and drained by `send_extra_file_lists()` during the transfer loop.
-    pending_segments: Vec<PendingSegment>,
-    /// Whether all incremental file list segments have been sent.
-    flist_eof_sent: bool,
-    /// Cached file list writer for compression state continuity across sub-lists.
-    ///
-    /// Upstream rsync uses `static` variables in `send_file_entry()` that persist
-    /// across `send_file_list()` calls. This field preserves the same state
-    /// (prev_name, prev_mode, prev_uid, prev_gid) between `send_file_list()`
-    /// and `send_extra_file_lists()`.
-    flist_writer_cache: Option<FileListWriter>,
-    /// Number of entries in the initial segment when INC_RECURSE is active.
-    ///
-    /// When set, `send_file_list()` only sends the first `initial_segment_count`
-    /// entries. The remaining entries are sent via `send_extra_file_lists()`.
-    initial_segment_count: Option<usize>,
-    /// Segment boundary table for mapping wire NDX values to flat array indices.
-    ///
-    /// With INC_RECURSE, the sender sends segmented file lists with +1 gaps
-    /// between segments (upstream `flist.c:2931`). When the receiver sends
-    /// wire NDX values back, this table maps them to flat array indices.
-    /// Each entry is `(flat_start, ndx_start)`.
-    ///
-    /// Without INC_RECURSE, this contains a single entry `(0, 0)`.
-    ndx_segments: Vec<(usize, i32)>,
+    /// Incremental recursion (INC_RECURSE) state for segmented file list sending.
+    incremental: IncrementalState,
     /// Accumulated deletion statistics received via NDX_DEL_STATS messages.
     /// (upstream: main.c:238-247 `read_del_stats()`)
     delete_stats: DeleteStats,
@@ -243,19 +281,11 @@ impl GeneratorContext {
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
-            flist_build_start: None,
-            flist_build_end: None,
-            flist_xfer_start: None,
-            flist_xfer_end: None,
-            pending_segments: Vec::new(),
-            flist_eof_sent: false,
-            flist_writer_cache: None,
-            initial_segment_count: None,
-            total_bytes_read: 0,
+            timing: TransferTiming::new(),
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             io_error: 0,
-            ndx_segments: vec![(0, initial_ndx_start)],
+            incremental: IncrementalState::new(initial_ndx_start),
             delete_stats: DeleteStats::new(),
         }
     }
@@ -266,7 +296,7 @@ impl GeneratorContext {
     ///
     /// - `rsync.c:424` — `i = ndx - cur_flist->ndx_start`
     fn wire_to_flat_ndx(&self, wire_ndx: i32) -> usize {
-        for &(flat_start, ndx_start) in self.ndx_segments.iter().rev() {
+        for &(flat_start, ndx_start) in self.incremental.ndx_segments.iter().rev() {
             if wire_ndx >= ndx_start {
                 return flat_start + (wire_ndx - ndx_start) as usize;
             }
@@ -281,10 +311,11 @@ impl GeneratorContext {
     /// - `generator.c:2321` — `ndx = i + cur_flist->ndx_start`
     fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
         let seg_idx = self
+            .incremental
             .ndx_segments
             .partition_point(|&(start, _)| start <= flat_idx)
             - 1;
-        let (flat_start, ndx_start) = self.ndx_segments[seg_idx];
+        let (flat_start, ndx_start) = self.incremental.ndx_segments[seg_idx];
         ndx_start + (flat_idx - flat_start) as i32
     }
 
@@ -696,7 +727,7 @@ impl GeneratorContext {
     ///   }
     ///   ```
     fn send_flist_eof_if_inc_recurse<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        if self.flist_eof_sent {
+        if self.incremental.flist_eof_sent {
             return Ok(());
         }
         if let Some(flags) = self.compat_flags
@@ -705,7 +736,7 @@ impl GeneratorContext {
             let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
             ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
             writer.flush()?;
-            self.flist_eof_sent = true;
+            self.incremental.flist_eof_sent = true;
         }
         Ok(())
     }
@@ -833,16 +864,16 @@ impl GeneratorContext {
             // Read item flags using ItemFlags helper
             let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
             if self.protocol.supports_iflags() {
-                self.total_bytes_read += 2;
+                self.timing.total_bytes_read += 2;
             }
 
             // Read and discard optional trailing fields (basis type, xname)
             let (_fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
             if iflags.has_basis_type() {
-                self.total_bytes_read += 1;
+                self.timing.total_bytes_read += 1;
             }
             if let Some(ref xname_data) = xname {
-                self.total_bytes_read += 4 + xname_data.len() as u64;
+                self.timing.total_bytes_read += 4 + xname_data.len() as u64;
             }
 
             // Check if file should be transferred
@@ -852,13 +883,13 @@ impl GeneratorContext {
 
             // Read sum_head using SumHead helper
             let sum_head = SumHead::read(&mut *reader)?;
-            self.total_bytes_read += 16;
+            self.timing.total_bytes_read += 16;
 
             // Validate file index
             self.validate_file_index(ndx)?;
 
             let file_entry = &self.file_list[ndx];
-            // Direct field access to allow subsequent mutable access to self.total_bytes_read
+            // Direct field access to allow subsequent mutable access to self.timing
             // (Rust's borrow checker allows disjoint field borrows)
             debug_assert_eq!(
                 self.file_list.len(),
@@ -872,7 +903,7 @@ impl GeneratorContext {
 
             // Track bytes read for signature blocks
             let bytes_per_block = 4 + sum_head.s2length as u64;
-            self.total_bytes_read += sum_head.count as u64 * bytes_per_block;
+            self.timing.total_bytes_read += sum_head.count as u64 * bytes_per_block;
 
             let block_length = sum_head.blength;
             let strong_sum_length = sum_head.s2length as u8;
@@ -1181,7 +1212,7 @@ impl GeneratorContext {
     /// Mirrors upstream recursive directory scanning and file list construction behavior.
     pub fn build_file_list(&mut self, base_paths: &[PathBuf]) -> io::Result<usize> {
         // Track timing for flist_buildtime statistic (upstream stats.flist_buildtime)
-        self.flist_build_start = Some(Instant::now());
+        self.timing.flist_build_start = Some(Instant::now());
 
         info_log!(Flist, 1, "building file list...");
         self.clear_file_list();
@@ -1229,7 +1260,7 @@ impl GeneratorContext {
         }
 
         // Record end time for flist_buildtime statistic
-        self.flist_build_end = Some(Instant::now());
+        self.timing.flist_build_end = Some(Instant::now());
 
         // Collect UID/GID mappings for name-based ownership transfer
         self.collect_id_mappings();
@@ -1270,8 +1301,8 @@ impl GeneratorContext {
             Flist,
             2,
             "partitioned file list: {} initial entries, {} sub-segments",
-            self.initial_segment_count.unwrap_or(0),
-            self.pending_segments.len()
+            self.incremental.initial_segment_count.unwrap_or(0),
+            self.incremental.pending_segments.len()
         );
     }
 
@@ -1361,7 +1392,7 @@ impl GeneratorContext {
             self.file_list.push(old_file_list[idx].clone());
             self.full_paths.push(old_full_paths[idx].clone());
         }
-        self.initial_segment_count = Some(initial_indices.len());
+        self.incremental.initial_segment_count = Some(initial_indices.len());
 
         // Build dir_ndx -> segment_data index mapping for O(1) lookup
         let dir_ndx_to_seg: HashMap<usize, usize> = segment_data
@@ -1387,7 +1418,7 @@ impl GeneratorContext {
             }
         }
 
-        self.pending_segments = pending;
+        self.incremental.pending_segments = pending;
     }
 
     /// Sends pending file list segments during the transfer loop.
@@ -1401,7 +1432,10 @@ impl GeneratorContext {
     /// - `sender.c:send_files()` line 250: `send_extra_file_list(f, MIN_FILECNT_LOOKAHEAD)`
     /// - `flist.c:send_extra_file_list()` — sends one directory's entries
     fn send_extra_file_lists<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        if !self.inc_recurse() || self.flist_eof_sent || self.pending_segments.is_empty() {
+        if !self.inc_recurse()
+            || self.incremental.flist_eof_sent
+            || self.incremental.pending_segments.is_empty()
+        {
             return Ok(());
         }
 
@@ -1409,13 +1443,14 @@ impl GeneratorContext {
         // state across sub-lists, matching upstream's static variables in
         // send_file_entry() (prev_name, prev_mode, prev_uid, prev_gid).
         let mut flist_writer = self
+            .incremental
             .flist_writer_cache
             .take()
             .unwrap_or_else(|| self.build_flist_writer());
 
         // Send all pending segments. Since we eagerly scanned, send them all at once
         // (upstream uses MIN_FILECNT_LOOKAHEAD=1000 for throttling with lazy scanning).
-        let segments = std::mem::take(&mut self.pending_segments);
+        let segments = std::mem::take(&mut self.incremental.pending_segments);
         let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
 
         for segment in &segments {
@@ -1425,11 +1460,16 @@ impl GeneratorContext {
 
             // Build ndx_segments entry for this sub-list.
             // upstream: flist.c:2931 — flist->ndx_start = prev->ndx_start + prev->used + 1
-            let &(prev_flat_start, prev_ndx_start) =
-                self.ndx_segments.last().expect("initial segment exists");
+            let &(prev_flat_start, prev_ndx_start) = self
+                .incremental
+                .ndx_segments
+                .last()
+                .expect("initial segment exists");
             let prev_used = (segment.flist_start - prev_flat_start) as i32;
             let seg_ndx_start = prev_ndx_start + prev_used + 1;
-            self.ndx_segments.push((segment.flist_start, seg_ndx_start));
+            self.incremental
+                .ndx_segments
+                .push((segment.flist_start, seg_ndx_start));
 
             // Write NDX_FLIST_OFFSET - dir_ndx to signal a new sub-list
             ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
@@ -1456,7 +1496,7 @@ impl GeneratorContext {
         // All segments sent — send NDX_FLIST_EOF
         ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
         writer.flush()?;
-        self.flist_eof_sent = true;
+        self.incremental.flist_eof_sent = true;
         debug_log!(
             Flist,
             2,
@@ -1717,13 +1757,13 @@ impl GeneratorContext {
     /// Sends the file list to the receiver.
     pub fn send_file_list<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<usize> {
         // Track timing for flist_xfertime statistic (upstream stats.flist_xfertime)
-        self.flist_xfer_start = Some(Instant::now());
+        self.timing.flist_xfer_start = Some(Instant::now());
 
         let mut flist_writer = self.build_flist_writer();
 
         // When INC_RECURSE, only send initial segment entries; the rest
         // are sent via send_extra_file_lists() during the transfer loop.
-        let entries_to_send = if let Some(count) = self.initial_segment_count {
+        let entries_to_send = if let Some(count) = self.incremental.initial_segment_count {
             &self.file_list[..count]
         } else {
             &self.file_list
@@ -1743,10 +1783,10 @@ impl GeneratorContext {
 
         // Cache the writer so send_extra_file_lists() inherits the compression
         // state (prev_name, prev_mode, etc.), matching upstream's static variables.
-        self.flist_writer_cache = Some(flist_writer);
+        self.incremental.flist_writer_cache = Some(flist_writer);
 
         // Record end time for flist_xfertime statistic
-        self.flist_xfer_end = Some(Instant::now());
+        self.timing.flist_xfer_end = Some(Instant::now());
 
         Ok(self.file_list.len())
     }
@@ -1815,14 +1855,16 @@ impl GeneratorContext {
         self.handle_goodbye(reader, writer, &mut ndx_read_codec, &mut ndx_write_codec)?;
 
         // Calculate timing stats for return value
-        let flist_buildtime = calculate_duration_ms(self.flist_build_start, self.flist_build_end);
-        let flist_xfertime = calculate_duration_ms(self.flist_xfer_start, self.flist_xfer_end);
+        let flist_buildtime =
+            calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
+        let flist_xfertime =
+            calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
 
         Ok(GeneratorStats {
             files_listed: file_count,
             files_transferred: transfer_result.files_transferred,
             bytes_sent: transfer_result.bytes_sent,
-            bytes_read: self.total_bytes_read,
+            bytes_read: self.timing.total_bytes_read,
             flist_buildtime_ms: flist_buildtime,
             flist_xfertime_ms: flist_xfertime,
             delete_stats: self.delete_stats,
