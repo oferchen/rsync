@@ -204,6 +204,24 @@ pub struct ServerConfig {
     /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
     /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
     pub has_partial_dir: bool,
+    /// Backup directory path (long-form `--backup-dir=DIR`).
+    ///
+    /// When set with `--backup`, displaced files are placed in this directory
+    /// hierarchy instead of alongside the destination files.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2854-2870`: `--backup-dir=DIR` server option
+    pub backup_dir: Option<String>,
+    /// Backup file suffix (long-form `--backup-suffix=SUFFIX`).
+    ///
+    /// Overrides the default `~` suffix for backup files. When `--backup-dir`
+    /// is set, the default suffix is empty.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2871-2876`: `--backup-suffix=SUFFIX` server option
+    pub backup_suffix: Option<String>,
     /// File selection and filtering configuration.
     pub file_selection: FileSelectionConfig,
     /// Whether `--stats` was requested, enabling detailed transfer statistics.
@@ -236,6 +254,8 @@ impl Default for ServerConfig {
             stop_at: None,
             qsort: false,
             has_partial_dir: false,
+            backup_dir: None,
+            backup_suffix: None,
             file_selection: FileSelectionConfig::default(),
             do_stats: false,
         }

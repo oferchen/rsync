@@ -93,6 +93,10 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_crtimes() {
         flags.push('N');
     }
+    // upstream: options.c:764 — 'L' = copy_links (resolve symlinks).
+    if config.copy_links() {
+        flags.push('L');
+    }
 
     flags
 }
