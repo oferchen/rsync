@@ -72,7 +72,9 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.dirs() && !config.recursive() {
         flags.push('d');
     }
-    if config.whole_file() {
+    // upstream: options.c:2622 — whole_file, but not when --append is active
+    // (append requires delta transfer to append only new data)
+    if config.whole_file() && !config.append() {
         flags.push('W');
     }
     if config.sparse() {
