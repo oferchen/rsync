@@ -624,10 +624,6 @@ setup_comprehensive_src() {
   chmod 755 "$dir/script.sh"
   echo "should be excluded" > "$dir/excluded.log"
   echo "also excluded" > "$dir/subdir/debug.log"
-  # File with zero blocks for sparse testing
-  dd if=/dev/zero bs=4096 count=16 2>/dev/null > "$dir/sparse_test.bin"
-  # Unsafe symlink (absolute path outside tree) for safe-links test
-  ln -sf /etc/hostname "$dir/unsafe_link.txt" 2>/dev/null || true
 }
 
 # Verify core files transferred with correct content
@@ -800,6 +796,17 @@ comp_run_scenario() {
       ;;
   esac
 
+  # Per-scenario source augmentation: add files that only specific scenarios need,
+  # avoiding pollution of the shared source that breaks older rsync versions.
+  case "$vtype" in
+    safe-links)
+      ln -sf /etc/hostname "$sdir/unsafe_link.txt" 2>/dev/null || true
+      ;;
+    sparse)
+      dd if=/dev/zero bs=4096 count=16 2>/dev/null > "$sdir/sparse_test.bin"
+      ;;
+  esac
+
   # shellcheck disable=SC2086
   local transfer_log="${log}.transfer"
   # Resolve --files-from path to absolute (file placed in dest dir during prep)
@@ -811,6 +818,13 @@ comp_run_scenario() {
       "${sdir}/" "$url" >"$transfer_log.out" 2>"$transfer_log.err"
   local rc=$?
   cat "$transfer_log.err" >> "$log"
+
+  # Clean up per-scenario source augmentation
+  case "$vtype" in
+    safe-links) rm -f "$sdir/unsafe_link.txt" ;;
+    sparse) rm -f "$sdir/sparse_test.bin" ;;
+  esac
+
   # --max-delete exits 25 when limit reached; treat as success for verification
   if [[ $rc -ne 0 ]] && ! [[ "$vtype" == "max-delete" && $rc -eq 25 ]]; then
     echo "    FAIL (transfer error, exit=$rc)"
