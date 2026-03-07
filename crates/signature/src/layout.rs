@@ -265,6 +265,16 @@ fn derive_block_length(file_length: u64, protocol: ProtocolVersion) -> u32 {
     block_length as u32
 }
 
+/// Computes the strong checksum length for a given file and block size.
+///
+/// Behavior depends on the transfer phase:
+/// - **Phase 1** (`checksum_length = SHORT_SUM_LENGTH = 2`): dynamically computes
+///   a length between 2-16 bytes using a bias heuristic based on file and block sizes.
+///   Smaller files get shorter checksums, reducing signature overhead.
+/// - **Phase 2 redo** (`checksum_length = SUM_LENGTH = 16`): short-circuits to return
+///   16 bytes unconditionally, ensuring full collision resistance for retransmissions.
+///
+/// (upstream: generator.c:725-738 `sum_sizes_sqroot()`)
 fn derive_strong_sum_length(
     file_length: u64,
     block_length: u32,
