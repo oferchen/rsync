@@ -2514,6 +2514,7 @@ impl ReceiverContext {
 
             write_devices: self.config.write.write_devices,
             inplace: self.config.write.inplace,
+            inplace_partial: self.config.write.inplace_partial,
             io_uring_policy: self.config.write.io_uring_policy,
         };
 

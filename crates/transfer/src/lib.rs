@@ -298,12 +298,13 @@ pub fn run_server_with_handshake<W: Write>(
 
     // upstream: compat.c:777-778 - apply CF_INPLACE_PARTIAL_DIR after compat exchange.
     // When the server advertises this flag and a partial directory is configured,
-    // enable in-place writes so partial-dir basis files are updated directly.
+    // enable per-file inplace for partial-dir basis files.
+    // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
     if let Some(flags) = setup_result.compat_flags {
         if flags.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR)
             && config.has_partial_dir
         {
-            config.write.inplace = true;
+            config.write.inplace_partial = true;
         }
     }
 

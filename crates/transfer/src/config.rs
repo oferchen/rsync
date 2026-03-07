@@ -24,6 +24,17 @@ pub struct WriteConfig {
     pub fsync: bool,
     /// Write directly to destination without temp-file + rename (`--inplace`).
     pub inplace: bool,
+    /// Per-file inplace for partial-dir basis files (CF_INPLACE_PARTIAL_DIR).
+    ///
+    /// When true, files whose basis comes from `--partial-dir` are written
+    /// in-place (directly to the partial file) instead of using temp+rename.
+    /// Other files still use the safe temp+rename path.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
+    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    pub inplace_partial: bool,
     /// Write data to device files instead of creating with mknod (`--write-devices`).
     pub write_devices: bool,
     /// Policy controlling io_uring usage for file I/O.
@@ -35,6 +46,7 @@ impl Default for WriteConfig {
         Self {
             fsync: false,
             inplace: false,
+            inplace_partial: false,
             write_devices: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
         }
