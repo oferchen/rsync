@@ -778,6 +778,17 @@ comp_run_scenario() {
       # Copy source files to reference dir so link-dest can hardlink them
       cp -a "$sdir"/* "$ddir/link_ref"/
       ;;
+    files-from)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      # Create file list selecting only specific files (in dest dir so both sides can find it)
+      printf 'hello.txt\nmultiline.txt\nsubdir/file.txt\n' > "$ddir/filelist.txt"
+      ;;
+    hardlinks-relative)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+    xattrs)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
     itemize)
       rm -rf "$ddir"/*
       mkdir -p "$ddir/subdir/nested"
@@ -791,7 +802,12 @@ comp_run_scenario() {
 
   # shellcheck disable=SC2086
   local transfer_log="${log}.transfer"
-  timeout "$hard_timeout" $client $flags --timeout=10 \
+  # Resolve --files-from path to absolute (file placed in dest dir during prep)
+  local resolved_flags="$flags"
+  if [[ "$resolved_flags" == *"--files-from=filelist.txt"* ]]; then
+    resolved_flags="${resolved_flags/--files-from=filelist.txt/--files-from=${ddir}/filelist.txt}"
+  fi
+  timeout "$hard_timeout" $client $resolved_flags --timeout=10 \
       "${sdir}/" "$url" >"$transfer_log.out" 2>"$transfer_log.err"
   local rc=$?
   cat "$transfer_log.err" >> "$log"
@@ -989,6 +1005,56 @@ comp_run_scenario() {
       fi
       return 0
       ;;
+    files-from)
+      # Only the files listed in filelist.txt should be transferred
+      for f in hello.txt multiline.txt subdir/file.txt; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    --files-from: listed file $f missing"
+          return 1
+        fi
+        if ! cmp -s "$sdir/$f" "$ddir/$f"; then
+          echo "    --files-from: content mismatch for $f"
+          return 1
+        fi
+      done
+      # Files NOT in the list should not be transferred
+      for f in binary.dat large.dat empty.txt subdir/nested/deep.txt; do
+        if [[ -f "$ddir/$f" ]]; then
+          echo "    --files-from: unlisted file $f was transferred"
+          return 1
+        fi
+      done
+      # Clean up the file list
+      rm -f "$sdir/filelist.txt"
+      return 0
+      ;;
+    hardlinks-relative)
+      # With -H -R, hardlinks and relative paths should both work
+      if [[ ! -f "$ddir/hello.txt" ]]; then
+        echo "    -HR: hello.txt missing"
+        return 1
+      fi
+      if ! cmp -s "$sdir/hello.txt" "$ddir/hello.txt"; then
+        echo "    -HR: hello.txt content mismatch"
+        return 1
+      fi
+      # Check hardlink preservation
+      if [[ -f "$ddir/hardlink.txt" ]]; then
+        local i1 i2
+        i1=$(stat -c %i "$ddir/hello.txt" 2>/dev/null || stat -f %i "$ddir/hello.txt" 2>/dev/null)
+        i2=$(stat -c %i "$ddir/hardlink.txt" 2>/dev/null || stat -f %i "$ddir/hardlink.txt" 2>/dev/null)
+        if [[ "$i1" != "$i2" ]]; then
+          echo "    -HR: hardlink not preserved (inodes $i1 vs $i2)"
+          return 1
+        fi
+      fi
+      return 0
+      ;;
+    xattrs)
+      # -X transfer should not break the transfer itself
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      return 0
+      ;;
     itemize)
       comp_verify_transfer "$sdir" "$ddir" || return 1
       local item_out="$transfer_log.out"
@@ -1131,6 +1197,9 @@ run_comprehensive_interop_case() {
     "devices|-avD|basic"
     "acls|-avA|acls"
     "compare-dest|-av --compare-dest=compare_ref|compare-dest"
+    "files-from|-av --files-from=filelist.txt|files-from"
+    "hardlinks-relative|-avHR|hardlinks-relative"
+    "xattrs|-avX|xattrs"
   )
 
   # Incremental recursion only supported on protocol 30+
