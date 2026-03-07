@@ -1045,9 +1045,19 @@ impl GeneratorContext {
             ));
         }
 
-        // For protocol 31+: echo NDX_DONE back, then read final NDX_DONE
-        // upstream: main.c:887-898
+        // For protocol 31+: send del_stats (if any), echo NDX_DONE, read final NDX_DONE
+        // upstream: generator.c:2420-2424 — write_del_stats before final NDX_DONE
         if self.protocol.supports_extended_goodbye() {
+            if self.delete_stats.total() > 0 {
+                ndx_write_codec.write_ndx(writer, NDX_DEL_STATS)?;
+                self.delete_stats.write_to(writer)?;
+                debug_log!(
+                    Flist,
+                    2,
+                    "sent NDX_DEL_STATS during goodbye: {} deletions",
+                    self.delete_stats.total()
+                );
+            }
             ndx_write_codec.write_ndx_done(writer)?;
             writer.flush()?;
 
