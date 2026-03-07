@@ -7,6 +7,8 @@ use core::num::{NonZeroU8, NonZeroU32};
 use protocol::ProtocolVersion;
 use thiserror::Error;
 
+use crate::block_size::MAX_SUM_LENGTH as SUM_LENGTH;
+
 /// Default block length used by rsync when files are small.
 const BLOCK_SIZE: u32 = 700;
 /// Maximum block size supported by protocol versions 30 and newer.
@@ -15,8 +17,6 @@ const MAX_BLOCK_SIZE: u32 = 1 << 17;
 const OLD_MAX_BLOCK_SIZE: u32 = 1 << 29;
 /// Bias applied when computing strong checksum lengths for larger files.
 const BLOCKSUM_BIAS: i32 = 10;
-/// Maximum strong checksum length supported by the protocol.
-const SUM_LENGTH: u8 = 16;
 
 /// Parameters describing a file signature computation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
