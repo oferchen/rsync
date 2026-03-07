@@ -152,35 +152,45 @@ pub fn calculate_block_length(
 
 /// Calculates the strong checksum length based on file size and block size.
 ///
-/// This implements the checksum length heuristic from upstream rsync, which
-/// adjusts the checksum length to balance collision probability against overhead.
-/// The algorithm uses a bias calculation based on file size and block size.
+/// This implements the checksum length heuristic from upstream rsync's
+/// `generator.c:sum_sizes_sqroot()` (lines 725-738), which adjusts the
+/// checksum length to balance collision probability against overhead.
+///
+/// Behavior depends on the transfer phase:
+/// - **Phase 1** (`requested_checksum_length = SHORT_SUM_LENGTH = 2`): dynamically
+///   computes a length between 2-16 bytes. Smaller files get shorter checksums,
+///   reducing signature size and network overhead.
+/// - **Phase 2 redo** (`requested_checksum_length = MAX_SUM_LENGTH = 16`):
+///   short-circuits to return 16 bytes, ensuring full collision resistance
+///   for files that failed phase 1 verification.
 ///
 /// # Arguments
 ///
 /// * `file_size` - Size of the file in bytes
 /// * `block_length` - Block size in bytes (from `calculate_block_length`)
 /// * `protocol_version` - Rsync protocol version
-/// * `requested_checksum_length` - Minimum checksum length from protocol negotiation
+/// * `requested_checksum_length` - Minimum checksum length (`SHORT_SUM_LENGTH`
+///   for phase 1, `MAX_SUM_LENGTH` for phase 2 redo)
 ///
 /// # Returns
 ///
-/// Strong checksum length in bytes, clamped to [requested_checksum_length, MAX_SUM_LENGTH].
+/// Strong checksum length in bytes, clamped to
+/// [`requested_checksum_length`, `MAX_SUM_LENGTH`].
 ///
 /// # Examples
 ///
 /// ```rust
-/// use signature::block_size::calculate_checksum_length;
+/// use signature::block_size::{calculate_checksum_length, SHORT_SUM_LENGTH, MAX_SUM_LENGTH};
 ///
 /// // Protocol < 27 always returns requested length
 /// assert_eq!(calculate_checksum_length(1024, 700, 26, 8), 8);
 ///
-/// // Protocol >= 27 applies bias heuristic
-/// let len = calculate_checksum_length(10 * 1024 * 1024, 1024, 31, 2);
-/// assert!(len >= 2 && len <= 16);
+/// // Phase 1: SHORT_SUM_LENGTH (2) - dynamic computation
+/// let len = calculate_checksum_length(10 * 1024 * 1024, 1024, 31, SHORT_SUM_LENGTH);
+/// assert!(len >= SHORT_SUM_LENGTH && len <= MAX_SUM_LENGTH);
 ///
-/// // Requesting max length (16) always returns 16
-/// assert_eq!(calculate_checksum_length(1024, 700, 31, 16), 16);
+/// // Phase 2 redo: MAX_SUM_LENGTH (16) - always returns 16
+/// assert_eq!(calculate_checksum_length(1024, 700, 31, MAX_SUM_LENGTH), MAX_SUM_LENGTH);
 /// ```
 #[must_use]
 pub fn calculate_checksum_length(
