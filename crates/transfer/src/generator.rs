@@ -325,6 +325,7 @@ impl GeneratorContext {
         .with_preserve_specials(self.config.flags.specials)
         .with_preserve_hard_links(self.config.flags.hard_links)
         .with_preserve_atimes(self.config.flags.atimes)
+        .with_preserve_crtimes(self.config.flags.crtimes)
         .with_preserve_acls(self.config.flags.acls)
         .with_preserve_xattrs(self.config.flags.xattrs);
 
@@ -1600,6 +1601,29 @@ impl GeneratorContext {
             if let Ok(mtime) = metadata.modified() {
                 if let Ok(duration) = mtime.duration_since(std::time::UNIX_EPOCH) {
                     entry.set_mtime(duration.as_secs() as i64, duration.subsec_nanos());
+                }
+            }
+        }
+
+        // Set access time if preserving (upstream: flist.c:489-494)
+        #[cfg(unix)]
+        if self.config.flags.atimes && !entry.is_dir() {
+            entry.set_atime(metadata.atime());
+        }
+        #[cfg(not(unix))]
+        if self.config.flags.atimes && !entry.is_dir() {
+            if let Ok(atime) = metadata.accessed() {
+                if let Ok(duration) = atime.duration_since(std::time::UNIX_EPOCH) {
+                    entry.set_atime(duration.as_secs() as i64);
+                }
+            }
+        }
+
+        // Set creation time if preserving (upstream: flist.c:495-498)
+        if self.config.flags.crtimes {
+            if let Ok(crtime) = metadata.created() {
+                if let Ok(duration) = crtime.duration_since(std::time::UNIX_EPOCH) {
+                    entry.set_crtime(duration.as_secs() as i64);
                 }
             }
         }
