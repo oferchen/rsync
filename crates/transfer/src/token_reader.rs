@@ -91,7 +91,11 @@ impl TokenReader {
     pub fn new(compression: Option<CompressionAlgorithm>) -> Self {
         match compression {
             Some(CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX) => {
-                Self::Compressed(CompressedTokenDecoder::new())
+                let mut decoder = CompressedTokenDecoder::new();
+                if matches!(compression, Some(CompressionAlgorithm::ZlibX)) {
+                    decoder.set_zlibx(true);
+                }
+                Self::Compressed(decoder)
             }
             _ => Self::Plain,
         }

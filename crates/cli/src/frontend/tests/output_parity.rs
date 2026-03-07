@@ -749,7 +749,7 @@ fn parity_itemize_string_is_eleven_chars_for_non_delete() {
 
 #[test]
 fn parity_itemize_unchanged_file_shows_dots() {
-    // Upstream rsync: ".f........." for unchanged file with -ii
+    // upstream: log.c:735-744 — all-dots collapse to spaces for '.', 'h', 'c' update types
     let event = ClientEvent::for_test(
         PathBuf::from("unchanged.txt"),
         ClientEventKind::MetadataReused,
@@ -766,9 +766,9 @@ fn parity_itemize_unchanged_file_shows_dots() {
     let rendered = String::from_utf8(output).expect("utf8");
 
     assert_eq!(
-        rendered.trim(),
-        ".f.........",
-        "unchanged file should show all dots"
+        rendered.trim_end_matches('\n'),
+        ".f         ",
+        "unchanged file should collapse all-dots to spaces"
     );
 }
 
