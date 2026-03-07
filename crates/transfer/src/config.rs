@@ -228,6 +228,37 @@ pub struct ServerConfig {
     /// - `generator.c:617`: `quick_check_ok()` — `if (size_only) return 1;` after size match
     /// - `options.c:2836-2837`: `--size-only` sent as long-form arg in `server_options()`
     pub size_only: bool,
+    /// Skip updating files that already exist at the destination (`--ignore-existing`).
+    ///
+    /// When true, files that exist at the destination are not updated even if the
+    /// source has newer content. New files (not present at destination) are still
+    /// transferred.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1562`: `if (ignore_existing > 0 && statret == 0) { ... }`
+    /// - `options.c:2831`: `--ignore-existing` sent as long-form arg in `server_options()`
+    pub ignore_existing: bool,
+    /// Skip creating new files - only update files that already exist (`--existing`).
+    ///
+    /// When true, files not present at the destination are skipped. Only files
+    /// that already exist are candidates for update.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1571`: `if (ignore_non_existing > 0 && statret == -1) { ... }`
+    /// - `options.c:2833`: `--existing` sent as long-form arg in `server_options()`
+    pub existing_only: bool,
+    /// Maximum number of deletions allowed (`--max-delete=NUM`).
+    ///
+    /// When set, limits the number of files that can be deleted during a transfer.
+    /// Returns exit code 25 (RERR_DEL_LIMIT) when the limit is exceeded.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2823`: `--max-delete=NUM` sent in `server_options()`
+    /// - `main.c:1367`: `deletion_count >= max_delete` check
+    pub max_delete: Option<u64>,
 }
 
 impl ServerConfig {
@@ -279,6 +310,9 @@ impl ServerConfig {
             from0: false,
             inplace: false,
             size_only: false,
+            ignore_existing: false,
+            existing_only: false,
+            max_delete: None,
         })
     }
 }

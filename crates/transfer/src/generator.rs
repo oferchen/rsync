@@ -2613,6 +2613,9 @@ mod tests {
             from0: false,
             inplace: false,
             size_only: false,
+            ignore_existing: false,
+            existing_only: false,
+            max_delete: None,
         }
     }
 
@@ -3850,6 +3853,9 @@ mod tests {
             from0: false,
             inplace: false,
             size_only: false,
+            ignore_existing: false,
+            existing_only: false,
+            max_delete: None,
         }
     }
 
