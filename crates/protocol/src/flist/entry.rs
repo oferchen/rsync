@@ -161,6 +161,8 @@ pub struct FileEntry {
     mode: u32,
     /// Modification time nanoseconds (protocol 31+).
     mtime_nsec: u32,
+    /// Access time nanoseconds (protocol 32+, --atimes).
+    atime_nsec: u32,
 
     // 2-byte aligned fields
     /// Entry flags from wire format.
@@ -208,6 +210,7 @@ impl Clone for FileEntry {
             xattr_ndx: self.xattr_ndx,
             mode: self.mode,
             mtime_nsec: self.mtime_nsec,
+            atime_nsec: self.atime_nsec,
             flags: self.flags,
             content_dir: self.content_dir,
         }
@@ -238,6 +241,7 @@ impl std::fmt::Debug for FileEntry {
             .field("xattr_ndx", &self.xattr_ndx)
             .field("mode", &self.mode)
             .field("mtime_nsec", &self.mtime_nsec)
+            .field("atime_nsec", &self.atime_nsec)
             .field("flags", &self.flags)
             .field("content_dir", &self.content_dir)
             .finish()
@@ -267,6 +271,7 @@ impl PartialEq for FileEntry {
             && self.xattr_ndx == other.xattr_ndx
             && self.mode == other.mode
             && self.mtime_nsec == other.mtime_nsec
+            && self.atime_nsec == other.atime_nsec
             && self.flags == other.flags
             && self.content_dir == other.content_dir
     }
@@ -311,6 +316,7 @@ impl FileEntry {
             xattr_ndx: None,
             mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime_nsec: 0,
+            atime_nsec: 0,
             flags: super::flags::FileFlags::default(),
             content_dir: true, // Directories have content by default
         }
@@ -399,6 +405,7 @@ impl FileEntry {
             xattr_ndx: None,
             mode,
             mtime_nsec,
+            atime_nsec: 0,
             flags,
             content_dir: true,
         }
@@ -460,6 +467,7 @@ impl FileEntry {
             xattr_ndx: None,
             mode,
             mtime_nsec,
+            atime_nsec: 0,
             flags,
             content_dir: true,
         }
@@ -711,9 +719,21 @@ impl FileEntry {
         self.atime
     }
 
-    /// Sets the access time.
+    /// Sets the access time (seconds only, nanoseconds unchanged).
     pub const fn set_atime(&mut self, secs: i64) {
         self.atime = secs;
+    }
+
+    /// Returns the access time nanoseconds.
+    #[inline]
+    #[must_use]
+    pub const fn atime_nsec(&self) -> u32 {
+        self.atime_nsec
+    }
+
+    /// Sets the access time nanoseconds.
+    pub const fn set_atime_nsec(&mut self, nsec: u32) {
+        self.atime_nsec = nsec;
     }
 
     /// Returns the creation time as seconds since Unix epoch.

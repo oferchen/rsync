@@ -99,6 +99,15 @@ pub struct RequestConfig<'a> {
     ///
     /// - `receiver.c:855-860`: opens destination directly when inplace
     pub inplace: bool,
+    /// Per-file inplace for partial-dir basis files (CF_INPLACE_PARTIAL_DIR).
+    ///
+    /// When true, files whose basis type is `PartialDir` are written in-place.
+    /// Combined with `fnamecmp_type` from sender attrs to make per-file decisions.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`
+    pub inplace_partial: bool,
     /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
     pub io_uring_policy: fast_io::IoUringPolicy,
 }
@@ -235,7 +244,7 @@ pub fn process_file_response<R: Read>(
     let expected_ndx = pending.ndx();
 
     // Read sender attributes (echoed NDX + iflags)
-    let (echoed_ndx, _sender_attrs) = SenderAttrs::read_with_codec(reader, ndx_codec)?;
+    let (echoed_ndx, sender_attrs) = SenderAttrs::read_with_codec(reader, ndx_codec)?;
 
     // Verify NDX matches - protocol requires in-order responses
     if echoed_ndx != expected_ndx {
@@ -253,8 +262,13 @@ pub fn process_file_response<R: Read>(
     // Decompose pending transfer
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
+    // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+    let use_inplace = ctx.config.inplace
+        || (ctx.config.inplace_partial
+            && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir));
+
     // Inplace: write directly to destination. Otherwise temp+rename for atomicity.
-    let (file, mut cleanup_guard, needs_rename) = if ctx.config.inplace {
+    let (file, mut cleanup_guard, needs_rename) = if use_inplace {
         // upstream: receiver.c:855 — do_open(fname, O_WRONLY|O_CREAT, 0600)
         let f = fs::OpenOptions::new()
             .write(true)
@@ -523,7 +537,7 @@ pub fn process_file_response_streaming<R: Read>(
     let expected_ndx = pending.ndx();
 
     // Read sender attributes (echoed NDX + iflags)
-    let (echoed_ndx, _sender_attrs) = SenderAttrs::read_with_codec(reader, ndx_codec)?;
+    let (echoed_ndx, sender_attrs) = SenderAttrs::read_with_codec(reader, ndx_codec)?;
 
     if echoed_ndx != expected_ndx {
         return Err(io::Error::new(
@@ -556,7 +570,10 @@ pub fn process_file_response_streaming<R: Read>(
         checksum_verifier: Some(disk_verifier),
         file_entry,
         is_device_target,
-        is_inplace: ctx.config.inplace,
+        // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+        is_inplace: ctx.config.inplace
+            || (ctx.config.inplace_partial
+                && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir)),
     });
 
     // Open basis file for block references
@@ -826,6 +843,7 @@ mod tests {
             do_fsync: false,
             write_devices: false,
             inplace: false,
+            inplace_partial: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
         };
         let debug_str = format!("{config:?}");

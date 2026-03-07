@@ -74,6 +74,9 @@ pub fn apply_file_metadata_with_options(
     if options.times() {
         set_timestamp_like(metadata, destination, true, None)?;
     }
+    if options.crtimes() {
+        apply_crtime_from_source_metadata(destination, metadata)?;
+    }
     Ok(())
 }
 
@@ -95,6 +98,10 @@ pub fn apply_file_metadata_with_fd(
     if options.times() {
         set_timestamp_with_fd(metadata, destination, fd, None)?;
     }
+    // crtime is always path-based (setattrlist on macOS) - no fd variant exists
+    if options.crtimes() {
+        apply_crtime_from_source_metadata(destination, metadata)?;
+    }
     Ok(())
 }
 
@@ -114,6 +121,9 @@ pub fn apply_file_metadata_if_changed(
     apply_permissions_with_chmod(destination, metadata, options, Some(existing))?;
     if options.times() {
         set_timestamp_like(metadata, destination, true, Some(existing))?;
+    }
+    if options.crtimes() {
+        apply_crtime_from_source_metadata(destination, metadata)?;
     }
     Ok(())
 }
@@ -135,6 +145,10 @@ pub fn apply_file_metadata_with_fd_if_changed(
     apply_permissions_with_chmod_fd(destination, metadata, options, Some(fd), Some(existing))?;
     if options.times() {
         set_timestamp_with_fd(metadata, destination, fd, Some(existing))?;
+    }
+    // crtime is always path-based (setattrlist on macOS) - no fd variant exists
+    if options.crtimes() {
+        apply_crtime_from_source_metadata(destination, metadata)?;
     }
     Ok(())
 }
@@ -1040,6 +1054,28 @@ fn apply_atime_only_from_entry(
             .map_err(|error| MetadataError::new("preserve access time", destination, error))?;
     }
 
+    Ok(())
+}
+
+/// Applies the creation time from source `fs::Metadata` to the destination.
+///
+/// Reads the birth time via `metadata.created()` and applies it using
+/// `set_crtime`. Used by the local copy engine's metadata application
+/// functions where source metadata is available directly (not via `FileEntry`).
+/// On platforms where `created()` is unavailable, this is a no-op.
+// upstream: rsync.c:615 - crtime application after file transfer
+fn apply_crtime_from_source_metadata(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), MetadataError> {
+    if let Ok(created) = metadata.created() {
+        if let Ok(duration) = created.duration_since(std::time::UNIX_EPOCH) {
+            let secs = duration.as_secs() as i64;
+            if secs > 0 {
+                set_crtime(destination, secs)?;
+            }
+        }
+    }
     Ok(())
 }
 

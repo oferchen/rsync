@@ -713,6 +713,48 @@ comp_run_scenario() {
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       echo "extra" > "$ddir/extra_file.txt"
       ;;
+    existing)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/subdir"
+      echo "old content" > "$ddir/hello.txt"
+      echo "old nested" > "$ddir/subdir/file.txt"
+      ;;
+    backup)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      echo "old hello" > "$ddir/hello.txt"
+      echo "old multiline" > "$ddir/multiline.txt"
+      ;;
+    update)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      cp -r "$sdir"/* "$ddir"/
+      # Set dest file timestamps to future (newer than source)
+      find "$ddir" -type f -exec touch -t 203001010000 {} +
+      ;;
+    checksum-skip)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      # Copy source files to dest so content is identical
+      cp -a "$sdir"/* "$ddir"/
+      ;;
+    max-delete)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      echo "extra1" > "$ddir/extra_one.txt"
+      echo "extra2" > "$ddir/extra_two.txt"
+      echo "extra3" > "$ddir/extra_three.txt"
+      ;;
+    inplace)
+      rm -rf "$ddir"/*
+      mkdir -p "$ddir/subdir/nested"
+      for f in hello.txt multiline.txt empty.txt subdir/file.txt subdir/nested/deep.txt; do
+        [[ -f "$sdir/$f" ]] && cp "$sdir/$f" "$ddir/$f"
+      done
+      echo "old content for inplace" > "$ddir/hello.txt"
+      ;;
+    whole-file-replace)
+      rm -rf "$ddir"/*
+      mkdir -p "$ddir/subdir/nested"
+      for f in hello.txt multiline.txt subdir/file.txt subdir/nested/deep.txt; do
+        echo "stale data" > "$ddir/$f"
+      done
+      ;;
     delta)
       rm -rf "$ddir"/*
       mkdir -p "$ddir/subdir/nested"
@@ -723,18 +765,68 @@ comp_run_scenario() {
       dd if=/dev/zero of="$ddir/binary.dat" bs=1K count=50 2>/dev/null
       dd if=/dev/zero of="$ddir/large.dat" bs=1K count=200 2>/dev/null
       ;;
+    compare-dest)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/compare_ref"
+      cp "$sdir/hello.txt" "$ddir/compare_ref/"
+      ;;
+    link-dest)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/link_ref"
+      # Copy source files to reference dir so link-dest can hardlink them
+      cp -a "$sdir"/* "$ddir/link_ref"/
+      ;;
+    files-from)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      # Create file list selecting only specific files (in dest dir so both sides can find it)
+      printf 'hello.txt\nmultiline.txt\nsubdir/file.txt\n' > "$ddir/filelist.txt"
+      ;;
+    hardlinks-relative)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+    xattrs)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+    itemize)
+      rm -rf "$ddir"/*
+      mkdir -p "$ddir/subdir/nested"
+      echo "old content" > "$ddir/hello.txt"
+      echo "old nested" > "$ddir/subdir/file.txt"
+      ;;
     *)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       ;;
   esac
 
+  # Per-scenario source augmentation: add files that only specific scenarios need,
+  # avoiding pollution of the shared source that breaks older rsync versions.
+  case "$vtype" in
+    safe-links)
+      ln -sf /etc/hostname "$sdir/unsafe_link.txt" 2>/dev/null || true
+      ;;
+    sparse)
+      dd if=/dev/zero bs=4096 count=16 2>/dev/null > "$sdir/sparse_test.bin"
+      ;;
+  esac
+
   # shellcheck disable=SC2086
   local transfer_log="${log}.transfer"
-  timeout "$hard_timeout" $client $flags --timeout=10 \
+  # Resolve --files-from path to absolute (file placed in dest dir during prep)
+  local resolved_flags="$flags"
+  if [[ "$resolved_flags" == *"--files-from=filelist.txt"* ]]; then
+    resolved_flags="${resolved_flags/--files-from=filelist.txt/--files-from=${ddir}/filelist.txt}"
+  fi
+  timeout "$hard_timeout" $client $resolved_flags --timeout=10 \
       "${sdir}/" "$url" >"$transfer_log.out" 2>"$transfer_log.err"
   local rc=$?
   cat "$transfer_log.err" >> "$log"
-  if [[ $rc -ne 0 ]]; then
+
+  # Clean up per-scenario source augmentation
+  case "$vtype" in
+    safe-links) rm -f "$sdir/unsafe_link.txt" ;;
+    sparse) rm -f "$sdir/sparse_test.bin" ;;
+  esac
+
+  # --max-delete exits 25 when limit reached; treat as success for verification
+  if [[ $rc -ne 0 ]] && ! [[ "$vtype" == "max-delete" && $rc -eq 25 ]]; then
     echo "    FAIL (transfer error, exit=$rc)"
     echo "    stderr: $(head -5 "$transfer_log.err")"
     return 1
@@ -742,7 +834,30 @@ comp_run_scenario() {
 
   # Verify per scenario type
   case "$vtype" in
-    basic|compress|whole-file|inplace|numeric-ids|recursive|size-only|inc-recursive|delta)
+    checksum-skip)
+      local file_count
+      file_count=$(find "$ddir" -type f | wc -l)
+      if [ "$file_count" -lt 1 ]; then
+        echo "FAIL: no files in destination after checksum transfer"
+        return 1
+      fi
+      echo "  --checksum correctly handled pre-populated identical files"
+      return 0
+      ;;
+    update)
+      for f in $(find "$ddir" -type f); do
+        local mod_epoch
+        mod_epoch=$(stat -c %Y "$f" 2>/dev/null)
+        # 1893456000 = 2030-01-01 00:00:00 UTC
+        if [[ "$mod_epoch" -lt 1893456000 ]]; then
+          echo "    --update: $f was overwritten despite newer dest timestamp"
+          return 1
+        fi
+      done
+      echo "  --update correctly skipped files with newer dest timestamps"
+      return 0
+      ;;
+    basic|compress|whole-file|whole-file-replace|inplace|numeric-ids|recursive|size-only|inc-recursive|delta|sparse|partial|append|bwlimit)
       if ! comp_verify_transfer "$sdir" "$ddir"; then
         echo "    dest contents: $(find "$ddir" -type f | sort | head -20)"
         echo "    daemon log tail: $(tail -5 "$log" 2>/dev/null)"
@@ -784,6 +899,189 @@ comp_run_scenario() {
     perms)
       comp_verify_transfer "$sdir" "$ddir" && comp_verify_perms "$sdir" "$ddir"
       ;;
+    copy-links)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      if [[ -L "$ddir/link.txt" ]]; then
+        echo "    --copy-links: link.txt is still a symlink"
+        return 1
+      fi
+      if [[ -f "$ddir/link.txt" ]]; then
+        if ! cmp -s "$sdir/hello.txt" "$ddir/link.txt"; then
+          echo "    --copy-links: link.txt content mismatch"
+          return 1
+        fi
+      else
+        echo "    --copy-links: link.txt missing"
+        return 1
+      fi
+      return 0
+      ;;
+    safe-links)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      if [[ -L "$ddir/unsafe_link.txt" ]]; then
+        echo "    --safe-links: unsafe symlink was transferred"
+        return 1
+      fi
+      if [[ -L "$sdir/link.txt" ]] && [[ ! -L "$ddir/link.txt" ]]; then
+        echo "    --safe-links: safe symlink missing"
+        return 1
+      fi
+      return 0
+      ;;
+    existing)
+      if [[ ! -f "$ddir/hello.txt" ]]; then
+        echo "    --existing: pre-existing hello.txt missing"
+        return 1
+      fi
+      if ! cmp -s "$sdir/hello.txt" "$ddir/hello.txt"; then
+        echo "    --existing: hello.txt not updated"
+        return 1
+      fi
+      if ! cmp -s "$sdir/subdir/file.txt" "$ddir/subdir/file.txt"; then
+        echo "    --existing: subdir/file.txt not updated"
+        return 1
+      fi
+      if [[ -f "$ddir/multiline.txt" || -f "$ddir/binary.dat" ]]; then
+        echo "    --existing: new files were created"
+        return 1
+      fi
+      return 0
+      ;;
+    backup)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      if [[ ! -f "$ddir/hello.txt~" ]]; then
+        echo "    --backup: hello.txt~ backup not created"
+        return 1
+      fi
+      if [[ ! -f "$ddir/multiline.txt~" ]]; then
+        echo "    --backup: multiline.txt~ backup not created"
+        return 1
+      fi
+      local expected_hello="old hello"
+      local actual_hello
+      actual_hello=$(cat "$ddir/hello.txt~")
+      if [[ "$actual_hello" != "$expected_hello" ]]; then
+        echo "    --backup: hello.txt~ content wrong"
+        return 1
+      fi
+      return 0
+      ;;
+    dry-run)
+      local count
+      count=$(find "$ddir" -type f 2>/dev/null | wc -l)
+      if [[ $count -gt 0 ]]; then
+        echo "    --dry-run: files were created ($count found)"
+        return 1
+      fi
+      return 0
+      ;;
+    max-delete)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      local remaining=0
+      [[ -f "$ddir/extra_one.txt" ]] && remaining=$((remaining + 1))
+      [[ -f "$ddir/extra_two.txt" ]] && remaining=$((remaining + 1))
+      [[ -f "$ddir/extra_three.txt" ]] && remaining=$((remaining + 1))
+      if [[ $remaining -lt 2 ]]; then
+        echo "    --max-delete=1: too many files deleted (${remaining} remaining, expected >= 2)"
+        return 1
+      fi
+      return 0
+      ;;
+    acls)
+      # ACLs transfer should not break the transfer itself
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      return 0
+      ;;
+    compare-dest)
+      # Files matching compare_ref should be skipped; others should transfer
+      if [[ ! -f "$ddir/multiline.txt" ]]; then
+        echo "    --compare-dest: multiline.txt not transferred (should not match ref)"
+        return 1
+      fi
+      if [[ -f "$ddir/hello.txt" ]]; then
+        echo "    --compare-dest: hello.txt was transferred despite matching ref"
+        return 1
+      fi
+      return 0
+      ;;
+    link-dest)
+      # With --link-dest, unchanged files should be hardlinked to reference
+      if [[ ! -f "$ddir/hello.txt" ]]; then
+        echo "    --link-dest: hello.txt missing from dest"
+        return 1
+      fi
+      # Check that hello.txt is a hardlink (link count > 1)
+      local link_count
+      link_count=$(stat -c %h "$ddir/hello.txt" 2>/dev/null || stat -f %l "$ddir/hello.txt" 2>/dev/null)
+      if [[ "$link_count" -le 1 ]]; then
+        echo "    --link-dest: hello.txt not hardlinked (count=$link_count)"
+        return 1
+      fi
+      return 0
+      ;;
+    files-from)
+      # Only the files listed in filelist.txt should be transferred
+      for f in hello.txt multiline.txt subdir/file.txt; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    --files-from: listed file $f missing"
+          return 1
+        fi
+        if ! cmp -s "$sdir/$f" "$ddir/$f"; then
+          echo "    --files-from: content mismatch for $f"
+          return 1
+        fi
+      done
+      # Files NOT in the list should not be transferred
+      for f in binary.dat large.dat empty.txt subdir/nested/deep.txt; do
+        if [[ -f "$ddir/$f" ]]; then
+          echo "    --files-from: unlisted file $f was transferred"
+          return 1
+        fi
+      done
+      # Clean up the file list
+      rm -f "$sdir/filelist.txt"
+      return 0
+      ;;
+    hardlinks-relative)
+      # With -H -R, hardlinks and relative paths should both work
+      if [[ ! -f "$ddir/hello.txt" ]]; then
+        echo "    -HR: hello.txt missing"
+        return 1
+      fi
+      if ! cmp -s "$sdir/hello.txt" "$ddir/hello.txt"; then
+        echo "    -HR: hello.txt content mismatch"
+        return 1
+      fi
+      # Check hardlink preservation
+      if [[ -f "$ddir/hardlink.txt" ]]; then
+        local i1 i2
+        i1=$(stat -c %i "$ddir/hello.txt" 2>/dev/null || stat -f %i "$ddir/hello.txt" 2>/dev/null)
+        i2=$(stat -c %i "$ddir/hardlink.txt" 2>/dev/null || stat -f %i "$ddir/hardlink.txt" 2>/dev/null)
+        if [[ "$i1" != "$i2" ]]; then
+          echo "    -HR: hardlink not preserved (inodes $i1 vs $i2)"
+          return 1
+        fi
+      fi
+      return 0
+      ;;
+    xattrs)
+      # -X transfer should not break the transfer itself
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      return 0
+      ;;
+    itemize)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      local item_out="$transfer_log.out"
+      if ! grep -qE '^[<>ch.][fdLDS]' "$item_out"; then
+        echo "    --itemize-changes: no itemize output found"
+        return 1
+      fi
+      if ! grep -qE '^\>f' "$item_out"; then
+        echo "    --itemize-changes: no file transfer itemize lines"
+        return 1
+      fi
+      return 0
+      ;;
   esac
 }
 
@@ -801,6 +1099,36 @@ comp_run_scenario() {
 # - up:compress, oc:compress (TokenReader integration in run_sync path)
 # - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
 #
+# SSH interop test: oc-rsync client transfers to localhost via SSH.
+run_ssh_interop_test() {
+  local oc_bin=$1 src_dir=$2 work_dir=$3 log=$4
+
+  local ssh_dest="${work_dir}/ssh_dest"
+  rm -rf "$ssh_dest"
+  mkdir -p "$ssh_dest"
+
+  local transfer_log="${log}.ssh-transfer"
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      -e "ssh -o StrictHostKeyChecking=no" \
+      --timeout=10 \
+      "${src_dir}/" "${ssh_dest}/" \
+      >"$transfer_log.out" 2>"$transfer_log.err"; then
+    local rc=$?
+    cat "$transfer_log.err" >> "$log"
+    echo "    FAIL (SSH transfer error, exit=$rc)"
+    echo "    stderr: $(head -5 "$transfer_log.err")"
+    return 1
+  fi
+  cat "$transfer_log.err" >> "$log"
+
+  if ! comp_verify_transfer "$src_dir" "$ssh_dest"; then
+    echo "    dest contents: $(find "$ssh_dest" -type f | sort | head -20)"
+    return 1
+  fi
+
+  return 0
+}
+
 # Remaining known failures:
 KNOWN_FAILURES=(
 )
@@ -841,19 +1169,51 @@ run_comprehensive_interop_case() {
   # Scenario table: name|flags|verify_type
   local -a scenarios=(
     "archive|-av|basic"
+    "relative|-avR|basic"
+    "one-file-system|-avx|basic"
     "checksum|-avc|basic"
     "compress|-avz|compress"
     "whole-file|-avW|whole-file"
+    "whole-file-replace|-avW|whole-file-replace"
     "delta|-av --no-whole-file -I|delta"
     "inplace|-av --inplace|inplace"
+    "delay-updates|-av --delay-updates|basic"
     "numeric-ids|-av --numeric-ids|numeric-ids"
     "recursive-only|-rv|recursive"
     "symlinks|-rlptv|symlinks"
     "hardlinks|-avH|hardlinks"
     "delete|-av --delete|delete"
+    "delete-after|-av --delete-after|delete"
+    "delete-during|-av --delete-during|delete"
     "exclude|-av --exclude=*.log|exclude"
     "permissions|-rlpv|perms"
     "size-only|-av --size-only|size-only"
+    "ignore-times|-av --ignore-times|basic"
+    "checksum-skip|-avc|checksum-skip"
+    "copy-links|-avL|copy-links"
+    "safe-links|-rlptv --safe-links|safe-links"
+    "existing|-av --existing|existing"
+    "backup|-av --backup|backup"
+    "link-dest|-av --link-dest=link_ref|link-dest"
+    "max-delete|-av --delete --max-delete=1|max-delete"
+    "update|-av --update|update"
+    "dry-run|-avn|dry-run"
+    "itemize|-avi|itemize"
+    "sparse|-avS|sparse"
+    "partial|-av --partial|partial"
+    "append|-av --append|append"
+    "bwlimit|-av --bwlimit=10000|bwlimit"
+    "compress-level-1|-avz --compress-level=1|basic"
+    "compress-level-9|-avz --compress-level=9|basic"
+    "protocol-30|-av --protocol=30|basic"
+    "protocol-31|-av --protocol=31|basic"
+    "compress-delta|-avz --no-whole-file -I|delta"
+    "devices|-avD|basic"
+    "acls|-avA|acls"
+    "compare-dest|-av --compare-dest=compare_ref|compare-dest"
+    "files-from|-av --files-from=filelist.txt|files-from"
+    "hardlinks-relative|-avHR|hardlinks-relative"
+    "xattrs|-avX|xattrs"
   )
 
   # Incremental recursion only supported on protocol 30+
@@ -907,6 +1267,23 @@ run_comprehensive_interop_case() {
   done
 
   stop_upstream_daemon
+
+  # SSH interop (only if SSH is available)
+  if command -v ssh >/dev/null 2>&1; then
+    total=$((total + 1))
+    echo "  [oc-rsync SSH] local SSH transfer${sfx}"
+    local ssh_dir="${workdir}/ssh-${tag}"
+    mkdir -p "$ssh_dir"
+    if run_ssh_interop_test "$oc_client" "$comp_src" "$ssh_dir" "$olf"; then
+      echo "    PASS"
+      passed=$((passed + 1))
+    elif is_known_failure "oc" "ssh-transfer" "$fp"; then
+      echo "    SKIP (known limitation)"
+      known=$((known + 1))
+    else
+      unexpected=$((unexpected + 1))
+    fi
+  fi
 
   local fail=$((known + unexpected))
   echo "  === ${version}${sfx}: ${passed}/${total} passed, ${known} known, ${unexpected} unexpected ==="

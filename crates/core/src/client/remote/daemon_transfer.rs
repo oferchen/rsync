@@ -20,7 +20,7 @@ use protocol::filters::FilterRuleWireFormat;
 
 use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_digest};
 
-use super::super::config::{ClientConfig, DeleteMode};
+use super::super::config::{ClientConfig, DeleteMode, ReferenceDirectoryKind};
 use super::super::error::{ClientError, daemon_error, invalid_argument_error, socket_error};
 use super::super::module_list::{
     DaemonAddress, DaemonAuthContext, apply_socket_options, connect_direct, load_daemon_password,
@@ -774,9 +774,44 @@ fn build_full_daemon_args(
         args.push("--inplace".to_owned());
     }
 
+    // --backup, --backup-dir, --backup-suffix — upstream: options.c:2849-2876
+    if config.backup() {
+        args.push("--backup".to_owned());
+        if let Some(dir) = config.backup_directory() {
+            args.push(format!("--backup-dir={}", dir.display()));
+        }
+        if let Some(suffix) = config.backup_suffix() {
+            args.push(format!("--backup-suffix={}", suffix.to_string_lossy()));
+        }
+    }
+
+    // --compare-dest, --copy-dest, --link-dest — upstream: options.c:2744-2768
+    for ref_dir in config.reference_directories() {
+        let prefix = match ref_dir.kind() {
+            ReferenceDirectoryKind::Compare => "--compare-dest=",
+            ReferenceDirectoryKind::Copy => "--copy-dest=",
+            ReferenceDirectoryKind::Link => "--link-dest=",
+        };
+        args.push(format!("{prefix}{}", ref_dir.path().display()));
+    }
+
     // --remove-source-files — upstream: options.c:2964-2965
     if config.remove_source_files() {
         args.push("--remove-source-files".to_owned());
+    }
+
+    // --files-from — upstream: options.c:2975-2977
+    match config.files_from() {
+        super::super::config::FilesFromSource::None => {}
+        super::super::config::FilesFromSource::Stdin => {
+            args.push("--files-from=-".to_owned());
+        }
+        super::super::config::FilesFromSource::LocalFile(path) => {
+            args.push(format!("--files-from={}", path.display()));
+        }
+        super::super::config::FilesFromSource::RemoteFile(path) => {
+            args.push(format!("--files-from={path}"));
+        }
     }
 
     // Dummy argument (upstream requirement — represents CWD)
