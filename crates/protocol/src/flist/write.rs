@@ -26,6 +26,36 @@ use super::flags::{
 };
 use super::state::{FileListCompressionState, FileListStats};
 
+/// Boolean flags controlling which file attributes are preserved on the wire.
+///
+/// Groups the `preserve_*` options that determine whether specific metadata
+/// fields (UID, GID, symlinks, devices, etc.) are encoded in the file list.
+/// Used by both [`FileListWriter`] and [`BatchedFileListWriter`] to configure
+/// which fields appear in the wire format.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PreserveFlags {
+    /// Whether to preserve (and thus write) UID values to the wire.
+    pub uid: bool,
+    /// Whether to preserve (and thus write) GID values to the wire.
+    pub gid: bool,
+    /// Whether to preserve (and thus write) symlink targets to the wire.
+    pub links: bool,
+    /// Whether to preserve (and thus write) device numbers (block/char) to the wire.
+    pub devices: bool,
+    /// Whether to preserve (and thus write) special files (FIFOs/sockets) to the wire.
+    pub specials: bool,
+    /// Whether to preserve (and thus write) hardlink indices to the wire.
+    pub hard_links: bool,
+    /// Whether to preserve (and thus write) access times to the wire.
+    pub atimes: bool,
+    /// Whether to preserve (and thus write) creation times to the wire.
+    pub crtimes: bool,
+    /// Whether to preserve (and thus write) ACLs to the wire.
+    pub acls: bool,
+    /// Whether to preserve (and thus write) extended attributes to the wire.
+    pub xattrs: bool,
+}
+
 /// State maintained while writing a file list.
 ///
 /// The rsync protocol uses compression across entries, where fields that match
@@ -41,28 +71,10 @@ pub struct FileListWriter {
     state: FileListCompressionState,
     /// Statistics collected during file list writing.
     stats: FileListStats,
-    /// Whether to preserve (and thus write) UID values to the wire.
-    preserve_uid: bool,
-    /// Whether to preserve (and thus write) GID values to the wire.
-    preserve_gid: bool,
-    /// Whether to preserve (and thus write) symlink targets to the wire.
-    preserve_links: bool,
-    /// Whether to preserve (and thus write) device numbers (block/char) to the wire.
-    preserve_devices: bool,
-    /// Whether to preserve (and thus write) special files (FIFOs/sockets) to the wire.
-    preserve_specials: bool,
-    /// Whether to preserve (and thus write) hardlink indices to the wire.
-    preserve_hard_links: bool,
-    /// Whether to preserve (and thus write) access times to the wire.
-    preserve_atimes: bool,
-    /// Whether to preserve (and thus write) creation times to the wire.
-    preserve_crtimes: bool,
+    /// Flags controlling which file attributes are preserved on the wire.
+    preserve: PreserveFlags,
     /// Whether to send checksums for all files (--checksum / -c mode).
     always_checksum: bool,
-    /// Whether to preserve (and thus write) ACLs to the wire.
-    preserve_acls: bool,
-    /// Whether to preserve (and thus write) extended attributes to the wire.
-    preserve_xattrs: bool,
     /// Length of checksum to write (depends on protocol and checksum algorithm).
     flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
@@ -82,17 +94,8 @@ impl FileListWriter {
             codec: create_protocol_codec(protocol.as_u8()),
             state: FileListCompressionState::new(),
             stats: FileListStats::default(),
-            preserve_uid: false,
-            preserve_gid: false,
-            preserve_links: false,
-            preserve_devices: false,
-            preserve_specials: false,
-            preserve_hard_links: false,
-            preserve_atimes: false,
-            preserve_crtimes: false,
+            preserve: PreserveFlags::default(),
             always_checksum: false,
-            preserve_acls: false,
-            preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
             use_varint_flags: false,
@@ -108,17 +111,8 @@ impl FileListWriter {
             codec: create_protocol_codec(protocol.as_u8()),
             state: FileListCompressionState::new(),
             stats: FileListStats::default(),
-            preserve_uid: false,
-            preserve_gid: false,
-            preserve_links: false,
-            preserve_devices: false,
-            preserve_specials: false,
-            preserve_hard_links: false,
-            preserve_atimes: false,
-            preserve_crtimes: false,
+            preserve: PreserveFlags::default(),
             always_checksum: false,
-            preserve_acls: false,
-            preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
             use_varint_flags: compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
@@ -131,7 +125,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_uid(mut self, preserve: bool) -> Self {
-        self.preserve_uid = preserve;
+        self.preserve.uid = preserve;
         self
     }
 
@@ -139,7 +133,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_gid(mut self, preserve: bool) -> Self {
-        self.preserve_gid = preserve;
+        self.preserve.gid = preserve;
         self
     }
 
@@ -147,7 +141,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_links(mut self, preserve: bool) -> Self {
-        self.preserve_links = preserve;
+        self.preserve.links = preserve;
         self
     }
 
@@ -155,7 +149,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_devices(mut self, preserve: bool) -> Self {
-        self.preserve_devices = preserve;
+        self.preserve.devices = preserve;
         self
     }
 
@@ -168,7 +162,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_specials(mut self, preserve: bool) -> Self {
-        self.preserve_specials = preserve;
+        self.preserve.specials = preserve;
         self
     }
 
@@ -176,7 +170,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_hard_links(mut self, preserve: bool) -> Self {
-        self.preserve_hard_links = preserve;
+        self.preserve.hard_links = preserve;
         self
     }
 
@@ -184,7 +178,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_atimes(mut self, preserve: bool) -> Self {
-        self.preserve_atimes = preserve;
+        self.preserve.atimes = preserve;
         self
     }
 
@@ -192,7 +186,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_crtimes(mut self, preserve: bool) -> Self {
-        self.preserve_crtimes = preserve;
+        self.preserve.crtimes = preserve;
         self
     }
 
@@ -203,7 +197,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_acls(mut self, preserve: bool) -> Self {
-        self.preserve_acls = preserve;
+        self.preserve.acls = preserve;
         self
     }
 
@@ -214,7 +208,7 @@ impl FileListWriter {
     #[inline]
     #[must_use]
     pub const fn with_preserve_xattrs(mut self, preserve: bool) -> Self {
-        self.preserve_xattrs = preserve;
+        self.preserve.xattrs = preserve;
         self
     }
 
@@ -341,13 +335,13 @@ impl FileListWriter {
 
         // UID comparison
         let entry_uid = entry.uid().unwrap_or(0);
-        if self.preserve_uid && entry_uid == self.state.prev_uid() {
+        if self.preserve.uid && entry_uid == self.state.prev_uid() {
             xflags |= XMIT_SAME_UID as u32;
         }
 
         // GID comparison
         let entry_gid = entry.gid().unwrap_or(0);
-        if self.preserve_gid && entry_gid == self.state.prev_gid() {
+        if self.preserve.gid && entry_gid == self.state.prev_gid() {
             xflags |= XMIT_SAME_GID as u32;
         }
 
@@ -373,8 +367,8 @@ impl FileListWriter {
 
         // upstream: flist.c:send_file_entry() checks preserve_devices for
         // IS_DEVICE and preserve_specials for IS_SPECIAL separately
-        let needs_rdev = (self.preserve_devices && entry.is_device())
-            || (self.preserve_specials && entry.is_special() && self.protocol.as_u8() < 31);
+        let needs_rdev = (self.preserve.devices && entry.is_device())
+            || (self.preserve.specials && entry.is_special() && self.protocol.as_u8() < 31);
 
         if !needs_rdev {
             return xflags;
@@ -413,7 +407,7 @@ impl FileListWriter {
     fn calculate_hardlink_flags(&self, entry: &FileEntry) -> u32 {
         let mut xflags: u32 = 0;
 
-        if !self.preserve_hard_links || entry.is_dir() {
+        if !self.preserve.hard_links || entry.is_dir() {
             return xflags;
         }
 
@@ -450,7 +444,7 @@ impl FileListWriter {
         }
 
         // User name follows flag
-        if self.preserve_uid
+        if self.preserve.uid
             && entry.user_name().is_some()
             && (current_flags & (XMIT_SAME_UID as u32)) == 0
         {
@@ -458,7 +452,7 @@ impl FileListWriter {
         }
 
         // Group name follows flag
-        if self.preserve_gid
+        if self.preserve.gid
             && entry.group_name().is_some()
             && (current_flags & (XMIT_SAME_GID as u32)) == 0
         {
@@ -476,12 +470,12 @@ impl FileListWriter {
         let mut xflags: u32 = 0;
 
         // Same atime flag (non-directories only, when preserving atimes)
-        if self.preserve_atimes && !entry.is_dir() && entry.atime() == self.state.prev_atime() {
+        if self.preserve.atimes && !entry.is_dir() && entry.atime() == self.state.prev_atime() {
             xflags |= (XMIT_SAME_ATIME as u32) << 8;
         }
 
         // Creation time equals mtime flag (bit 17, varint mode only)
-        if self.preserve_crtimes && entry.crtime() == entry.mtime() {
+        if self.preserve.crtimes && entry.crtime() == entry.mtime() {
             xflags |= (XMIT_CRTIME_EQ_MTIME as u32) << 16;
         }
 
@@ -627,7 +621,7 @@ impl FileListWriter {
         }
 
         // Write crtime if preserving and different from mtime
-        if self.preserve_crtimes && (xflags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16)) == 0 {
+        if self.preserve.crtimes && (xflags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16)) == 0 {
             crate::write_varlong(writer, entry.crtime(), 4)?;
         }
 
@@ -657,7 +651,7 @@ impl FileListWriter {
         entry: &FileEntry,
         xflags: u32,
     ) -> io::Result<()> {
-        if self.preserve_atimes
+        if self.preserve.atimes
             && !entry.is_dir()
             && (xflags & ((XMIT_SAME_ATIME as u32) << 8)) == 0
         {
@@ -676,7 +670,7 @@ impl FileListWriter {
         xflags: u32,
     ) -> io::Result<()> {
         let entry_uid = entry.uid().unwrap_or(0);
-        if !self.preserve_uid || (xflags & (XMIT_SAME_UID as u32)) != 0 {
+        if !self.preserve.uid || (xflags & (XMIT_SAME_UID as u32)) != 0 {
             return Ok(());
         }
 
@@ -702,7 +696,7 @@ impl FileListWriter {
         xflags: u32,
     ) -> io::Result<()> {
         let entry_gid = entry.gid().unwrap_or(0);
-        if !self.preserve_gid || (xflags & (XMIT_SAME_GID as u32)) != 0 {
+        if !self.preserve.gid || (xflags & (XMIT_SAME_GID as u32)) != 0 {
             return Ok(());
         }
 
@@ -743,7 +737,7 @@ impl FileListWriter {
         writer: &mut W,
         entry: &FileEntry,
     ) -> io::Result<()> {
-        if !self.preserve_links || !entry.is_symlink() {
+        if !self.preserve.links || !entry.is_symlink() {
             return Ok(());
         }
 
@@ -775,8 +769,8 @@ impl FileListWriter {
 
         // upstream: flist.c:send_file_entry() checks preserve_devices for
         // IS_DEVICE and preserve_specials for IS_SPECIAL separately
-        let needs_rdev = (self.preserve_devices && is_device)
-            || (self.preserve_specials && is_special && self.protocol.as_u8() < 31);
+        let needs_rdev = (self.preserve.devices && is_device)
+            || (self.preserve.specials && is_special && self.protocol.as_u8() < 31);
 
         if !needs_rdev {
             return Ok(());
@@ -827,7 +821,7 @@ impl FileListWriter {
         entry: &FileEntry,
         xflags: u32,
     ) -> io::Result<()> {
-        if !self.preserve_hard_links || self.protocol.as_u8() < 30 {
+        if !self.preserve.hard_links || self.protocol.as_u8() < 30 {
             return Ok(());
         }
 
@@ -859,7 +853,7 @@ impl FileListWriter {
         xflags: u32,
     ) -> io::Result<()> {
         // Only for protocol 28-29, non-directories with hardlink info
-        if !self.preserve_hard_links
+        if !self.preserve.hard_links
             || self.protocol.as_u8() >= 30
             || self.protocol.as_u8() < 28
             || entry.is_dir()
