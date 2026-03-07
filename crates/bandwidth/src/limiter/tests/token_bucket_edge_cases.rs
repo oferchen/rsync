@@ -239,7 +239,7 @@ fn burst_handling_u64_max_burst_no_clamping() {
     // causing integer division to lose up to 1 byte of debt. Allow this.
     let debt = limiter.accumulated_debt_for_testing();
     assert!(
-        debt >= 99_990 && debt <= 100_000,
+        (99_990..=100_000).contains(&debt),
         "u64::MAX burst should not clamp debt, got {debt}"
     );
 }
