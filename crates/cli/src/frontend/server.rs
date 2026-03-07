@@ -179,6 +179,8 @@ where
     config.from0 = long_flags.from0;
     config.inplace = long_flags.inplace;
     config.size_only = long_flags.size_only;
+    config.ignore_existing = long_flags.ignore_existing;
+    config.existing_only = long_flags.existing_only;
     config.flags.numeric_ids = long_flags.numeric_ids;
     config.flags.delete = long_flags.delete;
 
@@ -248,6 +250,20 @@ where
         }
     }
 
+    if let Some(max_del_str) = &long_flags.max_delete {
+        match max_del_str.parse::<u64>() {
+            Ok(limit) => config.max_delete = Some(limit),
+            Err(_) => {
+                write_server_error(
+                    stderr,
+                    program_brand,
+                    format!("invalid --max-delete value '{max_del_str}'"),
+                );
+                return 1;
+            }
+        }
+    }
+
     // Run native server with stdio
     match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
@@ -295,6 +311,12 @@ struct ServerLongFlags {
     numeric_ids: bool,
     /// Delete extraneous files (upstream: `--delete-*` variants, long-form only).
     delete: bool,
+    /// Skip updating files that exist at destination (upstream: `--ignore-existing`).
+    ignore_existing: bool,
+    /// Skip creating files not present at destination (upstream: `--existing`).
+    existing_only: bool,
+    /// Maximum deletions allowed (upstream: `--max-delete=NUM`).
+    max_delete: Option<String>,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -324,6 +346,9 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         size_only: false,
         numeric_ids: false,
         delete: false,
+        ignore_existing: false,
+        existing_only: false,
+        max_delete: None,
     };
 
     for arg in args {
@@ -347,6 +372,10 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: --delete variants are long-form only (options.c:2818-2827)
             "--delete" | "--delete-before" | "--delete-during" | "--delete-after"
             | "--delete-delay" | "--delete-excluded" => flags.delete = true,
+            // upstream: options.c:2831 — --ignore-existing sent as long-form arg
+            "--ignore-existing" => flags.ignore_existing = true,
+            // upstream: options.c:2833 — --existing (--ignore-non-existing) sent as long-form arg
+            "--existing" | "--ignore-non-existing" => flags.existing_only = true,
             _ => {
                 // Value-bearing flags use `--flag=value` syntax.
                 if let Some(value) = s.strip_prefix("--checksum-seed=") {
@@ -363,6 +392,8 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
                     flags.stop_after = Some(value.to_owned());
                 } else if let Some(value) = s.strip_prefix("--files-from=") {
                     flags.files_from = Some(value.to_owned());
+                } else if let Some(value) = s.strip_prefix("--max-delete=") {
+                    flags.max_delete = Some(value.to_owned());
                 }
             }
         }
@@ -398,6 +429,9 @@ fn is_known_server_long_flag(arg: &str) -> bool {
             | "--delete-after"
             | "--delete-delay"
             | "--delete-excluded"
+            | "--ignore-existing"
+            | "--existing"
+            | "--ignore-non-existing"
     ) || arg == "-s"
         || arg.starts_with("--checksum-seed=")
         || arg.starts_with("--checksum-choice=")
@@ -406,6 +440,7 @@ fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--stop-at=")
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")
+        || arg.starts_with("--max-delete=")
 }
 
 /// Parses a `--checksum-seed=NUM` value from the server argument list.

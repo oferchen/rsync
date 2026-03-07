@@ -57,6 +57,9 @@ fn test_config() -> ServerConfig {
         from0: false,
         inplace: false,
         size_only: false,
+        ignore_existing: false,
+        existing_only: false,
+        max_delete: None,
     }
 }
 
@@ -88,6 +91,9 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         from0: false,
         inplace: false,
         size_only: false,
+        ignore_existing: false,
+        existing_only: false,
+        max_delete: None,
     }
 }
 
