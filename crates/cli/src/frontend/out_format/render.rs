@@ -79,7 +79,9 @@ fn render_placeholder_value(
             Some(rendered)
         }
         OutFormatPlaceholder::FullPath => Some(render_path(event, false)),
-        OutFormatPlaceholder::ItemizedChanges => Some(format_itemized_changes(event)),
+        OutFormatPlaceholder::ItemizedChanges => {
+            Some(format_itemized_changes(event, context.is_sender))
+        }
         OutFormatPlaceholder::FileLength => {
             let length = event.metadata().map_or(0, ClientEntryMetadata::length);
             Some(format_numeric_value(length as i64, &spec.format))
@@ -310,7 +312,7 @@ fn format_current_timestamp() -> String {
     )
 }
 
-fn format_itemized_changes(event: &ClientEvent) -> String {
+fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> String {
     use ClientEventKind::*;
 
     if matches!(event.kind(), ClientEventKind::EntryDeleted) {
@@ -320,8 +322,9 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
 
     let mut fields = ['.'; 11];
 
+    // upstream: log.c:704 — '<' when am_sender && !am_server, '>' otherwise
     fields[0] = match event.kind() {
-        DataCopied => '>',
+        DataCopied => if is_sender { '<' } else { '>' },
         HardLink => 'h',
         DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
         MetadataReused
@@ -734,7 +737,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.len(),
             11,
@@ -750,7 +753,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.len(),
             11,
@@ -770,7 +773,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.len(),
             11,
@@ -788,11 +791,27 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('>'),
             "Y should be '>' for DataCopied: {result:?}"
+        );
+    }
+
+    #[test]
+    fn itemize_y_position_data_copied_sender_shows_less_than() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new(),
+        );
+        let result = format_itemized_changes(&event, true);
+        assert_eq!(
+            result.chars().next(),
+            Some('<'),
+            "Y should be '<' for DataCopied with is_sender=true: {result:?}"
         );
     }
 
@@ -804,7 +823,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('h'),
@@ -820,7 +839,7 @@ mod tests {
             Some(ClientEntryKind::Directory),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('c'),
@@ -836,7 +855,7 @@ mod tests {
             Some(ClientEntryKind::Symlink),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('c'),
@@ -852,7 +871,7 @@ mod tests {
             Some(ClientEntryKind::Fifo),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('c'),
@@ -868,7 +887,7 @@ mod tests {
             Some(ClientEntryKind::CharDevice),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('c'),
@@ -884,7 +903,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('.'),
@@ -900,7 +919,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('.'),
@@ -916,7 +935,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('c'),
@@ -934,7 +953,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('f'),
@@ -950,7 +969,7 @@ mod tests {
             Some(ClientEntryKind::Directory),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('d'),
@@ -966,7 +985,7 @@ mod tests {
             Some(ClientEntryKind::Symlink),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('L'),
@@ -982,7 +1001,7 @@ mod tests {
             Some(ClientEntryKind::CharDevice),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('D'),
@@ -998,7 +1017,7 @@ mod tests {
             Some(ClientEntryKind::BlockDevice),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('D'),
@@ -1014,7 +1033,7 @@ mod tests {
             Some(ClientEntryKind::Fifo),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('S'),
@@ -1030,7 +1049,7 @@ mod tests {
             Some(ClientEntryKind::Socket),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('S'),
@@ -1048,7 +1067,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, ">f+++++++++",
             "new file should be >f+++++++++: {result:?}"
@@ -1063,7 +1082,7 @@ mod tests {
             Some(ClientEntryKind::Directory),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, "cd+++++++++",
             "new directory should be cd+++++++++: {result:?}"
@@ -1078,7 +1097,7 @@ mod tests {
             Some(ClientEntryKind::Symlink),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, "cL+++++++++",
             "new symlink should be cL+++++++++: {result:?}"
@@ -1093,7 +1112,7 @@ mod tests {
             Some(ClientEntryKind::CharDevice),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, "cD+++++++++",
             "new device should be cD+++++++++: {result:?}"
@@ -1108,7 +1127,7 @@ mod tests {
             Some(ClientEntryKind::Fifo),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, "cS+++++++++",
             "new fifo should be cS+++++++++: {result:?}"
@@ -1123,7 +1142,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, "hf+++++++++",
             "new hardlink should be hf+++++++++: {result:?}"
@@ -1140,7 +1159,7 @@ mod tests {
             None,
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, "*deleting  ",
             "deleted entry should be '*deleting  ' (11 chars): {result:?}"
@@ -1158,7 +1177,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(2),
             Some('c'),
@@ -1175,7 +1194,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(3),
             Some('s'),
@@ -1192,7 +1211,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(4),
             Some('t'),
@@ -1209,7 +1228,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(4),
             Some('T'),
@@ -1226,7 +1245,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(5),
             Some('p'),
@@ -1243,7 +1262,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(6),
             Some('o'),
@@ -1260,7 +1279,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(7),
             Some('g'),
@@ -1277,7 +1296,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(8),
             Some('u'),
@@ -1294,7 +1313,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(8),
             Some('n'),
@@ -1313,7 +1332,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(8),
             Some('b'),
@@ -1330,7 +1349,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(9),
             Some('a'),
@@ -1347,7 +1366,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(10),
             Some('x'),
@@ -1365,7 +1384,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, ".f         ",
             "no change with '.' update type should collapse dots to spaces: {result:?}"
@@ -1385,7 +1404,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             &result[..4],
             ">fcs",
@@ -1412,7 +1431,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, ">fcstpogbax",
             "full changes should show all indicators: {result:?}"
@@ -1431,7 +1450,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, ">fcst......",
             "typical update should show '>fcst......': {result:?}"
@@ -1447,7 +1466,7 @@ mod tests {
             Some(ClientEntryKind::Directory),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, "cd..t......",
             "directory time update should show 'cd..t......': {result:?}"
@@ -1463,7 +1482,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(result, ">f...p.....", "permission-only change: {result:?}");
     }
 
@@ -1478,7 +1497,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(result, ">f....og...", "owner+group change: {result:?}");
     }
 
@@ -1492,7 +1511,7 @@ mod tests {
             None,
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('f'),
@@ -1508,7 +1527,7 @@ mod tests {
             None,
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('d'),
@@ -1524,7 +1543,7 @@ mod tests {
             None,
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('L'),
@@ -1540,7 +1559,7 @@ mod tests {
             None,
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('S'),
@@ -1556,7 +1575,7 @@ mod tests {
             None,
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(1),
             Some('D'),
@@ -1574,7 +1593,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('.'),
@@ -1590,7 +1609,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('.'),
@@ -1606,7 +1625,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('.'),
@@ -1622,7 +1641,7 @@ mod tests {
             Some(ClientEntryKind::Directory),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('.'),
@@ -1638,7 +1657,7 @@ mod tests {
             Some(ClientEntryKind::Symlink),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('.'),
@@ -1654,7 +1673,7 @@ mod tests {
             Some(ClientEntryKind::Directory),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().next(),
             Some('.'),
@@ -1673,7 +1692,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        assert_eq!(format_itemized_changes(&event), ">f+++++++++");
+        assert_eq!(format_itemized_changes(&event, false), ">f+++++++++");
     }
 
     #[test]
@@ -1685,7 +1704,7 @@ mod tests {
             Some(ClientEntryKind::Directory),
             LocalCopyChangeSet::new(),
         );
-        assert_eq!(format_itemized_changes(&event), "cd+++++++++");
+        assert_eq!(format_itemized_changes(&event, false), "cd+++++++++");
     }
 
     #[test]
@@ -1697,7 +1716,7 @@ mod tests {
             Some(ClientEntryKind::Symlink),
             LocalCopyChangeSet::new(),
         );
-        assert_eq!(format_itemized_changes(&event), "cL+++++++++");
+        assert_eq!(format_itemized_changes(&event, false), "cL+++++++++");
     }
 
     #[test]
@@ -1709,7 +1728,7 @@ mod tests {
             None,
             LocalCopyChangeSet::new(),
         );
-        assert_eq!(format_itemized_changes(&event), "*deleting  ");
+        assert_eq!(format_itemized_changes(&event, false), "*deleting  ");
     }
 
     #[test]
@@ -1721,7 +1740,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        assert_eq!(format_itemized_changes(&event), ".f         ");
+        assert_eq!(format_itemized_changes(&event, false), ".f         ");
     }
 
     #[test]
@@ -1737,7 +1756,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        assert_eq!(format_itemized_changes(&event), ">fcst......");
+        assert_eq!(format_itemized_changes(&event, false), ">fcst......");
     }
 
     #[test]
@@ -1750,7 +1769,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        assert_eq!(format_itemized_changes(&event), ">f..t......");
+        assert_eq!(format_itemized_changes(&event, false), ">f..t......");
     }
 
     #[test]
@@ -1763,7 +1782,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        assert_eq!(format_itemized_changes(&event), ">f..T......");
+        assert_eq!(format_itemized_changes(&event, false), ">f..T......");
     }
 
     // ---- Edge cases ----
@@ -1781,7 +1800,7 @@ mod tests {
             Some(ClientEntryKind::File),
             cs,
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result, ">f+++++++++",
             "created=true should override change_set with '+': {result:?}"
@@ -1797,7 +1816,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(
             result.chars().nth(8),
             Some('.'),
@@ -1814,7 +1833,7 @@ mod tests {
             None,
             LocalCopyChangeSet::new(),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(result, "*deleting  ");
         assert_eq!(result.len(), 11, "delete format should be 11 characters");
     }
@@ -1828,7 +1847,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new().with_missing_data(true),
         );
-        assert_eq!(format_itemized_changes(&event), ">f?????????");
+        assert_eq!(format_itemized_changes(&event, false), ">f?????????");
     }
 
     #[test]
@@ -1842,7 +1861,7 @@ mod tests {
                 .with_checksum_changed(true)
                 .with_size_changed(true),
         );
-        assert_eq!(format_itemized_changes(&event), ">f?????????");
+        assert_eq!(format_itemized_changes(&event, false), ">f?????????");
     }
 
     #[test]
@@ -1853,7 +1872,7 @@ mod tests {
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new().with_missing_data(true),
         );
-        let result = format_itemized_changes(&event);
+        let result = format_itemized_changes(&event, false);
         assert_eq!(result.len(), 11);
     }
 
@@ -2178,6 +2197,7 @@ mod tests {
             remote_address: Some("10.0.0.1".to_owned()),
             module_name: Some("backup".to_owned()),
             module_path: Some("/var/backup".to_owned()),
+            is_sender: false,
         };
         assert_eq!(
             render_format_with_context("%h", &event, &context),
@@ -2198,6 +2218,7 @@ mod tests {
             remote_address: Some("192.168.1.100".to_owned()),
             module_name: None,
             module_path: None,
+            is_sender: false,
         };
         assert_eq!(
             render_format_with_context("%a", &event, &context),
@@ -2218,6 +2239,7 @@ mod tests {
             remote_address: None,
             module_name: Some("data".to_owned()),
             module_path: None,
+            is_sender: false,
         };
         assert_eq!(render_format_with_context("%m", &event, &context), "data\n");
     }
@@ -2235,6 +2257,7 @@ mod tests {
             remote_address: None,
             module_name: None,
             module_path: Some("/srv/data".to_owned()),
+            is_sender: false,
         };
         assert_eq!(
             render_format_with_context("%P", &event, &context),
@@ -2255,6 +2278,7 @@ mod tests {
             remote_address: Some("addr".to_owned()),
             module_name: Some("mod".to_owned()),
             module_path: Some("/path".to_owned()),
+            is_sender: false,
         };
         let rendered = render_format_with_context("%h %a %m %P", &event, &context);
         assert_eq!(rendered, "host addr mod /path\n");
