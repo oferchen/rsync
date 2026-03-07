@@ -899,6 +899,11 @@ comp_run_scenario() {
       fi
       return 0
       ;;
+    acls)
+      # ACLs transfer should not break the transfer itself
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      return 0
+      ;;
     itemize)
       comp_verify_transfer "$sdir" "$ddir" || return 1
       local item_out="$transfer_log.out"
@@ -929,6 +934,36 @@ comp_run_scenario() {
 # - up:compress, oc:compress (TokenReader integration in run_sync path)
 # - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
 #
+# SSH interop test: oc-rsync client transfers to localhost via SSH.
+run_ssh_interop_test() {
+  local oc_bin=$1 src_dir=$2 work_dir=$3 log=$4
+
+  local ssh_dest="${work_dir}/ssh_dest"
+  rm -rf "$ssh_dest"
+  mkdir -p "$ssh_dest"
+
+  local transfer_log="${log}.ssh-transfer"
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      -e "ssh -o StrictHostKeyChecking=no" \
+      --timeout=10 \
+      "${src_dir}/" "${ssh_dest}/" \
+      >"$transfer_log.out" 2>"$transfer_log.err"; then
+    local rc=$?
+    cat "$transfer_log.err" >> "$log"
+    echo "    FAIL (SSH transfer error, exit=$rc)"
+    echo "    stderr: $(head -5 "$transfer_log.err")"
+    return 1
+  fi
+  cat "$transfer_log.err" >> "$log"
+
+  if ! comp_verify_transfer "$src_dir" "$ssh_dest"; then
+    echo "    dest contents: $(find "$ssh_dest" -type f | sort | head -20)"
+    return 1
+  fi
+
+  return 0
+}
+
 # Remaining known failures:
 KNOWN_FAILURES=(
 )
@@ -998,6 +1033,8 @@ run_comprehensive_interop_case() {
     "protocol-30|-av --protocol=30|basic"
     "protocol-31|-av --protocol=31|basic"
     "compress-delta|-avz --no-whole-file -I|delta"
+    "devices|-avD|basic"
+    "acls|-avA|acls"
   )
 
   # Incremental recursion only supported on protocol 30+
@@ -1051,6 +1088,23 @@ run_comprehensive_interop_case() {
   done
 
   stop_upstream_daemon
+
+  # SSH interop (only if SSH is available)
+  if command -v ssh >/dev/null 2>&1; then
+    total=$((total + 1))
+    echo "  [oc-rsync SSH] local SSH transfer${sfx}"
+    local ssh_dir="${workdir}/ssh-${tag}"
+    mkdir -p "$ssh_dir"
+    if run_ssh_interop_test "$oc_client" "$comp_src" "$ssh_dir" "$olf"; then
+      echo "    PASS"
+      passed=$((passed + 1))
+    elif is_known_failure "oc" "ssh-transfer" "$fp"; then
+      echo "    SKIP (known limitation)"
+      known=$((known + 1))
+    else
+      unexpected=$((unexpected + 1))
+    fi
+  fi
 
   local fail=$((known + unexpected))
   echo "  === ${version}${sfx}: ${passed}/${total} passed, ${known} known, ${unexpected} unexpected ==="
