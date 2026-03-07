@@ -1349,10 +1349,10 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("file list I/O error: 42"));
+        // io_error markers are now accumulated (upstream: flist.c io_error |= err)
+        // rather than returned as hard errors.
+        assert!(result.unwrap().is_none());
+        assert_eq!(reader.io_error(), 42);
     }
 
     #[test]
@@ -1397,9 +1397,8 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("file list I/O error: 99"));
+        assert!(result.unwrap().is_none());
+        assert_eq!(reader.io_error(), 99);
     }
 
     #[test]
@@ -1418,9 +1417,8 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("file list I/O error: 123"));
+        assert!(result.unwrap().is_none());
+        assert_eq!(reader.io_error(), 123);
     }
 
     #[test]
@@ -1443,16 +1441,15 @@ mod tests {
         assert!(result.unwrap().is_none());
         assert_eq!(cursor.position() as usize, data.len());
 
-        // Test end marker with non-zero error returns Err
+        // Test end marker with non-zero error accumulates io_error
         let mut data2 = Vec::new();
         writer.write_end(&mut data2, Some(123)).unwrap();
 
         let mut reader2 = FileListReader::with_compat_flags(protocol, flags);
         let mut cursor2 = Cursor::new(&data2[..]);
         let result2 = reader2.read_entry(&mut cursor2);
-        assert!(result2.is_err());
-        let err = result2.unwrap_err();
-        assert!(err.to_string().contains("123"));
+        assert!(result2.unwrap().is_none());
+        assert_eq!(reader2.io_error(), 123);
     }
 
     // Tests for extracted helper methods
