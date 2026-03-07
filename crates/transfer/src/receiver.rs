@@ -55,6 +55,7 @@ use protocol::codec::{
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader, IncrementalFileListBuilder, sort_file_list};
 use protocol::idlist::IdList;
+use protocol::stats::DeleteStats;
 #[cfg(test)]
 use protocol::wire::DeltaOp;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
@@ -786,9 +787,8 @@ impl ReceiverContext {
     ///
     /// - `generator.c:delete_in_dir()` — scans one directory, removes unlisted entries
     /// - `generator.c:do_delete_pass()` — full tree walk deletion sweep
-    fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<u64> {
+    fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<DeleteStats> {
         use std::collections::{HashMap, HashSet};
-        use std::sync::atomic::{AtomicU64, Ordering};
 
         use rayon::prelude::*;
 
@@ -820,7 +820,7 @@ impl ReceiverContext {
 
         // Per-directory deletion: scan one directory, delete unlisted entries.
         // Each directory is independent — remove_dir_all handles subtree deletion.
-        let delete_in_dir = |dir_relative: &PathBuf| -> u64 {
+        let delete_in_dir = |dir_relative: &PathBuf| -> DeleteStats {
             let dest_path = if dir_relative.as_os_str() == "." {
                 dest_dir.to_path_buf()
             } else {
@@ -829,15 +829,15 @@ impl ReceiverContext {
 
             let keep = match dir_children.get(dir_relative) {
                 Some(set) => set,
-                None => return 0,
+                None => return DeleteStats::new(),
             };
 
             let read_dir = match fs::read_dir(&dest_path) {
                 Ok(iter) => iter,
-                Err(_) => return 0,
+                Err(_) => return DeleteStats::new(),
             };
 
-            let mut count = 0u64;
+            let mut stats = DeleteStats::new();
             for entry in read_dir {
                 let entry = match entry {
                     Ok(e) => e,
@@ -849,7 +849,9 @@ impl ReceiverContext {
                 }
 
                 let path = dest_path.join(&name);
-                let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+                let file_type = entry.file_type().ok();
+                let is_dir = file_type.as_ref().is_some_and(|ft| ft.is_dir());
+                let is_symlink = file_type.as_ref().is_some_and(|ft| ft.is_symlink());
 
                 let result = if is_dir {
                     fs::remove_dir_all(&path)
@@ -861,10 +863,14 @@ impl ReceiverContext {
                     Ok(()) => {
                         if is_dir {
                             info_log!(Del, 1, "deleting directory {}", path.display());
+                            stats.dirs += 1;
+                        } else if is_symlink {
+                            info_log!(Del, 1, "deleting {}", path.display());
+                            stats.symlinks += 1;
                         } else {
                             info_log!(Del, 1, "deleting {}", path.display());
+                            stats.files += 1;
                         }
-                        count += 1;
                     }
                     Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                     Err(e) => {
@@ -872,21 +878,32 @@ impl ReceiverContext {
                     }
                 }
             }
-            count
+            stats
         };
 
         // Parallel directory scanning when above threshold, sequential otherwise.
-        let deleted = if dirs_to_scan.len() >= PARALLEL_STAT_THRESHOLD {
-            let total = AtomicU64::new(0);
-            dirs_to_scan.par_iter().for_each(|dir| {
-                total.fetch_add(delete_in_dir(dir), Ordering::Relaxed);
-            });
-            total.load(Ordering::Relaxed)
-        } else {
-            dirs_to_scan.iter().map(delete_in_dir).sum()
+        let merge = |mut a: DeleteStats, b: DeleteStats| -> DeleteStats {
+            a.files = a.files.saturating_add(b.files);
+            a.dirs = a.dirs.saturating_add(b.dirs);
+            a.symlinks = a.symlinks.saturating_add(b.symlinks);
+            a.devices = a.devices.saturating_add(b.devices);
+            a.specials = a.specials.saturating_add(b.specials);
+            a
         };
 
-        Ok(deleted)
+        let stats = if dirs_to_scan.len() >= PARALLEL_STAT_THRESHOLD {
+            dirs_to_scan
+                .par_iter()
+                .map(delete_in_dir)
+                .reduce(DeleteStats::new, merge)
+        } else {
+            dirs_to_scan
+                .iter()
+                .map(delete_in_dir)
+                .fold(DeleteStats::new(), merge)
+        };
+
+        Ok(stats)
     }
 
     /// Creates symbolic links from the file list entries.
@@ -1956,7 +1973,7 @@ impl ReceiverContext {
             directories_created: 0,
             directories_failed: 0,
             files_skipped: 0,
-            files_deleted: 0,
+            delete_stats: DeleteStats::new(),
             redo_count: 0,
         })
     }
@@ -1998,9 +2015,9 @@ impl ReceiverContext {
 
         // Delete extraneous files at destination (--delete-before pass).
         // upstream: generator.c:do_delete_pass() — full tree walk deletion
-        let mut deleted_count = 0u64;
+        let mut delete_stats = DeleteStats::new();
         if self.config.flags.delete {
-            deleted_count = self.delete_extraneous_files(&setup.dest_dir)?;
+            delete_stats = self.delete_extraneous_files(&setup.dest_dir)?;
         }
 
         let mut stats = TransferStats {
@@ -2084,7 +2101,7 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.total_source_bytes = total_source_bytes;
         stats.metadata_errors = metadata_errors;
-        stats.files_deleted = deleted_count;
+        stats.delete_stats = delete_stats;
         stats.redo_count = redo_count;
 
         Ok(stats)
@@ -2844,8 +2861,8 @@ pub struct TransferStats {
     /// Files skipped due to failed parent directory (incremental mode).
     pub files_skipped: u64,
 
-    /// Number of extraneous files deleted at the destination (`--delete`).
-    pub files_deleted: u64,
+    /// Breakdown of extraneous items deleted at the destination (`--delete`).
+    pub delete_stats: DeleteStats,
 
     /// Number of files that were retransmitted due to checksum verification failure.
     ///
@@ -4914,7 +4931,7 @@ mod tests {
             directories_created: 10,
             directories_failed: 2,
             files_skipped: 5,
-            files_deleted: 0,
+            delete_stats: DeleteStats::new(),
             redo_count: 0,
         };
 
