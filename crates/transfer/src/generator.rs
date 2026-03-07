@@ -47,6 +47,7 @@ use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{DevIno, HardlinkLookup, HardlinkTable};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
 use protocol::idlist::IdList;
+use protocol::stats::DeleteStats;
 use protocol::wire::{
     CHUNK_SIZE, CompressedTokenEncoder, DeltaOp, SignatureBlock, write_token_end,
     write_token_stream,
@@ -218,6 +219,9 @@ pub struct GeneratorContext {
     ///
     /// Without INC_RECURSE, this contains a single entry `(0, 0)`.
     ndx_segments: Vec<(usize, i32)>,
+    /// Accumulated deletion statistics received via NDX_DEL_STATS messages.
+    /// (upstream: main.c:238-247 `read_del_stats()`)
+    delete_stats: DeleteStats,
 }
 
 impl GeneratorContext {
@@ -252,6 +256,7 @@ impl GeneratorContext {
             gid_list: IdList::new(),
             io_error: 0,
             ndx_segments: vec![(0, initial_ndx_start)],
+            delete_stats: DeleteStats::new(),
         }
     }
 
@@ -796,12 +801,15 @@ impl GeneratorContext {
                         continue;
                     }
                     NDX_DEL_STATS => {
-                        // Deletion statistics (upstream main.c:228-230)
-                        // Read and discard: 5 varints for deleted file counts
-                        for _ in 0..5 {
-                            protocol::read_varint(&mut *reader)?;
-                        }
-                        debug_log!(Flist, 2, "received and discarded NDX_DEL_STATS");
+                        // Deletion statistics (upstream main.c:238-247)
+                        let stats = DeleteStats::read_from(&mut *reader)?;
+                        self.accumulate_delete_stats(&stats);
+                        debug_log!(
+                            Flist,
+                            2,
+                            "received NDX_DEL_STATS: {} deletions",
+                            stats.total()
+                        );
                         continue;
                     }
                     _ if ndx <= NDX_FLIST_OFFSET => {
@@ -1017,7 +1025,7 @@ impl GeneratorContext {
     /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
     /// - `main.c:240-247` - `read_del_stats()` format
     fn handle_goodbye<R: Read, W: Write>(
-        &self,
+        &mut self,
         reader: &mut R,
         writer: &mut W,
         ndx_read_codec: &mut NdxCodecEnum,
@@ -1029,7 +1037,7 @@ impl GeneratorContext {
 
         // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS
         // upstream: main.c:886 — read_ndx_and_attrs() handles NDX_DEL_STATS internally
-        let ndx = Self::read_ndx_skipping_del_stats(reader, ndx_read_codec)?;
+        let ndx = self.read_ndx_skipping_del_stats(reader, ndx_read_codec)?;
         if ndx != NDX_DONE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -1044,7 +1052,7 @@ impl GeneratorContext {
             writer.flush()?;
 
             // Read final NDX_DONE - may fail if daemon kills receiver child early
-            match Self::read_ndx_skipping_del_stats(reader, ndx_read_codec) {
+            match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
                 Ok(final_ndx) => {
                     if final_ndx != NDX_DONE {
                         return Err(io::Error::new(
@@ -1072,32 +1080,45 @@ impl GeneratorContext {
         Ok(())
     }
 
-    /// Reads the next NDX value, consuming and discarding any NDX_DEL_STATS messages.
+    /// Reads the next NDX value, consuming any NDX_DEL_STATS messages.
     ///
     /// Upstream `read_ndx_and_attrs()` (rsync.c:337-342) loops over NDX_DEL_STATS,
-    /// calling `read_del_stats()` which reads 5 varints of deletion counts
-    /// (regular files, dirs, symlinks, devices, specials).
+    /// calling `read_del_stats()` which reads 5 varints and accumulates counts.
     ///
     /// # Upstream Reference
     ///
     /// - `rsync.c:337-342` - NDX_DEL_STATS loop in `read_ndx_and_attrs()`
-    /// - `main.c:240-247` - `read_del_stats()` format
+    /// - `main.c:238-247` - `read_del_stats()` accumulates into global counters
     fn read_ndx_skipping_del_stats<R: Read>(
+        &mut self,
         reader: &mut R,
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<i32> {
         loop {
             let ndx = ndx_read_codec.read_ndx(reader)?;
             if ndx == NDX_DEL_STATS {
-                // upstream: main.c:240-247 — read_del_stats() reads 5 varints
-                for _ in 0..5 {
-                    protocol::read_varint(reader)?;
-                }
-                debug_log!(Flist, 2, "consumed NDX_DEL_STATS during goodbye phase");
+                let stats = DeleteStats::read_from(reader)?;
+                self.accumulate_delete_stats(&stats);
+                debug_log!(
+                    Flist,
+                    2,
+                    "consumed NDX_DEL_STATS during goodbye: {} deletions",
+                    stats.total()
+                );
                 continue;
             }
             return Ok(ndx);
         }
+    }
+
+    /// Accumulates deletion statistics from an NDX_DEL_STATS message.
+    /// (upstream: main.c:238-247 - `read_del_stats()` adds to global counters)
+    fn accumulate_delete_stats(&mut self, stats: &DeleteStats) {
+        self.delete_stats.files = self.delete_stats.files.saturating_add(stats.files);
+        self.delete_stats.dirs = self.delete_stats.dirs.saturating_add(stats.dirs);
+        self.delete_stats.symlinks = self.delete_stats.symlinks.saturating_add(stats.symlinks);
+        self.delete_stats.devices = self.delete_stats.devices.saturating_add(stats.devices);
+        self.delete_stats.specials = self.delete_stats.specials.saturating_add(stats.specials);
     }
 
     /// Builds the file list from the specified paths.
@@ -1760,6 +1781,7 @@ impl GeneratorContext {
             bytes_read: self.total_bytes_read,
             flist_buildtime_ms: flist_buildtime,
             flist_xfertime_ms: flist_xfertime,
+            delete_stats: self.delete_stats,
         })
     }
 
@@ -1870,6 +1892,8 @@ pub struct GeneratorStats {
     pub flist_buildtime_ms: u64,
     /// File list transfer time in milliseconds.
     pub flist_xfertime_ms: u64,
+    /// Accumulated deletion statistics from the receiver.
+    pub delete_stats: DeleteStats,
 }
 
 /// Item flags received from the receiver indicating transfer requirements.
