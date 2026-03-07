@@ -741,6 +741,12 @@ comp_run_scenario() {
       dd if=/dev/zero of="$ddir/binary.dat" bs=1K count=50 2>/dev/null
       dd if=/dev/zero of="$ddir/large.dat" bs=1K count=200 2>/dev/null
       ;;
+    itemize)
+      rm -rf "$ddir"/*
+      mkdir -p "$ddir/subdir/nested"
+      echo "old content" > "$ddir/hello.txt"
+      echo "old nested" > "$ddir/subdir/file.txt"
+      ;;
     *)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       ;;
@@ -891,6 +897,19 @@ comp_run_scenario() {
       fi
       return 0
       ;;
+    itemize)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      local item_out="$transfer_log.out"
+      if ! grep -qE '^[<>ch.][fdLDS]' "$item_out"; then
+        echo "    --itemize-changes: no itemize output found"
+        return 1
+      fi
+      if ! grep -qE '^\>f' "$item_out"; then
+        echo "    --itemize-changes: no file transfer itemize lines"
+        return 1
+      fi
+      return 0
+      ;;
   esac
 }
 
@@ -967,6 +986,11 @@ run_comprehensive_interop_case() {
     "backup|-av --backup|backup"
     "max-delete|-av --delete --max-delete=1|max-delete"
     "dry-run|-avn|dry-run"
+    "itemize|-avi|itemize"
+    "sparse|-avS|sparse"
+    "partial|-av --partial|partial"
+    "append|-av --append|append"
+    "bwlimit|-av --bwlimit=10000|bwlimit"
   )
 
   # Incremental recursion only supported on protocol 30+
