@@ -766,7 +766,7 @@ fn parity_itemize_unchanged_file_shows_dots() {
     let rendered = String::from_utf8(output).expect("utf8");
 
     assert_eq!(
-        rendered.trim(),
+        rendered.trim_end_matches('\n'),
         ".f         ",
         "unchanged file should collapse all-dots to spaces"
     );
