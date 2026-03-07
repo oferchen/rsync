@@ -410,6 +410,68 @@ mod tests {
     }
 
     #[test]
+    fn sum_length_derive_strong_phase1_is_dynamic() {
+        // Phase 1 uses SHORT_SUM_LENGTH (2). For a large file the heuristic
+        // should compute a value above the minimum.
+        use crate::block_size::SHORT_SUM_LENGTH;
+
+        let checksum_len = NonZeroU8::new(SHORT_SUM_LENGTH).unwrap();
+        let protocol = ProtocolVersion::try_from(31u8).unwrap();
+        let result = derive_strong_sum_length(100 * 1024 * 1024, 10_240, protocol, checksum_len);
+
+        assert!(result.get() >= SHORT_SUM_LENGTH);
+        assert!(result.get() <= SUM_LENGTH);
+        assert!(
+            result.get() > SHORT_SUM_LENGTH,
+            "large file should exceed SHORT_SUM_LENGTH"
+        );
+    }
+
+    #[test]
+    fn sum_length_derive_strong_phase2_redo_returns_max() {
+        // Phase 2 redo uses SUM_LENGTH (16). The function short-circuits
+        // and returns 16 for any file/block size combination.
+        let checksum_len = NonZeroU8::new(SUM_LENGTH).unwrap();
+        let protocol = ProtocolVersion::try_from(31u8).unwrap();
+
+        for &(file_len, block_len) in &[
+            (1024u64, 700u32),
+            (10 * 1024 * 1024, 3232),
+            (1u64 << 30, 32768),
+        ] {
+            let result = derive_strong_sum_length(file_len, block_len, protocol, checksum_len);
+            assert_eq!(
+                result.get(),
+                SUM_LENGTH,
+                "redo must return SUM_LENGTH for file_len={file_len}"
+            );
+        }
+    }
+
+    #[test]
+    fn sum_length_phase_toggle_produces_different_layouts() {
+        // Verify that the same file produces different strong_sum_length
+        // values depending on whether phase 1 or phase 2 checksum length
+        // is requested.
+        use crate::block_size::SHORT_SUM_LENGTH;
+
+        let phase1 = calculate_signature_layout(params(1024, None, 31, SHORT_SUM_LENGTH))
+            .expect("phase1 layout");
+        let phase2 =
+            calculate_signature_layout(params(1024, None, 31, SUM_LENGTH)).expect("phase2 layout");
+
+        // Block layout is identical - only checksum length differs
+        assert_eq!(phase1.block_length(), phase2.block_length());
+        assert_eq!(phase1.block_count(), phase2.block_count());
+        assert_eq!(phase1.remainder(), phase2.remainder());
+
+        // Phase 1 gets a shorter checksum, phase 2 gets the maximum
+        assert_eq!(phase1.strong_sum_length().get(), SHORT_SUM_LENGTH);
+        assert_eq!(phase2.strong_sum_length().get(), SUM_LENGTH);
+        assert!(phase1.strong_sum_length() < phase2.strong_sum_length());
+    }
+
+    #[test]
     fn signature_layout_params_accessors() {
         let p = params(100, Some(512), 31, 8);
         assert_eq!(p.file_length(), 100);
