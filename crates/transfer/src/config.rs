@@ -181,6 +181,17 @@ pub struct ServerConfig {
     /// - `flist.c:2991`: `if (use_qsort) qsort(...); else merge_sort(...);`
     /// - `options.c`: `--qsort` flag definition
     pub qsort: bool,
+    /// Whether `--partial-dir` is configured on the client.
+    ///
+    /// Used after compat flag negotiation to apply `CF_INPLACE_PARTIAL_DIR`:
+    /// when the server advertises this flag and a partial directory is configured,
+    /// the receiver uses in-place writes for partial-dir basis files.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
+    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    pub has_partial_dir: bool,
     /// File selection and filtering configuration.
     pub file_selection: FileSelectionConfig,
     /// Whether `--stats` was requested, enabling detailed transfer statistics.
@@ -212,6 +223,7 @@ impl Default for ServerConfig {
             trust_sender: false,
             stop_at: None,
             qsort: false,
+            has_partial_dir: false,
             file_selection: FileSelectionConfig::default(),
             do_stats: false,
         }

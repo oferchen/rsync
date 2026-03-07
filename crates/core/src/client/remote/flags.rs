@@ -173,6 +173,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
     server_config.write.inplace = config.inplace();
+    server_config.has_partial_dir = config.partial_directory().is_some();
     server_config.file_selection.min_file_size = config.min_file_size();
     server_config.file_selection.max_file_size = config.max_file_size();
     // upstream: options.c:2046-2048 - do_stats sets INFO_STATS to level 2+
