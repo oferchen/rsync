@@ -87,6 +87,13 @@ pub struct FileListReader {
     /// they all point to a single `Arc<Path>` allocation instead of each holding
     /// an independent copy.
     dirname_interner: PathInterner,
+    /// Accumulated I/O error code from the sender.
+    ///
+    /// Upstream `flist.c:recv_file_list()` does `io_error |= err` when it
+    /// encounters an IoError marker, then breaks the loop. We mirror this by
+    /// returning `Ok(None)` and accumulating the error here for the caller to
+    /// inspect after the file list is fully read.
+    io_error: i32,
 }
 
 /// Result from reading metadata fields.
@@ -143,6 +150,7 @@ impl FileListReader {
             flist_csum_len: 0,
             iconv: None,
             dirname_interner: PathInterner::new(),
+            io_error: 0,
         }
     }
 
@@ -171,6 +179,7 @@ impl FileListReader {
             flist_csum_len: 0,
             iconv: None,
             dirname_interner: PathInterner::new(),
+            io_error: 0,
         }
     }
 
@@ -289,6 +298,17 @@ impl FileListReader {
     #[must_use]
     pub const fn stats(&self) -> &FileListStats {
         &self.stats
+    }
+
+    /// Returns the accumulated I/O error code from the sender.
+    ///
+    /// Upstream `flist.c:recv_file_list()` accumulates `io_error |= err` when
+    /// the sender reports I/O errors during file list generation. A non-zero
+    /// value means some source files could not be read, but the transfer should
+    /// still proceed with the files that were successfully listed.
+    #[must_use]
+    pub const fn io_error(&self) -> i32 {
+        self.io_error
     }
 
     /// Returns whether varint flag encoding is enabled.
@@ -889,10 +909,10 @@ impl FileListReader {
         let flags = match self.read_flags(reader)? {
             FlagsResult::EndOfList => return Ok(None),
             FlagsResult::IoError(code) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("file list I/O error: {code}"),
-                ));
+                // upstream: flist.c:recv_file_list() does `io_error |= err`
+                // and breaks the loop - it does NOT abort the transfer.
+                self.io_error |= code;
+                return Ok(None);
             }
             FlagsResult::Flags(f) => f,
         };
