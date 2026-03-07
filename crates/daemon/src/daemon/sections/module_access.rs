@@ -711,8 +711,8 @@ fn build_server_config(
             // but no explicit --compress-level=N was sent, default to level 6 (the
             // upstream default). Without this, compression_level stays None and the
             // transfer pipeline won't activate token-level compression.
-            if cfg.flags.compress && cfg.compression_level.is_none() {
-                cfg.compression_level = Some(compress::zlib::CompressionLevel::Default);
+            if cfg.flags.compress && cfg.connection.compression_level.is_none() {
+                cfg.connection.compression_level = Some(compress::zlib::CompressionLevel::Default);
             }
 
             Ok(Some(cfg))
@@ -747,10 +747,10 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                 config.flags.delete = true;
             }
             "--size-only" => {
-                config.size_only = true;
+                config.file_selection.size_only = true;
             }
             "--ignore-errors" => {
-                config.ignore_errors = true;
+                config.deletion.ignore_errors = true;
             }
             "--numeric-ids" => {
                 config.flags.numeric_ids = true;
@@ -759,16 +759,16 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                 config.qsort = true;
             }
             "--inplace" => {
-                config.inplace = true;
+                config.write.inplace = true;
             }
             "--fsync" => {
-                config.fsync = true;
+                config.write.fsync = true;
             }
             _ => {
                 if let Some(level_str) = arg.strip_prefix("--compress-level=") {
                     if let Ok(level) = level_str.parse::<u32>() {
                         if let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level) {
-                            config.compression_level = Some(cl);
+                            config.connection.compression_level = Some(cl);
                         }
                     }
                 }

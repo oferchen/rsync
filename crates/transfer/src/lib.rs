@@ -137,7 +137,9 @@ pub use self::adaptive_buffer::{
     SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD, adaptive_buffer_size, adaptive_token_capacity,
     adaptive_writer_capacity,
 };
-pub use self::config::{ReferenceDirectory, ReferenceDirectoryKind, ServerConfig};
+pub use self::config::{
+    FileSelectionConfig, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig,
+};
 pub use self::delta_config::DeltaGeneratorConfig;
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
 pub use self::generator::{
@@ -252,16 +254,16 @@ pub fn run_server_with_handshake<W: Write>(
     // upstream: main.c:1245 start_server() → setup_protocol(f_out, f_in)
     // Performs compat flags exchange + capability negotiation in RAW mode,
     // before multiplex activation.
-    let is_server = !config.client_mode;
+    let is_server = !config.connection.client_mode;
 
     // upstream: daemon mode uses unidirectional negotiation (server sends,
     // client reads silently); SSH mode uses bidirectional exchange.
-    let is_daemon_mode = config.client_mode || handshake.client_args.is_some();
+    let is_daemon_mode = config.connection.client_mode || handshake.client_args.is_some();
 
     // upstream: compat.c — do_compression is set by the -z short option.
     // Only check compact flag strings (single-dash args like "-avz"), not
     // long-form args like "--size-only" which contain 'z' but don't mean compression.
-    let do_compression = if config.client_mode {
+    let do_compression = if config.connection.client_mode {
         config.flags.compress
     } else if let Some(args) = handshake.client_args.as_deref() {
         args.iter()
@@ -306,7 +308,7 @@ pub fn run_server_with_handshake<W: Write>(
 
     // upstream: main.c:1246-1248 — server activates multiplex_out for proto >= 23.
     // upstream: main.c:1296-1345 — client activates for proto >= 30 (need_messages).
-    let should_activate_output_multiplex = if config.client_mode {
+    let should_activate_output_multiplex = if config.connection.client_mode {
         handshake.protocol.supports_generator_messages()
     } else {
         handshake.protocol.supports_multiplex_io()
@@ -322,7 +324,7 @@ pub fn run_server_with_handshake<W: Write>(
     let receiver_wants_filter_list = config.flags.delete || config.flags.prune_empty_dirs;
 
     // upstream: main.c:1258 — daemon sender always calls recv_filter_list(f_in).
-    let should_send_filter_list = if config.client_mode {
+    let should_send_filter_list = if config.connection.client_mode {
         match config.role {
             ServerRole::Generator => receiver_wants_filter_list,
             ServerRole::Receiver => true,
@@ -334,13 +336,13 @@ pub fn run_server_with_handshake<W: Write>(
     if should_send_filter_list {
         protocol::filters::write_filter_list(
             &mut writer,
-            &config.filter_rules,
+            &config.connection.filter_rules,
             handshake.protocol,
         )?;
         writer.flush()?;
     }
     // upstream: main.c:1249-1250 — server sends MSG_IO_TIMEOUT to client.
-    if !config.client_mode
+    if !config.connection.client_mode
         && let Some(timeout_secs) = handshake.io_timeout
         && handshake.protocol.supports_extended_goodbye()
     {
