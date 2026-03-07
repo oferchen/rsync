@@ -624,6 +624,8 @@ setup_comprehensive_src() {
   chmod 755 "$dir/script.sh"
   echo "should be excluded" > "$dir/excluded.log"
   echo "also excluded" > "$dir/subdir/debug.log"
+  # Unsafe symlink (absolute path outside tree) for safe-links test
+  ln -sf /etc/hostname "$dir/unsafe_link.txt" 2>/dev/null || true
 }
 
 # Verify core files transferred with correct content
@@ -713,6 +715,22 @@ comp_run_scenario() {
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       echo "extra" > "$ddir/extra_file.txt"
       ;;
+    existing)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/subdir"
+      echo "old content" > "$ddir/hello.txt"
+      echo "old nested" > "$ddir/subdir/file.txt"
+      ;;
+    backup)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      echo "old hello" > "$ddir/hello.txt"
+      echo "old multiline" > "$ddir/multiline.txt"
+      ;;
+    max-delete)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      echo "extra1" > "$ddir/extra_one.txt"
+      echo "extra2" > "$ddir/extra_two.txt"
+      echo "extra3" > "$ddir/extra_three.txt"
+      ;;
     delta)
       rm -rf "$ddir"/*
       mkdir -p "$ddir/subdir/nested"
@@ -734,7 +752,8 @@ comp_run_scenario() {
       "${sdir}/" "$url" >"$transfer_log.out" 2>"$transfer_log.err"
   local rc=$?
   cat "$transfer_log.err" >> "$log"
-  if [[ $rc -ne 0 ]]; then
+  # --max-delete exits 25 when limit reached; treat as success for verification
+  if [[ $rc -ne 0 ]] && ! [[ "$vtype" == "max-delete" && $rc -eq 25 ]]; then
     echo "    FAIL (transfer error, exit=$rc)"
     echo "    stderr: $(head -5 "$transfer_log.err")"
     return 1
@@ -783,6 +802,94 @@ comp_run_scenario() {
       ;;
     perms)
       comp_verify_transfer "$sdir" "$ddir" && comp_verify_perms "$sdir" "$ddir"
+      ;;
+    copy-links)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      if [[ -L "$ddir/link.txt" ]]; then
+        echo "    --copy-links: link.txt is still a symlink"
+        return 1
+      fi
+      if [[ -f "$ddir/link.txt" ]]; then
+        if ! cmp -s "$sdir/hello.txt" "$ddir/link.txt"; then
+          echo "    --copy-links: link.txt content mismatch"
+          return 1
+        fi
+      else
+        echo "    --copy-links: link.txt missing"
+        return 1
+      fi
+      return 0
+      ;;
+    safe-links)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      if [[ -L "$ddir/unsafe_link.txt" ]]; then
+        echo "    --safe-links: unsafe symlink was transferred"
+        return 1
+      fi
+      if [[ -L "$sdir/link.txt" ]] && [[ ! -L "$ddir/link.txt" ]]; then
+        echo "    --safe-links: safe symlink missing"
+        return 1
+      fi
+      return 0
+      ;;
+    existing)
+      if [[ ! -f "$ddir/hello.txt" ]]; then
+        echo "    --existing: pre-existing hello.txt missing"
+        return 1
+      fi
+      if ! cmp -s "$sdir/hello.txt" "$ddir/hello.txt"; then
+        echo "    --existing: hello.txt not updated"
+        return 1
+      fi
+      if ! cmp -s "$sdir/subdir/file.txt" "$ddir/subdir/file.txt"; then
+        echo "    --existing: subdir/file.txt not updated"
+        return 1
+      fi
+      if [[ -f "$ddir/multiline.txt" || -f "$ddir/binary.dat" ]]; then
+        echo "    --existing: new files were created"
+        return 1
+      fi
+      return 0
+      ;;
+    backup)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      if [[ ! -f "$ddir/hello.txt~" ]]; then
+        echo "    --backup: hello.txt~ backup not created"
+        return 1
+      fi
+      if [[ ! -f "$ddir/multiline.txt~" ]]; then
+        echo "    --backup: multiline.txt~ backup not created"
+        return 1
+      fi
+      local expected_hello="old hello"
+      local actual_hello
+      actual_hello=$(cat "$ddir/hello.txt~")
+      if [[ "$actual_hello" != "$expected_hello" ]]; then
+        echo "    --backup: hello.txt~ content wrong"
+        return 1
+      fi
+      return 0
+      ;;
+    dry-run)
+      local count
+      count=$(find "$ddir" -type f 2>/dev/null | wc -l)
+      if [[ $count -gt 0 ]]; then
+        echo "    --dry-run: files were created ($count found)"
+        return 1
+      fi
+      return 0
+      ;;
+    max-delete)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      local remaining=0
+      [[ -f "$ddir/extra_one.txt" ]] && remaining=$((remaining + 1))
+      [[ -f "$ddir/extra_two.txt" ]] && remaining=$((remaining + 1))
+      [[ -f "$ddir/extra_three.txt" ]] && remaining=$((remaining + 1))
+      if [[ $remaining -lt 2 ]]; then
+        echo "    --max-delete=1: too many files deleted (${remaining} remaining, expected >= 2)"
+        return 1
+      fi
+      return 0
       ;;
   esac
 }
@@ -854,6 +961,12 @@ run_comprehensive_interop_case() {
     "exclude|-av --exclude=*.log|exclude"
     "permissions|-rlpv|perms"
     "size-only|-av --size-only|size-only"
+    "copy-links|-avL|copy-links"
+    "safe-links|-rlptv --safe-links|safe-links"
+    "existing|-av --existing|existing"
+    "backup|-av --backup|backup"
+    "max-delete|-av --delete --max-delete=1|max-delete"
+    "dry-run|-avn|dry-run"
   )
 
   # Incremental recursion only supported on protocol 30+
