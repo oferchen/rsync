@@ -94,8 +94,8 @@ mod summary;
 
 pub use self::config::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientConfigBuilder,
-    CompressionSetting, DeleteMode, FilesFromSource, FilterRuleKind, FilterRuleSpec,
-    HumanReadableMode, HumanReadableModeParseError, IconvParseError, IconvSetting,
+    CompressionSetting, ConfigConflict, DeleteMode, FilesFromSource, FilterRuleKind,
+    FilterRuleSpec, HumanReadableMode, HumanReadableModeParseError, IconvParseError, IconvSetting,
     ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumAlgorithm, StrongChecksumChoice,
     TransferTimeout, force_no_compress_from_env, parse_skip_compress_list, skip_compress_from_env,
 };
