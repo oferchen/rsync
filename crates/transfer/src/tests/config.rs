@@ -137,9 +137,9 @@ fn size_limits_default_to_none() {
         vec![OsString::from("/p")],
     )
     .expect("ok");
-    let mfs = cfg.min_file_size;
+    let mfs = cfg.file_selection.min_file_size;
     assert!(mfs.is_none());
-    let mxs = cfg.max_file_size;
+    let mxs = cfg.file_selection.max_file_size;
     assert!(mxs.is_none());
 }
 
@@ -151,8 +151,8 @@ fn size_limits_can_be_configured() {
         vec![OsString::from("/p")],
     )
     .expect("ok");
-    cfg.min_file_size = Some(100);
-    cfg.max_file_size = Some(1000);
-    assert_eq!(cfg.min_file_size, Some(100));
-    assert_eq!(cfg.max_file_size, Some(1000));
+    cfg.file_selection.min_file_size = Some(100);
+    cfg.file_selection.max_file_size = Some(1000);
+    assert_eq!(cfg.file_selection.min_file_size, Some(100));
+    assert_eq!(cfg.file_selection.max_file_size, Some(1000));
 }

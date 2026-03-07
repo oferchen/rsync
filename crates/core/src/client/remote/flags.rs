@@ -172,9 +172,9 @@ pub(crate) fn build_wire_format_rules(
 pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &mut ServerConfig) {
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
-    server_config.inplace = config.inplace();
-    server_config.min_file_size = config.min_file_size();
-    server_config.max_file_size = config.max_file_size();
+    server_config.write.inplace = config.inplace();
+    server_config.file_selection.min_file_size = config.min_file_size();
+    server_config.file_selection.max_file_size = config.max_file_size();
 }
 
 #[cfg(test)]

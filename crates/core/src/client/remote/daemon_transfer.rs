@@ -1014,9 +1014,9 @@ fn build_server_config_for_receiver(
     // Set client_mode since we're a daemon client, not a server.
     // This prevents the context from trying to read filter list
     // (since we'll send it to the daemon after multiplex activation).
-    server_config.client_mode = true;
-    server_config.is_daemon_connection = true;
-    server_config.filter_rules = filter_rules;
+    server_config.connection.client_mode = true;
+    server_config.connection.is_daemon_connection = true;
+    server_config.connection.filter_rules = filter_rules;
 
     // Set verbose flag for local output (not sent to daemon in server protocol string)
     server_config.flags.verbose = config.verbosity() > 0;
@@ -1025,19 +1025,20 @@ fn build_server_config_for_receiver(
     // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
     server_config.flags.numeric_ids = config.numeric_ids();
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
-    server_config.size_only = config.size_only();
+    server_config.file_selection.size_only = config.size_only();
 
-    server_config.fsync = config.fsync();
-    server_config.io_uring_policy = config.io_uring_policy();
+    server_config.write.fsync = config.fsync();
+    server_config.write.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
-    server_config.compression_level = config.compression_level();
+    server_config.connection.compression_level = config.compression_level();
     // When -z is active but no explicit --compress-level=N was given, default to
     // level 6 (upstream rsync default). Without this, compression_level stays None
     // and setup_protocol won't activate token-level Zlib compression, causing the
     // TokenReader to run in plain mode while the remote sends compressed tokens.
     // upstream: options.c:2737-2740 — compress_level defaults to 6 when -z is set.
-    if server_config.flags.compress && server_config.compression_level.is_none() {
-        server_config.compression_level = Some(compress::zlib::CompressionLevel::Default);
+    if server_config.flags.compress && server_config.connection.compression_level.is_none() {
+        server_config.connection.compression_level =
+            Some(compress::zlib::CompressionLevel::Default);
     }
     server_config.stop_at = config.stop_at();
 
@@ -1061,9 +1062,9 @@ fn build_server_config_for_generator(
     // Set client_mode since we're a daemon client, not a server.
     // This prevents the context from trying to read filter list
     // (since we'll send it to the daemon after multiplex activation).
-    server_config.client_mode = true;
-    server_config.is_daemon_connection = true;
-    server_config.filter_rules = filter_rules;
+    server_config.connection.client_mode = true;
+    server_config.connection.is_daemon_connection = true;
+    server_config.connection.filter_rules = filter_rules;
 
     // Set verbose flag for local output (not sent to daemon in server protocol string)
     server_config.flags.verbose = config.verbosity() > 0;
@@ -1072,19 +1073,20 @@ fn build_server_config_for_generator(
     // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
     server_config.flags.numeric_ids = config.numeric_ids();
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
-    server_config.size_only = config.size_only();
+    server_config.file_selection.size_only = config.size_only();
 
-    server_config.fsync = config.fsync();
-    server_config.io_uring_policy = config.io_uring_policy();
+    server_config.write.fsync = config.fsync();
+    server_config.write.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
-    server_config.compression_level = config.compression_level();
+    server_config.connection.compression_level = config.compression_level();
     // When -z is active but no explicit --compress-level=N was given, default to
     // level 6 (upstream rsync default). Without this, compression_level stays None
     // and setup_protocol won't activate token-level Zlib compression, causing the
     // TokenReader to run in plain mode while the remote sends compressed tokens.
     // upstream: options.c:2737-2740 — compress_level defaults to 6 when -z is set.
-    if server_config.flags.compress && server_config.compression_level.is_none() {
-        server_config.compression_level = Some(compress::zlib::CompressionLevel::Default);
+    if server_config.flags.compress && server_config.connection.compression_level.is_none() {
+        server_config.connection.compression_level =
+            Some(compress::zlib::CompressionLevel::Default);
     }
     server_config.stop_at = config.stop_at();
 
