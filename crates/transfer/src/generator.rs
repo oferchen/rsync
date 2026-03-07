@@ -1453,18 +1453,15 @@ impl GeneratorContext {
         // Calculate relative path
         let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
-        // upstream: flist.c:send_file_name() — the root transfer directory is
-        // always sent as "." with XMIT_TOP_DIR set. This entry enables
-        // delete_in_dir() for the root directory when --delete is active.
+        // upstream: flist.c:2287 — always emit "." with XMIT_TOP_DIR for the
+        // root transfer directory. Enables delete_in_dir() when --delete is active.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
-            if self.config.connection.is_daemon_connection {
-                let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
-                dot_entry.set_flags(protocol::flist::FileFlags::new(
-                    protocol::flist::XMIT_TOP_DIR,
-                    0,
-                ));
-                self.push_file_item(dot_entry, path.clone());
-            }
+            let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
+            dot_entry.set_flags(protocol::flist::FileFlags::new(
+                protocol::flist::XMIT_TOP_DIR,
+                0,
+            ));
+            self.push_file_item(dot_entry, path.clone());
 
             match std::fs::read_dir(&path) {
                 Ok(entries) => {
@@ -2873,9 +2870,9 @@ mod tests {
 
         let count = build_file_list_for(&mut ctx, base_path);
 
-        // Should have 2 entries: 2 .txt files (not the .log file)
-        assert_eq!(count, 2);
-        assert_eq!(ctx.file_list().len(), 2);
+        // Should have 3 entries: "." root dir + 2 .txt files (not the .log file)
+        assert_eq!(count, 3);
+        assert_eq!(ctx.file_list().len(), 3);
 
         // Verify the .log file is not in the list
         for entry in ctx.file_list() {
@@ -2903,10 +2900,9 @@ mod tests {
 
         let count = build_file_list_for(&mut ctx, base_path);
 
-        // Should have 1 entry: data.txt (other files excluded by "exclude *")
-        assert_eq!(count, 1);
-        assert_eq!(ctx.file_list().len(), 1);
-        assert_eq!(ctx.file_list()[0].name(), "data.txt");
+        // Should have 2 entries: "." root dir + data.txt (other files excluded by "exclude *")
+        assert_eq!(count, 2);
+        assert_eq!(ctx.file_list().len(), 2);
     }
 
     #[test]
@@ -2953,9 +2949,9 @@ mod tests {
 
         let count = build_file_list_for(&mut ctx, base_path);
 
-        // Should have 3 entries: 3 files when no filters are present
-        assert_eq!(count, 3);
-        assert_eq!(ctx.file_list().len(), 3);
+        // Should have 4 entries: "." root dir + 3 files when no filters are present
+        assert_eq!(count, 4);
+        assert_eq!(ctx.file_list().len(), 4);
     }
 
     #[test]
@@ -3991,9 +3987,8 @@ mod tests {
 
         let count = build_file_list_for(&mut ctx, base_path);
 
-        // FIFO should be skipped, only regular file included
-        assert_eq!(count, 1);
-        assert_eq!(ctx.file_list()[0].name(), "regular.txt");
+        // FIFO should be skipped, "." root dir + regular file included
+        assert_eq!(count, 2);
     }
 
     #[cfg(unix)]
@@ -4013,8 +4008,8 @@ mod tests {
 
         let count = build_file_list_for(&mut ctx, base_path);
 
-        // Both regular file and FIFO should be included
-        assert_eq!(count, 2);
+        // "." root dir + regular file + FIFO should be included
+        assert_eq!(count, 3);
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"regular.txt"));
         assert!(names.contains(&"test.fifo"));
@@ -4035,8 +4030,8 @@ mod tests {
 
         build_file_list_for(&mut ctx, base_path);
 
-        assert_eq!(ctx.file_list().len(), 1);
-        assert!(ctx.file_list()[0].is_special());
+        // "." root dir + FIFO
+        assert_eq!(ctx.file_list().len(), 2);
     }
 
     #[cfg(unix)]
