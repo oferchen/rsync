@@ -6,9 +6,9 @@
 //   Position 1: X = file type: f (file), d (directory), L (symlink), D (device), S (special)
 //   Positions 2-10: attribute change indicators or '+' for new, '.' for unchanged
 //
-// The format string is always 11 characters for file operations, followed by
-// a space and the filename. The only exception is deletion which outputs
-// "*deleting   filename".
+// The format string is always 11 characters, followed by a space and the
+// filename. Deletions use "*deleting  " (padded to 11 chars) followed by
+// a space and the filename, matching upstream log.c:697.
 
 use super::common::*;
 use super::*;

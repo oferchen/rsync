@@ -314,7 +314,8 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
     use ClientEventKind::*;
 
     if matches!(event.kind(), ClientEventKind::EntryDeleted) {
-        return "*deleting".to_owned();
+        // upstream: log.c:697 — padded to 11 chars to match YXcstpoguax width
+        return "*deleting  ".to_owned();
     }
 
     let mut fields = ['.'; 11];
@@ -365,6 +366,14 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
     }
 
     let change_set = event.change_set();
+
+    // upstream: log.c:730-734 — ITEM_MISSING_DATA fills attribute positions with '?'
+    if change_set.missing_data() {
+        for slot in fields.iter_mut().skip(2) {
+            *slot = '?';
+        }
+        return fields.iter().collect();
+    }
     let attr = &mut fields[2..];
 
     if change_set.checksum_changed() {
@@ -399,6 +408,14 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
     }
     if change_set.xattr_changed() {
         attr[8] = 'x';
+    }
+
+    // upstream: log.c:735-744 — when update type is '.', 'h', or 'c' and all
+    // attribute positions (2-10) are dots, collapse them to spaces.
+    if matches!(fields[0], '.' | 'h' | 'c') && fields[2..].iter().all(|&ch| ch == '.') {
+        for slot in fields[2..].iter_mut() {
+            *slot = ' ';
+        }
     }
 
     fields.iter().collect()
@@ -1125,8 +1142,8 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result, "*deleting",
-            "deleted entry should be '*deleting': {result:?}"
+            result, "*deleting  ",
+            "deleted entry should be '*deleting  ' (11 chars): {result:?}"
         );
     }
 
@@ -1350,8 +1367,8 @@ mod tests {
         );
         let result = format_itemized_changes(&event);
         assert_eq!(
-            result, ".f.........",
-            "no change should show all dots: {result:?}"
+            result, ".f         ",
+            "no change with '.' update type should collapse dots to spaces: {result:?}"
         );
     }
 
@@ -1685,26 +1702,26 @@ mod tests {
 
     #[test]
     fn itemize_upstream_delete_pattern() {
-        // Upstream rsync: *deleting for deleted entries
+        // upstream: log.c:697 — "*deleting  " padded to 11 chars
         let event = make_event(
             ClientEventKind::EntryDeleted,
             false,
             None,
             LocalCopyChangeSet::new(),
         );
-        assert_eq!(format_itemized_changes(&event), "*deleting");
+        assert_eq!(format_itemized_changes(&event), "*deleting  ");
     }
 
     #[test]
     fn itemize_upstream_unchanged_file_pattern() {
-        // Upstream rsync: .f......... for an unchanged file
+        // upstream: log.c:735-744 — all-dots collapse to spaces
         let event = make_event(
             ClientEventKind::MetadataReused,
             false,
             Some(ClientEntryKind::File),
             LocalCopyChangeSet::new(),
         );
-        assert_eq!(format_itemized_changes(&event), ".f.........");
+        assert_eq!(format_itemized_changes(&event), ".f         ");
     }
 
     #[test]
@@ -1789,8 +1806,8 @@ mod tests {
     }
 
     #[test]
-    fn itemize_delete_does_not_have_eleven_char_length() {
-        // *deleting is a special case -- it is 9 characters, not 11
+    fn itemize_delete_has_eleven_char_length() {
+        // upstream: log.c:697 — "*deleting  " padded to 11 chars like YXcstpoguax
         let event = make_event(
             ClientEventKind::EntryDeleted,
             false,
@@ -1798,8 +1815,46 @@ mod tests {
             LocalCopyChangeSet::new(),
         );
         let result = format_itemized_changes(&event);
-        assert_eq!(result, "*deleting");
-        assert_eq!(result.len(), 9, "delete format should be 9 characters");
+        assert_eq!(result, "*deleting  ");
+        assert_eq!(result.len(), 11, "delete format should be 11 characters");
+    }
+
+    #[test]
+    fn itemize_missing_data_shows_question_marks() {
+        // upstream: log.c:730-734 — ITEM_MISSING_DATA fills positions 2-10 with '?'
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new().with_missing_data(true),
+        );
+        assert_eq!(format_itemized_changes(&event), ">f?????????");
+    }
+
+    #[test]
+    fn itemize_missing_data_overrides_individual_changes() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new()
+                .with_missing_data(true)
+                .with_checksum_changed(true)
+                .with_size_changed(true),
+        );
+        assert_eq!(format_itemized_changes(&event), ">f?????????");
+    }
+
+    #[test]
+    fn itemize_missing_data_length_is_eleven() {
+        let event = make_event(
+            ClientEventKind::DataCopied,
+            false,
+            Some(ClientEntryKind::File),
+            LocalCopyChangeSet::new().with_missing_data(true),
+        );
+        let result = format_itemized_changes(&event);
+        assert_eq!(result.len(), 11);
     }
 
     use super::super::parser::parse_out_format;

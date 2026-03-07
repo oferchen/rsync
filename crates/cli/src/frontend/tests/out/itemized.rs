@@ -79,5 +79,5 @@ fn out_format_itemized_placeholder_reports_deletion() {
         .render(event, &OutFormatContext::default(), &mut output)
         .expect("render %i");
 
-    assert_eq!(output, b"*deleting\n");
+    assert_eq!(output, b"*deleting  \n");
 }
