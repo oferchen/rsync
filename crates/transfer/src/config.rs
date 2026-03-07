@@ -15,6 +15,78 @@ use super::role::ServerRole;
 /// Reference directory types for remote transfers.
 pub use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
+/// File write behavior configuration.
+///
+/// Controls how the receiver writes transferred data to disk.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WriteConfig {
+    /// Call fsync() after writing each file (`--fsync`).
+    pub fsync: bool,
+    /// Write directly to destination without temp-file + rename (`--inplace`).
+    pub inplace: bool,
+    /// Write data to device files instead of creating with mknod (`--write-devices`).
+    pub write_devices: bool,
+    /// Policy controlling io_uring usage for file I/O.
+    pub io_uring_policy: fast_io::IoUringPolicy,
+}
+
+impl Default for WriteConfig {
+    fn default() -> Self {
+        Self {
+            fsync: false,
+            inplace: false,
+            write_devices: false,
+            io_uring_policy: fast_io::IoUringPolicy::Auto,
+        }
+    }
+}
+
+/// Deletion behavior configuration.
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct DeletionConfig {
+    /// Maximum number of deletions allowed (`--max-delete=NUM`).
+    pub max_delete: Option<u64>,
+    /// Delete files even if there are I/O errors (`--ignore-errors`).
+    pub ignore_errors: bool,
+}
+
+/// Connection and protocol context configuration.
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct ConnectionConfig {
+    /// When true, indicates client-side operation (daemon client mode).
+    pub client_mode: bool,
+    /// Indicates the transfer is over a daemon (rsync://) connection.
+    pub is_daemon_connection: bool,
+    /// Filter rules to send to remote daemon (client_mode only).
+    pub filter_rules: Vec<FilterRuleWireFormat>,
+    /// Optional filename encoding converter for `--iconv` support.
+    pub iconv: Option<FilenameConverter>,
+    /// Optional compression level for zlib compression (0-9).
+    pub compression_level: Option<CompressionLevel>,
+}
+
+/// File selection and filtering options.
+///
+/// Controls which files are candidates for transfer based on size,
+/// existence at destination, and external file lists.
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct FileSelectionConfig {
+    /// Minimum file size in bytes. Files smaller than this are skipped.
+    pub min_file_size: Option<u64>,
+    /// Maximum file size in bytes. Files larger than this are skipped.
+    pub max_file_size: Option<u64>,
+    /// Skip updating files that already exist at the destination (`--ignore-existing`).
+    pub ignore_existing: bool,
+    /// Skip creating new files - only update existing files (`--existing`).
+    pub existing_only: bool,
+    /// Compare only file sizes, ignoring modification times (`--size-only`).
+    pub size_only: bool,
+    /// Path for `--files-from` when the server reads the file list directly.
+    pub files_from_path: Option<String>,
+    /// Use NUL bytes as delimiters for `--files-from` input (`--from0`).
+    pub from0: bool,
+}
+
 /// Configuration supplied to the server entry point.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ServerConfig {
@@ -28,64 +100,14 @@ pub struct ServerConfig {
     pub flags: ParsedServerFlags,
     /// Remaining positional arguments passed to the server.
     pub args: Vec<OsString>,
-    /// Optional compression level for zlib compression (0-9).
-    /// When None, defaults to level 6 (upstream default).
-    /// Sourced from daemon configuration or environment.
-    pub compression_level: Option<CompressionLevel>,
-    /// When true, indicates client-side operation (daemon client mode).
-    ///
-    /// In client mode:
-    /// - Filter list is SENT to the remote server, not read from it
-    /// - The contexts skip reading filter list since the client already sent it
-    ///
-    /// This is used when connecting to a daemon as a client, where our code
-    /// sends the filter list to the daemon (which reads it), and then runs
-    /// server contexts locally that should not try to read filter list again.
-    pub client_mode: bool,
-    /// Filter rules to send to remote daemon (client_mode only).
-    ///
-    /// When `client_mode` is true, these rules are sent to the daemon after
-    /// multiplex activation and before the transfer begins. The daemon uses
-    /// these rules to filter file list generation.
-    ///
-    /// This is empty for normal server mode (where we receive filter list).
-    pub filter_rules: Vec<FilterRuleWireFormat>,
+    /// Connection and protocol context configuration.
+    pub connection: ConnectionConfig,
     /// Reference directories for basis file lookup (`--compare-dest`, `--copy-dest`, `--link-dest`).
-    ///
-    /// These directories are searched in order when looking for basis files during delta
-    /// transfers. Each directory can be used for comparison, copying, or hard-linking
-    /// depending on its kind.
     pub reference_directories: Vec<ReferenceDirectory>,
-    /// Optional filename encoding converter for `--iconv` support.
-    ///
-    /// When set, filenames are converted between local and remote character encodings
-    /// during file list transmission. This is used when the local and remote systems
-    /// use different filename encodings.
-    pub iconv: Option<FilenameConverter>,
-    /// Delete files even if there are I/O errors (`--ignore-errors`).
-    ///
-    /// When true, the io_error flag is sent as 0 to the receiver regardless of
-    /// actual I/O errors encountered during file list generation.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:2518`: `write_int(f, ignore_errors ? 0 : io_error);`
-    pub ignore_errors: bool,
-    /// Call fsync() after writing each file to ensure data durability (`--fsync`).
-    ///
-    /// When true, the receiver calls fsync() on each file after writing to guarantee
-    /// data is flushed to stable storage before proceeding. This matches upstream rsync's
-    /// `--fsync` flag behavior.
-    ///
-    /// Default is false (matching upstream's `do_fsync=0` default), as the atomic rename
-    /// provides crash consistency and the kernel will flush buffers when closing files
-    /// or when buffer pressure requires it.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `receiver.c:340`: `if (do_fsync && (fd != -1) && fsync(fd) != 0) { ... }`
-    /// - `options.c`: `--fsync` flag (long-form only, no short character)
-    pub fsync: bool,
+    /// Deletion behavior configuration.
+    pub deletion: DeletionConfig,
+    /// File write behavior configuration.
+    pub write: WriteConfig,
     /// Optional user-specified checksum seed from `--checksum-seed=NUM`.
     ///
     /// When `Some(seed)`, the server uses this fixed seed instead of generating
@@ -102,34 +124,12 @@ pub struct ServerConfig {
     /// - `options.c:835`: `--checksum-seed=NUM`
     /// - `compat.c:750`: `checksum_seed = (int32)time(NULL);` (default)
     pub checksum_seed: Option<u32>,
-    /// Indicates the transfer is over a daemon (rsync://) connection.
-    ///
-    /// When true, certain protocol behaviors are adjusted:
-    /// - Capability negotiation is unidirectional (server sends, client reads)
-    /// - The `--checksum-choice` argument is forwarded to the daemon
-    ///
-    /// Default is false (SSH or local transfer).
-    pub is_daemon_connection: bool,
     /// Optional checksum algorithm override from `--checksum-choice`.
     ///
     /// When set, forces the negotiated checksum algorithm for the transfer
     /// protocol instead of using automatic negotiation. Propagated from
     /// the client configuration to ensure both sides agree on the algorithm.
     pub checksum_choice: Option<protocol::ChecksumAlgorithm>,
-    /// Write file data directly to device files instead of creating them with mknod.
-    ///
-    /// When true, device files (block and character) are opened for writing and
-    /// receive delta data just like regular files. This enables writing disk images
-    /// or raw data to device nodes. Implies inplace behavior for device targets
-    /// (no temp file + rename, since devices cannot be renamed onto).
-    ///
-    /// Default is false.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `options.c`: `--write-devices` implies `inplace = 1`
-    /// - `receiver.c`: `if (write_devices && IS_DEVICE(st.st_mode))` opens device for writing
-    pub write_devices: bool,
     /// Disables sender path safety checks when true (`--trust-sender`).
     ///
     /// When false (default), the receiver validates file list entries from the
@@ -172,93 +172,30 @@ pub struct ServerConfig {
     /// - `flist.c:2991`: `if (use_qsort) qsort(...); else merge_sort(...);`
     /// - `options.c`: `--qsort` flag definition
     pub qsort: bool,
-    /// Policy controlling io_uring usage for file I/O.
-    ///
-    /// Controls whether io_uring is used for file writes during transfer:
-    /// - `Auto`: use io_uring when available (default)
-    /// - `Enabled`: require io_uring, error if unavailable (`--io-uring`)
-    /// - `Disabled`: always use standard I/O (`--no-io-uring`)
-    pub io_uring_policy: fast_io::IoUringPolicy,
-    /// Minimum file size in bytes. Files smaller than this are skipped.
-    pub min_file_size: Option<u64>,
-    /// Maximum file size in bytes. Files larger than this are skipped.
-    pub max_file_size: Option<u64>,
-    /// Path for `--files-from` when the server reads the file list directly.
-    ///
-    /// When set to `Some("-")`, the file list is forwarded by the client over
-    /// the protocol socket. When set to a path, the server opens the file
-    /// locally. When `None`, `--files-from` is not active.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `options.c:2944-2956` — server_options() sends `--files-from=-` or path
-    /// - `flist.c:2205` — `reading_remotely = filesfrom_host != NULL`
-    pub files_from_path: Option<String>,
-    /// Use NUL bytes as delimiters for `--files-from` input (`--from0`).
-    ///
-    /// When true, the file list uses NUL bytes instead of newlines as
-    /// delimiters. Always true when the client forwards a local file
-    /// (the client sends `--from0` alongside `--files-from=-`).
-    pub from0: bool,
-    /// Update destination files in place without temp-file + rename (`--inplace`).
-    ///
-    /// When true, the receiver writes directly to the destination file instead
-    /// of creating a temporary file and atomically renaming. This preserves the
-    /// destination inode and is required for read-only directories, device targets,
-    /// and space-constrained scenarios.
-    ///
-    /// The delta application is safe because block copy tokens reference positions
-    /// in the basis file that are at or before the current write head, and the basis
-    /// file is mmap'd before writing begins.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `options.c`: `--inplace` sets `inplace = 1`
-    /// - `receiver.c:855-860`: opens destination directly when inplace
-    /// - `receiver.c:241`: `receive_data` with `inplace_sizing` parameter
-    pub inplace: bool,
-    /// Compare only file sizes during quick-check, ignoring modification times (`--size-only`).
-    ///
-    /// When true, the generator's quick-check skips the mtime comparison and considers
-    /// files up-to-date if their sizes match. This is useful when synchronising from
-    /// a filesystem that does not preserve timestamps (e.g., FAT32).
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `generator.c:617`: `quick_check_ok()` — `if (size_only) return 1;` after size match
-    /// - `options.c:2836-2837`: `--size-only` sent as long-form arg in `server_options()`
-    pub size_only: bool,
-    /// Skip updating files that already exist at the destination (`--ignore-existing`).
-    ///
-    /// When true, files that exist at the destination are not updated even if the
-    /// source has newer content. New files (not present at destination) are still
-    /// transferred.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `generator.c:1562`: `if (ignore_existing > 0 && statret == 0) { ... }`
-    /// - `options.c:2831`: `--ignore-existing` sent as long-form arg in `server_options()`
-    pub ignore_existing: bool,
-    /// Skip creating new files - only update files that already exist (`--existing`).
-    ///
-    /// When true, files not present at the destination are skipped. Only files
-    /// that already exist are candidates for update.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `generator.c:1571`: `if (ignore_non_existing > 0 && statret == -1) { ... }`
-    /// - `options.c:2833`: `--existing` sent as long-form arg in `server_options()`
-    pub existing_only: bool,
-    /// Maximum number of deletions allowed (`--max-delete=NUM`).
-    ///
-    /// When set, limits the number of files that can be deleted during a transfer.
-    /// Returns exit code 25 (RERR_DEL_LIMIT) when the limit is exceeded.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `options.c:2823`: `--max-delete=NUM` sent in `server_options()`
-    /// - `main.c:1367`: `deletion_count >= max_delete` check
-    pub max_delete: Option<u64>,
+    /// File selection and filtering configuration.
+    pub file_selection: FileSelectionConfig,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::NEWEST,
+            flag_string: String::new(),
+            flags: ParsedServerFlags::default(),
+            args: Vec::new(),
+            connection: ConnectionConfig::default(),
+            reference_directories: Vec::new(),
+            deletion: DeletionConfig::default(),
+            write: WriteConfig::default(),
+            checksum_seed: None,
+            checksum_choice: None,
+            trust_sender: false,
+            stop_at: None,
+            qsort: false,
+            file_selection: FileSelectionConfig::default(),
+        }
+    }
 }
 
 impl ServerConfig {
@@ -285,34 +222,10 @@ impl ServerConfig {
 
         Ok(Self {
             role,
-            protocol: ProtocolVersion::NEWEST,
             flag_string,
             flags,
             args,
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-            checksum_seed: None,
-            is_daemon_connection: false,
-            checksum_choice: None,
-            write_devices: false,
-            trust_sender: false,
-            stop_at: None,
-            qsort: false,
-            io_uring_policy: fast_io::IoUringPolicy::Auto,
-            min_file_size: None,
-            max_file_size: None,
-            files_from_path: None,
-            from0: false,
-            inplace: false,
-            size_only: false,
-            ignore_existing: false,
-            existing_only: false,
-            max_delete: None,
+            ..Self::default()
         })
     }
 }
@@ -388,9 +301,9 @@ mod tests {
             vec![OsString::from("/path")],
         );
         let config = result.unwrap();
-        assert!(config.compression_level.is_none());
-        assert!(!config.client_mode);
-        assert!(config.filter_rules.is_empty());
+        assert!(config.connection.compression_level.is_none());
+        assert!(!config.connection.client_mode);
+        assert!(config.connection.filter_rules.is_empty());
     }
 
     #[test]

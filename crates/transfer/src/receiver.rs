@@ -120,25 +120,41 @@ fn is_hardlink_follower(entry: &FileEntry) -> bool {
 /// Returns `true` when the destination file matches the source entry (skip transfer).
 /// Thread-safe for use with `rayon::par_iter`.
 ///
-/// When `size_only` is true, only sizes are compared (mtime is ignored).
-/// When `preserve_times` is false and `size_only` is false, all files need transfer.
-///
-/// Mirrors upstream `generator.c:617 quick_check_ok()` for `FT_REG`.
+/// Follows upstream `generator.c:617 quick_check_ok()` evaluation order:
+/// 1. Size mismatch - always needs transfer
+/// 2. `always_checksum` - compute file checksum and compare (ignores mtime)
+/// 3. `size_only` - size matched, skip transfer
+/// 4. `!preserve_times` (implies `ignore_times`) - force transfer
+/// 5. mtime comparison
 fn quick_check_matches(
     entry: &FileEntry,
+    dest_path: &Path,
     dest_meta: &fs::Metadata,
     preserve_times: bool,
     size_only: bool,
+    always_checksum: Option<protocol::ChecksumAlgorithm>,
 ) -> bool {
-    if !preserve_times && !size_only {
-        return false;
-    }
+    // upstream: generator.c:621 - size check first
     if dest_meta.len() != entry.size() {
         return false;
     }
-    // upstream: generator.c:617 — `if (size_only) return 1;` after size match
+    // upstream: generator.c:626 - always_checksum compares file checksums
+    // instead of relying on mtime. Takes priority over size_only and ignore_times.
+    if let Some(algorithm) = always_checksum {
+        return match entry.checksum() {
+            Some(expected) => {
+                file_checksum_matches(dest_path, dest_meta.len(), algorithm, expected)
+            }
+            None => false,
+        };
+    }
+    // upstream: generator.c:632 — `if (size_only) return 1;` after size match
     if size_only {
         return true;
+    }
+    // upstream: generator.c:635 - ignore_times forces transfer
+    if !preserve_times {
+        return false;
     }
     #[cfg(unix)]
     {
@@ -153,6 +169,39 @@ fn quick_check_matches(
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(false, |d| d.as_secs() as i64 == entry.mtime())
     }
+}
+
+/// Computes a file's checksum and compares it against an expected value.
+///
+/// Used by `--checksum` (`-c`) mode to compare file contents instead of
+/// mtime+size quick-check. Returns `true` when checksums match (skip transfer).
+///
+/// upstream: checksum.c:402 `file_checksum()` - plain hash, no seed
+fn file_checksum_matches(
+    path: &Path,
+    file_size: u64,
+    algorithm: protocol::ChecksumAlgorithm,
+    expected: &[u8],
+) -> bool {
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut hasher = ChecksumVerifier::for_algorithm(algorithm);
+    let mut buf = [0u8; 64 * 1024];
+    let mut remaining = file_size;
+    while remaining > 0 {
+        let to_read = buf.len().min(remaining as usize);
+        if file.read_exact(&mut buf[..to_read]).is_err() {
+            return false;
+        }
+        hasher.update(&buf[..to_read]);
+        remaining -= to_read as u64;
+    }
+    let mut digest = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let len = hasher.finalize_into(&mut digest);
+    // upstream: flist_csum_len determines comparison length
+    let cmp_len = expected.len().min(len);
+    digest[..cmp_len] == expected[..cmp_len]
 }
 
 /// Context for the receiver role during a transfer.
@@ -252,6 +301,20 @@ impl ReceiverContext {
         &self.config
     }
 
+    /// Returns the file-list checksum algorithm based on negotiation and protocol.
+    ///
+    /// upstream: checksum.c - `file_sum_nni` selects algorithm for file checksums
+    #[must_use]
+    const fn get_checksum_algorithm(&self) -> protocol::ChecksumAlgorithm {
+        if let Some(negotiated) = &self.negotiated_algorithms {
+            negotiated.checksum
+        } else if self.protocol.uses_varint_encoding() {
+            protocol::ChecksumAlgorithm::MD5
+        } else {
+            protocol::ChecksumAlgorithm::MD4
+        }
+    }
+
     /// Builds a [`BasisFileConfig`] for a single file, pulling shared state from `self`.
     fn build_basis_file_config<'a>(
         &'a self,
@@ -320,7 +383,7 @@ impl ReceiverContext {
             reader = reader.with_always_checksum(factory.digest_length());
         }
 
-        if let Some(ref converter) = self.config.iconv {
+        if let Some(ref converter) = self.config.connection.iconv {
             reader = reader.with_iconv(converter.clone());
         }
         reader
@@ -649,7 +712,7 @@ impl ReceiverContext {
     #[must_use]
     const fn should_read_filter_list(&self) -> bool {
         let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
-        !self.config.client_mode && receiver_wants_list
+        !self.config.connection.client_mode && receiver_wants_list
     }
 
     /// Sanitizes the received file list by removing entries with unsafe paths.
@@ -788,15 +851,24 @@ impl ReceiverContext {
     /// are removed recursively (depth-first).
     ///
     /// Uses rayon for parallel directory scanning when directory count exceeds threshold.
+    /// When `max_delete` is set, an atomic counter enforces the deletion limit across
+    /// all parallel workers.
+    ///
+    /// Returns `(stats, limit_exceeded)` where `limit_exceeded` is true when deletions
+    /// were stopped due to `--max-delete`.
     ///
     /// # Upstream Reference
     ///
     /// - `generator.c:delete_in_dir()` — scans one directory, removes unlisted entries
     /// - `generator.c:do_delete_pass()` — full tree walk deletion sweep
-    fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<DeleteStats> {
+    /// - `main.c:1367` — `deletion_count >= max_delete` check
+    fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<(DeleteStats, bool)> {
         use std::collections::{HashMap, HashSet};
+        use std::sync::atomic::{AtomicU64, Ordering};
 
         use rayon::prelude::*;
+
+        let max_delete = self.config.deletion.max_delete;
 
         // Build directory → children map from the file list.
         // Each directory maps to the set of child entry names it contains.
@@ -823,6 +895,10 @@ impl ReceiverContext {
         }
 
         let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+
+        // Atomic counter for max_delete enforcement across parallel workers.
+        // upstream: main.c:1367 — deletion_count >= max_delete
+        let deletions_performed = AtomicU64::new(0);
 
         // Per-directory deletion: scan one directory, delete unlisted entries.
         // Each directory is independent — remove_dir_all handles subtree deletion.
@@ -852,6 +928,15 @@ impl ReceiverContext {
                 let name = entry.file_name();
                 if keep.contains(name.as_os_str()) {
                     continue;
+                }
+
+                // Check max_delete limit before each deletion.
+                if let Some(limit) = max_delete {
+                    let current = deletions_performed.load(Ordering::Relaxed);
+                    if current >= limit {
+                        break;
+                    }
+                    deletions_performed.fetch_add(1, Ordering::Relaxed);
                 }
 
                 let path = dest_path.join(&name);
@@ -909,7 +994,13 @@ impl ReceiverContext {
                 .fold(DeleteStats::new(), merge)
         };
 
-        Ok(stats)
+        // Limit is exceeded when we had candidates beyond the allowed count.
+        // The counter may be >= limit if we incremented it but then the actual
+        // deletion failed, so compare actual deletions against the limit too.
+        let limit_exceeded =
+            max_delete.is_some_and(|limit| deletions_performed.load(Ordering::Relaxed) >= limit);
+
+        Ok((stats, limit_exceeded))
     }
 
     /// Creates symbolic links from the file list entries.
@@ -1195,13 +1286,20 @@ impl ReceiverContext {
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
                 let sz = e.size();
-                self.config.min_file_size.is_none_or(|m| sz >= m)
-                    && self.config.max_file_size.is_none_or(|m| sz <= m)
+                self.config
+                    .file_selection
+                    .min_file_size
+                    .is_none_or(|m| sz >= m)
+                    && self
+                        .config
+                        .file_selection
+                        .max_file_size
+                        .is_none_or(|m| sz <= m)
             })
             .filter(|(_, e)| {
                 if let Some(fd) = failed_dirs {
                     if let Some(failed_parent) = fd.failed_ancestor(e.name()) {
-                        if self.config.flags.verbose && self.config.client_mode {
+                        if self.config.flags.verbose && self.config.connection.client_mode {
                             info_log!(
                                 Skip,
                                 1,
@@ -1218,12 +1316,18 @@ impl ReceiverContext {
             })
             .collect();
 
-        // Quick-check requires preserve_times and no --ignore-times (or --size-only).
-        // upstream: generator.c:617 — quick_check_ok() is skipped when ignore_times
+        // Quick-check parameters mirror upstream generator.c:617 quick_check_ok().
+        // preserve_times is false when ignore_times is set, forcing transfer.
         let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
-        let size_only = self.config.size_only;
-        let ignore_existing = self.config.ignore_existing;
-        let existing_only = self.config.existing_only;
+        let size_only = self.config.file_selection.size_only;
+        let ignore_existing = self.config.file_selection.ignore_existing;
+        let existing_only = self.config.file_selection.existing_only;
+        // upstream: generator.c:626 - always_checksum uses file checksums instead of mtime
+        let always_checksum = if self.config.flags.checksum {
+            Some(self.get_checksum_algorithm())
+        } else {
+            None
+        };
 
         // Phase B: Stat each candidate to determine quick-check status.
         // Also applies --ignore-existing and --existing filters.
@@ -1246,8 +1350,15 @@ impl ReceiverContext {
                     if ignore_existing {
                         continue;
                     }
-                    if quick_check_matches(entry, meta, preserve_times, size_only) {
-                        let file_path = dest_dir.join(entry.path());
+                    let file_path = dest_dir.join(entry.path());
+                    if quick_check_matches(
+                        entry,
+                        &file_path,
+                        meta,
+                        preserve_times,
+                        size_only,
+                        always_checksum,
+                    ) {
                         if let Err(e) = apply_metadata_with_cached_stat(
                             &file_path,
                             entry,
@@ -1273,7 +1384,14 @@ impl ReceiverContext {
                     if ignore_existing {
                         continue;
                     }
-                    if quick_check_matches(entry, meta, preserve_times, size_only) {
+                    if quick_check_matches(
+                        entry,
+                        &file_path,
+                        meta,
+                        preserve_times,
+                        size_only,
+                        always_checksum,
+                    ) {
                         if let Err(e) = apply_metadata_with_cached_stat(
                             &file_path,
                             entry,
@@ -1313,7 +1431,7 @@ impl ReceiverContext {
 
         // Check if parent is under a failed directory
         if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
-            if self.config.flags.verbose && self.config.client_mode {
+            if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Skip,
                     1,
@@ -1329,7 +1447,7 @@ impl ReceiverContext {
         // Try to create the directory
         if !dir_path.exists() {
             if let Err(e) = fs::create_dir_all(&dir_path) {
-                if self.config.flags.verbose && self.config.client_mode {
+                if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(
                         Misc,
                         1,
@@ -1345,7 +1463,7 @@ impl ReceiverContext {
 
         // Apply metadata (non-fatal errors)
         if let Err(e) = apply_metadata_from_file_entry(&dir_path, entry, metadata_opts) {
-            if self.config.flags.verbose && self.config.client_mode {
+            if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Misc,
                     1,
@@ -1356,7 +1474,7 @@ impl ReceiverContext {
             }
         }
 
-        if self.config.flags.verbose && self.config.client_mode {
+        if self.config.flags.verbose && self.config.connection.client_mode {
             if relative_path.as_os_str() == "." {
                 info_log!(Name, 1, "./");
             } else {
@@ -1692,7 +1810,10 @@ impl ReceiverContext {
 
             // Skip non-regular files (directories, symlinks, devices, etc.)
             if !file_entry.is_file() {
-                if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
+                if file_entry.is_dir()
+                    && self.config.flags.verbose
+                    && self.config.connection.client_mode
+                {
                     if relative_path.as_os_str() == "." {
                         info_log!(Name, 1, "./");
                     } else {
@@ -1710,19 +1831,19 @@ impl ReceiverContext {
 
             // Skip files outside the configured size range.
             let file_size = file_entry.size();
-            if let Some(min_limit) = self.config.min_file_size {
+            if let Some(min_limit) = self.config.file_selection.min_file_size {
                 if file_size < min_limit {
                     continue;
                 }
             }
-            if let Some(max_limit) = self.config.max_file_size {
+            if let Some(max_limit) = self.config.file_selection.max_file_size {
                 if file_size > max_limit {
                     continue;
                 }
             }
 
             // upstream: rsync.c:674
-            if self.config.flags.verbose && self.config.client_mode {
+            if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(Name, 1, "{}", relative_path.display());
             }
 
@@ -1953,7 +2074,7 @@ impl ReceiverContext {
                     "failed to flush output buffer for {file_path:?}: {e}"
                 ))
             })?;
-            if self.config.fsync {
+            if self.config.write.fsync {
                 file.sync_all().map_err(|e| {
                     io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
                 })?;
@@ -1999,6 +2120,7 @@ impl ReceiverContext {
             directories_failed: 0,
             files_skipped: 0,
             delete_stats: DeleteStats::new(),
+            delete_limit_exceeded: false,
             redo_count: 0,
         })
     }
@@ -2041,8 +2163,11 @@ impl ReceiverContext {
         // Delete extraneous files at destination (--delete-before pass).
         // upstream: generator.c:do_delete_pass() — full tree walk deletion
         let mut delete_stats = DeleteStats::new();
+        let mut delete_limit_exceeded = false;
         if self.config.flags.delete {
-            delete_stats = self.delete_extraneous_files(&setup.dest_dir)?;
+            let (ds, exceeded) = self.delete_extraneous_files(&setup.dest_dir)?;
+            delete_stats = ds;
+            delete_limit_exceeded = exceeded;
         }
 
         let mut stats = TransferStats {
@@ -2108,7 +2233,10 @@ impl ReceiverContext {
 
         // Print verbose directories
         for file_entry in &self.file_list {
-            if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
+            if file_entry.is_dir()
+                && self.config.flags.verbose
+                && self.config.connection.client_mode
+            {
                 let relative_path = file_entry.path();
                 if relative_path.as_os_str() == "." {
                     info_log!(Name, 1, "./");
@@ -2131,6 +2259,7 @@ impl ReceiverContext {
         stats.total_source_bytes = total_source_bytes;
         stats.metadata_errors = metadata_errors;
         stats.delete_stats = delete_stats;
+        stats.delete_limit_exceeded = delete_limit_exceeded;
         stats.redo_count = redo_count;
 
         Ok(stats)
@@ -2280,7 +2409,7 @@ impl ReceiverContext {
             })?;
         }
 
-        if self.config.flags.verbose && self.config.client_mode {
+        if self.config.flags.verbose && self.config.connection.client_mode {
             info_log!(Flist, 1, "receiving incremental file list");
         }
 
@@ -2381,11 +2510,11 @@ impl ReceiverContext {
             compat_flags: self.compat_flags.as_ref(),
             checksum_seed: self.checksum_seed,
             use_sparse: self.config.flags.sparse,
-            do_fsync: self.config.fsync,
+            do_fsync: self.config.write.fsync,
 
-            write_devices: self.config.write_devices,
-            inplace: self.config.inplace,
-            io_uring_policy: self.config.io_uring_policy,
+            write_devices: self.config.write.write_devices,
+            inplace: self.config.write.inplace,
+            io_uring_policy: self.config.write.io_uring_policy,
         };
 
         let mut pipeline = PipelineState::new(pipeline_config);
@@ -2407,7 +2536,7 @@ impl ReceiverContext {
         // mtime/perms/ownership immediately after rename — mirroring upstream
         // finish_transfer() → set_file_attrs() in receiver.c.
         let disk_config = DiskCommitConfig {
-            do_fsync: self.config.fsync,
+            do_fsync: self.config.write.fsync,
             metadata_opts: Some(setup.metadata_opts.clone()),
             ..DiskCommitConfig::default()
         };
@@ -2439,7 +2568,7 @@ impl ReceiverContext {
                             setup.dest_dir.join(relative_path)
                         };
 
-                        if self.config.flags.verbose && self.config.client_mode {
+                        if self.config.flags.verbose && self.config.connection.client_mode {
                             info_log!(Name, 1, "{}", relative_path.display());
                         }
 
@@ -2561,7 +2690,7 @@ impl ReceiverContext {
 
         // Only read stats in client mode: daemon sender writes stats over the wire,
         // but in server mode the client sender returns without writing stats.
-        if self.config.client_mode {
+        if self.config.connection.client_mode {
             let _sender_stats = self.receive_stats(reader)?;
         }
 
@@ -2896,6 +3025,15 @@ pub struct TransferStats {
 
     /// Breakdown of extraneous items deleted at the destination (`--delete`).
     pub delete_stats: DeleteStats,
+
+    /// Whether deletion was stopped due to `--max-delete` limit.
+    ///
+    /// When true, the caller should report exit code 25 (`RERR_DEL_LIMIT`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1367` — `deletion_count >= max_delete` triggers exit 25
+    pub delete_limit_exceeded: bool,
 
     /// Number of files that were retransmitted due to checksum verification failure.
     ///
@@ -3604,33 +3742,8 @@ mod tests {
             role: ServerRole::Receiver,
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
             flag_string: "-logDtpre.".to_owned(),
-            flags: ParsedServerFlags::default(),
             args: vec![OsString::from(".")],
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-
-            io_uring_policy: fast_io::IoUringPolicy::Auto,
-            checksum_seed: None,
-            is_daemon_connection: false,
-            checksum_choice: None,
-            write_devices: false,
-            trust_sender: false,
-            stop_at: None,
-            qsort: false,
-            min_file_size: None,
-            max_file_size: None,
-            files_from_path: None,
-            from0: false,
-            inplace: false,
-            size_only: false,
-            ignore_existing: false,
-            existing_only: false,
-            max_delete: None,
+            ..Default::default()
         }
     }
 
@@ -4513,31 +4626,7 @@ mod tests {
                 ..ParsedServerFlags::default()
             },
             args: vec![OsString::from(".")],
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-
-            io_uring_policy: fast_io::IoUringPolicy::Auto,
-            checksum_seed: None,
-            is_daemon_connection: false,
-            checksum_choice: None,
-            write_devices: false,
-            trust_sender: false,
-            stop_at: None,
-            qsort: false,
-            min_file_size: None,
-            max_file_size: None,
-            files_from_path: None,
-            from0: false,
-            inplace: false,
-            size_only: false,
-            ignore_existing: false,
-            existing_only: false,
-            max_delete: None,
+            ..Default::default()
         }
     }
 
@@ -4971,6 +5060,7 @@ mod tests {
             directories_failed: 2,
             files_skipped: 5,
             delete_stats: DeleteStats::new(),
+            delete_limit_exceeded: false,
             redo_count: 0,
         };
 

@@ -322,9 +322,11 @@ fn run_pull_transfer(
     // correct point in the protocol (after handshake + compat exchange), matching
     // upstream main.c:1258 where recv_filter_list() is called inside the server.
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;
-    server_config.client_mode = true;
-    server_config.filter_rules = flags::build_wire_format_rules(config.filter_rules())
-        .map_err(|e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12))?;
+    server_config.connection.client_mode = true;
+    server_config.connection.filter_rules = flags::build_wire_format_rules(config.filter_rules())
+        .map_err(|e| {
+        invalid_argument_error(&format!("failed to build filter rules: {e}"), 12)
+    })?;
     server_config.stop_at = config.stop_at();
 
     let start = Instant::now();
@@ -352,9 +354,11 @@ fn run_push_transfer(
     // client_mode = true ensures the filter list is sent at the correct point
     // in the protocol flow (after handshake + compat exchange).
     let mut server_config = build_server_config_for_generator(config, local_paths)?;
-    server_config.client_mode = true;
-    server_config.filter_rules = flags::build_wire_format_rules(config.filter_rules())
-        .map_err(|e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12))?;
+    server_config.connection.client_mode = true;
+    server_config.connection.filter_rules = flags::build_wire_format_rules(config.filter_rules())
+        .map_err(|e| {
+        invalid_argument_error(&format!("failed to build filter rules: {e}"), 12)
+    })?;
     server_config.stop_at = config.stop_at();
 
     let start = Instant::now();
@@ -537,7 +541,7 @@ fn build_server_config_for_receiver(
     // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
     server_config.flags.numeric_ids = config.numeric_ids();
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
-    server_config.size_only = config.size_only();
+    server_config.file_selection.size_only = config.size_only();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -559,7 +563,7 @@ fn build_server_config_for_generator(
     // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
     server_config.flags.numeric_ids = config.numeric_ids();
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
-    server_config.size_only = config.size_only();
+    server_config.file_selection.size_only = config.size_only();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
