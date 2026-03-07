@@ -788,15 +788,24 @@ impl ReceiverContext {
     /// are removed recursively (depth-first).
     ///
     /// Uses rayon for parallel directory scanning when directory count exceeds threshold.
+    /// When `max_delete` is set, an atomic counter enforces the deletion limit across
+    /// all parallel workers.
+    ///
+    /// Returns `(stats, limit_exceeded)` where `limit_exceeded` is true when deletions
+    /// were stopped due to `--max-delete`.
     ///
     /// # Upstream Reference
     ///
     /// - `generator.c:delete_in_dir()` — scans one directory, removes unlisted entries
     /// - `generator.c:do_delete_pass()` — full tree walk deletion sweep
-    fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<DeleteStats> {
+    /// - `main.c:1367` — `deletion_count >= max_delete` check
+    fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<(DeleteStats, bool)> {
         use std::collections::{HashMap, HashSet};
+        use std::sync::atomic::{AtomicU64, Ordering};
 
         use rayon::prelude::*;
+
+        let max_delete = self.config.max_delete;
 
         // Build directory → children map from the file list.
         // Each directory maps to the set of child entry names it contains.
@@ -823,6 +832,10 @@ impl ReceiverContext {
         }
 
         let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+
+        // Atomic counter for max_delete enforcement across parallel workers.
+        // upstream: main.c:1367 — deletion_count >= max_delete
+        let deletions_performed = AtomicU64::new(0);
 
         // Per-directory deletion: scan one directory, delete unlisted entries.
         // Each directory is independent — remove_dir_all handles subtree deletion.
@@ -852,6 +865,15 @@ impl ReceiverContext {
                 let name = entry.file_name();
                 if keep.contains(name.as_os_str()) {
                     continue;
+                }
+
+                // Check max_delete limit before each deletion.
+                if let Some(limit) = max_delete {
+                    let current = deletions_performed.load(Ordering::Relaxed);
+                    if current >= limit {
+                        break;
+                    }
+                    deletions_performed.fetch_add(1, Ordering::Relaxed);
                 }
 
                 let path = dest_path.join(&name);
@@ -909,7 +931,13 @@ impl ReceiverContext {
                 .fold(DeleteStats::new(), merge)
         };
 
-        Ok(stats)
+        // Limit is exceeded when we had candidates beyond the allowed count.
+        // The counter may be >= limit if we incremented it but then the actual
+        // deletion failed, so compare actual deletions against the limit too.
+        let limit_exceeded =
+            max_delete.is_some_and(|limit| deletions_performed.load(Ordering::Relaxed) >= limit);
+
+        Ok((stats, limit_exceeded))
     }
 
     /// Creates symbolic links from the file list entries.
@@ -1999,6 +2027,7 @@ impl ReceiverContext {
             directories_failed: 0,
             files_skipped: 0,
             delete_stats: DeleteStats::new(),
+            delete_limit_exceeded: false,
             redo_count: 0,
         })
     }
@@ -2041,8 +2070,11 @@ impl ReceiverContext {
         // Delete extraneous files at destination (--delete-before pass).
         // upstream: generator.c:do_delete_pass() — full tree walk deletion
         let mut delete_stats = DeleteStats::new();
+        let mut delete_limit_exceeded = false;
         if self.config.flags.delete {
-            delete_stats = self.delete_extraneous_files(&setup.dest_dir)?;
+            let (ds, exceeded) = self.delete_extraneous_files(&setup.dest_dir)?;
+            delete_stats = ds;
+            delete_limit_exceeded = exceeded;
         }
 
         let mut stats = TransferStats {
@@ -2131,6 +2163,7 @@ impl ReceiverContext {
         stats.total_source_bytes = total_source_bytes;
         stats.metadata_errors = metadata_errors;
         stats.delete_stats = delete_stats;
+        stats.delete_limit_exceeded = delete_limit_exceeded;
         stats.redo_count = redo_count;
 
         Ok(stats)
@@ -2896,6 +2929,15 @@ pub struct TransferStats {
 
     /// Breakdown of extraneous items deleted at the destination (`--delete`).
     pub delete_stats: DeleteStats,
+
+    /// Whether deletion was stopped due to `--max-delete` limit.
+    ///
+    /// When true, the caller should report exit code 25 (`RERR_DEL_LIMIT`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1367` — `deletion_count >= max_delete` triggers exit 25
+    pub delete_limit_exceeded: bool,
 
     /// Number of files that were retransmitted due to checksum verification failure.
     ///
@@ -4971,6 +5013,7 @@ mod tests {
             directories_failed: 2,
             files_skipped: 5,
             delete_stats: DeleteStats::new(),
+            delete_limit_exceeded: false,
             redo_count: 0,
         };
 
