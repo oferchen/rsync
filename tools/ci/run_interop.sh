@@ -995,6 +995,9 @@ run_comprehensive_interop_case() {
     "bwlimit|-av --bwlimit=10000|bwlimit"
     "compress-level-1|-avz --compress-level=1|basic"
     "compress-level-9|-avz --compress-level=9|basic"
+    "protocol-30|-av --protocol=30|basic"
+    "protocol-31|-av --protocol=31|basic"
+    "compress-delta|-avz --no-whole-file -I|delta"
   )
 
   # Incremental recursion only supported on protocol 30+
