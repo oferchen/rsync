@@ -744,6 +744,21 @@ comp_run_scenario() {
       echo "extra2" > "$ddir/extra_two.txt"
       echo "extra3" > "$ddir/extra_three.txt"
       ;;
+    inplace)
+      rm -rf "$ddir"/*
+      mkdir -p "$ddir/subdir/nested"
+      for f in hello.txt multiline.txt empty.txt subdir/file.txt subdir/nested/deep.txt; do
+        [[ -f "$sdir/$f" ]] && cp "$sdir/$f" "$ddir/$f"
+      done
+      echo "old content for inplace" > "$ddir/hello.txt"
+      ;;
+    whole-file-replace)
+      rm -rf "$ddir"/*
+      mkdir -p "$ddir/subdir/nested"
+      for f in hello.txt multiline.txt subdir/file.txt subdir/nested/deep.txt; do
+        echo "stale data" > "$ddir/$f"
+      done
+      ;;
     delta)
       rm -rf "$ddir"/*
       mkdir -p "$ddir/subdir/nested"
@@ -803,7 +818,7 @@ comp_run_scenario() {
       echo "  --update correctly skipped files with newer dest timestamps"
       return 0
       ;;
-    basic|compress|whole-file|inplace|numeric-ids|recursive|size-only|inc-recursive|delta|sparse|partial|append|bwlimit)
+    basic|compress|whole-file|whole-file-replace|inplace|numeric-ids|recursive|size-only|inc-recursive|delta|sparse|partial|append|bwlimit)
       if ! comp_verify_transfer "$sdir" "$ddir"; then
         echo "    dest contents: $(find "$ddir" -type f | sort | head -20)"
         echo "    daemon log tail: $(tail -5 "$log" 2>/dev/null)"
@@ -1038,16 +1053,22 @@ run_comprehensive_interop_case() {
   # Scenario table: name|flags|verify_type
   local -a scenarios=(
     "archive|-av|basic"
+    "relative|-avR|basic"
+    "one-file-system|-avx|basic"
     "checksum|-avc|basic"
     "compress|-avz|compress"
     "whole-file|-avW|whole-file"
+    "whole-file-replace|-avW|whole-file-replace"
     "delta|-av --no-whole-file -I|delta"
     "inplace|-av --inplace|inplace"
+    "delay-updates|-av --delay-updates|basic"
     "numeric-ids|-av --numeric-ids|numeric-ids"
     "recursive-only|-rv|recursive"
     "symlinks|-rlptv|symlinks"
     "hardlinks|-avH|hardlinks"
     "delete|-av --delete|delete"
+    "delete-after|-av --delete-after|delete"
+    "delete-during|-av --delete-during|delete"
     "exclude|-av --exclude=*.log|exclude"
     "permissions|-rlpv|perms"
     "size-only|-av --size-only|size-only"
