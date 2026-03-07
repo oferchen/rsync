@@ -228,4 +228,67 @@ mod tests {
         let config = builder().build();
         assert_eq!(config.io_uring_policy(), fast_io::IoUringPolicy::Auto);
     }
+
+    // Mutual exclusion validation tests
+    // (upstream: options.c:2406-2414 - inplace/append conflicts with partial-dir/delay-updates)
+
+    #[test]
+    fn validate_inplace_with_partial_dir_conflicts() {
+        let b = builder()
+            .inplace(true)
+            .partial_directory(Some("/tmp/partial"));
+        let err = b.validate().unwrap_err();
+        assert_eq!(err.option1, "inplace");
+        assert_eq!(err.option2, "partial-dir");
+    }
+
+    #[test]
+    fn validate_inplace_with_delay_updates_conflicts() {
+        let b = builder().inplace(true).delay_updates(true);
+        let err = b.validate().unwrap_err();
+        assert_eq!(err.option1, "inplace");
+        assert_eq!(err.option2, "delay-updates");
+    }
+
+    #[test]
+    fn validate_append_with_partial_dir_conflicts() {
+        let b = builder()
+            .append(true)
+            .partial_directory(Some("/tmp/partial"));
+        let err = b.validate().unwrap_err();
+        assert_eq!(err.option1, "append");
+        assert_eq!(err.option2, "partial-dir");
+    }
+
+    #[test]
+    fn validate_append_with_delay_updates_conflicts() {
+        let b = builder().append(true).delay_updates(true);
+        let err = b.validate().unwrap_err();
+        assert_eq!(err.option1, "append");
+        assert_eq!(err.option2, "delay-updates");
+    }
+
+    #[test]
+    fn validate_inplace_without_conflicts_ok() {
+        let b = builder().inplace(true);
+        assert!(b.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_delay_updates_without_inplace_ok() {
+        let b = builder().delay_updates(true);
+        assert!(b.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_partial_dir_without_inplace_ok() {
+        let b = builder().partial_directory(Some("/tmp/partial"));
+        assert!(b.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_default_builder_ok() {
+        let b = builder();
+        assert!(b.validate().is_ok());
+    }
 }
