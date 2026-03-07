@@ -87,6 +87,13 @@ pub struct FileListReader {
     /// they all point to a single `Arc<Path>` allocation instead of each holding
     /// an independent copy.
     dirname_interner: PathInterner,
+    /// Accumulated I/O error code from the sender.
+    ///
+    /// Upstream `flist.c:recv_file_list()` does `io_error |= err` when it
+    /// encounters an IoError marker, then breaks the loop. We mirror this by
+    /// returning `Ok(None)` and accumulating the error here for the caller to
+    /// inspect after the file list is fully read.
+    io_error: i32,
 }
 
 /// Result from reading metadata fields.
@@ -143,6 +150,7 @@ impl FileListReader {
             flist_csum_len: 0,
             iconv: None,
             dirname_interner: PathInterner::new(),
+            io_error: 0,
         }
     }
 
@@ -171,6 +179,7 @@ impl FileListReader {
             flist_csum_len: 0,
             iconv: None,
             dirname_interner: PathInterner::new(),
+            io_error: 0,
         }
     }
 
@@ -289,6 +298,17 @@ impl FileListReader {
     #[must_use]
     pub const fn stats(&self) -> &FileListStats {
         &self.stats
+    }
+
+    /// Returns the accumulated I/O error code from the sender.
+    ///
+    /// Upstream `flist.c:recv_file_list()` accumulates `io_error |= err` when
+    /// the sender reports I/O errors during file list generation. A non-zero
+    /// value means some source files could not be read, but the transfer should
+    /// still proceed with the files that were successfully listed.
+    #[must_use]
+    pub const fn io_error(&self) -> i32 {
+        self.io_error
     }
 
     /// Returns whether varint flag encoding is enabled.
@@ -889,10 +909,10 @@ impl FileListReader {
         let flags = match self.read_flags(reader)? {
             FlagsResult::EndOfList => return Ok(None),
             FlagsResult::IoError(code) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("file list I/O error: {code}"),
-                ));
+                // upstream: flist.c:recv_file_list() does `io_error |= err`
+                // and breaks the loop - it does NOT abort the transfer.
+                self.io_error |= code;
+                return Ok(None);
             }
             FlagsResult::Flags(f) => f,
         };
@@ -1329,10 +1349,10 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("file list I/O error: 42"));
+        // io_error markers are now accumulated (upstream: flist.c io_error |= err)
+        // rather than returned as hard errors.
+        assert!(result.unwrap().is_none());
+        assert_eq!(reader.io_error(), 42);
     }
 
     #[test]
@@ -1377,9 +1397,8 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("file list I/O error: 99"));
+        assert!(result.unwrap().is_none());
+        assert_eq!(reader.io_error(), 99);
     }
 
     #[test]
@@ -1398,9 +1417,8 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("file list I/O error: 123"));
+        assert!(result.unwrap().is_none());
+        assert_eq!(reader.io_error(), 123);
     }
 
     #[test]
@@ -1423,16 +1441,15 @@ mod tests {
         assert!(result.unwrap().is_none());
         assert_eq!(cursor.position() as usize, data.len());
 
-        // Test end marker with non-zero error returns Err
+        // Test end marker with non-zero error accumulates io_error
         let mut data2 = Vec::new();
         writer.write_end(&mut data2, Some(123)).unwrap();
 
         let mut reader2 = FileListReader::with_compat_flags(protocol, flags);
         let mut cursor2 = Cursor::new(&data2[..]);
         let result2 = reader2.read_entry(&mut cursor2);
-        assert!(result2.is_err());
-        let err = result2.unwrap_err();
-        assert!(err.to_string().contains("123"));
+        assert!(result2.unwrap().is_none());
+        assert_eq!(reader2.io_error(), 123);
     }
 
     // Tests for extracted helper methods
