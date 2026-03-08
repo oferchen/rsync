@@ -26,7 +26,8 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .help("Force protocol version NUM when accessing rsync daemons.")
                 .num_args(1)
                 .action(ArgAction::Set)
-                .value_parser(OsStringValueParser::new()),
+                .value_parser(OsStringValueParser::new())
+                .overrides_with("protocol"),
         )
         .arg(
             Arg::new("sockopts")

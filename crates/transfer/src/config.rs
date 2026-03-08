@@ -24,6 +24,17 @@ pub struct WriteConfig {
     pub fsync: bool,
     /// Write directly to destination without temp-file + rename (`--inplace`).
     pub inplace: bool,
+    /// Per-file inplace for partial-dir basis files (CF_INPLACE_PARTIAL_DIR).
+    ///
+    /// When true, files whose basis comes from `--partial-dir` are written
+    /// in-place (directly to the partial file) instead of using temp+rename.
+    /// Other files still use the safe temp+rename path.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
+    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    pub inplace_partial: bool,
     /// Write data to device files instead of creating with mknod (`--write-devices`).
     pub write_devices: bool,
     /// Policy controlling io_uring usage for file I/O.
@@ -35,6 +46,7 @@ impl Default for WriteConfig {
         Self {
             fsync: false,
             inplace: false,
+            inplace_partial: false,
             write_devices: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
         }
@@ -48,6 +60,15 @@ pub struct DeletionConfig {
     pub max_delete: Option<u64>,
     /// Delete files even if there are I/O errors (`--ignore-errors`).
     pub ignore_errors: bool,
+    /// Whether deletions are deferred until after the transfer completes.
+    ///
+    /// True when the delete mode is `--delete-delay` or `--delete-after`.
+    /// Controls timing of NDX_DEL_STATS in the goodbye phase.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:124`: `#define EARLY_DELETE_DONE_MSG() (!(delete_during == 2 || delete_after))`
+    pub late_delete: bool,
 }
 
 /// Connection and protocol context configuration.
@@ -172,8 +193,47 @@ pub struct ServerConfig {
     /// - `flist.c:2991`: `if (use_qsort) qsort(...); else merge_sort(...);`
     /// - `options.c`: `--qsort` flag definition
     pub qsort: bool,
+    /// Whether `--partial-dir` is configured on the client.
+    ///
+    /// Used after compat flag negotiation to apply `CF_INPLACE_PARTIAL_DIR`:
+    /// when the server advertises this flag and a partial directory is configured,
+    /// the receiver uses in-place writes for partial-dir basis files.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
+    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    pub has_partial_dir: bool,
+    /// Backup directory path (long-form `--backup-dir=DIR`).
+    ///
+    /// When set with `--backup`, displaced files are placed in this directory
+    /// hierarchy instead of alongside the destination files.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2854-2870`: `--backup-dir=DIR` server option
+    pub backup_dir: Option<String>,
+    /// Backup file suffix (long-form `--backup-suffix=SUFFIX`).
+    ///
+    /// Overrides the default `~` suffix for backup files. When `--backup-dir`
+    /// is set, the default suffix is empty.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2871-2876`: `--backup-suffix=SUFFIX` server option
+    pub backup_suffix: Option<String>,
     /// File selection and filtering configuration.
     pub file_selection: FileSelectionConfig,
+    /// Whether `--stats` was requested, enabling detailed transfer statistics.
+    ///
+    /// Maps to upstream's `INFO_GTE(STATS, 2)` condition. When true, deletion
+    /// statistics (NDX_DEL_STATS) are sent during the goodbye phase.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2046-2048`: `do_stats` sets `info_levels[INFO_STATS]` to 2+
+    /// - `generator.c:2377,2422`: `INFO_GTE(STATS, 2)` gates `write_del_stats()`
+    pub do_stats: bool,
 }
 
 impl Default for ServerConfig {
@@ -193,7 +253,11 @@ impl Default for ServerConfig {
             trust_sender: false,
             stop_at: None,
             qsort: false,
+            has_partial_dir: false,
+            backup_dir: None,
+            backup_suffix: None,
             file_selection: FileSelectionConfig::default(),
+            do_stats: false,
         }
     }
 }
