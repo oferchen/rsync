@@ -767,7 +767,7 @@ comp_run_scenario() {
       ;;
     compare-dest)
       rm -rf "$ddir"/*; mkdir -p "$ddir/compare_ref"
-      cp "$sdir/hello.txt" "$ddir/compare_ref/"
+      cp -a "$sdir/hello.txt" "$ddir/compare_ref/"
       ;;
     link-dest)
       rm -rf "$ddir"/*; mkdir -p "$ddir/link_ref"
@@ -1139,8 +1139,8 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # dry-run: EAGAIN on non-blocking socket read during abbreviated transfer
-  # handshake when upstream daemon closes early in dry-run mode.
+  # dry-run: connection closure during abbreviated transfer when upstream daemon
+  # exits early in dry-run mode (EAGAIN / WouldBlock on socket read).
   "oc:dry-run"
   # safe-links: our client sends --safe-links but does not filter unsafe
   # symlinks from the file list before transmission.
@@ -1160,14 +1160,18 @@ KNOWN_FAILURES=(
   "up:acls"
   "up:xattrs"
   # (up:backup fixed - receiver now creates backup files before overwriting)
-  # link-dest: receiver does not create hardlinks from reference directories.
+  # link-dest: receiver creates hardlinks from reference directories but the
+  # interop test still reports non-hardlinked files (needs investigation).
   "up:link-dest"
-  # compare-dest: receiver does not check reference directories during
-  # quick-check to skip unchanged files.
+  # compare-dest: receiver checks reference directories during quick-check but
+  # the interop test still transfers matching files (needs investigation).
   "up:compare-dest"
-  # relative: receiver does not reconstruct implied path components from the
-  # 'R' (--relative) flag in upstream→oc push direction.
+  # relative: open_tmpfile creates parent dirs on ENOENT but upstream -R implied
+  # directory handling may need additional receiver-side fixes.
   "up:relative"
+  # hardlinks-relative: combined -H -R still fails - needs relative fix plus
+  # hardlink ordering adjustments.
+  "up:hardlinks-relative"
   # safe-links: our daemon requests symlink entries that upstream sender
   # rejects as non-regular (protocol incompatibility for --safe-links).
   "up:safe-links"
@@ -1177,9 +1181,6 @@ KNOWN_FAILURES=(
   # itemize: our daemon does not relay itemize output (-i) back to the
   # upstream sender - no itemize lines appear in the transfer output.
   "up:itemize"
-  # hardlinks-relative: our daemon does not handle combined -H -R from
-  # upstream sender - hardlinked files with relative paths fail to transfer.
-  "up:hardlinks-relative"
 )
 
 is_known_failure() {
