@@ -767,7 +767,7 @@ comp_run_scenario() {
       ;;
     compare-dest)
       rm -rf "$ddir"/*; mkdir -p "$ddir/compare_ref"
-      cp "$sdir/hello.txt" "$ddir/compare_ref/"
+      cp -a "$sdir/hello.txt" "$ddir/compare_ref/"
       ;;
     link-dest)
       rm -rf "$ddir"/*; mkdir -p "$ddir/link_ref"
@@ -1160,11 +1160,8 @@ KNOWN_FAILURES=(
   "up:acls"
   "up:xattrs"
   # (up:backup fixed - receiver now creates backup files before overwriting)
-  # link-dest: receiver does not create hardlinks from reference directories.
-  "up:link-dest"
-  # compare-dest: receiver does not check reference directories during
-  # quick-check to skip unchanged files.
-  "up:compare-dest"
+  # (up:link-dest fixed - receiver creates hardlinks from reference directories)
+  # (up:compare-dest fixed - receiver checks reference directories during quick-check)
   # relative: receiver does not reconstruct implied path components from the
   # 'R' (--relative) flag in upstream→oc push direction.
   "up:relative"

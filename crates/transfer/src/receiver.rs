@@ -88,7 +88,7 @@ use engine::delta::{SignatureLayoutParams, calculate_signature_layout};
 use engine::fuzzy::FuzzyMatcher;
 use engine::signature::{FileSignature, generate_file_signature};
 
-use super::config::{ReferenceDirectory, ServerConfig};
+use super::config::{ReferenceDirectory, ReferenceDirectoryKind, ServerConfig};
 use super::handshake::HandshakeResult;
 use super::pipeline::{PipelineConfig, PipelineState};
 use super::shared::ChecksumFactory;
@@ -191,6 +191,95 @@ fn dest_mtime_newer(dest_meta: &fs::Metadata, source_entry: &FileEntry) -> bool 
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(false, |d| (d.as_secs() as i64) > source_entry.mtime())
     }
+}
+
+/// Checks reference directories for a file that matches the source entry.
+///
+/// When the destination file does not exist, this function iterates through
+/// configured reference directories (`--compare-dest`, `--copy-dest`,
+/// `--link-dest`) and performs the appropriate action based on kind:
+///
+/// - `Compare`: skip transfer entirely (file is up-to-date in reference)
+/// - `Link`: create a hard link from the reference file to the destination
+/// - `Copy`: copy the reference file to the destination
+///
+/// Returns `true` if the entry was handled and should not be transferred.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:942` - `try_dests_reg()` iterates `basis_dir[]`
+/// - `generator.c:983` - match_level 3 with `COMPARE_DEST` returns -2 (skip)
+/// - `generator.c:991` - match_level 3 with `LINK_DEST` calls `hard_link_one()`
+/// - `generator.c:1021` - match_level >= 2 with `COPY_DEST` copies locally
+fn try_reference_dest(
+    entry: &FileEntry,
+    dest_dir: &Path,
+    reference_directories: &[ReferenceDirectory],
+    preserve_times: bool,
+    size_only: bool,
+    always_checksum: Option<protocol::ChecksumAlgorithm>,
+    metadata_opts: &MetadataOptions,
+    metadata_errors: &mut Vec<(PathBuf, String)>,
+) -> bool {
+    if reference_directories.is_empty() {
+        return false;
+    }
+
+    let relative_path = entry.path();
+    for ref_dir in reference_directories {
+        let ref_path = ref_dir.path.join(relative_path);
+        let ref_meta = match fs::metadata(&ref_path) {
+            Ok(m) if m.is_file() => m,
+            _ => continue,
+        };
+
+        // upstream: generator.c:959 - quick_check_ok against reference file
+        if !quick_check_matches(
+            entry,
+            &ref_path,
+            &ref_meta,
+            preserve_times,
+            size_only,
+            always_checksum,
+        ) {
+            continue;
+        }
+
+        let dest_path = dest_dir.join(relative_path);
+        match ref_dir.kind {
+            ReferenceDirectoryKind::Compare => {
+                // upstream: generator.c:1007 - return -2 (file is up-to-date)
+                return true;
+            }
+            ReferenceDirectoryKind::Link => {
+                // upstream: generator.c:991 - hard_link_one()
+                if let Some(parent) = dest_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if fs::hard_link(&ref_path, &dest_path).is_ok() {
+                    if let Err(e) = apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
+                    {
+                        metadata_errors.push((dest_path, e.to_string()));
+                    }
+                    return true;
+                }
+            }
+            ReferenceDirectoryKind::Copy => {
+                // upstream: generator.c:1021 - copy_altdest_file()
+                if let Some(parent) = dest_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if fs::copy(&ref_path, &dest_path).is_ok() {
+                    if let Err(e) = apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
+                    {
+                        metadata_errors.push((dest_path, e.to_string()));
+                    }
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Computes a file's checksum and compares it against an expected value.
@@ -1407,8 +1496,23 @@ impl ReceiverContext {
                         }
                         continue;
                     }
-                } else if existing_only {
-                    continue;
+                } else {
+                    if existing_only {
+                        continue;
+                    }
+                    // upstream: generator.c:942 - try_dests_reg() for absent files
+                    if try_reference_dest(
+                        entry,
+                        dest_dir,
+                        &self.config.reference_directories,
+                        preserve_times,
+                        size_only,
+                        always_checksum,
+                        metadata_opts,
+                        metadata_errors,
+                    ) {
+                        continue;
+                    }
                 }
                 files_to_transfer.push((idx, entry));
             }
@@ -1444,8 +1548,23 @@ impl ReceiverContext {
                         }
                         continue;
                     }
-                } else if existing_only {
-                    continue;
+                } else {
+                    if existing_only {
+                        continue;
+                    }
+                    // upstream: generator.c:942 - try_dests_reg() for absent files
+                    if try_reference_dest(
+                        entry,
+                        dest_dir,
+                        &self.config.reference_directories,
+                        preserve_times,
+                        size_only,
+                        always_checksum,
+                        metadata_opts,
+                        metadata_errors,
+                    ) {
+                        continue;
+                    }
                 }
                 files_to_transfer.push((idx, entry));
             }
