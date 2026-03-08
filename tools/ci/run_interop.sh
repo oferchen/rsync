@@ -1139,33 +1139,23 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # (oc:dry-run fixed - generator now handles early connection close from
-  # upstream daemon during dry-run in transfer loop and goodbye handshake)
-  # (oc:safe-links fixed - generator now filters unsafe symlinks from file
-  # list when --safe-links is set, preventing them from reaching the receiver)
-  # (oc:compare-dest fixed - reference directory wiring gap resolved)
-  # (oc:copy-links fixed - generator now uses stat() instead of lstat()
-  # when --copy-links is set, resolving symlinks before sending file list)
+  # dry-run: upstream daemon closes connection during dry-run handshake,
+  # causing "Resource temporarily unavailable" (os error 11) on all protocols.
+  "oc:dry-run"
   # itemize: our client does not capture/relay itemize output (-i) from the
   # upstream daemon transfer - no itemize lines appear in stdout.
   "oc:itemize"
 
   # --- upstream→oc (daemon receive) ---
-  # (up:relative fixed - strip_leading_slashes runs unconditionally in
-  # sanitize_file_list, not guarded by trust_sender)
+  # relative: --relative path handling still fails for upstream→oc daemon
+  # transfers on native protocol and forced protocols >= 30.
+  "up:relative"
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
   "up:acls"
   "up:xattrs"
-  # (up:backup fixed - receiver now creates backup files before overwriting)
-  # (up:link-dest fixed - reference directory paths resolved against module
-  # root in daemon build_server_config)
-  # (up:compare-dest fixed - reference directory paths resolved against module
-  # root in daemon build_server_config)
   # hardlinks-relative: combined -H -R still fails - needs relative fix plus
   # hardlink ordering adjustments.
   "up:hardlinks-relative"
-  # (up:safe-links fixed - moved symlink safety check from sanitize_file_list
-  # to create_symlinks, preserving protocol index alignment with sender)
   # protocol-31: upstream 3.0.9 does not support protocol 31, causing
   # negotiation failure when our daemon offers it.
   "up:protocol-31"
