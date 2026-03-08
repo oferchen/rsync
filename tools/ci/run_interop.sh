@@ -1162,9 +1162,8 @@ KNOWN_FAILURES=(
   # (up:backup fixed - receiver now creates backup files before overwriting)
   # (up:link-dest fixed - receiver creates hardlinks from reference directories)
   # (up:compare-dest fixed - receiver checks reference directories during quick-check)
-  # relative: receiver does not reconstruct implied path components from the
-  # 'R' (--relative) flag in upstream→oc push direction.
-  "up:relative"
+  # (up:relative fixed - open_tmpfile creates parent dirs on ENOENT for implied paths)
+  # (up:hardlinks-relative fixed - same ENOENT fix enables -H -R combination)
   # safe-links: our daemon requests symlink entries that upstream sender
   # rejects as non-regular (protocol incompatibility for --safe-links).
   "up:safe-links"
@@ -1174,9 +1173,6 @@ KNOWN_FAILURES=(
   # itemize: our daemon does not relay itemize output (-i) back to the
   # upstream sender - no itemize lines appear in the transfer output.
   "up:itemize"
-  # hardlinks-relative: our daemon does not handle combined -H -R from
-  # upstream sender - hardlinked files with relative paths fail to transfer.
-  "up:hardlinks-relative"
 )
 
 is_known_failure() {
