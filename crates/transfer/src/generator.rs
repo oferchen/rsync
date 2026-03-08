@@ -2723,49 +2723,6 @@ fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
     (major, minor)
 }
 
-/// Checks whether a symlink target stays within the transfer tree.
-///
-/// Returns `false` if the target escapes the tree by traversing above
-/// the link's directory depth via `..` components.
-/// upstream: util1.c `unsafe_symlink()`
-fn symlink_target_is_safe(target: &Path, link_path: &Path) -> bool {
-    use std::path::Component;
-
-    if target.as_os_str().is_empty() || target.has_root() {
-        return false;
-    }
-
-    // Count directory depth of the link within the transfer tree.
-    // The last component is the symlink name itself.
-    let mut depth: i64 = 0;
-    for component in link_path.components() {
-        match component {
-            Component::Normal(_) => depth += 1,
-            Component::ParentDir => depth = 0,
-            _ => {}
-        }
-    }
-    // Exclude the symlink filename from the depth budget.
-    depth = (depth - 1).max(0);
-
-    // Walk the target, tracking whether `..` escapes the tree.
-    for component in target.components() {
-        match component {
-            Component::ParentDir => {
-                depth -= 1;
-                if depth < 0 {
-                    return false;
-                }
-            }
-            Component::Normal(_) => depth += 1,
-            Component::CurDir => {}
-            Component::RootDir | Component::Prefix(_) => return false,
-        }
-    }
-
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::flags::ParsedServerFlags;
