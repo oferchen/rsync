@@ -1157,18 +1157,15 @@ KNOWN_FAILURES=(
   "up:acls"
   "up:xattrs"
   # (up:backup fixed - receiver now creates backup files before overwriting)
-  # link-dest: reference directory path resolution or hardlink creation needs
-  # investigation (daemon parses --link-dest but receiver may not find basis).
-  "up:link-dest"
-  # compare-dest: reference directory path resolution needs investigation
-  # (daemon parses --compare-dest but quick-check may not find basis).
-  "up:compare-dest"
+  # (up:link-dest fixed - reference directory paths resolved against module
+  # root in daemon build_server_config)
+  # (up:compare-dest fixed - reference directory paths resolved against module
+  # root in daemon build_server_config)
   # hardlinks-relative: combined -H -R still fails - needs relative fix plus
   # hardlink ordering adjustments.
   "up:hardlinks-relative"
-  # safe-links: our daemon requests symlink entries that upstream sender
-  # rejects as non-regular (protocol incompatibility for --safe-links).
-  "up:safe-links"
+  # (up:safe-links fixed - moved symlink safety check from sanitize_file_list
+  # to create_symlinks, preserving protocol index alignment with sender)
   # protocol-31: upstream 3.0.9 does not support protocol 31, causing
   # negotiation failure when our daemon offers it.
   "up:protocol-31"

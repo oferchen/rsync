@@ -877,23 +877,6 @@ impl ReceiverContext {
                 return false;
             }
 
-            // Check symlink targets for safety (similar to --safe-links).
-            // Reject symlinks that point outside the transfer tree.
-            if entry.is_symlink() {
-                if let Some(target) = entry.link_target() {
-                    if !symlink_target_is_safe_for_transfer(target, path) {
-                        info_log!(
-                            Misc,
-                            1,
-                            "ERROR: rejecting symlink with unsafe target from sender: {} -> {}",
-                            path.display(),
-                            target.display()
-                        );
-                        return false;
-                    }
-                }
-            }
-
             true
         });
 
@@ -1157,6 +1140,16 @@ impl ReceiverContext {
             };
 
             let relative_path = entry.path();
+
+            // upstream: util1.c:unsafe_symlink() — skip unsafe symlinks when
+            // --safe-links is set. The check stays here (not in sanitize_file_list)
+            // to preserve protocol index alignment with the sender.
+            if self.config.flags.safe_links
+                && !symlink_target_is_safe_for_transfer(target, relative_path)
+            {
+                continue;
+            }
+
             let link_path = dest_dir.join(relative_path);
 
             // upstream: generator.c:1561 — quick_check_ok(FT_SYMLINK, ...)
