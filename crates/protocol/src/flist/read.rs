@@ -118,6 +118,8 @@ struct MetadataResult {
     group_name: Option<String>,
     /// Access time (when preserve_atimes is enabled, non-directories only).
     atime: Option<i64>,
+    /// Nanosecond component of access time (protocol 32+, --atimes).
+    atime_nsec: u32,
     /// Creation time (when preserve_crtimes is enabled).
     crtime: Option<i64>,
     /// Whether directory has content to transfer (protocol 30+, directories only).
@@ -529,16 +531,21 @@ impl FileListReader {
         let is_dir = (mode & 0o170000) == 0o040000;
 
         // 5. Read atime if preserving atimes (AFTER mode, non-directories only)
-        let atime = if self.preserve_atimes && !is_dir {
+        let (atime, atime_nsec) = if self.preserve_atimes && !is_dir {
             if flags.same_atime() {
-                Some(self.state.prev_atime())
+                (Some(self.state.prev_atime()), 0)
             } else {
                 let atime = crate::read_varlong(reader, 4)?;
+                let nsec = if self.protocol.as_u8() >= 32 {
+                    crate::read_varint(reader)? as u32
+                } else {
+                    0
+                };
                 self.state.update_atime(atime);
-                Some(atime)
+                (Some(atime), nsec)
             }
         } else {
-            None
+            (None, 0)
         };
 
         // 6. Read UID and optional user name
@@ -602,6 +609,7 @@ impl FileListReader {
             user_name,
             group_name,
             atime,
+            atime_nsec,
             crtime,
             content_dir,
         })
@@ -953,6 +961,7 @@ impl FileListReader {
                         user_name: None,
                         group_name: None,
                         atime: None,
+                        atime_nsec: 0,
                         crtime: None,
                         content_dir: true,
                     },
@@ -1052,6 +1061,7 @@ impl FileListReader {
         // Step 17: Set atime if present
         if let Some(atime) = metadata.atime {
             entry.set_atime(atime);
+            entry.set_atime_nsec(metadata.atime_nsec);
         }
 
         // Step 18: Set crtime if present
