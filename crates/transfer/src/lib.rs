@@ -113,6 +113,9 @@ pub mod temp_guard;
 /// Writer abstraction supporting plain and multiplex modes.
 mod writer;
 
+/// Bounded-concurrency parallel I/O using tokio `spawn_blocking` + `Semaphore`.
+mod parallel_io;
+
 /// Batched acknowledgments for reduced network overhead.
 pub mod ack_batcher;
 /// Adaptive buffer sizing based on file size.
