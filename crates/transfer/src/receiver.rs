@@ -843,45 +843,49 @@ impl ReceiverContext {
     /// - `flist.c:757`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
     /// - `options.c:2595`: `trust_sender_args = trust_sender_filter = 1`
     fn sanitize_file_list(&mut self) -> usize {
-        if self.config.trust_sender {
-            return 0;
-        }
-
         let relative_paths = self.config.flags.relative;
-        let original_len = self.file_list.len();
 
-        self.file_list.retain(|entry| {
-            let path = entry.path();
+        let removed = if self.config.trust_sender {
+            0
+        } else {
+            let original_len = self.file_list.len();
 
-            // Check for absolute paths (reject unless --relative is active).
-            // upstream: flist.c:757 `!relative_paths && *thisname == '/'`
-            if !relative_paths && path.has_root() {
-                info_log!(
-                    Misc,
-                    1,
-                    "ERROR: rejecting file-list entry with absolute path from sender: {}",
-                    path.display()
-                );
-                return false;
-            }
+            self.file_list.retain(|entry| {
+                let path = entry.path();
 
-            // Check for `..` path components (always rejected).
-            // upstream: flist.c:757 `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0`
-            if path_contains_dot_dot(path) {
-                info_log!(
-                    Misc,
-                    1,
-                    "ERROR: rejecting file-list entry with \"..\" component from sender: {}",
-                    path.display()
-                );
-                return false;
-            }
+                // Check for absolute paths (reject unless --relative is active).
+                // upstream: flist.c:757 `!relative_paths && *thisname == '/'`
+                if !relative_paths && path.has_root() {
+                    info_log!(
+                        Misc,
+                        1,
+                        "ERROR: rejecting file-list entry with absolute path from sender: {}",
+                        path.display()
+                    );
+                    return false;
+                }
 
-            true
-        });
+                // Check for `..` path components (always rejected).
+                // upstream: flist.c:757 `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0`
+                if path_contains_dot_dot(path) {
+                    info_log!(
+                        Misc,
+                        1,
+                        "ERROR: rejecting file-list entry with \"..\" component from sender: {}",
+                        path.display()
+                    );
+                    return false;
+                }
 
-        // Strip leading slashes from relative paths after sorting.
+                true
+            });
+
+            original_len - self.file_list.len()
+        };
+
         // upstream: flist.c:3071-3084 — strip_root in flist_sort_and_clean()
+        // Runs unconditionally: leading-slash stripping is a functional
+        // requirement for --relative mode, not a security check.
         if relative_paths {
             for entry in &mut self.file_list {
                 if entry.path().has_root() {
@@ -890,7 +894,7 @@ impl ReceiverContext {
             }
         }
 
-        original_len - self.file_list.len()
+        removed
     }
 
     /// Creates directories from the file list, applying metadata in parallel.
