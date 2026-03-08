@@ -187,6 +187,9 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)
     server_config.deletion.late_delete =
         matches!(config.delete_mode(), DeleteMode::Delay | DeleteMode::After);
+    // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
+    server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
+    server_config.flags.safe_links = config.safe_links();
 }
 
 #[cfg(test)]
