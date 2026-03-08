@@ -130,7 +130,6 @@ impl ParallelExecutor {
         F: Fn(&T) -> io::Result<U> + Sync,
     {
         let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let bytes = Arc::new(AtomicU64::new(0));
 
         let run = |errors: &Arc<std::sync::Mutex<Vec<(usize, io::Error)>>>| -> Vec<U> {
             items
@@ -159,7 +158,7 @@ impl ParallelExecutor {
         ParallelResult {
             successes,
             errors: Arc::try_unwrap(errors).unwrap().into_inner().unwrap(),
-            bytes_processed: bytes.load(AtomicOrdering::Relaxed),
+            bytes_processed: 0,
         }
     }
 
