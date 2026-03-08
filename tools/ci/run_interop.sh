@@ -1139,12 +1139,10 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # dry-run: upstream daemon closes connection early during dry-run,
-  # causing EAGAIN on our client's non-blocking socket read.
-  "oc:dry-run"
-  # safe-links: our client push sends all symlinks - sender-side safe-links
-  # filtering for oc→upstream push direction is not yet wired.
-  "oc:safe-links"
+  # (oc:dry-run fixed - generator tolerates early connection close during
+  # dry-run mode, matching upstream daemon's abbreviated transfer)
+  # (oc:safe-links fixed - generator filters unsafe symlinks before sending
+  # file list, using symlink_target_is_safe() depth check)
   # compare-dest: upstream daemon does not honour --compare-dest from our
   # client for protocol <= 30 (reference directory wiring gap).
   "oc:compare-dest"
@@ -1155,9 +1153,8 @@ KNOWN_FAILURES=(
   "oc:itemize"
 
   # --- upstream→oc (daemon receive) ---
-  # relative: --relative paths land in absolute-path subdirectory instead
-  # of destination root (dirname leading slash not stripped in receiver).
-  "up:relative"
+  # (up:relative fixed - strip_leading_slashes runs unconditionally in
+  # sanitize_file_list, not guarded by trust_sender)
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
   "up:acls"
   "up:xattrs"

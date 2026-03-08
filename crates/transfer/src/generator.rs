@@ -1617,6 +1617,15 @@ impl GeneratorContext {
             }
         }
 
+        // upstream: generator.c:1547 — skip unsafe symlinks when --safe-links is set.
+        if self.config.flags.safe_links && metadata.file_type().is_symlink() {
+            if let Ok(target) = std::fs::read_link(&path) {
+                if target.has_root() || !symlink_target_is_safe(&target, &relative) {
+                    return Ok(());
+                }
+            }
+        }
+
         // Create file entry based on type (moves relative — no clone)
         let entry = match self.create_entry(&path, relative, &metadata) {
             Ok(e) => e,
@@ -2712,6 +2721,49 @@ fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
     let major = (rdev >> 24) as u32;
     let minor = (rdev & 0xffffff) as u32;
     (major, minor)
+}
+
+/// Checks whether a symlink target stays within the transfer tree.
+///
+/// Returns `false` if the target escapes the tree by traversing above
+/// the link's directory depth via `..` components.
+/// upstream: util1.c `unsafe_symlink()`
+fn symlink_target_is_safe(target: &Path, link_path: &Path) -> bool {
+    use std::path::Component;
+
+    if target.as_os_str().is_empty() || target.has_root() {
+        return false;
+    }
+
+    // Count directory depth of the link within the transfer tree.
+    // The last component is the symlink name itself.
+    let mut depth: i64 = 0;
+    for component in link_path.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::ParentDir => depth = 0,
+            _ => {}
+        }
+    }
+    // Exclude the symlink filename from the depth budget.
+    depth = (depth - 1).max(0);
+
+    // Walk the target, tracking whether `..` escapes the tree.
+    for component in target.components() {
+        match component {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]
