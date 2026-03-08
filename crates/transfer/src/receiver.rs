@@ -171,6 +171,28 @@ fn quick_check_matches(
     }
 }
 
+/// Returns `true` when the destination file's mtime is strictly newer than the source.
+///
+/// Used by `--update` (`-u`) to skip files where the destination is already newer.
+///
+/// upstream: generator.c:1709 - `file->modtime - sx.st.st_mtime < modify_window`
+/// with modify_window=0, this simplifies to `dest_mtime > source_mtime`.
+fn dest_mtime_newer(dest_meta: &fs::Metadata, source_entry: &FileEntry) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        dest_meta.mtime() > source_entry.mtime()
+    }
+    #[cfg(not(unix))]
+    {
+        dest_meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(false, |d| (d.as_secs() as i64) > source_entry.mtime())
+    }
+}
+
 /// Computes a file's checksum and compares it against an expected value.
 ///
 /// Used by `--checksum` (`-c`) mode to compare file contents instead of
@@ -803,6 +825,11 @@ impl ReceiverContext {
     ) -> io::Result<Vec<(PathBuf, String)>> {
         use rayon::prelude::*;
 
+        // upstream: receiver.c:693 - dry_run skips all filesystem modifications
+        if self.config.flags.dry_run {
+            return Ok(Vec::new());
+        }
+
         let dir_entries: Vec<(&FileEntry, PathBuf)> = self
             .file_list
             .iter()
@@ -1016,7 +1043,7 @@ impl ReceiverContext {
     /// - `generator.c:1591` — `atomic_create(file, fname, sl, ...)`
     #[cfg(unix)]
     fn create_symlinks(&self, dest_dir: &Path) {
-        if !self.config.flags.links {
+        if !self.config.flags.links || self.config.flags.dry_run {
             return;
         }
 
@@ -1079,7 +1106,7 @@ impl ReceiverContext {
     /// - `hlink.c:finish_hard_link()` — creates links after leader transfer completes
     /// - `generator.c:1539` — `F_HLINK_NOT_FIRST` check before `hard_link_check()`
     fn create_hardlinks(&self, dest_dir: &Path) {
-        if !self.config.flags.hard_links {
+        if !self.config.flags.hard_links || self.config.flags.dry_run {
             return;
         }
 
@@ -1274,6 +1301,11 @@ impl ReceiverContext {
     ) -> Vec<(usize, &'a FileEntry)> {
         use rayon::prelude::*;
 
+        // upstream: receiver.c:693 - dry_run (!do_xfers) skips all file transfers
+        if self.config.flags.dry_run {
+            return Vec::new();
+        }
+
         // Phase A: Filter candidates (cheap, in-memory checks only).
         let candidates: Vec<(usize, &FileEntry)> = self
             .file_list
@@ -1322,6 +1354,8 @@ impl ReceiverContext {
         let size_only = self.config.file_selection.size_only;
         let ignore_existing = self.config.file_selection.ignore_existing;
         let existing_only = self.config.file_selection.existing_only;
+        // upstream: generator.c:1709 - update_only skips files with newer dest timestamps
+        let update_only = self.config.flags.update;
         // upstream: generator.c:626 - always_checksum uses file checksums instead of mtime
         let always_checksum = if self.config.flags.checksum {
             Some(self.get_checksum_algorithm())
@@ -1348,6 +1382,10 @@ impl ReceiverContext {
             for (idx, entry, dest_meta) in results {
                 if let Some(ref meta) = dest_meta {
                     if ignore_existing {
+                        continue;
+                    }
+                    // upstream: generator.c:1709 - skip when dest is newer than source
+                    if update_only && dest_mtime_newer(meta, entry) {
                         continue;
                     }
                     let file_path = dest_dir.join(entry.path());
@@ -1382,6 +1420,10 @@ impl ReceiverContext {
                 let dest_meta = fs::metadata(&file_path).ok();
                 if let Some(ref meta) = dest_meta {
                     if ignore_existing {
+                        continue;
+                    }
+                    // upstream: generator.c:1709 - skip when dest is newer than source
+                    if update_only && dest_mtime_newer(meta, entry) {
                         continue;
                     }
                     if quick_check_matches(
@@ -2081,6 +2123,23 @@ impl ReceiverContext {
             }
             drop(file); // Ensure file is closed before rename
 
+            // upstream: backup.c:make_backup() - rename existing file before overwrite
+            if self.config.flags.backup && file_path.exists() {
+                let backup_path = engine::compute_backup_path(
+                    &dest_dir,
+                    &file_path,
+                    None,
+                    self.config.backup_dir.as_ref().map(std::path::Path::new),
+                    std::ffi::OsStr::new(self.config.backup_suffix.as_deref().unwrap_or("~")),
+                );
+                if let Some(parent) = backup_path.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::rename(&file_path, &backup_path)?;
+            }
+
             // Atomic rename (crash-safe)
             fs::rename(temp_guard.path(), &file_path)?;
             temp_guard.keep(); // Success! Keep the file (now renamed)
@@ -2492,7 +2551,7 @@ impl ReceiverContext {
         total_files: usize,
         progress: &mut Option<&mut dyn super::TransferProgressCallback>,
     ) -> io::Result<(usize, u64, Vec<usize>)> {
-        use crate::disk_commit::DiskCommitConfig;
+        use crate::disk_commit::{BackupConfig, DiskCommitConfig};
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
 
@@ -2536,9 +2595,19 @@ impl ReceiverContext {
         // Spawn the disk commit thread with metadata options so it applies
         // mtime/perms/ownership immediately after rename — mirroring upstream
         // finish_transfer() → set_file_attrs() in receiver.c.
+        let backup = if self.config.flags.backup {
+            Some(BackupConfig {
+                dest_dir: setup.dest_dir.clone(),
+                backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
+                suffix: self.config.backup_suffix.as_deref().unwrap_or("~").into(),
+            })
+        } else {
+            None
+        };
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
             metadata_opts: Some(setup.metadata_opts.clone()),
+            backup,
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);

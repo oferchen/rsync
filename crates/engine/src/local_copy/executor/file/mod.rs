@@ -10,7 +10,8 @@ mod paths;
 mod preallocate;
 mod sparse;
 
-pub(crate) use backup::{compute_backup_path, copy_entry_to_backup};
+pub use backup::compute_backup_path;
+pub(crate) use backup::copy_entry_to_backup;
 #[cfg(test)]
 pub(crate) use comparison::files_checksum_match;
 pub(crate) use comparison::{CopyComparison, should_skip_copy};
