@@ -1143,9 +1143,7 @@ KNOWN_FAILURES=(
   # upstream daemon during dry-run in transfer loop and goodbye handshake)
   # (oc:safe-links fixed - generator now filters unsafe symlinks from file
   # list when --safe-links is set, preventing them from reaching the receiver)
-  # compare-dest: upstream daemon does not honour --compare-dest from our
-  # client for protocol <= 30 (reference directory wiring gap).
-  "oc:compare-dest"
+  # (oc:compare-dest fixed - reference directory wiring gap resolved)
   # (oc:copy-links fixed - generator now uses stat() instead of lstat()
   # when --copy-links is set, resolving symlinks before sending file list)
   # itemize: our client does not capture/relay itemize output (-i) from the
@@ -1279,11 +1277,14 @@ run_comprehensive_interop_case() {
         "rsync://127.0.0.1:${oc_port}/interop" "$od" "$olf" "$vtype"; then
       echo "    PASS"
       passed=$((passed + 1))
-    elif is_known_failure "up" "$name" "$fp"; then
-      echo "    SKIP (known limitation)"
-      known=$((known + 1))
     else
-      unexpected=$((unexpected + 1))
+      if is_known_failure "up" "$name" "$fp"; then
+        echo "    SKIP (known limitation)"
+        known=$((known + 1))
+      else
+        echo "    UNEXPECTED FAIL: up:${name} (fp=${fp:-native})"
+        unexpected=$((unexpected + 1))
+      fi
     fi
   done
 
@@ -1301,11 +1302,14 @@ run_comprehensive_interop_case() {
         "rsync://127.0.0.1:${upstream_port}/interop" "$ud" "$ulf" "$vtype"; then
       echo "    PASS"
       passed=$((passed + 1))
-    elif is_known_failure "oc" "$name" "$fp"; then
-      echo "    SKIP (known limitation)"
-      known=$((known + 1))
     else
-      unexpected=$((unexpected + 1))
+      if is_known_failure "oc" "$name" "$fp"; then
+        echo "    SKIP (known limitation)"
+        known=$((known + 1))
+      else
+        echo "    UNEXPECTED FAIL: oc:${name} (fp=${fp:-native})"
+        unexpected=$((unexpected + 1))
+      fi
     fi
   done
 
@@ -1320,11 +1324,14 @@ run_comprehensive_interop_case() {
     if run_ssh_interop_test "$oc_client" "$comp_src" "$ssh_dir" "$olf"; then
       echo "    PASS"
       passed=$((passed + 1))
-    elif is_known_failure "oc" "ssh-transfer" "$fp"; then
-      echo "    SKIP (known limitation)"
-      known=$((known + 1))
     else
-      unexpected=$((unexpected + 1))
+      if is_known_failure "oc" "ssh-transfer" "$fp"; then
+        echo "    SKIP (known limitation)"
+        known=$((known + 1))
+      else
+        echo "    UNEXPECTED FAIL: oc:ssh-transfer (fp=${fp:-native})"
+        unexpected=$((unexpected + 1))
+      fi
     fi
   fi
 
