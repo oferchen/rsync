@@ -1145,10 +1145,7 @@ impl ReceiverContext {
             // is set. Check stays here (not in sanitize_file_list) to preserve
             // protocol index alignment with the sender.
             if self.config.flags.safe_links
-                && super::symlink_safety::is_unsafe_symlink(
-                    target.as_os_str(),
-                    relative_path,
-                )
+                && super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative_path)
             {
                 continue;
             }
