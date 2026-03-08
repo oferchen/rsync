@@ -3,11 +3,13 @@
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use core::branding::Brand;
 use core::message::Role;
 use core::rsync_error;
+use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 use logging_sink::MessageSink;
 
 /// Returns the daemon argument vector when `--daemon` is present.
@@ -183,6 +185,7 @@ where
     config.file_selection.existing_only = long_flags.existing_only;
     config.flags.numeric_ids = long_flags.numeric_ids;
     config.flags.delete = long_flags.delete;
+    config.reference_directories = long_flags.reference_directories;
 
     // Apply value-bearing flags, returning parse errors to the client.
     // upstream: options.c — server_options() sends these as `--flag=value`.
@@ -317,6 +320,9 @@ struct ServerLongFlags {
     existing_only: bool,
     /// Maximum deletions allowed (upstream: `--max-delete=NUM`).
     max_delete: Option<String>,
+    /// Reference directories for basis file lookup.
+    /// upstream: options.c:2915-2923 - `--compare-dest`, `--copy-dest`, `--link-dest`
+    reference_directories: Vec<ReferenceDirectory>,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -349,6 +355,7 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         ignore_existing: false,
         existing_only: false,
         max_delete: None,
+        reference_directories: Vec::new(),
     };
 
     for arg in args {
@@ -394,6 +401,22 @@ fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
                     flags.files_from = Some(value.to_owned());
                 } else if let Some(value) = s.strip_prefix("--max-delete=") {
                     flags.max_delete = Some(value.to_owned());
+                // upstream: options.c:2915-2923 — reference directory args
+                } else if let Some(value) = s.strip_prefix("--compare-dest=") {
+                    flags.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Compare,
+                        PathBuf::from(value),
+                    ));
+                } else if let Some(value) = s.strip_prefix("--copy-dest=") {
+                    flags.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Copy,
+                        PathBuf::from(value),
+                    ));
+                } else if let Some(value) = s.strip_prefix("--link-dest=") {
+                    flags.reference_directories.push(ReferenceDirectory::new(
+                        ReferenceDirectoryKind::Link,
+                        PathBuf::from(value),
+                    ));
                 }
             }
         }
@@ -435,6 +458,9 @@ fn is_known_server_long_flag(arg: &str) -> bool {
     ) || arg == "-s"
         || arg.starts_with("--checksum-seed=")
         || arg.starts_with("--checksum-choice=")
+        || arg.starts_with("--compare-dest=")
+        || arg.starts_with("--copy-dest=")
+        || arg.starts_with("--link-dest=")
         || arg.starts_with("--min-size=")
         || arg.starts_with("--max-size=")
         || arg.starts_with("--stop-at=")
