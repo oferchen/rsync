@@ -810,6 +810,11 @@ impl GeneratorContext {
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
 
+        // During dry-run the upstream daemon may close the connection at any
+        // point after file list exchange because no actual data transfer occurs.
+        // upstream: sender.c - dry-run skips data transfer entirely.
+        let tolerant = self.config.flags.dry_run;
+
         loop {
             // Read NDX value from receiver.
             // Connection may close early in dry-run or abbreviated transfers - treat
@@ -818,14 +823,8 @@ impl GeneratorContext {
                 Ok(ndx) => ndx,
                 // Connection may close early in dry-run mode (upstream daemon
                 // exits after file list exchange) or after phase transitions.
-                // upstream: sender.c — dry-run skips data transfer entirely.
-                Err(e)
-                    if (phase > 0 || self.config.flags.dry_run)
-                        && (e.kind() == io::ErrorKind::ConnectionReset
-                            || e.kind() == io::ErrorKind::UnexpectedEof
-                            || e.kind() == io::ErrorKind::BrokenPipe
-                            || e.kind() == io::ErrorKind::WouldBlock) =>
-                {
+                // upstream: sender.c - dry-run skips data transfer entirely.
+                Err(e) if (phase > 0 || tolerant) && is_early_close_error(&e) => {
                     break;
                 }
                 Err(e) => return Err(e),
@@ -840,8 +839,18 @@ impl GeneratorContext {
                         if phase > max_phase {
                             break;
                         }
-                        ndx_write_codec.write_ndx_done(&mut *writer)?;
-                        writer.flush()?;
+                        // upstream: sender.c:250 - echo NDX_DONE back to receiver.
+                        // During dry-run the daemon may close the pipe before we
+                        // finish echoing - treat write failures as end-of-transfer.
+                        if let Err(e) = ndx_write_codec
+                            .write_ndx_done(&mut *writer)
+                            .and_then(|()| writer.flush())
+                        {
+                            if tolerant && is_early_close_error(&e) {
+                                break;
+                            }
+                            return Err(e);
+                        }
                         continue;
                     }
                     NDX_FLIST_EOF => {
@@ -850,8 +859,15 @@ impl GeneratorContext {
                         continue;
                     }
                     NDX_DEL_STATS => {
-                        // Deletion statistics (upstream main.c:238-247)
-                        let stats = DeleteStats::read_from(&mut *reader)?;
+                        // Deletion statistics (upstream main.c:238-247).
+                        // During dry-run the connection may drop mid-read.
+                        let stats = match DeleteStats::read_from(&mut *reader) {
+                            Ok(s) => s,
+                            Err(e) if tolerant && is_early_close_error(&e) => {
+                                break;
+                            }
+                            Err(e) => return Err(e),
+                        };
                         self.accumulate_delete_stats(&stats);
                         debug_log!(
                             Flist,
@@ -1049,9 +1065,18 @@ impl GeneratorContext {
             }
         }
 
-        // Send final NDX_DONE
-        ndx_write_codec.write_ndx_done(&mut *writer)?;
-        writer.flush()?;
+        // Send final NDX_DONE.
+        // During dry-run the upstream daemon may have already closed the connection,
+        // making the write fail with BrokenPipe or WouldBlock.
+        // upstream: sender.c - dry-run never enters the data-transfer phase.
+        if let Err(e) = ndx_write_codec
+            .write_ndx_done(&mut *writer)
+            .and_then(|()| writer.flush())
+        {
+            if !(tolerant && is_early_close_error(&e)) {
+                return Err(e);
+            }
+        }
 
         Ok(TransferLoopResult {
             files_transferred,
@@ -1097,12 +1122,7 @@ impl GeneratorContext {
         // completing the goodbye exchange - treat this as acceptable.
         let ndx = match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
             Ok(ndx) => ndx,
-            Err(e)
-                if e.kind() == io::ErrorKind::ConnectionReset
-                    || e.kind() == io::ErrorKind::UnexpectedEof
-                    || e.kind() == io::ErrorKind::BrokenPipe
-                    || e.kind() == io::ErrorKind::WouldBlock =>
-            {
+            Err(e) if is_early_close_error(&e) => {
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -1123,18 +1143,29 @@ impl GeneratorContext {
         // - Late (generator.c:2420-2425): (delete_during==2 || delete_after) =>
         //   send del_stats when do_stats
         if self.protocol.supports_extended_goodbye() {
-            if self.should_send_del_stats() {
-                ndx_write_codec.write_ndx(writer, NDX_DEL_STATS)?;
-                self.delete_stats.write_to(writer)?;
-                debug_log!(
-                    Flist,
-                    2,
-                    "sent NDX_DEL_STATS during goodbye: {} deletions",
-                    self.delete_stats.total()
-                );
+            // Writes during goodbye may fail when the daemon has already closed
+            // the connection (common in dry-run mode).
+            let write_result = (|| -> io::Result<()> {
+                if self.should_send_del_stats() {
+                    ndx_write_codec.write_ndx(writer, NDX_DEL_STATS)?;
+                    self.delete_stats.write_to(writer)?;
+                    debug_log!(
+                        Flist,
+                        2,
+                        "sent NDX_DEL_STATS during goodbye: {} deletions",
+                        self.delete_stats.total()
+                    );
+                }
+                ndx_write_codec.write_ndx_done(writer)?;
+                writer.flush()
+            })();
+
+            if let Err(e) = write_result {
+                if is_early_close_error(&e) {
+                    return Ok(());
+                }
+                return Err(e);
             }
-            ndx_write_codec.write_ndx_done(writer)?;
-            writer.flush()?;
 
             // Read final NDX_DONE - may fail if daemon kills receiver child early
             match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
@@ -1148,12 +1179,7 @@ impl GeneratorContext {
                         ));
                     }
                 }
-                Err(e)
-                    if e.kind() == io::ErrorKind::ConnectionReset
-                        || e.kind() == io::ErrorKind::UnexpectedEof
-                        || e.kind() == io::ErrorKind::BrokenPipe
-                        || e.kind() == io::ErrorKind::WouldBlock =>
-                {
+                Err(e) if is_early_close_error(&e) => {
                     // Connection closed during final goodbye - acceptable
                 }
                 Err(e) => {
@@ -1617,10 +1643,12 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: generator.c:1547 — skip unsafe symlinks when --safe-links is set.
+        // upstream: generator.c:1547 — skip unsafe symlinks when --safe-links.
+        // Sender-side filtering ensures unsafe symlinks never reach the receiver,
+        // matching the belt-and-suspenders approach for daemon push interop.
         if self.config.flags.safe_links && metadata.file_type().is_symlink() {
             if let Ok(target) = std::fs::read_link(&path) {
-                if target.has_root() || !symlink_target_is_safe(&target, &relative) {
+                if super::symlink_safety::is_unsafe_symlink(target.as_os_str(), &relative) {
                     return Ok(());
                 }
             }
@@ -2228,6 +2256,22 @@ impl ItemFlags {
 
         Ok((fnamecmp_type, xname))
     }
+}
+
+/// Returns `true` when the I/O error indicates an early connection close.
+///
+/// During dry-run (and sometimes at phase boundaries), the upstream daemon may
+/// close the socket before the sender finishes the goodbye handshake. These
+/// error kinds all represent "peer went away" rather than a protocol error.
+fn is_early_close_error(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::WouldBlock
+            | io::ErrorKind::ConnectionAborted
+    )
 }
 
 /// Reads signature blocks from the receiver.
