@@ -1159,16 +1159,12 @@ KNOWN_FAILURES=(
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
   "up:acls"
   "up:xattrs"
-  # backup: receiver does not create backup files (~suffix) when overwriting.
-  "up:backup"
+  # (up:backup fixed - receiver now creates backup files before overwriting)
   # link-dest: receiver does not create hardlinks from reference directories.
   "up:link-dest"
   # compare-dest: receiver does not check reference directories during
   # quick-check to skip unchanged files.
   "up:compare-dest"
-  # update: receiver does not honour the 'u' (--update) flag to skip files
-  # with newer destination timestamps.
-  "up:update"
   # relative: receiver does not reconstruct implied path components from the
   # 'R' (--relative) flag in upstream→oc push direction.
   "up:relative"
@@ -1178,9 +1174,6 @@ KNOWN_FAILURES=(
   # protocol-31: upstream 3.0.9 does not support protocol 31, causing
   # negotiation failure when our daemon offers it.
   "up:protocol-31"
-  # dry-run: our daemon receiver does not honour the 'n' (--dry-run) flag -
-  # files are created on disk despite dry-run mode (3.4.1 only).
-  "up:dry-run"
   # itemize: our daemon does not relay itemize output (-i) back to the
   # upstream sender - no itemize lines appear in the transfer output.
   "up:itemize"
