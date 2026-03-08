@@ -774,25 +774,28 @@ fn build_full_daemon_args(
         args.push("--inplace".to_owned());
     }
 
-    // --backup, --backup-dir, --backup-suffix — upstream: options.c:2849-2876
+    // --backup, --backup-dir, --suffix — upstream: options.c:2787-2795
     if config.backup() {
         args.push("--backup".to_owned());
         if let Some(dir) = config.backup_directory() {
-            args.push(format!("--backup-dir={}", dir.display()));
+            args.push("--backup-dir".to_owned());
+            args.push(dir.display().to_string());
         }
         if let Some(suffix) = config.backup_suffix() {
-            args.push(format!("--backup-suffix={}", suffix.to_string_lossy()));
+            args.push(format!("--suffix={}", suffix.to_string_lossy()));
         }
     }
 
-    // --compare-dest, --copy-dest, --link-dest — upstream: options.c:2744-2768
+    // --compare-dest, --copy-dest, --link-dest — upstream: options.c:2915-2923
+    // Sent as two separate args (option then value) matching upstream's wire format.
     for ref_dir in config.reference_directories() {
-        let prefix = match ref_dir.kind() {
-            ReferenceDirectoryKind::Compare => "--compare-dest=",
-            ReferenceDirectoryKind::Copy => "--copy-dest=",
-            ReferenceDirectoryKind::Link => "--link-dest=",
+        let option = match ref_dir.kind() {
+            ReferenceDirectoryKind::Compare => "--compare-dest",
+            ReferenceDirectoryKind::Copy => "--copy-dest",
+            ReferenceDirectoryKind::Link => "--link-dest",
         };
-        args.push(format!("{prefix}{}", ref_dir.path().display()));
+        args.push(option.to_owned());
+        args.push(ref_dir.path().display().to_string());
     }
 
     // --remove-source-files — upstream: options.c:2964-2965

@@ -740,7 +740,9 @@ fn build_server_config(
 /// - `options.c:2891` — `--use-qsort`
 /// - `options.c:2737-2740` — `--compress-level=N`
 fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
-    for arg in client_args {
+    let mut i = 0;
+    while i < client_args.len() {
+        let arg = &client_args[i];
         match arg.as_str() {
             // upstream: options.c:2818-2829 - delete mode variants
             "--delete" | "--delete-before" | "--delete-during" => {
@@ -800,6 +802,49 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             "--backup" => {
                 config.flags.backup = true;
             }
+            // Two-arg options: upstream sends option and value as separate args.
+            // upstream: options.c:2915-2923 - reference directories
+            "--compare-dest" => {
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Compare,
+                    });
+                    i += 1;
+                }
+            }
+            "--copy-dest" => {
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Copy,
+                    });
+                    i += 1;
+                }
+            }
+            "--link-dest" => {
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Link,
+                    });
+                    i += 1;
+                }
+            }
+            // upstream: options.c:2787-2790 - backup-dir as separate args
+            "--backup-dir" => {
+                config.flags.backup = true;
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.backup_dir = Some(dir.to_owned());
+                    i += 1;
+                }
+            }
+            // upstream: options.c:2907-2909 - temp-dir as separate args
+            "--temp-dir" => {
+                if let Some(_dir) = client_args.get(i + 1) {
+                    i += 1;
+                }
+            }
             _ => {
                 // upstream: options.c:2737-2740
                 if let Some(level_str) = arg.strip_prefix("--compress-level=") {
@@ -815,13 +860,15 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                             config.deletion.max_delete = Some(n as u64);
                         }
                     }
-                // upstream: options.c:2854-2870
+                // Fallback: =value format for reference directories and backup options.
+                // Handles both upstream (two-arg) and legacy (=value) formats.
                 } else if let Some(dir) = arg.strip_prefix("--backup-dir=") {
                     config.flags.backup = true;
                     config.backup_dir = Some(dir.to_owned());
+                } else if let Some(suffix) = arg.strip_prefix("--suffix=") {
+                    config.backup_suffix = Some(suffix.to_owned());
                 } else if let Some(suffix) = arg.strip_prefix("--backup-suffix=") {
                     config.backup_suffix = Some(suffix.to_owned());
-                // upstream: options.c:2744-2768
                 } else if let Some(dir) = arg.strip_prefix("--link-dest=") {
                     config.reference_directories.push(ReferenceDirectory {
                         path: std::path::PathBuf::from(dir),
@@ -837,12 +884,12 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                         path: std::path::PathBuf::from(dir),
                         kind: ReferenceDirectoryKind::Copy,
                     });
-                // upstream: options.c:2975-2977
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
                     config.file_selection.files_from_path = Some(path.to_owned());
                 }
             }
         }
+        i += 1;
     }
 }
 
