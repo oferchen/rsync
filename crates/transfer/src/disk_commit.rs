@@ -19,12 +19,15 @@
 //!
 //! A `Shutdown` message terminates the thread after draining in-progress work.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, IoSlice, Seek, Write};
+use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
 
 use crate::pipeline::spsc;
 
+use engine::compute_backup_path;
 use metadata::MetadataOptions;
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
@@ -161,6 +164,49 @@ pub struct DiskThreadHandle {
     pub join_handle: JoinHandle<()>,
 }
 
+/// Backup configuration for creating backup copies before overwriting.
+///
+/// # Upstream Reference
+///
+/// - `backup.c:make_backup()` - renames existing file to backup path
+/// - `options.c:2854-2876` - `--backup`, `--backup-dir`, `--suffix`
+#[derive(Debug, Clone)]
+pub struct BackupConfig {
+    /// Destination root directory for computing relative backup paths.
+    pub dest_dir: PathBuf,
+    /// Optional backup directory (`--backup-dir`).
+    pub backup_dir: Option<PathBuf>,
+    /// Backup file suffix (default `~`).
+    pub suffix: OsString,
+}
+
+/// Creates a backup of the destination file before overwriting.
+///
+/// Mirrors upstream `backup.c:make_backup()` which renames the existing file
+/// to the backup path. Parent directories are created if needed when using
+/// `--backup-dir`.
+fn make_backup(file_path: &Path, config: &BackupConfig) -> io::Result<()> {
+    if !file_path.exists() {
+        return Ok(());
+    }
+
+    let backup_path = compute_backup_path(
+        &config.dest_dir,
+        file_path,
+        None,
+        config.backup_dir.as_deref(),
+        &config.suffix,
+    );
+
+    if let Some(parent) = backup_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    fs::rename(file_path, &backup_path)
+}
+
 /// Configuration for the disk commit thread.
 #[derive(Debug, Clone)]
 pub struct DiskCommitConfig {
@@ -173,6 +219,9 @@ pub struct DiskCommitConfig {
     /// immediately after rename — mirroring upstream `finish_transfer()` →
     /// `set_file_attrs()` in receiver.c.
     pub metadata_opts: Option<MetadataOptions>,
+    /// Backup configuration. When `Some`, existing files are renamed to a
+    /// backup path before being overwritten.
+    pub backup: Option<BackupConfig>,
 }
 
 impl Default for DiskCommitConfig {
@@ -181,6 +230,7 @@ impl Default for DiskCommitConfig {
             do_fsync: false,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
             metadata_opts: None,
+            backup: None,
         }
     }
 }
@@ -328,6 +378,11 @@ fn process_file(
                 }
                 drop(output);
 
+                // upstream: backup.c:make_backup() - rename existing file before overwrite
+                if let Some(ref backup_config) = config.backup {
+                    make_backup(&begin.file_path, backup_config)?;
+                }
+
                 // Atomic rename (only for temp+rename path).
                 if needs_rename {
                     fs::rename(cleanup_guard.path(), &begin.file_path)?;
@@ -447,6 +502,11 @@ fn process_whole_file(
         })?;
     }
     drop(output);
+
+    // upstream: backup.c:make_backup() - rename existing file before overwrite
+    if let Some(ref backup_config) = config.backup {
+        make_backup(&begin.file_path, backup_config)?;
+    }
 
     if needs_rename {
         fs::rename(cleanup_guard.path(), &begin.file_path)?;
