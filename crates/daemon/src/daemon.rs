@@ -54,7 +54,10 @@ use core::{
     branding::{self, Brand, manifest},
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
-    server::{HandshakeResult, ServerConfig, ServerRole, run_server_with_handshake},
+    server::{
+        HandshakeResult, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig, ServerRole,
+        run_server_with_handshake,
+    },
 };
 use logging_sink::MessageSink;
 use protocol::{

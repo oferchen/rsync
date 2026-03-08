@@ -230,7 +230,7 @@ pub fn run_server_stdio(
 /// - The receiver or generator role encounters a transfer error
 #[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake<W: Write>(
-    config: ServerConfig,
+    mut config: ServerConfig,
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
     mut stdout: W,
@@ -295,6 +295,18 @@ pub fn run_server_with_handshake<W: Write>(
     handshake.negotiated_algorithms = setup_result.negotiated_algorithms;
     handshake.compat_flags = setup_result.compat_flags;
     handshake.checksum_seed = setup_result.checksum_seed;
+
+    // upstream: compat.c:777-778 - apply CF_INPLACE_PARTIAL_DIR after compat exchange.
+    // When the server advertises this flag and a partial directory is configured,
+    // enable per-file inplace for partial-dir basis files.
+    // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+    if let Some(flags) = setup_result.compat_flags {
+        if flags.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR)
+            && config.has_partial_dir
+        {
+            config.write.inplace_partial = true;
+        }
+    }
 
     // Flush raw-mode data before wrapping in multiplexed writer.
     stdout.flush()?;

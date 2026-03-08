@@ -70,4 +70,4 @@ pub use trace::{
     trace_sort_start, trace_struct_sizes, trace_write_entry,
 };
 pub use wire_mode::{from_wire_mode, to_wire_mode};
-pub use write::{FileListWriter, write_file_entry};
+pub use write::{FileListWriter, PreserveFlags, write_file_entry};

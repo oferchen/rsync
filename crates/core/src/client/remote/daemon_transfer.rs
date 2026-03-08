@@ -20,7 +20,7 @@ use protocol::filters::FilterRuleWireFormat;
 
 use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_digest};
 
-use super::super::config::{ClientConfig, DeleteMode};
+use super::super::config::{ClientConfig, DeleteMode, ReferenceDirectoryKind};
 use super::super::error::{ClientError, daemon_error, invalid_argument_error, socket_error};
 use super::super::module_list::{
     DaemonAddress, DaemonAuthContext, apply_socket_options, connect_direct, load_daemon_password,
@@ -774,9 +774,47 @@ fn build_full_daemon_args(
         args.push("--inplace".to_owned());
     }
 
+    // --backup, --backup-dir, --suffix — upstream: options.c:2787-2795
+    if config.backup() {
+        args.push("--backup".to_owned());
+        if let Some(dir) = config.backup_directory() {
+            args.push("--backup-dir".to_owned());
+            args.push(dir.display().to_string());
+        }
+        if let Some(suffix) = config.backup_suffix() {
+            args.push(format!("--suffix={}", suffix.to_string_lossy()));
+        }
+    }
+
+    // --compare-dest, --copy-dest, --link-dest — upstream: options.c:2915-2923
+    // Sent as two separate args (option then value) matching upstream's wire format.
+    for ref_dir in config.reference_directories() {
+        let option = match ref_dir.kind() {
+            ReferenceDirectoryKind::Compare => "--compare-dest",
+            ReferenceDirectoryKind::Copy => "--copy-dest",
+            ReferenceDirectoryKind::Link => "--link-dest",
+        };
+        args.push(option.to_owned());
+        args.push(ref_dir.path().display().to_string());
+    }
+
     // --remove-source-files — upstream: options.c:2964-2965
     if config.remove_source_files() {
         args.push("--remove-source-files".to_owned());
+    }
+
+    // --files-from — upstream: options.c:2975-2977
+    match config.files_from() {
+        super::super::config::FilesFromSource::None => {}
+        super::super::config::FilesFromSource::Stdin => {
+            args.push("--files-from=-".to_owned());
+        }
+        super::super::config::FilesFromSource::LocalFile(path) => {
+            args.push(format!("--files-from={}", path.display()));
+        }
+        super::super::config::FilesFromSource::RemoteFile(path) => {
+            args.push(format!("--files-from={path}"));
+        }
     }
 
     // Dummy argument (upstream requirement — represents CWD)
