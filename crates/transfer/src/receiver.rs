@@ -877,25 +877,18 @@ impl ReceiverContext {
                 return false;
             }
 
-            // Check symlink targets for safety (similar to --safe-links).
-            // Reject symlinks that point outside the transfer tree.
-            if entry.is_symlink() {
-                if let Some(target) = entry.link_target() {
-                    if !symlink_target_is_safe_for_transfer(target, path) {
-                        info_log!(
-                            Misc,
-                            1,
-                            "ERROR: rejecting symlink with unsafe target from sender: {} -> {}",
-                            path.display(),
-                            target.display()
-                        );
-                        return false;
-                    }
-                }
-            }
-
             true
         });
+
+        // Strip leading slashes from relative paths after sorting.
+        // upstream: flist.c:3071-3084 — strip_root in flist_sort_and_clean()
+        if relative_paths {
+            for entry in &mut self.file_list {
+                if entry.path().has_root() {
+                    entry.strip_leading_slashes();
+                }
+            }
+        }
 
         original_len - self.file_list.len()
     }
@@ -1147,6 +1140,16 @@ impl ReceiverContext {
             };
 
             let relative_path = entry.path();
+
+            // upstream: generator.c:1547 — skip unsafe symlinks when --safe-links
+            // is set. Check stays here (not in sanitize_file_list) to preserve
+            // protocol index alignment with the sender.
+            if self.config.flags.safe_links
+                && super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative_path)
+            {
+                continue;
+            }
+
             let link_path = dest_dir.join(relative_path);
 
             // upstream: generator.c:1561 — quick_check_ok(FT_SYMLINK, ...)
@@ -3627,57 +3630,6 @@ pub struct BasisFileConfig<'a> {
 /// - `util1.c`: `clean_fname()` with `CFN_REFUSE_DOT_DOT_DIRS`
 fn path_contains_dot_dot(path: &Path) -> bool {
     path.components().any(|c| matches!(c, Component::ParentDir))
-}
-
-/// Determines whether a symlink target is safe within the transfer tree.
-///
-/// A symlink target is considered unsafe if:
-/// - It is an absolute path
-/// - It is empty
-/// - It would escape the transfer directory via `..` traversal
-///
-/// The safety check evaluates whether the symlink, when resolved relative
-/// to its location in the transfer tree, would point outside the tree root.
-///
-/// # Upstream Reference
-///
-/// - `util1.c`: `unsafe_symlink()` — returns 1 if unsafe, 0 if safe
-fn symlink_target_is_safe_for_transfer(target: &Path, link_path: &Path) -> bool {
-    // Reject empty targets and absolute symlinks.
-    // upstream: util1.c `if (!dest || !*dest || *dest == '/') return 1;`
-    if target.as_os_str().is_empty() || target.has_root() {
-        return false;
-    }
-
-    // Count the directory depth of the link within the transfer tree.
-    // The last component is the symlink name itself, not a directory level.
-    let mut depth: i64 = 0;
-    for component in link_path.components() {
-        match component {
-            Component::Normal(_) => depth += 1,
-            Component::ParentDir => depth = 0,
-            _ => {}
-        }
-    }
-    // Exclude the symlink filename from the depth budget.
-    depth = (depth - 1).max(0);
-
-    // Walk the target components, tracking whether `..` escapes the tree.
-    for component in target.components() {
-        match component {
-            Component::ParentDir => {
-                depth -= 1;
-                if depth < 0 {
-                    return false;
-                }
-            }
-            Component::Normal(_) => depth += 1,
-            Component::CurDir => {}
-            Component::RootDir | Component::Prefix(_) => return false,
-        }
-    }
-
-    true
 }
 
 /// Tries to find a basis file in the reference directories.

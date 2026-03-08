@@ -106,6 +106,8 @@ pub mod role;
 pub mod setup;
 /// Shared abstractions used by generator and receiver roles.
 pub mod shared;
+/// Symlink target safety analysis mirroring upstream `util1.c:unsafe_symlink()`.
+pub mod symlink_safety;
 /// RAII guard for temporary file cleanup.
 pub mod temp_guard;
 /// Writer abstraction supporting plain and multiplex modes.
