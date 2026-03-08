@@ -44,7 +44,7 @@ pub fn is_unsafe_symlink(target: &OsStr, link_path: &std::path::Path) -> bool {
     // upstream 3.4.1: reject /../ mid-path after skipping leading ../
     // segments. Prevents canonicalization attacks where intermediate
     // directories could be symlinks themselves.
-    if has_mid_path_dotdot(target_bytes) {
+    if has_mid_path_dotdot(&target_bytes) {
         return true;
     }
 
@@ -55,7 +55,7 @@ pub fn is_unsafe_symlink(target: &OsStr, link_path: &std::path::Path) -> bool {
     // Walk the target, checking if ".." ever escapes the tree.
     // upstream: walks dest path, decrementing depth on "..", incrementing on
     // normal components, returns depth < 0
-    !is_target_within_depth(target_bytes, depth)
+    !is_target_within_depth(&target_bytes, depth)
 }
 
 /// Computes the directory depth budget for a symlink within the transfer tree.
