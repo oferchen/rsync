@@ -89,9 +89,9 @@ pub struct ParsedServerFlags {
     ///
     /// Not part of the compact flag string; set via long-form args.
     pub append: bool,
-    /// Make backups before overwriting (long-form `--backup`).
+    /// Make backups before overwriting (`b` flag, `--backup`).
     ///
-    /// Not part of the compact flag string; set via long-form args.
+    /// Upstream: `options.c:2613` - `argstr[x++] = 'b'`.
     pub backup: bool,
     /// Fuzzy basis file matching (`y` flag, `--fuzzy`).
     pub fuzzy: bool,
@@ -201,6 +201,8 @@ impl ParsedServerFlags {
             b'R' => self.relative = true,
             b'P' => self.partial = true,
             b'u' => self.update = true,
+            // upstream: options.c:2613 — 'b' = backup.
+            b'b' => self.backup = true,
             b'N' => self.crtimes = true,
             // upstream: options.c:764 — 'L' = copy_links (resolve symlinks).
             b'L' => self.copy_links = true,
@@ -368,5 +370,18 @@ mod tests {
     fn crtimes_not_set_by_default() {
         let flags = ParsedServerFlags::parse("-r").unwrap();
         assert!(!flags.crtimes);
+    }
+
+    #[test]
+    fn parses_backup_flag() {
+        let flags = ParsedServerFlags::parse("-rb").unwrap();
+        assert!(flags.recursive);
+        assert!(flags.backup);
+    }
+
+    #[test]
+    fn backup_not_set_by_default() {
+        let flags = ParsedServerFlags::parse("-r").unwrap();
+        assert!(!flags.backup);
     }
 }

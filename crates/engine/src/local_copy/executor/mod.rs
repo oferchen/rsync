@@ -15,12 +15,13 @@ pub(crate) use directory::{copy_directory_recursive, is_device, is_fifo};
 #[allow(unused_imports)]
 pub(crate) use file::take_fsync_call_count;
 pub(crate) use file::{
-    CopyComparison, SparseWriteState, compute_backup_path, copy_entry_to_backup, copy_file,
-    should_skip_copy, write_sparse_chunk,
+    CopyComparison, SparseWriteState, copy_entry_to_backup, copy_file, should_skip_copy,
+    write_sparse_chunk,
 };
 pub use file::{
     DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetector, SparseReader,
-    SparseRegion, SparseWriter, remove_existing_destination, remove_incomplete_destination,
+    SparseRegion, SparseWriter, compute_backup_path, remove_existing_destination,
+    remove_incomplete_destination,
 };
 #[cfg(test)]
 pub(crate) use file::{
