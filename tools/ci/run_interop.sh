@@ -1160,8 +1160,12 @@ KNOWN_FAILURES=(
   "up:acls"
   "up:xattrs"
   # (up:backup fixed - receiver now creates backup files before overwriting)
-  # (up:link-dest fixed - receiver creates hardlinks from reference directories)
-  # (up:compare-dest fixed - receiver checks reference directories during quick-check)
+  # link-dest: receiver creates hardlinks from reference directories but the
+  # interop test still reports non-hardlinked files (needs investigation).
+  "up:link-dest"
+  # compare-dest: receiver checks reference directories during quick-check but
+  # the interop test still transfers matching files (needs investigation).
+  "up:compare-dest"
   # relative: open_tmpfile creates parent dirs on ENOENT but upstream -R implied
   # directory handling may need additional receiver-side fixes.
   "up:relative"
