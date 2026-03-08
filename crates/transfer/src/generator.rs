@@ -1678,11 +1678,7 @@ impl GeneratorContext {
     ///
     /// - `flist.c:205-232` - `readlink_stat()`
     /// - `flist.c:215` - `copy_unsafe_links && unsafe_symlink(linkbuf, path)`
-    fn resolve_symlink_metadata(
-        &self,
-        path: &Path,
-        base: &Path,
-    ) -> io::Result<std::fs::Metadata> {
+    fn resolve_symlink_metadata(&self, path: &Path, base: &Path) -> io::Result<std::fs::Metadata> {
         if self.config.flags.copy_links {
             return std::fs::metadata(path);
         }
@@ -2717,7 +2713,6 @@ fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
     let minor = (rdev & 0xffffff) as u32;
     (major, minor)
 }
-
 
 #[cfg(test)]
 mod tests {
