@@ -524,6 +524,47 @@ impl FileEntry {
         self.dirname = dirname;
     }
 
+    /// Strips leading `/` characters from the entry path.
+    ///
+    /// With `--relative`, upstream sends paths with a leading slash (e.g.
+    /// `/src/lib/foo.rs`). After sorting, the receiver strips these so that
+    /// `dest_dir.join(path)` produces the correct destination.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:3071-3084`: `if (strip_root)` block in `flist_sort_and_clean()`
+    pub fn strip_leading_slashes(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let bytes = self.name.as_os_str().as_bytes();
+            let trimmed = bytes.iter().position(|&b| b != b'/').unwrap_or(bytes.len());
+            if trimmed > 0 {
+                let new_bytes = &bytes[trimmed..];
+                if new_bytes.is_empty() {
+                    self.name = PathBuf::from(".");
+                } else {
+                    use std::ffi::OsStr;
+                    self.name = PathBuf::from(OsStr::from_bytes(new_bytes));
+                }
+                self.dirname = extract_dirname(&self.name);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let s = self.name.to_string_lossy();
+            let trimmed = s.trim_start_matches('/');
+            if trimmed.len() != s.len() {
+                self.name = if trimmed.is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    PathBuf::from(trimmed)
+                };
+                self.dirname = extract_dirname(&self.name);
+            }
+        }
+    }
+
     /// Returns the path as raw bytes without UTF-8 validation.
     ///
     /// This is an optimized accessor for protocol operations that work

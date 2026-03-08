@@ -5,9 +5,9 @@
 //! # Overview
 //!
 //! `engine` hosts transfer-oriented building blocks that power the Rust
-//! rsync implementation. The crate currently focuses on deterministic local
-//! filesystem copies so higher layers can provide observable behaviour while the
-//! full delta-transfer pipeline is under construction.
+//! rsync implementation. The crate provides deterministic local filesystem
+//! copies and delta-transfer primitives used by the `transfer` crate's
+//! remote pipeline (sender/receiver/generator roles).
 //!
 //! # Design
 //!
@@ -16,8 +16,8 @@
 //! recursive copies of regular files, directories, symbolic links, and FIFOs
 //! while preserving permissions and timestamps through the [`metadata`]
 //! helpers. The [`delta`] module mirrors upstream rsync's signature layout
-//! heuristics so the delta-transfer pipeline can reuse byte-identical block
-//! sizing when it lands, while [`signature`] turns those layouts into
+//! heuristics matching upstream rsync's block sizing, while [`signature`]
+//! turns those layouts into
 //! rsync-compatible rolling/strong checksum streams ready for transmission. The
 //! design keeps path parsing and copying logic in the engine layer so both the
 //! CLI and daemon facades can drive local transfers through a single interface.
