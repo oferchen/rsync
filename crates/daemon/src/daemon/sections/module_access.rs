@@ -715,6 +715,16 @@ fn build_server_config(
                 cfg.connection.compression_level = Some(compress::zlib::CompressionLevel::Default);
             }
 
+            // upstream: after chroot + chdir, reference directory paths resolve
+            // relative to the module root. We don't chdir, so resolve relative
+            // paths explicitly against the module path.
+            let module_path = std::path::Path::new(&module.path);
+            for ref_dir in &mut cfg.reference_directories {
+                if ref_dir.path.is_relative() {
+                    ref_dir.path = module_path.join(&ref_dir.path);
+                }
+            }
+
             Ok(Some(cfg))
         }
         Err(err) => {

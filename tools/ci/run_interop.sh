@@ -1139,42 +1139,38 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # dry-run: connection closure during abbreviated transfer when upstream daemon
-  # exits early in dry-run mode (EAGAIN / WouldBlock on socket read).
+  # dry-run: upstream daemon closes connection early during dry-run,
+  # causing EAGAIN on our client's non-blocking socket read.
   "oc:dry-run"
-  # safe-links: our client sends --safe-links but does not filter unsafe
-  # symlinks from the file list before transmission.
+  # safe-links: our client push sends all symlinks - sender-side safe-links
+  # filtering for oc→upstream push direction is not yet wired.
   "oc:safe-links"
   # compare-dest: upstream daemon does not honour --compare-dest from our
   # client for protocol <= 30 (reference directory wiring gap).
   "oc:compare-dest"
-  # copy-links: our client sends -L/--copy-links but the upstream daemon
-  # does not resolve symlinks when receiving from our sender.
-  "oc:copy-links"
+  # (oc:copy-links fixed - generator now uses stat() instead of lstat()
+  # when --copy-links is set, resolving symlinks before sending file list)
   # itemize: our client does not capture/relay itemize output (-i) from the
   # upstream daemon transfer - no itemize lines appear in stdout.
   "oc:itemize"
 
   # --- upstream→oc (daemon receive) ---
+  # relative: --relative paths land in absolute-path subdirectory instead
+  # of destination root (dirname leading slash not stripped in receiver).
+  "up:relative"
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
   "up:acls"
   "up:xattrs"
   # (up:backup fixed - receiver now creates backup files before overwriting)
-  # link-dest: receiver creates hardlinks from reference directories but the
-  # interop test still reports non-hardlinked files (needs investigation).
-  "up:link-dest"
-  # compare-dest: receiver checks reference directories during quick-check but
-  # the interop test still transfers matching files (needs investigation).
-  "up:compare-dest"
-  # relative: open_tmpfile creates parent dirs on ENOENT but upstream -R implied
-  # directory handling may need additional receiver-side fixes.
-  "up:relative"
+  # (up:link-dest fixed - reference directory paths resolved against module
+  # root in daemon build_server_config)
+  # (up:compare-dest fixed - reference directory paths resolved against module
+  # root in daemon build_server_config)
   # hardlinks-relative: combined -H -R still fails - needs relative fix plus
   # hardlink ordering adjustments.
   "up:hardlinks-relative"
-  # safe-links: our daemon requests symlink entries that upstream sender
-  # rejects as non-regular (protocol incompatibility for --safe-links).
-  "up:safe-links"
+  # (up:safe-links fixed - moved symlink safety check from sanitize_file_list
+  # to create_symlinks, preserving protocol index alignment with sender)
   # protocol-31: upstream 3.0.9 does not support protocol 31, causing
   # negotiation failure when our daemon offers it.
   "up:protocol-31"
