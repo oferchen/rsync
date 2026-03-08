@@ -1148,6 +1148,12 @@ KNOWN_FAILURES=(
   # compare-dest: upstream daemon does not honour --compare-dest from our
   # client for protocol <= 30 (reference directory wiring gap).
   "oc:compare-dest"
+  # copy-links: our client sends -L/--copy-links but the upstream daemon
+  # does not resolve symlinks when receiving from our sender.
+  "oc:copy-links"
+  # itemize: our client does not capture/relay itemize output (-i) from the
+  # upstream daemon transfer - no itemize lines appear in stdout.
+  "oc:itemize"
 
   # --- upstream→oc (daemon receive) ---
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
@@ -1172,6 +1178,15 @@ KNOWN_FAILURES=(
   # protocol-31: upstream 3.0.9 does not support protocol 31, causing
   # negotiation failure when our daemon offers it.
   "up:protocol-31"
+  # dry-run: our daemon receiver does not honour the 'n' (--dry-run) flag -
+  # files are created on disk despite dry-run mode (3.4.1 only).
+  "up:dry-run"
+  # itemize: our daemon does not relay itemize output (-i) back to the
+  # upstream sender - no itemize lines appear in the transfer output.
+  "up:itemize"
+  # hardlinks-relative: our daemon does not handle combined -H -R from
+  # upstream sender - hardlinked files with relative paths fail to transfer.
+  "up:hardlinks-relative"
 )
 
 is_known_failure() {
