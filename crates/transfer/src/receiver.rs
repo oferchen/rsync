@@ -3645,6 +3645,7 @@ fn path_contains_dot_dot(path: &Path) -> bool {
 /// # Upstream Reference
 ///
 /// - `util1.c`: `unsafe_symlink()` — returns 1 if unsafe, 0 if safe
+#[cfg(unix)]
 fn symlink_target_is_safe_for_transfer(target: &Path, link_path: &Path) -> bool {
     // Reject empty targets and absolute symlinks.
     // upstream: util1.c `if (!dest || !*dest || *dest == '/') return 1;`
