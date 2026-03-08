@@ -152,6 +152,21 @@ pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::Fil
                 // Collision — try another random suffix
                 continue;
             }
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                // Parent directory missing - create it and retry.
+                // upstream: receiver.c:766 - mkdir_defmode(dn) before do_mkstemp()
+                if let Some(parent) = concrete_path.parent() {
+                    fs::create_dir_all(parent)?;
+                    if let Ok(file) = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&concrete_path)
+                    {
+                        return Ok((file, TempFileGuard::new(concrete_path)));
+                    }
+                }
+                return Err(io::Error::new(e.kind(), e.to_string()));
+            }
             Err(e) => return Err(e),
         }
     }

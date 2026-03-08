@@ -811,8 +811,22 @@ impl GeneratorContext {
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
 
         loop {
-            // Read NDX value from receiver
-            let ndx = ndx_read_codec.read_ndx(&mut *reader)?;
+            // Read NDX value from receiver.
+            // Connection may close early in dry-run or abbreviated transfers - treat
+            // as end of transfer once we have completed at least one phase.
+            let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
+                Ok(ndx) => ndx,
+                Err(e)
+                    if phase > 0
+                        && (e.kind() == io::ErrorKind::ConnectionReset
+                            || e.kind() == io::ErrorKind::UnexpectedEof
+                            || e.kind() == io::ErrorKind::BrokenPipe
+                            || e.kind() == io::ErrorKind::WouldBlock) =>
+                {
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
 
             // Handle negative NDX values (upstream io.c:1736-1750, sender.c:236-258)
             if ndx < 0 {
@@ -1074,9 +1088,22 @@ impl GeneratorContext {
             return Ok(());
         }
 
-        // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS
-        // upstream: main.c:886 - read_ndx_and_attrs() handles NDX_DEL_STATS internally
-        let ndx = self.read_ndx_skipping_del_stats(reader, ndx_read_codec)?;
+        // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS.
+        // upstream: main.c:886 - read_ndx_and_attrs() handles NDX_DEL_STATS internally.
+        // Connection may close early in dry-run or when the remote daemon exits before
+        // completing the goodbye exchange - treat this as acceptable.
+        let ndx = match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
+            Ok(ndx) => ndx,
+            Err(e)
+                if e.kind() == io::ErrorKind::ConnectionReset
+                    || e.kind() == io::ErrorKind::UnexpectedEof
+                    || e.kind() == io::ErrorKind::BrokenPipe
+                    || e.kind() == io::ErrorKind::WouldBlock =>
+            {
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
         if ndx != NDX_DONE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
