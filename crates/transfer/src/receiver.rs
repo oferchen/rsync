@@ -56,8 +56,8 @@ const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
 const REDO_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::MAX_SUM_LENGTH).unwrap();
 
-/// Minimum candidate count to justify rayon thread-pool overhead for
-/// parallel stat() calls in the quick-check phase. Below this threshold,
+/// Minimum candidate count to justify parallel I/O overhead for
+/// stat() calls in the quick-check phase. Below this threshold,
 /// sequential iteration is faster.
 const PARALLEL_STAT_THRESHOLD: usize = 64;
 
@@ -118,7 +118,6 @@ fn is_hardlink_follower(entry: &FileEntry) -> bool {
 /// Pure-function quick-check: compares destination stat against source entry.
 ///
 /// Returns `true` when the destination file matches the source entry (skip transfer).
-/// Thread-safe for use with `rayon::par_iter`.
 ///
 /// Follows upstream `generator.c:617 quick_check_ok()` evaluation order:
 /// 1. Size mismatch - always needs transfer
@@ -901,7 +900,8 @@ impl ReceiverContext {
     ///
     /// Two-phase approach: directory creation is sequential (cheap, respects
     /// parent-child ordering), metadata application (`chown`/`chmod`/`utimes`)
-    /// runs in parallel via rayon when above [`PARALLEL_STAT_THRESHOLD`].
+    /// runs in parallel via tokio `spawn_blocking` + semaphore when above
+    /// [`PARALLEL_STAT_THRESHOLD`].
     ///
     /// Returns a list of metadata errors encountered (path, error message).
     fn create_directories(
@@ -909,25 +909,24 @@ impl ReceiverContext {
         dest_dir: &std::path::Path,
         metadata_opts: &MetadataOptions,
     ) -> io::Result<Vec<(PathBuf, String)>> {
-        use rayon::prelude::*;
-
         // upstream: receiver.c:693 - dry_run skips all filesystem modifications
         if self.config.flags.dry_run {
             return Ok(Vec::new());
         }
 
-        let dir_entries: Vec<(&FileEntry, PathBuf)> = self
+        let dir_entries: Vec<(usize, PathBuf)> = self
             .file_list
             .iter()
-            .filter(|e| e.is_dir())
-            .map(|entry| {
+            .enumerate()
+            .filter(|(_, e)| e.is_dir())
+            .map(|(idx, entry)| {
                 let relative_path = entry.path();
                 let dir_path = if relative_path.as_os_str() == "." {
                     dest_dir.to_path_buf()
                 } else {
                     dest_dir.join(relative_path)
                 };
-                (entry, dir_path)
+                (idx, dir_path)
             })
             .collect();
 
@@ -937,24 +936,27 @@ impl ReceiverContext {
             }
         }
 
-        if dir_entries.len() >= PARALLEL_STAT_THRESHOLD {
-            Ok(dir_entries
-                .par_iter()
-                .filter_map(|(entry, dir_path)| {
-                    apply_metadata_from_file_entry(dir_path, entry, metadata_opts)
-                        .err()
-                        .map(|e| (dir_path.clone(), e.to_string()))
-                })
-                .collect())
-        } else {
-            let mut errors = Vec::new();
-            for (entry, dir_path) in &dir_entries {
-                if let Err(e) = apply_metadata_from_file_entry(dir_path, entry, metadata_opts) {
-                    errors.push((dir_path.clone(), e.to_string()));
-                }
-            }
-            Ok(errors)
-        }
+        // Build owned data for parallel metadata application.
+        let metadata_opts_clone = metadata_opts.clone();
+        let entry_snapshots: Vec<(PathBuf, FileEntry)> = dir_entries
+            .into_iter()
+            .map(|(idx, dir_path)| {
+                let entry = &self.file_list[idx];
+                (dir_path, entry.clone())
+            })
+            .collect();
+
+        let results = super::parallel_io::map_blocking(
+            entry_snapshots,
+            PARALLEL_STAT_THRESHOLD,
+            move |(dir_path, entry)| {
+                apply_metadata_from_file_entry(&dir_path, &entry, &metadata_opts_clone)
+                    .err()
+                    .map(|e| (dir_path, e.to_string()))
+            },
+        );
+
+        Ok(results.into_iter().flatten().collect())
     }
 
     /// Deletes extraneous files at the destination that are not in the received file list.
@@ -963,9 +965,9 @@ impl ReceiverContext {
     /// scans for entries not present in the source list and removes them. Directories
     /// are removed recursively (depth-first).
     ///
-    /// Uses rayon for parallel directory scanning when directory count exceeds threshold.
-    /// When `max_delete` is set, an atomic counter enforces the deletion limit across
-    /// all parallel workers.
+    /// Uses tokio `spawn_blocking` + semaphore for parallel directory scanning when
+    /// directory count exceeds threshold. When `max_delete` is set, an atomic counter
+    /// enforces the deletion limit across all parallel workers.
     ///
     /// Returns `(stats, limit_exceeded)` where `limit_exceeded` is true when deletions
     /// were stopped due to `--max-delete`.
@@ -977,15 +979,14 @@ impl ReceiverContext {
     /// - `main.c:1367` — `deletion_count >= max_delete` check
     fn delete_extraneous_files(&self, dest_dir: &Path) -> io::Result<(DeleteStats, bool)> {
         use std::collections::{HashMap, HashSet};
+        use std::sync::Arc;
         use std::sync::atomic::{AtomicU64, Ordering};
-
-        use rayon::prelude::*;
 
         let max_delete = self.config.deletion.max_delete;
 
-        // Build directory → children map from the file list.
-        // Each directory maps to the set of child entry names it contains.
-        let mut dir_children: HashMap<PathBuf, HashSet<&std::ffi::OsStr>> = HashMap::new();
+        // Build directory -> children map from the file list.
+        // Use owned OsString keys so the map can be shared across threads.
+        let mut dir_children: HashMap<PathBuf, HashSet<std::ffi::OsString>> = HashMap::new();
 
         for entry in &self.file_list {
             let relative = entry.path();
@@ -1003,117 +1004,119 @@ impl ReceiverContext {
                 },
             );
             if let Some(name) = relative.file_name() {
-                dir_children.entry(parent).or_default().insert(name);
+                dir_children
+                    .entry(parent)
+                    .or_default()
+                    .insert(name.to_os_string());
             }
         }
 
         let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
 
         // Atomic counter for max_delete enforcement across parallel workers.
-        // upstream: main.c:1367 — deletion_count >= max_delete
-        let deletions_performed = AtomicU64::new(0);
+        // upstream: main.c:1367 - deletion_count >= max_delete
+        let deletions_performed = Arc::new(AtomicU64::new(0));
 
-        // Per-directory deletion: scan one directory, delete unlisted entries.
-        // Each directory is independent — remove_dir_all handles subtree deletion.
-        let delete_in_dir = |dir_relative: &PathBuf| -> DeleteStats {
-            let dest_path = if dir_relative.as_os_str() == "." {
-                dest_dir.to_path_buf()
-            } else {
-                dest_dir.join(dir_relative)
-            };
+        // Share directory children map across workers.
+        let dir_children = Arc::new(dir_children);
+        let dest_dir_owned = dest_dir.to_path_buf();
 
-            let keep = match dir_children.get(dir_relative) {
-                Some(set) => set,
-                None => return DeleteStats::new(),
-            };
-
-            let read_dir = match fs::read_dir(&dest_path) {
-                Ok(iter) => iter,
-                Err(_) => return DeleteStats::new(),
-            };
-
-            let mut stats = DeleteStats::new();
-            for entry in read_dir {
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(_) => continue,
-                };
-                let name = entry.file_name();
-                if keep.contains(name.as_os_str()) {
-                    continue;
-                }
-
-                // Check max_delete limit before each deletion.
-                if let Some(limit) = max_delete {
-                    let current = deletions_performed.load(Ordering::Relaxed);
-                    if current >= limit {
-                        break;
-                    }
-                    deletions_performed.fetch_add(1, Ordering::Relaxed);
-                }
-
-                let path = dest_path.join(&name);
-                let file_type = entry.file_type().ok();
-                let is_dir = file_type.as_ref().is_some_and(|ft| ft.is_dir());
-                let is_symlink = file_type.as_ref().is_some_and(|ft| ft.is_symlink());
-
-                let result = if is_dir {
-                    fs::remove_dir_all(&path)
+        let per_dir_results = super::parallel_io::map_blocking(
+            dirs_to_scan,
+            PARALLEL_STAT_THRESHOLD,
+            move |dir_relative| {
+                let dest_path = if dir_relative.as_os_str() == "." {
+                    dest_dir_owned.clone()
                 } else {
-                    fs::remove_file(&path)
+                    dest_dir_owned.join(&dir_relative)
                 };
 
-                match result {
-                    Ok(()) => {
-                        if is_dir {
-                            info_log!(Del, 1, "deleting directory {}", path.display());
-                            stats.dirs += 1;
-                        } else if is_symlink {
-                            info_log!(Del, 1, "deleting {}", path.display());
-                            stats.symlinks += 1;
-                        } else {
-                            info_log!(Del, 1, "deleting {}", path.display());
-                            stats.files += 1;
+                let keep = match dir_children.get(&dir_relative) {
+                    Some(set) => set,
+                    None => return DeleteStats::new(),
+                };
+
+                let read_dir = match fs::read_dir(&dest_path) {
+                    Ok(iter) => iter,
+                    Err(_) => return DeleteStats::new(),
+                };
+
+                let mut stats = DeleteStats::new();
+                for entry in read_dir {
+                    let entry = match entry {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    let name = entry.file_name();
+                    if keep.contains(&name) {
+                        continue;
+                    }
+
+                    // Check max_delete limit before each deletion.
+                    if let Some(limit) = max_delete {
+                        let current = deletions_performed.load(Ordering::Relaxed);
+                        if current >= limit {
+                            break;
+                        }
+                        deletions_performed.fetch_add(1, Ordering::Relaxed);
+                    }
+
+                    let path = dest_path.join(&name);
+                    let file_type = entry.file_type().ok();
+                    let is_dir = file_type.as_ref().is_some_and(|ft| ft.is_dir());
+                    let is_symlink = file_type.as_ref().is_some_and(|ft| ft.is_symlink());
+
+                    let result = if is_dir {
+                        fs::remove_dir_all(&path)
+                    } else {
+                        fs::remove_file(&path)
+                    };
+
+                    match result {
+                        Ok(()) => {
+                            if is_dir {
+                                info_log!(Del, 1, "deleting directory {}", path.display());
+                                stats.dirs += 1;
+                            } else if is_symlink {
+                                info_log!(Del, 1, "deleting {}", path.display());
+                                stats.symlinks += 1;
+                            } else {
+                                info_log!(Del, 1, "deleting {}", path.display());
+                                stats.files += 1;
+                            }
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                        Err(e) => {
+                            debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
                         }
                     }
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                    Err(e) => {
-                        debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
-                    }
                 }
-            }
-            stats
-        };
+                stats
+            },
+        );
 
-        // Parallel directory scanning when above threshold, sequential otherwise.
-        let merge = |mut a: DeleteStats, b: DeleteStats| -> DeleteStats {
-            a.files = a.files.saturating_add(b.files);
-            a.dirs = a.dirs.saturating_add(b.dirs);
-            a.symlinks = a.symlinks.saturating_add(b.symlinks);
-            a.devices = a.devices.saturating_add(b.devices);
-            a.specials = a.specials.saturating_add(b.specials);
-            a
-        };
-
-        let stats = if dirs_to_scan.len() >= PARALLEL_STAT_THRESHOLD {
-            dirs_to_scan
-                .par_iter()
-                .map(delete_in_dir)
-                .reduce(DeleteStats::new, merge)
-        } else {
-            dirs_to_scan
-                .iter()
-                .map(delete_in_dir)
-                .fold(DeleteStats::new(), merge)
-        };
+        let mut combined = DeleteStats::new();
+        for s in per_dir_results {
+            combined.files = combined.files.saturating_add(s.files);
+            combined.dirs = combined.dirs.saturating_add(s.dirs);
+            combined.symlinks = combined.symlinks.saturating_add(s.symlinks);
+            combined.devices = combined.devices.saturating_add(s.devices);
+            combined.specials = combined.specials.saturating_add(s.specials);
+        }
 
         // Limit is exceeded when we had candidates beyond the allowed count.
         // The counter may be >= limit if we incremented it but then the actual
         // deletion failed, so compare actual deletions against the limit too.
-        let limit_exceeded =
-            max_delete.is_some_and(|limit| deletions_performed.load(Ordering::Relaxed) >= limit);
+        // Note: deletions_performed is now owned by the closure; reconstruct
+        // the check from the combined stats.
+        let total_deletions = u64::from(combined.files)
+            + u64::from(combined.dirs)
+            + u64::from(combined.symlinks)
+            + u64::from(combined.devices)
+            + u64::from(combined.specials);
+        let limit_exceeded = max_delete.is_some_and(|limit| total_deletions >= limit);
 
-        Ok((stats, limit_exceeded))
+        Ok((combined, limit_exceeded))
     }
 
     /// Creates symbolic links from the file list entries.
@@ -1380,13 +1383,14 @@ impl ReceiverContext {
     /// Builds the list of files that need transfer, applying quick-check to skip
     /// unchanged files and respecting size bounds and failed directory tracking.
     ///
-    /// Performs stat() calls in parallel (via rayon) when the candidate count
-    /// exceeds [`PARALLEL_STAT_THRESHOLD`], falling back to sequential iteration
-    /// for small lists where thread-pool overhead would dominate.
+    /// Performs stat() calls in parallel (via tokio `spawn_blocking` + semaphore)
+    /// when the candidate count exceeds [`PARALLEL_STAT_THRESHOLD`], falling back
+    /// to sequential iteration for small lists where runtime creation overhead
+    /// would dominate.
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1809` — `quick_check_ok()` for `FT_REG`
+    /// - `generator.c:1809` - `quick_check_ok()` for `FT_REG`
     fn build_files_to_transfer<'a>(
         &'a self,
         dest_dir: &Path,
@@ -1395,8 +1399,6 @@ impl ReceiverContext {
         metadata_errors: &mut Vec<(PathBuf, String)>,
         stats: &mut TransferStats,
     ) -> Vec<(usize, &'a FileEntry)> {
-        use rayon::prelude::*;
-
         // upstream: receiver.c:693 - dry_run (!do_xfers) skips all file transfers
         if self.config.flags.dry_run {
             return Vec::new();
@@ -1408,9 +1410,9 @@ impl ReceiverContext {
             .iter()
             .enumerate()
             .filter(|(_, e)| e.is_file())
-            // Hardlink followers are not transferred — they are created as hard links
+            // Hardlink followers are not transferred - they are created as hard links
             // to the leader after the transfer loop.
-            // upstream: generator.c:1539 — F_HLINK_NOT_FIRST → hard_link_check() → skip
+            // upstream: generator.c:1539 - F_HLINK_NOT_FIRST -> hard_link_check() -> skip
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
                 let sz = e.size();
@@ -1459,124 +1461,74 @@ impl ReceiverContext {
             None
         };
 
-        // Phase B: Stat each candidate to determine quick-check status.
-        // Also applies --ignore-existing and --existing filters.
-        // upstream: generator.c:1562 — ignore_existing skips when file exists
-        // upstream: generator.c:1571 — existing_only (--existing) skips when file absent
-        // Parallel when above threshold, sequential otherwise.
-        if candidates.len() >= PARALLEL_STAT_THRESHOLD {
-            let results: Vec<_> = candidates
-                .par_iter()
-                .map(|&(idx, entry)| {
-                    let file_path = dest_dir.join(entry.path());
-                    let dest_meta = fs::metadata(&file_path).ok();
-                    (idx, entry, dest_meta)
-                })
-                .collect();
+        // Phase B: Parallel stat - collect destination metadata for all candidates.
+        // Only the stat() syscall runs in parallel; post-processing is sequential
+        // because it mutates metadata_errors and calls try_reference_dest.
+        let stat_paths: Vec<(usize, PathBuf)> = candidates
+            .iter()
+            .map(|&(idx, entry)| (idx, dest_dir.join(entry.path())))
+            .collect();
 
-            let mut files_to_transfer = Vec::with_capacity(results.len());
-            for (idx, entry, dest_meta) in results {
-                if let Some(ref meta) = dest_meta {
-                    if ignore_existing {
-                        continue;
-                    }
-                    // upstream: generator.c:1709 - skip when dest is newer than source
-                    if update_only && dest_mtime_newer(meta, entry) {
-                        continue;
-                    }
-                    let file_path = dest_dir.join(entry.path());
-                    if quick_check_matches(
-                        entry,
-                        &file_path,
-                        meta,
-                        preserve_times,
-                        size_only,
-                        always_checksum,
-                    ) {
-                        if let Err(e) = apply_metadata_with_cached_stat(
-                            &file_path,
-                            entry,
-                            metadata_opts,
-                            dest_meta,
-                        ) {
-                            metadata_errors.push((file_path, e.to_string()));
-                        }
-                        continue;
-                    }
-                } else {
-                    if existing_only {
-                        continue;
-                    }
-                    // upstream: generator.c:942 - try_dests_reg() for absent files
-                    if try_reference_dest(
-                        entry,
-                        dest_dir,
-                        &self.config.reference_directories,
-                        preserve_times,
-                        size_only,
-                        always_checksum,
-                        metadata_opts,
-                        metadata_errors,
-                    ) {
-                        continue;
-                    }
+        let stat_results: Vec<(usize, Option<fs::Metadata>)> = super::parallel_io::map_blocking(
+            stat_paths,
+            PARALLEL_STAT_THRESHOLD,
+            move |(idx, file_path)| {
+                let meta = fs::metadata(&file_path).ok();
+                (idx, meta)
+            },
+        );
+
+        // Phase C: Sequential post-processing with stat results.
+        // upstream: generator.c:1562 - ignore_existing skips when file exists
+        // upstream: generator.c:1571 - existing_only (--existing) skips when file absent
+        let mut files_to_transfer = Vec::with_capacity(stat_results.len());
+        for (idx, dest_meta) in stat_results {
+            let entry = &self.file_list[idx];
+            if let Some(ref meta) = dest_meta {
+                if ignore_existing {
+                    continue;
                 }
-                files_to_transfer.push((idx, entry));
-            }
-            files_to_transfer
-        } else {
-            let mut files_to_transfer = Vec::with_capacity(candidates.len());
-            for (idx, entry) in candidates {
+                // upstream: generator.c:1709 - skip when dest is newer than source
+                if update_only && dest_mtime_newer(meta, entry) {
+                    continue;
+                }
                 let file_path = dest_dir.join(entry.path());
-                let dest_meta = fs::metadata(&file_path).ok();
-                if let Some(ref meta) = dest_meta {
-                    if ignore_existing {
-                        continue;
+                if quick_check_matches(
+                    entry,
+                    &file_path,
+                    meta,
+                    preserve_times,
+                    size_only,
+                    always_checksum,
+                ) {
+                    if let Err(e) =
+                        apply_metadata_with_cached_stat(&file_path, entry, metadata_opts, dest_meta)
+                    {
+                        metadata_errors.push((file_path, e.to_string()));
                     }
-                    // upstream: generator.c:1709 - skip when dest is newer than source
-                    if update_only && dest_mtime_newer(meta, entry) {
-                        continue;
-                    }
-                    if quick_check_matches(
-                        entry,
-                        &file_path,
-                        meta,
-                        preserve_times,
-                        size_only,
-                        always_checksum,
-                    ) {
-                        if let Err(e) = apply_metadata_with_cached_stat(
-                            &file_path,
-                            entry,
-                            metadata_opts,
-                            dest_meta,
-                        ) {
-                            metadata_errors.push((file_path, e.to_string()));
-                        }
-                        continue;
-                    }
-                } else {
-                    if existing_only {
-                        continue;
-                    }
-                    // upstream: generator.c:942 - try_dests_reg() for absent files
-                    if try_reference_dest(
-                        entry,
-                        dest_dir,
-                        &self.config.reference_directories,
-                        preserve_times,
-                        size_only,
-                        always_checksum,
-                        metadata_opts,
-                        metadata_errors,
-                    ) {
-                        continue;
-                    }
+                    continue;
                 }
-                files_to_transfer.push((idx, entry));
+            } else {
+                if existing_only {
+                    continue;
+                }
+                // upstream: generator.c:942 - try_dests_reg() for absent files
+                if try_reference_dest(
+                    entry,
+                    dest_dir,
+                    &self.config.reference_directories,
+                    preserve_times,
+                    size_only,
+                    always_checksum,
+                    metadata_opts,
+                    metadata_errors,
+                ) {
+                    continue;
+                }
             }
-            files_to_transfer
+            files_to_transfer.push((idx, entry));
         }
+        files_to_transfer
     }
 
     /// Creates a single directory during incremental processing.
