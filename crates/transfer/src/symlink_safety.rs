@@ -194,17 +194,18 @@ impl<'a> Iterator for ByteSegments<'a> {
 
 /// Converts an `OsStr` to bytes for path analysis.
 ///
-/// On Unix, this is a zero-cost view via `OsStrExt`. On other platforms,
-/// falls back to UTF-8 lossy conversion.
-#[cfg(unix)]
-fn os_str_as_bytes(s: &OsStr) -> &[u8] {
-    use std::os::unix::ffi::OsStrExt;
-    s.as_bytes()
-}
-
-#[cfg(not(unix))]
+/// Returns an owned `Vec<u8>` for a consistent return type across platforms.
+/// This is not a hot path - called once per symlink during transfer.
 fn os_str_as_bytes(s: &OsStr) -> Vec<u8> {
-    s.to_string_lossy().as_bytes().to_vec()
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        s.as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        s.to_string_lossy().as_bytes().to_vec()
+    }
 }
 
 #[cfg(test)]
