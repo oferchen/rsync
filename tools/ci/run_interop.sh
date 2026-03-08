@@ -1139,8 +1139,8 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # dry-run: EAGAIN on non-blocking socket read during abbreviated transfer
-  # handshake when upstream daemon closes early in dry-run mode.
+  # dry-run: connection closure during abbreviated transfer when upstream daemon
+  # exits early in dry-run mode (EAGAIN / WouldBlock on socket read).
   "oc:dry-run"
   # safe-links: our client sends --safe-links but does not filter unsafe
   # symlinks from the file list before transmission.
@@ -1162,8 +1162,12 @@ KNOWN_FAILURES=(
   # (up:backup fixed - receiver now creates backup files before overwriting)
   # (up:link-dest fixed - receiver creates hardlinks from reference directories)
   # (up:compare-dest fixed - receiver checks reference directories during quick-check)
-  # (up:relative fixed - open_tmpfile creates parent dirs on ENOENT for implied paths)
-  # (up:hardlinks-relative fixed - same ENOENT fix enables -H -R combination)
+  # relative: open_tmpfile creates parent dirs on ENOENT but upstream -R implied
+  # directory handling may need additional receiver-side fixes.
+  "up:relative"
+  # hardlinks-relative: combined -H -R still fails - needs relative fix plus
+  # hardlink ordering adjustments.
+  "up:hardlinks-relative"
   # safe-links: our daemon requests symlink entries that upstream sender
   # rejects as non-regular (protocol incompatibility for --safe-links).
   "up:safe-links"
