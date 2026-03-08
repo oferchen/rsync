@@ -1139,18 +1139,15 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # dry-run: connection closure during abbreviated transfer when upstream daemon
-  # exits early in dry-run mode (EAGAIN / WouldBlock on socket read).
-  "oc:dry-run"
-  # safe-links: our client sends --safe-links but does not filter unsafe
-  # symlinks from the file list before transmission.
-  "oc:safe-links"
+  # (oc:dry-run fixed - generator tolerates early connection close during
+  # dry-run mode, matching upstream daemon's abbreviated transfer)
+  # (oc:safe-links fixed - generator filters unsafe symlinks before sending
+  # file list, using symlink_target_is_safe() depth check)
   # compare-dest: upstream daemon does not honour --compare-dest from our
   # client for protocol <= 30 (reference directory wiring gap).
   "oc:compare-dest"
-  # copy-links: our client sends -L/--copy-links but the upstream daemon
-  # does not resolve symlinks when receiving from our sender.
-  "oc:copy-links"
+  # (oc:copy-links fixed - generator now uses stat() instead of lstat()
+  # when --copy-links is set, resolving symlinks before sending file list)
   # itemize: our client does not capture/relay itemize output (-i) from the
   # upstream daemon transfer - no itemize lines appear in stdout.
   "oc:itemize"
@@ -1160,15 +1157,12 @@ KNOWN_FAILURES=(
   "up:acls"
   "up:xattrs"
   # (up:backup fixed - receiver now creates backup files before overwriting)
-  # link-dest: receiver creates hardlinks from reference directories but the
-  # interop test still reports non-hardlinked files (needs investigation).
+  # link-dest: reference directory path resolution or hardlink creation needs
+  # investigation (daemon parses --link-dest but receiver may not find basis).
   "up:link-dest"
-  # compare-dest: receiver checks reference directories during quick-check but
-  # the interop test still transfers matching files (needs investigation).
+  # compare-dest: reference directory path resolution needs investigation
+  # (daemon parses --compare-dest but quick-check may not find basis).
   "up:compare-dest"
-  # relative: open_tmpfile creates parent dirs on ENOENT but upstream -R implied
-  # directory handling may need additional receiver-side fixes.
-  "up:relative"
   # hardlinks-relative: combined -H -R still fails - needs relative fix plus
   # hardlink ordering adjustments.
   "up:hardlinks-relative"

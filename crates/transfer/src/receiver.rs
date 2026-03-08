@@ -897,6 +897,16 @@ impl ReceiverContext {
             true
         });
 
+        // Strip leading slashes from relative paths after sorting.
+        // upstream: flist.c:3071-3084 — strip_root in flist_sort_and_clean()
+        if relative_paths {
+            for entry in &mut self.file_list {
+                if entry.path().has_root() {
+                    entry.strip_leading_slashes();
+                }
+            }
+        }
+
         original_len - self.file_list.len()
     }
 
