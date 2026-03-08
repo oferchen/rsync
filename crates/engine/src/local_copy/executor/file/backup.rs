@@ -5,7 +5,16 @@ use std::path::{Path, PathBuf};
 use crate::local_copy::LocalCopyError;
 use crate::local_copy::create_symlink;
 
-pub(crate) fn compute_backup_path(
+/// Computes the backup file path for a destination file.
+///
+/// When `backup_dir` is `Some`, the backup is placed under that directory
+/// preserving the relative path structure. Otherwise, the backup is placed
+/// alongside the destination with the given `suffix` appended.
+///
+/// # Upstream Reference
+///
+/// - `backup.c:get_backup_name()` - path computation for backup files
+pub fn compute_backup_path(
     destination_root: &Path,
     destination: &Path,
     relative: Option<&Path>,

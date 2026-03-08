@@ -2123,6 +2123,23 @@ impl ReceiverContext {
             }
             drop(file); // Ensure file is closed before rename
 
+            // upstream: backup.c:make_backup() - rename existing file before overwrite
+            if self.config.flags.backup && file_path.exists() {
+                let backup_path = engine::compute_backup_path(
+                    &dest_dir,
+                    &file_path,
+                    None,
+                    self.config.backup_dir.as_ref().map(std::path::Path::new),
+                    std::ffi::OsStr::new(self.config.backup_suffix.as_deref().unwrap_or("~")),
+                );
+                if let Some(parent) = backup_path.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::rename(&file_path, &backup_path)?;
+            }
+
             // Atomic rename (crash-safe)
             fs::rename(temp_guard.path(), &file_path)?;
             temp_guard.keep(); // Success! Keep the file (now renamed)
@@ -2534,7 +2551,7 @@ impl ReceiverContext {
         total_files: usize,
         progress: &mut Option<&mut dyn super::TransferProgressCallback>,
     ) -> io::Result<(usize, u64, Vec<usize>)> {
-        use crate::disk_commit::DiskCommitConfig;
+        use crate::disk_commit::{BackupConfig, DiskCommitConfig};
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
 
@@ -2578,9 +2595,19 @@ impl ReceiverContext {
         // Spawn the disk commit thread with metadata options so it applies
         // mtime/perms/ownership immediately after rename — mirroring upstream
         // finish_transfer() → set_file_attrs() in receiver.c.
+        let backup = if self.config.flags.backup {
+            Some(BackupConfig {
+                dest_dir: setup.dest_dir.clone(),
+                backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
+                suffix: self.config.backup_suffix.as_deref().unwrap_or("~").into(),
+            })
+        } else {
+            None
+        };
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
             metadata_opts: Some(setup.metadata_opts.clone()),
+            backup,
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);

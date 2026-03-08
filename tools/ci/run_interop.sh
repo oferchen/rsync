@@ -1159,8 +1159,7 @@ KNOWN_FAILURES=(
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
   "up:acls"
   "up:xattrs"
-  # backup: receiver does not create backup files (~suffix) when overwriting.
-  "up:backup"
+  # (up:backup fixed - receiver now creates backup files before overwriting)
   # link-dest: receiver does not create hardlinks from reference directories.
   "up:link-dest"
   # compare-dest: receiver does not check reference directories during
