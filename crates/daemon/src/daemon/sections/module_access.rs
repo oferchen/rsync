@@ -740,40 +740,156 @@ fn build_server_config(
 /// - `options.c:2891` — `--use-qsort`
 /// - `options.c:2737-2740` — `--compress-level=N`
 fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
-    for arg in client_args {
+    let mut i = 0;
+    while i < client_args.len() {
+        let arg = &client_args[i];
         match arg.as_str() {
-            "--delete" | "--delete-before" | "--delete-during" | "--delete-after"
-            | "--delete-delay" | "--delete-excluded" => {
+            // upstream: options.c:2818-2829 - delete mode variants
+            "--delete" | "--delete-before" | "--delete-during" => {
                 config.flags.delete = true;
             }
+            "--delete-after" | "--delete-delay" => {
+                config.flags.delete = true;
+                config.deletion.late_delete = true;
+            }
+            "--delete-excluded" => {
+                config.flags.delete = true;
+            }
+            // upstream: options.c:2836-2837
             "--size-only" => {
                 config.file_selection.size_only = true;
             }
+            // upstream: options.c:2878-2879
             "--ignore-errors" => {
                 config.deletion.ignore_errors = true;
             }
+            // upstream: options.c:2881-2882
+            "--copy-unsafe-links" => {
+                config.flags.copy_unsafe_links = true;
+            }
+            // upstream: options.c:2884-2885
+            "--safe-links" => {
+                config.flags.safe_links = true;
+            }
+            // upstream: options.c:2887-2888
             "--numeric-ids" => {
                 config.flags.numeric_ids = true;
             }
+            // upstream: options.c:2890-2891
             "--use-qsort" => {
                 config.qsort = true;
             }
+            // upstream: options.c:2893-2897
+            "--ignore-existing" => {
+                config.file_selection.ignore_existing = true;
+            }
+            // upstream: options.c:2899-2900
+            "--existing" => {
+                config.file_selection.existing_only = true;
+            }
+            // upstream: options.c:2933-2942
             "--inplace" => {
                 config.write.inplace = true;
             }
+            "--append" => {
+                config.flags.append = true;
+            }
+            // upstream: options.c:2964-2965
             "--fsync" => {
                 config.write.fsync = true;
             }
+            // upstream: options.c:2849 - backup
+            "--backup" => {
+                config.flags.backup = true;
+            }
+            // Two-arg options: upstream sends option and value as separate args.
+            // upstream: options.c:2915-2923 - reference directories
+            "--compare-dest" => {
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Compare,
+                    });
+                    i += 1;
+                }
+            }
+            "--copy-dest" => {
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Copy,
+                    });
+                    i += 1;
+                }
+            }
+            "--link-dest" => {
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Link,
+                    });
+                    i += 1;
+                }
+            }
+            // upstream: options.c:2787-2790 - backup-dir as separate args
+            "--backup-dir" => {
+                config.flags.backup = true;
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.backup_dir = Some(dir.to_owned());
+                    i += 1;
+                }
+            }
+            // upstream: options.c:2907-2909 - temp-dir as separate args
+            "--temp-dir" => {
+                if let Some(_dir) = client_args.get(i + 1) {
+                    i += 1;
+                }
+            }
             _ => {
+                // upstream: options.c:2737-2740
                 if let Some(level_str) = arg.strip_prefix("--compress-level=") {
                     if let Ok(level) = level_str.parse::<u32>() {
                         if let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level) {
                             config.connection.compression_level = Some(cl);
                         }
                     }
+                // upstream: options.c:2807-2810
+                } else if let Some(val) = arg.strip_prefix("--max-delete=") {
+                    if let Ok(n) = val.parse::<i64>() {
+                        if n >= 0 {
+                            config.deletion.max_delete = Some(n as u64);
+                        }
+                    }
+                // Fallback: =value format for reference directories and backup options.
+                // Handles both upstream (two-arg) and legacy (=value) formats.
+                } else if let Some(dir) = arg.strip_prefix("--backup-dir=") {
+                    config.flags.backup = true;
+                    config.backup_dir = Some(dir.to_owned());
+                } else if let Some(suffix) = arg.strip_prefix("--suffix=") {
+                    config.backup_suffix = Some(suffix.to_owned());
+                } else if let Some(suffix) = arg.strip_prefix("--backup-suffix=") {
+                    config.backup_suffix = Some(suffix.to_owned());
+                } else if let Some(dir) = arg.strip_prefix("--link-dest=") {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Link,
+                    });
+                } else if let Some(dir) = arg.strip_prefix("--compare-dest=") {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Compare,
+                    });
+                } else if let Some(dir) = arg.strip_prefix("--copy-dest=") {
+                    config.reference_directories.push(ReferenceDirectory {
+                        path: std::path::PathBuf::from(dir),
+                        kind: ReferenceDirectoryKind::Copy,
+                    });
+                } else if let Some(path) = arg.strip_prefix("--files-from=") {
+                    config.file_selection.files_from_path = Some(path.to_owned());
                 }
             }
         }
+        i += 1;
     }
 }
 

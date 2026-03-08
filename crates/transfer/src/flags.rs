@@ -75,6 +75,24 @@ pub struct ParsedServerFlags {
     pub crtimes: bool,
     /// Ignore modification times for quick-check (`I` flag, `--ignore-times`).
     pub ignore_times: bool,
+    /// Copy symlinks as the referent file/dir (`L` flag, `--copy-links`).
+    pub copy_links: bool,
+    /// Copy unsafe symlinks as files (long-form `--copy-unsafe-links`).
+    ///
+    /// Not part of the compact flag string; set via long-form args.
+    pub copy_unsafe_links: bool,
+    /// Ignore symlinks that point outside the source tree (long-form `--safe-links`).
+    ///
+    /// Not part of the compact flag string; set via long-form args.
+    pub safe_links: bool,
+    /// Append data onto shorter files (long-form `--append`).
+    ///
+    /// Not part of the compact flag string; set via long-form args.
+    pub append: bool,
+    /// Make backups before overwriting (long-form `--backup`).
+    ///
+    /// Not part of the compact flag string; set via long-form args.
+    pub backup: bool,
     /// Fuzzy basis file matching (`y` flag, `--fuzzy`).
     pub fuzzy: bool,
     /// Prune empty directories from destination (`m` flag, `--prune-empty-dirs`).
@@ -184,6 +202,8 @@ impl ParsedServerFlags {
             b'P' => self.partial = true,
             b'u' => self.update = true,
             b'N' => self.crtimes = true,
+            // upstream: options.c:764 — 'L' = copy_links (resolve symlinks).
+            b'L' => self.copy_links = true,
             b'y' => self.fuzzy = true,
             b'm' => self.prune_empty_dirs = true,
             // Unknown flags are ignored to maintain forward compatibility
