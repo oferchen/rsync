@@ -275,6 +275,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let manifest = manifest();
     let version = manifest.rust_version();
     let detach = options.detach();
+    let listen_backlog = options.listen_backlog();
     let RuntimeOptions {
         bind_address,
         port,
@@ -292,6 +293,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         config_path,
         syslog_facility,
         syslog_tag,
+        daemon_uid,
+        daemon_gid,
         ..
     } = options;
 
@@ -357,13 +360,19 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         }
     };
 
+    // upstream: daemon-parm.txt — listen_backlog INTEGER, default 5.
+    // Using socket2 to create the listener allows explicit control over the
+    // backlog argument passed to listen(2).
+    const DEFAULT_LISTEN_BACKLOG: i32 = 5;
+    let backlog = listen_backlog.map_or(DEFAULT_LISTEN_BACKLOG, |v| v as i32);
+
     // Create listeners for each bind address
     let mut listeners: Vec<TcpListener> = Vec::with_capacity(bind_addresses.len());
     let mut bound_addresses: Vec<SocketAddr> = Vec::with_capacity(bind_addresses.len());
 
     for addr in &bind_addresses {
         let requested_addr = SocketAddr::new(*addr, port);
-        match TcpListener::bind(requested_addr) {
+        match bind_with_backlog(requested_addr, backlog) {
             Ok(listener) => {
                 let local_addr = listener.local_addr().unwrap_or(requested_addr);
                 bound_addresses.push(local_addr);
@@ -409,6 +418,25 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     } else {
         None
     };
+
+    // Drop daemon-level privileges after binding (which may require root for
+    // ports < 1024), daemonizing, and writing the PID file.
+    // upstream: clientserver.c - setuid/setgid from global uid/gid params happen
+    // after the socket is bound and the daemon has forked.
+    if daemon_uid.is_some() || daemon_gid.is_some() {
+        let fallback_sink = open_privilege_fallback_sink();
+        let sink = log_sink.as_ref().unwrap_or(&fallback_sink);
+        drop_privileges(daemon_uid, daemon_gid, sink).map_err(|error| {
+            DaemonError::new(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                rsync_error!(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    format!("failed to drop daemon privileges: {error}")
+                )
+                .with_role(Role::Daemon),
+            )
+        })?;
+    }
 
     let notifier = systemd::ServiceNotifier::new();
     let ready_status = if bound_addresses.len() == 1 {
@@ -980,6 +1008,36 @@ const fn is_connection_closed_error(kind: io::ErrorKind) -> bool {
             | io::ErrorKind::ConnectionReset
             | io::ErrorKind::ConnectionAborted
     )
+}
+
+/// Creates a TCP listener bound to `addr` with an explicit listen backlog.
+///
+/// Uses `socket2` to create the socket, bind, and call `listen(2)` with the
+/// specified backlog, rather than relying on the standard library's hardcoded
+/// default (128). This matches upstream rsync's `socket.c` which calls
+/// `listen(sp[i], lp_listen_backlog())`.
+fn bind_with_backlog(addr: SocketAddr, backlog: i32) -> io::Result<TcpListener> {
+    let domain = if addr.is_ipv4() {
+        socket2::Domain::IPV4
+    } else {
+        socket2::Domain::IPV6
+    };
+    let socket = socket2::Socket::new(domain, socket2::Type::STREAM, Some(socket2::Protocol::TCP))?;
+
+    // Allow port reuse so the daemon can restart quickly without waiting for
+    // TIME_WAIT sockets to expire. Mirrors standard TcpListener::bind behaviour.
+    socket.set_reuse_address(true)?;
+
+    // For IPv6 sockets, set IPV6_V6ONLY to avoid conflicts with the separate
+    // IPv4 listener in dual-stack mode.
+    if addr.is_ipv6() {
+        socket.set_only_v6(true)?;
+    }
+
+    socket.bind(&addr.into())?;
+    socket.listen(backlog)?;
+
+    Ok(socket.into())
 }
 
 #[cfg(test)]
