@@ -957,12 +957,56 @@ fn run_push_transfer(
     };
 
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
+    let dry_run = config.dry_run();
     let start = Instant::now();
-    let server_stats =
-        run_server_with_handshake_over_stream(server_config, handshake, &mut stream, None)?;
-    let elapsed = start.elapsed();
 
-    Ok(convert_server_stats_to_summary(server_stats, elapsed))
+    // Call the server directly (not the error-wrapping helper) so we can
+    // inspect the raw io::Error kind for dry-run graceful close handling.
+    let mut reader = stream
+        .try_clone()
+        .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
+
+    let result = crate::server::run_server_with_handshake(
+        server_config,
+        handshake,
+        &mut reader,
+        &mut stream,
+        None,
+    );
+
+    match result {
+        Ok(server_stats) => {
+            let elapsed = start.elapsed();
+            Ok(convert_server_stats_to_summary(server_stats, elapsed))
+        }
+        Err(ref e) if dry_run && is_dry_run_remote_close(e) => {
+            // upstream: clientserver.c - during --dry-run push, the daemon closes
+            // its socket early after receiving the file list since no actual data
+            // transfer is needed. Treat this as a successful completion.
+            Ok(ClientSummary::default())
+        }
+        Err(e) => Err(invalid_argument_error(&format!("transfer failed: {e}"), 23)),
+    }
+}
+
+/// Returns `true` if the I/O error indicates the remote side closed the connection.
+///
+/// During `--dry-run` push transfers, the upstream daemon closes its socket early
+/// after processing the file list since no actual data transfer occurs. This
+/// manifests as `BrokenPipe` (write to closed socket), `ConnectionReset` (read
+/// from closed socket), or `UnexpectedEof`. All are expected and should map to
+/// exit code 0.
+///
+/// upstream: clientserver.c - the server exits after file list processing when
+/// `!do_xfers` (dry-run mode), causing the client to see a closed connection.
+fn is_dry_run_remote_close(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::UnexpectedEof
+    )
 }
 
 /// Converts server-side statistics to a client summary.
@@ -1772,6 +1816,59 @@ mod tests {
                     .unwrap();
 
             assert!(server_config.reference_directories.is_empty());
+        }
+    }
+
+    mod dry_run_remote_close_tests {
+        use super::*;
+        use std::io;
+
+        #[test]
+        fn broken_pipe_is_remote_close() {
+            let err = io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe");
+            assert!(is_dry_run_remote_close(&err));
+        }
+
+        #[test]
+        fn connection_reset_is_remote_close() {
+            let err = io::Error::new(io::ErrorKind::ConnectionReset, "connection reset");
+            assert!(is_dry_run_remote_close(&err));
+        }
+
+        #[test]
+        fn connection_aborted_is_remote_close() {
+            let err = io::Error::new(io::ErrorKind::ConnectionAborted, "connection aborted");
+            assert!(is_dry_run_remote_close(&err));
+        }
+
+        #[test]
+        fn unexpected_eof_is_remote_close() {
+            let err = io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected eof");
+            assert!(is_dry_run_remote_close(&err));
+        }
+
+        #[test]
+        fn timeout_is_not_remote_close() {
+            let err = io::Error::new(io::ErrorKind::TimedOut, "timed out");
+            assert!(!is_dry_run_remote_close(&err));
+        }
+
+        #[test]
+        fn permission_denied_is_not_remote_close() {
+            let err = io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
+            assert!(!is_dry_run_remote_close(&err));
+        }
+
+        #[test]
+        fn connection_refused_is_not_remote_close() {
+            let err = io::Error::new(io::ErrorKind::ConnectionRefused, "connection refused");
+            assert!(!is_dry_run_remote_close(&err));
+        }
+
+        #[test]
+        fn other_error_is_not_remote_close() {
+            let err = io::Error::other("some other error");
+            assert!(!is_dry_run_remote_close(&err));
         }
     }
 }
