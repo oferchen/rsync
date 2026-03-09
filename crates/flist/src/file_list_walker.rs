@@ -11,6 +11,7 @@ use std::path::PathBuf;
 pub struct FileListWalker {
     pub(crate) root: PathBuf,
     pub(crate) follow_symlinks: bool,
+    pub(crate) copy_links: bool,
     pub(crate) yielded_root: bool,
     pub(crate) root_metadata: Option<fs::Metadata>,
     pub(crate) stack: Vec<DirectoryState>,
@@ -22,17 +23,25 @@ impl FileListWalker {
     pub(crate) fn new(
         root: PathBuf,
         follow_symlinks: bool,
+        copy_links: bool,
         include_root: bool,
     ) -> Result<Self, FileListError> {
         let root = absolutize(root)?;
         debug_log!(Flist, 1, "building file list from {:?}", root);
 
-        let metadata = fs::symlink_metadata(&root)
-            .map_err(|error| FileListError::root_metadata(root.clone(), error))?;
+        // upstream: flist.c:readlink_stat() - use stat() when copy_links is
+        // set, lstat() otherwise.
+        let metadata = if copy_links {
+            fs::metadata(&root)
+        } else {
+            fs::symlink_metadata(&root)
+        }
+        .map_err(|error| FileListError::root_metadata(root.clone(), error))?;
 
         let mut walker = Self {
             root,
             follow_symlinks,
+            copy_links,
             yielded_root: !include_root,
             root_metadata: Some(metadata),
             stack: Vec::new(),
@@ -88,8 +97,15 @@ impl FileListWalker {
     ) -> Result<FileListEntry, FileListError> {
         debug_log!(Flist, 3, "processing entry: {:?}", relative_path);
 
-        let metadata = fs::symlink_metadata(&full_path)
-            .map_err(|error| FileListError::metadata(full_path.clone(), error))?;
+        // upstream: flist.c:readlink_stat() - use stat() when copy_links is
+        // set, lstat() otherwise. stat() follows symlinks so the metadata
+        // reflects the target file/directory, not the symlink itself.
+        let metadata = if self.copy_links {
+            fs::metadata(&full_path)
+        } else {
+            fs::symlink_metadata(&full_path)
+        }
+        .map_err(|error| FileListError::metadata(full_path.clone(), error))?;
         let mut next_state = None;
 
         if metadata.file_type().is_dir() {
@@ -381,8 +397,8 @@ mod tests {
         let file_path = temp.path().join("test.txt");
         std::fs::write(&file_path, b"content").expect("write");
 
-        let walker =
-            FileListWalker::new(temp.path().to_path_buf(), false, true).expect("create walker");
+        let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true)
+            .expect("create walker");
 
         let entries: Vec<_> = walker.collect();
         assert!(!entries.is_empty());
@@ -401,8 +417,8 @@ mod tests {
     #[test]
     fn file_list_walker_empty_directory() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let walker =
-            FileListWalker::new(temp.path().to_path_buf(), false, true).expect("create walker");
+        let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true)
+            .expect("create walker");
 
         let entries: Vec<_> = walker.collect();
         // Should have just the root directory
@@ -417,7 +433,8 @@ mod tests {
         let file_path = temp.path().join("single.txt");
         std::fs::write(&file_path, b"content").expect("write");
 
-        let walker = FileListWalker::new(file_path.clone(), false, true).expect("create walker");
+        let walker =
+            FileListWalker::new(file_path.clone(), false, false, true).expect("create walker");
 
         let entries: Vec<_> = walker.collect();
         assert_eq!(entries.len(), 1);
