@@ -129,6 +129,11 @@ pub(crate) struct ModuleDefinition {
     ///
     /// Upstream: `loadparm.c` — `post-xfer exec` parameter.
     pub(crate) post_xfer_exec: Option<String>,
+    /// External program for mapping user/group names to IDs and vice versa.
+    ///
+    /// Used when the daemon runs in a chroot where `/etc/passwd` is unavailable.
+    /// Upstream: `loadparm.c` — `name converter` parameter.
+    pub(crate) name_converter: Option<String>,
     /// Temporary directory for receiving files before final placement.
     ///
     /// Upstream: `loadparm.c` — `temp dir` parameter.
@@ -358,6 +363,10 @@ impl ModuleDefinition {
 
     pub(super) fn post_xfer_exec(&self) -> Option<&str> {
         self.post_xfer_exec.as_deref()
+    }
+
+    pub(super) fn name_converter(&self) -> Option<&str> {
+        self.name_converter.as_deref()
     }
 
     pub(super) fn temp_dir(&self) -> Option<&str> {
