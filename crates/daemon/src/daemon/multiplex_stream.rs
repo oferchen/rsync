@@ -117,26 +117,28 @@ impl<R: Read> Read for MultiplexReader<R> {
                     self.pos = to_copy;
                     return Ok(to_copy);
                 }
-                protocol::MessageCode::Info
-                | protocol::MessageCode::Warning
-                | protocol::MessageCode::Log
-                | protocol::MessageCode::Client => {
-                    // Info/warning messages: print to stderr and continue
+                protocol::MessageCode::Info | protocol::MessageCode::Client => {
+                    // upstream: log.c:rwrite() — FINFO and FCLIENT go to stdout
+                    if let Ok(msg) = std::str::from_utf8(&self.buffer) {
+                        print!("{}", msg);
+                        let _ = io::stdout().flush();
+                    }
+                }
+                protocol::MessageCode::Warning | protocol::MessageCode::Log => {
+                    // upstream: log.c:rwrite() — FWARNING to stderr, FLOG to daemon log
                     if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                         eprint!("{}", msg);
                     }
-                    // Continue loop to read next message
                 }
                 protocol::MessageCode::Error
                 | protocol::MessageCode::ErrorXfer
                 | protocol::MessageCode::ErrorSocket
                 | protocol::MessageCode::ErrorUtf8
                 | protocol::MessageCode::ErrorExit => {
-                    // Error messages: print to stderr and continue
+                    // upstream: log.c:rwrite() — FERROR* to stderr
                     if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                         eprint!("{}", msg);
                     }
-                    // Continue loop to read next message
                 }
                 _ => {
                     // Other message types (Redo, Stats, etc.): continue reading
