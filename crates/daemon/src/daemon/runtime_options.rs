@@ -41,6 +41,11 @@ pub(crate) struct RuntimeOptions {
     daemon_gid: Option<u32>,
     listen_backlog: Option<u32>,
     listen_backlog_from_config: bool,
+    /// TCP port from the `port` / `rsync port` global config parameter.
+    ///
+    /// upstream: daemon-parm.txt - `port` INTEGER, P_GLOBAL, default 0.
+    /// When set, overrides the default listening port unless CLI `--port` was given.
+    rsync_port: Option<u16>,
     /// Raw socket options string from the `socket options` global parameter.
     ///
     /// upstream: daemon-parm.txt - `socket options` STRING. Comma-separated list
@@ -101,6 +106,7 @@ impl Default for RuntimeOptions {
             daemon_gid: None,
             listen_backlog: None,
             listen_backlog_from_config: false,
+            rsync_port: None,
             socket_options: None,
             socket_options_from_config: false,
             proxy_protocol: false,
@@ -440,6 +446,10 @@ impl RuntimeOptions {
 
         if let Some((backlog, origin)) = parsed.listen_backlog {
             self.set_listen_backlog_from_config(backlog, &origin)?;
+        }
+
+        if let Some((port, _origin)) = parsed.rsync_port {
+            self.rsync_port = Some(port);
         }
 
         if let Some((opts, origin)) = parsed.socket_options {
@@ -851,6 +861,14 @@ impl RuntimeOptions {
     /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER, default 5.
     pub(crate) fn listen_backlog(&self) -> Option<u32> {
         self.listen_backlog
+    }
+
+    /// Returns the configured TCP port from the config file `port` directive.
+    ///
+    /// Upstream: `daemon-parm.txt` - `port` INTEGER, P_GLOBAL, default 0.
+    #[allow(dead_code)]
+    pub(crate) fn rsync_port(&self) -> Option<u16> {
+        self.rsync_port
     }
 
     /// Returns the configured socket options string.

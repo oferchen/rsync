@@ -230,6 +230,7 @@ fn parse_module_definition(
         ignore_nonreadable: false,
         transfer_logging: false,
         log_format: Some("%o %h [%a] %m (%u) %f %l".to_owned()),
+        log_file: None,
         dont_compress: None,
         early_exec: None,
         pre_xfer_exec: None,
