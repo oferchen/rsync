@@ -41,6 +41,13 @@ pub(crate) struct RuntimeOptions {
     daemon_gid: Option<u32>,
     listen_backlog: Option<u32>,
     listen_backlog_from_config: bool,
+    /// Raw socket options string from the `socket options` global parameter.
+    ///
+    /// upstream: daemon-parm.txt - `socket options` STRING. Comma-separated list
+    /// of TCP/IP socket options (e.g., `TCP_NODELAY`, `SO_KEEPALIVE`,
+    /// `SO_SNDBUF=65536`) applied to the daemon listener socket.
+    socket_options: Option<String>,
+    socket_options_from_config: bool,
     detach: bool,
     /// Path to the config file loaded at startup, retained for SIGHUP reload.
     ///
@@ -86,6 +93,8 @@ impl Default for RuntimeOptions {
             daemon_gid: None,
             listen_backlog: None,
             listen_backlog_from_config: false,
+            socket_options: None,
+            socket_options_from_config: false,
             detach: cfg!(unix),
             config_path: None,
         }
@@ -423,6 +432,10 @@ impl RuntimeOptions {
             self.set_listen_backlog_from_config(backlog, &origin)?;
         }
 
+        if let Some((opts, origin)) = parsed.socket_options {
+            self.set_socket_options_from_config(opts, &origin)?;
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -597,6 +610,30 @@ impl RuntimeOptions {
 
         self.listen_backlog = Some(value);
         self.listen_backlog_from_config = true;
+        Ok(())
+    }
+
+    fn set_socket_options_from_config(
+        &mut self,
+        value: String,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.socket_options {
+            if self.socket_options_from_config {
+                if *existing == value {
+                    return Ok(());
+                }
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'socket options' directive in global section",
+                ));
+            }
+            return Ok(());
+        }
+
+        self.socket_options = Some(value);
+        self.socket_options_from_config = true;
         Ok(())
     }
 
@@ -796,6 +833,15 @@ impl RuntimeOptions {
     /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER, default 5.
     pub(crate) fn listen_backlog(&self) -> Option<u32> {
         self.listen_backlog
+    }
+
+    /// Returns the configured socket options string.
+    ///
+    /// Upstream: `daemon-parm.txt` - `socket options` STRING. Comma-separated
+    /// list of TCP/IP socket options applied to the daemon listener socket
+    /// (e.g., `TCP_NODELAY`, `SO_KEEPALIVE`, `SO_SNDBUF=65536`).
+    pub(crate) fn socket_options(&self) -> Option<&str> {
+        self.socket_options.as_deref()
     }
 }
 
