@@ -242,6 +242,7 @@ fn parse_module_definition(
         exclude_from: None,
         include_from: None,
         open_noatime: false,
+        log_file: None,
     };
 
     if let Some(options_text) = options_part {

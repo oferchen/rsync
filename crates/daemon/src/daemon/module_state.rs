@@ -112,6 +112,9 @@ pub(crate) struct ModuleDefinition {
     ///
     /// Upstream: `loadparm.c` — `log format` parameter, default `"%o %h [%a] %m (%u) %f %l"`.
     pub(crate) log_format: Option<String>,
+    /// Per-module log file path.
+    /// upstream: daemon-parm.h - `log file` STRING, P_LOCAL.
+    pub(crate) log_file: Option<PathBuf>,
     /// Glob patterns of files that should not be compressed during transfer.
     ///
     /// Upstream: `loadparm.c` — `dont compress` parameter.
@@ -249,6 +252,12 @@ impl ModuleDefinition {
         self.munge_symlinks.unwrap_or(!self.use_chroot)
     }
 
+    /// Returns the per-module log file path, if configured.
+    #[allow(dead_code)]
+    pub(crate) fn module_log_file(&self) -> Option<&Path> {
+        self.log_file.as_deref()
+    }
+
     pub(super) fn inherit_incoming_chmod(&mut self, chmod: Option<&str>) {
         if self.incoming_chmod.is_none() {
             self.incoming_chmod = chmod.map(str::to_string);
@@ -347,6 +356,10 @@ impl ModuleDefinition {
 
     pub(super) fn log_format(&self) -> Option<&str> {
         self.log_format.as_deref()
+    }
+
+    pub(super) fn log_file(&self) -> Option<&Path> {
+        self.log_file.as_deref()
     }
 
     pub(super) fn dont_compress(&self) -> Option<&str> {

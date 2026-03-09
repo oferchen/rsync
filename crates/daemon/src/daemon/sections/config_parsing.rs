@@ -56,6 +56,9 @@ pub(crate) struct ParsedConfigModules {
     ///
     /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
     proxy_protocol: Option<(bool, ConfigDirectiveOrigin)>,
+    /// TCP port the daemon listens on.
+    /// upstream: daemon-parm.txt - `port` INTEGER, P_GLOBAL, default 0.
+    rsync_port: Option<(u16, ConfigDirectiveOrigin)>,
     /// Directory the daemon chroots into before forking children.
     ///
     /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
@@ -109,6 +112,7 @@ fn parse_config_modules_inner(
     let mut listen_backlog: Option<(u32, ConfigDirectiveOrigin)> = None;
     let mut socket_options: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut proxy_protocol: Option<(bool, ConfigDirectiveOrigin)> = None;
+    let mut rsync_port: Option<(u16, ConfigDirectiveOrigin)> = None;
     let mut daemon_chroot: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
@@ -433,6 +437,17 @@ fn parse_config_modules_inner(
                             Some(value.to_owned())
                         };
                         builder.set_log_format(format, path, line_number)?;
+                    }
+                    "log file" => {
+                        if value.is_empty() {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                "'log file' directive must not be empty",
+                            ));
+                        }
+                        let resolved = resolve_config_relative_path(&canonical, value);
+                        builder.set_log_file(resolved, path, line_number)?;
                     }
                     "dont compress" => {
                         let patterns = if value.is_empty() {
@@ -792,6 +807,23 @@ fn parse_config_modules_inner(
                             }
                         } else {
                             proxy_protocol = Some((pp_val, origin));
+                        }
+                    }
+
+                    if let Some((port_val, origin)) = included.rsync_port {
+                        if let Some((existing, existing_origin)) = &rsync_port {
+                            if *existing != port_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "conflicting 'port' directive in global section (previously defined as {existing} on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            rsync_port = Some((port_val, origin));
                         }
                     }
 
@@ -1288,6 +1320,37 @@ fn parse_config_modules_inner(
                         listen_backlog = Some((parsed, origin));
                     }
                 }
+                // upstream: daemon-parm.txt - port INTEGER, P_GLOBAL, default 0.
+                // Controls the TCP port the daemon listens on.
+                "port" | "rsync port" => {
+                    let parsed: u16 = value.parse().map_err(|_| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid port number '{value}' for 'port'"),
+                        )
+                    })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &rsync_port {
+                        if *existing != parsed {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "conflicting 'port' directive in global section (previously defined as {existing} on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        rsync_port = Some((parsed, origin));
+                    }
+                }
                 // upstream: daemon-parm.txt - socket options STRING.
                 // Comma-separated TCP/IP socket options for the listener.
                 "socket options" => {
@@ -1425,6 +1488,7 @@ fn parse_config_modules_inner(
             listen_backlog,
             socket_options,
             proxy_protocol,
+            rsync_port,
             daemon_chroot,
         })
     })();
@@ -3298,5 +3362,144 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path());
         assert!(result.is_err());
+    }
+
+    // --- rsync port tests ---
+
+    #[test]
+    fn parse_global_rsync_port() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("port = 8730\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).unwrap();
+        assert_eq!(result.rsync_port.unwrap().0, 8730);
+    }
+
+    #[test]
+    fn parse_global_rsync_port_alias() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("rsync port = 8730\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).unwrap();
+        assert_eq!(result.rsync_port.unwrap().0, 8730);
+    }
+
+    #[test]
+    fn parse_global_rsync_port_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).unwrap();
+        assert!(result.rsync_port.is_none());
+    }
+
+    #[test]
+    fn parse_global_rsync_port_invalid() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("port = abc\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_global_rsync_port_duplicate_conflict() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "port = 8730\nport = 9999\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path());
+        assert!(result.is_err());
+    }
+
+    // --- module log file tests ---
+
+    #[test]
+    fn parse_module_log_file_absolute() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nlog file = /var/log/rsync-mod.log\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).unwrap();
+        assert_eq!(
+            result.modules[0].log_file,
+            Some(PathBuf::from("/var/log/rsync-mod.log"))
+        );
+    }
+
+    #[test]
+    fn parse_module_log_file_relative() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nlog file = rsync-mod.log\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).unwrap();
+        let log_file = result.modules[0].log_file.as_ref().expect("log_file set");
+        let config_dir = file.path().canonicalize().unwrap();
+        let expected = config_dir.parent().unwrap().join("rsync-mod.log");
+        assert_eq!(*log_file, expected);
+    }
+
+    #[test]
+    fn parse_module_log_file_empty_rejected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nlog file =\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_module_log_file_duplicate_rejected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nlog file = /a.log\nlog file = /b.log\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_module_log_file_default_none() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).unwrap();
+        assert!(result.modules[0].log_file.is_none());
     }
 }
