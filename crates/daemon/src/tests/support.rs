@@ -68,6 +68,9 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
         exclude_from: None,
         include_from: None,
         open_noatime: false,
+        filter: Vec::new(),
+        exclude: Vec::new(),
+        include: Vec::new(),
     }
 }
 
@@ -122,6 +125,9 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
         exclude_from: None,
         include_from: None,
         open_noatime: false,
+        filter: Vec::new(),
+        exclude: Vec::new(),
+        include: Vec::new(),
     }
 }
 

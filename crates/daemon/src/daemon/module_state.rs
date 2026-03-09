@@ -161,6 +161,21 @@ pub(crate) struct ModuleDefinition {
     /// Upstream: `daemon-parm.txt` — `include_from` STRING parameter, default NULL.
     /// Patterns are loaded via `parse_filter_file()` in `clientserver.c`.
     pub(crate) include_from: Option<PathBuf>,
+    /// Direct filter rules for this module (space-separated, repeatable).
+    ///
+    /// Upstream: `daemon-parm.h` - `filter` STRING, P_LOCAL.
+    /// Parsed with `FILTRULE_WORD_SPLIT` in `clientserver.c:rsync_module()`.
+    pub(crate) filter: Vec<String>,
+    /// Direct exclude rules for this module (space-separated, repeatable).
+    ///
+    /// Upstream: `daemon-parm.h` - `exclude` STRING, P_LOCAL.
+    /// Parsed with `FILTRULE_WORD_SPLIT` in `clientserver.c:rsync_module()`.
+    pub(crate) exclude: Vec<String>,
+    /// Direct include rules for this module (space-separated, repeatable).
+    ///
+    /// Upstream: `daemon-parm.h` - `include` STRING, P_LOCAL.
+    /// Parsed with `FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT` in `clientserver.c:rsync_module()`.
+    pub(crate) include: Vec<String>,
     /// When true, source files are opened with `O_NOATIME` to avoid updating access times.
     ///
     /// Only effective on Linux where `O_NOATIME` is supported. On other platforms this
@@ -391,6 +406,21 @@ impl ModuleDefinition {
 
     pub(super) fn include_from(&self) -> Option<&Path> {
         self.include_from.as_deref()
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn filter(&self) -> &[String] {
+        &self.filter
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn exclude(&self) -> &[String] {
+        &self.exclude
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn include(&self) -> &[String] {
+        &self.include
     }
 
     pub(super) fn open_noatime(&self) -> bool {
