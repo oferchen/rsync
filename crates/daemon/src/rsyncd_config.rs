@@ -140,6 +140,10 @@ pub struct GlobalConfig {
     /// the daemon process drops to after binding.
     gid: Option<String>,
     listen_backlog: Option<u32>,
+    /// Whether incoming connections must start with a PROXY protocol header.
+    ///
+    /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
+    proxy_protocol: bool,
 }
 
 impl GlobalConfig {
@@ -216,6 +220,13 @@ impl GlobalConfig {
     /// Controls the backlog argument passed to `listen(2)` on the daemon socket.
     pub fn listen_backlog(&self) -> Option<u32> {
         self.listen_backlog
+    }
+
+    /// Returns whether incoming connections require a PROXY protocol header.
+    ///
+    /// upstream: clientserver.c:1298 - `if (lp_proxy_protocol() && !read_proxy_protocol_header(f_in))`
+    pub fn proxy_protocol(&self) -> bool {
+        self.proxy_protocol
     }
 }
 
@@ -648,6 +659,19 @@ impl<'a> Parser<'a> {
                         "invalid listen backlog value",
                     )
                 })?);
+            }
+            "proxy protocol" => {
+                global.proxy_protocol = match value.trim().to_ascii_lowercase().as_str() {
+                    "1" | "true" | "yes" | "on" => true,
+                    "0" | "false" | "no" | "off" => false,
+                    _ => {
+                        return Err(ConfigError::parse_error(
+                            self.path,
+                            self.line_number,
+                            format!("invalid boolean value '{value}' for 'proxy protocol'"),
+                        ));
+                    }
+                };
             }
             _ => {
                 // Unknown global directives are silently ignored for forward compatibility
@@ -1689,5 +1713,34 @@ mod tests {
         let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
         assert_eq!(config.global().syslog_facility(), "auth");
         assert_eq!(config.global().syslog_tag(), "backup-daemon");
+    }
+
+    #[test]
+    fn proxy_protocol_true() {
+        let file = write_config("proxy protocol = yes\n[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(config.global().proxy_protocol());
+    }
+
+    #[test]
+    fn proxy_protocol_false() {
+        let file = write_config("proxy protocol = no\n[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(!config.global().proxy_protocol());
+    }
+
+    #[test]
+    fn proxy_protocol_default_is_false() {
+        let file = write_config("[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(!config.global().proxy_protocol());
+    }
+
+    #[test]
+    fn proxy_protocol_invalid_value_errors() {
+        let file = write_config("proxy protocol = maybe\n[m]\npath = /srv/m\n");
+        let result = RsyncdConfig::from_file(file.path());
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("invalid boolean value"));
     }
 }
