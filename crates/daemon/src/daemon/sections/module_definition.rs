@@ -43,6 +43,18 @@ struct ModuleDefinitionBuilder {
     exclude_from: Option<PathBuf>,
     include_from: Option<PathBuf>,
     open_noatime: Option<bool>,
+    /// Direct filter rules for this module.
+    ///
+    /// upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
+    filter: Vec<String>,
+    /// Direct exclude rules for this module.
+    ///
+    /// upstream: daemon-parm.h - `exclude` STRING, P_LOCAL.
+    exclude: Vec<String>,
+    /// Direct include rules for this module.
+    ///
+    /// upstream: daemon-parm.h - `include` STRING, P_LOCAL.
+    include: Vec<String>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -92,6 +104,9 @@ impl ModuleDefinitionBuilder {
             exclude_from: None,
             include_from: None,
             open_noatime: None,
+            filter: Vec::new(),
+            exclude: Vec::new(),
+            include: Vec::new(),
         }
     }
 
@@ -984,6 +999,9 @@ impl ModuleDefinitionBuilder {
             exclude_from: self.exclude_from,
             include_from: self.include_from,
             open_noatime: self.open_noatime.unwrap_or(false),
+            filter: self.filter,
+            exclude: self.exclude,
+            include: self.include,
         })
     }
 }

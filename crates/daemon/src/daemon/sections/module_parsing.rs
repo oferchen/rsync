@@ -242,6 +242,9 @@ fn parse_module_definition(
         exclude_from: None,
         include_from: None,
         open_noatime: false,
+        filter: Vec::new(),
+        exclude: Vec::new(),
+        include: Vec::new(),
     };
 
     if let Some(options_text) = options_part {
