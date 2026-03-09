@@ -214,7 +214,13 @@ mod short_options {
     #[test]
     fn fuzzy_short_flag() {
         let parsed = parse_test_args(["-y", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.fuzzy, Some(true));
+        assert_eq!(parsed.fuzzy, Some(1));
+    }
+
+    #[test]
+    fn fuzzy_double_short_flag() {
+        let parsed = parse_test_args(["-yy", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.fuzzy, Some(2));
     }
 
     #[test]
@@ -914,7 +920,7 @@ mod negation_flags {
     #[test]
     fn no_fuzzy_flag() {
         let parsed = parse_test_args(["--no-fuzzy", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.fuzzy, Some(false));
+        assert_eq!(parsed.fuzzy, Some(0));
     }
 
     #[test]

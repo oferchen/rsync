@@ -304,7 +304,17 @@ where
     let hard_links = tri_state_flag_positive_first(&matches, "hard-links", "no-hard-links");
     let links = tri_state_flag_positive_first(&matches, "links", "no-links");
     let sparse = tri_state_flag_positive_first(&matches, "sparse", "no-sparse");
-    let fuzzy = tri_state_flag_positive_first(&matches, "fuzzy", "no-fuzzy");
+    let fuzzy = {
+        let count = matches.get_count("fuzzy");
+        let negated = matches.get_flag("no-fuzzy");
+        if negated && count == 0 {
+            Some(0u8)
+        } else if count > 0 {
+            Some(count.min(2))
+        } else {
+            None
+        }
+    };
     let copy_links = if matches.get_flag("copy-links") {
         Some(true)
     } else {

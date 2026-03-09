@@ -436,8 +436,8 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                 Arg::new("fuzzy")
                     .long("fuzzy")
                     .short('y')
-                    .help("Search for basis files with similar names at the destination.")
-                    .action(ArgAction::SetTrue)
+                    .help("Search for basis files with similar names. Specify twice (-yy) to also search reference directories.")
+                    .action(ArgAction::Count)
                     .overrides_with("no-fuzzy"),
             )
             .arg(

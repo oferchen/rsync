@@ -747,10 +747,15 @@ pub struct ParsedArgs {
     /// When a file is not found on the destination, look for similar files
     /// to use as a basis for delta transfer.
     ///
+    /// - `None`: not specified (default).
+    /// - `Some(0)`: explicitly disabled via `--no-fuzzy`.
+    /// - `Some(1)`: single `-y` - search destination directory.
+    /// - `Some(2)`: double `-yy` - also search reference directories.
+    ///
     /// Corresponds to: `--fuzzy`, `-y` / `--no-fuzzy`
     ///
     /// Default: `None`
-    pub fuzzy: Option<bool>,
+    pub fuzzy: Option<u8>,
 
     /// Follow and copy the referent of symbolic links.
     ///
