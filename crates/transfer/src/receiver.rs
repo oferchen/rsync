@@ -1714,9 +1714,19 @@ impl ReceiverContext {
 
     /// Handles the goodbye handshake at end of transfer.
     ///
+    /// For protocol < 29, upstream uses `read_int()` (raw 4-byte LE) to read the
+    /// goodbye NDX_DONE. For protocol >= 29, it uses `read_ndx_and_attrs()` which
+    /// calls `read_ndx()` - also 4-byte LE for protocol 29. Both read the same
+    /// wire format, so the legacy NDX codec handles both correctly.
+    ///
+    /// Protocol 30 introduces the modern varint NDX codec. Protocol 31+ adds the
+    /// extended goodbye with NDX_DEL_STATS and an extra NDX_DONE round-trip.
+    ///
     /// # Upstream Reference
     ///
     /// - `main.c:875-907` - `read_final_goodbye()`
+    /// - `main.c:883` - protocol < 29 uses `read_int(f_in)`
+    /// - `main.c:885-886` - protocol >= 29 uses `read_ndx_and_attrs()`
     fn handle_goodbye<R: Read, W: Write + ?Sized>(
         &self,
         reader: &mut R,
@@ -5812,6 +5822,196 @@ mod tests {
             assert_eq!(stats.files_skipped, 0);
             assert_eq!(stats.files_transferred, 0);
             assert_eq!(stats.bytes_received, 0);
+        }
+    }
+
+    /// Tests for legacy goodbye handshake (protocol 28/29).
+    ///
+    /// Protocol 28/29 uses a simpler goodbye sequence than protocol 30+:
+    /// just NDX_DONE as 4-byte little-endian i32, without NDX_FLIST_EOF
+    /// or NDX_DEL_STATS messages.
+    ///
+    /// upstream: main.c:875-906 `read_final_goodbye()`
+    mod legacy_goodbye_tests {
+        use super::*;
+        use protocol::codec::create_ndx_codec;
+        use std::io::Cursor;
+
+        /// NDX_DONE as 4-byte little-endian (-1 = 0xFFFFFFFF).
+        const NDX_DONE_LE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+
+        /// Creates a `HandshakeResult` for a specific protocol version.
+        fn handshake_for(protocol_version: u8) -> HandshakeResult {
+            HandshakeResult {
+                protocol: ProtocolVersion::try_from(protocol_version).unwrap(),
+                buffered: Vec::new(),
+                compat_exchanged: false,
+                client_args: None,
+                io_timeout: None,
+                negotiated_algorithms: None,
+                compat_flags: None,
+                checksum_seed: 0,
+            }
+        }
+
+        /// Creates a `ReceiverContext` for a given protocol version.
+        fn receiver_for(protocol_version: u8) -> ReceiverContext {
+            let handshake = handshake_for(protocol_version);
+            let config = ServerConfig {
+                role: super::super::super::role::ServerRole::Receiver,
+                protocol: ProtocolVersion::try_from(protocol_version).unwrap(),
+                flag_string: "-logDtpre.".to_owned(),
+                args: vec![std::ffi::OsString::from(".")],
+                ..Default::default()
+            };
+            ReceiverContext::new(&handshake, config)
+        }
+
+        #[test]
+        fn proto28_supports_goodbye_but_not_extended() {
+            let ctx = receiver_for(28);
+            assert!(ctx.protocol.supports_goodbye_exchange());
+            assert!(!ctx.protocol.supports_extended_goodbye());
+            assert!(!ctx.protocol.supports_multi_phase());
+        }
+
+        #[test]
+        fn proto29_supports_goodbye_but_not_extended() {
+            let ctx = receiver_for(29);
+            assert!(ctx.protocol.supports_goodbye_exchange());
+            assert!(!ctx.protocol.supports_extended_goodbye());
+            assert!(ctx.protocol.supports_multi_phase());
+        }
+
+        #[test]
+        fn exchange_phase_done_proto28_single_phase() {
+            // Protocol 28: max_phase=1, single-phase transfer.
+            // Receiver sends 2 NDX_DONEs: one phase transition (echoed) + one break.
+            // Reads 2 NDX_DONEs: one echo + sender's post-loop final.
+            //
+            // upstream: receiver.c:536 max_phase = protocol_version >= 29 ? 2 : 1
+            let ctx = receiver_for(28);
+
+            let mut sender_input = Vec::new();
+            sender_input.extend_from_slice(&NDX_DONE_LE); // echo for phase 1
+            sender_input.extend_from_slice(&NDX_DONE_LE); // sender's post-loop final
+
+            let mut reader = Cursor::new(sender_input);
+            let mut output = Vec::new();
+            let mut ndx_write = create_ndx_codec(28);
+            let mut ndx_read = create_ndx_codec(28);
+
+            ctx.exchange_phase_done(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
+                .unwrap();
+
+            // 2 NDX_DONEs = 8 bytes, all 0xFF
+            assert_eq!(output.len(), 8);
+            assert_eq!(&output[0..4], &NDX_DONE_LE);
+            assert_eq!(&output[4..8], &NDX_DONE_LE);
+        }
+
+        #[test]
+        fn exchange_phase_done_proto29_two_phases() {
+            // Protocol 29: max_phase=2, two-phase transfer.
+            // Receiver sends 3 NDX_DONEs: phase 1 (echoed) + phase 2 (echoed) + break.
+            // Reads 3 NDX_DONEs: 2 echoes + sender's post-loop final.
+            //
+            // upstream: receiver.c:536 max_phase = protocol_version >= 29 ? 2 : 1
+            let ctx = receiver_for(29);
+
+            let mut sender_input = Vec::new();
+            for _ in 0..3 {
+                sender_input.extend_from_slice(&NDX_DONE_LE);
+            }
+
+            let mut reader = Cursor::new(sender_input);
+            let mut output = Vec::new();
+            let mut ndx_write = create_ndx_codec(29);
+            let mut ndx_read = create_ndx_codec(29);
+
+            ctx.exchange_phase_done(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
+                .unwrap();
+
+            // 3 NDX_DONEs = 12 bytes
+            assert_eq!(output.len(), 12);
+            for i in 0..3 {
+                assert_eq!(&output[i * 4..(i + 1) * 4], &NDX_DONE_LE);
+            }
+        }
+
+        #[test]
+        fn handle_goodbye_proto28_sends_single_ndx_done() {
+            // Protocol 28: goodbye sends exactly one NDX_DONE (4-byte LE).
+            // No extended handshake (proto < 31), so no reading required.
+            //
+            // upstream: main.c:883-884 protocol_version < 29 => read_int(f_in)
+            let ctx = receiver_for(28);
+
+            let mut reader = Cursor::new(Vec::<u8>::new());
+            let mut output = Vec::new();
+            let mut ndx_write = create_ndx_codec(28);
+            let mut ndx_read = create_ndx_codec(28);
+
+            ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
+                .unwrap();
+
+            assert_eq!(output.len(), 4);
+            assert_eq!(&output[..], &NDX_DONE_LE);
+        }
+
+        #[test]
+        fn handle_goodbye_proto29_sends_single_ndx_done() {
+            // Protocol 29: goodbye sends exactly one NDX_DONE (4-byte LE).
+            // No extended handshake (proto < 31).
+            //
+            // upstream: main.c:885-886 read_ndx_and_attrs() - NDX_DONE returns
+            // immediately without reading iflags.
+            let ctx = receiver_for(29);
+
+            let mut reader = Cursor::new(Vec::<u8>::new());
+            let mut output = Vec::new();
+            let mut ndx_write = create_ndx_codec(29);
+            let mut ndx_read = create_ndx_codec(29);
+
+            ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
+                .unwrap();
+
+            assert_eq!(output.len(), 4);
+            assert_eq!(&output[..], &NDX_DONE_LE);
+        }
+
+        #[test]
+        fn legacy_ndx_done_wire_format_matches_read_int() {
+            // Verify that the legacy NDX codec writes NDX_DONE identically to
+            // upstream's write_int() - a raw 4-byte little-endian i32.
+            //
+            // upstream: io.c write_int() / read_int() for protocol < 30
+            let mut codec = create_ndx_codec(28);
+            let mut buf = Vec::new();
+            codec.write_ndx_done(&mut buf).unwrap();
+
+            assert_eq!(buf, (-1i32).to_le_bytes());
+        }
+
+        #[test]
+        fn exchange_phase_done_proto28_reads_all_sender_bytes() {
+            // Verify the reader is fully consumed - no leftover bytes.
+            let ctx = receiver_for(28);
+
+            let mut sender_input = Vec::new();
+            sender_input.extend_from_slice(&NDX_DONE_LE);
+            sender_input.extend_from_slice(&NDX_DONE_LE);
+
+            let mut reader = Cursor::new(sender_input);
+            let mut output = Vec::new();
+            let mut ndx_write = create_ndx_codec(28);
+            let mut ndx_read = create_ndx_codec(28);
+
+            ctx.exchange_phase_done(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
+                .unwrap();
+
+            // All sender bytes consumed
+            assert_eq!(reader.position(), 8);
         }
     }
 }
