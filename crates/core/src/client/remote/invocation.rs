@@ -635,7 +635,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.sparse() {
             flags.push('S');
         }
-        if self.config.fuzzy() {
+        // upstream: options.c:2613 - send 'y' for fuzzy, 'yy' for level 2
+        for _ in 0..self.config.fuzzy_level() {
             flags.push('y');
         }
         for _ in 0..self.config.one_file_system_level() {
@@ -1450,6 +1451,16 @@ mod tests {
 
         let flags = args[2].to_string_lossy();
         assert!(flags.contains('y'), "expected 'y' in flags: {flags}");
+    }
+
+    #[test]
+    fn includes_double_fuzzy_flag() {
+        let config = ClientConfig::builder().fuzzy_level(2).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        let flags = args[2].to_string_lossy();
+        assert!(flags.contains("yy"), "expected 'yy' in flags: {flags}");
     }
 
     #[test]

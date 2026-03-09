@@ -112,12 +112,29 @@ impl ClientConfigBuilder {
         sparse: bool,
     }
 
-    builder_setter! {
-        /// Enables or disables fuzzy basis file search during delta transfers.
-        #[doc(alias = "--fuzzy")]
-        #[doc(alias = "--no-fuzzy")]
-        #[doc(alias = "-y")]
-        fuzzy: bool,
+    /// Sets the fuzzy matching level for delta transfers.
+    ///
+    /// - 0: disabled (default)
+    /// - 1: search destination directory for similar files (`-y`)
+    /// - 2: also search reference directories (`-yy`)
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `fuzzy_basis` in upstream `options.c`.
+    #[must_use]
+    #[doc(alias = "--fuzzy")]
+    #[doc(alias = "--no-fuzzy")]
+    #[doc(alias = "-y")]
+    pub const fn fuzzy_level(mut self, level: u8) -> Self {
+        self.fuzzy_level = level;
+        self
+    }
+
+    /// Convenience method: enables fuzzy at level 1 when `true`, disables when `false`.
+    #[must_use]
+    pub const fn fuzzy(mut self, enabled: bool) -> Self {
+        self.fuzzy_level = if enabled { 1 } else { 0 };
+        self
     }
 
     builder_setter! {
@@ -269,12 +286,21 @@ mod tests {
     fn fuzzy_sets_flag() {
         let config = builder().fuzzy(true).build();
         assert!(config.fuzzy());
+        assert_eq!(config.fuzzy_level(), 1);
     }
 
     #[test]
     fn fuzzy_false_clears_flag() {
         let config = builder().fuzzy(true).fuzzy(false).build();
         assert!(!config.fuzzy());
+        assert_eq!(config.fuzzy_level(), 0);
+    }
+
+    #[test]
+    fn fuzzy_level_2_sets_correctly() {
+        let config = builder().fuzzy_level(2).build();
+        assert!(config.fuzzy());
+        assert_eq!(config.fuzzy_level(), 2);
     }
 
     #[test]
@@ -302,9 +328,10 @@ mod tests {
     }
 
     #[test]
-    fn default_fuzzy_is_false() {
+    fn default_fuzzy_is_zero() {
         let config = builder().build();
         assert!(!config.fuzzy());
+        assert_eq!(config.fuzzy_level(), 0);
     }
 
     #[test]

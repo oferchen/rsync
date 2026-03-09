@@ -440,7 +440,7 @@ impl ReceiverContext {
             dest_dir,
             relative_path,
             target_size,
-            fuzzy_enabled: self.config.flags.fuzzy,
+            fuzzy_level: self.config.flags.fuzzy_level,
             reference_directories: &self.config.reference_directories,
             protocol: self.protocol,
             checksum_length,
@@ -3572,8 +3572,13 @@ pub struct BasisFileConfig<'a> {
     pub relative_path: &'a std::path::Path,
     /// Expected size of the target file.
     pub target_size: u64,
-    /// Whether to try fuzzy matching.
-    pub fuzzy_enabled: bool,
+    /// Fuzzy matching level (0=off, 1=dest dir, 2=dest+reference dirs).
+    ///
+    /// Upstream: `options.c:764` - `fuzzy_basis` controls how many directory
+    /// sources are searched. Level 1 searches only the destination directory.
+    /// Level 2 also searches reference directories (`--compare-dest`,
+    /// `--copy-dest`, `--link-dest`).
+    pub fuzzy_level: u8,
     /// List of reference directories to check.
     pub reference_directories: &'a [ReferenceDirectory],
     /// Protocol version for signature generation.
@@ -3635,16 +3640,40 @@ fn try_open_file(path: &std::path::Path) -> Option<(fs::File, u64, PathBuf)> {
 
 /// Attempts fuzzy matching to find a similar basis file.
 ///
+/// For level 1, searches only the destination directory. For level 2,
+/// also searches reference directories (`--compare-dest`, `--copy-dest`,
+/// `--link-dest`) by passing them as fuzzy basis dirs to the matcher.
+///
 /// # Upstream Reference
 ///
 /// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
+/// - `options.c:2120` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
 fn try_fuzzy_match(
     relative_path: &std::path::Path,
     dest_dir: &std::path::Path,
     target_size: u64,
+    fuzzy_level: u8,
+    reference_directories: &[ReferenceDirectory],
 ) -> Option<(fs::File, u64, PathBuf)> {
     let target_name = relative_path.file_name()?;
-    let fuzzy_matcher = FuzzyMatcher::new();
+
+    // Build the search directory for reference dirs: join each reference
+    // dir base with the target file's parent directory, mirroring upstream
+    // generator.c where fuzzy_dirlist[i] = get_dirlist(basis_dir[i-1]/dn).
+    let parent_dir = relative_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""));
+    let basis_dirs: Vec<PathBuf> = if fuzzy_level >= 2 {
+        reference_directories
+            .iter()
+            .map(|rd| rd.path.join(parent_dir))
+            .filter(|p| p.is_dir())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let fuzzy_matcher = FuzzyMatcher::with_level(fuzzy_level).with_fuzzy_basis_dirs(basis_dirs);
     let fuzzy_match = fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)?;
     try_open_file(&fuzzy_match.path)
 }
@@ -3733,8 +3762,14 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
     let basis = try_open_file(config.file_path)
         .or_else(|| try_reference_directories(config.relative_path, config.reference_directories))
         .or_else(|| {
-            if config.fuzzy_enabled {
-                try_fuzzy_match(config.relative_path, config.dest_dir, config.target_size)
+            if config.fuzzy_level > 0 {
+                try_fuzzy_match(
+                    config.relative_path,
+                    config.dest_dir,
+                    config.target_size,
+                    config.fuzzy_level,
+                    config.reference_directories,
+                )
             } else {
                 None
             }

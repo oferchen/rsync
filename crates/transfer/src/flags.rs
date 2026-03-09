@@ -93,8 +93,15 @@ pub struct ParsedServerFlags {
     ///
     /// Upstream: `options.c:2613` - `argstr[x++] = 'b'`.
     pub backup: bool,
-    /// Fuzzy basis file matching (`y` flag, `--fuzzy`).
-    pub fuzzy: bool,
+    /// Fuzzy basis file matching level (`y` flag, `--fuzzy`).
+    ///
+    /// - 0: disabled
+    /// - 1: search destination directory for similar files (`-y`)
+    /// - 2: also search reference directories (`-yy`)
+    ///
+    /// Each `y` in the compact flag string increments this counter,
+    /// matching upstream `options.c:764` - `fuzzy_basis++`.
+    pub fuzzy_level: u8,
     /// Prune empty directories from destination (`m` flag, `--prune-empty-dirs`).
     pub prune_empty_dirs: bool,
     /// Incremental recursion mode (`i` flag, `--inc-recursive`).
@@ -244,7 +251,8 @@ impl ParsedServerFlags {
             b'N' => self.crtimes = true,
             // upstream: options.c:764 — 'L' = copy_links (resolve symlinks).
             b'L' => self.copy_links = true,
-            b'y' => self.fuzzy = true,
+            // upstream: options.c:764 - fuzzy_basis++ for each 'y'
+            b'y' => self.fuzzy_level = self.fuzzy_level.saturating_add(1),
             b'm' => self.prune_empty_dirs = true,
             // Unknown flags are ignored to maintain forward compatibility
             _ => {}
@@ -367,7 +375,20 @@ mod tests {
     fn parses_fuzzy_flag() {
         let flags = ParsedServerFlags::parse("-ry").unwrap();
         assert!(flags.recursive);
-        assert!(flags.fuzzy);
+        assert_eq!(flags.fuzzy_level, 1);
+    }
+
+    #[test]
+    fn parses_double_fuzzy_flag() {
+        let flags = ParsedServerFlags::parse("-ryy").unwrap();
+        assert!(flags.recursive);
+        assert_eq!(flags.fuzzy_level, 2);
+    }
+
+    #[test]
+    fn fuzzy_level_defaults_to_zero() {
+        let flags = ParsedServerFlags::parse("-r").unwrap();
+        assert_eq!(flags.fuzzy_level, 0);
     }
 
     #[test]

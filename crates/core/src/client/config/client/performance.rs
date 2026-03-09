@@ -72,12 +72,26 @@ impl ClientConfig {
         self.sparse
     }
 
-    /// Reports whether fuzzy basis file matching was requested.
+    /// Returns the fuzzy matching level.
+    ///
+    /// - 0: disabled (default)
+    /// - 1: search destination directory for similar files (`-y`)
+    /// - 2: also search reference directories (`-yy`)
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `fuzzy_basis` in upstream `options.c`.
     #[must_use]
     #[doc(alias = "--fuzzy")]
     #[doc(alias = "-y")]
+    pub const fn fuzzy_level(&self) -> u8 {
+        self.fuzzy_level
+    }
+
+    /// Reports whether fuzzy basis file matching is enabled (level >= 1).
+    #[must_use]
     pub const fn fuzzy(&self) -> bool {
-        self.fuzzy
+        self.fuzzy_level > 0
     }
 
     /// Returns the configured delta-transfer block size override, if any.
@@ -167,10 +181,10 @@ mod tests {
         assert!(!config.sparse());
     }
 
-    // Tests for fuzzy
     #[test]
-    fn fuzzy_default_is_false() {
+    fn fuzzy_level_default_is_zero() {
         let config = default_config();
+        assert_eq!(config.fuzzy_level(), 0);
         assert!(!config.fuzzy());
     }
 
