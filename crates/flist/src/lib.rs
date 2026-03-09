@@ -90,6 +90,7 @@ mod error;
 mod file_list_walker;
 mod lazy_entry;
 mod lazy_metadata;
+pub(crate) mod symlink_safety;
 
 #[cfg(feature = "parallel")]
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
