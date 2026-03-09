@@ -552,6 +552,25 @@ fn parse_config_modules_inner(
                         let resolved = resolve_config_relative_path(&canonical, value);
                         builder.set_include_from(resolved, path, line_number)?;
                     }
+                    // upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
+                    // Repeatable: multiple directives accumulate rules.
+                    "filter" => {
+                        if !value.is_empty() {
+                            builder.filter.push(value.to_owned());
+                        }
+                    }
+                    // upstream: daemon-parm.h - `exclude` STRING, P_LOCAL.
+                    "exclude" => {
+                        if !value.is_empty() {
+                            builder.exclude.push(value.to_owned());
+                        }
+                    }
+                    // upstream: daemon-parm.h - `include` STRING, P_LOCAL.
+                    "include" => {
+                        if !value.is_empty() {
+                            builder.include.push(value.to_owned());
+                        }
+                    }
                     _ => {
                         eprintln!(
                             "warning: unknown per-module directive '{}' in '{}' line {}",
@@ -3298,5 +3317,133 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path());
         assert!(result.is_err());
+    }
+
+    // --- filter / exclude / include tests ---
+
+    #[test]
+    fn parse_module_filter_single_rule() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nfilter = - *.tmp\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].filter, vec!["- *.tmp"]);
+    }
+
+    #[test]
+    fn parse_module_filter_multiple_rules_accumulate() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nfilter = - *.tmp\nfilter = + *.rs\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].filter, vec!["- *.tmp", "+ *.rs"]);
+    }
+
+    #[test]
+    fn parse_module_exclude_single_rule() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nexclude = *.log\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].exclude, vec!["*.log"]);
+    }
+
+    #[test]
+    fn parse_module_include_single_rule() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\ninclude = *.rs\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].include, vec!["*.rs"]);
+    }
+
+    #[test]
+    fn parse_module_exclude_multiple_rules_accumulate() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nexclude = *.log\nexclude = *.tmp\nexclude = /cache/\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].exclude,
+            vec!["*.log", "*.tmp", "/cache/"]
+        );
+    }
+
+    #[test]
+    fn parse_module_filter_empty_value_ignored() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nfilter =\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].filter.is_empty());
+    }
+
+    #[test]
+    fn parse_module_exclude_empty_value_ignored() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nexclude =\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].exclude.is_empty());
+    }
+
+    #[test]
+    fn parse_module_filter_default_empty() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].filter.is_empty());
+        assert!(result.modules[0].exclude.is_empty());
+        assert!(result.modules[0].include.is_empty());
+    }
+
+    #[test]
+    fn parse_module_filter_per_module_isolation() {
+        let dir = TempDir::new().expect("create temp dir");
+        let p1 = dir.path().join("d1");
+        let p2 = dir.path().join("d2");
+        fs::create_dir(&p1).expect("create dir");
+        fs::create_dir(&p2).expect("create dir");
+
+        let config = format!(
+            "[mod1]\npath = {}\nexclude = *.tmp\n\n[mod2]\npath = {}\n",
+            p1.display(),
+            p2.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].exclude, vec!["*.tmp"]);
+        assert!(result.modules[1].exclude.is_empty());
     }
 }
