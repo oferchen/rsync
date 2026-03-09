@@ -532,7 +532,7 @@ where
     let whole_file_enabled = whole_file_option;
 
     let checksum_for_config = checksum.unwrap_or(false);
-    let fuzzy_enabled = fuzzy.unwrap_or(false);
+    let fuzzy_level_value = fuzzy.unwrap_or(0);
 
     let config_inputs = config::ConfigInputs {
         transfer_operands,
@@ -603,7 +603,7 @@ where
         safe_links,
         munge_links: munge_links.unwrap_or(false),
         trust_sender,
-        fuzzy: fuzzy_enabled,
+        fuzzy_level: fuzzy_level_value,
         links: preserve_symlinks,
         relative_paths: relative,
         one_file_system,

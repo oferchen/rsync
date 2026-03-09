@@ -94,8 +94,12 @@ const SIZE_SIMILARITY_BONUS: u32 = 30;
 pub const FUZZY_LEVEL_1: u8 = 1;
 
 /// Fuzzy level for -yy (double --fuzzy).
-/// Searches in destination directory AND fuzzy basis directories
-/// (--compare-dest, --copy-dest, --link-dest).
+/// Searches in destination directory AND reference directories
+/// (`--compare-dest`, `--copy-dest`, `--link-dest`).
+///
+/// Upstream `options.c:2120`: when `fuzzy_basis > 1`, the value is set
+/// to `basis_dir_cnt + 1`, making the fuzzy search iterate over the
+/// dest dir (index 0) plus each reference directory.
 pub const FUZZY_LEVEL_2: u8 = 2;
 
 /// Result of fuzzy matching search.
