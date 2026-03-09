@@ -1970,6 +1970,7 @@ impl GeneratorContext {
             flist_buildtime_ms: flist_buildtime,
             flist_xfertime_ms: flist_xfertime,
             delete_stats: self.delete_stats,
+            io_error: self.io_error,
         })
     }
 
@@ -2082,6 +2083,17 @@ pub struct GeneratorStats {
     pub flist_xfertime_ms: u64,
     /// Accumulated deletion statistics from the receiver.
     pub delete_stats: DeleteStats,
+    /// Accumulated I/O error flags from file list building and transfer.
+    ///
+    /// Uses [`io_error_flags`] constants. When `IOERR_VANISHED` is set and
+    /// `IOERR_GENERAL` is not, the exit code should be 24 (partial transfer
+    /// due to vanished files). Propagated to the client summary so the
+    /// process exit code reflects files that disappeared mid-transfer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1338-1345`: `log_exit()` maps `io_error` to `RERR_VANISHED` (24).
+    pub io_error: i32,
 }
 
 /// Item flags received from the receiver indicating transfer requirements.
@@ -4517,5 +4529,96 @@ mod tests {
         config.deletion.late_delete = true;
         let ctx = GeneratorContext::new(&handshake, config);
         assert!(ctx.should_send_del_stats());
+    }
+
+    #[test]
+    fn record_io_error_not_found_sets_vanished() {
+        let handshake = test_handshake();
+        let mut ctx = GeneratorContext::new(&handshake, test_config());
+
+        let error = io::Error::new(io::ErrorKind::NotFound, "file vanished");
+        ctx.record_io_error(&error);
+
+        assert_eq!(
+            ctx.io_error() & io_error_flags::IOERR_VANISHED,
+            io_error_flags::IOERR_VANISHED
+        );
+        assert_eq!(ctx.io_error() & io_error_flags::IOERR_GENERAL, 0);
+    }
+
+    #[test]
+    fn record_io_error_other_sets_general() {
+        let handshake = test_handshake();
+        let mut ctx = GeneratorContext::new(&handshake, test_config());
+
+        let error = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
+        ctx.record_io_error(&error);
+
+        assert_eq!(
+            ctx.io_error() & io_error_flags::IOERR_GENERAL,
+            io_error_flags::IOERR_GENERAL
+        );
+        assert_eq!(ctx.io_error() & io_error_flags::IOERR_VANISHED, 0);
+    }
+
+    #[test]
+    fn io_error_flags_accumulate_via_or() {
+        let handshake = test_handshake();
+        let mut ctx = GeneratorContext::new(&handshake, test_config());
+
+        let vanished = io::Error::new(io::ErrorKind::NotFound, "gone");
+        let general = io::Error::new(io::ErrorKind::PermissionDenied, "denied");
+        ctx.record_io_error(&vanished);
+        ctx.record_io_error(&general);
+
+        assert_eq!(
+            ctx.io_error(),
+            io_error_flags::IOERR_VANISHED | io_error_flags::IOERR_GENERAL
+        );
+    }
+
+    #[test]
+    fn to_exit_code_vanished_only_returns_24() {
+        assert_eq!(
+            io_error_flags::to_exit_code(io_error_flags::IOERR_VANISHED),
+            24
+        );
+    }
+
+    #[test]
+    fn to_exit_code_general_returns_23() {
+        assert_eq!(
+            io_error_flags::to_exit_code(io_error_flags::IOERR_GENERAL),
+            23
+        );
+    }
+
+    #[test]
+    fn to_exit_code_general_overrides_vanished() {
+        // upstream: IOERR_GENERAL takes precedence over IOERR_VANISHED
+        let combined = io_error_flags::IOERR_GENERAL | io_error_flags::IOERR_VANISHED;
+        assert_eq!(io_error_flags::to_exit_code(combined), 23);
+    }
+
+    #[test]
+    fn to_exit_code_del_limit_returns_25() {
+        assert_eq!(
+            io_error_flags::to_exit_code(io_error_flags::IOERR_DEL_LIMIT),
+            25
+        );
+    }
+
+    #[test]
+    fn to_exit_code_del_limit_overrides_all() {
+        // upstream: IOERR_DEL_LIMIT takes highest precedence
+        let all = io_error_flags::IOERR_DEL_LIMIT
+            | io_error_flags::IOERR_GENERAL
+            | io_error_flags::IOERR_VANISHED;
+        assert_eq!(io_error_flags::to_exit_code(all), 25);
+    }
+
+    #[test]
+    fn to_exit_code_no_errors_returns_zero() {
+        assert_eq!(io_error_flags::to_exit_code(0), 0);
     }
 }
