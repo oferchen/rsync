@@ -30,6 +30,22 @@ pub(crate) struct ParsedConfigModules {
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
     syslog_facility: Option<(String, ConfigDirectiveOrigin)>,
     syslog_tag: Option<(String, ConfigDirectiveOrigin)>,
+    /// Global bind address from the `address` directive.
+    ///
+    /// upstream: loadparm.c - `bind address` / `address` parameter sets the
+    /// interface the daemon listens on.
+    bind_address: Option<(IpAddr, ConfigDirectiveOrigin)>,
+    /// Daemon-level uid from the global section.
+    ///
+    /// upstream: loadparm.c - `uid` in the global section sets the daemon process uid.
+    /// The value is a username string or numeric uid that gets resolved at runtime.
+    daemon_uid: Option<(String, ConfigDirectiveOrigin)>,
+    /// Daemon-level gid from the global section.
+    ///
+    /// upstream: loadparm.c - `gid` in the global section sets the daemon process gid.
+    /// The value is a groupname string or numeric gid that gets resolved at runtime.
+    daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
+    listen_backlog: Option<(u32, ConfigDirectiveOrigin)>,
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
@@ -73,6 +89,10 @@ fn parse_config_modules_inner(
     let mut global_use_chroot: Option<(bool, ConfigDirectiveOrigin)> = None;
     let mut syslog_facility: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut syslog_tag: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut bind_address: Option<(IpAddr, ConfigDirectiveOrigin)> = None;
+    let mut daemon_uid: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut daemon_gid: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut listen_backlog: Option<(u32, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -461,6 +481,18 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_strict_modes(parsed, path, line_number)?;
                     }
+                    "open noatime" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'open noatime'"
+                                ),
+                            )
+                        })?;
+                        builder.set_open_noatime(parsed, path, line_number)?;
+                    }
                     // upstream: daemon-parm.txt — `exclude_from` STRING, default NULL.
                     // Loaded via parse_filter_file() in clientserver.c.
                     "exclude from" => {
@@ -625,6 +657,74 @@ fn parse_config_modules_inner(
                             }
                         } else {
                             global_outgoing_chmod = Some((outgoing, origin));
+                        }
+                    }
+
+                    if let Some((addr, origin)) = included.bind_address {
+                        if let Some((existing, existing_origin)) = &bind_address {
+                            if *existing != addr {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'address' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            bind_address = Some((addr, origin));
+                        }
+                    }
+
+                    if let Some((uid_val, origin)) = included.daemon_uid {
+                        if let Some((existing, existing_origin)) = &daemon_uid {
+                            if existing != &uid_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'uid' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            daemon_uid = Some((uid_val, origin));
+                        }
+                    }
+
+                    if let Some((gid_val, origin)) = included.daemon_gid {
+                        if let Some((existing, existing_origin)) = &daemon_gid {
+                            if existing != &gid_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'gid' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            daemon_gid = Some((gid_val, origin));
+                        }
+                    }
+
+                    if let Some((backlog_val, origin)) = included.listen_backlog {
+                        if let Some((existing, existing_origin)) = &listen_backlog {
+                            if *existing != backlog_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'listen backlog' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            listen_backlog = Some((backlog_val, origin));
                         }
                     }
                 }
@@ -967,6 +1067,143 @@ fn parse_config_modules_inner(
                         syslog_tag = Some((owned, origin));
                     }
                 }
+                // upstream: loadparm.c - `address` sets the bind address for
+                // the daemon listener.
+                "address" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'address' directive must not be empty",
+                        ));
+                    }
+
+                    let parsed_addr = parse_bind_address(&OsString::from(value))
+                        .map_err(|_| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!("invalid bind address '{value}'"),
+                            )
+                        })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &bind_address {
+                        if *existing != parsed_addr {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'address' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        bind_address = Some((parsed_addr, origin));
+                    }
+                }
+                // upstream: loadparm.c - `uid` in the global section sets the
+                // daemon process uid after binding and daemonizing.
+                "uid" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'uid' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &daemon_uid {
+                        if existing != value {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'uid' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        let mut owned = String::new();
+                        value.clone_into(&mut owned);
+                        daemon_uid = Some((owned, origin));
+                    }
+                }
+                // upstream: loadparm.c - `gid` in the global section sets the
+                // daemon process gid after binding and daemonizing.
+                "gid" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'gid' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &daemon_gid {
+                        if existing != value {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'gid' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        let mut owned = String::new();
+                        value.clone_into(&mut owned);
+                        daemon_gid = Some((owned, origin));
+                    }
+                }
+                // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
+                // Controls the backlog argument passed to listen(2).
+                "listen backlog" => {
+                    let parsed: u32 = value.parse().map_err(|_| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid integer value '{value}' for 'listen backlog'"),
+                        )
+                    })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &listen_backlog {
+                        if *existing != parsed {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'listen backlog' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        listen_backlog = Some((parsed, origin));
+                    }
+                }
                 _ => {
                     eprintln!(
                         "warning: unknown global directive '{}' in '{}' line {}",
@@ -1007,6 +1244,10 @@ fn parse_config_modules_inner(
             global_outgoing_chmod,
             syslog_facility,
             syslog_tag,
+            bind_address,
+            daemon_uid,
+            daemon_gid,
+            listen_backlog,
         })
     })();
 
@@ -1812,6 +2053,66 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("duplicate"));
     }
 
+    // --- Open noatime directive tests ---
+
+    #[test]
+    fn parse_module_open_noatime_yes() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nopen noatime = yes\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].open_noatime);
+    }
+
+    #[test]
+    fn parse_module_open_noatime_no() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nopen noatime = no\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].open_noatime);
+    }
+
+    #[test]
+    fn parse_module_open_noatime_default_false() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].open_noatime);
+    }
+
+    #[test]
+    fn parse_module_open_noatime_invalid_boolean() {
+        let file = write_config("[mod]\npath = /tmp\nopen noatime = maybe\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("invalid boolean"));
+    }
+
+    #[test]
+    fn parse_module_open_noatime_duplicate() {
+        let file = write_config(
+            "[mod]\npath = /tmp\nopen noatime = yes\nopen noatime = no\n",
+        );
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("duplicate"));
+    }
+
     #[test]
     fn parse_unknown_per_module_directive_continues() {
         let dir = TempDir::new().expect("create temp dir");
@@ -2572,5 +2873,62 @@ mod config_parsing_tests {
         let (tag, _) = result.syslog_tag.expect("should have tag");
         assert_eq!(facility, "local3");
         assert_eq!(tag, "backup-daemon");
+    }
+
+    // --- address directive tests ---
+
+    #[test]
+    fn parse_address_ipv4() {
+        let file = write_config("address = 192.168.1.100\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (addr, _) = result.bind_address.expect("should have bind_address");
+        assert_eq!(addr, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
+    }
+
+    #[test]
+    fn parse_address_ipv6() {
+        let file = write_config("address = ::1\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (addr, _) = result.bind_address.expect("should have bind_address");
+        assert_eq!(addr, IpAddr::V6(Ipv6Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn parse_address_absent() {
+        let file = write_config("# no address\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.bind_address.is_none());
+    }
+
+    #[test]
+    fn parse_address_empty_value() {
+        let file = write_config("address =\n");
+        let err = parse_config_modules(file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("'address' directive must not be empty"), "{msg}");
+    }
+
+    #[test]
+    fn parse_address_invalid() {
+        let file = write_config("address = not-an-ip\n");
+        let err = parse_config_modules(file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid bind address"), "{msg}");
+    }
+
+    #[test]
+    fn parse_address_duplicate_same_value() {
+        let file = write_config("address = 10.0.0.1\naddress = 10.0.0.1\n");
+        let result = parse_config_modules(file.path()).expect("identical duplicates accepted");
+        let (addr, _) = result.bind_address.expect("should have bind_address");
+        assert_eq!(addr, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
+    }
+
+    #[test]
+    fn parse_address_duplicate_different_value() {
+        let file = write_config("address = 10.0.0.1\naddress = 10.0.0.2\n");
+        let err = parse_config_modules(file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("duplicate 'address' directive"), "{msg}");
     }
 }

@@ -151,6 +151,12 @@ pub(crate) struct ModuleDefinition {
     /// Upstream: `daemon-parm.txt` — `include_from` STRING parameter, default NULL.
     /// Patterns are loaded via `parse_filter_file()` in `clientserver.c`.
     pub(crate) include_from: Option<PathBuf>,
+    /// When true, source files are opened with `O_NOATIME` to avoid updating access times.
+    ///
+    /// Only effective on Linux where `O_NOATIME` is supported. On other platforms this
+    /// is accepted but has no effect (no-op).
+    /// Upstream: `loadparm.c` — `open noatime` parameter, default false.
+    pub(crate) open_noatime: bool,
 }
 
 impl ModuleDefinition {
@@ -367,6 +373,10 @@ impl ModuleDefinition {
 
     pub(super) fn include_from(&self) -> Option<&Path> {
         self.include_from.as_deref()
+    }
+
+    pub(super) fn open_noatime(&self) -> bool {
+        self.open_noatime
     }
 }
 
@@ -721,6 +731,7 @@ mod module_state_tests {
         assert!(def.munge_symlinks.is_none());
         assert!(def.exclude_from.is_none());
         assert!(def.include_from.is_none());
+        assert!(!def.open_noatime);
     }
 
     #[test]

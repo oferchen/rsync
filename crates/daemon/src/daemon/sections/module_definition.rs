@@ -40,6 +40,7 @@ struct ModuleDefinitionBuilder {
     strict_modes: Option<bool>,
     exclude_from: Option<PathBuf>,
     include_from: Option<PathBuf>,
+    open_noatime: Option<bool>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -86,6 +87,7 @@ impl ModuleDefinitionBuilder {
             strict_modes: None,
             exclude_from: None,
             include_from: None,
+            open_noatime: None,
         }
     }
 
@@ -804,6 +806,27 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_open_noatime(
+        &mut self,
+        open_noatime: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.open_noatime.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'open noatime' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.open_noatime = Some(open_noatime);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -912,6 +935,7 @@ impl ModuleDefinitionBuilder {
             strict_modes: self.strict_modes.unwrap_or(true),
             exclude_from: self.exclude_from,
             include_from: self.include_from,
+            open_noatime: self.open_noatime.unwrap_or(false),
         })
     }
 }
@@ -972,6 +996,7 @@ mod module_definition_builder_tests {
         assert!(builder.strict_modes.is_none());
         assert!(builder.exclude_from.is_none());
         assert!(builder.include_from.is_none());
+        assert!(builder.open_noatime.is_none());
     }
 
     // ==================== set_path tests ====================
@@ -1449,6 +1474,30 @@ mod module_definition_builder_tests {
         assert!(result.is_err());
     }
 
+    // ==================== set_open_noatime tests ====================
+
+    #[test]
+    fn set_open_noatime_stores_true() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_open_noatime(true, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.open_noatime, Some(true));
+    }
+
+    #[test]
+    fn set_open_noatime_stores_false() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_open_noatime(false, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.open_noatime, Some(false));
+    }
+
+    #[test]
+    fn set_open_noatime_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_open_noatime(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_open_noatime(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
     // ==================== finish() tests ====================
 
     #[test]
@@ -1636,6 +1685,7 @@ mod module_definition_builder_tests {
         assert!(def.strict_modes); // default true
         assert!(def.exclude_from.is_none());
         assert!(def.include_from.is_none());
+        assert!(!def.open_noatime); // default false
     }
 
     #[test]
@@ -1697,5 +1747,15 @@ mod module_definition_builder_tests {
 
         let def = builder.finish(&test_config_path(), None, None, None, None).unwrap();
         assert_eq!(def.include_from, Some(PathBuf::from("/etc/includes.txt")));
+    }
+
+    #[test]
+    fn finish_preserves_open_noatime_when_set() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_open_noatime(true, &test_config_path(), 3).unwrap();
+
+        let def = builder.finish(&test_config_path(), None, None, None, None).unwrap();
+        assert!(def.open_noatime);
     }
 }
