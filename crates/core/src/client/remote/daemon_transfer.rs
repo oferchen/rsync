@@ -786,16 +786,15 @@ fn build_full_daemon_args(
         }
     }
 
-    // --compare-dest, --copy-dest, --link-dest — upstream: options.c:2915-2923
-    // Sent as two separate args (option then value) matching upstream's wire format.
+    // --compare-dest=DIR, --copy-dest=DIR, --link-dest=DIR
+    // upstream: options.c:2915-2923 - sent as --key=value format
     for ref_dir in config.reference_directories() {
-        let option = match ref_dir.kind() {
-            ReferenceDirectoryKind::Compare => "--compare-dest",
-            ReferenceDirectoryKind::Copy => "--copy-dest",
-            ReferenceDirectoryKind::Link => "--link-dest",
+        let flag = match ref_dir.kind() {
+            ReferenceDirectoryKind::Compare => "--compare-dest=",
+            ReferenceDirectoryKind::Copy => "--copy-dest=",
+            ReferenceDirectoryKind::Link => "--link-dest=",
         };
-        args.push(option.to_owned());
-        args.push(ref_dir.path().display().to_string());
+        args.push(format!("{flag}{}", ref_dir.path().display()));
     }
 
     // --remove-source-files — upstream: options.c:2964-2965
@@ -1079,6 +1078,7 @@ fn build_server_config_for_receiver(
             Some(compress::zlib::CompressionLevel::Default);
     }
     server_config.stop_at = config.stop_at();
+    server_config.reference_directories = config.reference_directories().to_vec();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -1127,6 +1127,7 @@ fn build_server_config_for_generator(
             Some(compress::zlib::CompressionLevel::Default);
     }
     server_config.stop_at = config.stop_at();
+    server_config.reference_directories = config.reference_directories().to_vec();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -1610,6 +1611,167 @@ mod tests {
             let args = build_full_daemon_args(&config, &request, protocol, false);
 
             assert!(!args.iter().any(|a| a.starts_with("-e.")));
+        }
+
+        #[test]
+        fn build_full_args_includes_compare_dest() {
+            let config = ClientConfig::builder()
+                .compare_destination("/tmp/compare")
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                args.iter().any(|a| a == "--compare-dest=/tmp/compare"),
+                "expected --compare-dest=/tmp/compare in args: {args:?}"
+            );
+        }
+
+        #[test]
+        fn build_full_args_includes_copy_dest() {
+            let config = ClientConfig::builder()
+                .copy_destination("/tmp/copy")
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                args.iter().any(|a| a == "--copy-dest=/tmp/copy"),
+                "expected --copy-dest=/tmp/copy in args: {args:?}"
+            );
+        }
+
+        #[test]
+        fn build_full_args_includes_link_dest() {
+            let config = ClientConfig::builder().link_destination("/prev").build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                args.iter().any(|a| a == "--link-dest=/prev"),
+                "expected --link-dest=/prev in args: {args:?}"
+            );
+        }
+
+        #[test]
+        fn build_full_args_includes_multiple_reference_dirs() {
+            let config = ClientConfig::builder()
+                .link_destination("/prev1")
+                .link_destination("/prev2")
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                args.iter().any(|a| a == "--link-dest=/prev1"),
+                "expected --link-dest=/prev1 in args: {args:?}"
+            );
+            assert!(
+                args.iter().any(|a| a == "--link-dest=/prev2"),
+                "expected --link-dest=/prev2 in args: {args:?}"
+            );
+        }
+
+        #[test]
+        fn build_full_args_omits_reference_dirs_when_empty() {
+            let config = ClientConfig::default();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                !args.iter().any(|a| a.starts_with("--compare-dest=")
+                    || a.starts_with("--copy-dest=")
+                    || a.starts_with("--link-dest=")),
+                "should not emit reference dir args when empty: {args:?}"
+            );
+        }
+    }
+
+    mod server_config_reference_dirs {
+        use super::*;
+        use crate::client::config::ReferenceDirectoryKind;
+
+        #[test]
+        fn receiver_config_propagates_reference_directories() {
+            let config = ClientConfig::builder()
+                .compare_destination("/tmp/compare")
+                .link_destination("/prev")
+                .build();
+            let server_config =
+                build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new())
+                    .unwrap();
+
+            assert_eq!(server_config.reference_directories.len(), 2);
+            assert_eq!(
+                server_config.reference_directories[0].kind(),
+                ReferenceDirectoryKind::Compare
+            );
+            assert_eq!(
+                server_config.reference_directories[0]
+                    .path()
+                    .to_str()
+                    .unwrap(),
+                "/tmp/compare"
+            );
+            assert_eq!(
+                server_config.reference_directories[1].kind(),
+                ReferenceDirectoryKind::Link
+            );
+            assert_eq!(
+                server_config.reference_directories[1]
+                    .path()
+                    .to_str()
+                    .unwrap(),
+                "/prev"
+            );
+        }
+
+        #[test]
+        fn generator_config_propagates_reference_directories() {
+            let config = ClientConfig::builder()
+                .copy_destination("/tmp/copy")
+                .build();
+            let server_config =
+                build_server_config_for_generator(&config, &["src".to_owned()], Vec::new())
+                    .unwrap();
+
+            assert_eq!(server_config.reference_directories.len(), 1);
+            assert_eq!(
+                server_config.reference_directories[0].kind(),
+                ReferenceDirectoryKind::Copy
+            );
+            assert_eq!(
+                server_config.reference_directories[0]
+                    .path()
+                    .to_str()
+                    .unwrap(),
+                "/tmp/copy"
+            );
+        }
+
+        #[test]
+        fn receiver_config_empty_reference_dirs_by_default() {
+            let config = ClientConfig::default();
+            let server_config =
+                build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new())
+                    .unwrap();
+
+            assert!(server_config.reference_directories.is_empty());
+        }
+
+        #[test]
+        fn generator_config_empty_reference_dirs_by_default() {
+            let config = ClientConfig::default();
+            let server_config =
+                build_server_config_for_generator(&config, &["src".to_owned()], Vec::new())
+                    .unwrap();
+
+            assert!(server_config.reference_directories.is_empty());
         }
     }
 }
