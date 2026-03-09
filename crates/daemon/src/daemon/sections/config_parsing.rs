@@ -45,6 +45,7 @@ pub(crate) struct ParsedConfigModules {
     /// upstream: loadparm.c - `gid` in the global section sets the daemon process gid.
     /// The value is a groupname string or numeric gid that gets resolved at runtime.
     daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
+    listen_backlog: Option<(u32, ConfigDirectiveOrigin)>,
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
@@ -91,6 +92,7 @@ fn parse_config_modules_inner(
     let mut bind_address: Option<(IpAddr, ConfigDirectiveOrigin)> = None;
     let mut daemon_uid: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut daemon_gid: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut listen_backlog: Option<(u32, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -1039,9 +1041,6 @@ fn parse_config_modules_inner(
                 // upstream: loadparm.c - `address` sets the bind address for
                 // the daemon listener.
                 "address" => {
-                // upstream: loadparm.c - `uid` in the global section sets the
-                // daemon process uid after binding and daemonizing.
-                "uid" => {
                     if value.is_empty() {
                         return Err(config_parse_error(
                             path,
@@ -1059,6 +1058,33 @@ fn parse_config_modules_inner(
                             )
                         })?;
 
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &bind_address {
+                        if *existing != parsed_addr {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'address' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        bind_address = Some((parsed_addr, origin));
+                    }
+                }
+                // upstream: loadparm.c - `uid` in the global section sets the
+                // daemon process uid after binding and daemonizing.
+                "uid" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
                             "'uid' directive must not be empty",
                         ));
                     }
@@ -1068,8 +1094,6 @@ fn parse_config_modules_inner(
                         line: line_number,
                     };
 
-                    if let Some((existing, existing_origin)) = &bind_address {
-                        if *existing != parsed_addr {
                     if let Some((existing, existing_origin)) = &daemon_uid {
                         if existing != value {
                             let existing_line = existing_origin.line;
@@ -1077,13 +1101,11 @@ fn parse_config_modules_inner(
                                 path,
                                 line_number,
                                 format!(
-                                    "duplicate 'address' directive in global section (previously defined on line {existing_line})"
                                     "duplicate 'uid' directive in global section (previously defined on line {existing_line})"
                                 ),
                             ));
                         }
                     } else {
-                        bind_address = Some((parsed_addr, origin));
                         let mut owned = String::new();
                         value.clone_into(&mut owned);
                         daemon_uid = Some((owned, origin));
@@ -1120,6 +1142,37 @@ fn parse_config_modules_inner(
                         let mut owned = String::new();
                         value.clone_into(&mut owned);
                         daemon_gid = Some((owned, origin));
+                    }
+                }
+                // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
+                // Controls the backlog argument passed to listen(2).
+                "listen backlog" => {
+                    let parsed: u32 = value.parse().map_err(|_| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid integer value '{value}' for 'listen backlog'"),
+                        )
+                    })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &listen_backlog {
+                        if *existing != parsed {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'listen backlog' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        listen_backlog = Some((parsed, origin));
                     }
                 }
                 _ => {
@@ -1165,6 +1218,7 @@ fn parse_config_modules_inner(
             bind_address,
             daemon_uid,
             daemon_gid,
+            listen_backlog,
         })
     })();
 

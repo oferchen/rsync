@@ -139,6 +139,7 @@ pub struct GlobalConfig {
     /// upstream: loadparm.c - `gid` in the global section controls what group
     /// the daemon process drops to after binding.
     gid: Option<String>,
+    listen_backlog: Option<u32>,
 }
 
 impl GlobalConfig {
@@ -207,6 +208,14 @@ impl GlobalConfig {
     /// happens at daemon startup time via platform APIs.
     pub fn gid(&self) -> Option<&str> {
         self.gid.as_deref()
+    }
+
+    /// Returns the TCP listen backlog, if configured.
+    ///
+    /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER, default 5.
+    /// Controls the backlog argument passed to `listen(2)` on the daemon socket.
+    pub fn listen_backlog(&self) -> Option<u32> {
+        self.listen_backlog
     }
 }
 
@@ -612,6 +621,15 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 global.gid = Some(value.to_string());
+            }
+            "listen backlog" => {
+                global.listen_backlog = Some(value.parse().map_err(|_| {
+                    ConfigError::parse_error(
+                        self.path,
+                        self.line_number,
+                        "invalid listen backlog value",
+                    )
+                })?);
             }
             _ => {
                 // Unknown global directives are silently ignored for forward compatibility

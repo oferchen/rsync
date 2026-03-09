@@ -39,6 +39,8 @@ pub(crate) struct RuntimeOptions {
     /// upstream: loadparm.c - global `gid` parameter. Resolved from groupname
     /// or numeric string at config load time.
     daemon_gid: Option<u32>,
+    listen_backlog: Option<u32>,
+    listen_backlog_from_config: bool,
     detach: bool,
     /// Path to the config file loaded at startup, retained for SIGHUP reload.
     ///
@@ -82,6 +84,8 @@ impl Default for RuntimeOptions {
             syslog_tag_from_config: false,
             daemon_uid: None,
             daemon_gid: None,
+            listen_backlog: None,
+            listen_backlog_from_config: false,
             detach: cfg!(unix),
             config_path: None,
         }
@@ -405,12 +409,18 @@ impl RuntimeOptions {
                 self.bind_address_overridden = true;
                 self.address_family = Some(AddressFamily::from_ip(addr));
             }
+        }
+
         if let Some((uid_str, origin)) = parsed.daemon_uid {
             self.set_daemon_uid_from_config(&uid_str, &origin)?;
         }
 
         if let Some((gid_str, origin)) = parsed.daemon_gid {
             self.set_daemon_gid_from_config(&gid_str, &origin)?;
+        }
+
+        if let Some((backlog, origin)) = parsed.listen_backlog {
+            self.set_listen_backlog_from_config(backlog, &origin)?;
         }
 
         if !parsed.motd_lines.is_empty() {
@@ -563,6 +573,30 @@ impl RuntimeOptions {
 
         self.syslog_tag = Some(value);
         self.syslog_tag_from_config = true;
+        Ok(())
+    }
+
+    fn set_listen_backlog_from_config(
+        &mut self,
+        value: u32,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = self.listen_backlog {
+            if self.listen_backlog_from_config {
+                if existing == value {
+                    return Ok(());
+                }
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'listen backlog' directive in global section",
+                ));
+            }
+            return Ok(());
+        }
+
+        self.listen_backlog = Some(value);
+        self.listen_backlog_from_config = true;
         Ok(())
     }
 
@@ -755,6 +789,13 @@ impl RuntimeOptions {
     /// `false` on Windows where `fork` is not available.
     pub(crate) fn detach(&self) -> bool {
         self.detach
+    }
+
+    /// Returns the configured TCP listen backlog.
+    ///
+    /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER, default 5.
+    pub(crate) fn listen_backlog(&self) -> Option<u32> {
+        self.listen_backlog
     }
 }
 
