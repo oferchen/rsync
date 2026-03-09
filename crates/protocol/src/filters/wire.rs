@@ -562,24 +562,16 @@ mod tests {
     }
 
     #[test]
-    fn protocol_downgrade_strips_unsupported() {
-        // Create rule with v30 features
+    fn protocol_downgrade_rejects_unrepresentable_rules() {
+        // Create rule with v30 features (s/r/p modifiers)
         let rule = FilterRuleWireFormat::exclude("test".to_owned())
             .with_sides(true, false)
             .with_perishable(true);
 
-        // Serialize with v28 protocol (doesn't support s/r/p)
+        // v28 uses old prefixes which cannot encode modifiers - write fails
         let protocol_v28 = ProtocolVersion::from_supported(28).unwrap();
         let mut buf = Vec::new();
-        write_filter_list(&mut buf, &[rule], protocol_v28).unwrap();
-
-        // Parse back
-        let parsed = read_filter_list(&mut &buf[..], protocol_v28).unwrap();
-        assert_eq!(parsed.len(), 1);
-
-        // v28 should ignore s, r, p modifiers
-        assert!(!parsed[0].sender_side);
-        assert!(!parsed[0].receiver_side);
-        assert!(!parsed[0].perishable);
+        let result = write_filter_list(&mut buf, &[rule], protocol_v28);
+        assert!(result.is_err());
     }
 }
