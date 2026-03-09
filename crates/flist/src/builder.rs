@@ -15,6 +15,7 @@ use std::path::PathBuf;
 pub struct FileListBuilder {
     root: PathBuf,
     follow_symlinks: bool,
+    copy_links: bool,
     include_root: bool,
 }
 
@@ -25,6 +26,7 @@ impl FileListBuilder {
         Self {
             root: root.into(),
             follow_symlinks: false,
+            copy_links: false,
             include_root: true,
         }
     }
@@ -42,6 +44,24 @@ impl FileListBuilder {
         self
     }
 
+    /// Configures whether all symlinks should be resolved to their targets.
+    ///
+    /// When enabled, the walker uses `stat()` (follows symlinks) instead of
+    /// `lstat()` for every entry, so symlinks appear as whatever they point to
+    /// (regular files, directories, etc.). This mirrors upstream rsync's
+    /// `--copy-links` (`-L`) behaviour where `make_file()` calls `do_stat()`
+    /// instead of `do_lstat()`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:205-232` - `readlink_stat()` uses `do_stat()` when
+    ///   `copy_links` is set.
+    #[must_use]
+    pub const fn copy_links(mut self, copy: bool) -> Self {
+        self.copy_links = copy;
+        self
+    }
+
     /// Controls whether the root entry should be included in the output.
     ///
     /// When disabled, traversal starts directly with the root's children.
@@ -53,7 +73,12 @@ impl FileListBuilder {
 
     /// Builds a [`FileListWalker`] using the configured options.
     pub fn build(self) -> Result<FileListWalker, FileListError> {
-        FileListWalker::new(self.root, self.follow_symlinks, self.include_root)
+        FileListWalker::new(
+            self.root,
+            self.follow_symlinks,
+            self.copy_links,
+            self.include_root,
+        )
     }
 }
 
@@ -100,9 +125,22 @@ mod tests {
     }
 
     #[test]
+    fn copy_links_sets_option() {
+        let builder = FileListBuilder::new("/path").copy_links(true);
+        let _ = format!("{builder:?}");
+    }
+
+    #[test]
+    fn copy_links_false() {
+        let builder = FileListBuilder::new("/path").copy_links(false);
+        let _ = format!("{builder:?}");
+    }
+
+    #[test]
     fn builder_chain() {
         let builder = FileListBuilder::new("/path")
             .follow_symlinks(true)
+            .copy_links(true)
             .include_root(false);
         let _ = format!("{builder:?}");
     }
