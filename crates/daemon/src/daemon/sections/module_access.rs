@@ -1266,6 +1266,23 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
+    // Enforce read-only / write-only access restrictions.
+    // upstream: clientserver.c:rsync_module() — after reading args, check
+    // am_sender against lp_read_only(i) and lp_write_only(i).
+    // When --sender is absent the client is pushing (server = Receiver).
+    // A read-only module must reject pushes; a write-only module must reject pulls.
+    let role = determine_server_role(&client_args);
+    if module.read_only && matches!(role, ServerRole::Receiver) {
+        let payload = "@ERROR: module is read only".to_string();
+        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+        return Ok(());
+    }
+    if module.write_only && matches!(role, ServerRole::Generator) {
+        let payload = "@ERROR: module is write only".to_string();
+        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+        return Ok(());
+    }
+
     // Validate module path before chroot (path must be accessible pre-chroot)
     if !validate_module_path(ctx, module)? {
         return Ok(());
@@ -1375,7 +1392,6 @@ fn process_approved_module(
     }
 
     // Build handshake and execute transfer
-    let role = determine_server_role(&client_args);
     let handshake = build_handshake_result(ctx.reader, negotiated_protocol, client_args, module);
     let final_protocol = handshake.protocol;
 
