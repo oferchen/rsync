@@ -224,23 +224,21 @@ mod tests {
     }
 
     #[test]
-    fn v28_strips_sender_receiver() {
+    fn v28_cannot_represent_sender_receiver() {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, true);
 
-        let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        // v28 doesn't support s/r, so they should be omitted
-        assert_eq!(prefix, "- ");
+        // v28 uses old prefixes which cannot encode modifiers - returns None
+        assert!(build_rule_prefix(&rule, protocol).is_none());
     }
 
     #[test]
-    fn v28_strips_perishable() {
+    fn v28_cannot_represent_perishable() {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_perishable(true);
 
-        let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        // v28 doesn't support p, so it should be omitted
-        assert_eq!(prefix, "- ");
+        // v28 uses old prefixes which cannot encode modifiers - returns None
+        assert!(build_rule_prefix(&rule, protocol).is_none());
     }
 
     #[test]
