@@ -52,6 +52,10 @@ pub(crate) struct ParsedConfigModules {
     /// of TCP/IP socket options applied to the daemon listener socket via
     /// `set_socket_options()` in `socket.c`.
     socket_options: Option<(String, ConfigDirectiveOrigin)>,
+    /// Whether incoming connections require a PROXY protocol header (V1 or V2).
+    ///
+    /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
+    proxy_protocol: Option<(bool, ConfigDirectiveOrigin)>,
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
@@ -100,6 +104,7 @@ fn parse_config_modules_inner(
     let mut daemon_gid: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut listen_backlog: Option<(u32, ConfigDirectiveOrigin)> = None;
     let mut socket_options: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut proxy_protocol: Option<(bool, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -759,6 +764,23 @@ fn parse_config_modules_inner(
                             socket_options = Some((opts_val, origin));
                         }
                     }
+
+                    if let Some((pp_val, origin)) = included.proxy_protocol {
+                        if let Some((existing, existing_origin)) = &proxy_protocol {
+                            if *existing != pp_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'proxy protocol' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            proxy_protocol = Some((pp_val, origin));
+                        }
+                    }
                 }
                 "motd file" => {
                     let trimmed = value.trim();
@@ -1268,6 +1290,35 @@ fn parse_config_modules_inner(
                         socket_options = Some((trimmed.to_string(), origin));
                     }
                 }
+                "proxy protocol" => {
+                    let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid boolean value '{value}' for 'proxy protocol'"),
+                        )
+                    })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &proxy_protocol {
+                        if *existing != parsed {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'proxy protocol' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        proxy_protocol = Some((parsed, origin));
+                    }
+                }
                 _ => {
                     eprintln!(
                         "warning: unknown global directive '{}' in '{}' line {}",
@@ -1313,6 +1364,7 @@ fn parse_config_modules_inner(
             daemon_gid,
             listen_backlog,
             socket_options,
+            proxy_protocol,
         })
     })();
 
@@ -3084,5 +3136,49 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.socket_options.is_none());
+    }
+
+    #[test]
+    fn parse_global_proxy_protocol_true() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "proxy protocol = yes\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (enabled, _) = result.proxy_protocol.expect("should have proxy_protocol");
+        assert!(enabled);
+    }
+
+    #[test]
+    fn parse_global_proxy_protocol_false() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "proxy protocol = no\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (enabled, _) = result.proxy_protocol.expect("should have proxy_protocol");
+        assert!(!enabled);
+    }
+
+    #[test]
+    fn parse_global_proxy_protocol_default_is_none() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.proxy_protocol.is_none());
     }
 }

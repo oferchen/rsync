@@ -48,6 +48,10 @@ pub(crate) struct RuntimeOptions {
     /// `SO_SNDBUF=65536`) applied to the daemon listener socket.
     socket_options: Option<String>,
     socket_options_from_config: bool,
+    /// Whether incoming connections require a PROXY protocol header.
+    ///
+    /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
+    proxy_protocol: bool,
     detach: bool,
     /// Path to the config file loaded at startup, retained for SIGHUP reload.
     ///
@@ -95,6 +99,7 @@ impl Default for RuntimeOptions {
             listen_backlog_from_config: false,
             socket_options: None,
             socket_options_from_config: false,
+            proxy_protocol: false,
             detach: cfg!(unix),
             config_path: None,
         }
@@ -434,6 +439,10 @@ impl RuntimeOptions {
 
         if let Some((opts, origin)) = parsed.socket_options {
             self.set_socket_options_from_config(opts, &origin)?;
+        }
+
+        if let Some((enabled, _origin)) = parsed.proxy_protocol {
+            self.proxy_protocol = enabled;
         }
 
         if !parsed.motd_lines.is_empty() {
@@ -842,6 +851,15 @@ impl RuntimeOptions {
     /// (e.g., `TCP_NODELAY`, `SO_KEEPALIVE`, `SO_SNDBUF=65536`).
     pub(crate) fn socket_options(&self) -> Option<&str> {
         self.socket_options.as_deref()
+    }
+
+    /// Returns whether incoming connections require a PROXY protocol header.
+    ///
+    /// upstream: clientserver.c:1298 - checked before accepting client data.
+    /// Used when implementing PROXY protocol header validation.
+    #[allow(dead_code)]
+    pub(crate) fn proxy_protocol(&self) -> bool {
+        self.proxy_protocol
     }
 }
 
