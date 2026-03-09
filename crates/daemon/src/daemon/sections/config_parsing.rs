@@ -35,6 +35,16 @@ pub(crate) struct ParsedConfigModules {
     /// upstream: loadparm.c - `bind address` / `address` parameter sets the
     /// interface the daemon listens on.
     bind_address: Option<(IpAddr, ConfigDirectiveOrigin)>,
+    /// Daemon-level uid from the global section.
+    ///
+    /// upstream: loadparm.c - `uid` in the global section sets the daemon process uid.
+    /// The value is a username string or numeric uid that gets resolved at runtime.
+    daemon_uid: Option<(String, ConfigDirectiveOrigin)>,
+    /// Daemon-level gid from the global section.
+    ///
+    /// upstream: loadparm.c - `gid` in the global section sets the daemon process gid.
+    /// The value is a groupname string or numeric gid that gets resolved at runtime.
+    daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
@@ -79,6 +89,8 @@ fn parse_config_modules_inner(
     let mut syslog_facility: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut syslog_tag: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut bind_address: Option<(IpAddr, ConfigDirectiveOrigin)> = None;
+    let mut daemon_uid: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut daemon_gid: Option<(String, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -637,17 +649,39 @@ fn parse_config_modules_inner(
                     if let Some((addr, origin)) = included.bind_address {
                         if let Some((existing, existing_origin)) = &bind_address {
                             if *existing != addr {
+                    if let Some((uid_val, origin)) = included.daemon_uid {
+                        if let Some((existing, existing_origin)) = &daemon_uid {
+                            if existing != &uid_val {
                                 let existing_line = existing_origin.line;
                                 return Err(config_parse_error(
                                     &origin.path,
                                     origin.line,
                                     format!(
                                         "duplicate 'address' directive in global section (previously defined on line {existing_line})"
+                                        "duplicate 'uid' directive in global section (previously defined on line {existing_line})"
                                     ),
                                 ));
                             }
                         } else {
                             bind_address = Some((addr, origin));
+                            daemon_uid = Some((uid_val, origin));
+                        }
+                    }
+
+                    if let Some((gid_val, origin)) = included.daemon_gid {
+                        if let Some((existing, existing_origin)) = &daemon_gid {
+                            if existing != &gid_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'gid' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            daemon_gid = Some((gid_val, origin));
                         }
                     }
                 }
@@ -993,6 +1027,9 @@ fn parse_config_modules_inner(
                 // upstream: loadparm.c - `address` sets the bind address for
                 // the daemon listener.
                 "address" => {
+                // upstream: loadparm.c - `uid` in the global section sets the
+                // daemon process uid after binding and daemonizing.
+                "uid" => {
                     if value.is_empty() {
                         return Err(config_parse_error(
                             path,
@@ -1010,6 +1047,10 @@ fn parse_config_modules_inner(
                             )
                         })?;
 
+                            "'uid' directive must not be empty",
+                        ));
+                    }
+
                     let origin = ConfigDirectiveOrigin {
                         path: canonical.clone(),
                         line: line_number,
@@ -1017,17 +1058,56 @@ fn parse_config_modules_inner(
 
                     if let Some((existing, existing_origin)) = &bind_address {
                         if *existing != parsed_addr {
+                    if let Some((existing, existing_origin)) = &daemon_uid {
+                        if existing != value {
                             let existing_line = existing_origin.line;
                             return Err(config_parse_error(
                                 path,
                                 line_number,
                                 format!(
                                     "duplicate 'address' directive in global section (previously defined on line {existing_line})"
+                                    "duplicate 'uid' directive in global section (previously defined on line {existing_line})"
                                 ),
                             ));
                         }
                     } else {
                         bind_address = Some((parsed_addr, origin));
+                        let mut owned = String::new();
+                        value.clone_into(&mut owned);
+                        daemon_uid = Some((owned, origin));
+                    }
+                }
+                // upstream: loadparm.c - `gid` in the global section sets the
+                // daemon process gid after binding and daemonizing.
+                "gid" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'gid' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &daemon_gid {
+                        if existing != value {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'gid' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        let mut owned = String::new();
+                        value.clone_into(&mut owned);
+                        daemon_gid = Some((owned, origin));
                     }
                 }
                 _ => {
@@ -1071,6 +1151,8 @@ fn parse_config_modules_inner(
             syslog_facility,
             syslog_tag,
             bind_address,
+            daemon_uid,
+            daemon_gid,
         })
     })();
 

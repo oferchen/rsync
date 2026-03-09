@@ -292,6 +292,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         config_path,
         syslog_facility,
         syslog_tag,
+        daemon_uid,
+        daemon_gid,
         ..
     } = options;
 
@@ -409,6 +411,25 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     } else {
         None
     };
+
+    // Drop daemon-level privileges after binding (which may require root for
+    // ports < 1024), daemonizing, and writing the PID file.
+    // upstream: clientserver.c - setuid/setgid from global uid/gid params happen
+    // after the socket is bound and the daemon has forked.
+    if daemon_uid.is_some() || daemon_gid.is_some() {
+        let fallback_sink = open_privilege_fallback_sink();
+        let sink = log_sink.as_ref().unwrap_or(&fallback_sink);
+        drop_privileges(daemon_uid, daemon_gid, sink).map_err(|error| {
+            DaemonError::new(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                rsync_error!(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    format!("failed to drop daemon privileges: {error}")
+                )
+                .with_role(Role::Daemon),
+            )
+        })?;
+    }
 
     let notifier = systemd::ServiceNotifier::new();
     let ready_status = if bound_addresses.len() == 1 {

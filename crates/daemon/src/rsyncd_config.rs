@@ -129,6 +129,16 @@ pub struct GlobalConfig {
     log_format: Option<String>,
     syslog_facility: Option<String>,
     syslog_tag: Option<String>,
+    /// Daemon process uid - username or numeric uid string.
+    ///
+    /// upstream: loadparm.c - `uid` in the global section controls what user
+    /// the daemon process drops to after binding.
+    uid: Option<String>,
+    /// Daemon process gid - groupname or numeric gid string.
+    ///
+    /// upstream: loadparm.c - `gid` in the global section controls what group
+    /// the daemon process drops to after binding.
+    gid: Option<String>,
 }
 
 impl GlobalConfig {
@@ -181,6 +191,22 @@ impl GlobalConfig {
     /// For oc-rsync the default is "oc-rsyncd".
     pub fn syslog_tag(&self) -> &str {
         self.syslog_tag.as_deref().unwrap_or("oc-rsyncd")
+    }
+
+    /// Returns the daemon process uid string, if specified.
+    ///
+    /// The value may be a username or numeric uid. Resolution to a numeric ID
+    /// happens at daemon startup time via platform APIs.
+    pub fn uid(&self) -> Option<&str> {
+        self.uid.as_deref()
+    }
+
+    /// Returns the daemon process gid string, if specified.
+    ///
+    /// The value may be a groupname or numeric gid. Resolution to a numeric ID
+    /// happens at daemon startup time via platform APIs.
+    pub fn gid(&self) -> Option<&str> {
+        self.gid.as_deref()
     }
 }
 
@@ -557,6 +583,26 @@ impl<'a> Parser<'a> {
             }
             "syslog tag" => {
                 global.syslog_tag = Some(value.to_string());
+            }
+            "uid" => {
+                if value.is_empty() {
+                    return Err(ConfigError::validation_error(
+                        self.path,
+                        self.line_number,
+                        "uid must not be empty",
+                    ));
+                }
+                global.uid = Some(value.to_string());
+            }
+            "gid" => {
+                if value.is_empty() {
+                    return Err(ConfigError::validation_error(
+                        self.path,
+                        self.line_number,
+                        "gid must not be empty",
+                    ));
+                }
+                global.gid = Some(value.to_string());
             }
             _ => {
                 // Unknown global directives are silently ignored for forward compatibility

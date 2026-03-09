@@ -29,6 +29,16 @@ pub(crate) struct RuntimeOptions {
     syslog_facility_from_config: bool,
     syslog_tag: Option<String>,
     syslog_tag_from_config: bool,
+    /// Resolved numeric uid the daemon process should drop to after binding.
+    ///
+    /// upstream: loadparm.c - global `uid` parameter. Resolved from username
+    /// or numeric string at config load time.
+    daemon_uid: Option<u32>,
+    /// Resolved numeric gid the daemon process should drop to after binding.
+    ///
+    /// upstream: loadparm.c - global `gid` parameter. Resolved from groupname
+    /// or numeric string at config load time.
+    daemon_gid: Option<u32>,
     detach: bool,
     /// Path to the config file loaded at startup, retained for SIGHUP reload.
     ///
@@ -70,6 +80,8 @@ impl Default for RuntimeOptions {
             syslog_facility_from_config: false,
             syslog_tag: None,
             syslog_tag_from_config: false,
+            daemon_uid: None,
+            daemon_gid: None,
             detach: cfg!(unix),
             config_path: None,
         }
@@ -393,6 +405,12 @@ impl RuntimeOptions {
                 self.bind_address_overridden = true;
                 self.address_family = Some(AddressFamily::from_ip(addr));
             }
+        if let Some((uid_str, origin)) = parsed.daemon_uid {
+            self.set_daemon_uid_from_config(&uid_str, &origin)?;
+        }
+
+        if let Some((gid_str, origin)) = parsed.daemon_gid {
+            self.set_daemon_gid_from_config(&gid_str, &origin)?;
         }
 
         if !parsed.motd_lines.is_empty() {
@@ -683,6 +701,54 @@ impl RuntimeOptions {
         self.motd_lines.push(line);
     }
 
+    /// Resolves a uid string (username or numeric) and stores it as the daemon uid.
+    ///
+    /// upstream: loadparm.c - global `uid` parameter accepts both numeric IDs and
+    /// usernames. Resolution happens at config load time via `getpwnam_r`.
+    fn set_daemon_uid_from_config(
+        &mut self,
+        value: &str,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if self.daemon_uid.is_some() {
+            return Err(config_parse_error(
+                &origin.path,
+                origin.line,
+                "duplicate 'uid' directive in global section",
+            ));
+        }
+
+        let resolved = resolve_uid(value).map_err(|msg| {
+            config_parse_error(&origin.path, origin.line, msg)
+        })?;
+        self.daemon_uid = Some(resolved);
+        Ok(())
+    }
+
+    /// Resolves a gid string (groupname or numeric) and stores it as the daemon gid.
+    ///
+    /// upstream: loadparm.c - global `gid` parameter accepts both numeric IDs and
+    /// groupnames. Resolution happens at config load time via `getgrnam_r`.
+    fn set_daemon_gid_from_config(
+        &mut self,
+        value: &str,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if self.daemon_gid.is_some() {
+            return Err(config_parse_error(
+                &origin.path,
+                origin.line,
+                "duplicate 'gid' directive in global section",
+            ));
+        }
+
+        let resolved = resolve_gid(value).map_err(|msg| {
+            config_parse_error(&origin.path, origin.line, msg)
+        })?;
+        self.daemon_gid = Some(resolved);
+        Ok(())
+    }
+
     /// Returns whether the daemon should fork and detach from the terminal.
     ///
     /// Defaults to `true` on Unix (matching upstream `become_daemon()`) and
@@ -690,6 +756,58 @@ impl RuntimeOptions {
     pub(crate) fn detach(&self) -> bool {
         self.detach
     }
+}
+
+/// Resolves a uid string to a numeric uid.
+///
+/// Accepts either a numeric uid (e.g., "1000") or a username (e.g., "nobody").
+/// On Unix, usernames are resolved via `getpwnam_r`. On non-Unix, only numeric
+/// IDs are accepted.
+#[cfg(unix)]
+fn resolve_uid(value: &str) -> Result<u32, String> {
+    if let Ok(numeric) = value.parse::<u32>() {
+        return Ok(numeric);
+    }
+
+    match metadata::id_lookup::lookup_user_by_name(value.as_bytes()) {
+        Ok(Some(uid)) => Ok(uid),
+        Ok(None) => Err(format!("unknown user '{value}'")),
+        Err(error) => Err(format!("failed to look up user '{value}': {error}")),
+    }
+}
+
+/// Resolves a uid string to a numeric uid.
+///
+/// On non-Unix platforms, only numeric IDs are accepted.
+#[cfg(not(unix))]
+fn resolve_uid(value: &str) -> Result<u32, String> {
+    value.parse::<u32>().map_err(|_| format!("invalid uid '{value}' (only numeric IDs supported on this platform)"))
+}
+
+/// Resolves a gid string to a numeric gid.
+///
+/// Accepts either a numeric gid (e.g., "1000") or a groupname (e.g., "nogroup").
+/// On Unix, groupnames are resolved via `getgrnam_r`. On non-Unix, only numeric
+/// IDs are accepted.
+#[cfg(unix)]
+fn resolve_gid(value: &str) -> Result<u32, String> {
+    if let Ok(numeric) = value.parse::<u32>() {
+        return Ok(numeric);
+    }
+
+    match metadata::id_lookup::lookup_group_by_name(value.as_bytes()) {
+        Ok(Some(gid)) => Ok(gid),
+        Ok(None) => Err(format!("unknown group '{value}'")),
+        Err(error) => Err(format!("failed to look up group '{value}': {error}")),
+    }
+}
+
+/// Resolves a gid string to a numeric gid.
+///
+/// On non-Unix platforms, only numeric IDs are accepted.
+#[cfg(not(unix))]
+fn resolve_gid(value: &str) -> Result<u32, String> {
+    value.parse::<u32>().map_err(|_| format!("invalid gid '{value}' (only numeric IDs supported on this platform)"))
 }
 
 fn validate_cli_secrets_file(path: PathBuf) -> Result<PathBuf, DaemonError> {
@@ -775,6 +893,16 @@ impl RuntimeOptions {
 
     pub(super) fn config_path(&self) -> Option<&Path> {
         self.config_path.as_deref()
+    }
+
+    /// Returns the resolved daemon-level uid, if configured.
+    pub(super) fn daemon_uid(&self) -> Option<u32> {
+        self.daemon_uid
+    }
+
+    /// Returns the resolved daemon-level gid, if configured.
+    pub(super) fn daemon_gid(&self) -> Option<u32> {
+        self.daemon_gid
     }
 }
 
