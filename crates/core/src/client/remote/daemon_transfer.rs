@@ -998,7 +998,7 @@ fn convert_server_stats_to_summary(
                 generator_stats.bytes_sent,
                 elapsed,
             );
-            (s, 0i32, 0u32)
+            (s, generator_stats.io_error, 0u32)
         }
     };
 
