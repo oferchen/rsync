@@ -480,7 +480,8 @@ impl ReceiverContext {
         .with_preserve_hard_links(self.config.flags.hard_links)
         .with_preserve_acls(self.config.flags.acls)
         .with_preserve_xattrs(self.config.flags.xattrs)
-        .with_preserve_atimes(self.config.flags.atimes);
+        .with_preserve_atimes(self.config.flags.atimes)
+        .with_relative_paths(self.config.flags.relative);
 
         // upstream: flist.c — always_checksum includes per-file checksums in the file list
         if self.config.flags.checksum {
