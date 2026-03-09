@@ -1867,7 +1867,7 @@ mod tests {
 
         #[test]
         fn other_error_is_not_remote_close() {
-            let err = io::Error::new(io::ErrorKind::Other, "some other error");
+            let err = io::Error::other("some other error");
             assert!(!is_dry_run_remote_close(&err));
         }
     }
