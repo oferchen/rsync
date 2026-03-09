@@ -249,6 +249,7 @@ pub struct ModuleConfig {
     transfer_logging: bool,
     refuse_options: Vec<String>,
     dont_compress: Vec<String>,
+    early_exec: Option<String>,
     pre_xfer_exec: Option<String>,
     post_xfer_exec: Option<String>,
     strict_modes: bool,
@@ -382,6 +383,14 @@ impl ModuleConfig {
     /// Returns the list of file patterns that won't be compressed.
     pub fn dont_compress(&self) -> &[String] {
         &self.dont_compress
+    }
+
+    /// Returns the early exec command, if specified.
+    ///
+    /// Runs early in the connection, before file list exchange.
+    /// Upstream: `loadparm.c` - `early exec` parameter.
+    pub fn early_exec(&self) -> Option<&str> {
+        self.early_exec.as_deref()
     }
 
     /// Returns the pre-transfer command, if specified.
@@ -745,6 +754,9 @@ impl<'a> Parser<'a> {
             "dont compress" => {
                 builder.dont_compress = self.parse_list(value);
             }
+            "early exec" => {
+                builder.early_exec = Some(value.to_string());
+            }
             "pre-xfer exec" => {
                 builder.pre_xfer_exec = Some(value.to_string());
             }
@@ -819,6 +831,7 @@ struct ModuleBuilder {
     transfer_logging: Option<bool>,
     refuse_options: Vec<String>,
     dont_compress: Vec<String>,
+    early_exec: Option<String>,
     pre_xfer_exec: Option<String>,
     post_xfer_exec: Option<String>,
     strict_modes: Option<bool>,
@@ -872,6 +885,7 @@ impl ModuleBuilder {
             transfer_logging: self.transfer_logging.unwrap_or(false),
             refuse_options: self.refuse_options,
             dont_compress: self.dont_compress,
+            early_exec: self.early_exec,
             pre_xfer_exec: self.pre_xfer_exec,
             post_xfer_exec: self.post_xfer_exec,
             strict_modes: self.strict_modes.unwrap_or(true),
@@ -967,6 +981,7 @@ mod tests {
              transfer logging = yes\n\
              refuse options = delete, hardlinks\n\
              dont compress = *.zip *.gz\n\
+             early exec = /usr/local/bin/early-check\n\
              pre-xfer exec = /usr/local/bin/pre-xfer\n\
              post-xfer exec = /usr/local/bin/post-xfer\n",
         );
@@ -1000,6 +1015,7 @@ mod tests {
         assert!(module.transfer_logging());
         assert_eq!(module.refuse_options(), &["delete", "hardlinks"]);
         assert_eq!(module.dont_compress(), &["*.zip", "*.gz"]);
+        assert_eq!(module.early_exec(), Some("/usr/local/bin/early-check"));
         assert_eq!(module.pre_xfer_exec(), Some("/usr/local/bin/pre-xfer"));
         assert_eq!(module.post_xfer_exec(), Some("/usr/local/bin/post-xfer"));
     }
