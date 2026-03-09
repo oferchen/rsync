@@ -931,19 +931,49 @@ impl ReceiverContext {
             })
             .collect();
 
+        let mut failed_dir_paths: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
         for (_, dir_path) in &dir_entries {
             if !dir_path.exists() {
-                fs::create_dir_all(dir_path)?;
+                if let Err(e) = fs::create_dir_all(dir_path) {
+                    if e.kind() == io::ErrorKind::PermissionDenied {
+                        // upstream: receiver.c - permission denied on mkdir is non-fatal,
+                        // sets io_error and continues with remaining files.
+                        if self.config.flags.verbose && self.config.connection.client_mode {
+                            info_log!(
+                                Misc,
+                                1,
+                                "failed to create directory {}: {}",
+                                dir_path.display(),
+                                e
+                            );
+                        }
+                        failed_dir_paths.insert(dir_path.clone());
+                        continue;
+                    }
+                    return Err(e);
+                }
             }
         }
 
-        // Build owned data for parallel metadata application.
+        // Build owned data for parallel metadata application, skipping failed dirs.
         let metadata_opts_clone = metadata_opts.clone();
         let entry_snapshots: Vec<(PathBuf, FileEntry)> = dir_entries
             .into_iter()
+            .filter(|(_, dir_path)| !failed_dir_paths.contains(dir_path))
             .map(|(idx, dir_path)| {
                 let entry = &self.file_list[idx];
                 (dir_path, entry.clone())
+            })
+            .collect();
+        let dir_creation_errors: Vec<(PathBuf, String)> = failed_dir_paths
+            .into_iter()
+            .map(|p| {
+                let msg = format!(
+                    "failed to create directory {}: Permission denied",
+                    p.display()
+                );
+                (p, msg)
             })
             .collect();
 
@@ -957,7 +987,9 @@ impl ReceiverContext {
             },
         );
 
-        Ok(results.into_iter().flatten().collect())
+        let mut all_errors: Vec<(PathBuf, String)> = results.into_iter().flatten().collect();
+        all_errors.extend(dir_creation_errors);
+        Ok(all_errors)
     }
 
     /// Deletes extraneous files at the destination that are not in the received file list.
@@ -2405,6 +2437,11 @@ impl ReceiverContext {
         stats.files_transferred = files_transferred;
         stats.bytes_received = bytes_received;
         stats.total_source_bytes = total_source_bytes;
+        // upstream: log.c - accumulate IOERR_GENERAL when per-file errors occurred.
+        // Metadata errors and permission errors are non-fatal but cause exit code 23.
+        if !metadata_errors.is_empty() {
+            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+        }
         stats.metadata_errors = metadata_errors;
         stats.delete_stats = delete_stats;
         stats.delete_limit_exceeded = delete_limit_exceeded;
@@ -2526,6 +2563,12 @@ impl ReceiverContext {
         stats.files_transferred = files_transferred;
         stats.bytes_received = bytes_received;
         stats.total_source_bytes = self.file_list.iter().map(|e| e.size()).sum();
+        // upstream: log.c - accumulate IOERR_GENERAL when per-file errors occurred.
+        // Failed directories, metadata errors, and permission errors are non-fatal
+        // but cause exit code 23 (RERR_PARTIAL).
+        if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
+            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+        }
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
 
