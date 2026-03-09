@@ -251,6 +251,7 @@ pub struct ModuleConfig {
     dont_compress: Vec<String>,
     pre_xfer_exec: Option<String>,
     post_xfer_exec: Option<String>,
+    name_converter: Option<String>,
     strict_modes: bool,
     open_noatime: bool,
 }
@@ -392,6 +393,14 @@ impl ModuleConfig {
     /// Returns the post-transfer command, if specified.
     pub fn post_xfer_exec(&self) -> Option<&str> {
         self.post_xfer_exec.as_deref()
+    }
+
+    /// Returns the name converter program for user/group name-to-ID mapping, if specified.
+    ///
+    /// Used when the daemon runs in a chroot where `/etc/passwd` is unavailable.
+    /// Upstream: `loadparm.c` - `name converter` parameter.
+    pub fn name_converter(&self) -> Option<&str> {
+        self.name_converter.as_deref()
     }
 
     /// Returns whether strict permission checks on the secrets file are enabled (default: true).
@@ -751,6 +760,9 @@ impl<'a> Parser<'a> {
             "post-xfer exec" => {
                 builder.post_xfer_exec = Some(value.to_string());
             }
+            "name converter" => {
+                builder.name_converter = Some(value.to_string());
+            }
             "strict modes" => {
                 builder.strict_modes = Some(self.parse_bool(value)?);
             }
@@ -821,6 +833,7 @@ struct ModuleBuilder {
     dont_compress: Vec<String>,
     pre_xfer_exec: Option<String>,
     post_xfer_exec: Option<String>,
+    name_converter: Option<String>,
     strict_modes: Option<bool>,
     open_noatime: Option<bool>,
 }
@@ -874,6 +887,7 @@ impl ModuleBuilder {
             dont_compress: self.dont_compress,
             pre_xfer_exec: self.pre_xfer_exec,
             post_xfer_exec: self.post_xfer_exec,
+            name_converter: self.name_converter,
             strict_modes: self.strict_modes.unwrap_or(true),
             open_noatime: self.open_noatime.unwrap_or(false),
         })
@@ -968,7 +982,8 @@ mod tests {
              refuse options = delete, hardlinks\n\
              dont compress = *.zip *.gz\n\
              pre-xfer exec = /usr/local/bin/pre-xfer\n\
-             post-xfer exec = /usr/local/bin/post-xfer\n",
+             post-xfer exec = /usr/local/bin/post-xfer\n\
+             name converter = /usr/local/bin/nameconv\n",
         );
         let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
         let module = &config.modules()[0];
@@ -1002,6 +1017,7 @@ mod tests {
         assert_eq!(module.dont_compress(), &["*.zip", "*.gz"]);
         assert_eq!(module.pre_xfer_exec(), Some("/usr/local/bin/pre-xfer"));
         assert_eq!(module.post_xfer_exec(), Some("/usr/local/bin/post-xfer"));
+        assert_eq!(module.name_converter(), Some("/usr/local/bin/nameconv"));
     }
 
     #[test]

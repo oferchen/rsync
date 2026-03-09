@@ -34,6 +34,7 @@ struct ModuleDefinitionBuilder {
     dont_compress: Option<Option<String>>,
     pre_xfer_exec: Option<Option<String>>,
     post_xfer_exec: Option<Option<String>>,
+    name_converter: Option<Option<String>>,
     temp_dir: Option<Option<String>>,
     charset: Option<Option<String>>,
     forward_lookup: Option<bool>,
@@ -81,6 +82,7 @@ impl ModuleDefinitionBuilder {
             dont_compress: None,
             pre_xfer_exec: None,
             post_xfer_exec: None,
+            name_converter: None,
             temp_dir: None,
             charset: None,
             forward_lookup: None,
@@ -680,6 +682,27 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_name_converter(
+        &mut self,
+        name_converter: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.name_converter.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'name converter' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.name_converter = Some(name_converter);
+        Ok(())
+    }
+
     fn set_temp_dir(
         &mut self,
         temp_dir: Option<String>,
@@ -929,6 +952,7 @@ impl ModuleDefinitionBuilder {
             dont_compress: self.dont_compress.unwrap_or(None),
             pre_xfer_exec: self.pre_xfer_exec.unwrap_or(None),
             post_xfer_exec: self.post_xfer_exec.unwrap_or(None),
+            name_converter: self.name_converter.unwrap_or(None),
             temp_dir: self.temp_dir.unwrap_or(None),
             charset: self.charset.unwrap_or(None),
             forward_lookup: self.forward_lookup.unwrap_or(true),
@@ -990,6 +1014,7 @@ mod module_definition_builder_tests {
         assert!(builder.dont_compress.is_none());
         assert!(builder.pre_xfer_exec.is_none());
         assert!(builder.post_xfer_exec.is_none());
+        assert!(builder.name_converter.is_none());
         assert!(builder.temp_dir.is_none());
         assert!(builder.charset.is_none());
         assert!(builder.forward_lookup.is_none());
@@ -1679,6 +1704,7 @@ mod module_definition_builder_tests {
         assert!(def.dont_compress.is_none());
         assert!(def.pre_xfer_exec.is_none());
         assert!(def.post_xfer_exec.is_none());
+        assert!(def.name_converter.is_none());
         assert!(def.temp_dir.is_none());
         assert!(def.charset.is_none());
         assert!(def.forward_lookup); // default true

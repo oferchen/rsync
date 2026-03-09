@@ -448,6 +448,14 @@ fn parse_config_modules_inner(
                         };
                         builder.set_post_xfer_exec(cmd, path, line_number)?;
                     }
+                    "name converter" => {
+                        let cmd = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_name_converter(cmd, path, line_number)?;
+                    }
                     "temp dir" => {
                         let dir = if value.is_empty() {
                             None
@@ -1982,6 +1990,24 @@ mod config_parsing_tests {
     }
 
     #[test]
+    fn parse_module_name_converter() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nname converter = /usr/local/bin/nameconv\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].name_converter.as_deref(),
+            Some("/usr/local/bin/nameconv")
+        );
+    }
+
+    #[test]
     fn parse_module_temp_dir() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
@@ -2203,6 +2229,7 @@ mod config_parsing_tests {
              dont compress = *.gz *.bz2\n\
              pre-xfer exec = /bin/pre\n\
              post-xfer exec = /bin/post\n\
+             name converter = /bin/nameconv\n\
              temp dir = /tmp/staging\n\
              charset = utf-8\n\
              forward lookup = no\n",
@@ -2219,6 +2246,7 @@ mod config_parsing_tests {
         assert_eq!(module.dont_compress.as_deref(), Some("*.gz *.bz2"));
         assert_eq!(module.pre_xfer_exec.as_deref(), Some("/bin/pre"));
         assert_eq!(module.post_xfer_exec.as_deref(), Some("/bin/post"));
+        assert_eq!(module.name_converter.as_deref(), Some("/bin/nameconv"));
         assert_eq!(module.temp_dir.as_deref(), Some("/tmp/staging"));
         assert_eq!(module.charset.as_deref(), Some("utf-8"));
         assert!(!module.forward_lookup);
