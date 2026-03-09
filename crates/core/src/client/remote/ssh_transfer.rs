@@ -404,25 +404,44 @@ fn convert_server_stats_to_summary(
 ) -> ClientSummary {
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
+    use transfer::io_error_flags;
 
-    let summary = match stats {
-        ServerStats::Receiver(transfer_stats) => LocalCopySummary::from_receiver_stats(
-            transfer_stats.files_listed,
-            transfer_stats.files_transferred,
-            transfer_stats.bytes_received,
-            transfer_stats.bytes_sent,
-            transfer_stats.total_source_bytes,
-            elapsed,
-        ),
-        ServerStats::Generator(generator_stats) => LocalCopySummary::from_generator_stats(
-            generator_stats.files_listed,
-            generator_stats.files_transferred,
-            generator_stats.bytes_sent,
-            elapsed,
-        ),
+    let (local_summary, io_error, error_count) = match stats {
+        ServerStats::Receiver(ref transfer_stats) => {
+            let s = LocalCopySummary::from_receiver_stats(
+                transfer_stats.files_listed,
+                transfer_stats.files_transferred,
+                transfer_stats.bytes_received,
+                transfer_stats.bytes_sent,
+                transfer_stats.total_source_bytes,
+                elapsed,
+            );
+            (s, transfer_stats.io_error, transfer_stats.error_count)
+        }
+        ServerStats::Generator(ref generator_stats) => {
+            let s = LocalCopySummary::from_generator_stats(
+                generator_stats.files_listed,
+                generator_stats.files_transferred,
+                generator_stats.bytes_sent,
+                elapsed,
+            );
+            (s, generator_stats.io_error, 0u32)
+        }
     };
 
-    ClientSummary::from_summary(summary)
+    let mut summary = ClientSummary::from_summary(local_summary);
+
+    // Map accumulated I/O error flags to an exit code.
+    // upstream: log.c - log_exit() converts io_error bitfield to RERR_* codes.
+    let exit_code = io_error_flags::to_exit_code(io_error);
+    if exit_code != 0 {
+        summary.set_io_error_exit_code(exit_code);
+    } else if error_count > 0 {
+        // Remote sender reported errors via MSG_ERROR - treat as partial transfer.
+        summary.set_io_error_exit_code(23); // RERR_PARTIAL
+    }
+
+    summary
 }
 
 /// Maps an SSH child process exit status to an rsync exit code.
