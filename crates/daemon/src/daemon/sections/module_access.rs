@@ -1174,6 +1174,55 @@ fn process_approved_module(
         log_module_request(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
     }
 
+    // Run early exec if configured
+    // upstream: clientserver.c - early_exec() runs early in the connection,
+    // before authentication and argument exchange.
+    if let Some(command) = &module.early_exec {
+        let early_ctx = XferExecContext {
+            module_name: &module.name,
+            module_path: &module.path,
+            host_addr: ctx.peer_ip,
+            host_name: ctx.effective_host(),
+            user_name: None,
+            request: ctx.request,
+        };
+        match run_early_exec(command, &early_ctx) {
+            Ok(Ok(())) => {
+                if let Some(log) = ctx.log_sink {
+                    let text = format!(
+                        "early exec succeeded for module '{}'",
+                        ctx.request
+                    );
+                    let message = rsync_info!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+            }
+            Ok(Err(error_msg)) => {
+                let payload = format!("@ERROR: {error_msg}");
+                send_error_and_exit(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    ctx.messages,
+                    &payload,
+                )?;
+                return Ok(());
+            }
+            Err(err) => {
+                let payload = format!(
+                    "@ERROR: failed to run early exec command for module '{}': {err}",
+                    ctx.request
+                );
+                send_error_and_exit(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    ctx.messages,
+                    &payload,
+                )?;
+                return Ok(());
+            }
+        }
+    }
+
     // Check for refused options
     if let Some(refused) = refused_option(module, options) {
         return handle_refused_option(ctx, refused);
