@@ -153,7 +153,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned());
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "- ");
     }
 
@@ -162,7 +162,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat::include("test".to_owned());
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "+ ");
     }
 
@@ -171,7 +171,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_anchored(true);
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-/ ");
     }
 
@@ -183,7 +183,7 @@ mod tests {
         rule.no_inherit = true;
         rule.cvs_exclude = true;
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-/Cn ");
     }
 
@@ -192,7 +192,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, false);
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-s ");
     }
 
@@ -201,7 +201,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(false, true);
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-r ");
     }
 
@@ -210,7 +210,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, true);
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-sr ");
     }
 
@@ -219,7 +219,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(30).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_perishable(true);
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-p ");
     }
 
@@ -228,7 +228,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, true);
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         // v28 doesn't support s/r, so they should be omitted
         assert_eq!(prefix, "- ");
     }
@@ -238,7 +238,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_perishable(true);
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         // v28 doesn't support p, so it should be omitted
         assert_eq!(prefix, "- ");
     }
@@ -250,7 +250,7 @@ mod tests {
             .with_sides(true, true)
             .with_perishable(true);
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         // v29 supports s/r but not p
         assert_eq!(prefix, "-sr ");
     }
@@ -270,7 +270,7 @@ mod tests {
         rule.receiver_side = true;
         rule.perishable = true;
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-/!Cnwexsrp ");
     }
 
@@ -293,7 +293,7 @@ mod tests {
             negate: false,
         };
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, ": ");
     }
 
@@ -316,7 +316,7 @@ mod tests {
             negate: false,
         };
 
-        let prefix = build_rule_prefix(&rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "P ");
     }
 }
