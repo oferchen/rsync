@@ -1623,8 +1623,7 @@ mod tests {
             let args = build_full_daemon_args(&config, &request, protocol, false);
 
             assert!(
-                args.iter()
-                    .any(|a| a == "--compare-dest=/tmp/compare"),
+                args.iter().any(|a| a == "--compare-dest=/tmp/compare"),
                 "expected --compare-dest=/tmp/compare in args: {args:?}"
             );
         }
@@ -1646,9 +1645,7 @@ mod tests {
 
         #[test]
         fn build_full_args_includes_link_dest() {
-            let config = ClientConfig::builder()
-                .link_destination("/prev")
-                .build();
+            let config = ClientConfig::builder().link_destination("/prev").build();
             let request = test_daemon_request();
             let protocol = ProtocolVersion::try_from(32u8).unwrap();
             let args = build_full_daemon_args(&config, &request, protocol, false);
@@ -1715,7 +1712,10 @@ mod tests {
                 ReferenceDirectoryKind::Compare
             );
             assert_eq!(
-                server_config.reference_directories[0].path().to_str().unwrap(),
+                server_config.reference_directories[0]
+                    .path()
+                    .to_str()
+                    .unwrap(),
                 "/tmp/compare"
             );
             assert_eq!(
@@ -1723,7 +1723,10 @@ mod tests {
                 ReferenceDirectoryKind::Link
             );
             assert_eq!(
-                server_config.reference_directories[1].path().to_str().unwrap(),
+                server_config.reference_directories[1]
+                    .path()
+                    .to_str()
+                    .unwrap(),
                 "/prev"
             );
         }
@@ -1743,7 +1746,10 @@ mod tests {
                 ReferenceDirectoryKind::Copy
             );
             assert_eq!(
-                server_config.reference_directories[0].path().to_str().unwrap(),
+                server_config.reference_directories[0]
+                    .path()
+                    .to_str()
+                    .unwrap(),
                 "/tmp/copy"
             );
         }
