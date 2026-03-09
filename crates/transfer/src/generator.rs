@@ -752,19 +752,38 @@ impl GeneratorContext {
         Ok(())
     }
 
-    /// Records an I/O error and sends MSG_NO_SEND for protocol >= 30.
+    /// Records an I/O error, logs the appropriate warning/error, and sends
+    /// MSG_NO_SEND for protocol >= 30.
     ///
-    /// upstream: sender.c:354-369
+    /// For `NotFound` errors, logs "file has vanished: <path>" (upstream: `FWARNING`)
+    /// and sets `IOERR_VANISHED`. For other errors, logs the open failure as an error
+    /// and sets `IOERR_GENERAL`.
+    ///
+    /// The `path_display` parameter is a pre-formatted path string to avoid
+    /// borrow conflicts with `&mut self` (the path comes from `self.full_paths`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:354-369`: open failure handling with vanished vs general distinction
     fn record_open_failure<W: Write>(
         &mut self,
         writer: &mut super::writer::ServerWriter<W>,
         ndx: i32,
         error: &io::Error,
+        path_display: &str,
     ) -> io::Result<()> {
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= io_error_flags::IOERR_VANISHED;
+            // upstream: sender.c:358 — rprintf(c, "file has vanished: %s\n", ...)
+            eprintln!("file has vanished: {path_display}");
         } else {
             self.io_error |= io_error_flags::IOERR_GENERAL;
+            // upstream: sender.c:362 — rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
+            eprintln!(
+                "rsync: send_files failed to open \"{path_display}\": {} ({})",
+                error,
+                error.raw_os_error().unwrap_or(0),
+            );
         }
         if self.protocol.supports_generator_messages() {
             writer.send_no_send(ndx)?;
@@ -993,6 +1012,7 @@ impl GeneratorContext {
                 "file_list and full_paths must be kept in sync"
             );
             let source_path = &self.full_paths[ndx];
+            let source_path_display = source_path.display().to_string();
 
             // Read signature blocks
             let sig_blocks = read_signature_blocks(&mut *reader, &sum_head)?;
@@ -1028,7 +1048,7 @@ impl GeneratorContext {
                         f,
                     )),
                     Err(e) => {
-                        self.record_open_failure(&mut *writer, ndx_i32, &e)?;
+                        self.record_open_failure(&mut *writer, ndx_i32, &e, &source_path_display)?;
                         continue;
                     }
                 };
@@ -1072,7 +1092,7 @@ impl GeneratorContext {
                 let source = match fs::File::open(source_path) {
                     Ok(f) => f,
                     Err(e) => {
-                        self.record_open_failure(&mut *writer, ndx_i32, &e)?;
+                        self.record_open_failure(&mut *writer, ndx_i32, &e, &source_path_display)?;
                         continue;
                     }
                 };
@@ -1650,7 +1670,10 @@ impl GeneratorContext {
         let metadata = match self.resolve_symlink_metadata(&path, base) {
             Ok(m) => m,
             Err(e) => {
-                // Record error and continue (upstream rsync behavior)
+                // upstream: flist.c:1286-1294 — log vanished warning or general error
+                if e.kind() == io::ErrorKind::NotFound {
+                    eprintln!("file has vanished: {}", path.display());
+                }
                 self.record_io_error(&e);
                 return Ok(());
             }

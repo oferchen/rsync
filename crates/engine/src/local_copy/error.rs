@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use super::filter_program::{
     INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE, TIMEOUT_EXIT_CODE,
+    VANISHED_EXIT_CODE,
 };
 
 /// Error produced when planning or executing a local copy fails.
@@ -20,6 +21,7 @@ use super::filter_program::{
 /// |-----------|---------------|---------------------------|
 /// | 1         | RERR_SYNTAX   | `Syntax`                  |
 /// | 23        | RERR_PARTIAL  | `PartialTransfer`         |
+/// | 24        | RERR_VANISHED | `Vanished`                |
 /// | 25        | RERR_DEL_LIMIT| `DeleteLimit`             |
 /// | 30        | RERR_TIMEOUT  | `Timeout`                 |
 #[derive(Debug, Error)]
@@ -80,16 +82,29 @@ impl LocalCopyError {
     /// Returns the exit code that mirrors upstream rsync's behaviour.
     ///
     /// See the struct-level documentation for mappings to `core::exit_code::ExitCode`.
+    ///
+    /// For I/O errors, `NotFound` maps to exit code 24 (`RERR_VANISHED`) while
+    /// all other I/O errors map to exit code 23 (`RERR_PARTIAL`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1338-1345`: `log_exit()` maps `io_error` flags to exit codes
     #[must_use]
-    pub const fn exit_code(&self) -> i32 {
-        match self.kind {
+    pub fn exit_code(&self) -> i32 {
+        match &self.kind {
             LocalCopyErrorKind::MissingSourceOperands => MISSING_OPERANDS_EXIT_CODE,
-            LocalCopyErrorKind::InvalidArgument(_) | LocalCopyErrorKind::Io { .. } => {
-                INVALID_OPERAND_EXIT_CODE
+            LocalCopyErrorKind::InvalidArgument(_) => INVALID_OPERAND_EXIT_CODE,
+            LocalCopyErrorKind::Io { source, .. } => {
+                if source.kind() == io::ErrorKind::NotFound {
+                    VANISHED_EXIT_CODE
+                } else {
+                    INVALID_OPERAND_EXIT_CODE
+                }
             }
-            LocalCopyErrorKind::Timeout { .. } => TIMEOUT_EXIT_CODE,
+            LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
+                TIMEOUT_EXIT_CODE
+            }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
-            LocalCopyErrorKind::StopAtReached { .. } => TIMEOUT_EXIT_CODE,
         }
     }
 
@@ -97,11 +112,16 @@ impl LocalCopyError {
     ///
     /// These names correspond to constants in upstream rsync's `errcode.h`.
     #[must_use]
-    pub const fn code_name(&self) -> &'static str {
-        match self.kind {
+    pub fn code_name(&self) -> &'static str {
+        match &self.kind {
             LocalCopyErrorKind::MissingSourceOperands => "RERR_SYNTAX",
-            LocalCopyErrorKind::InvalidArgument(_) | LocalCopyErrorKind::Io { .. } => {
-                "RERR_PARTIAL"
+            LocalCopyErrorKind::InvalidArgument(_) => "RERR_PARTIAL",
+            LocalCopyErrorKind::Io { source, .. } => {
+                if source.kind() == io::ErrorKind::NotFound {
+                    "RERR_VANISHED"
+                } else {
+                    "RERR_PARTIAL"
+                }
             }
             LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
                 "RERR_TIMEOUT"
@@ -466,8 +486,15 @@ mod tests {
     }
 
     #[test]
-    fn code_name_for_io() {
+    fn code_name_for_io_vanished() {
         let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        let error = LocalCopyError::io("read", PathBuf::from("/test"), io_err);
+        assert_eq!(error.code_name(), "RERR_VANISHED");
+    }
+
+    #[test]
+    fn code_name_for_io_general() {
+        let io_err = io::Error::new(ErrorKind::PermissionDenied, "access denied");
         let error = LocalCopyError::io("read", PathBuf::from("/test"), io_err);
         assert_eq!(error.code_name(), "RERR_PARTIAL");
     }
@@ -488,5 +515,21 @@ mod tests {
     fn code_name_for_stop_at_reached() {
         let error = LocalCopyError::stop_at_reached(SystemTime::now());
         assert_eq!(error.code_name(), "RERR_TIMEOUT");
+    }
+
+    #[test]
+    fn exit_code_vanished_returns_24() {
+        let io_err = io::Error::new(ErrorKind::NotFound, "file vanished");
+        let error = LocalCopyError::io("read", PathBuf::from("/gone"), io_err);
+        assert_eq!(error.exit_code(), VANISHED_EXIT_CODE);
+        assert_eq!(error.exit_code(), 24);
+    }
+
+    #[test]
+    fn exit_code_permission_denied_returns_23() {
+        let io_err = io::Error::new(ErrorKind::PermissionDenied, "access denied");
+        let error = LocalCopyError::io("read", PathBuf::from("/denied"), io_err);
+        assert_eq!(error.exit_code(), INVALID_OPERAND_EXIT_CODE);
+        assert_eq!(error.exit_code(), 23);
     }
 }
