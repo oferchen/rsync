@@ -62,6 +62,9 @@ pub struct PipelinedReceiver {
     /// Whether the redo mechanism is active (phase 1). When false (phase 2),
     /// checksum mismatches are hard errors.
     redo_enabled: bool,
+    /// Count of files skipped due to permission-denied errors during disk commit.
+    /// Used to accumulate `IOERR_GENERAL` for exit code 23.
+    permission_error_count: u32,
 }
 
 impl PipelinedReceiver {
@@ -77,6 +80,7 @@ impl PipelinedReceiver {
             expected_checksums: VecDeque::new(),
             redo_indices: Vec::new(),
             redo_enabled: true,
+            permission_error_count: 0,
         }
     }
 
@@ -121,8 +125,14 @@ impl PipelinedReceiver {
     /// Non-blockingly drains all available commit results.
     ///
     /// Returns accumulated (bytes_written, metadata_errors).
-    /// Propagates the first disk error encountered. Verifies per-file
-    /// checksums when the disk thread returns a computed digest.
+    /// Permission-denied errors from the disk thread are treated as recoverable
+    /// per-file errors - logged and added to `meta_errors` rather than aborting
+    /// the transfer. Other fatal disk errors are still propagated.
+    /// Verifies per-file checksums when the disk thread returns a computed digest.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:720` - `recv_files()` continues on EACCES/EPERM, sets io_error
     pub fn drain_ready_results(&mut self) -> io::Result<(u64, Vec<(PathBuf, String)>)> {
         let mut bytes = 0u64;
         let mut meta_errors = Vec::new();
@@ -139,9 +149,18 @@ impl PipelinedReceiver {
                 }
                 Ok(Err(e)) => {
                     self.pending_commits = self.pending_commits.saturating_sub(1);
-                    // Consume the corresponding expected checksum on error.
-                    let _ = self.expected_checksums.pop_front();
-                    return Err(e);
+                    let pending = self.expected_checksums.pop_front();
+                    if is_permission_error(&e) {
+                        let path = pending.map(|p| p.file_path).unwrap_or_default();
+                        eprintln!(
+                            "rsync: send_files failed to open {:?}: Permission denied (13)",
+                            path.display()
+                        );
+                        meta_errors.push((path, e.to_string()));
+                        self.permission_error_count += 1;
+                    } else {
+                        return Err(e);
+                    }
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
@@ -162,8 +181,14 @@ impl PipelinedReceiver {
     /// Blocks until all pending commits have been collected.
     ///
     /// Returns accumulated (bytes_written, metadata_errors).
-    /// Propagates the first disk error encountered. Verifies per-file
-    /// checksums when the disk thread returns a computed digest.
+    /// Permission-denied errors from the disk thread are treated as recoverable
+    /// per-file errors - logged and added to `meta_errors` rather than aborting
+    /// the transfer. Other fatal disk errors are still propagated.
+    /// Verifies per-file checksums when the disk thread returns a computed digest.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:720` - `recv_files()` continues on EACCES/EPERM, sets io_error
     pub fn drain_all_results(&mut self) -> io::Result<(u64, Vec<(PathBuf, String)>)> {
         let mut bytes = 0u64;
         let mut meta_errors = Vec::new();
@@ -180,8 +205,18 @@ impl PipelinedReceiver {
                 }
                 Ok(Err(e)) => {
                     self.pending_commits -= 1;
-                    let _ = self.expected_checksums.pop_front();
-                    return Err(e);
+                    let pending = self.expected_checksums.pop_front();
+                    if is_permission_error(&e) {
+                        let path = pending.map(|p| p.file_path).unwrap_or_default();
+                        eprintln!(
+                            "rsync: send_files failed to open {:?}: Permission denied (13)",
+                            path.display()
+                        );
+                        meta_errors.push((path, e.to_string()));
+                        self.permission_error_count += 1;
+                    } else {
+                        return Err(e);
+                    }
                 }
                 Err(_) => {
                     return Err(io::Error::new(
@@ -193,6 +228,14 @@ impl PipelinedReceiver {
         }
 
         Ok((bytes, meta_errors))
+    }
+
+    /// Returns the number of files skipped due to permission-denied errors.
+    ///
+    /// Used by the receiver to accumulate `IOERR_GENERAL` in `TransferStats.io_error`,
+    /// which maps to exit code 23 (`RERR_PARTIAL`).
+    pub fn permission_error_count(&self) -> u32 {
+        self.permission_error_count
     }
 
     /// Verifies a commit result's computed checksum against the expected value.
@@ -286,6 +329,20 @@ impl PipelinedReceiver {
 
         result
     }
+}
+
+/// Returns `true` if the I/O error represents a permission-denied condition
+/// (EACCES or EPERM) that should be treated as a recoverable per-file error.
+///
+/// Upstream rsync continues the transfer when individual files cannot be
+/// opened due to insufficient privileges, setting `io_error |= IOERR_GENERAL`
+/// and returning exit code 23 (`RERR_PARTIAL`) at the end.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:825-832` - `do_open()` failure handling logs and continues
+fn is_permission_error(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::PermissionDenied
 }
 
 impl Drop for PipelinedReceiver {
@@ -502,6 +559,68 @@ mod tests {
         pr.verify_checksum(&result).unwrap();
         assert_eq!(pr.redo_count(), 0);
 
+        drop(pr);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permission_denied_on_output_is_recoverable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Check if running as root via /proc or whoami fallback.
+        // Root bypasses permission checks so the test would be meaningless.
+        if std::env::var("USER").is_ok_and(|u| u == "root") {
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        // Create a read-only directory so file creation inside fails
+        let readonly_dir = dir.path().join("readonly");
+        std::fs::create_dir(&readonly_dir).unwrap();
+        std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
+
+        let file_path = readonly_dir.join("test.dat");
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+
+        // Send a file destined for the read-only directory
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 9,
+                    file_entry_index: 0,
+                    use_sparse: false,
+                    checksum_verifier: None,
+                    file_entry: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                }),
+                data: b"test data".to_vec(),
+            })
+            .unwrap();
+
+        pr.note_commit_sent([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 0, file_path, 0);
+
+        // Should NOT return an error - permission denied is recoverable
+        let (bytes, errors) = pr.drain_all_results().unwrap();
+        assert_eq!(bytes, 0, "no bytes written for failed file");
+        assert_eq!(errors.len(), 1, "one error recorded");
+        assert!(
+            errors[0].1.contains("ermission denied") || errors[0].1.contains("EACCES"),
+            "error should mention permission denied: {}",
+            errors[0].1
+        );
+        assert_eq!(pr.permission_error_count(), 1);
+
+        // Restore permissions for cleanup
+        let _ = std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o755));
+        drop(pr);
+    }
+
+    #[test]
+    fn permission_error_count_starts_at_zero() {
+        let pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        assert_eq!(pr.permission_error_count(), 0);
         drop(pr);
     }
 }
