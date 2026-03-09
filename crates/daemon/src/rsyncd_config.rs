@@ -243,6 +243,7 @@ pub struct ModuleConfig {
     pre_xfer_exec: Option<String>,
     post_xfer_exec: Option<String>,
     strict_modes: bool,
+    open_noatime: bool,
 }
 
 impl ModuleConfig {
@@ -390,6 +391,14 @@ impl ModuleConfig {
     /// Upstream: `loadparm.c` — `strict modes` parameter, default true.
     pub fn strict_modes(&self) -> bool {
         self.strict_modes
+    }
+
+    /// Returns whether source files should be opened with `O_NOATIME` (default: false).
+    ///
+    /// Only effective on Linux. On other platforms this is a no-op.
+    /// Upstream: `loadparm.c` — `open noatime` parameter, default false.
+    pub fn open_noatime(&self) -> bool {
+        self.open_noatime
     }
 }
 
@@ -727,6 +736,9 @@ impl<'a> Parser<'a> {
             "strict modes" => {
                 builder.strict_modes = Some(self.parse_bool(value)?);
             }
+            "open noatime" => {
+                builder.open_noatime = Some(self.parse_bool(value)?);
+            }
             _ => {
                 // Unknown module directives are silently ignored
             }
@@ -792,6 +804,7 @@ struct ModuleBuilder {
     pre_xfer_exec: Option<String>,
     post_xfer_exec: Option<String>,
     strict_modes: Option<bool>,
+    open_noatime: Option<bool>,
 }
 
 impl ModuleBuilder {
@@ -844,6 +857,7 @@ impl ModuleBuilder {
             pre_xfer_exec: self.pre_xfer_exec,
             post_xfer_exec: self.post_xfer_exec,
             strict_modes: self.strict_modes.unwrap_or(true),
+            open_noatime: self.open_noatime.unwrap_or(false),
         })
     }
 }
@@ -1148,6 +1162,7 @@ mod tests {
         assert!(module.refuse_options().is_empty());
         assert!(module.dont_compress().is_empty());
         assert!(module.strict_modes());
+        assert!(!module.open_noatime());
     }
 
     #[test]
@@ -1231,6 +1246,50 @@ mod tests {
     #[test]
     fn parse_strict_modes_invalid_boolean() {
         let file = write_config("[mod]\npath = /data\nstrict modes = maybe\n");
+        let err = RsyncdConfig::from_file(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("invalid boolean"));
+    }
+
+    // --- Open noatime tests ---
+
+    #[test]
+    fn parse_open_noatime_yes() {
+        let file = write_config("[mod]\npath = /data\nopen noatime = yes\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(config.modules()[0].open_noatime());
+    }
+
+    #[test]
+    fn parse_open_noatime_no() {
+        let file = write_config("[mod]\npath = /data\nopen noatime = no\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(!config.modules()[0].open_noatime());
+    }
+
+    #[test]
+    fn parse_open_noatime_true() {
+        let file = write_config("[mod]\npath = /data\nopen noatime = true\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(config.modules()[0].open_noatime());
+    }
+
+    #[test]
+    fn parse_open_noatime_false() {
+        let file = write_config("[mod]\npath = /data\nopen noatime = false\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(!config.modules()[0].open_noatime());
+    }
+
+    #[test]
+    fn parse_open_noatime_default_false() {
+        let file = write_config("[mod]\npath = /data\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(!config.modules()[0].open_noatime());
+    }
+
+    #[test]
+    fn parse_open_noatime_invalid_boolean() {
+        let file = write_config("[mod]\npath = /data\nopen noatime = maybe\n");
         let err = RsyncdConfig::from_file(file.path()).expect_err("should fail");
         assert!(err.to_string().contains("invalid boolean"));
     }

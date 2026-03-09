@@ -65,6 +65,7 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
         strict_modes: true,
         exclude_from: None,
         include_from: None,
+        open_noatime: false,
     }
 }
 
@@ -116,6 +117,7 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
         strict_modes: true,
         exclude_from: None,
         include_from: None,
+        open_noatime: false,
     }
 }
 

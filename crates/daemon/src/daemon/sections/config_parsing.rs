@@ -479,6 +479,18 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_strict_modes(parsed, path, line_number)?;
                     }
+                    "open noatime" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "invalid boolean value '{value}' for 'open noatime'"
+                                ),
+                            )
+                        })?;
+                        builder.set_open_noatime(parsed, path, line_number)?;
+                    }
                     // upstream: daemon-parm.txt — `exclude_from` STRING, default NULL.
                     // Loaded via parse_filter_file() in clientserver.c.
                     "exclude from" => {
@@ -1953,6 +1965,66 @@ mod config_parsing_tests {
     fn parse_module_strict_modes_duplicate() {
         let file = write_config(
             "[mod]\npath = /tmp\nstrict modes = yes\nstrict modes = no\n",
+        );
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    // --- Open noatime directive tests ---
+
+    #[test]
+    fn parse_module_open_noatime_yes() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nopen noatime = yes\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].open_noatime);
+    }
+
+    #[test]
+    fn parse_module_open_noatime_no() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nopen noatime = no\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].open_noatime);
+    }
+
+    #[test]
+    fn parse_module_open_noatime_default_false() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].open_noatime);
+    }
+
+    #[test]
+    fn parse_module_open_noatime_invalid_boolean() {
+        let file = write_config("[mod]\npath = /tmp\nopen noatime = maybe\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("invalid boolean"));
+    }
+
+    #[test]
+    fn parse_module_open_noatime_duplicate() {
+        let file = write_config(
+            "[mod]\npath = /tmp\nopen noatime = yes\nopen noatime = no\n",
         );
         let err = parse_config_modules(file.path()).expect_err("should fail");
         assert!(err.to_string().contains("duplicate"));
