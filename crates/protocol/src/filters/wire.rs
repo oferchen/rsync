@@ -222,6 +222,11 @@ pub fn write_filter_list<W: Write>(
 }
 
 /// Parses a single filter rule from wire format bytes.
+///
+/// For protocol < 29, only old-style prefixes are accepted: `"+ "`, `"- "`,
+/// or `"!"`. No modifier characters are parsed. This matches upstream
+/// `exclude.c:1119-1133` where `XFLG_OLD_PREFIXES` restricts parsing to
+/// these three forms.
 fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRuleWireFormat> {
     if buf.is_empty() {
         return Err(io::Error::new(
@@ -237,6 +242,91 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
         )
     })?;
 
+    // upstream: exclude.c:1675 - protocol < 29 uses XFLG_OLD_PREFIXES
+    if protocol.uses_old_prefixes() {
+        return parse_wire_rule_old_prefix(text);
+    }
+
+    parse_wire_rule_modern(text, protocol)
+}
+
+/// Parses a wire rule using old-style prefix rules (protocol < 29).
+///
+/// Only three forms are valid:
+/// - `"- pattern"` - exclude
+/// - `"+ pattern"` - include
+/// - `"!"` - clear list
+///
+/// No modifier flags are parsed. The pattern is the raw text after the
+/// 2-character prefix.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1119-1133` - `XFLG_OLD_PREFIXES` branch
+fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
+    if text == "!" {
+        return Ok(FilterRuleWireFormat {
+            rule_type: RuleType::Clear,
+            pattern: String::new(),
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: false,
+            perishable: false,
+            negate: false,
+        });
+    }
+
+    let (rule_type, pattern_text) = if let Some(pat) = text.strip_prefix("- ") {
+        (RuleType::Exclude, pat)
+    } else if let Some(pat) = text.strip_prefix("+ ") {
+        (RuleType::Include, pat)
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid old-style filter prefix in: {text:?}"),
+        ));
+    };
+
+    let mut rule = FilterRuleWireFormat {
+        rule_type,
+        pattern: String::new(),
+        anchored: false,
+        directory_only: false,
+        no_inherit: false,
+        cvs_exclude: false,
+        word_split: false,
+        exclude_from_merge: false,
+        xattr_only: false,
+        sender_side: false,
+        receiver_side: false,
+        perishable: false,
+        negate: false,
+    };
+
+    if let Some(stripped) = pattern_text.strip_suffix('/') {
+        rule.directory_only = true;
+        stripped.clone_into(&mut rule.pattern);
+    } else {
+        pattern_text.clone_into(&mut rule.pattern);
+    }
+
+    Ok(rule)
+}
+
+/// Parses a wire rule using modern prefix rules (protocol >= 29).
+///
+/// Supports full modifier parsing including `/`, `!`, `C`, `n`, `w`, `e`,
+/// `x`, `s`, `r`, `p` flags.
+fn parse_wire_rule_modern(
+    text: &str,
+    protocol: ProtocolVersion,
+) -> io::Result<FilterRuleWireFormat> {
     let mut chars = text.chars();
     let first = chars
         .next()
@@ -332,8 +422,20 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
 }
 
 /// Serializes a filter rule to wire format bytes.
+///
+/// Returns an error if the rule cannot be represented in the current
+/// protocol version (e.g., dir-merge or modifier-bearing rules for proto < 29).
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1623-1627` - sender exits with RERR_PROTOCOL when prefix is NULL
 fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io::Result<Vec<u8>> {
-    let prefix = super::prefix::build_rule_prefix(rule, protocol);
+    let prefix = super::prefix::build_rule_prefix(rule, protocol).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "filter rules are too modern for remote rsync",
+        )
+    })?;
     let mut bytes = prefix.into_bytes();
     bytes.extend_from_slice(rule.pattern.as_bytes());
 
