@@ -858,3 +858,167 @@ fn copy_links_multiple_symlinks_all_resolved() {
     // 2 real files + 2 resolved symlinks = 4 regular files
     assert_eq!(file_count, 4, "all entries should appear as regular files");
 }
+
+// ==================== safe-links filtering tests ====================
+
+#[cfg(unix)]
+#[test]
+fn safe_links_excludes_unsafe_symlink_escaping_tree() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("create root");
+
+    // Safe symlink: points to sibling within the tree
+    fs::write(root.join("real_file.txt"), b"data").expect("write file");
+    symlink("real_file.txt", root.join("safe_link")).expect("create safe symlink");
+
+    // Unsafe symlink: points outside the tree via ../
+    symlink("../../etc/passwd", root.join("unsafe_link")).expect("create unsafe symlink");
+
+    let walker = FileListBuilder::new(&root)
+        .safe_links(true)
+        .build()
+        .expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert!(
+        paths.contains(&PathBuf::from("real_file.txt")),
+        "regular file should be present"
+    );
+    assert!(
+        paths.contains(&PathBuf::from("safe_link")),
+        "safe symlink should be present"
+    );
+    assert!(
+        !paths.contains(&PathBuf::from("unsafe_link")),
+        "unsafe symlink should be filtered out"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn safe_links_excludes_absolute_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("create root");
+
+    fs::write(root.join("file.txt"), b"data").expect("write file");
+    symlink("/etc/passwd", root.join("abs_link")).expect("create absolute symlink");
+
+    let walker = FileListBuilder::new(&root)
+        .safe_links(true)
+        .build()
+        .expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert!(paths.contains(&PathBuf::from("file.txt")));
+    assert!(
+        !paths.contains(&PathBuf::from("abs_link")),
+        "absolute symlink should be filtered out"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn safe_links_allows_safe_dotdot_within_depth() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    let sub = root.join("sub");
+    fs::create_dir_all(&sub).expect("create sub");
+    fs::write(root.join("target.txt"), b"data").expect("write target");
+
+    // sub/link -> ../target.txt resolves to root/target.txt - still in tree
+    symlink("../target.txt", sub.join("link")).expect("create safe dotdot symlink");
+
+    let walker = FileListBuilder::new(&root)
+        .safe_links(true)
+        .build()
+        .expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert!(
+        paths.contains(&PathBuf::from("sub/link")),
+        "safe ../target.txt symlink should be kept"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn safe_links_disabled_keeps_all_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("create root");
+
+    symlink("../../etc/passwd", root.join("unsafe_link")).expect("create unsafe symlink");
+
+    let walker = FileListBuilder::new(&root)
+        .safe_links(false)
+        .build()
+        .expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert!(
+        paths.contains(&PathBuf::from("unsafe_link")),
+        "unsafe symlink should be kept when safe_links is disabled"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn safe_links_excludes_mid_path_dotdot_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    let deep = root.join("a").join("b").join("c");
+    fs::create_dir_all(&deep).expect("create deep");
+
+    // Target has mid-path /../ - rejected by upstream 3.4.1 security hardening
+    symlink("x/../../../etc/passwd", deep.join("sneaky")).expect("create sneaky symlink");
+
+    let walker = FileListBuilder::new(&root)
+        .safe_links(true)
+        .build()
+        .expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert!(
+        !paths.contains(&PathBuf::from("a/b/c/sneaky")),
+        "mid-path dotdot symlink should be filtered out"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn safe_links_mixed_safe_and_unsafe_in_nested_dirs() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    let sub = root.join("dir");
+    fs::create_dir_all(&sub).expect("create dir");
+    fs::write(sub.join("file.txt"), b"data").expect("write file");
+
+    // Safe: points within the tree
+    symlink("file.txt", sub.join("safe")).expect("create safe");
+    // Unsafe: escapes the tree
+    symlink("../../../outside", sub.join("unsafe")).expect("create unsafe");
+
+    let walker = FileListBuilder::new(&root)
+        .safe_links(true)
+        .build()
+        .expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert!(paths.contains(&PathBuf::from("dir/file.txt")));
+    assert!(paths.contains(&PathBuf::from("dir/safe")));
+    assert!(!paths.contains(&PathBuf::from("dir/unsafe")));
+}
