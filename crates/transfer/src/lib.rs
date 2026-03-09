@@ -311,6 +311,26 @@ pub fn run_server_with_handshake<W: Write>(
         {
             config.write.inplace_partial = true;
         }
+
+        // upstream: compat.c:780-785 - when acting as client, detect that the
+        // remote daemon lacks xattr support (no CF_AVOID_XATTR_OPTIM in its compat
+        // flags means it was built without SUPPORT_XATTRS). Gracefully disable
+        // xattr preservation and warn the user instead of failing mid-transfer.
+        if config.connection.client_mode
+            && config.flags.xattrs
+            && !flags.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
+        {
+            eprintln!(
+                "WARNING: remote daemon does not support extended attributes - disabling xattr preservation"
+            );
+            config.flags.xattrs = false;
+        }
+
+        // Same pattern for ACLs: upstream sets CF_AVOID_XATTR_OPTIM only when
+        // SUPPORT_XATTRS is compiled in. A daemon without ACL support won't
+        // advertise the corresponding compat flag. Since upstream rsync has no
+        // dedicated ACL compat flag, ACL rejection is handled via the daemon's
+        // "refuse options" mechanism instead of compat-flag detection.
     }
 
     // Flush raw-mode data before wrapping in multiplexed writer.
