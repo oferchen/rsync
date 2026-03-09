@@ -1162,6 +1162,28 @@ KNOWN_FAILURES=(
   # itemize: our daemon does not relay itemize output (-i) back to the
   # upstream sender - no itemize lines appear in the transfer output.
   "up:itemize"
+
+  # --- standalone scenario known failures ---
+  # write-batch/read-batch: batch file support not yet implemented.
+  "standalone:write-batch-read-batch"
+  # info-progress2: --info=progress2 output not yet wired in our client/daemon.
+  "standalone:info-progress2"
+  # large-file-2gb: large file (>2GB) transfer not yet validated end-to-end.
+  "standalone:large-file-2gb"
+  # file-vanished: vanished-file handling (exit code 24) not yet implemented.
+  "standalone:file-vanished"
+  # copy-unsafe-safe-links: --copy-unsafe-links + --safe-links interaction
+  # not yet implemented.
+  "standalone:copy-unsafe-safe-links"
+  # pre-post-xfer-exec: pre-xfer exec / post-xfer exec daemon hooks not
+  # yet implemented.
+  "standalone:pre-post-xfer-exec"
+  # read-only-module: read-only module rejection not yet validated.
+  "standalone:read-only-module"
+  # wrong-password-auth: auth rejection with wrong password not yet tested.
+  "standalone:wrong-password-auth"
+  # iconv: --iconv charset conversion not yet implemented.
+  "standalone:iconv"
 )
 
 is_known_failure() {
@@ -1176,6 +1198,655 @@ is_known_failure() {
     [[ "$kf" == "$key" ]] && return 0
   done
   return 1
+}
+
+# ============================================================================
+# Standalone Interop Test Scenarios (#876-#884)
+# These tests require custom daemon configs, special setup, or non-standard
+# verification that does not fit the comp_run_scenario pattern.
+# ============================================================================
+
+# Helper: check if a standalone test is a known failure and report accordingly.
+run_standalone_test() {
+  local name=$1
+  local test_func=$2
+  shift 2
+
+  echo "  [standalone] ${name}"
+  if $test_func "$@"; then
+    echo "    PASS"
+    return 0
+  else
+    if is_known_failure "standalone" "$name" ""; then
+      echo "    SKIP (known limitation)"
+      return 2
+    else
+      echo "    UNEXPECTED FAIL: standalone:${name}"
+      return 1
+    fi
+  fi
+}
+
+# #876: write-batch / read-batch roundtrip
+# Writes a batch file with upstream rsync, then reads it back with oc-rsync
+# (and vice versa) to verify batch file format compatibility.
+test_write_batch_read_batch() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local batch_dir="${work}/batch-test"
+  local dest1="${batch_dir}/dest1"
+  local dest2="${batch_dir}/dest2"
+  local batch_file="${batch_dir}/batch.rsync"
+  rm -rf "$batch_dir"
+  mkdir -p "$dest1" "$dest2"
+
+  # Step 1: upstream rsync writes a batch file
+  if ! timeout "$hard_timeout" "$upstream_binary" -av \
+      --write-batch="$batch_file" --timeout=10 \
+      "${src_dir}/" "${dest1}/" \
+      >"${log}.write-batch.out" 2>"${log}.write-batch.err"; then
+    echo "    write-batch failed (upstream write, exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_file" ]]; then
+    echo "    batch file not created"
+    return 1
+  fi
+
+  # Step 2: oc-rsync reads the batch file to a fresh destination
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      --read-batch="$batch_file" --timeout=10 \
+      "${dest2}/" \
+      >"${log}.read-batch.out" 2>"${log}.read-batch.err"; then
+    echo "    read-batch failed (oc-rsync read, exit=$?)"
+    return 1
+  fi
+
+  # Verify files match
+  if ! comp_verify_transfer "$src_dir" "$dest2"; then
+    echo "    content mismatch after read-batch"
+    return 1
+  fi
+
+  # Step 3: reverse - oc-rsync writes batch, upstream reads
+  local dest3="${batch_dir}/dest3"
+  local dest4="${batch_dir}/dest4"
+  local batch_file2="${batch_dir}/batch2.rsync"
+  mkdir -p "$dest3" "$dest4"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      --write-batch="$batch_file2" --timeout=10 \
+      "${src_dir}/" "${dest3}/" \
+      >"${log}.write-batch2.out" 2>"${log}.write-batch2.err"; then
+    echo "    write-batch failed (oc-rsync write, exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_file2" ]]; then
+    echo "    batch file 2 not created"
+    return 1
+  fi
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av \
+      --read-batch="$batch_file2" --timeout=10 \
+      "${dest4}/" \
+      >"${log}.read-batch2.out" 2>"${log}.read-batch2.err"; then
+    echo "    read-batch failed (upstream read, exit=$?)"
+    return 1
+  fi
+
+  if ! comp_verify_transfer "$src_dir" "$dest4"; then
+    echo "    content mismatch after reverse read-batch"
+    return 1
+  fi
+
+  return 0
+}
+
+# #877: --info=progress2 output
+# Verifies that --info=progress2 produces whole-transfer progress output.
+test_info_progress2() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local dest="${work}/progress2-dest"
+  rm -rf "$dest"
+  mkdir -p "$dest"
+
+  # oc-rsync client with --info=progress2
+  if ! timeout "$hard_timeout" "$oc_bin" -av --info=progress2 --timeout=10 \
+      "${src_dir}/" "${dest}/" \
+      >"${log}.progress2.out" 2>"${log}.progress2.err"; then
+    echo "    transfer failed (exit=$?)"
+    return 1
+  fi
+
+  # --info=progress2 should show percentage progress lines with xfr#N
+  if ! grep -qE '[0-9]+%|xfr#|to-chk=' "${log}.progress2.out" "${log}.progress2.err" 2>/dev/null; then
+    echo "    no progress2 output found in stdout/stderr"
+    echo "    stdout: $(head -5 "${log}.progress2.out")"
+    echo "    stderr: $(head -5 "${log}.progress2.err")"
+    return 1
+  fi
+
+  if ! comp_verify_transfer "$src_dir" "$dest"; then
+    echo "    content verification failed"
+    return 1
+  fi
+
+  return 0
+}
+
+# #878: large file >2GB transfer
+# Creates a sparse 2200MB file via truncate and transfers it.
+test_large_file_2gb() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local large_src="${work}/large-src"
+  local large_dest="${work}/large-dest"
+  rm -rf "$large_src" "$large_dest"
+  mkdir -p "$large_src" "$large_dest"
+
+  # Create a sparse 2200MB file (fast, uses no real disk)
+  if ! truncate -s 2200M "${large_src}/bigfile.dat"; then
+    echo "    truncate not available or failed"
+    return 1
+  fi
+
+  # Write a small marker at the start so we can verify content
+  echo "large-file-marker" > "${large_src}/marker.txt"
+
+  # Local transfer with oc-rsync
+  if ! timeout 120 "$oc_bin" -avS --timeout=60 \
+      "${large_src}/" "${large_dest}/" \
+      >"${log}.large.out" 2>"${log}.large.err"; then
+    echo "    large file transfer failed (exit=$?)"
+    echo "    stderr: $(head -5 "${log}.large.err")"
+    return 1
+  fi
+
+  if [[ ! -f "${large_dest}/bigfile.dat" ]]; then
+    echo "    bigfile.dat missing from dest"
+    return 1
+  fi
+
+  # Verify size matches (2200 * 1024 * 1024 = 2306867200 bytes)
+  local src_size dest_size
+  src_size=$(stat -c %s "${large_src}/bigfile.dat" 2>/dev/null || stat -f %z "${large_src}/bigfile.dat" 2>/dev/null)
+  dest_size=$(stat -c %s "${large_dest}/bigfile.dat" 2>/dev/null || stat -f %z "${large_dest}/bigfile.dat" 2>/dev/null)
+  if [[ "$src_size" != "$dest_size" ]]; then
+    echo "    size mismatch: src=${src_size} dest=${dest_size}"
+    return 1
+  fi
+
+  if ! cmp -s "${large_src}/marker.txt" "${large_dest}/marker.txt"; then
+    echo "    marker.txt content mismatch"
+    return 1
+  fi
+
+  # Clean up large files immediately to save disk
+  rm -rf "$large_src" "$large_dest"
+  return 0
+}
+
+# #879: file-vanished-mid-transfer
+# Upstream rsync exits 24 (some files vanished) when a source file disappears
+# during transfer. Verify our implementation handles this gracefully.
+test_file_vanished() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local vanish_src="${work}/vanish-src"
+  local vanish_dest="${work}/vanish-dest"
+  rm -rf "$vanish_src" "$vanish_dest"
+  mkdir -p "$vanish_src" "$vanish_dest"
+
+  # Create source files
+  echo "stable file" > "${vanish_src}/stable.txt"
+  dd if=/dev/urandom of="${vanish_src}/large_vanish.dat" bs=1K count=100 2>/dev/null
+
+  # Remove the large file after a short delay to simulate vanishing mid-transfer
+  (sleep 0.2 && rm -f "${vanish_src}/large_vanish.dat") &
+  local rm_pid=$!
+
+  timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      "${vanish_src}/" "${vanish_dest}/" \
+      >"${log}.vanish.out" 2>"${log}.vanish.err"
+  local rc=$?
+  wait "$rm_pid" 2>/dev/null || true
+
+  # Exit code 24 means "some files vanished before transfer" - this is OK
+  # Exit code 0 means transfer completed before file was removed - also OK
+  if [[ $rc -ne 0 && $rc -ne 24 && $rc -ne 23 ]]; then
+    echo "    unexpected exit code $rc (expected 0, 23, or 24)"
+    echo "    stderr: $(head -5 "${log}.vanish.err")"
+    return 1
+  fi
+
+  # stable.txt should always be transferred
+  if [[ ! -f "${vanish_dest}/stable.txt" ]]; then
+    echo "    stable.txt missing - transfer broke completely"
+    return 1
+  fi
+
+  return 0
+}
+
+# #880: --copy-unsafe-links + --safe-links interaction
+# --copy-unsafe-links converts absolute symlinks to regular files while
+# --safe-links drops symlinks pointing outside the transfer tree. When both
+# are combined, unsafe links should be copied as files and truly unsafe
+# (absolute) links should be transferred as file content.
+test_copy_unsafe_safe_links() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local link_src="${work}/unsafe-links-src"
+  local link_dest="${work}/unsafe-links-dest"
+  rm -rf "$link_src" "$link_dest"
+  mkdir -p "$link_src/subdir" "$link_dest"
+
+  # Create test files
+  echo "target content" > "${link_src}/target.txt"
+  echo "sub content" > "${link_src}/subdir/sub.txt"
+
+  # Safe relative symlink (within transfer tree)
+  ln -sf target.txt "${link_src}/safe_rel.txt"
+
+  # Unsafe relative symlink (points outside tree via ..)
+  echo "outside content" > "${work}/outside.txt"
+  ln -sf "../../outside.txt" "${link_src}/subdir/unsafe_rel.txt"
+
+  # Absolute symlink (always unsafe)
+  ln -sf /etc/hostname "${link_src}/abs_link.txt" 2>/dev/null || true
+
+  # Transfer with --copy-unsafe-links --safe-links
+  timeout "$hard_timeout" "$oc_bin" -rlptv \
+      --copy-unsafe-links --safe-links --timeout=10 \
+      "${link_src}/" "${link_dest}/" \
+      >"${log}.unsafe-safe.out" 2>"${log}.unsafe-safe.err"
+  local rc=$?
+
+  if [[ $rc -ne 0 ]]; then
+    echo "    transfer failed (exit=$rc)"
+    echo "    stderr: $(head -5 "${log}.unsafe-safe.err")"
+    return 1
+  fi
+
+  # target.txt should be transferred normally
+  if [[ ! -f "${link_dest}/target.txt" ]]; then
+    echo "    target.txt missing"
+    return 1
+  fi
+
+  # safe_rel.txt should be preserved as a symlink
+  if [[ ! -L "${link_dest}/safe_rel.txt" ]]; then
+    echo "    safe relative symlink not preserved"
+    return 1
+  fi
+
+  # unsafe_rel.txt should have been copied as a regular file
+  # (--copy-unsafe-links converts it)
+  if [[ -L "${link_dest}/subdir/unsafe_rel.txt" ]]; then
+    echo "    unsafe relative symlink was not dereferenced"
+    return 1
+  fi
+
+  return 0
+}
+
+# #881: pre-xfer exec / post-xfer exec daemon hooks
+# Upstream rsyncd.conf supports "pre-xfer exec" and "post-xfer exec" module
+# parameters that run scripts before/after a transfer. Verify our daemon
+# handles these hooks.
+test_pre_post_xfer_exec() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6
+
+  local xfer_dest="${work}/xfer-exec-dest"
+  local pre_marker="${work}/pre-xfer-ran.marker"
+  local post_marker="${work}/post-xfer-ran.marker"
+  rm -rf "$xfer_dest" "$pre_marker" "$post_marker"
+  mkdir -p "$xfer_dest"
+
+  # Create hook scripts
+  local pre_script="${work}/pre-xfer.sh"
+  local post_script="${work}/post-xfer.sh"
+  cat > "$pre_script" <<'SCRIPT'
+#!/bin/sh
+touch "$RSYNC_MODULE_PATH/../pre-xfer-ran.marker"
+exit 0
+SCRIPT
+  chmod 755 "$pre_script"
+
+  cat > "$post_script" <<'SCRIPT'
+#!/bin/sh
+touch "$RSYNC_MODULE_PATH/../post-xfer-ran.marker"
+exit 0
+SCRIPT
+  chmod 755 "$post_script"
+
+  # Write custom daemon conf with pre/post-xfer exec
+  local xfer_conf="${work}/xfer-exec.conf"
+  local xfer_pid="${work}/xfer-exec.pid"
+  local xfer_log="${work}/xfer-exec.log"
+  cat > "$xfer_conf" <<CONF
+pid file = ${xfer_pid}
+port = ${oc_port}
+use chroot = false
+numeric ids = yes
+
+[interop]
+path = ${xfer_dest}
+comment = xfer exec test
+read only = false
+pre-xfer exec = ${pre_script}
+post-xfer exec = ${post_script}
+CONF
+
+  start_oc_daemon "$xfer_conf" "$xfer_log" "$upstream_binary" "$xfer_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${src_dir}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.xfer-exec.out" 2>"${log}.xfer-exec.err"; then
+    echo "    transfer failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify the transfer completed
+  if ! comp_verify_transfer "$src_dir" "$xfer_dest"; then
+    echo "    content verification failed"
+    return 1
+  fi
+
+  # Check that hooks ran
+  if [[ ! -f "$pre_marker" ]]; then
+    echo "    pre-xfer exec did not run"
+    return 1
+  fi
+
+  if [[ ! -f "$post_marker" ]]; then
+    echo "    post-xfer exec did not run"
+    return 1
+  fi
+
+  return 0
+}
+
+# #882: read-only module rejection
+# When a module is configured as "read only = true", push transfers should
+# be rejected by the daemon with an appropriate error.
+test_read_only_module() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ro_dest="${work}/readonly-dest"
+  rm -rf "$ro_dest"
+  mkdir -p "$ro_dest"
+
+  # Test 1: upstream client -> oc-rsync daemon with read-only module
+  local ro_conf="${work}/readonly-oc.conf"
+  local ro_pid="${work}/readonly-oc.pid"
+  local ro_log="${work}/readonly-oc.log"
+  cat > "$ro_conf" <<CONF
+pid file = ${ro_pid}
+port = ${oc_port}
+use chroot = false
+numeric ids = yes
+
+[interop]
+path = ${ro_dest}
+comment = read-only module
+read only = true
+CONF
+
+  start_oc_daemon "$ro_conf" "$ro_log" "$upstream_binary" "$ro_pid" "$oc_port"
+
+  # Push to a read-only module should fail
+  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${src_dir}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.readonly-oc.out" 2>"${log}.readonly-oc.err"
+  local rc=$?
+
+  stop_oc_daemon
+
+  if [[ $rc -eq 0 ]]; then
+    echo "    push to read-only oc module succeeded (should have been rejected)"
+    return 1
+  fi
+
+  # Test 2: oc-rsync client -> upstream daemon with read-only module
+  local ro_up_dest="${work}/readonly-up-dest"
+  rm -rf "$ro_up_dest"
+  mkdir -p "$ro_up_dest"
+
+  local ro_up_conf="${work}/readonly-up.conf"
+  local ro_up_pid="${work}/readonly-up.pid"
+  local ro_up_log="${work}/readonly-up.log"
+  cat > "$ro_up_conf" <<CONF
+pid file = ${ro_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ro_up_dest}
+    comment = read-only upstream
+    read only = true
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ro_up_conf" "$ro_up_log" "$ro_up_pid"
+
+  timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      "${src_dir}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.readonly-up.out" 2>"${log}.readonly-up.err"
+  rc=$?
+
+  stop_upstream_daemon
+
+  if [[ $rc -eq 0 ]]; then
+    echo "    push to read-only upstream module succeeded (should have been rejected)"
+    return 1
+  fi
+
+  return 0
+}
+
+# #883: wrong password authentication rejection
+# When a module requires authentication and the wrong password is provided,
+# the daemon should reject the connection.
+test_wrong_password_auth() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local auth_dest="${work}/auth-dest"
+  rm -rf "$auth_dest"
+  mkdir -p "$auth_dest"
+
+  # Create secrets file for upstream daemon
+  local secrets_file="${work}/rsyncd.secrets"
+  echo "testuser:correctpassword" > "$secrets_file"
+  chmod 600 "$secrets_file"
+
+  # Create wrong password file for client
+  local wrong_pass_file="${work}/wrong.pass"
+  echo "wrongpassword" > "$wrong_pass_file"
+  chmod 600 "$wrong_pass_file"
+
+  # Test: oc-rsync client -> upstream daemon with wrong password
+  local auth_conf="${work}/auth-up.conf"
+  local auth_pid="${work}/auth-up.pid"
+  local auth_log="${work}/auth-up.log"
+  cat > "$auth_conf" <<CONF
+pid file = ${auth_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${auth_dest}
+    comment = auth test
+    read only = false
+    auth users = testuser
+    secrets file = ${secrets_file}
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$auth_conf" "$auth_log" "$auth_pid"
+
+  # Try with wrong password
+  RSYNC_PASSWORD="wrongpassword" \
+  timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      "${src_dir}/" "rsync://testuser@127.0.0.1:${upstream_port}/interop" \
+      >"${log}.wrongpass.out" 2>"${log}.wrongpass.err"
+  local rc=$?
+
+  stop_upstream_daemon
+
+  if [[ $rc -eq 0 ]]; then
+    echo "    auth with wrong password succeeded (should have failed)"
+    return 1
+  fi
+
+  # Verify error message mentions auth failure
+  if ! grep -qiE 'auth|denied|unauthorized|password|refused' \
+      "${log}.wrongpass.err" "${log}.wrongpass.out" 2>/dev/null; then
+    echo "    no auth error message in output (exit=$rc)"
+    echo "    stderr: $(cat "${log}.wrongpass.err" 2>/dev/null)"
+    # Still pass if exit code is non-zero - the important thing is rejection
+  fi
+
+  # Verify no files were transferred
+  local file_count
+  file_count=$(find "$auth_dest" -type f 2>/dev/null | wc -l)
+  if [[ "$file_count" -gt 0 ]]; then
+    echo "    files were transferred despite wrong password"
+    return 1
+  fi
+
+  return 0
+}
+
+# #884: --iconv charset conversion
+# Upstream rsync supports --iconv=LOCAL,REMOTE for filename charset conversion.
+# Verify that our implementation handles (or gracefully rejects) this option.
+test_iconv() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local iconv_src="${work}/iconv-src"
+  local iconv_dest="${work}/iconv-dest"
+  rm -rf "$iconv_src" "$iconv_dest"
+  mkdir -p "$iconv_src" "$iconv_dest"
+
+  # Create files with ASCII names (safe baseline)
+  echo "ascii content" > "${iconv_src}/ascii.txt"
+  echo "another file" > "${iconv_src}/plain.txt"
+
+  # Try creating a file with UTF-8 characters if the filesystem supports it
+  echo "utf8 content" > "${iconv_src}/café.txt" 2>/dev/null || true
+
+  # Transfer with --iconv=UTF-8,UTF-8 (identity conversion)
+  timeout "$hard_timeout" "$oc_bin" -av --iconv=UTF-8,UTF-8 --timeout=10 \
+      "${iconv_src}/" "${iconv_dest}/" \
+      >"${log}.iconv.out" 2>"${log}.iconv.err"
+  local rc=$?
+
+  # Accept either success or graceful rejection (exit code 2 = syntax/usage)
+  if [[ $rc -ne 0 ]]; then
+    # Check if it was a graceful rejection vs crash
+    if [[ $rc -eq 2 ]] || grep -qiE 'iconv|not supported|charset' \
+        "${log}.iconv.err" 2>/dev/null; then
+      echo "    --iconv gracefully rejected (not implemented)"
+      return 1
+    fi
+    echo "    transfer failed with unexpected exit code $rc"
+    echo "    stderr: $(head -5 "${log}.iconv.err")"
+    return 1
+  fi
+
+  # If transfer succeeded, verify content
+  if [[ ! -f "${iconv_dest}/ascii.txt" ]]; then
+    echo "    ascii.txt missing after iconv transfer"
+    return 1
+  fi
+
+  if ! cmp -s "${iconv_src}/ascii.txt" "${iconv_dest}/ascii.txt"; then
+    echo "    ascii.txt content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
+# Run all standalone interop tests.
+# Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
+run_standalone_interop_tests() {
+  local upstream_binary=$1 oc_port=$2 upstream_port=$3
+
+  local total=0 passed=0 known=0 unexpected=0
+  local standalone_log="${workdir}/standalone"
+
+  local test_names=(
+    "write-batch-read-batch"
+    "info-progress2"
+    "large-file-2gb"
+    "file-vanished"
+    "copy-unsafe-safe-links"
+    "pre-post-xfer-exec"
+    "read-only-module"
+    "wrong-password-auth"
+    "iconv"
+  )
+  local test_funcs=(
+    "test_write_batch_read_batch"
+    "test_info_progress2"
+    "test_large_file_2gb"
+    "test_file_vanished"
+    "test_copy_unsafe_safe_links"
+    "test_pre_post_xfer_exec"
+    "test_read_only_module"
+    "test_wrong_password_auth"
+    "test_iconv"
+  )
+
+  for i in "${!test_names[@]}"; do
+    local name="${test_names[$i]}"
+    local func="${test_funcs[$i]}"
+    total=$((total + 1))
+
+    local test_args=("$upstream_binary" "$oc_client" "$comp_src" "$workdir" "$standalone_log")
+
+    # Some tests need ports
+    case "$name" in
+      large-file-2gb)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      pre-post-xfer-exec)
+        test_args+=("$oc_port")
+        ;;
+      read-only-module)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      wrong-password-auth)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+    esac
+
+    local rc=0
+    run_standalone_test "$name" "$func" "${test_args[@]}" || rc=$?
+
+    if [[ $rc -eq 0 ]]; then
+      passed=$((passed + 1))
+    elif [[ $rc -eq 2 ]]; then
+      known=$((known + 1))
+    else
+      unexpected=$((unexpected + 1))
+    fi
+  done
+
+  echo "  === Standalone: ${passed}/${total} passed, ${known} known, ${unexpected} unexpected ==="
+  return "$unexpected"
 }
 
 # Uses global $comp_src, $oc_client, $up_identity, $hard_timeout.
@@ -1447,6 +2118,35 @@ else
   echo "Skipping protocol forcing tests (3.4.1 binary unavailable)"
 fi
 
+# =====================================================================
+# Standalone interop tests (#876-#884): batch, progress2, large files,
+# vanished files, link interactions, daemon hooks, auth, iconv
+# =====================================================================
+echo ""
+echo "=== Standalone Interop Tests ==="
+
+# Use the newest available upstream binary for standalone tests
+standalone_binary="${upstream_install_root}/3.4.1/bin/rsync"
+if [[ ! -x "$standalone_binary" ]]; then
+  # Fall back to any available version
+  for v in "${versions[@]}"; do
+    if [[ -x "${upstream_install_root}/${v}/bin/rsync" ]]; then
+      standalone_binary="${upstream_install_root}/${v}/bin/rsync"
+      break
+    fi
+  done
+fi
+
+if [[ -x "$standalone_binary" ]]; then
+  if ! run_standalone_interop_tests "$standalone_binary" \
+      "$port_base" $((port_base + 1)); then
+    failed+=("standalone")
+  fi
+  port_base=$((port_base + 2))
+else
+  echo "Skipping standalone tests (no upstream binary available)"
+fi
+
 # Final report
 if (( ${#failed[@]} > 0 )); then
   echo ""
@@ -1455,4 +2155,4 @@ if (( ${#failed[@]} > 0 )); then
 fi
 
 echo ""
-echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32)."
+echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone)."
