@@ -126,6 +126,44 @@ pub struct InfoFlags {
 }
 
 impl ParsedServerFlags {
+    /// Clears feature-gated flags that are not supported in this build.
+    ///
+    /// When the remote peer requests ACL preservation (`-A`) or extended
+    /// attribute preservation (`-X`), but this binary was compiled without
+    /// the corresponding feature (`acl` or `xattr`), the flag is cleared
+    /// and the feature name is returned so the caller can emit a warning.
+    ///
+    /// This mirrors upstream rsync's `options.c:1842-1857` where
+    /// `SUPPORT_ACLS` / `SUPPORT_XATTRS` guards produce an error. We
+    /// choose a graceful fallback instead - warn and continue without the
+    /// unsupported feature.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec` of human-readable feature names that were requested but
+    /// disabled (e.g., `["ACLs", "xattrs"]`). Empty when all requested
+    /// features are available.
+    pub fn clear_unsupported_features(&mut self) -> Vec<&'static str> {
+        #[allow(unused_mut)]
+        let mut cleared = Vec::new();
+
+        // ACL support requires the `acl` feature on Unix.
+        #[cfg(not(all(unix, feature = "acl")))]
+        if self.acls {
+            self.acls = false;
+            cleared.push("ACLs");
+        }
+
+        // Extended attribute support requires the `xattr` feature on Unix.
+        #[cfg(not(all(unix, feature = "xattr")))]
+        if self.xattrs {
+            self.xattrs = false;
+            cleared.push("xattrs");
+        }
+
+        cleared
+    }
+
     /// Parses a compact flag string like `-logDtpre.iLsfxC`.
     ///
     /// Returns an error if the string doesn't start with `-` or contains
