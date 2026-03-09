@@ -144,6 +144,10 @@ pub struct GlobalConfig {
     ///
     /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
     proxy_protocol: bool,
+    /// Directory the daemon chroots into before forking children.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    daemon_chroot: Option<PathBuf>,
 }
 
 impl GlobalConfig {
@@ -227,6 +231,13 @@ impl GlobalConfig {
     /// upstream: clientserver.c:1298 - `if (lp_proxy_protocol() && !read_proxy_protocol_header(f_in))`
     pub fn proxy_protocol(&self) -> bool {
         self.proxy_protocol
+    }
+
+    /// Returns the directory the daemon chroots into before forking children.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    pub fn daemon_chroot(&self) -> Option<&Path> {
+        self.daemon_chroot.as_deref()
     }
 }
 
@@ -672,6 +683,17 @@ impl<'a> Parser<'a> {
                         ));
                     }
                 };
+            }
+            "daemon chroot" => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(ConfigError::parse_error(
+                        self.path,
+                        self.line_number,
+                        "'daemon chroot' must not be empty",
+                    ));
+                }
+                global.daemon_chroot = Some(PathBuf::from(trimmed));
             }
             _ => {
                 // Unknown global directives are silently ignored for forward compatibility
@@ -1742,5 +1764,30 @@ mod tests {
         let result = RsyncdConfig::from_file(file.path());
         assert!(result.is_err());
         assert!(format!("{}", result.unwrap_err()).contains("invalid boolean value"));
+    }
+
+    #[test]
+    fn daemon_chroot_parsed() {
+        let file = write_config("daemon chroot = /var/chroot\n[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).unwrap();
+        assert_eq!(
+            config.global().daemon_chroot(),
+            Some(Path::new("/var/chroot"))
+        );
+    }
+
+    #[test]
+    fn daemon_chroot_default_is_none() {
+        let file = write_config("[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).unwrap();
+        assert!(config.global().daemon_chroot().is_none());
+    }
+
+    #[test]
+    fn daemon_chroot_empty_value_errors() {
+        let file = write_config("daemon chroot = \n[m]\npath = /srv/m\n");
+        let result = RsyncdConfig::from_file(file.path());
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("must not be empty"));
     }
 }

@@ -52,6 +52,10 @@ pub(crate) struct RuntimeOptions {
     ///
     /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
     proxy_protocol: bool,
+    /// Directory the daemon chroots into before forking children.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    daemon_chroot: Option<PathBuf>,
     detach: bool,
     /// Path to the config file loaded at startup, retained for SIGHUP reload.
     ///
@@ -100,6 +104,7 @@ impl Default for RuntimeOptions {
             socket_options: None,
             socket_options_from_config: false,
             proxy_protocol: false,
+            daemon_chroot: None,
             detach: cfg!(unix),
             config_path: None,
         }
@@ -443,6 +448,10 @@ impl RuntimeOptions {
 
         if let Some((enabled, _origin)) = parsed.proxy_protocol {
             self.proxy_protocol = enabled;
+        }
+
+        if let Some((chroot_path, _origin)) = parsed.daemon_chroot {
+            self.daemon_chroot = Some(chroot_path);
         }
 
         if !parsed.motd_lines.is_empty() {
@@ -860,6 +869,14 @@ impl RuntimeOptions {
     #[allow(dead_code)]
     pub(crate) fn proxy_protocol(&self) -> bool {
         self.proxy_protocol
+    }
+
+    /// Returns the directory the daemon chroots into before forking children.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    #[allow(dead_code)]
+    pub(crate) fn daemon_chroot(&self) -> Option<&Path> {
+        self.daemon_chroot.as_deref()
     }
 }
 
