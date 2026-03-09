@@ -140,6 +140,12 @@ pub struct GlobalConfig {
     /// the daemon process drops to after binding.
     gid: Option<String>,
     listen_backlog: Option<u32>,
+    /// Directory the daemon chroots into before forking children.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    /// When set, the daemon calls `chroot()` to this directory early,
+    /// before processing any module connections.
+    daemon_chroot: Option<PathBuf>,
 }
 
 impl GlobalConfig {
@@ -216,6 +222,13 @@ impl GlobalConfig {
     /// Controls the backlog argument passed to `listen(2)` on the daemon socket.
     pub fn listen_backlog(&self) -> Option<u32> {
         self.listen_backlog
+    }
+
+    /// Returns the daemon chroot directory, if configured.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    pub fn daemon_chroot(&self) -> Option<&Path> {
+        self.daemon_chroot.as_deref()
     }
 }
 
@@ -648,6 +661,17 @@ impl<'a> Parser<'a> {
                         "invalid listen backlog value",
                     )
                 })?);
+            }
+            "daemon chroot" => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(ConfigError::parse_error(
+                        self.path,
+                        self.line_number,
+                        "'daemon chroot' must not be empty",
+                    ));
+                }
+                global.daemon_chroot = Some(PathBuf::from(trimmed));
             }
             _ => {
                 // Unknown global directives are silently ignored for forward compatibility
@@ -1689,5 +1713,35 @@ mod tests {
         let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
         assert_eq!(config.global().syslog_facility(), "auth");
         assert_eq!(config.global().syslog_tag(), "backup-daemon");
+    }
+
+    #[test]
+    fn daemon_chroot_parsed() {
+        let file = write_config(
+            "daemon chroot = /var/run/rsync\n\
+             [m]\npath = /srv/m\n",
+        );
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert_eq!(
+            config.global().daemon_chroot(),
+            Some(Path::new("/var/run/rsync"))
+        );
+    }
+
+    #[test]
+    fn daemon_chroot_default_is_none() {
+        let file = write_config("[m]\npath = /srv/m\n");
+        let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+        assert!(config.global().daemon_chroot().is_none());
+    }
+
+    #[test]
+    fn daemon_chroot_empty_value_errors() {
+        let file = write_config(
+            "daemon chroot = \n\
+             [m]\npath = /srv/m\n",
+        );
+        let result = RsyncdConfig::from_file(file.path());
+        assert!(result.is_err());
     }
 }

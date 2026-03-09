@@ -48,6 +48,10 @@ pub(crate) struct RuntimeOptions {
     /// `SO_SNDBUF=65536`) applied to the daemon listener socket.
     socket_options: Option<String>,
     socket_options_from_config: bool,
+    /// Directory the daemon chroots into before forking children.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    daemon_chroot: Option<PathBuf>,
     detach: bool,
     /// Path to the config file loaded at startup, retained for SIGHUP reload.
     ///
@@ -95,6 +99,7 @@ impl Default for RuntimeOptions {
             listen_backlog_from_config: false,
             socket_options: None,
             socket_options_from_config: false,
+            daemon_chroot: None,
             detach: cfg!(unix),
             config_path: None,
         }
@@ -434,6 +439,10 @@ impl RuntimeOptions {
 
         if let Some((opts, origin)) = parsed.socket_options {
             self.set_socket_options_from_config(opts, &origin)?;
+        }
+
+        if let Some((chroot_path, _origin)) = parsed.daemon_chroot {
+            self.daemon_chroot = Some(chroot_path);
         }
 
         if !parsed.motd_lines.is_empty() {
@@ -842,6 +851,14 @@ impl RuntimeOptions {
     /// (e.g., `TCP_NODELAY`, `SO_KEEPALIVE`, `SO_SNDBUF=65536`).
     pub(crate) fn socket_options(&self) -> Option<&str> {
         self.socket_options.as_deref()
+    }
+
+    /// Returns the daemon chroot directory, if configured.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    #[allow(dead_code)]
+    pub(crate) fn daemon_chroot(&self) -> Option<&Path> {
+        self.daemon_chroot.as_deref()
     }
 }
 

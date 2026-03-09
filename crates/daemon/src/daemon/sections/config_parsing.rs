@@ -52,6 +52,10 @@ pub(crate) struct ParsedConfigModules {
     /// of TCP/IP socket options applied to the daemon listener socket via
     /// `set_socket_options()` in `socket.c`.
     socket_options: Option<(String, ConfigDirectiveOrigin)>,
+    /// Directory the daemon chroots into before forking children.
+    ///
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    daemon_chroot: Option<(PathBuf, ConfigDirectiveOrigin)>,
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
@@ -100,6 +104,7 @@ fn parse_config_modules_inner(
     let mut daemon_gid: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut listen_backlog: Option<(u32, ConfigDirectiveOrigin)> = None;
     let mut socket_options: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut daemon_chroot: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -767,6 +772,23 @@ fn parse_config_modules_inner(
                             socket_options = Some((opts_val, origin));
                         }
                     }
+
+                    if let Some((chroot_val, origin)) = included.daemon_chroot {
+                        if let Some((existing, existing_origin)) = &daemon_chroot {
+                            if *existing != chroot_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'daemon chroot' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            daemon_chroot = Some((chroot_val, origin));
+                        }
+                    }
                 }
                 "motd file" => {
                     let trimmed = value.trim();
@@ -1276,6 +1298,36 @@ fn parse_config_modules_inner(
                         socket_options = Some((trimmed.to_string(), origin));
                     }
                 }
+                "daemon chroot" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'daemon chroot' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &daemon_chroot {
+                        if *existing != Path::new(trimmed) {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'daemon chroot' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        daemon_chroot = Some((PathBuf::from(trimmed), origin));
+                    }
+                }
                 _ => {
                     eprintln!(
                         "warning: unknown global directive '{}' in '{}' line {}",
@@ -1321,6 +1373,7 @@ fn parse_config_modules_inner(
             daemon_gid,
             listen_backlog,
             socket_options,
+            daemon_chroot,
         })
     })();
 
@@ -3112,5 +3165,48 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.socket_options.is_none());
+    }
+
+    #[test]
+    fn parse_global_daemon_chroot() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "daemon chroot = /var/run/rsync\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (chroot, _) = result.daemon_chroot.expect("should have daemon_chroot");
+        assert_eq!(chroot, PathBuf::from("/var/run/rsync"));
+    }
+
+    #[test]
+    fn parse_global_daemon_chroot_default_is_none() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.daemon_chroot.is_none());
+    }
+
+    #[test]
+    fn parse_global_daemon_chroot_empty_rejected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "daemon chroot = \n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path());
+        assert!(result.is_err());
     }
 }
