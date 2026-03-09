@@ -1088,6 +1088,11 @@ impl GeneratorContext {
 
     /// Handles the goodbye handshake at end of transfer.
     ///
+    /// For protocol < 29, upstream uses `read_int()` (raw 4-byte LE) to read the
+    /// receiver's goodbye NDX_DONE. For protocol >= 29, it uses `read_ndx_and_attrs()`
+    /// which for NDX_DONE returns immediately without reading iflags. Both produce
+    /// the same wire format, so the legacy NDX codec handles both correctly.
+    ///
     /// Protocol 31+ introduces NDX_DEL_STATS during the goodbye phase. The receiver
     /// may send deletion statistics before the final NDX_DONE. This mirrors upstream's
     /// `read_ndx_and_attrs()` which loops over NDX_DEL_STATS, reading 5 varints of
@@ -1101,6 +1106,8 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `main.c:875-906` - `read_final_goodbye()`
+    /// - `main.c:883` - protocol < 29 uses `read_int(f_in)`
+    /// - `main.c:885-886` - protocol >= 29 uses `read_ndx_and_attrs()`
     /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
     /// - `main.c:225-238` - `write_del_stats()` format
     /// - `generator.c:2376-2381` - early del_stats path
@@ -4620,5 +4627,154 @@ mod tests {
     #[test]
     fn to_exit_code_no_errors_returns_zero() {
         assert_eq!(io_error_flags::to_exit_code(0), 0);
+    }
+
+    /// Tests for legacy goodbye handshake (protocol 28/29).
+    ///
+    /// Protocol 28/29 uses a simpler goodbye sequence: the receiver sends
+    /// a single NDX_DONE (4-byte LE) and the sender (generator) reads it.
+    /// No NDX_DEL_STATS or extended goodbye round-trip occurs.
+    ///
+    /// upstream: main.c:875-906 `read_final_goodbye()`
+    mod legacy_goodbye_tests {
+        use super::*;
+
+        /// NDX_DONE as 4-byte little-endian (-1 = 0xFFFFFFFF).
+        const NDX_DONE_LE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+
+        /// Creates a `GeneratorContext` for a specific protocol version.
+        fn generator_for(protocol_version: u8) -> GeneratorContext {
+            let handshake = test_handshake_with_protocol(protocol_version);
+            let mut config = test_config();
+            config.protocol = ProtocolVersion::try_from(protocol_version).unwrap();
+            GeneratorContext::new(&handshake, config)
+        }
+
+        #[test]
+        fn proto28_supports_goodbye_but_not_extended() {
+            let ctx = generator_for(28);
+            assert!(ctx.protocol.supports_goodbye_exchange());
+            assert!(!ctx.protocol.supports_extended_goodbye());
+        }
+
+        #[test]
+        fn proto29_supports_goodbye_but_not_extended() {
+            let ctx = generator_for(29);
+            assert!(ctx.protocol.supports_goodbye_exchange());
+            assert!(!ctx.protocol.supports_extended_goodbye());
+        }
+
+        #[test]
+        fn handle_goodbye_proto28_reads_single_ndx_done() {
+            // Protocol 28: sender reads exactly one NDX_DONE from receiver.
+            // No extended goodbye (proto < 31), so no echoing or del_stats.
+            //
+            // upstream: main.c:883-884 protocol_version < 29 => i = read_int(f_in)
+            let mut ctx = generator_for(28);
+
+            // Receiver sends one goodbye NDX_DONE
+            let receiver_input = NDX_DONE_LE.to_vec();
+            let mut reader = Cursor::new(receiver_input);
+            let mut output = Vec::new();
+            let mut ndx_read = create_ndx_codec(28);
+            let mut ndx_write = create_ndx_codec(28);
+
+            ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
+                .unwrap();
+
+            // No output - sender doesn't echo for proto < 31
+            assert!(output.is_empty());
+            // All input consumed
+            assert_eq!(reader.position(), 4);
+        }
+
+        #[test]
+        fn handle_goodbye_proto29_reads_single_ndx_done() {
+            // Protocol 29: sender reads exactly one NDX_DONE from receiver.
+            // Uses read_ndx_and_attrs() which returns NDX_DONE immediately
+            // without reading iflags.
+            //
+            // upstream: main.c:885-886 read_ndx_and_attrs()
+            let mut ctx = generator_for(29);
+
+            let receiver_input = NDX_DONE_LE.to_vec();
+            let mut reader = Cursor::new(receiver_input);
+            let mut output = Vec::new();
+            let mut ndx_read = create_ndx_codec(29);
+            let mut ndx_write = create_ndx_codec(29);
+
+            ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
+                .unwrap();
+
+            assert!(output.is_empty());
+            assert_eq!(reader.position(), 4);
+        }
+
+        #[test]
+        fn handle_goodbye_proto28_rejects_non_ndx_done() {
+            // If receiver sends something other than NDX_DONE, it should error.
+            let mut ctx = generator_for(28);
+
+            // Send NDX value 5 (not NDX_DONE) as 4-byte LE
+            let bad_input = 5i32.to_le_bytes().to_vec();
+            let mut reader = Cursor::new(bad_input);
+            let mut output = Vec::new();
+            let mut ndx_read = create_ndx_codec(28);
+            let mut ndx_write = create_ndx_codec(28);
+
+            let result =
+                ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write);
+            assert!(result.is_err());
+            let err_msg = result.unwrap_err().to_string();
+            assert!(err_msg.contains("expected goodbye NDX_DONE"));
+        }
+
+        #[test]
+        fn handle_goodbye_proto28_no_del_stats_sent() {
+            // Protocol 28: even with do_stats and delete enabled, no del_stats
+            // should be sent because supports_extended_goodbye() is false.
+            let handshake = test_handshake_with_protocol(28);
+            let mut config = test_config();
+            config.protocol = ProtocolVersion::try_from(28u8).unwrap();
+            config.do_stats = true;
+            config.flags.delete = true;
+            let mut ctx = GeneratorContext::new(&handshake, config);
+
+            let receiver_input = NDX_DONE_LE.to_vec();
+            let mut reader = Cursor::new(receiver_input);
+            let mut output = Vec::new();
+            let mut ndx_read = create_ndx_codec(28);
+            let mut ndx_write = create_ndx_codec(28);
+
+            ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
+                .unwrap();
+
+            // No output at all - del_stats only for proto >= 31
+            assert!(output.is_empty());
+        }
+
+        #[test]
+        fn transfer_loop_proto28_single_phase_break() {
+            // Protocol 28: max_phase=1 in sender's transfer loop.
+            // First NDX_DONE increments phase to 1 (echoed), second to 2 (break).
+            //
+            // upstream: sender.c:210 max_phase = protocol >= 29 ? 2 : 1
+            let ctx = generator_for(28);
+            assert!(!ctx.protocol.supports_iflags());
+
+            // max_phase should be 1 for proto 28
+            let max_phase: i32 = if ctx.protocol.supports_iflags() { 2 } else { 1 };
+            assert_eq!(max_phase, 1);
+        }
+
+        #[test]
+        fn transfer_loop_proto29_two_phase_break() {
+            // Protocol 29: max_phase=2 in sender's transfer loop.
+            let ctx = generator_for(29);
+            assert!(ctx.protocol.supports_iflags());
+
+            let max_phase: i32 = if ctx.protocol.supports_iflags() { 2 } else { 1 };
+            assert_eq!(max_phase, 2);
+        }
     }
 }
