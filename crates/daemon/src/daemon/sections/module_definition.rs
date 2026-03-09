@@ -43,6 +43,7 @@ struct ModuleDefinitionBuilder {
     exclude_from: Option<PathBuf>,
     include_from: Option<PathBuf>,
     open_noatime: Option<bool>,
+    log_file: Option<PathBuf>,
     /// Direct filter rules for this module.
     ///
     /// upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
@@ -104,6 +105,7 @@ impl ModuleDefinitionBuilder {
             exclude_from: None,
             include_from: None,
             open_noatime: None,
+            log_file: None,
             filter: Vec::new(),
             exclude: Vec::new(),
             include: Vec::new(),
@@ -888,6 +890,27 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_log_file(
+        &mut self,
+        path: PathBuf,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.log_file.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'log file' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.log_file = Some(path);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -999,6 +1022,7 @@ impl ModuleDefinitionBuilder {
             exclude_from: self.exclude_from,
             include_from: self.include_from,
             open_noatime: self.open_noatime.unwrap_or(false),
+            log_file: self.log_file,
             filter: self.filter,
             exclude: self.exclude,
             include: self.include,
