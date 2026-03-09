@@ -46,6 +46,12 @@ pub(crate) struct ParsedConfigModules {
     /// The value is a groupname string or numeric gid that gets resolved at runtime.
     daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
     listen_backlog: Option<(u32, ConfigDirectiveOrigin)>,
+    /// Global socket options from the `socket options` directive.
+    ///
+    /// upstream: daemon-parm.txt - `socket options` STRING. Comma-separated list
+    /// of TCP/IP socket options applied to the daemon listener socket via
+    /// `set_socket_options()` in `socket.c`.
+    socket_options: Option<(String, ConfigDirectiveOrigin)>,
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
@@ -93,6 +99,7 @@ fn parse_config_modules_inner(
     let mut daemon_uid: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut daemon_gid: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut listen_backlog: Option<(u32, ConfigDirectiveOrigin)> = None;
+    let mut socket_options: Option<(String, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -727,6 +734,23 @@ fn parse_config_modules_inner(
                             listen_backlog = Some((backlog_val, origin));
                         }
                     }
+
+                    if let Some((opts_val, origin)) = included.socket_options {
+                        if let Some((existing, existing_origin)) = &socket_options {
+                            if *existing != opts_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'socket options' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            socket_options = Some((opts_val, origin));
+                        }
+                    }
                 }
                 "motd file" => {
                     let trimmed = value.trim();
@@ -1204,6 +1228,38 @@ fn parse_config_modules_inner(
                         listen_backlog = Some((parsed, origin));
                     }
                 }
+                // upstream: daemon-parm.txt - socket options STRING.
+                // Comma-separated TCP/IP socket options for the listener.
+                "socket options" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'socket options' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &socket_options {
+                        if existing != trimmed {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'socket options' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        socket_options = Some((trimmed.to_string(), origin));
+                    }
+                }
                 _ => {
                     eprintln!(
                         "warning: unknown global directive '{}' in '{}' line {}",
@@ -1248,6 +1304,7 @@ fn parse_config_modules_inner(
             daemon_uid,
             daemon_gid,
             listen_backlog,
+            socket_options,
         })
     })();
 
@@ -2930,5 +2987,74 @@ mod config_parsing_tests {
         let err = parse_config_modules(file.path()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("duplicate 'address' directive"), "{msg}");
+    }
+
+    // --- socket options directive tests ---
+
+    #[test]
+    fn parse_socket_options_single_option() {
+        let file = write_config("socket options = TCP_NODELAY\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (opts, _) = result.socket_options.expect("should have socket_options");
+        assert_eq!(opts, "TCP_NODELAY");
+    }
+
+    #[test]
+    fn parse_socket_options_multiple_options() {
+        let file = write_config("socket options = TCP_NODELAY, SO_KEEPALIVE, SO_SNDBUF=65536\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (opts, _) = result.socket_options.expect("should have socket_options");
+        assert_eq!(opts, "TCP_NODELAY, SO_KEEPALIVE, SO_SNDBUF=65536");
+    }
+
+    #[test]
+    fn parse_socket_options_empty_value_rejected() {
+        let file = write_config("socket options =\n");
+        let err = parse_config_modules(file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'socket options' directive must not be empty"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn parse_socket_options_duplicate_same_value_accepted() {
+        let file =
+            write_config("socket options = SO_KEEPALIVE\nsocket options = SO_KEEPALIVE\n");
+        let result = parse_config_modules(file.path()).expect("identical duplicates accepted");
+        let (opts, _) = result.socket_options.expect("should have socket_options");
+        assert_eq!(opts, "SO_KEEPALIVE");
+    }
+
+    #[test]
+    fn parse_socket_options_duplicate_different_value_rejected() {
+        let file =
+            write_config("socket options = SO_KEEPALIVE\nsocket options = TCP_NODELAY\n");
+        let err = parse_config_modules(file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("duplicate 'socket options' directive"), "{msg}");
+    }
+
+    #[test]
+    fn parse_socket_options_not_set_when_absent() {
+        let file = write_config("[mod]\npath = /tmp\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.socket_options.is_none());
+    }
+
+    #[test]
+    fn parse_socket_options_inside_module_is_unknown() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nsocket options = TCP_NODELAY\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.socket_options.is_none());
     }
 }
