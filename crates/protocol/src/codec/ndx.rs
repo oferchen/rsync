@@ -565,6 +565,96 @@ pub fn write_ndx_done<W: Write>(writer: &mut W) -> io::Result<()> {
     writer.write_all(&[0x00])
 }
 
+/// NDX_DONE as 4-byte little-endian wire bytes for protocol < 30.
+///
+/// This is the raw representation of -1 as a signed 32-bit little-endian integer,
+/// matching upstream's `write_int()` / `read_int()` for the goodbye handshake
+/// in protocol versions 28 and 29.
+///
+/// # Upstream Reference
+///
+/// - `io.c` - `write_int()` / `read_int()` used by `main.c:883` for protocol < 29
+/// - `io.c:2243-2287` - `write_ndx()` (protocol >= 30 uses varint instead)
+pub const NDX_DONE_LEGACY_BYTES: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+
+/// NDX_DONE as modern varint wire byte for protocol >= 30.
+///
+/// The modern NDX codec encodes NDX_DONE (-1) as a single zero byte, distinct
+/// from the legacy 4-byte encoding.
+///
+/// # Upstream Reference
+///
+/// - `io.c:2259-2262` - `write_ndx()` encodes NDX_DONE as `0x00`
+pub const NDX_DONE_MODERN_BYTE: u8 = 0x00;
+
+/// Writes the goodbye NDX_DONE using the correct wire format for the given protocol version.
+///
+/// - Protocol < 30: writes 4-byte LE `[0xFF, 0xFF, 0xFF, 0xFF]` (same as `write_int(-1)`)
+/// - Protocol >= 30: writes single byte `[0x00]` (modern varint encoding)
+///
+/// This is a stateless helper for code paths that need to send a goodbye sentinel
+/// without maintaining an `NdxCodecEnum` instance. For codec-based writes, prefer
+/// `NdxCodec::write_ndx_done()`.
+///
+/// # Upstream Reference
+///
+/// - `main.c:875-906` - `read_final_goodbye()` reads the goodbye sentinel
+/// - `main.c:883` - protocol < 29 uses `read_int(f_in)` (4-byte LE)
+/// - `main.c:885-886` - protocol >= 29 uses `read_ndx_and_attrs()` (still 4-byte LE for 29)
+pub fn write_goodbye<W: Write>(writer: &mut W, protocol_version: u8) -> io::Result<()> {
+    if protocol_version < 30 {
+        writer.write_all(&NDX_DONE_LEGACY_BYTES)
+    } else {
+        writer.write_all(&[NDX_DONE_MODERN_BYTE])
+    }
+}
+
+/// Reads a goodbye NDX_DONE using the correct wire format for the given protocol version.
+///
+/// - Protocol < 30: reads 4-byte LE integer and validates it equals -1
+/// - Protocol >= 30: reads single byte and validates it equals 0x00
+///
+/// Returns `Ok(())` if the goodbye sentinel was read successfully, or an error if
+/// the read value doesn't match the expected NDX_DONE encoding.
+///
+/// This is a stateless helper for code paths that need to read a goodbye sentinel
+/// without maintaining an `NdxCodecEnum` instance. For codec-based reads, prefer
+/// `NdxCodec::read_ndx()` and check for `NDX_DONE`.
+///
+/// # Upstream Reference
+///
+/// - `main.c:883` - protocol < 29: `i = read_int(f_in)` then checks `i != NDX_DONE`
+/// - `main.c:885-886` - protocol >= 29: `read_ndx_and_attrs()` which calls `read_ndx()`
+pub fn read_goodbye<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<()> {
+    if protocol_version < 30 {
+        let mut buf = [0u8; 4];
+        reader.read_exact(&mut buf)?;
+        let value = i32::from_le_bytes(buf);
+        if value != NDX_DONE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "expected goodbye NDX_DONE (-1) as 4-byte LE, got {value} (protocol {protocol_version})"
+                ),
+            ));
+        }
+        Ok(())
+    } else {
+        let mut buf = [0u8; 1];
+        reader.read_exact(&mut buf)?;
+        if buf[0] != NDX_DONE_MODERN_BYTE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "expected goodbye NDX_DONE (0x00), got 0x{:02X} (protocol {protocol_version})",
+                    buf[0]
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1796,5 +1886,72 @@ mod tests {
         buf.clear();
         codec.write_ndx(&mut buf, -1).unwrap();
         assert_eq!(buf, [0xFF, 0xFF, 0xFF, 0xFF]); // -1 in LE
+    }
+
+    #[test]
+    fn test_ndx_done_legacy_bytes_constant() {
+        assert_eq!(NDX_DONE_LEGACY_BYTES, (-1i32).to_le_bytes());
+    }
+
+    #[test]
+    fn test_ndx_done_modern_byte_constant() {
+        assert_eq!(NDX_DONE_MODERN_BYTE, 0x00);
+    }
+
+    #[test]
+    fn test_write_goodbye_legacy() {
+        let mut buf = Vec::new();
+        write_goodbye(&mut buf, 28).unwrap();
+        assert_eq!(buf, NDX_DONE_LEGACY_BYTES);
+
+        buf.clear();
+        write_goodbye(&mut buf, 29).unwrap();
+        assert_eq!(buf, NDX_DONE_LEGACY_BYTES);
+    }
+
+    #[test]
+    fn test_write_goodbye_modern() {
+        let mut buf = Vec::new();
+        write_goodbye(&mut buf, 30).unwrap();
+        assert_eq!(buf, [0x00]);
+
+        buf.clear();
+        write_goodbye(&mut buf, 32).unwrap();
+        assert_eq!(buf, [0x00]);
+    }
+
+    #[test]
+    fn test_read_goodbye_legacy_valid() {
+        let mut cursor = Cursor::new(NDX_DONE_LEGACY_BYTES.to_vec());
+        read_goodbye(&mut cursor, 28).unwrap();
+    }
+
+    #[test]
+    fn test_read_goodbye_modern_valid() {
+        let mut cursor = Cursor::new(vec![0x00]);
+        read_goodbye(&mut cursor, 30).unwrap();
+    }
+
+    #[test]
+    fn test_read_goodbye_legacy_rejects_wrong_value() {
+        let data = 42i32.to_le_bytes().to_vec();
+        let mut cursor = Cursor::new(data);
+        assert!(read_goodbye(&mut cursor, 29).is_err());
+    }
+
+    #[test]
+    fn test_read_goodbye_modern_rejects_wrong_value() {
+        let mut cursor = Cursor::new(vec![0xFF]);
+        assert!(read_goodbye(&mut cursor, 30).is_err());
+    }
+
+    #[test]
+    fn test_write_goodbye_roundtrip_all_versions() {
+        for version in [28, 29, 30, 31, 32] {
+            let mut buf = Vec::new();
+            write_goodbye(&mut buf, version).unwrap();
+            let mut cursor = Cursor::new(buf);
+            read_goodbye(&mut cursor, version).unwrap();
+        }
     }
 }
