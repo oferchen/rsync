@@ -144,6 +144,7 @@ impl ParsedServerFlags {
     /// disabled (e.g., `["ACLs", "xattrs"]`). Empty when all requested
     /// features are available.
     pub fn clear_unsupported_features(&mut self) -> Vec<&'static str> {
+        #[allow(unused_mut)]
         let mut cleared = Vec::new();
 
         // ACL support requires the `acl` feature on Unix.
