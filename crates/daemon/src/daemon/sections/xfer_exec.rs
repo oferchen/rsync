@@ -46,6 +46,48 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
     cmd
 }
 
+/// Runs the early exec command for a daemon module.
+///
+/// The command is executed via `sh -c` (Unix) or `cmd /C` (Windows) with
+/// upstream-compatible environment variables. If the command exits non-zero,
+/// returns an error indicating the connection should be denied.
+///
+/// Upstream: `clientserver.c` — `early_exec()` runs early in the connection,
+/// before authentication and argument exchange.
+fn run_early_exec(
+    command: &str,
+    ctx: &XferExecContext<'_>,
+) -> io::Result<Result<(), String>> {
+    let mut cmd = build_xfer_command(command, ctx);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::piped());
+
+    let output = cmd.output()?;
+
+    if output.status.success() {
+        Ok(Ok(()))
+    } else {
+        let code = output.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr_trimmed = stderr.trim();
+
+        let message = if stderr_trimmed.is_empty() {
+            format!(
+                "early exec command failed with exit code {code} for module '{}'",
+                ctx.module_name
+            )
+        } else {
+            format!(
+                "early exec command failed with exit code {code} for module '{}': {stderr_trimmed}",
+                ctx.module_name
+            )
+        };
+
+        Ok(Err(message))
+    }
+}
+
 /// Runs the pre-xfer exec command for a daemon module.
 ///
 /// The command is executed via `sh -c` (Unix) or `cmd /C` (Windows) with
@@ -247,6 +289,48 @@ mod xfer_exec_tests {
         assert_eq!(cmd.get_program(), "cmd");
         let args: Vec<_> = cmd.get_args().collect();
         assert_eq!(args, vec!["/C", "echo hello"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_early_exec_succeeds_on_zero_exit() {
+        let ctx = test_context();
+        let result = run_early_exec("true", &ctx).expect("command should run");
+        assert!(result.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_early_exec_fails_on_nonzero_exit() {
+        let ctx = test_context();
+        let result = run_early_exec("false", &ctx).expect("command should run");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("early exec command failed"));
+        assert!(msg.contains("testmod"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_early_exec_captures_stderr() {
+        let ctx = test_context();
+        let result =
+            run_early_exec("echo 'early error' >&2; exit 1", &ctx).expect("command should run");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("early error"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_early_exec_passes_env_variables() {
+        let ctx = test_context();
+        let result = run_early_exec(
+            "test \"$RSYNC_MODULE_NAME\" = \"testmod\" && test \"$RSYNC_HOST_ADDR\" = \"192.168.1.100\"",
+            &ctx,
+        )
+        .expect("command should run");
+        assert!(result.is_ok(), "env vars should be set correctly");
     }
 
     #[cfg(unix)]

@@ -432,6 +432,14 @@ fn parse_config_modules_inner(
                         };
                         builder.set_dont_compress(patterns, path, line_number)?;
                     }
+                    "early exec" => {
+                        let cmd = if value.is_empty() {
+                            None
+                        } else {
+                            Some(value.to_owned())
+                        };
+                        builder.set_early_exec(cmd, path, line_number)?;
+                    }
                     "pre-xfer exec" => {
                         let cmd = if value.is_empty() {
                             None
@@ -1946,6 +1954,24 @@ mod config_parsing_tests {
     }
 
     #[test]
+    fn parse_module_early_exec() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nearly exec = /usr/bin/early-check\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.modules[0].early_exec.as_deref(),
+            Some("/usr/bin/early-check")
+        );
+    }
+
+    #[test]
     fn parse_module_pre_xfer_exec() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
@@ -2201,6 +2227,7 @@ mod config_parsing_tests {
              transfer logging = yes\n\
              log format = %o %f\n\
              dont compress = *.gz *.bz2\n\
+             early exec = /bin/early\n\
              pre-xfer exec = /bin/pre\n\
              post-xfer exec = /bin/post\n\
              temp dir = /tmp/staging\n\
@@ -2217,6 +2244,7 @@ mod config_parsing_tests {
         assert!(module.transfer_logging);
         assert_eq!(module.log_format.as_deref(), Some("%o %f"));
         assert_eq!(module.dont_compress.as_deref(), Some("*.gz *.bz2"));
+        assert_eq!(module.early_exec.as_deref(), Some("/bin/early"));
         assert_eq!(module.pre_xfer_exec.as_deref(), Some("/bin/pre"));
         assert_eq!(module.post_xfer_exec.as_deref(), Some("/bin/post"));
         assert_eq!(module.temp_dir.as_deref(), Some("/tmp/staging"));
