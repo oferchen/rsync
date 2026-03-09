@@ -663,6 +663,20 @@ fn parse_config_modules_inner(
                     if let Some((addr, origin)) = included.bind_address {
                         if let Some((existing, existing_origin)) = &bind_address {
                             if *existing != addr {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'address' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            bind_address = Some((addr, origin));
+                        }
+                    }
+
                     if let Some((uid_val, origin)) = included.daemon_uid {
                         if let Some((existing, existing_origin)) = &daemon_uid {
                             if existing != &uid_val {
@@ -671,13 +685,11 @@ fn parse_config_modules_inner(
                                     &origin.path,
                                     origin.line,
                                     format!(
-                                        "duplicate 'address' directive in global section (previously defined on line {existing_line})"
                                         "duplicate 'uid' directive in global section (previously defined on line {existing_line})"
                                     ),
                                 ));
                             }
                         } else {
-                            bind_address = Some((addr, origin));
                             daemon_uid = Some((uid_val, origin));
                         }
                     }
@@ -696,6 +708,23 @@ fn parse_config_modules_inner(
                             }
                         } else {
                             daemon_gid = Some((gid_val, origin));
+                        }
+                    }
+
+                    if let Some((backlog_val, origin)) = included.listen_backlog {
+                        if let Some((existing, existing_origin)) = &listen_backlog {
+                            if *existing != backlog_val {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'listen backlog' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            listen_backlog = Some((backlog_val, origin));
                         }
                     }
                 }
