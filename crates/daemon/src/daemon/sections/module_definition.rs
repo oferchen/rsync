@@ -32,6 +32,7 @@ struct ModuleDefinitionBuilder {
     transfer_logging: Option<bool>,
     log_format: Option<Option<String>>,
     dont_compress: Option<Option<String>>,
+    early_exec: Option<Option<String>>,
     pre_xfer_exec: Option<Option<String>>,
     post_xfer_exec: Option<Option<String>>,
     temp_dir: Option<Option<String>>,
@@ -79,6 +80,7 @@ impl ModuleDefinitionBuilder {
             transfer_logging: None,
             log_format: None,
             dont_compress: None,
+            early_exec: None,
             pre_xfer_exec: None,
             post_xfer_exec: None,
             temp_dir: None,
@@ -638,6 +640,27 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_early_exec(
+        &mut self,
+        early_exec: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.early_exec.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'early exec' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.early_exec = Some(early_exec);
+        Ok(())
+    }
+
     fn set_pre_xfer_exec(
         &mut self,
         pre_xfer_exec: Option<String>,
@@ -927,6 +950,7 @@ impl ModuleDefinitionBuilder {
                 .log_format
                 .unwrap_or_else(|| Some("%o %h [%a] %m (%u) %f %l".to_owned())),
             dont_compress: self.dont_compress.unwrap_or(None),
+            early_exec: self.early_exec.unwrap_or(None),
             pre_xfer_exec: self.pre_xfer_exec.unwrap_or(None),
             post_xfer_exec: self.post_xfer_exec.unwrap_or(None),
             temp_dir: self.temp_dir.unwrap_or(None),
@@ -988,6 +1012,7 @@ mod module_definition_builder_tests {
         assert!(builder.transfer_logging.is_none());
         assert!(builder.log_format.is_none());
         assert!(builder.dont_compress.is_none());
+        assert!(builder.early_exec.is_none());
         assert!(builder.pre_xfer_exec.is_none());
         assert!(builder.post_xfer_exec.is_none());
         assert!(builder.temp_dir.is_none());
@@ -1677,6 +1702,7 @@ mod module_definition_builder_tests {
             Some("%o %h [%a] %m (%u) %f %l")
         ); // default format
         assert!(def.dont_compress.is_none());
+        assert!(def.early_exec.is_none());
         assert!(def.pre_xfer_exec.is_none());
         assert!(def.post_xfer_exec.is_none());
         assert!(def.temp_dir.is_none());

@@ -116,6 +116,11 @@ pub(crate) struct ModuleDefinition {
     ///
     /// Upstream: `loadparm.c` — `dont compress` parameter.
     pub(crate) dont_compress: Option<String>,
+    /// Command to execute early in the connection, before file list exchange.
+    ///
+    /// Upstream: `loadparm.c` — `early exec` parameter. Runs after module selection
+    /// but before argument exchange and authentication.
+    pub(crate) early_exec: Option<String>,
     /// Command to execute before a transfer begins.
     ///
     /// Upstream: `loadparm.c` — `pre-xfer exec` parameter.
@@ -341,6 +346,10 @@ impl ModuleDefinition {
 
     pub(super) fn dont_compress(&self) -> Option<&str> {
         self.dont_compress.as_deref()
+    }
+
+    pub(super) fn early_exec(&self) -> Option<&str> {
+        self.early_exec.as_deref()
     }
 
     pub(super) fn pre_xfer_exec(&self) -> Option<&str> {
