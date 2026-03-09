@@ -385,6 +385,16 @@ impl RuntimeOptions {
             self.set_syslog_tag_from_config(tag, &origin)?;
         }
 
+        // Apply the `address` directive only when no CLI --address/--bind was given.
+        // upstream: clientserver.c - CLI --address overrides the config file `address`.
+        if let Some((addr, _origin)) = parsed.bind_address {
+            if !self.bind_address_overridden {
+                self.bind_address = addr;
+                self.bind_address_overridden = true;
+                self.address_family = Some(AddressFamily::from_ip(addr));
+            }
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -1372,6 +1382,57 @@ mod runtime_options_tests {
         let options = RuntimeOptions::parse(&args).expect("parse");
         assert!(options.syslog_facility.is_none());
         assert!(options.syslog_tag.is_none());
+    }
+
+    // ==== Config address directive tests ====
+
+    #[test]
+    fn address_from_config_sets_bind_address() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "address = 10.0.0.5\n[m]\npath = /srv/m\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(
+            options.bind_address(),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))
+        );
+        assert!(options.bind_address_overridden);
+    }
+
+    #[test]
+    fn cli_address_overrides_config_address() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "address = 10.0.0.5\n[m]\npath = /srv/m\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--address"),
+            OsString::from("192.168.1.1"),
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(
+            options.bind_address(),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))
+        );
+    }
+
+    #[test]
+    fn config_without_address_keeps_default() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[m]\npath = /srv/m\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.bind_address(), DEFAULT_BIND_ADDRESS);
+        assert!(!options.bind_address_overridden);
     }
 }
 

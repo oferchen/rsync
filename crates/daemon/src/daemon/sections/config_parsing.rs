@@ -30,6 +30,11 @@ pub(crate) struct ParsedConfigModules {
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
     syslog_facility: Option<(String, ConfigDirectiveOrigin)>,
     syslog_tag: Option<(String, ConfigDirectiveOrigin)>,
+    /// Global bind address from the `address` directive.
+    ///
+    /// upstream: loadparm.c - `bind address` / `address` parameter sets the
+    /// interface the daemon listens on.
+    bind_address: Option<(IpAddr, ConfigDirectiveOrigin)>,
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
@@ -73,6 +78,7 @@ fn parse_config_modules_inner(
     let mut global_use_chroot: Option<(bool, ConfigDirectiveOrigin)> = None;
     let mut syslog_facility: Option<(String, ConfigDirectiveOrigin)> = None;
     let mut syslog_tag: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut bind_address: Option<(IpAddr, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -627,6 +633,23 @@ fn parse_config_modules_inner(
                             global_outgoing_chmod = Some((outgoing, origin));
                         }
                     }
+
+                    if let Some((addr, origin)) = included.bind_address {
+                        if let Some((existing, existing_origin)) = &bind_address {
+                            if *existing != addr {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'address' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            bind_address = Some((addr, origin));
+                        }
+                    }
                 }
                 "motd file" => {
                     let trimmed = value.trim();
@@ -967,6 +990,46 @@ fn parse_config_modules_inner(
                         syslog_tag = Some((owned, origin));
                     }
                 }
+                // upstream: loadparm.c - `address` sets the bind address for
+                // the daemon listener.
+                "address" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'address' directive must not be empty",
+                        ));
+                    }
+
+                    let parsed_addr = parse_bind_address(&OsString::from(value))
+                        .map_err(|_| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!("invalid bind address '{value}'"),
+                            )
+                        })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &bind_address {
+                        if *existing != parsed_addr {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'address' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        bind_address = Some((parsed_addr, origin));
+                    }
+                }
                 _ => {
                     eprintln!(
                         "warning: unknown global directive '{}' in '{}' line {}",
@@ -1007,6 +1070,7 @@ fn parse_config_modules_inner(
             global_outgoing_chmod,
             syslog_facility,
             syslog_tag,
+            bind_address,
         })
     })();
 
@@ -2572,5 +2636,62 @@ mod config_parsing_tests {
         let (tag, _) = result.syslog_tag.expect("should have tag");
         assert_eq!(facility, "local3");
         assert_eq!(tag, "backup-daemon");
+    }
+
+    // --- address directive tests ---
+
+    #[test]
+    fn parse_address_ipv4() {
+        let file = write_config("address = 192.168.1.100\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (addr, _) = result.bind_address.expect("should have bind_address");
+        assert_eq!(addr, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
+    }
+
+    #[test]
+    fn parse_address_ipv6() {
+        let file = write_config("address = ::1\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (addr, _) = result.bind_address.expect("should have bind_address");
+        assert_eq!(addr, IpAddr::V6(Ipv6Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn parse_address_absent() {
+        let file = write_config("# no address\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.bind_address.is_none());
+    }
+
+    #[test]
+    fn parse_address_empty_value() {
+        let file = write_config("address =\n");
+        let err = parse_config_modules(file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("'address' directive must not be empty"), "{msg}");
+    }
+
+    #[test]
+    fn parse_address_invalid() {
+        let file = write_config("address = not-an-ip\n");
+        let err = parse_config_modules(file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid bind address"), "{msg}");
+    }
+
+    #[test]
+    fn parse_address_duplicate_same_value() {
+        let file = write_config("address = 10.0.0.1\naddress = 10.0.0.1\n");
+        let result = parse_config_modules(file.path()).expect("identical duplicates accepted");
+        let (addr, _) = result.bind_address.expect("should have bind_address");
+        assert_eq!(addr, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
+    }
+
+    #[test]
+    fn parse_address_duplicate_different_value() {
+        let file = write_config("address = 10.0.0.1\naddress = 10.0.0.2\n");
+        let err = parse_config_modules(file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("duplicate 'address' directive"), "{msg}");
     }
 }
