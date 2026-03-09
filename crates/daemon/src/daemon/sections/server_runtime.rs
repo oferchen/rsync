@@ -276,6 +276,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let version = manifest.rust_version();
     let detach = options.detach();
     let listen_backlog = options.listen_backlog();
+    let socket_options_str = options.socket_options().map(str::to_string);
     let RuntimeOptions {
         bind_address,
         port,
@@ -396,6 +397,33 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             requested_addr,
             io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses available to bind"),
         ));
+    }
+
+    // upstream: socket.c:set_socket_options() - apply socket options to each
+    // listener socket before accepting connections.
+    if let Some(ref opts_str) = socket_options_str {
+        let parsed = parse_socket_options(opts_str).map_err(|msg| {
+            DaemonError::new(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                rsync_error!(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    format!("invalid socket options: {msg}")
+                )
+                .with_role(Role::Daemon),
+            )
+        })?;
+        for listener in &listeners {
+            apply_socket_options(listener, &parsed).map_err(|error| {
+                DaemonError::new(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    rsync_error!(
+                        FEATURE_UNAVAILABLE_EXIT_CODE,
+                        format!("failed to set socket options: {error}")
+                    )
+                    .with_role(Role::Daemon),
+                )
+            })?;
+        }
     }
 
     // Detach from terminal if --detach is active (Unix default).
@@ -1010,6 +1038,117 @@ const fn is_connection_closed_error(kind: io::ErrorKind) -> bool {
     )
 }
 
+/// A parsed TCP/IP socket option ready for application to a socket.
+///
+/// upstream: socket.c - `set_socket_options()` parses a comma-separated string
+/// of option names and optional `=value` suffixes, then applies them via
+/// `setsockopt(2)`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SocketOption {
+    /// `TCP_NODELAY` - disable Nagle's algorithm.
+    TcpNoDelay(bool),
+    /// `SO_KEEPALIVE` - enable TCP keepalive probes.
+    SoKeepAlive(bool),
+    /// `SO_SNDBUF=<size>` - set the send buffer size.
+    SoSndBuf(usize),
+    /// `SO_RCVBUF=<size>` - set the receive buffer size.
+    SoRcvBuf(usize),
+}
+
+/// Parses a comma-separated socket options string into typed option values.
+///
+/// Accepts the upstream `rsyncd.conf` format: comma-separated option names with
+/// optional `=value` suffixes. Boolean options default to `true` when no value
+/// is given, and accept `0`/`1` or `true`/`false` as values.
+///
+/// upstream: socket.c - `set_socket_options()` supports a similar format.
+fn parse_socket_options(options: &str) -> Result<Vec<SocketOption>, String> {
+    let mut result = Vec::new();
+
+    for part in options.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let (name, value) = if let Some(eq_pos) = trimmed.find('=') {
+            let n = trimmed[..eq_pos].trim();
+            let v = trimmed[eq_pos + 1..].trim();
+            (n, Some(v))
+        } else {
+            (trimmed, None)
+        };
+
+        let upper = name.to_uppercase();
+        let upper = upper.replace('-', "_");
+        match upper.as_str() {
+            "TCP_NODELAY" => {
+                let enabled = parse_bool_option_value(value, "TCP_NODELAY")?;
+                result.push(SocketOption::TcpNoDelay(enabled));
+            }
+            "SO_KEEPALIVE" => {
+                let enabled = parse_bool_option_value(value, "SO_KEEPALIVE")?;
+                result.push(SocketOption::SoKeepAlive(enabled));
+            }
+            "SO_SNDBUF" => {
+                let size = parse_size_option_value(value, "SO_SNDBUF")?;
+                result.push(SocketOption::SoSndBuf(size));
+            }
+            "SO_RCVBUF" => {
+                let size = parse_size_option_value(value, "SO_RCVBUF")?;
+                result.push(SocketOption::SoRcvBuf(size));
+            }
+            _ => {
+                return Err(format!("unknown socket option '{name}'"));
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Parses a boolean value for a socket option.
+///
+/// When no value is provided, defaults to `true` (matching upstream behavior
+/// where `TCP_NODELAY` alone means enable it).
+fn parse_bool_option_value(value: Option<&str>, name: &str) -> Result<bool, String> {
+    match value {
+        None => Ok(true),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES") => Ok(true),
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => Ok(false),
+        Some(other) => Err(format!(
+            "invalid boolean value '{other}' for {name} (expected 0/1, true/false, or yes/no)"
+        )),
+    }
+}
+
+/// Parses a required size value for a buffer-size socket option.
+fn parse_size_option_value(value: Option<&str>, name: &str) -> Result<usize, String> {
+    match value {
+        None => Err(format!("{name} requires a numeric value (e.g., {name}=65536)")),
+        Some(s) => s
+            .parse::<usize>()
+            .map_err(|_| format!("invalid numeric value '{s}' for {name}")),
+    }
+}
+
+/// Applies parsed socket options to a TCP listener via `socket2`.
+///
+/// upstream: socket.c - `set_socket_options()` applies options via `setsockopt(2)`
+/// after binding and before accepting connections.
+fn apply_socket_options(listener: &TcpListener, options: &[SocketOption]) -> io::Result<()> {
+    let sock = socket2::SockRef::from(listener);
+    for opt in options {
+        match opt {
+            SocketOption::TcpNoDelay(enabled) => sock.set_nodelay(*enabled)?,
+            SocketOption::SoKeepAlive(enabled) => sock.set_keepalive(*enabled)?,
+            SocketOption::SoSndBuf(size) => sock.set_send_buffer_size(*size)?,
+            SocketOption::SoRcvBuf(size) => sock.set_recv_buffer_size(*size)?,
+        }
+    }
+    Ok(())
+}
+
 /// Creates a TCP listener bound to `addr` with an explicit listen backlog.
 ///
 /// Uses `socket2` to create the socket, bind, and call `listen(2)` with the
@@ -1597,6 +1736,129 @@ mod server_runtime_tests {
 
         // Second swap should return false (flag was cleared)
         assert!(!flags.reload_config.swap(false, Ordering::Relaxed));
+    }
+
+    // --- parse_socket_options tests ---
+
+    #[test]
+    fn parse_socket_options_tcp_nodelay() {
+        let opts = parse_socket_options("TCP_NODELAY").expect("parse succeeds");
+        assert_eq!(opts.len(), 1);
+        assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
+    }
+
+    #[test]
+    fn parse_socket_options_so_keepalive() {
+        let opts = parse_socket_options("SO_KEEPALIVE").expect("parse succeeds");
+        assert_eq!(opts.len(), 1);
+        assert_eq!(opts[0], SocketOption::SoKeepAlive(true));
+    }
+
+    #[test]
+    fn parse_socket_options_buffer_sizes() {
+        let opts =
+            parse_socket_options("SO_SNDBUF=65536, SO_RCVBUF=32768").expect("parse succeeds");
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts[0], SocketOption::SoSndBuf(65536));
+        assert_eq!(opts[1], SocketOption::SoRcvBuf(32768));
+    }
+
+    #[test]
+    fn parse_socket_options_multiple_mixed() {
+        let opts = parse_socket_options("TCP_NODELAY, SO_KEEPALIVE, SO_SNDBUF=65536")
+            .expect("parse succeeds");
+        assert_eq!(opts.len(), 3);
+        assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
+        assert_eq!(opts[1], SocketOption::SoKeepAlive(true));
+        assert_eq!(opts[2], SocketOption::SoSndBuf(65536));
+    }
+
+    #[test]
+    fn parse_socket_options_bool_explicit_values() {
+        let opts = parse_socket_options("TCP_NODELAY=1, SO_KEEPALIVE=0").expect("parse succeeds");
+        assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
+        assert_eq!(opts[1], SocketOption::SoKeepAlive(false));
+    }
+
+    #[test]
+    fn parse_socket_options_bool_text_values() {
+        let opts =
+            parse_socket_options("TCP_NODELAY=true, SO_KEEPALIVE=false").expect("parse succeeds");
+        assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
+        assert_eq!(opts[1], SocketOption::SoKeepAlive(false));
+    }
+
+    #[test]
+    fn parse_socket_options_empty_string() {
+        let opts = parse_socket_options("").expect("parse succeeds");
+        assert!(opts.is_empty());
+    }
+
+    #[test]
+    fn parse_socket_options_unknown_option_rejected() {
+        let err = parse_socket_options("UNKNOWN_OPT").expect_err("should fail");
+        assert!(err.contains("unknown socket option"), "{err}");
+    }
+
+    #[test]
+    fn parse_socket_options_sndbuf_missing_value_rejected() {
+        let err = parse_socket_options("SO_SNDBUF").expect_err("should fail");
+        assert!(err.contains("requires a numeric value"), "{err}");
+    }
+
+    #[test]
+    fn parse_socket_options_sndbuf_invalid_value_rejected() {
+        let err = parse_socket_options("SO_SNDBUF=abc").expect_err("should fail");
+        assert!(err.contains("invalid numeric value"), "{err}");
+    }
+
+    #[test]
+    fn parse_socket_options_case_insensitive() {
+        let opts = parse_socket_options("tcp_nodelay, so_keepalive").expect("parse succeeds");
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
+        assert_eq!(opts[1], SocketOption::SoKeepAlive(true));
+    }
+
+    #[test]
+    fn parse_socket_options_trailing_comma_ignored() {
+        let opts = parse_socket_options("TCP_NODELAY,").expect("parse succeeds");
+        assert_eq!(opts.len(), 1);
+        assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
+    }
+
+    #[test]
+    fn parse_socket_options_whitespace_around_values() {
+        let opts = parse_socket_options("  TCP_NODELAY , SO_SNDBUF = 4096  ").expect("parse succeeds");
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
+        assert_eq!(opts[1], SocketOption::SoSndBuf(4096));
+    }
+
+    #[test]
+    fn apply_socket_options_to_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let opts = vec![
+            SocketOption::TcpNoDelay(true),
+            SocketOption::SoKeepAlive(true),
+        ];
+        apply_socket_options(&listener, &opts).expect("apply succeeds");
+
+        let sock = socket2::SockRef::from(&listener);
+        assert!(sock.nodelay().expect("query nodelay"));
+        assert!(sock.keepalive().expect("query keepalive"));
+    }
+
+    #[test]
+    fn apply_socket_options_buffer_sizes_to_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let opts = vec![SocketOption::SoSndBuf(32768), SocketOption::SoRcvBuf(32768)];
+        apply_socket_options(&listener, &opts).expect("apply succeeds");
+
+        let sock = socket2::SockRef::from(&listener);
+        // Kernel may double the requested buffer size; just verify it's at least as large.
+        assert!(sock.send_buffer_size().expect("query sndbuf") >= 32768);
+        assert!(sock.recv_buffer_size().expect("query rcvbuf") >= 32768);
     }
 }
 
