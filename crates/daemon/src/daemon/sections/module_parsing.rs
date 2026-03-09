@@ -234,6 +234,7 @@ fn parse_module_definition(
         early_exec: None,
         pre_xfer_exec: None,
         post_xfer_exec: None,
+        name_converter: None,
         temp_dir: None,
         charset: None,
         forward_lookup: true,
