@@ -671,3 +671,190 @@ fn error_display_includes_path_and_message() {
     assert!(display.contains("/my/path"));
     assert!(display.contains("io error"));
 }
+
+// ==================== copy_links tests ====================
+
+#[cfg(unix)]
+#[test]
+fn copy_links_resolves_file_symlink_to_regular_file() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("create root");
+
+    let target = root.join("real.txt");
+    fs::write(&target, b"hello").expect("write target");
+    symlink(&target, root.join("link.txt")).expect("create symlink");
+
+    let walker = FileListBuilder::new(&root)
+        .copy_links(true)
+        .build()
+        .expect("build walker");
+
+    let mut found_link = false;
+    for entry in walker {
+        let entry = entry.expect("entry ok");
+        if entry.relative_path() == Path::new("link.txt") {
+            found_link = true;
+            // With copy_links, the symlink's metadata should reflect the
+            // target - a regular file, not a symlink.
+            assert!(
+                entry.metadata().is_file(),
+                "symlink should appear as regular file with copy_links"
+            );
+            assert!(
+                !entry.metadata().file_type().is_symlink(),
+                "symlink type should not be reported with copy_links"
+            );
+            assert_eq!(entry.metadata().len(), 5, "size should match target file");
+        }
+    }
+    assert!(found_link, "link.txt should be in file list");
+}
+
+#[cfg(unix)]
+#[test]
+fn copy_links_resolves_directory_symlink_and_descends() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("create root");
+
+    let target_dir = temp.path().join("target_dir");
+    fs::create_dir(&target_dir).expect("create target dir");
+    fs::write(target_dir.join("nested.txt"), b"data").expect("write nested");
+
+    symlink(&target_dir, root.join("dirlink")).expect("create dir symlink");
+
+    let walker = FileListBuilder::new(&root)
+        .copy_links(true)
+        .build()
+        .expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    // With copy_links, the symlink to a directory resolves to a directory
+    // and the walker descends into it.
+    assert!(
+        paths.contains(&PathBuf::from("dirlink")),
+        "dirlink should be in paths"
+    );
+    assert!(
+        paths.contains(&PathBuf::from("dirlink/nested.txt")),
+        "nested file should be found via resolved directory symlink"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn copy_links_disabled_preserves_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("create root");
+
+    let target = root.join("real.txt");
+    fs::write(&target, b"hello").expect("write target");
+    symlink(&target, root.join("link.txt")).expect("create symlink");
+
+    let walker = FileListBuilder::new(&root)
+        .copy_links(false)
+        .build()
+        .expect("build walker");
+
+    for entry in walker {
+        let entry = entry.expect("entry ok");
+        if entry.relative_path() == Path::new("link.txt") {
+            assert!(
+                entry.metadata().file_type().is_symlink(),
+                "symlink should be preserved when copy_links is false"
+            );
+            return;
+        }
+    }
+    panic!("link.txt should be in file list");
+}
+
+#[cfg(unix)]
+#[test]
+fn copy_links_root_symlink_resolved_to_target() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let target = temp.path().join("target");
+    fs::create_dir(&target).expect("create target");
+    fs::write(target.join("file.txt"), b"data").expect("write file");
+
+    let link = temp.path().join("link");
+    symlink(&target, &link).expect("create symlink");
+
+    let mut walker = FileListBuilder::new(&link)
+        .copy_links(true)
+        .build()
+        .expect("build walker");
+
+    let root_entry = walker.next().expect("root entry").expect("root ok");
+    assert!(root_entry.is_root());
+    // With copy_links, the root metadata reflects the target directory,
+    // not the symlink itself.
+    assert!(
+        root_entry.metadata().is_dir(),
+        "root symlink should resolve to directory with copy_links"
+    );
+    assert!(
+        !root_entry.metadata().file_type().is_symlink(),
+        "root should not be reported as symlink with copy_links"
+    );
+
+    let paths = collect_relative_paths(walker);
+    assert_eq!(paths, vec![PathBuf::from("file.txt")]);
+}
+
+#[cfg(unix)]
+#[test]
+fn copy_links_multiple_symlinks_all_resolved() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("create root");
+
+    // Create target files with different sizes for verification
+    let file_a = root.join("a.txt");
+    let file_b = root.join("b.txt");
+    fs::write(&file_a, b"short").expect("write a");
+    fs::write(&file_b, b"longer content").expect("write b");
+
+    // Create symlinks pointing to the files
+    symlink(&file_a, root.join("link_a")).expect("symlink a");
+    symlink(&file_b, root.join("link_b")).expect("symlink b");
+
+    let walker = FileListBuilder::new(&root)
+        .copy_links(true)
+        .build()
+        .expect("build walker");
+
+    let mut symlink_count = 0;
+    let mut file_count = 0;
+    for entry in walker {
+        let entry = entry.expect("entry ok");
+        if entry.is_root() {
+            continue;
+        }
+        if entry.metadata().file_type().is_symlink() {
+            symlink_count += 1;
+        }
+        if entry.metadata().is_file() {
+            file_count += 1;
+        }
+    }
+
+    assert_eq!(
+        symlink_count, 0,
+        "no entries should be symlinks with copy_links"
+    );
+    // 2 real files + 2 resolved symlinks = 4 regular files
+    assert_eq!(file_count, 4, "all entries should appear as regular files");
+}
