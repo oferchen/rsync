@@ -81,6 +81,12 @@ pub struct FileListReader {
     flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
+    /// Whether `--relative` (`-R`) paths are active.
+    ///
+    /// Controls pathname validation: when false, absolute paths (leading `/`)
+    /// are rejected. When true, leading slashes are stripped instead.
+    /// upstream: flist.c:757 `!relative_paths && *thisname == '/'`
+    relative_paths: bool,
     /// Interner for deduplicating parent directory paths across file entries.
     ///
     /// When many entries share the same parent directory, the interner ensures
@@ -151,6 +157,7 @@ impl FileListReader {
             preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
+            relative_paths: false,
             dirname_interner: PathInterner::new(),
             io_error: 0,
         }
@@ -180,6 +187,7 @@ impl FileListReader {
             preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
+            relative_paths: false,
             dirname_interner: PathInterner::new(),
             io_error: 0,
         }
@@ -293,6 +301,22 @@ impl FileListReader {
     #[must_use]
     pub const fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
+        self
+    }
+
+    /// Sets whether `--relative` (`-R`) transfer mode is active.
+    ///
+    /// When enabled, leading slashes on received filenames are stripped instead
+    /// of causing an abort. When disabled, absolute paths from the sender are
+    /// rejected as unsafe.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:757`: `!relative_paths && *thisname == '/'`
+    #[inline]
+    #[must_use]
+    pub const fn with_relative_paths(mut self, relative: bool) -> Self {
+        self.relative_paths = relative;
         self
     }
 
@@ -876,6 +900,122 @@ impl FileListReader {
         }
     }
 
+    /// Cleans and validates a filename received from the sender.
+    ///
+    /// Mirrors upstream `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)` followed
+    /// by the leading-slash check at flist.c:756-760. Performs in-place on a byte
+    /// buffer to avoid allocations on the common (clean) path.
+    ///
+    /// Normalization:
+    /// - Collapses duplicate slashes (`a//b` -> `a/b`)
+    /// - Removes interior `.` components (`a/./b` -> `a/b`)
+    /// - Strips trailing slashes (`a/b/` -> `a/b`)
+    /// - Replaces empty result with `.`
+    ///
+    /// Validation:
+    /// - Rejects any `..` path component (always, regardless of mode)
+    /// - Rejects leading `/` when `relative_paths` is false
+    /// - Strips leading slashes when `relative_paths` is true
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `util1.c:943`: `clean_fname()` with `CFN_REFUSE_DOT_DOT_DIRS`
+    /// - `flist.c:756-760`: pathname safety check after `clean_fname`
+    fn clean_and_validate_name(&self, name: Vec<u8>) -> io::Result<Vec<u8>> {
+        if name.is_empty() {
+            return Ok(name);
+        }
+
+        // Fast path: most names from a well-behaved sender need no cleaning.
+        if !needs_cleaning(&name) {
+            if !self.relative_paths && name[0] == b'/' {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "ABORTING due to unsafe pathname from sender: {}",
+                        String::from_utf8_lossy(&name)
+                    ),
+                ));
+            }
+            return Ok(name);
+        }
+
+        // Slow path: normalize and validate.
+        let mut out = Vec::with_capacity(name.len());
+        let anchored = name[0] == b'/';
+
+        // upstream: flist.c:757 - reject absolute paths when not --relative
+        if anchored && !self.relative_paths {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "ABORTING due to unsafe pathname from sender: {}",
+                    String::from_utf8_lossy(&name)
+                ),
+            ));
+        }
+
+        // Skip all leading slashes for --relative mode.
+        // Non-relative absolute paths were rejected above.
+        let start = if anchored {
+            name.iter().position(|&b| b != b'/').unwrap_or(name.len())
+        } else {
+            0
+        };
+
+        let mut i = start;
+        while i < name.len() {
+            // Skip duplicate slashes
+            if name[i] == b'/' {
+                i += 1;
+                continue;
+            }
+
+            // Check for `.` or `..` components
+            if name[i] == b'.' {
+                let next = name.get(i + 1).copied();
+                // Single `.` component: skip it
+                if next == Some(b'/') || next.is_none() {
+                    i += if next.is_some() { 2 } else { 1 };
+                    continue;
+                }
+                // `..` component: always reject
+                // upstream: util1.c:982-985 CFN_REFUSE_DOT_DOT_DIRS
+                if next == Some(b'.') {
+                    let after = name.get(i + 2).copied();
+                    if after == Some(b'/') || after.is_none() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "ABORTING due to unsafe pathname from sender: {}",
+                                String::from_utf8_lossy(&name)
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            // Copy this path component
+            if !out.is_empty() {
+                out.push(b'/');
+            }
+            while i < name.len() && name[i] != b'/' {
+                out.push(name[i]);
+                i += 1;
+            }
+            if i < name.len() {
+                i += 1; // skip the slash
+            }
+        }
+
+        // upstream: util1.c:1004-1005 - empty result becomes "."
+        if out.is_empty() {
+            out.push(b'.');
+        }
+
+        Ok(out)
+    }
+
     /// Returns true if this entry is a hardlink follower (metadata was skipped on wire).
     ///
     /// A hardlink follower has XMIT_HLINKED set but NOT XMIT_HLINK_FIRST.
@@ -1003,9 +1143,15 @@ impl FileListReader {
         // Step 8: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
 
+        // Step 8b: Clean and validate the filename.
+        // upstream: flist.c:756-760 - clean_fname(CFN_REFUSE_DOT_DOT_DIRS)
+        // then reject leading '/' when !relative_paths.
+        // In --relative mode, leading slashes are stripped instead.
+        let cleaned_name = self.clean_and_validate_name(converted_name)?;
+
         // Step 9: Construct entry from raw bytes (avoids UTF-8 validation on Unix)
         let mut entry = FileEntry::from_raw_bytes(
-            converted_name,
+            cleaned_name,
             size,
             metadata.mode,
             metadata.mtime,
@@ -1269,6 +1415,62 @@ pub fn read_file_entry<R: Read>(
 ) -> io::Result<Option<FileEntry>> {
     let mut list_reader = FileListReader::new(protocol);
     list_reader.read_entry(reader)
+}
+
+/// Returns true if a filename needs normalization or contains unsafe components.
+///
+/// Checks for patterns that `clean_and_validate_name` would modify:
+/// leading slashes, duplicate slashes, `.` or `..` path components.
+/// This allows a fast bypass for the common case of well-formed names.
+fn needs_cleaning(name: &[u8]) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    // Leading slash requires stripping or rejection
+    if name[0] == b'/' {
+        return true;
+    }
+
+    let mut i = 0;
+    while i < name.len() {
+        // Duplicate slashes
+        if name[i] == b'/' {
+            if i + 1 < name.len() && name[i + 1] == b'/' {
+                return true;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Check for `.` or `..` at component start
+        if name[i] == b'.' {
+            let at_start = i == 0 || name[i - 1] == b'/';
+            if at_start {
+                let next = name.get(i + 1).copied();
+                // "." component
+                if next == Some(b'/') || next.is_none() {
+                    return true;
+                }
+                // ".." component
+                if next == Some(b'.') {
+                    let after = name.get(i + 2).copied();
+                    if after == Some(b'/') || after.is_none() {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        i += 1;
+    }
+
+    // Trailing slash
+    if name[name.len() - 1] == b'/' {
+        return true;
+    }
+
+    false
 }
 
 #[cfg(test)]
