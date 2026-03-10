@@ -207,9 +207,9 @@ fn timeout_exit_code_distinct_from_partial_transfer() {
         io::Error::new(io::ErrorKind::NotFound, "file not found"),
     );
 
-    // RERR_TIMEOUT = 30, RERR_PARTIAL = 23
+    // RERR_TIMEOUT = 30, RERR_VANISHED = 24 (NotFound I/O error)
     assert_eq!(timeout_error.exit_code(), 30);
-    assert_eq!(io_error.exit_code(), 23);
+    assert_eq!(io_error.exit_code(), 24);
     assert_ne!(timeout_error.exit_code(), io_error.exit_code());
 }
 
