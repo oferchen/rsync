@@ -234,6 +234,21 @@ pub struct ServerConfig {
     /// - `options.c:2046-2048`: `do_stats` sets `info_levels[INFO_STATS]` to 2+
     /// - `generator.c:2377,2422`: `INFO_GTE(STATS, 2)` gates `write_del_stats()`
     pub do_stats: bool,
+    /// Temporary directory for receiving files before final placement.
+    ///
+    /// When set, temporary files are created in this directory instead of alongside
+    /// the destination file. After successful transfer, the temp file is renamed
+    /// to its final location. This is useful when the destination is on a slow or
+    /// network-mounted filesystem.
+    ///
+    /// Sources: client `--temp-dir` argument, daemon `temp dir` module parameter.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2907-2909`: `--temp-dir` server option
+    /// - `receiver.c:766`: `open_tmpfile()` uses `tmpdir` when set
+    /// - `loadparm.c`: `temp dir` daemon module parameter
+    pub temp_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for ServerConfig {
@@ -258,6 +273,7 @@ impl Default for ServerConfig {
             backup_suffix: None,
             file_selection: FileSelectionConfig::default(),
             do_stats: false,
+            temp_dir: None,
         }
     }
 }
