@@ -250,12 +250,11 @@ fn remove_incomplete_destination_silent_on_not_found() {
 // ==================== Exit Code Verification Tests ====================
 
 #[test]
-fn io_error_exit_code_is_23_for_all_io_errors() {
-    // All I/O errors (including disk full) should return exit code 23 (RERR_PARTIAL)
+fn io_error_exit_code_is_23_for_general_io_errors() {
+    // General I/O errors (non-vanished) return exit code 23 (RERR_PARTIAL)
     let error_kinds = [
         io::ErrorKind::StorageFull,
         io::ErrorKind::PermissionDenied,
-        io::ErrorKind::NotFound,
         io::ErrorKind::WriteZero,
         io::ErrorKind::Interrupted,
     ];
@@ -268,6 +267,18 @@ fn io_error_exit_code_is_23_for_all_io_errors() {
             super::filter_program::INVALID_OPERAND_EXIT_CODE,
         );
     }
+}
+
+#[test]
+fn io_error_exit_code_is_24_for_vanished_files() {
+    // NotFound I/O errors return exit code 24 (RERR_VANISHED)
+    let io_error = io::Error::from(io::ErrorKind::NotFound);
+    let error = LocalCopyError::io("read file", PathBuf::from("/vanished"), io_error);
+    assert_eq!(
+        error.exit_code(),
+        super::filter_program::VANISHED_EXIT_CODE,
+    );
+    assert_eq!(error.exit_code(), 24);
 }
 
 #[test]
@@ -392,11 +403,11 @@ fn local_copy_error_into_kind_consumes_error() {
 // ==================== Comparison with Other Error Types ====================
 
 #[test]
-fn disk_full_vs_other_io_errors_have_same_exit_code() {
+fn disk_full_vs_general_io_errors_have_same_exit_code() {
+    // General I/O errors all map to RERR_PARTIAL (23)
     let error_types = [
         ("disk full", io::ErrorKind::StorageFull),
         ("permission denied", io::ErrorKind::PermissionDenied),
-        ("not found", io::ErrorKind::NotFound),
     ];
 
     let expected_code = super::filter_program::INVALID_OPERAND_EXIT_CODE;
@@ -406,6 +417,11 @@ fn disk_full_vs_other_io_errors_have_same_exit_code() {
         let error = LocalCopyError::io("test", PathBuf::from("/test"), io_error);
         assert_eq!(error.exit_code(), expected_code);
     }
+
+    // NotFound maps to RERR_VANISHED (24) - different from general I/O
+    let vanished = io::Error::new(io::ErrorKind::NotFound, "error");
+    let error = LocalCopyError::io("test", PathBuf::from("/test"), vanished);
+    assert_eq!(error.exit_code(), super::filter_program::VANISHED_EXIT_CODE);
 }
 
 #[test]
