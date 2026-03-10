@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn local_copy_error_io() {
-        let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        let io_err = io::Error::new(ErrorKind::PermissionDenied, "permission denied");
         let error = LocalCopyError::io("read", PathBuf::from("/test/file.txt"), io_err);
         assert_eq!(error.exit_code(), INVALID_OPERAND_EXIT_CODE);
         assert!(matches!(error.kind(), LocalCopyErrorKind::Io { .. }));
