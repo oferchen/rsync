@@ -1340,10 +1340,22 @@ fn process_approved_module(
     };
 
     // Build server configuration with the effective (post-chroot) path
-    let config = match build_server_config(ctx, &client_args, config_module)? {
+    let mut config = match build_server_config(ctx, &client_args, config_module)? {
         Some(cfg) => cfg,
         None => return Ok(()),
     };
+
+    // upstream: clientserver.c:rsync_module() — build daemon_filter_list from
+    // module filter/exclude/include/exclude_from/include_from parameters.
+    // These rules are enforced server-side regardless of client-sent filters.
+    match build_daemon_filter_rules(module) {
+        Ok(rules) => config.daemon_filter_rules = rules,
+        Err(err) => {
+            let payload = format!("@ERROR: failed to load module filter rules: {err}");
+            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            return Ok(());
+        }
+    }
 
     // Setup transfer streams
     let (mut read_stream, mut write_stream) = match setup_transfer_streams(ctx)? {
@@ -1678,6 +1690,143 @@ fn parse_daemon_dont_compress(value: &str) -> Option<SkipCompressList> {
 
     let spec = suffixes.join("/");
     SkipCompressList::parse(&spec).ok()
+}
+
+/// Builds daemon-side filter rules from the module's filter configuration.
+///
+/// Upstream rsync's `clientserver.c:rsync_module()` builds `daemon_filter_list` from:
+/// 1. `filter` - parsed with `FILTRULE_WORD_SPLIT` (full filter rule syntax)
+/// 2. `include` - parsed with `FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT`
+/// 3. `exclude` - parsed with `FILTRULE_WORD_SPLIT`
+/// 4. `include_from` - read from file, one pattern per line (include)
+/// 5. `exclude_from` - read from file, one pattern per line (exclude)
+///
+/// The order matches upstream: filter, include, exclude, include_from, exclude_from.
+fn build_daemon_filter_rules(
+    module: &ModuleRuntime,
+) -> Result<Vec<FilterRuleWireFormat>, io::Error> {
+    let mut rules = Vec::new();
+
+    // 1. filter rules - full filter syntax (e.g., "- *.tmp", "+ *.rs")
+    // upstream: parse_filter_str(&daemon_filter_list, lp_filter(i), rule, FILTRULE_WORD_SPLIT)
+    // Each element in the Vec is one complete filter rule from a `filter =` line.
+    for filter_str in &module.filter {
+        if let Some(rule) = parse_daemon_filter_token(filter_str.trim()) {
+            rules.push(rule);
+        }
+    }
+
+    // 2. include rules - bare patterns, word-split on whitespace
+    // upstream: parse_filter_str(&daemon_filter_list, lp_include(i), rule,
+    //           FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT)
+    for include_str in &module.include {
+        for pattern in include_str.split_whitespace() {
+            rules.push(build_pattern_rule(pattern, true));
+        }
+    }
+
+    // 3. exclude rules - bare patterns, word-split on whitespace
+    // upstream: parse_filter_str(&daemon_filter_list, lp_exclude(i), rule, FILTRULE_WORD_SPLIT)
+    for exclude_str in &module.exclude {
+        for pattern in exclude_str.split_whitespace() {
+            rules.push(build_pattern_rule(pattern, false));
+        }
+    }
+
+    // 4. include_from - read patterns from file, one per line
+    // upstream: parse_filter_file(&daemon_filter_list, lp_include_from(i), rule, 0)
+    if let Some(ref path) = module.include_from {
+        let patterns = read_patterns_from_file(path)?;
+        for pattern in patterns {
+            rules.push(build_pattern_rule(&pattern, true));
+        }
+    }
+
+    // 5. exclude_from - read patterns from file, one per line
+    // upstream: parse_filter_file(&daemon_filter_list, lp_exclude_from(i), rule, 0)
+    if let Some(ref path) = module.exclude_from {
+        let patterns = read_patterns_from_file(path)?;
+        for pattern in patterns {
+            rules.push(build_pattern_rule(&pattern, false));
+        }
+    }
+
+    Ok(rules)
+}
+
+/// Reads patterns from a file, one per line.
+///
+/// Skips empty lines and comment lines (starting with `#` or `;`).
+/// This matches upstream rsync's `parse_filter_file()` behavior for
+/// `exclude_from` and `include_from` daemon parameters.
+fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
+    let content = fs::read_to_string(path).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("failed to read filter file '{}': {e}", path.display()),
+        )
+    })?;
+
+    let patterns = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with(';'))
+        .map(str::to_string)
+        .collect();
+
+    Ok(patterns)
+}
+
+/// Parses a single daemon filter token in filter rule syntax.
+///
+/// Supports short-form prefixes: `+` (include), `-` (exclude).
+/// The pattern follows the prefix after optional whitespace.
+/// Returns `None` for unrecognised tokens (silently skipped, matching
+/// upstream's lenient parsing of daemon filter strings).
+fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
+    if let Some(pattern) = token.strip_prefix("+ ").or_else(|| token.strip_prefix('+')) {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return None;
+        }
+        Some(build_pattern_rule(pattern, true))
+    } else if let Some(pattern) = token.strip_prefix("- ").or_else(|| token.strip_prefix('-')) {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return None;
+        }
+        Some(build_pattern_rule(pattern, false))
+    } else {
+        // Bare pattern defaults to exclude (upstream behaviour)
+        if token.is_empty() {
+            return None;
+        }
+        Some(build_pattern_rule(token, false))
+    }
+}
+
+/// Constructs a `FilterRuleWireFormat` from a pattern string.
+///
+/// Handles anchored patterns (leading `/`) and directory-only patterns
+/// (trailing `/`) matching upstream rsync's pattern interpretation.
+/// The pattern is preserved as-is in the wire format - the `anchored` and
+/// `directory_only` flags are set for metadata but the pattern itself retains
+/// its original form.
+fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
+    let anchored = pattern.starts_with('/');
+    let directory_only = pattern.ends_with('/');
+
+    if is_include {
+        let mut rule = FilterRuleWireFormat::include(pattern.to_string());
+        rule.anchored = anchored;
+        rule.directory_only = directory_only;
+        rule
+    } else {
+        let mut rule = FilterRuleWireFormat::exclude(pattern.to_string());
+        rule.anchored = anchored;
+        rule.directory_only = directory_only;
+        rule
+    }
 }
 
 #[cfg(test)]
@@ -2376,5 +2525,299 @@ mod module_access_tests {
         assert!(list.matches_path(Path::new("file.gz")));
         assert!(list.matches_path(Path::new("song.mp3")));
         assert!(list.matches_path(Path::new("archive.bz2")));
+    }
+
+    // ==================== build_daemon_filter_rules tests ====================
+
+    fn test_module_with_defaults() -> ModuleRuntime {
+        ModuleRuntime::from(ModuleDefinition::default())
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_empty_module() {
+        let module = test_module_with_defaults();
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_exclude_patterns() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude: vec!["*.tmp".to_string(), "*.bak".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern, "*.tmp");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[1].pattern, "*.bak");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_include_patterns() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            include: vec!["*.txt".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "*.txt");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_filter_syntax() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["- *.log".to_string(), "+ *.rs".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern, "*.log");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[1].pattern, "*.rs");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Include);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_word_split_exclude() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude: vec!["*.tmp *.bak *.log".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern, "*.tmp");
+        assert_eq!(rules[1].pattern, "*.bak");
+        assert_eq!(rules[2].pattern, "*.log");
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_exclude_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let exclude_file = dir.path().join("excludes.txt");
+        fs::write(&exclude_file, "*.tmp\n*.bak\n# comment\n\n*.log\n").unwrap();
+
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude_from: Some(exclude_file),
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern, "*.tmp");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[1].pattern, "*.bak");
+        assert_eq!(rules[2].pattern, "*.log");
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_include_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let include_file = dir.path().join("includes.txt");
+        fs::write(&include_file, "*.rs\n; semicolon comment\n*.toml\n").unwrap();
+
+        let module = ModuleRuntime::from(ModuleDefinition {
+            include_from: Some(include_file),
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern, "*.rs");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[1].pattern, "*.toml");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Include);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_missing_file_returns_error() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude_from: Some(PathBuf::from("/nonexistent/excludes.txt")),
+            ..Default::default()
+        });
+        let result = build_daemon_filter_rules(&module);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_ordering_filter_include_exclude_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let include_file = dir.path().join("includes.txt");
+        fs::write(&include_file, "*.rs\n").unwrap();
+        let exclude_file = dir.path().join("excludes.txt");
+        fs::write(&exclude_file, "*.log\n").unwrap();
+
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["- *.tmp".to_string()],
+            include: vec!["*.toml".to_string()],
+            exclude: vec!["*.bak".to_string()],
+            include_from: Some(include_file),
+            exclude_from: Some(exclude_file),
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+
+        // Order: filter, include, exclude, include_from, exclude_from
+        assert_eq!(rules.len(), 5);
+        assert_eq!(rules[0].pattern, "*.tmp");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[1].pattern, "*.toml");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[2].pattern, "*.bak");
+        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[3].pattern, "*.rs");
+        assert_eq!(rules[3].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[4].pattern, "*.log");
+        assert_eq!(rules[4].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_anchored_pattern() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude: vec!["/secret".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "/secret");
+        assert!(rules[0].anchored);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_directory_only_pattern() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude: vec!["cache/".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "cache/");
+        assert!(rules[0].directory_only);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_from_file_skips_comments_and_blanks() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("patterns.txt");
+        fs::write(
+            &file,
+            "# header comment\n\n  \n*.tmp\n; another comment\n*.bak\n\n",
+        )
+        .unwrap();
+
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude_from: Some(file),
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern, "*.tmp");
+        assert_eq!(rules[1].pattern, "*.bak");
+    }
+
+    // ==================== build_pattern_rule tests ====================
+
+    #[test]
+    fn build_pattern_rule_exclude() {
+        let rule = build_pattern_rule("*.tmp", false);
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "*.tmp");
+        assert!(!rule.anchored);
+        assert!(!rule.directory_only);
+    }
+
+    #[test]
+    fn build_pattern_rule_include() {
+        let rule = build_pattern_rule("*.rs", true);
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rule.pattern, "*.rs");
+    }
+
+    #[test]
+    fn build_pattern_rule_anchored() {
+        let rule = build_pattern_rule("/etc", false);
+        assert!(rule.anchored);
+        assert_eq!(rule.pattern, "/etc");
+    }
+
+    #[test]
+    fn build_pattern_rule_directory_only() {
+        let rule = build_pattern_rule("build/", false);
+        assert!(rule.directory_only);
+        assert_eq!(rule.pattern, "build/");
+    }
+
+    // ==================== parse_daemon_filter_token tests ====================
+
+    #[test]
+    fn parse_daemon_filter_token_exclude() {
+        let rule = parse_daemon_filter_token("- *.tmp").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "*.tmp");
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_include() {
+        let rule = parse_daemon_filter_token("+ *.rs").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rule.pattern, "*.rs");
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_bare_pattern_defaults_to_exclude() {
+        let rule = parse_daemon_filter_token("*.bak").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "*.bak");
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_empty_returns_none() {
+        assert!(parse_daemon_filter_token("").is_none());
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_prefix_only_returns_none() {
+        assert!(parse_daemon_filter_token("-").is_none());
+        assert!(parse_daemon_filter_token("+").is_none());
+    }
+
+    // ==================== read_patterns_from_file tests ====================
+
+    #[test]
+    fn read_patterns_from_file_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("patterns.txt");
+        fs::write(&file, "*.tmp\n*.bak\n").unwrap();
+
+        let patterns = read_patterns_from_file(&file).unwrap();
+        assert_eq!(patterns, vec!["*.tmp", "*.bak"]);
+    }
+
+    #[test]
+    fn read_patterns_from_file_skips_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("patterns.txt");
+        fs::write(&file, "# comment\n*.tmp\n; another\n*.bak\n").unwrap();
+
+        let patterns = read_patterns_from_file(&file).unwrap();
+        assert_eq!(patterns, vec!["*.tmp", "*.bak"]);
+    }
+
+    #[test]
+    fn read_patterns_from_file_skips_empty_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("patterns.txt");
+        fs::write(&file, "\n*.tmp\n  \n\n*.bak\n").unwrap();
+
+        let patterns = read_patterns_from_file(&file).unwrap();
+        assert_eq!(patterns, vec!["*.tmp", "*.bak"]);
+    }
+
+    #[test]
+    fn read_patterns_from_file_missing_file() {
+        let result = read_patterns_from_file(Path::new("/nonexistent/file.txt"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("failed to read filter file"));
     }
 }

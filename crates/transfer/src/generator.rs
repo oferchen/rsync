@@ -506,9 +506,22 @@ impl GeneratorContext {
         // Server mode: read filter list from client (MULTIPLEXED for protocol >= 30)
         let wire_rules = read_filter_list(reader, self.protocol)?;
 
+        // upstream: clientserver.c:rsync_module() — daemon_filter_list is applied
+        // on top of client filters. Daemon rules take precedence (prepended).
+        let daemon_rules = &self.config.daemon_filter_rules;
+        let combined = if daemon_rules.is_empty() {
+            wire_rules
+        } else if wire_rules.is_empty() {
+            daemon_rules.clone()
+        } else {
+            let mut combined = daemon_rules.clone();
+            combined.extend(wire_rules);
+            combined
+        };
+
         // Convert wire format to FilterSet
-        if !wire_rules.is_empty() {
-            let filter_set = self.parse_received_filters(&wire_rules)?;
+        if !combined.is_empty() {
+            let filter_set = self.parse_received_filters(&combined)?;
             self.filters = Some(filter_set);
         }
 

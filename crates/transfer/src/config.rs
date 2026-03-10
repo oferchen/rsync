@@ -223,6 +223,18 @@ pub struct ServerConfig {
     ///
     /// - `options.c:2871-2876`: `--backup-suffix=SUFFIX` server option
     pub backup_suffix: Option<String>,
+    /// Daemon-side filter rules from module configuration.
+    ///
+    /// These rules are enforced by the daemon regardless of what the client sends.
+    /// Built from the module's `filter`, `exclude`, `include`, `exclude_from`,
+    /// and `include_from` parameters in `rsyncd.conf`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:rsync_module()` — builds `daemon_filter_list` from
+    ///   `lp_filter()`, `lp_include()`, `lp_exclude()`, `lp_include_from()`,
+    ///   `lp_exclude_from()` before the transfer starts.
+    pub daemon_filter_rules: Vec<FilterRuleWireFormat>,
     /// File selection and filtering configuration.
     pub file_selection: FileSelectionConfig,
     /// Whether `--stats` was requested, enabling detailed transfer statistics.
@@ -283,6 +295,7 @@ impl Default for ServerConfig {
             has_partial_dir: false,
             backup_dir: None,
             backup_suffix: None,
+            daemon_filter_rules: Vec::new(),
             file_selection: FileSelectionConfig::default(),
             do_stats: false,
             temp_dir: None,
