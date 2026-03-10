@@ -1345,15 +1345,15 @@ fn process_approved_module(
     // reduction so it runs with reduced privileges inside the chroot.
     #[cfg(unix)]
     let _name_converter_guard = if let Some(ref cmd) = module.name_converter {
-        let client_addr = ctx.peer_ip.to_string();
-        let client_host = ctx.effective_host().unwrap_or(&client_addr).to_owned();
-        let var_ctx = VarExpansionContext {
-            module_name: &module.name,
+        let nc_path_ctx = PathExpansionContext {
             module_path: &module.path.display().to_string(),
-            client_addr: &client_addr,
-            client_host: &client_host,
+            module_name: &module.name,
+            username: auth_user.as_deref().unwrap_or(""),
+            remote_addr: &ctx.peer_ip.to_string(),
+            hostname: ctx.effective_host().unwrap_or(""),
+            pid: std::process::id(),
         };
-        let expanded = expand_config_vars(cmd, &var_ctx);
+        let expanded = expand_exec_command(cmd, &nc_path_ctx);
         match NameConverter::spawn(&expanded) {
             Ok(nc) => Some(install_name_converter(nc)),
             Err(err) => {
