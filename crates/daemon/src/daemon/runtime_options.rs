@@ -883,7 +883,6 @@ impl RuntimeOptions {
     /// Returns whether incoming connections require a PROXY protocol header.
     ///
     /// upstream: clientserver.c:1298 - checked before accepting client data.
-    /// Used when implementing PROXY protocol header validation.
     #[allow(dead_code)]
     pub(crate) fn proxy_protocol(&self) -> bool {
         self.proxy_protocol
