@@ -21,6 +21,7 @@
 use crate::ownership;
 use rustix::fs::{Gid, Uid};
 use rustix::process::{RawGid, RawUid};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
 use std::ptr;
@@ -29,6 +30,47 @@ use std::{
     ffi::{CStr, CString},
     mem::MaybeUninit,
 };
+
+/// Trait for external name-to-ID and ID-to-name conversion.
+///
+/// Used by the daemon's `name converter` parameter to provide uid/gid mapping
+/// in chroot environments where NSS lookups are unavailable.
+///
+/// upstream: uidlist.c:110-193 - the name converter subprocess replaces
+/// getpwuid/getpwnam/getgrgid/getgrnam calls.
+pub trait NameConverterCallbacks: Send {
+    /// Converts a numeric UID to a username.
+    fn uid_to_name(&mut self, uid: u32) -> Option<String>;
+    /// Converts a numeric GID to a group name.
+    fn gid_to_name(&mut self, gid: u32) -> Option<String>;
+    /// Converts a username to a numeric UID.
+    fn name_to_uid(&mut self, name: &str) -> Option<u32>;
+    /// Converts a group name to a numeric GID.
+    fn name_to_gid(&mut self, name: &str) -> Option<u32>;
+}
+
+thread_local! {
+    static NAME_CONVERTER_SLOT: RefCell<Option<Box<dyn NameConverterCallbacks>>> =
+        const { RefCell::new(None) };
+}
+
+/// Installs a name converter for the current thread.
+///
+/// When set, the four lookup functions (`lookup_user_name`, `lookup_user_by_name`,
+/// `lookup_group_name`, `lookup_group_by_name`) will delegate to this converter
+/// instead of performing NSS queries.
+pub fn set_name_converter(converter: Box<dyn NameConverterCallbacks>) {
+    NAME_CONVERTER_SLOT.with(|slot| {
+        *slot.borrow_mut() = Some(converter);
+    });
+}
+
+/// Removes the name converter for the current thread, restoring NSS lookups.
+pub fn clear_name_converter() {
+    NAME_CONVERTER_SLOT.with(|slot| {
+        *slot.borrow_mut() = None;
+    });
+}
 
 /// Thread-safe cache for UID mappings.
 ///
@@ -143,8 +185,19 @@ fn map_gid_uncached(gid: RawGid) -> RawGid {
 /// Looks up the username for a given UID.
 ///
 /// Returns `Ok(Some(name))` if the user exists, `Ok(None)` if not found.
-/// Uses `getpwuid_r` for thread-safe lookup.
+/// Uses `getpwuid_r` for thread-safe lookup. When a name converter is
+/// installed via [`set_name_converter`], delegates to it instead.
 pub fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
+    // upstream: uidlist.c:110-116 - name_converter replaces getpwuid
+    let converted = NAME_CONVERTER_SLOT.with(|slot| {
+        slot.borrow_mut()
+            .as_mut()
+            .and_then(|nc| nc.uid_to_name(uid))
+    });
+    if let Some(name) = converted {
+        return Ok(Some(name.into_bytes()));
+    }
+
     let mut buffer = vec![0_u8; 1024];
     loop {
         let mut pwd = MaybeUninit::<libc::passwd>::zeroed();
@@ -187,8 +240,21 @@ pub fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
 /// Looks up the UID for a given username.
 ///
 /// Returns `Ok(Some(uid))` if the user exists, `Ok(None)` if not found.
-/// Uses `getpwnam_r` for thread-safe lookup.
+/// Uses `getpwnam_r` for thread-safe lookup. When a name converter is
+/// installed via [`set_name_converter`], delegates to it instead.
 pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
+    // upstream: uidlist.c:138-144 - name_converter replaces getpwnam
+    if let Ok(name_str) = std::str::from_utf8(name) {
+        let converted = NAME_CONVERTER_SLOT.with(|slot| {
+            slot.borrow_mut()
+                .as_mut()
+                .and_then(|nc| nc.name_to_uid(name_str))
+        });
+        if let Some(uid) = converted {
+            return Ok(Some(uid as RawUid));
+        }
+    }
+
     let Ok(c_name) = CString::new(name) else {
         return Ok(None);
     };
@@ -234,8 +300,19 @@ pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
 /// Looks up the group name for a given GID.
 ///
 /// Returns `Ok(Some(name))` if the group exists, `Ok(None)` if not found.
-/// Uses `getgrgid_r` for thread-safe lookup.
+/// Uses `getgrgid_r` for thread-safe lookup. When a name converter is
+/// installed via [`set_name_converter`], delegates to it instead.
 pub fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
+    // upstream: uidlist.c:153-159 - name_converter replaces getgrgid
+    let converted = NAME_CONVERTER_SLOT.with(|slot| {
+        slot.borrow_mut()
+            .as_mut()
+            .and_then(|nc| nc.gid_to_name(gid))
+    });
+    if let Some(name) = converted {
+        return Ok(Some(name.into_bytes()));
+    }
+
     let mut buffer = vec![0_u8; 1024];
     loop {
         let mut grp = MaybeUninit::<libc::group>::zeroed();
@@ -304,8 +381,21 @@ pub fn gid_cache_size() -> usize {
 /// Looks up the GID for a given group name.
 ///
 /// Returns `Ok(Some(gid))` if the group exists, `Ok(None)` if not found.
-/// Uses `getgrnam_r` for thread-safe lookup.
+/// Uses `getgrnam_r` for thread-safe lookup. When a name converter is
+/// installed via [`set_name_converter`], delegates to it instead.
 pub fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
+    // upstream: uidlist.c:175-181 - name_converter replaces getgrnam
+    if let Ok(name_str) = std::str::from_utf8(name) {
+        let converted = NAME_CONVERTER_SLOT.with(|slot| {
+            slot.borrow_mut()
+                .as_mut()
+                .and_then(|nc| nc.name_to_gid(name_str))
+        });
+        if let Some(gid) = converted {
+            return Ok(Some(gid as RawGid));
+        }
+    }
+
     let Ok(c_name) = CString::new(name) else {
         return Ok(None);
     };
