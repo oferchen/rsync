@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
+use engine::SkipCompressList;
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
@@ -249,6 +250,17 @@ pub struct ServerConfig {
     /// - `receiver.c:766`: `open_tmpfile()` uses `tmpdir` when set
     /// - `loadparm.c`: `temp dir` daemon module parameter
     pub temp_dir: Option<std::path::PathBuf>,
+    /// File suffixes that should skip per-file compression.
+    ///
+    /// When compression is enabled, files whose extension matches a suffix in
+    /// this list are sent uncompressed. This is populated from the daemon's
+    /// `dont compress` module parameter or the client's `--skip-compress` option.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `token.c:do_compression` - per-file compression decision
+    /// - `loadparm.c` - `dont compress` daemon parameter
+    pub skip_compress: Option<SkipCompressList>,
 }
 
 impl Default for ServerConfig {
@@ -274,6 +286,7 @@ impl Default for ServerConfig {
             file_selection: FileSelectionConfig::default(),
             do_stats: false,
             temp_dir: None,
+            skip_compress: None,
         }
     }
 }
