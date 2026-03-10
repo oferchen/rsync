@@ -5,6 +5,7 @@ struct SessionParams<'a> {
     daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
+    proxy_protocol: bool,
 }
 
 struct LegacySessionParams<'a> {
@@ -30,6 +31,7 @@ fn handle_session(
         daemon_burst,
         log_sink,
         reverse_lookup,
+        proxy_protocol,
     } = params;
 
     // rsync daemon protocol is ALWAYS the legacy @RSYNCD protocol.
@@ -39,6 +41,26 @@ fn handle_session(
     // Always use Legacy mode for daemon connections.
     let style = SessionStyle::Legacy;
     configure_stream(&stream)?;
+
+    // upstream: clientserver.c:1298 - read PROXY protocol header before any
+    // rsync protocol data when `proxy protocol = true` in the config.
+    let peer_addr = if proxy_protocol {
+        match parse_proxy_header(&stream) {
+            Ok(Some(proxied_addr)) => proxied_addr,
+            Ok(None) => peer_addr,
+            Err(error) => {
+                if let Some(log) = log_sink.as_ref() {
+                    let text =
+                        format!("failed to read PROXY protocol header from {peer_addr}: {error}");
+                    let message = rsync_warning!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                return Err(error);
+            }
+        }
+    } else {
+        peer_addr
+    };
 
     let peer_host = if reverse_lookup {
         resolve_peer_hostname(peer_addr.ip())
@@ -388,11 +410,13 @@ mod session_runtime_tests {
             daemon_burst: None,
             log_sink: None,
             reverse_lookup: false,
+            proxy_protocol: false,
         };
         assert!(params.modules.is_empty());
         assert!(params.motd_lines.is_empty());
         assert!(params.daemon_limit.is_none());
         assert!(!params.reverse_lookup);
+        assert!(!params.proxy_protocol);
     }
 
     #[test]
@@ -408,6 +432,7 @@ mod session_runtime_tests {
             daemon_burst: burst,
             log_sink: None,
             reverse_lookup: true,
+            proxy_protocol: false,
         };
         assert_eq!(params.daemon_limit, NonZeroU64::new(1000));
         assert_eq!(params.daemon_burst, NonZeroU64::new(2000));
