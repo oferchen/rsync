@@ -401,8 +401,11 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     }
 
     // upstream: socket.c:set_socket_options() - apply socket options to each
-    // listener socket before accepting connections.
-    if let Some(ref opts_str) = socket_options_str {
+    // listener socket before accepting connections, and to each accepted
+    // client connection before the session handler runs.
+    let client_socket_options: Arc<Vec<SocketOption>> = if let Some(ref opts_str) =
+        socket_options_str
+    {
         let parsed = parse_socket_options(opts_str).map_err(|msg| {
             DaemonError::new(
                 FEATURE_UNAVAILABLE_EXIT_CODE,
@@ -414,7 +417,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             )
         })?;
         for listener in &listeners {
-            apply_socket_options(listener, &parsed).map_err(|error| {
+            apply_socket_options_to_listener(listener, &parsed).map_err(|error| {
                 DaemonError::new(
                     FEATURE_UNAVAILABLE_EXIT_CODE,
                     rsync_error!(
@@ -425,7 +428,10 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                 )
             })?;
         }
-    }
+        Arc::new(parsed)
+    } else {
+        Arc::new(Vec::new())
+    };
 
     // Detach from terminal if --detach is active (Unix default).
     // Must happen after binding so startup errors reach stderr, and before
@@ -586,6 +592,22 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                             log_message(log, &message);
                         }
                         continue;
+                    }
+
+                    // upstream: clientserver.c — set_socket_options() is called
+                    // on the accepted client fd before the session handler runs.
+                    if !client_socket_options.is_empty() {
+                        if let Err(error) =
+                            apply_socket_options_to_stream(&stream, &client_socket_options)
+                        {
+                            if let Some(log) = log_sink.as_ref() {
+                                let text = format!(
+                                    "failed to apply socket options to client connection: {error}"
+                                );
+                                let message = rsync_warning!(text).with_role(Role::Daemon);
+                                log_message(log, &message);
+                            }
+                        }
                     }
 
                     let peer_addr = normalize_peer_address(raw_peer_addr);
@@ -802,6 +824,22 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             // Use recv_timeout to allow periodic worker reaping and signal checks
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Ok((stream, raw_peer_addr))) => {
+                    // upstream: clientserver.c — set_socket_options() is called
+                    // on the accepted client fd before the session handler runs.
+                    if !client_socket_options.is_empty() {
+                        if let Err(error) =
+                            apply_socket_options_to_stream(&stream, &client_socket_options)
+                        {
+                            if let Some(log) = log_sink.as_ref() {
+                                let text = format!(
+                                    "failed to apply socket options to client connection: {error}"
+                                );
+                                let message = rsync_warning!(text).with_role(Role::Daemon);
+                                log_message(log, &message);
+                            }
+                        }
+                    }
+
                     let peer_addr = normalize_peer_address(raw_peer_addr);
                     let modules = Arc::clone(&modules);
                     let motd_lines = Arc::clone(&motd_lines);
@@ -1056,6 +1094,11 @@ enum SocketOption {
     SoSndBuf(usize),
     /// `SO_RCVBUF=<size>` - set the receive buffer size.
     SoRcvBuf(usize),
+    /// `IP_TOS=<value>` - set the IP Type of Service field.
+    ///
+    /// upstream: socket.c - `IP_TOS` sets the TOS byte in the IP header.
+    /// Common values: `0x10` (IPTOS_LOWDELAY), `0x08` (IPTOS_THROUGHPUT).
+    IpTos(u32),
 }
 
 /// Parses a comma-separated socket options string into typed option values.
@@ -1101,6 +1144,10 @@ fn parse_socket_options(options: &str) -> Result<Vec<SocketOption>, String> {
                 let size = parse_size_option_value(value, "SO_RCVBUF")?;
                 result.push(SocketOption::SoRcvBuf(size));
             }
+            "IP_TOS" => {
+                let tos = parse_tos_option_value(value)?;
+                result.push(SocketOption::IpTos(tos));
+            }
             _ => {
                 return Err(format!("unknown socket option '{name}'"));
             }
@@ -1135,18 +1182,61 @@ fn parse_size_option_value(value: Option<&str>, name: &str) -> Result<usize, Str
     }
 }
 
+/// Parses a `IP_TOS` value, accepting both decimal and `0x`-prefixed hex.
+///
+/// upstream: socket.c - `IP_TOS` accepts numeric values; common presets are
+/// `0x10` (IPTOS_LOWDELAY) and `0x08` (IPTOS_THROUGHPUT).
+fn parse_tos_option_value(value: Option<&str>) -> Result<u32, String> {
+    match value {
+        None => Err("IP_TOS requires a numeric value (e.g., IP_TOS=0x10)".to_string()),
+        Some(s) => {
+            let trimmed = s.trim();
+            if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                u32::from_str_radix(hex, 16)
+                    .map_err(|_| format!("invalid hex value '{trimmed}' for IP_TOS"))
+            } else {
+                trimmed
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid numeric value '{trimmed}' for IP_TOS"))
+            }
+        }
+    }
+}
+
 /// Applies parsed socket options to a TCP listener via `socket2`.
 ///
 /// upstream: socket.c - `set_socket_options()` applies options via `setsockopt(2)`
 /// after binding and before accepting connections.
-fn apply_socket_options(listener: &TcpListener, options: &[SocketOption]) -> io::Result<()> {
-    let sock = socket2::SockRef::from(listener);
+fn apply_socket_options_to_listener(
+    listener: &TcpListener,
+    options: &[SocketOption],
+) -> io::Result<()> {
+    apply_socket_options_impl(socket2::SockRef::from(listener), options)
+}
+
+/// Applies parsed socket options to an accepted client `TcpStream` via `socket2`.
+///
+/// upstream: clientserver.c - `set_socket_options()` is called on the accepted
+/// client file descriptor before the session handler processes the connection.
+fn apply_socket_options_to_stream(
+    stream: &TcpStream,
+    options: &[SocketOption],
+) -> io::Result<()> {
+    apply_socket_options_impl(socket2::SockRef::from(stream), options)
+}
+
+/// Shared implementation for applying socket options to any socket reference.
+fn apply_socket_options_impl(
+    sock: socket2::SockRef<'_>,
+    options: &[SocketOption],
+) -> io::Result<()> {
     for opt in options {
         match opt {
             SocketOption::TcpNoDelay(enabled) => sock.set_nodelay(*enabled)?,
             SocketOption::SoKeepAlive(enabled) => sock.set_keepalive(*enabled)?,
             SocketOption::SoSndBuf(size) => sock.set_send_buffer_size(*size)?,
             SocketOption::SoRcvBuf(size) => sock.set_recv_buffer_size(*size)?,
+            SocketOption::IpTos(tos) => sock.set_tos(*tos)?,
         }
     }
     Ok(())
@@ -1839,13 +1929,13 @@ mod server_runtime_tests {
     }
 
     #[test]
-    fn apply_socket_options_to_listener() {
+    fn apply_listener_socket_options_nodelay_keepalive() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let opts = vec![
             SocketOption::TcpNoDelay(true),
             SocketOption::SoKeepAlive(true),
         ];
-        apply_socket_options(&listener, &opts).expect("apply succeeds");
+        apply_socket_options_to_listener(&listener, &opts).expect("apply succeeds");
 
         let sock = socket2::SockRef::from(&listener);
         assert!(sock.nodelay().expect("query nodelay"));
@@ -1853,15 +1943,82 @@ mod server_runtime_tests {
     }
 
     #[test]
-    fn apply_socket_options_buffer_sizes_to_listener() {
+    fn apply_listener_socket_options_buffer_sizes() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let opts = vec![SocketOption::SoSndBuf(32768), SocketOption::SoRcvBuf(32768)];
-        apply_socket_options(&listener, &opts).expect("apply succeeds");
+        apply_socket_options_to_listener(&listener, &opts).expect("apply succeeds");
 
         let sock = socket2::SockRef::from(&listener);
         // Kernel may double the requested buffer size; just verify it's at least as large.
         assert!(sock.send_buffer_size().expect("query sndbuf") >= 32768);
         assert!(sock.recv_buffer_size().expect("query rcvbuf") >= 32768);
+    }
+
+    #[test]
+    fn apply_stream_socket_options_nodelay_keepalive() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let stream = TcpStream::connect(addr).expect("connect");
+        let opts = vec![
+            SocketOption::TcpNoDelay(true),
+            SocketOption::SoKeepAlive(true),
+        ];
+        apply_socket_options_to_stream(&stream, &opts).expect("apply succeeds");
+
+        let sock = socket2::SockRef::from(&stream);
+        assert!(sock.nodelay().expect("query nodelay"));
+        assert!(sock.keepalive().expect("query keepalive"));
+    }
+
+    #[test]
+    fn apply_stream_socket_options_buffer_sizes() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let stream = TcpStream::connect(addr).expect("connect");
+        let opts = vec![SocketOption::SoSndBuf(32768), SocketOption::SoRcvBuf(32768)];
+        apply_socket_options_to_stream(&stream, &opts).expect("apply succeeds");
+
+        let sock = socket2::SockRef::from(&stream);
+        assert!(sock.send_buffer_size().expect("query sndbuf") >= 32768);
+        assert!(sock.recv_buffer_size().expect("query rcvbuf") >= 32768);
+    }
+
+    #[test]
+    fn parse_socket_options_ip_tos_hex() {
+        let opts = parse_socket_options("IP_TOS=0x10").expect("parse succeeds");
+        assert_eq!(opts.len(), 1);
+        assert_eq!(opts[0], SocketOption::IpTos(0x10));
+    }
+
+    #[test]
+    fn parse_socket_options_ip_tos_decimal() {
+        let opts = parse_socket_options("IP_TOS=16").expect("parse succeeds");
+        assert_eq!(opts.len(), 1);
+        assert_eq!(opts[0], SocketOption::IpTos(16));
+    }
+
+    #[test]
+    fn parse_socket_options_ip_tos_requires_value() {
+        let err = parse_socket_options("IP_TOS").expect_err("should fail");
+        assert!(err.contains("requires a numeric value"), "{err}");
+    }
+
+    #[test]
+    fn parse_socket_options_combined_with_ip_tos() {
+        let opts = parse_socket_options("TCP_NODELAY, IP_TOS=0x08, SO_SNDBUF=65536")
+            .expect("parse succeeds");
+        assert_eq!(opts.len(), 3);
+        assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
+        assert_eq!(opts[1], SocketOption::IpTos(0x08));
+        assert_eq!(opts[2], SocketOption::SoSndBuf(65536));
+    }
+
+    #[test]
+    fn apply_stream_socket_options_empty_is_noop() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let stream = TcpStream::connect(addr).expect("connect");
+        apply_socket_options_to_stream(&stream, &[]).expect("empty options should succeed");
     }
 }
 
