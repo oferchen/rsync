@@ -141,6 +141,103 @@ fn expand_module_vars(
     }
 }
 
+/// Context for expanding single-character `%` variables in daemon paths.
+///
+/// Upstream rsync expands `%`-escapes in certain config string values at
+/// runtime - for example `log file`, `early_exec`, `pre-xfer exec`, and
+/// `post-xfer exec`. The supported escapes mirror a subset of the log format
+/// variables but apply to path/command strings rather than per-file log lines.
+///
+/// upstream: `log.c:lp_do_log_file()` and `clientserver.c` expand `%P`, `%m`,
+/// `%u`, and `%%` in path contexts.
+struct PathExpansionContext<'a> {
+    /// Filesystem path of the module root (`%P`).
+    module_path: &'a str,
+    /// Module name from the daemon config (`%m`).
+    module_name: &'a str,
+    /// Authenticated username, or empty if anonymous (`%u`).
+    username: &'a str,
+    /// Peer IP address string (`%a`).
+    remote_addr: &'a str,
+    /// Resolved peer hostname (`%h`).
+    hostname: &'a str,
+    /// Daemon process ID (`%p`).
+    pid: u32,
+}
+
+/// Expands single-character `%` escapes in a daemon path or exec command string.
+///
+/// Processes `%X` escape sequences by substituting the corresponding field from
+/// `ctx`. Supports the path-relevant subset of log format escapes:
+///
+/// - `%P` - module path
+/// - `%m` - module name
+/// - `%u` - authenticated username
+/// - `%a` - remote IP address
+/// - `%h` - remote hostname
+/// - `%p` - daemon process ID
+/// - `%%` - literal `%`
+///
+/// Unknown escapes are passed through verbatim, matching upstream behaviour.
+///
+/// upstream: `log.c` and `clientserver.c` - path strings are expanded at
+/// connection time using the active module and session context.
+fn expand_daemon_path(template: &str, ctx: &PathExpansionContext<'_>) -> String {
+    let mut result = String::with_capacity(template.len());
+    let mut chars = template.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            result.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('P') => result.push_str(ctx.module_path),
+            Some('m') => result.push_str(ctx.module_name),
+            Some('u') => result.push_str(ctx.username),
+            Some('a') => result.push_str(ctx.remote_addr),
+            Some('h') => result.push_str(ctx.hostname),
+            Some('p') => push_u32(&mut result, ctx.pid),
+            Some('%') => result.push('%'),
+            Some(other) => {
+                result.push('%');
+                result.push(other);
+            }
+            None => {
+                result.push('%');
+            }
+        }
+    }
+
+    result
+}
+
+/// Applies single-character `%`-escape expansion to exec command strings.
+///
+/// Expands `%P`, `%m`, `%u`, `%a`, `%h`, `%p`, and `%%` in the exec command
+/// template using the provided path expansion context. Called before passing
+/// exec commands to the shell.
+///
+/// upstream: `clientserver.c` - exec command strings are expanded at runtime
+/// before being passed to `sh -c`.
+fn expand_exec_command(command: &str, ctx: &PathExpansionContext<'_>) -> String {
+    expand_daemon_path(command, ctx)
+}
+
+/// Applies single-character `%`-escape expansion to a log file path.
+///
+/// Expands `%P`, `%m`, `%u`, `%a`, `%h`, `%p`, and `%%` in the log file path
+/// using the provided path expansion context. Called when opening a per-module
+/// log file at connection time.
+///
+/// upstream: `log.c:lp_do_log_file()` - the log file path is expanded at
+/// connection time using the current module and session context.
+#[allow(dead_code)] // Wired when per-module log files are opened at connection time
+fn expand_log_file_path(path: &str, ctx: &PathExpansionContext<'_>) -> PathBuf {
+    PathBuf::from(expand_daemon_path(path, ctx))
+}
+
 #[cfg(test)]
 mod variable_expansion_tests {
     use super::*;
@@ -493,6 +590,183 @@ mod variable_expansion_tests {
         assert_eq!(
             module.include_from,
             Some(PathBuf::from("/etc/multi.include"))
+        );
+    }
+
+    // --- PathExpansionContext / expand_daemon_path tests ---
+
+    fn sample_path_ctx<'a>() -> PathExpansionContext<'a> {
+        PathExpansionContext {
+            module_path: "/srv/backup",
+            module_name: "backup",
+            username: "alice",
+            remote_addr: "192.168.1.100",
+            hostname: "client.example.com",
+            pid: 42,
+        }
+    }
+
+    #[test]
+    fn daemon_path_expand_module_path() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expand_daemon_path("%P/logs", &ctx), "/srv/backup/logs");
+    }
+
+    #[test]
+    fn daemon_path_expand_module_name() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_daemon_path("/var/log/%m.log", &ctx),
+            "/var/log/backup.log"
+        );
+    }
+
+    #[test]
+    fn daemon_path_expand_username() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_daemon_path("/home/%u/sync", &ctx),
+            "/home/alice/sync"
+        );
+    }
+
+    #[test]
+    fn daemon_path_expand_remote_addr() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_daemon_path("/logs/%a.log", &ctx),
+            "/logs/192.168.1.100.log"
+        );
+    }
+
+    #[test]
+    fn daemon_path_expand_hostname() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_daemon_path("/logs/%h/data", &ctx),
+            "/logs/client.example.com/data"
+        );
+    }
+
+    #[test]
+    fn daemon_path_expand_pid() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_daemon_path("/var/run/rsync.%p.lock", &ctx),
+            "/var/run/rsync.42.lock"
+        );
+    }
+
+    #[test]
+    fn daemon_path_expand_literal_percent() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expand_daemon_path("100%%", &ctx), "100%");
+    }
+
+    #[test]
+    fn daemon_path_expand_unknown_escape_passthrough() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expand_daemon_path("/path/%Z/data", &ctx), "/path/%Z/data");
+    }
+
+    #[test]
+    fn daemon_path_expand_trailing_percent() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expand_daemon_path("/path%", &ctx), "/path%");
+    }
+
+    #[test]
+    fn daemon_path_expand_empty_string() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expand_daemon_path("", &ctx), "");
+    }
+
+    #[test]
+    fn daemon_path_expand_no_escapes() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expand_daemon_path("/plain/path", &ctx), "/plain/path");
+    }
+
+    #[test]
+    fn daemon_path_expand_multiple_escapes() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_daemon_path("/var/log/%m/%h.log", &ctx),
+            "/var/log/backup/client.example.com.log"
+        );
+    }
+
+    #[test]
+    fn daemon_path_expand_adjacent_escapes() {
+        let ctx = sample_path_ctx();
+        assert_eq!(expand_daemon_path("%m%P", &ctx), "backup/srv/backup");
+    }
+
+    #[test]
+    fn daemon_path_expand_empty_username() {
+        let ctx = PathExpansionContext {
+            username: "",
+            ..sample_path_ctx()
+        };
+        assert_eq!(expand_daemon_path("/home/%u/data", &ctx), "/home//data");
+    }
+
+    #[test]
+    fn daemon_path_expand_all_escapes() {
+        let ctx = sample_path_ctx();
+        let result = expand_daemon_path("%P-%m-%u-%a-%h-%p", &ctx);
+        assert_eq!(
+            result,
+            "/srv/backup-backup-alice-192.168.1.100-client.example.com-42"
+        );
+    }
+
+    // --- expand_exec_command tests ---
+
+    #[test]
+    fn exec_command_expands_module_name() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_exec_command("echo %m", &ctx),
+            "echo backup"
+        );
+    }
+
+    #[test]
+    fn exec_command_expands_multiple_vars() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_exec_command("/usr/local/bin/notify --module=%m --user=%u --host=%h", &ctx),
+            "/usr/local/bin/notify --module=backup --user=alice --host=client.example.com"
+        );
+    }
+
+    // --- expand_log_file_path tests ---
+
+    #[test]
+    fn log_file_path_expands_module_name() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_log_file_path("/var/log/rsync/%m.log", &ctx),
+            PathBuf::from("/var/log/rsync/backup.log")
+        );
+    }
+
+    #[test]
+    fn log_file_path_expands_module_path() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_log_file_path("%P/rsync.log", &ctx),
+            PathBuf::from("/srv/backup/rsync.log")
+        );
+    }
+
+    #[test]
+    fn log_file_path_no_escapes() {
+        let ctx = sample_path_ctx();
+        assert_eq!(
+            expand_log_file_path("/var/log/rsync.log", &ctx),
+            PathBuf::from("/var/log/rsync.log")
         );
     }
 }
