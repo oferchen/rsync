@@ -45,6 +45,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use checksums::strong::{Md4, Md5};
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
+use core::client::SkipCompressList;
 use core::{
     auth::{digests_for_protocol, verify_daemon_auth_response},
     bandwidth::{
