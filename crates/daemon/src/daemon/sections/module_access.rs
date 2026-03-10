@@ -1341,6 +1341,36 @@ fn process_approved_module(
         }
     }
 
+    // upstream: clientserver.c:962-969 - spawn name converter after privilege
+    // reduction so it runs with reduced privileges inside the chroot.
+    #[cfg(unix)]
+    let _name_converter_guard = if let Some(ref cmd) = module.name_converter {
+        let nc_path_ctx = PathExpansionContext {
+            module_path: &module.path.display().to_string(),
+            module_name: &module.name,
+            username: auth_user.as_deref().unwrap_or(""),
+            remote_addr: &ctx.peer_ip.to_string(),
+            hostname: ctx.effective_host().unwrap_or(""),
+            pid: std::process::id(),
+        };
+        let expanded = expand_exec_command(cmd, &nc_path_ctx);
+        match NameConverter::spawn(&expanded) {
+            Ok(nc) => Some(install_name_converter(nc)),
+            Err(err) => {
+                let payload = format!("@ERROR: name-converter exec failed: {err}");
+                send_error_and_exit(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    ctx.messages,
+                    &payload,
+                )?;
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+
     // After chroot the server must use "/" as the module root
     let effective_module;
     let config_module = if module.use_chroot {
