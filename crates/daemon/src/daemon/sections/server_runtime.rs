@@ -296,6 +296,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         syslog_tag,
         daemon_uid,
         daemon_gid,
+        proxy_protocol,
         ..
     } = options;
 
@@ -615,6 +616,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                                         daemon_burst: bandwidth_burst,
                                         log_sink: log_for_worker.clone(),
                                         reverse_lookup,
+                                        proxy_protocol,
                                     },
                                 )
                             }),
@@ -821,6 +823,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                                         daemon_burst: bandwidth_burst,
                                         log_sink: log_for_worker.clone(),
                                         reverse_lookup,
+                                        proxy_protocol,
                                     },
                                 )
                             }),
