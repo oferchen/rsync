@@ -840,6 +840,25 @@ impl GeneratorContext {
         }
     }
 
+    /// Returns the per-file compression algorithm, respecting the skip-compress list.
+    ///
+    /// When compression is negotiated but the file's extension matches the
+    /// skip-compress list, returns `None` to send the file uncompressed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `token.c:do_compression` - checks `dont_compress_re` regex per file
+    /// - `loadparm.c` - `dont compress` daemon parameter populates the regex
+    fn file_compression(&self, path: &Path) -> Option<CompressionAlgorithm> {
+        let algo = self.negotiated_algorithms.map(|n| n.compression)?;
+        if let Some(ref skip_list) = self.config.skip_compress {
+            if skip_list.matches_path(path) {
+                return None;
+            }
+        }
+        Some(algo)
+    }
+
     /// Validates that a file index is within bounds of the file list.
     fn validate_file_index(&self, ndx: usize) -> io::Result<()> {
         if ndx >= self.file_list.len() {
@@ -1081,7 +1100,7 @@ impl GeneratorContext {
                 );
                 let delta_total_bytes = delta_script.total_bytes();
                 let wire_ops = script_to_wire_delta(delta_script);
-                let compression = self.negotiated_algorithms.map(|n| n.compression);
+                let compression = self.file_compression(source_path);
                 write_delta_with_compression(&mut *writer, &wire_ops, compression, source_path)?;
                 writer.write_all(&checksum_buf[..checksum_len])?;
                 bytes_sent += delta_total_bytes;
@@ -1110,7 +1129,7 @@ impl GeneratorContext {
                 // auto-flushing when full. This matches upstream rsync's batched
                 // iobuf_out pattern (sender.c send_files).
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let compression = self.negotiated_algorithms.map(|n| n.compression);
+                let compression = self.file_compression(source_path);
                 let result = stream_whole_file_transfer(
                     &mut *writer,
                     source,
