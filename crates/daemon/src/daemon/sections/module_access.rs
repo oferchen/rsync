@@ -725,6 +725,15 @@ fn build_server_config(
                 }
             }
 
+            // upstream: loadparm.c — `temp dir` module parameter provides a
+            // default temp directory. The client's --temp-dir takes precedence
+            // if already set from apply_long_form_args.
+            if cfg.temp_dir.is_none() {
+                if let Some(ref dir) = module.temp_dir {
+                    cfg.temp_dir = Some(std::path::PathBuf::from(dir));
+                }
+            }
+
             Ok(Some(cfg))
         }
         Err(err) => {
@@ -851,7 +860,8 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             }
             // upstream: options.c:2907-2909 - temp-dir as separate args
             "--temp-dir" => {
-                if let Some(_dir) = client_args.get(i + 1) {
+                if let Some(dir) = client_args.get(i + 1) {
+                    config.temp_dir = Some(std::path::PathBuf::from(dir));
                     i += 1;
                 }
             }
@@ -894,6 +904,8 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                         path: std::path::PathBuf::from(dir),
                         kind: ReferenceDirectoryKind::Copy,
                     });
+                } else if let Some(dir) = arg.strip_prefix("--temp-dir=") {
+                    config.temp_dir = Some(std::path::PathBuf::from(dir));
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
                     config.file_selection.files_from_path = Some(path.to_owned());
                 }
@@ -2239,5 +2251,46 @@ mod module_access_tests {
             args,
             vec!["--server", "--sender", "-logDtpr", ".", "mod/path"]
         );
+    }
+
+    // --- temp_dir wiring tests ---
+
+    #[test]
+    fn apply_long_form_args_parses_temp_dir_separate_args() {
+        let args = vec![
+            "--server".to_owned(),
+            "--temp-dir".to_owned(),
+            "/tmp/rsync-temp".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(
+            config.temp_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/rsync-temp"))
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_temp_dir_equals_format() {
+        let args = vec![
+            "--server".to_owned(),
+            "--temp-dir=/staging/area".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(
+            config.temp_dir.as_deref(),
+            Some(std::path::Path::new("/staging/area"))
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_temp_dir_defaults_to_none() {
+        let args = vec!["--server".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(config.temp_dir.is_none());
     }
 }

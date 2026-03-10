@@ -578,7 +578,7 @@ fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard
             .open(&begin.file_path)?;
         Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
     } else {
-        let (file, guard) = open_tmpfile(&begin.file_path, None)?;
+        let (file, guard) = open_tmpfile(&begin.file_path, begin.temp_dir.as_deref())?;
         Ok((file, guard, true))
     }
 }
@@ -619,6 +619,7 @@ mod tests {
                 file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
+                temp_dir: None,
             })))
             .unwrap();
 
@@ -655,6 +656,7 @@ mod tests {
                 file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
+                temp_dir: None,
             })))
             .unwrap();
 
@@ -695,6 +697,7 @@ mod tests {
                     file_entry: None,
                     is_device_target: false,
                     is_inplace: false,
+                    temp_dir: None,
                 })))
                 .unwrap();
 
@@ -742,6 +745,7 @@ mod tests {
                 file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
+                temp_dir: None,
             })))
             .unwrap();
 
@@ -775,6 +779,7 @@ mod tests {
                 file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
+                temp_dir: None,
             })))
             .unwrap();
 
@@ -817,6 +822,7 @@ mod tests {
                     file_entry: None,
                     is_device_target: false,
                     is_inplace: false,
+                    temp_dir: None,
                 }),
                 data: b"whole dat".to_vec(),
             })
