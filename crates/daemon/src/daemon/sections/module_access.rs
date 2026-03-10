@@ -734,6 +734,14 @@ fn build_server_config(
                 }
             }
 
+            // upstream: loadparm.c — `dont compress` parameter specifies suffixes
+            // that should skip per-file compression during transfer.
+            if let Some(dont_compress) = module.dont_compress.as_deref() {
+                if let Some(list) = parse_daemon_dont_compress(dont_compress) {
+                    cfg.skip_compress = Some(list);
+                }
+            }
+
             Ok(Some(cfg))
         }
         Err(err) => {
@@ -1635,6 +1643,43 @@ pub(crate) fn format_bandwidth_rate(value: NonZeroU64) -> String {
     }
 }
 
+/// Parses the daemon `dont compress` parameter into a `SkipCompressList`.
+///
+/// The daemon format uses space-separated glob-style suffixes (e.g., `"*.gz *.zip *.jpg"`).
+/// Each suffix is stripped of its `*.` prefix and converted to the slash-separated
+/// format that `SkipCompressList::parse` expects. Bare suffixes without `*.` prefix
+/// are also accepted.
+///
+/// Returns `None` if the input is empty or contains no valid suffixes.
+///
+/// # Upstream Reference
+///
+/// - `loadparm.c` - `dont compress` parameter, space-separated globs
+/// - `exclude.c:set_dont_compress_re()` - converts to regex for per-file matching
+fn parse_daemon_dont_compress(value: &str) -> Option<SkipCompressList> {
+    let suffixes: Vec<&str> = value
+        .split_whitespace()
+        .filter_map(|token| {
+            // Strip `*.` prefix used in daemon config notation
+            if let Some(suffix) = token.strip_prefix("*.") {
+                if !suffix.is_empty() {
+                    return Some(suffix);
+                }
+            }
+            // Accept bare suffixes without glob prefix
+            let bare = token.trim_start_matches('.');
+            if !bare.is_empty() { Some(bare) } else { None }
+        })
+        .collect();
+
+    if suffixes.is_empty() {
+        return None;
+    }
+
+    let spec = suffixes.join("/");
+    SkipCompressList::parse(&spec).ok()
+}
+
 #[cfg(test)]
 mod module_access_tests {
     use super::*;
@@ -2292,5 +2337,44 @@ mod module_access_tests {
         let mut config = ServerConfig::default();
         apply_long_form_args(&args, &mut config);
         assert!(config.temp_dir.is_none());
+    }
+
+    // Tests for parse_daemon_dont_compress
+
+    #[test]
+    fn parse_daemon_dont_compress_glob_suffixes() {
+        let list = parse_daemon_dont_compress("*.gz *.zip *.jpg").expect("should parse");
+        assert!(list.matches_path(Path::new("archive.gz")));
+        assert!(list.matches_path(Path::new("bundle.zip")));
+        assert!(list.matches_path(Path::new("photo.jpg")));
+        assert!(!list.matches_path(Path::new("notes.txt")));
+    }
+
+    #[test]
+    fn parse_daemon_dont_compress_bare_suffixes() {
+        let list = parse_daemon_dont_compress("gz zip").expect("should parse");
+        assert!(list.matches_path(Path::new("archive.gz")));
+        assert!(list.matches_path(Path::new("bundle.zip")));
+    }
+
+    #[test]
+    fn parse_daemon_dont_compress_empty_returns_none() {
+        assert!(parse_daemon_dont_compress("").is_none());
+        assert!(parse_daemon_dont_compress("   ").is_none());
+    }
+
+    #[test]
+    fn parse_daemon_dont_compress_case_insensitive() {
+        let list = parse_daemon_dont_compress("*.GZ *.ZIP").expect("should parse");
+        assert!(list.matches_path(Path::new("archive.gz")));
+        assert!(list.matches_path(Path::new("ARCHIVE.GZ")));
+    }
+
+    #[test]
+    fn parse_daemon_dont_compress_mixed_formats() {
+        let list = parse_daemon_dont_compress("*.gz mp3 .bz2").expect("should parse");
+        assert!(list.matches_path(Path::new("file.gz")));
+        assert!(list.matches_path(Path::new("song.mp3")));
+        assert!(list.matches_path(Path::new("archive.bz2")));
     }
 }
