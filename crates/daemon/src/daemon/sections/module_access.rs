@@ -1238,6 +1238,15 @@ fn process_approved_module(
     // upstream: clientserver.c - early_exec() runs after auth completes.
     if xfer_exec_enabled() {
         if let Some(command) = &module.early_exec {
+            let early_path_ctx = PathExpansionContext {
+                module_path: &module.path.display().to_string(),
+                module_name: &module.name,
+                username: auth_user.as_deref().unwrap_or(""),
+                remote_addr: &ctx.peer_ip.to_string(),
+                hostname: ctx.effective_host().unwrap_or(""),
+                pid: std::process::id(),
+            };
+            let expanded_command = expand_exec_command(command, &early_path_ctx);
             let early_ctx = XferExecContext {
                 module_name: &module.name,
                 module_path: &module.path,
@@ -1246,7 +1255,7 @@ fn process_approved_module(
                 user_name: auth_user.as_deref(),
                 request: ctx.request,
             };
-            match run_early_exec(command, &early_ctx) {
+            match run_early_exec(&expanded_command, &early_ctx) {
                 Ok(Ok(())) => {
                     if let Some(log) = ctx.log_sink {
                         let text = format!(
@@ -1377,11 +1386,25 @@ fn process_approved_module(
         request: ctx.request,
     };
 
+    // Build path expansion context for %-variable substitution in exec commands.
+    // upstream: clientserver.c - exec command strings support %P, %m, %u, %a, %h, %p.
+    let addr_str_exec = ctx.peer_ip.to_string();
+    let path_str_exec = module.path.display().to_string();
+    let exec_path_ctx = PathExpansionContext {
+        module_path: &path_str_exec,
+        module_name: &module.name,
+        username: "",
+        remote_addr: &addr_str_exec,
+        hostname: ctx.effective_host().unwrap_or(""),
+        pid: std::process::id(),
+    };
+
     // Run pre-xfer exec if configured
     // upstream: clientserver.c — pre_exec() runs before the transfer starts.
     // Early-input data (if any) is piped to the script's stdin.
     if let Some(command) = module.pre_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
-        match run_pre_xfer_exec(command, &xfer_ctx, ctx.early_input_data.as_deref()) {
+        let expanded_command = expand_exec_command(command, &exec_path_ctx);
+        match run_pre_xfer_exec(&expanded_command, &xfer_ctx, ctx.early_input_data.as_deref()) {
             Ok(Ok(())) => {
                 if let Some(log) = ctx.log_sink {
                     let text = format!(
@@ -1445,7 +1468,8 @@ fn process_approved_module(
     // Run post-xfer exec if configured
     // upstream: clientserver.c — post_exec() runs after the transfer, regardless of outcome
     if let Some(command) = module.post_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
-        run_post_xfer_exec(command, &xfer_ctx, exit_status, ctx.log_sink);
+        let expanded_command = expand_exec_command(command, &exec_path_ctx);
+        run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
     }
 
     Ok(())
