@@ -199,6 +199,8 @@ include!("daemon/sections/xfer_exec.rs");
 
 include!("daemon/sections/symlink_munge.rs");
 
+include!("daemon/sections/proxy_protocol.rs");
+
 include!("daemon/sections/auth_helpers.rs");
 
 include!("daemon/sections/module_parsing.rs");
