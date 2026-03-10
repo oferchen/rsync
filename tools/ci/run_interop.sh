@@ -1170,8 +1170,7 @@ KNOWN_FAILURES=(
   "standalone:info-progress2"
   # large-file-2gb: large file (>2GB) transfer not yet validated end-to-end.
   "standalone:large-file-2gb"
-  # file-vanished: vanished-file handling (exit code 24) not yet implemented.
-  "standalone:file-vanished"
+  # file-vanished: now handled — IOERR_VANISHED + exit code 24
   # copy-unsafe-safe-links: --copy-unsafe-links + --safe-links interaction
   # not yet implemented.
   "standalone:copy-unsafe-safe-links"

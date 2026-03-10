@@ -32,6 +32,11 @@ pub(crate) const TIMEOUT_EXIT_CODE: i32 = 30;
 #[allow(dead_code)]
 pub(crate) const CONNECTION_TIMEOUT_EXIT_CODE: i32 = 35;
 
+/// Exit code returned when source files vanished during transfer.
+///
+/// Maps to upstream rsync's `RERR_VANISHED` (24) and `core::exit_code::ExitCode::Vanished`.
+pub(crate) const VANISHED_EXIT_CODE: i32 = 24;
+
 /// Exit code returned when the `--max-delete` limit stops deletions.
 ///
 /// Maps to upstream rsync's `RERR_DEL_LIMIT` (25) and `core::exit_code::ExitCode::DeleteLimit`.
@@ -440,6 +445,7 @@ mod tests {
             MISSING_OPERANDS_EXIT_CODE,
             TIMEOUT_EXIT_CODE,
             CONNECTION_TIMEOUT_EXIT_CODE,
+            VANISHED_EXIT_CODE,
             MAX_DELETE_EXIT_CODE,
         ];
         let unique: std::collections::HashSet<_> = codes.iter().collect();
