@@ -1,3 +1,15 @@
+/// Returns whether xfer exec commands (early, pre, post) are enabled.
+///
+/// When the `RSYNC_NO_XFER_EXEC` environment variable is set (to any value),
+/// all three exec hooks are suppressed. This allows administrators to disable
+/// exec hooks without modifying the daemon configuration.
+///
+/// upstream: clientserver.c - checks `getenv("RSYNC_NO_XFER_EXEC")` before
+/// running any exec hook.
+fn xfer_exec_enabled() -> bool {
+    std::env::var_os("RSYNC_NO_XFER_EXEC").is_none()
+}
+
 /// Information about the current transfer request, used to populate
 /// environment variables for pre/post-xfer exec commands.
 ///
@@ -42,6 +54,7 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
     );
     cmd.env("RSYNC_USER_NAME", ctx.user_name.unwrap_or_default());
     cmd.env("RSYNC_REQUEST", ctx.request);
+    cmd.env("RSYNC_PID", std::process::id().to_string());
 
     cmd
 }
@@ -246,6 +259,14 @@ mod xfer_exec_tests {
             find_env("RSYNC_REQUEST").as_deref(),
             Some("testmod/subdir")
         );
+
+        let pid_str = find_env("RSYNC_PID");
+        assert!(pid_str.is_some(), "RSYNC_PID should be set");
+        let pid: u32 = pid_str
+            .unwrap()
+            .parse()
+            .expect("RSYNC_PID should be a valid u32");
+        assert_eq!(pid, std::process::id());
     }
 
     #[test]
@@ -445,5 +466,28 @@ mod xfer_exec_tests {
         assert!(result.is_ok());
         let captured = std::fs::read(&out_path).expect("output file should exist");
         assert_eq!(captured, data);
+    }
+
+    #[test]
+    fn xfer_exec_enabled_returns_true_when_env_unset() {
+        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env::EnvGuard::remove("RSYNC_NO_XFER_EXEC");
+        assert!(xfer_exec_enabled());
+    }
+
+    #[test]
+    fn xfer_exec_enabled_returns_false_when_env_set() {
+        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard =
+            crate::test_env::EnvGuard::set("RSYNC_NO_XFER_EXEC", std::ffi::OsStr::new("1"));
+        assert!(!xfer_exec_enabled());
+    }
+
+    #[test]
+    fn xfer_exec_enabled_returns_false_for_empty_value() {
+        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard =
+            crate::test_env::EnvGuard::set("RSYNC_NO_XFER_EXEC", std::ffi::OsStr::new(""));
+        assert!(!xfer_exec_enabled());
     }
 }

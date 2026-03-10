@@ -56,10 +56,10 @@ fn respond_with_module_list(
 }
 
 /// Result of a module authentication attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum AuthenticationStatus {
-    /// Authentication was successful.
-    Granted,
+    /// Authentication was successful, carrying the authenticated username.
+    Granted(String),
     /// Authentication was denied (bad credentials or missing response).
     Denied,
 }
@@ -135,7 +135,7 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied);
     }
 
-    Ok(AuthenticationStatus::Granted)
+    Ok(AuthenticationStatus::Granted(username.to_owned()))
 }
 
 /// Generates a unique authentication challenge string.
@@ -528,16 +528,17 @@ fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> i
 
 /// Handles module authentication flow.
 ///
-/// Returns `true` if authentication succeeded (or was not required),
-/// `false` if authentication failed or was denied.
+/// Returns `Some(username)` if authentication succeeded, where the username is
+/// the authenticated user (or `None` inside `Some` when auth was not required).
+/// Returns `Ok(None)` if authentication failed or was denied.
 fn handle_authentication(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleDefinition,
     protocol_version: Option<ProtocolVersion>,
-) -> io::Result<bool> {
+) -> io::Result<Option<Option<String>>> {
     if !module.requires_authentication() {
         send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
-        return Ok(true);
+        return Ok(Some(None));
     }
 
     match perform_module_authentication(
@@ -552,14 +553,14 @@ fn handle_authentication(
             if let Some(log) = ctx.log_sink {
                 log_module_auth_failure(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
             }
-            Ok(false)
+            Ok(None)
         }
-        AuthenticationStatus::Granted => {
+        AuthenticationStatus::Granted(username) => {
             if let Some(log) = ctx.log_sink {
                 log_module_auth_success(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
             }
             send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
-            Ok(true)
+            Ok(Some(Some(username)))
         }
     }
 }
@@ -1194,55 +1195,6 @@ fn process_approved_module(
         log_module_request(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
     }
 
-    // Run early exec if configured
-    // upstream: clientserver.c - early_exec() runs early in the connection,
-    // before authentication and argument exchange.
-    if let Some(command) = &module.early_exec {
-        let early_ctx = XferExecContext {
-            module_name: &module.name,
-            module_path: &module.path,
-            host_addr: ctx.peer_ip,
-            host_name: ctx.effective_host(),
-            user_name: None,
-            request: ctx.request,
-        };
-        match run_early_exec(command, &early_ctx) {
-            Ok(Ok(())) => {
-                if let Some(log) = ctx.log_sink {
-                    let text = format!(
-                        "early exec succeeded for module '{}'",
-                        ctx.request
-                    );
-                    let message = rsync_info!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-            }
-            Ok(Err(error_msg)) => {
-                let payload = format!("@ERROR: {error_msg}");
-                send_error_and_exit(
-                    ctx.reader.get_mut(),
-                    ctx.limiter,
-                    ctx.messages,
-                    &payload,
-                )?;
-                return Ok(());
-            }
-            Err(err) => {
-                let payload = format!(
-                    "@ERROR: failed to run early exec command for module '{}': {err}",
-                    ctx.request
-                );
-                send_error_and_exit(
-                    ctx.reader.get_mut(),
-                    ctx.limiter,
-                    ctx.messages,
-                    &payload,
-                )?;
-                return Ok(());
-            }
-        }
-    }
-
     // Check for refused options
     if let Some(refused) = refused_option(module, options) {
         return handle_refused_option(ctx, refused);
@@ -1276,8 +1228,60 @@ fn process_approved_module(
     apply_module_timeout(ctx.reader.get_mut(), module)?;
 
     // Handle authentication
-    if !handle_authentication(ctx, module, negotiated_protocol)? {
-        return Ok(());
+    let auth_user = match handle_authentication(ctx, module, negotiated_protocol)? {
+        Some(user) => user,
+        None => return Ok(()),
+    };
+
+    // Run early exec after authentication so the authenticated username
+    // is available in the RSYNC_USER_NAME environment variable.
+    // upstream: clientserver.c - early_exec() runs after auth completes.
+    if xfer_exec_enabled() {
+        if let Some(command) = &module.early_exec {
+            let early_ctx = XferExecContext {
+                module_name: &module.name,
+                module_path: &module.path,
+                host_addr: ctx.peer_ip,
+                host_name: ctx.effective_host(),
+                user_name: auth_user.as_deref(),
+                request: ctx.request,
+            };
+            match run_early_exec(command, &early_ctx) {
+                Ok(Ok(())) => {
+                    if let Some(log) = ctx.log_sink {
+                        let text = format!(
+                            "early exec succeeded for module '{}'",
+                            ctx.request
+                        );
+                        let message = rsync_info!(text).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
+                }
+                Ok(Err(error_msg)) => {
+                    let payload = format!("@ERROR: {error_msg}");
+                    send_error_and_exit(
+                        ctx.reader.get_mut(),
+                        ctx.limiter,
+                        ctx.messages,
+                        &payload,
+                    )?;
+                    return Ok(());
+                }
+                Err(err) => {
+                    let payload = format!(
+                        "@ERROR: failed to run early exec command for module '{}': {err}",
+                        ctx.request
+                    );
+                    send_error_and_exit(
+                        ctx.reader.get_mut(),
+                        ctx.limiter,
+                        ctx.messages,
+                        &payload,
+                    )?;
+                    return Ok(());
+                }
+            }
+        }
     }
 
     // Read client arguments
@@ -1369,14 +1373,14 @@ fn process_approved_module(
         module_path: &module.path,
         host_addr: ctx.peer_ip,
         host_name: ctx.effective_host(),
-        user_name: None,
+        user_name: auth_user.as_deref(),
         request: ctx.request,
     };
 
     // Run pre-xfer exec if configured
     // upstream: clientserver.c — pre_exec() runs before the transfer starts.
     // Early-input data (if any) is piped to the script's stdin.
-    if let Some(command) = &module.pre_xfer_exec {
+    if let Some(command) = module.pre_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
         match run_pre_xfer_exec(command, &xfer_ctx, ctx.early_input_data.as_deref()) {
             Ok(Ok(())) => {
                 if let Some(log) = ctx.log_sink {
@@ -1440,7 +1444,7 @@ fn process_approved_module(
 
     // Run post-xfer exec if configured
     // upstream: clientserver.c — post_exec() runs after the transfer, regardless of outcome
-    if let Some(command) = &module.post_xfer_exec {
+    if let Some(command) = module.post_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
         run_post_xfer_exec(command, &xfer_ctx, exit_status, ctx.log_sink);
     }
 
