@@ -80,6 +80,11 @@ pub struct BeginMessage {
     /// (created if absent) and truncated to target size after delta
     /// application. Preserves the destination inode.
     pub is_inplace: bool,
+    /// Temporary directory for staging received files before final placement.
+    ///
+    /// When set, temp files are created here instead of alongside the destination.
+    /// Mirrors upstream `--temp-dir` / daemon `temp dir` module parameter.
+    pub temp_dir: Option<PathBuf>,
 }
 
 /// Computed checksum digest returned by the disk thread.

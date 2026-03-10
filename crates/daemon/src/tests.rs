@@ -230,6 +230,7 @@ include!("tests/chunks/runtime_options_loads_refuse_options_from_config.rs");
 include!("tests/chunks/runtime_options_loads_reverse_lookup_from_config.rs");
 include!("tests/chunks/runtime_options_loads_secrets_from_branded_environment_variable.rs");
 include!("tests/chunks/runtime_options_loads_secrets_from_legacy_environment_variable.rs");
+include!("tests/chunks/runtime_options_loads_temp_dir_from_config.rs");
 include!("tests/chunks/runtime_options_loads_timeout_from_config.rs");
 include!("tests/chunks/runtime_options_loads_unlimited_global_bwlimit_from_config.rs");
 include!("tests/chunks/runtime_options_loads_unlimited_max_connections_from_config.rs");

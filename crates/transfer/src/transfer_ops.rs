@@ -33,7 +33,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::num::NonZeroU8;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use engine::signature::FileSignature;
 use protocol::ProtocolVersion;
@@ -79,6 +79,8 @@ pub struct RequestConfig<'a> {
     pub use_sparse: bool,
     /// Whether to fsync after write.
     pub do_fsync: bool,
+    /// Temporary directory for staging received files before final placement.
+    pub temp_dir: Option<&'a std::path::Path>,
     /// Whether to write data directly to device files (`--write-devices`).
     ///
     /// When true, device file targets are opened with `O_WRONLY` and receive
@@ -281,7 +283,7 @@ pub fn process_file_response<R: Read>(
             false,
         )
     } else {
-        let (f, guard) = open_tmpfile(&file_path, None)?;
+        let (f, guard) = open_tmpfile(&file_path, ctx.config.temp_dir)?;
         (f, guard, true)
     };
 
@@ -574,6 +576,7 @@ pub fn process_file_response_streaming<R: Read>(
         is_inplace: ctx.config.inplace
             || (ctx.config.inplace_partial
                 && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir)),
+        temp_dir: ctx.config.temp_dir.map(Path::to_path_buf),
     });
 
     // Open basis file for block references
@@ -841,6 +844,7 @@ mod tests {
             checksum_seed: 0,
             use_sparse: false,
             do_fsync: false,
+            temp_dir: None,
             write_devices: false,
             inplace: false,
             inplace_partial: false,

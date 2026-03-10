@@ -2059,7 +2059,7 @@ impl ReceiverContext {
 
             // Apply delta to reconstruct file
             // upstream: receiver.c open_tmpfile() → do_mkstemp() with ".filename.XXXXXX"
-            let (file, mut temp_guard) = open_tmpfile(&file_path, None)?;
+            let (file, mut temp_guard) = open_tmpfile(&file_path, self.config.temp_dir.as_deref())?;
             let target_size = file_entry.size();
             let writer_capacity = adaptive_writer_capacity(target_size);
             let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
@@ -2702,7 +2702,7 @@ impl ReceiverContext {
             checksum_seed: self.checksum_seed,
             use_sparse: self.config.flags.sparse,
             do_fsync: self.config.write.fsync,
-
+            temp_dir: self.config.temp_dir.as_deref(),
             write_devices: self.config.write.write_devices,
             inplace: self.config.write.inplace,
             inplace_partial: self.config.write.inplace_partial,
