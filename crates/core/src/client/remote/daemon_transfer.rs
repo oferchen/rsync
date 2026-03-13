@@ -803,17 +803,33 @@ fn build_full_daemon_args(
         args.push("--remove-source-files".to_owned());
     }
 
-    // --files-from — upstream: options.c:2975-2977
-    match config.files_from() {
-        super::super::config::FilesFromSource::None => {}
-        super::super::config::FilesFromSource::Stdin => {
-            args.push("--files-from=-".to_owned());
-        }
-        super::super::config::FilesFromSource::LocalFile(path) => {
-            args.push(format!("--files-from={}", path.display()));
-        }
-        super::super::config::FilesFromSource::RemoteFile(path) => {
-            args.push(format!("--files-from={path}"));
+    // --files-from — upstream: options.c:2944-2956
+    // Condition: files_from && (!am_sender || filesfrom_host)
+    // When the client is the sender (push, !is_sender), only send --files-from
+    // for remote files (the daemon reads them directly). Local files and stdin
+    // are read by the client and the daemon doesn't need to know about them.
+    // When the client is the receiver (pull, is_sender), forward files-from
+    // data over the socket for the daemon's sender to consume.
+    {
+        use super::super::config::FilesFromSource;
+        let client_is_sender = !is_sender;
+        match config.files_from() {
+            FilesFromSource::None => {}
+            FilesFromSource::Stdin | FilesFromSource::LocalFile(_) => {
+                if !client_is_sender {
+                    // Pull: daemon is sender and needs the file list from us.
+                    args.push("--files-from=-".to_owned());
+                    args.push("--from0".to_owned());
+                }
+                // Push: client reads locally, no arg needed for daemon receiver.
+            }
+            FilesFromSource::RemoteFile(path) => {
+                // Remote files are always sent - the daemon opens them directly.
+                args.push(format!("--files-from={path}"));
+                if config.from0() {
+                    args.push("--from0".to_owned());
+                }
+            }
         }
     }
 
@@ -1839,6 +1855,30 @@ mod tests {
 
             assert!(server_config.reference_directories.is_empty());
         }
+
+        #[test]
+        fn generator_config_does_not_set_files_from_for_push() {
+            // When pushing to daemon, the CLI has already expanded the files-from
+            // entries into transfer operands. The generator should NOT have
+            // files_from_path set, because it gets the paths from args directly.
+            let config = ClientConfig::builder()
+                .files_from(crate::client::config::FilesFromSource::LocalFile(
+                    std::path::PathBuf::from("/tmp/list.txt"),
+                ))
+                .build();
+
+            // local_paths already contain the expanded file entries
+            let local_paths = vec!["src/file1.txt".to_owned(), "src/file2.txt".to_owned()];
+            let server_config =
+                build_server_config_for_generator(&config, &local_paths, Vec::new()).unwrap();
+
+            // files_from_path should be None - the paths are in args
+            assert!(
+                server_config.file_selection.files_from_path.is_none(),
+                "generator in daemon push should not have files_from_path"
+            );
+            assert_eq!(server_config.args.len(), 2);
+        }
     }
 
     mod dry_run_remote_close_tests {
@@ -1891,6 +1931,146 @@ mod tests {
         fn other_error_is_not_remote_close() {
             let err = io::Error::other("some other error");
             assert!(!is_dry_run_remote_close(&err));
+        }
+    }
+
+    mod files_from_daemon_args_tests {
+        use super::*;
+        use crate::client::config::FilesFromSource;
+        use std::path::PathBuf;
+
+        fn test_daemon_request() -> DaemonTransferRequest {
+            DaemonTransferRequest {
+                address: DaemonAddress::new("127.0.0.1".to_owned(), 873).unwrap(),
+                module: "test".to_owned(),
+                path: String::new(),
+                username: None,
+            }
+        }
+
+        #[test]
+        fn push_with_local_file_omits_files_from_arg() {
+            // upstream: options.c:2944 - when client is sender and files_from
+            // is local, the arg is NOT sent to the daemon.
+            let config = ClientConfig::builder()
+                .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+            // is_sender=false means daemon is receiver (push)
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                !args.iter().any(|a| a.starts_with("--files-from")),
+                "push should not send --files-from to daemon: {args:?}"
+            );
+            assert!(
+                !args.iter().any(|a| a == "--from0"),
+                "push should not send --from0 to daemon: {args:?}"
+            );
+        }
+
+        #[test]
+        fn push_with_stdin_omits_files_from_arg() {
+            let config = ClientConfig::builder()
+                .files_from(FilesFromSource::Stdin)
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                !args.iter().any(|a| a.starts_with("--files-from")),
+                "push with stdin should not send --files-from to daemon: {args:?}"
+            );
+        }
+
+        #[test]
+        fn pull_with_local_file_sends_files_from_stdin() {
+            // upstream: options.c:2944 - when client is receiver (pull), local
+            // files are forwarded as --files-from=- with --from0.
+            let config = ClientConfig::builder()
+                .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+            // is_sender=true means daemon is sender (pull)
+            let args = build_full_daemon_args(&config, &request, protocol, true);
+
+            assert!(
+                args.iter().any(|a| a == "--files-from=-"),
+                "pull should send --files-from=- to daemon: {args:?}"
+            );
+            assert!(
+                args.iter().any(|a| a == "--from0"),
+                "pull should send --from0 to daemon: {args:?}"
+            );
+        }
+
+        #[test]
+        fn pull_with_stdin_sends_files_from_stdin() {
+            let config = ClientConfig::builder()
+                .files_from(FilesFromSource::Stdin)
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+            let args = build_full_daemon_args(&config, &request, protocol, true);
+
+            assert!(
+                args.iter().any(|a| a == "--files-from=-"),
+                "pull with stdin should send --files-from=- to daemon: {args:?}"
+            );
+        }
+
+        #[test]
+        fn push_with_remote_file_sends_files_from_path() {
+            // Remote files are always sent - the daemon opens them directly.
+            let config = ClientConfig::builder()
+                .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                args.iter().any(|a| a == "--files-from=/remote/list.txt"),
+                "should send remote --files-from path: {args:?}"
+            );
+        }
+
+        #[test]
+        fn pull_with_remote_file_sends_files_from_path() {
+            let config = ClientConfig::builder()
+                .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+            let args = build_full_daemon_args(&config, &request, protocol, true);
+
+            assert!(
+                args.iter().any(|a| a == "--files-from=/remote/list.txt"),
+                "should send remote --files-from path: {args:?}"
+            );
+        }
+
+        #[test]
+        fn no_files_from_omits_arg() {
+            let config = ClientConfig::default();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+            let args = build_full_daemon_args(&config, &request, protocol, false);
+
+            assert!(
+                !args.iter().any(|a| a.starts_with("--files-from")),
+                "should not include --files-from: {args:?}"
+            );
         }
     }
 }
