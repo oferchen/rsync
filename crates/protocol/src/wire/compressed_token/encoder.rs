@@ -9,8 +9,8 @@ use compress::zlib::CompressionLevel;
 use flate2::{Compress, Compression, FlushCompress};
 
 use super::{
-    write_deflated_data_pieces, CHUNK_SIZE, END_FLAG, TOKENRUN_LONG, TOKENRUN_REL, TOKEN_LONG,
-    TOKEN_REL,
+    CHUNK_SIZE, END_FLAG, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
+    write_deflated_data_pieces,
 };
 
 /// Encoder state for sending compressed tokens.

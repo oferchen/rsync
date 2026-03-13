@@ -8,8 +8,8 @@ use std::io::{self, Read};
 use flate2::{Decompress, FlushDecompress};
 
 use super::{
-    read_deflated_data_length, CompressedToken, CHUNK_SIZE, DEFLATED_DATA, END_FLAG,
-    MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL,
+    CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL,
+    read_deflated_data_length,
 };
 
 /// Decoder state for receiving compressed tokens.
