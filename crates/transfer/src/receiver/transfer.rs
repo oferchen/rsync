@@ -49,7 +49,7 @@ impl ReceiverContext {
     /// 1. Receive file list
     /// 2. For each file: generate signature, receive delta, apply
     /// 3. Set final metadata
-    pub fn run<R: Read, W: Write + ?Sized>(
+    pub fn run<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
         writer: &mut W,
@@ -73,7 +73,7 @@ impl ReceiverContext {
     ///
     /// This method is kept for compatibility and testing purposes.
     /// For production use, prefer the default `run()` which uses pipelining.
-    pub fn run_sync<R: Read, W: Write + ?Sized>(
+    pub fn run_sync<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
         writer: &mut W,
@@ -448,7 +448,7 @@ impl ReceiverContext {
     }
 
     /// Runs the pipelined receiver transfer loop.
-    pub fn run_pipelined<R: Read, W: Write + ?Sized>(
+    pub fn run_pipelined<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
         writer: &mut W,
@@ -481,6 +481,7 @@ impl ReceiverContext {
             ..Default::default()
         };
         let files_to_transfer = self.build_files_to_transfer(
+            writer,
             &setup.dest_dir,
             &setup.metadata_opts,
             None,
@@ -569,7 +570,7 @@ impl ReceiverContext {
     }
 
     /// Runs the receiver with incremental directory creation and failed-dir tracking.
-    pub fn run_pipelined_incremental<R: Read, W: Write + ?Sized>(
+    pub fn run_pipelined_incremental<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
         writer: &mut W,
@@ -596,13 +597,20 @@ impl ReceiverContext {
 
         for file_entry in &self.file_list {
             if file_entry.is_dir() {
-                if self.create_directory_incremental(
+                let created = self.create_directory_incremental(
                     &setup.dest_dir,
                     file_entry,
                     &setup.metadata_opts,
                     &mut failed_dirs,
-                )? {
+                )?;
+                if created {
                     stats.directories_created += 1;
+                    // upstream: generator.c:1432 - itemize new directory
+                    let iflags = crate::generator::ItemFlags::from_raw(
+                        crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
+                            | crate::generator::ItemFlags::ITEM_IS_NEW,
+                    );
+                    let _ = self.emit_itemize(writer, &iflags, file_entry);
                 } else {
                     stats.directories_failed += 1;
                 }
@@ -613,6 +621,7 @@ impl ReceiverContext {
         self.create_symlinks(&setup.dest_dir);
 
         let files_to_transfer = self.build_files_to_transfer(
+            writer,
             &setup.dest_dir,
             &setup.metadata_opts,
             Some(&failed_dirs),
@@ -753,7 +762,10 @@ impl ReceiverContext {
     ///
     /// Returns (files_transferred, bytes, redo_indices).
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn run_pipeline_loop_decoupled<R: Read, W: Write + ?Sized>(
+    pub(super) fn run_pipeline_loop_decoupled<
+        R: Read,
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
@@ -793,7 +805,9 @@ impl ReceiverContext {
 
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
-        let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry)> =
+        // (file_idx, file_path, file_entry, is_new_file) - is_new_file tracks whether
+        // the destination file existed for itemize direction indicator
+        let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry, bool)> =
             VecDeque::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
@@ -862,6 +876,8 @@ impl ReceiverContext {
                             (basis_result.signature, basis_result.basis_path)
                         };
 
+                        let is_new_file = basis.is_none();
+
                         let pending = send_file_request(
                             writer,
                             &mut ndx_write_codec,
@@ -874,7 +890,12 @@ impl ReceiverContext {
                         )?;
 
                         pipeline.push(pending);
-                        pending_files_info.push_back((file_idx, file_path, file_entry));
+                        pending_files_info.push_back((
+                            file_idx,
+                            file_path,
+                            file_entry,
+                            is_new_file,
+                        ));
                     } else {
                         break;
                     }
@@ -886,7 +907,7 @@ impl ReceiverContext {
 
                 // Process one response
                 let pending = pipeline.pop().expect("pipeline not empty");
-                let (file_idx, file_path, file_entry) =
+                let (file_idx, file_path, file_entry, is_new_file) =
                     pending_files_info.pop_front().expect("pipeline not empty");
 
                 let response_ctx = ResponseContext {
@@ -920,6 +941,19 @@ impl ReceiverContext {
                 bytes_received += result.total_bytes;
                 files_transferred += 1;
 
+                // upstream: receiver.c:950 - log_item() after successful file transfer
+                {
+                    use crate::generator::ItemFlags;
+                    let raw = ItemFlags::ITEM_TRANSFER
+                        | if is_new_file {
+                            ItemFlags::ITEM_IS_NEW
+                        } else {
+                            0
+                        };
+                    let iflags = ItemFlags::from_raw(raw);
+                    let _ = self.emit_itemize(writer, &iflags, file_entry);
+                }
+
                 if let Some(cb) = progress.as_mut() {
                     let event = crate::TransferProgressEvent {
                         path: file_entry.path(),
@@ -950,8 +984,12 @@ impl ReceiverContext {
 
     /// Builds the list of files that need transfer, applying quick-check to skip
     /// unchanged files and respecting size bounds and failed directory tracking.
-    pub(super) fn build_files_to_transfer<'a>(
+    ///
+    /// For files that are up-to-date (quick-check match), emits a metadata-only
+    /// itemize line via MSG_INFO when the daemon has itemize output enabled.
+    pub(super) fn build_files_to_transfer<'a, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &'a self,
+        writer: &mut W,
         dest_dir: &Path,
         metadata_opts: &MetadataOptions,
         failed_dirs: Option<&FailedDirectories>,
@@ -1048,6 +1086,10 @@ impl ReceiverContext {
                     size_only,
                     always_checksum,
                 ) {
+                    // upstream: generator.c:2260 - itemize() for up-to-date files
+                    // No ITEM_TRANSFER flag - file content unchanged, metadata only.
+                    let iflags = crate::generator::ItemFlags::from_raw(0);
+                    let _ = self.emit_itemize(writer, &iflags, entry);
                     if let Err(e) =
                         apply_metadata_with_cached_stat(&file_path, entry, metadata_opts, dest_meta)
                     {

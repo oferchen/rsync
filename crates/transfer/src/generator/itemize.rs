@@ -27,7 +27,7 @@ use super::item_flags::ItemFlags;
 /// # Upstream Reference
 ///
 /// - `log.c:695-746` - itemize string construction in `log_formatted()`
-pub(super) fn format_iflags(iflags: &ItemFlags, entry: &FileEntry, is_sender: bool) -> String {
+pub(crate) fn format_iflags(iflags: &ItemFlags, entry: &FileEntry, is_sender: bool) -> String {
     let raw = iflags.raw();
 
     // upstream: log.c:696-698 - deleted items
@@ -161,7 +161,7 @@ pub(super) fn format_iflags(iflags: &ItemFlags, entry: &FileEntry, is_sender: bo
 /// - `options.c:2336-2338` - `stdout_format = "%i %n%L"` for `-i`
 /// - `log.c:627-636` - `%n` expansion (filename with trailing `/` for dirs)
 /// - `log.c:637-653` - `%L` expansion (` -> target` for symlinks)
-pub(super) fn format_itemize_line(
+pub(crate) fn format_itemize_line(
     iflags: &ItemFlags,
     entry: &FileEntry,
     is_sender: bool,
