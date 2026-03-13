@@ -11,7 +11,6 @@ pub use detect::SparseDetector;
 pub use reader::SparseReader;
 pub use writer::SparseWriter;
 
-pub(crate) use hole_punch::punch_hole;
 pub(crate) use state::{SparseWriteState, write_sparse_chunk};
 
 use detect::{leading_zero_run, trailing_zero_run};
