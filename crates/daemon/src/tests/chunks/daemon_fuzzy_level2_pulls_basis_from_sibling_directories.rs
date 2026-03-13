@@ -157,19 +157,7 @@ fn fuzzy2_backdate_file(path: &Path) {
     let one_day_ago = SystemTime::now()
         .checked_sub(Duration::from_secs(86_400))
         .expect("time subtraction");
-    let epoch_secs = one_day_ago
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("duration since epoch")
-        .as_secs();
 
-    let ts = libc::timespec {
-        tv_sec: epoch_secs as libc::time_t,
-        tv_nsec: 0,
-    };
-    let times = [ts, ts];
-    let c_path =
-        std::ffi::CString::new(path.to_str().expect("path to str")).expect("CString::new");
-    unsafe {
-        libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0);
-    }
+    let ft = filetime::FileTime::from_system_time(one_day_ago);
+    filetime::set_file_mtime(path, ft).expect("set mtime");
 }
