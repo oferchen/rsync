@@ -31,11 +31,13 @@
 //!
 //! - Upstream rsync 3.4.1 `xattrs.c`
 
+mod cache;
 mod entry;
 mod list;
 mod prefix;
 mod wire;
 
+pub use cache::XattrCache;
 pub use entry::{XattrEntry, XattrState};
 pub use list::XattrList;
 pub use prefix::{local_to_wire, wire_to_local};
