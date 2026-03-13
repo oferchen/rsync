@@ -162,6 +162,8 @@ impl GeneratorContext {
 
             // Check if file should be transferred
             if !iflags.needs_transfer() {
+                // upstream: sender.c:287 — maybe_log_item() for non-transfer items
+                self.maybe_emit_itemize(writer, &iflags, ndx)?;
                 continue;
             }
 
@@ -292,6 +294,9 @@ impl GeneratorContext {
                 bytes_sent += result.total_bytes;
             }
             files_transferred += 1;
+
+            // upstream: sender.c:430 — log_item(log_code, file, iflags, NULL)
+            self.maybe_emit_itemize(writer, &iflags, ndx)?;
 
             if let Some(cb) = progress.as_mut() {
                 let event = super::super::TransferProgressEvent {
