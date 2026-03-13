@@ -188,6 +188,8 @@ include!("tests/chunks/run_daemon_writes_and_removes_pid_file.rs");
 include!("tests/chunks/run_daemon_pid_file_contains_correct_pid.rs");
 // Daemon dry-run push end-to-end test
 include!("tests/chunks/daemon_dry_run_push.rs");
+// Daemon copy-links push end-to-end test
+include!("tests/chunks/daemon_copy_links_push_resolves_symlinks.rs");
 // Daemon fuzzy level 2 end-to-end test
 include!("tests/chunks/daemon_fuzzy_level2_pulls_basis_from_sibling_directories.rs");
 // Daemon safe-links symlink filtering test
