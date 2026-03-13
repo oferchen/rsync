@@ -1174,13 +1174,9 @@ KNOWN_FAILURES=(
   # copy-unsafe-safe-links: --copy-unsafe-links + --safe-links interaction
   # not yet implemented.
   "standalone:copy-unsafe-safe-links"
-  # pre-post-xfer-exec: pre-xfer exec / post-xfer exec daemon hooks not
-  # yet implemented.
-  "standalone:pre-post-xfer-exec"
-  # read-only-module: read-only module rejection not yet validated.
-  "standalone:read-only-module"
-  # wrong-password-auth: auth rejection with wrong password not yet tested.
-  "standalone:wrong-password-auth"
+  # pre-post-xfer-exec: validated via #881.
+  # read-only-module: validated via #882.
+  # wrong-password-auth: validated via #883.
   # iconv: --iconv charset conversion not yet implemented.
   "standalone:iconv"
 )
