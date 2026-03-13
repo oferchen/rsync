@@ -762,6 +762,18 @@ fn build_full_daemon_args(
         if config.fsync() {
             args.push("--fsync".to_owned());
         }
+
+        // --compare-dest=DIR, --copy-dest=DIR, --link-dest=DIR
+        // upstream: options.c:2915-2923 - sent only when client is sender (push).
+        // In pull mode the local receiver handles reference dirs locally.
+        for ref_dir in config.reference_directories() {
+            let flag = match ref_dir.kind() {
+                ReferenceDirectoryKind::Compare => "--compare-dest=",
+                ReferenceDirectoryKind::Copy => "--copy-dest=",
+                ReferenceDirectoryKind::Link => "--link-dest=",
+            };
+            args.push(format!("{flag}{}", ref_dir.path().display()));
+        }
     }
 
     // --append / --inplace — upstream: options.c:2933-2942
@@ -784,17 +796,6 @@ fn build_full_daemon_args(
         if let Some(suffix) = config.backup_suffix() {
             args.push(format!("--suffix={}", suffix.to_string_lossy()));
         }
-    }
-
-    // --compare-dest=DIR, --copy-dest=DIR, --link-dest=DIR
-    // upstream: options.c:2915-2923 - sent as --key=value format
-    for ref_dir in config.reference_directories() {
-        let flag = match ref_dir.kind() {
-            ReferenceDirectoryKind::Compare => "--compare-dest=",
-            ReferenceDirectoryKind::Copy => "--copy-dest=",
-            ReferenceDirectoryKind::Link => "--link-dest=",
-        };
-        args.push(format!("{flag}{}", ref_dir.path().display()));
     }
 
     // --remove-source-files — upstream: options.c:2964-2965
@@ -1732,6 +1733,27 @@ mod tests {
                     || a.starts_with("--copy-dest=")
                     || a.starts_with("--link-dest=")),
                 "should not emit reference dir args when empty: {args:?}"
+            );
+        }
+
+        #[test]
+        fn build_full_args_omits_reference_dirs_in_pull_mode() {
+            // upstream: options.c:2915-2923 - reference dirs are inside if(am_sender).
+            // In pull mode (is_sender=true means daemon is sender), the local
+            // receiver handles reference dirs locally - they must not be sent.
+            let config = ClientConfig::builder()
+                .compare_destination("/tmp/compare")
+                .link_destination("/prev")
+                .build();
+            let request = test_daemon_request();
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let args = build_full_daemon_args(&config, &request, protocol, true);
+
+            assert!(
+                !args.iter().any(|a| a.starts_with("--compare-dest=")
+                    || a.starts_with("--copy-dest=")
+                    || a.starts_with("--link-dest=")),
+                "pull mode should not send reference dir args to daemon: {args:?}"
             );
         }
     }
