@@ -33,7 +33,7 @@ mod delta;
 mod file_list;
 mod filters;
 mod item_flags;
-mod itemize;
+pub(crate) mod itemize;
 mod protocol_io;
 #[cfg(test)]
 mod tests;

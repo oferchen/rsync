@@ -427,6 +427,45 @@ impl<W: Write> Write for MultiplexWriter<W> {
     }
 }
 
+/// Trait for writers that can send MSG_INFO multiplexed messages.
+///
+/// This abstraction allows the receiver to emit itemize output as MSG_INFO
+/// frames without being tightly coupled to [`ServerWriter`]. Writers that
+/// support multiplexed output (like [`ServerWriter`] and [`CountingWriter`])
+/// implement this trait to forward MSG_INFO payloads through the multiplex
+/// layer; writers that do not support it use the default no-op.
+///
+/// # Upstream Reference
+///
+/// - `log.c:330-340` - `rwrite()` sends FINFO/FCLIENT as `MSG_INFO` when `am_server`
+pub trait MsgInfoSender {
+    /// Sends a MSG_INFO frame through the multiplexed output stream.
+    ///
+    /// The default implementation is a no-op, suitable for writers that do
+    /// not support multiplexed protocol messages (e.g., plain `Vec<u8>` in tests).
+    fn send_msg_info(&mut self, _data: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<W: Write> MsgInfoSender for ServerWriter<W> {
+    fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+        // Plain mode cannot send MSG_INFO - silently ignore (matches upstream
+        // behavior where am_server gates message emission).
+        if self.is_multiplexed() {
+            self.send_message(MessageCode::Info, data)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
+    fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+        (**self).send_msg_info(data)
+    }
+}
+
 /// A writer wrapper that counts the total bytes written.
 ///
 /// This is used to track bytes sent during transfers for statistics.
@@ -453,6 +492,12 @@ impl<W> CountingWriter<W> {
     /// Consumes the wrapper, returning the inner writer.
     pub fn into_inner(self) -> W {
         self.inner
+    }
+}
+
+impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
+    fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+        self.inner.send_msg_info(data)
     }
 }
 
@@ -963,5 +1008,52 @@ mod tests {
         let result = writer.send_redo(42);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    // Tests for MsgInfoSender trait
+
+    #[test]
+    fn msg_info_sender_plain_mode_noop() {
+        let mut buf = Vec::new();
+        let mut writer = ServerWriter::new_plain(&mut buf);
+        // Plain mode silently ignores MSG_INFO
+        writer.send_msg_info(b"test info").unwrap();
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn msg_info_sender_multiplex_sends_frame() {
+        let mut buf = Vec::new();
+        let mut writer = ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        writer.send_msg_info(b"test info").unwrap();
+        // Verify that data was written (MSG_INFO frame = 4-byte header + payload)
+        assert!(!buf.is_empty());
+        // Header: code=Info(4), length=9
+        assert_eq!(buf.len(), 4 + 9); // 4-byte header + "test info"
+    }
+
+    #[test]
+    fn counting_writer_delegates_msg_info() {
+        let mut buf = Vec::new();
+        let mut server = ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        let mut counting = CountingWriter::new(&mut server);
+        counting.send_msg_info(b"hello").unwrap();
+        // MSG_INFO goes through the inner ServerWriter to the multiplex layer
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn mut_ref_delegates_msg_info() {
+        let mut buf = Vec::new();
+        let mut server = ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        let writer: &mut ServerWriter<&mut Vec<u8>> = &mut server;
+        writer.send_msg_info(b"ref test").unwrap();
+        assert!(!buf.is_empty());
     }
 }
