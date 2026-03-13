@@ -56,4 +56,5 @@ checksums = { path = "../checksums", default-features = false }
 
 [dev-dependencies]
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
+filetime = "0.2"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
