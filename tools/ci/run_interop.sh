@@ -414,12 +414,12 @@ write_rust_daemon_conf() {
 pid file = ${pid_file}
 port = ${port}
 use chroot = false
-numeric ids = yes
 
 [interop]
 path = ${dest}
 comment = ${comment}
 read only = false
+numeric ids = yes
 CONF
 }
 
@@ -505,11 +505,13 @@ start_oc_daemon() {
   local pid_file=$4
   local port=$5
 
+  stop_oc_daemon
+
   oc_pid_file_current="$pid_file"
 
   RUST_BACKTRACE=1 \
   OC_RSYNC_DAEMON_FALLBACK=0 \
-    "$oc_binary" --daemon --config "$config" --port "$port" --log-file "$log_file" &
+    "$oc_binary" --daemon --no-detach --config "$config" --port "$port" --log-file "$log_file" </dev/null &
   oc_pid=$!
   wait_for_port "$port" 10 || true
 }
@@ -1174,13 +1176,9 @@ KNOWN_FAILURES=(
   # copy-unsafe-safe-links: --copy-unsafe-links + --safe-links interaction
   # not yet implemented.
   "standalone:copy-unsafe-safe-links"
-  # pre-post-xfer-exec: pre-xfer exec / post-xfer exec daemon hooks not
-  # yet implemented.
-  "standalone:pre-post-xfer-exec"
-  # read-only-module: read-only module rejection not yet validated.
-  "standalone:read-only-module"
-  # wrong-password-auth: auth rejection with wrong password not yet tested.
-  "standalone:wrong-password-auth"
+  # pre-post-xfer-exec: validated via #881.
+  # read-only-module: validated via #882.
+  # wrong-password-auth: validated via #883.
   # iconv: --iconv charset conversion not yet implemented.
   "standalone:iconv"
 )
@@ -1532,12 +1530,12 @@ SCRIPT
 pid file = ${xfer_pid}
 port = ${oc_port}
 use chroot = false
-numeric ids = yes
 
 [interop]
 path = ${xfer_dest}
 comment = xfer exec test
 read only = false
+numeric ids = yes
 pre-xfer exec = ${pre_script}
 post-xfer exec = ${post_script}
 CONF
@@ -1593,12 +1591,12 @@ test_read_only_module() {
 pid file = ${ro_pid}
 port = ${oc_port}
 use chroot = false
-numeric ids = yes
 
 [interop]
 path = ${ro_dest}
 comment = read-only module
 read only = true
+numeric ids = yes
 CONF
 
   start_oc_daemon "$ro_conf" "$ro_log" "$upstream_binary" "$ro_pid" "$oc_port"
