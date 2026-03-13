@@ -100,6 +100,15 @@ impl XattrList {
         }
     }
 
+    /// Sorts entries by name.
+    ///
+    /// Maintains the invariant that xattr lists are sorted alphabetically
+    /// by name, matching upstream rsync's `qsort(rxa, count, sizeof(rsync_xa),
+    /// rsync_xal_compare_names)` in `xattrs.c:863`.
+    pub fn sort_by_name(&mut self) {
+        self.entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
+    }
+
     /// Finds an entry by name.
     pub fn find_by_name(&self, name: &[u8]) -> Option<&XattrEntry> {
         self.entries.iter().find(|e| e.name() == name)
@@ -362,6 +371,50 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list.entries()[0].name(), b"user.x");
         assert_eq!(list.entries()[1].name(), b"user.y");
+    }
+
+    #[test]
+    fn sort_by_name_orders_alphabetically() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.zebra", b"z".to_vec()));
+        list.push(XattrEntry::new("user.alpha", b"a".to_vec()));
+        list.push(XattrEntry::new("user.middle", b"m".to_vec()));
+
+        list.sort_by_name();
+
+        assert_eq!(list.entries()[0].name(), b"user.alpha");
+        assert_eq!(list.entries()[1].name(), b"user.middle");
+        assert_eq!(list.entries()[2].name(), b"user.zebra");
+    }
+
+    #[test]
+    fn sort_by_name_stable_for_sorted_input() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.a", b"1".to_vec()));
+        list.push(XattrEntry::new("user.b", b"2".to_vec()));
+        list.push(XattrEntry::new("user.c", b"3".to_vec()));
+
+        list.sort_by_name();
+
+        assert_eq!(list.entries()[0].name(), b"user.a");
+        assert_eq!(list.entries()[1].name(), b"user.b");
+        assert_eq!(list.entries()[2].name(), b"user.c");
+    }
+
+    #[test]
+    fn sort_by_name_empty_list() {
+        let mut list = XattrList::new();
+        list.sort_by_name(); // Should not panic
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn sort_by_name_single_entry() {
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new("user.only", b"val".to_vec()));
+        list.sort_by_name();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list.entries()[0].name(), b"user.only");
     }
 
     #[test]
