@@ -4,14 +4,12 @@ use std::io::{self, Read, Write};
 use std::time::Instant;
 
 use logging::debug_log;
-use protocol::codec::{
-    NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum, create_ndx_codec,
-};
-use protocol::wire::SignatureBlock;
 use protocol::CompatibilityFlags;
+use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum, create_ndx_codec};
+use protocol::wire::SignatureBlock;
 
-use super::item_flags::ItemFlags;
 use super::GeneratorContext;
+use super::item_flags::ItemFlags;
 use crate::receiver::SumHead;
 
 impl GeneratorContext {

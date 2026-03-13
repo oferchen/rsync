@@ -2,13 +2,13 @@
 
 use super::super::flags::ParsedServerFlags;
 use super::super::role::ServerRole;
-use super::*;
 use super::delta::{
     LARGE_FILE_WARNING_THRESHOLD, script_to_wire_delta, stream_whole_file_transfer,
     write_delta_with_compression,
 };
 use super::file_list::apply_permutation_in_place;
 use super::protocol_io::{calculate_duration_ms, read_signature_blocks};
+use super::*;
 use crate::delta_apply::ChecksumVerifier;
 use crate::handshake::HandshakeResult;
 use crate::receiver::SumHead;
@@ -1017,10 +1017,16 @@ fn get_checksum_algorithm_negotiated() {
 fn validate_file_index_valid() {
     let handshake = test_handshake();
     let mut ctx = GeneratorContext::new(&handshake, test_config());
-    ctx.file_list
-        .push(protocol::flist::FileEntry::new_file("test.txt".into(), 100, 0o644));
-    ctx.file_list
-        .push(protocol::flist::FileEntry::new_file("test2.txt".into(), 200, 0o644));
+    ctx.file_list.push(protocol::flist::FileEntry::new_file(
+        "test.txt".into(),
+        100,
+        0o644,
+    ));
+    ctx.file_list.push(protocol::flist::FileEntry::new_file(
+        "test2.txt".into(),
+        200,
+        0o644,
+    ));
 
     assert!(ctx.validate_file_index(0).is_ok());
     assert!(ctx.validate_file_index(1).is_ok());
@@ -1030,8 +1036,11 @@ fn validate_file_index_valid() {
 fn validate_file_index_invalid() {
     let handshake = test_handshake();
     let mut ctx = GeneratorContext::new(&handshake, test_config());
-    ctx.file_list
-        .push(protocol::flist::FileEntry::new_file("test.txt".into(), 100, 0o644));
+    ctx.file_list.push(protocol::flist::FileEntry::new_file(
+        "test.txt".into(),
+        100,
+        0o644,
+    ));
 
     let result = ctx.validate_file_index(1);
     assert!(result.is_err());
@@ -1675,8 +1684,7 @@ fn write_delta_with_compression_plain_fallback() {
 
     let mut encoded = Vec::new();
     // Pass a non-existent path since plain mode should not open the file
-    write_delta_with_compression(&mut encoded, &ops, None, Path::new("/nonexistent/path"))
-        .unwrap();
+    write_delta_with_compression(&mut encoded, &ops, None, Path::new("/nonexistent/path")).unwrap();
 
     assert!(!encoded.is_empty());
 }
@@ -1926,8 +1934,7 @@ mod legacy_goodbye_tests {
         let mut ndx_read = create_ndx_codec(28);
         let mut ndx_write = create_ndx_codec(28);
 
-        let result =
-            ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write);
+        let result = ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("expected goodbye NDX_DONE"));
