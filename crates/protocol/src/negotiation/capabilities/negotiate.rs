@@ -5,7 +5,7 @@ use logging::debug_log;
 use crate::ProtocolVersion;
 
 use super::algorithms::{
-    supported_compressions, ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS,
+    ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS, supported_compressions,
 };
 
 /// Outcome of the protocol 30+ capability negotiation.
