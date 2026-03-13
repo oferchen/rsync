@@ -2210,3 +2210,193 @@ mod legacy_goodbye_tests {
         assert_eq!(reader.position(), 8);
     }
 }
+
+// --- Tests for --relative implied parent directory creation ---
+
+#[cfg(test)]
+mod relative_parents {
+    use super::*;
+    use protocol::flist::FileEntry;
+
+    fn receiver_with_relative(entries: Vec<FileEntry>) -> ReceiverContext {
+        let handshake = test_handshake();
+        let config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpRe.".to_owned(),
+            flags: ParsedServerFlags {
+                relative: true,
+                ..Default::default()
+            },
+            args: vec![std::ffi::OsString::from(".")],
+            ..Default::default()
+        };
+        let mut ctx = ReceiverContext::new(&handshake, config);
+        ctx.file_list = entries;
+        ctx
+    }
+
+    fn receiver_without_relative(entries: Vec<FileEntry>) -> ReceiverContext {
+        let handshake = test_handshake();
+        let config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![std::ffi::OsString::from(".")],
+            ..Default::default()
+        };
+        let mut ctx = ReceiverContext::new(&handshake, config);
+        ctx.file_list = entries;
+        ctx
+    }
+
+    #[test]
+    fn ensure_relative_parents_creates_missing_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+
+        let entries = vec![FileEntry::new_file("a/b/c/file.txt".into(), 100, 0o644)];
+        let ctx = receiver_with_relative(entries);
+
+        ctx.ensure_relative_parents(dest);
+
+        assert!(dest.join("a").is_dir());
+        assert!(dest.join("a/b").is_dir());
+        assert!(dest.join("a/b/c").is_dir());
+    }
+
+    #[test]
+    fn ensure_relative_parents_handles_multiple_entries_shared_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+
+        let entries = vec![
+            FileEntry::new_file("src/lib/mod.rs".into(), 50, 0o644),
+            FileEntry::new_file("src/lib/util.rs".into(), 75, 0o644),
+            FileEntry::new_file("src/bin/main.rs".into(), 200, 0o644),
+        ];
+        let ctx = receiver_with_relative(entries);
+
+        ctx.ensure_relative_parents(dest);
+
+        assert!(dest.join("src").is_dir());
+        assert!(dest.join("src/lib").is_dir());
+        assert!(dest.join("src/bin").is_dir());
+    }
+
+    #[test]
+    fn ensure_relative_parents_noop_without_relative_flag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+
+        let entries = vec![FileEntry::new_file("a/b/file.txt".into(), 100, 0o644)];
+        let ctx = receiver_without_relative(entries);
+
+        ctx.ensure_relative_parents(dest);
+
+        // Without --relative, no parent directories are created
+        assert!(!dest.join("a").exists());
+    }
+
+    #[test]
+    fn ensure_relative_parents_skips_dot_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+
+        let entries = vec![
+            FileEntry::new_directory(".".into(), 0o755),
+            FileEntry::new_file("file.txt".into(), 100, 0o644),
+        ];
+        let ctx = receiver_with_relative(entries);
+
+        // Should not panic or create anything unexpected
+        ctx.ensure_relative_parents(dest);
+    }
+
+    #[test]
+    fn ensure_relative_parents_handles_directory_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+
+        // Directory entry at "a/b/c" - parents "a/" and "a/b/" should be created
+        let entries = vec![FileEntry::new_directory("a/b/c".into(), 0o755)];
+        let ctx = receiver_with_relative(entries);
+
+        ctx.ensure_relative_parents(dest);
+
+        assert!(dest.join("a").is_dir());
+        assert!(dest.join("a/b").is_dir());
+        // "a/b/c" is NOT created by ensure_relative_parents (it's a dir entry,
+        // handled by create_directories / create_directory_incremental)
+        assert!(!dest.join("a/b/c").exists());
+    }
+
+    #[test]
+    fn ensure_relative_parents_existing_dirs_not_clobbered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+
+        // Pre-create directory with a file inside
+        std::fs::create_dir_all(dest.join("a/b")).unwrap();
+        std::fs::write(dest.join("a/b/existing.txt"), "hello").unwrap();
+
+        let entries = vec![FileEntry::new_file("a/b/c/new.txt".into(), 100, 0o644)];
+        let ctx = receiver_with_relative(entries);
+
+        ctx.ensure_relative_parents(dest);
+
+        // Existing content preserved
+        assert_eq!(
+            std::fs::read_to_string(dest.join("a/b/existing.txt")).unwrap(),
+            "hello"
+        );
+        // New parent created
+        assert!(dest.join("a/b/c").is_dir());
+    }
+
+    #[test]
+    fn ensure_relative_parents_dry_run_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+
+        let handshake = test_handshake();
+        let config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpRne.".to_owned(),
+            flags: ParsedServerFlags {
+                relative: true,
+                dry_run: true,
+                ..Default::default()
+            },
+            args: vec![std::ffi::OsString::from(".")],
+            ..Default::default()
+        };
+        let mut ctx = ReceiverContext::new(&handshake, config);
+        ctx.file_list = vec![FileEntry::new_file(
+            "deep/nested/file.txt".into(),
+            100,
+            0o644,
+        )];
+
+        ctx.ensure_relative_parents(dest);
+
+        assert!(!dest.join("deep").exists());
+    }
+
+    #[test]
+    fn ensure_relative_parents_single_component_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+
+        // File at root level - no parent creation needed
+        let entries = vec![FileEntry::new_file("file.txt".into(), 100, 0o644)];
+        let ctx = receiver_with_relative(entries);
+
+        ctx.ensure_relative_parents(dest);
+
+        // No directories created for a root-level file
+        let dir_entries: Vec<_> = std::fs::read_dir(dest).unwrap().collect();
+        assert!(dir_entries.is_empty());
+    }
+}
