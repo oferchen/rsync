@@ -271,6 +271,173 @@ impl RsyncAcl {
     }
 }
 
+/// POSIX ACL tag type for permission extraction from file mode bits.
+///
+/// Each tag type corresponds to a different position in the Unix file
+/// mode word from which permission bits are extracted.
+///
+/// # Upstream Reference
+///
+/// Used by `rsync_acl_get_perms()` in `acls.c` lines 139-155.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AclTagType {
+    /// Owner permissions - bits 8-6 of mode.
+    UserObj,
+    /// Owning group permissions - bits 5-3 of mode.
+    GroupObj,
+    /// ACL mask - same position as group (bits 5-3) per POSIX.1e.
+    MaskObj,
+    /// Other/world permissions - bits 2-0 of mode.
+    OtherObj,
+}
+
+/// Extracts permission bits from a file mode for a given ACL tag type.
+///
+/// Maps Unix file mode bits to the 3-bit rwx permission value used in
+/// ACL entries. The mask position overlaps with group per POSIX.1e
+/// semantics - when an ACL has named entries, the group bits in the
+/// file mode represent the mask, not the owning group permissions.
+///
+/// # Upstream Reference
+///
+/// Mirrors `rsync_acl_get_perms()` in `acls.c` lines 139-155.
+#[must_use]
+pub const fn get_perms(mode: u32, tag_type: AclTagType) -> u8 {
+    let shift = match tag_type {
+        AclTagType::UserObj => 6,
+        // upstream: acls.c - mask uses same bits as group per POSIX.1e
+        AclTagType::GroupObj | AclTagType::MaskObj => 3,
+        AclTagType::OtherObj => 0,
+    };
+    ((mode >> shift) & 7) as u8
+}
+
+impl IdaEntries {
+    /// Removes all entries from the list.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+impl RsyncAcl {
+    /// Creates a minimal ACL from file mode bits.
+    ///
+    /// Populates user_obj, group_obj, and other_obj from the corresponding
+    /// permission bits in the file mode. The mask_obj is left as `NO_ENTRY`
+    /// and no named entries are added, producing the simplest ACL that
+    /// represents the given mode.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `rsync_acl_fake_perms()` in `acls.c` lines 157-170.
+    pub fn fake_perms(&mut self, mode: u32) {
+        self.user_obj = get_perms(mode, AclTagType::UserObj);
+        self.group_obj = get_perms(mode, AclTagType::GroupObj);
+        self.other_obj = get_perms(mode, AclTagType::OtherObj);
+        self.mask_obj = NO_ENTRY;
+        self.names = IdaEntries::new();
+    }
+
+    /// Creates an ACL from file mode bits.
+    ///
+    /// Convenience constructor that builds a minimal ACL with user_obj,
+    /// group_obj, and other_obj populated from the mode. Equivalent to
+    /// creating a default ACL and calling `fake_perms`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Equivalent to `rsync_acl_fake_perms()` in `acls.c` lines 157-170,
+    /// but as a standalone constructor.
+    #[must_use]
+    pub fn from_mode(mode: u32) -> Self {
+        Self {
+            names: IdaEntries::new(),
+            user_obj: get_perms(mode, AclTagType::UserObj),
+            group_obj: get_perms(mode, AclTagType::GroupObj),
+            mask_obj: NO_ENTRY,
+            other_obj: get_perms(mode, AclTagType::OtherObj),
+        }
+    }
+
+    /// Strips an ACL down to just the base permission entries.
+    ///
+    /// Removes all named user/group entries and clears the mask_obj.
+    /// After stripping, only user_obj, group_obj, and other_obj remain.
+    /// If the ACL had a mask_obj, the group_obj is replaced with the
+    /// mask value (since POSIX.1e stores effective group perms in mask
+    /// when extended entries exist).
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `rsync_acl_strip_perms()` in `acls.c` lines 172-190.
+    pub fn strip_perms(&mut self) {
+        // upstream: acls.c:176-178 - when mask is present, group permissions
+        // in the mode come from the mask, not group_obj
+        if self.has_mask_obj() {
+            self.group_obj = self.mask_obj;
+            self.mask_obj = NO_ENTRY;
+        }
+        self.names.clear();
+    }
+
+    /// Compares two ACLs for semantic equivalence.
+    ///
+    /// Two ACLs are "equal enough" when they produce the same effective
+    /// permissions. When neither ACL has named entries, the mask is
+    /// irrelevant (it only limits named entry permissions), so mask
+    /// differences are ignored in that case. Named entries (ida_entries)
+    /// are compared element-by-element when present.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `rsync_acl_equal_enough()` in `acls.c` lines 282-332.
+    #[must_use]
+    pub fn equal_enough(&self, other: &RsyncAcl) -> bool {
+        // upstream: acls.c:284-285 - compare user_obj and other_obj first
+        if self.user_obj != other.user_obj {
+            return false;
+        }
+        if self.other_obj != other.other_obj {
+            return false;
+        }
+
+        // upstream: acls.c:292-295 - compare named entries
+        if self.names.len() != other.names.len() {
+            return false;
+        }
+
+        // Compare named entries element-by-element
+        for (a, b) in self.names.iter().zip(other.names.iter()) {
+            if a.id != b.id || a.access != b.access {
+                return false;
+            }
+        }
+
+        // upstream: acls.c:309-331 - mask and group_obj comparison depends
+        // on whether named entries exist
+        if self.names.is_empty() {
+            // No named entries - mask is irrelevant, compare group_obj directly.
+            // upstream: acls.c:310-315 - when no named entries, only group_obj
+            // matters regardless of mask presence
+            let self_group = if self.has_mask_obj() {
+                self.mask_obj
+            } else {
+                self.group_obj
+            };
+            let other_group = if other.has_mask_obj() {
+                other.mask_obj
+            } else {
+                other.group_obj
+            };
+            self_group == other_group
+        } else {
+            // Named entries present - both mask and group must match exactly
+            // upstream: acls.c:325-331
+            self.group_obj == other.group_obj && self.mask_obj == other.mask_obj
+        }
+    }
+}
+
 /// Cache for tracking sent/received ACLs.
 ///
 /// Rsync uses index-based caching to avoid re-transmitting identical ACLs.
