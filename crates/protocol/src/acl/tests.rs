@@ -924,3 +924,202 @@ mod computed_mask_and_names {
         assert!(received.iter().next().unwrap().name.is_none());
     }
 }
+
+/// Tests for `receive_acl_cached` - the cache-integrated receive path.
+mod receive_acl_cached_tests {
+    use super::*;
+
+    #[test]
+    fn literal_acl_is_stored_in_cache() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x05;
+        acl.other_obj = 0x04;
+
+        let mut send_cache = AclCache::new();
+        let mut buf = Vec::new();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+
+        let mut recv_cache = AclCache::new();
+        let mut cursor = Cursor::new(buf);
+        let (access_ndx, def_ndx) =
+            receive_acl_cached(&mut cursor, false, &mut recv_cache).unwrap();
+
+        assert_eq!(access_ndx, 0);
+        assert!(def_ndx.is_none());
+        assert_eq!(recv_cache.access_count(), 1);
+
+        let cached = recv_cache.get_access(0).unwrap();
+        assert_eq!(cached.user_obj, 0x07);
+        assert_eq!(cached.group_obj, 0x05);
+        assert_eq!(cached.other_obj, 0x04);
+    }
+
+    #[test]
+    fn cache_hit_returns_correct_index() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+
+        let mut send_cache = AclCache::new();
+        let mut buf = Vec::new();
+
+        // First send - literal
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+
+        // Second send - cache hit (index 0)
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+
+        let mut recv_cache = AclCache::new();
+        let mut cursor = Cursor::new(buf);
+
+        // First receive - stores literal
+        let (ndx1, _) = receive_acl_cached(&mut cursor, false, &mut recv_cache).unwrap();
+        assert_eq!(ndx1, 0);
+
+        // Second receive - cache hit referencing index 0
+        let (ndx2, _) = receive_acl_cached(&mut cursor, false, &mut recv_cache).unwrap();
+        assert_eq!(ndx2, 0);
+
+        // Only one ACL stored in cache
+        assert_eq!(recv_cache.access_count(), 1);
+    }
+
+    #[test]
+    fn directory_receives_access_and_default_acls() {
+        let access_acl = {
+            let mut a = RsyncAcl::new();
+            a.user_obj = 0x07;
+            a.group_obj = 0x05;
+            a.other_obj = 0x05;
+            a
+        };
+        let default_acl = {
+            let mut a = RsyncAcl::new();
+            a.user_obj = 0x07;
+            a.group_obj = 0x05;
+            a.other_obj = 0x00;
+            a
+        };
+
+        let mut send_cache = AclCache::new();
+        let mut buf = Vec::new();
+        send_acl(
+            &mut buf,
+            &access_acl,
+            Some(&default_acl),
+            true,
+            &mut send_cache,
+        )
+        .unwrap();
+
+        let mut recv_cache = AclCache::new();
+        let mut cursor = Cursor::new(buf);
+        let (access_ndx, def_ndx) = receive_acl_cached(&mut cursor, true, &mut recv_cache).unwrap();
+
+        assert_eq!(access_ndx, 0);
+        assert_eq!(def_ndx, Some(0));
+        assert_eq!(recv_cache.access_count(), 1);
+        assert_eq!(recv_cache.default_count(), 1);
+
+        let cached_access = recv_cache.get_access(0).unwrap();
+        assert_eq!(cached_access.user_obj, 0x07);
+        assert_eq!(cached_access.other_obj, 0x05);
+
+        let cached_default = recv_cache.get_default(0).unwrap();
+        assert_eq!(cached_default.user_obj, 0x07);
+        assert_eq!(cached_default.other_obj, 0x00);
+    }
+
+    #[test]
+    fn out_of_range_cache_index_returns_error() {
+        // Manually construct a wire message with a cache hit for index 5,
+        // but the cache is empty, so the index is out of range.
+        use crate::varint::write_varint;
+
+        let mut buf = Vec::new();
+        // ndx + 1 = 6, so ndx = 5 (cache hit for index 5)
+        write_varint(&mut buf, 6).unwrap();
+
+        let mut recv_cache = AclCache::new();
+        let mut cursor = Cursor::new(buf);
+        let result = receive_acl_cached(&mut cursor, false, &mut recv_cache);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("ACL index"));
+    }
+
+    #[test]
+    fn multiple_different_acls_get_different_indices() {
+        let acl1 = {
+            let mut a = RsyncAcl::new();
+            a.user_obj = 0x07;
+            a
+        };
+        let acl2 = {
+            let mut a = RsyncAcl::new();
+            a.user_obj = 0x05;
+            a
+        };
+
+        let mut send_cache = AclCache::new();
+        let mut buf = Vec::new();
+        send_rsync_acl(&mut buf, &acl1, AclType::Access, &mut send_cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl2, AclType::Access, &mut send_cache, false).unwrap();
+
+        let mut recv_cache = AclCache::new();
+        let mut cursor = Cursor::new(buf);
+
+        let (ndx1, _) = receive_acl_cached(&mut cursor, false, &mut recv_cache).unwrap();
+        let (ndx2, _) = receive_acl_cached(&mut cursor, false, &mut recv_cache).unwrap();
+
+        assert_eq!(ndx1, 0);
+        assert_eq!(ndx2, 1);
+        assert_eq!(recv_cache.access_count(), 2);
+
+        assert_eq!(recv_cache.get_access(0).unwrap().user_obj, 0x07);
+        assert_eq!(recv_cache.get_access(1).unwrap().user_obj, 0x05);
+    }
+
+    #[test]
+    fn acl_with_named_entries_cached_correctly() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x05;
+        acl.mask_obj = 0x07;
+        acl.other_obj = 0x04;
+        acl.names.push(IdAccess::user(1000, 0x07));
+        acl.names.push(IdAccess::group(100, 0x05));
+
+        let mut send_cache = AclCache::new();
+        let mut buf = Vec::new();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+
+        let mut recv_cache = AclCache::new();
+        let mut cursor = Cursor::new(buf);
+        let (ndx, _) = receive_acl_cached(&mut cursor, false, &mut recv_cache).unwrap();
+
+        assert_eq!(ndx, 0);
+        let cached = recv_cache.get_access(0).unwrap();
+        assert_eq!(cached.names.len(), 2);
+        assert_eq!(cached.mask_obj, 0x07);
+    }
+
+    #[test]
+    fn empty_acl_for_file_no_default() {
+        let acl = RsyncAcl::new();
+
+        let mut send_cache = AclCache::new();
+        let mut buf = Vec::new();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+
+        let mut recv_cache = AclCache::new();
+        let mut cursor = Cursor::new(buf);
+        let (ndx, def_ndx) = receive_acl_cached(&mut cursor, false, &mut recv_cache).unwrap();
+
+        assert_eq!(ndx, 0);
+        assert!(def_ndx.is_none());
+        assert!(recv_cache.get_access(0).unwrap().is_empty());
+    }
+}
