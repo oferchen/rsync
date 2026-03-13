@@ -79,6 +79,17 @@ pub struct FileListReader {
     preserve_acls: bool,
     /// Whether to preserve (and thus read) extended attributes from the wire.
     preserve_xattrs: bool,
+    /// Xattr preservation level (1 = normal, 2 = include rsync.% internal attrs).
+    ///
+    /// Only meaningful when `preserve_xattrs` is true. Corresponds to the number
+    /// of `-X` flags passed on the command line. Level 2 preserves rsync-internal
+    /// attributes like `rsync.%stat` and `rsync.%aacl`.
+    xattr_level: u32,
+    /// Whether the receiver has root privileges.
+    ///
+    /// Affects xattr namespace handling during receive - root can write to
+    /// non-user namespaces (security, trusted, system) directly.
+    am_root: bool,
     /// Length of checksum to read (depends on protocol and checksum algorithm).
     flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
@@ -170,6 +181,8 @@ impl FileListReader {
             always_checksum: false,
             preserve_acls: false,
             preserve_xattrs: false,
+            xattr_level: 0,
+            am_root: false,
             flist_csum_len: 0,
             iconv: None,
             relative_paths: false,
@@ -202,6 +215,8 @@ impl FileListReader {
             always_checksum: false,
             preserve_acls: false,
             preserve_xattrs: false,
+            xattr_level: 0,
+            am_root: false,
             flist_csum_len: 0,
             iconv: None,
             relative_paths: false,
@@ -300,6 +315,33 @@ impl FileListReader {
     #[must_use]
     pub const fn with_preserve_xattrs(mut self, preserve: bool) -> Self {
         self.preserve_xattrs = preserve;
+        if preserve && self.xattr_level == 0 {
+            self.xattr_level = 1;
+        }
+        self
+    }
+
+    /// Sets the xattr preservation level.
+    ///
+    /// Level 1 is normal xattr preservation (`-X`). Level 2 also preserves
+    /// rsync-internal attributes like `rsync.%stat` (`-XX`).
+    #[inline]
+    #[must_use]
+    pub const fn with_xattr_level(mut self, level: u32) -> Self {
+        self.xattr_level = level;
+        if level > 0 {
+            self.preserve_xattrs = true;
+        }
+        self
+    }
+
+    /// Sets whether the receiver has root privileges.
+    ///
+    /// Affects xattr namespace handling - root can access non-user namespaces.
+    #[inline]
+    #[must_use]
+    pub const fn with_am_root(mut self, am_root: bool) -> Self {
+        self.am_root = am_root;
         self
     }
 
@@ -1190,7 +1232,10 @@ impl FileListReader {
         // upstream: flist.c:1209-1212 - receive_xattr() is called after create_object,
         // which means it runs for hardlink followers too.
         let xattr_ndx = if self.preserve_xattrs {
-            Some(self.xattr_cache.receive_xattr(reader)?)
+            Some(
+                self.xattr_cache
+                    .receive_xattr(reader, self.am_root, self.xattr_level)?,
+            )
         } else {
             None
         };
