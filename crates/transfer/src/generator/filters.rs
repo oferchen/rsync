@@ -7,8 +7,8 @@ pub use ::filters::FilterSet;
 use logging::info_log;
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 
-use ::filters::FilterRule;
 use super::GeneratorContext;
+use ::filters::FilterRule;
 
 impl GeneratorContext {
     /// Receives filter list from client in server mode.

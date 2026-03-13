@@ -4,7 +4,7 @@ use std::io::{self, Seek, SeekFrom};
 #[cfg(target_os = "linux")]
 use rustix::{fd::AsFd, io::Errno};
 
-use super::{SparseDetector, SparseRegion, SPARSE_WRITE_SIZE};
+use super::{SPARSE_WRITE_SIZE, SparseDetector, SparseRegion};
 
 /// Reads sparse files efficiently using filesystem hole detection.
 ///

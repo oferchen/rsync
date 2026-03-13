@@ -31,7 +31,9 @@ mod algorithms;
 mod negotiate;
 
 pub use algorithms::{ChecksumAlgorithm, CompressionAlgorithm};
-pub use negotiate::{negotiate_capabilities, negotiate_capabilities_with_override, NegotiationResult};
+pub use negotiate::{
+    NegotiationResult, negotiate_capabilities, negotiate_capabilities_with_override,
+};
 
 #[cfg(test)]
 #[allow(clippy::uninlined_format_args)]

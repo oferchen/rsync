@@ -1,4 +1,4 @@
-use super::{SparseRegion, SPARSE_WRITE_SIZE};
+use super::{SPARSE_WRITE_SIZE, SparseRegion};
 
 /// Detects sparse (zero-filled) regions in data buffers.
 ///

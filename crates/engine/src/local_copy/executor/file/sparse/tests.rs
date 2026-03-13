@@ -81,9 +81,8 @@ fn sparse_writer_accumulates_zero_runs_across_chunks() {
     let mut state = SparseWriteState::default();
 
     let first = [b'A', b'B', 0, 0, 0];
-    let written_first =
-        write_sparse_chunk(file.as_file_mut(), &mut state, &first, path.as_path())
-            .expect("write first chunk");
+    let written_first = write_sparse_chunk(file.as_file_mut(), &mut state, &first, path.as_path())
+        .expect("write first chunk");
 
     let second = [0, 0, b'C', b'D'];
     let written_second =
@@ -1297,8 +1296,7 @@ fn write_sparse_chunk_all_zeros_followed_by_data() {
 
     // Then data
     let data = [b'X', b'Y', b'Z'];
-    write_sparse_chunk(file.as_file_mut(), &mut state, &data, path.as_path())
-        .expect("write data");
+    write_sparse_chunk(file.as_file_mut(), &mut state, &data, path.as_path()).expect("write data");
 
     state
         .finish(file.as_file_mut(), path.as_path())
@@ -2238,8 +2236,7 @@ fn sparse_writer_empty_data() {
 #[test]
 fn sparse_writer_file_accessors() {
     let file = NamedTempFile::new().expect("temp file");
-    let mut writer =
-        super::SparseWriter::new(file.as_file().try_clone().expect("clone"), false);
+    let mut writer = super::SparseWriter::new(file.as_file().try_clone().expect("clone"), false);
 
     // Test accessors
     let _file_ref: &fs::File = writer.file();
