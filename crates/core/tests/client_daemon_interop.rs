@@ -27,7 +27,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use core::client::{ClientConfig, run_client};
+use core::client::{ClientConfig, FilesFromSource, run_client};
 use tempfile::{TempDir, tempdir};
 
 const UPSTREAM_3_0_9: &str = "target/interop/upstream-install/3.0.9/bin/rsync";
@@ -1152,4 +1152,65 @@ fn test_special_characters_in_filename() {
     assert!(dest_root.path().join("file-with-dashes.txt").exists());
     assert!(dest_root.path().join("file_with_underscores.txt").exists());
     assert!(summary.files_copied() >= 3);
+}
+
+/// Test pushing files to upstream daemon with --files-from.
+///
+/// Verifies that when --files-from specifies a local file listing specific
+/// paths, only those paths are transferred to the daemon. The client reads
+/// the file list locally and does NOT send --files-from to the daemon
+/// receiver - upstream: options.c:2944.
+#[test]
+#[ignore = "requires upstream rsync binary"]
+fn test_client_push_to_daemon_with_files_from() {
+    require_upstream(UPSTREAM_3_4_1);
+
+    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13070).expect("start daemon");
+    daemon
+        .wait_ready(Duration::from_secs(5))
+        .expect("daemon ready");
+
+    // Create source files - some will be selected, some not
+    let source_root = tempdir().expect("create source dir");
+    create_test_file(&source_root.path().join("selected1.txt"), b"selected one");
+    create_test_file(&source_root.path().join("selected2.txt"), b"selected two");
+    create_test_file(
+        &source_root.path().join("excluded.txt"),
+        b"should not transfer",
+    );
+
+    // Write a files-from list that selects only two of the three files
+    let files_list = tempdir().expect("create list dir");
+    let list_path = files_list.path().join("filelist.txt");
+    fs::write(&list_path, "selected1.txt\nselected2.txt\n").expect("write file list");
+
+    // Push with --files-from pointing at the local list file
+    let mut source_arg = source_root.path().as_os_str().to_os_string();
+    source_arg.push("/");
+
+    let config = ClientConfig::builder()
+        .transfer_args([
+            source_arg.to_string_lossy().to_string(),
+            format!("{}/", daemon.url()),
+        ])
+        .files_from(FilesFromSource::LocalFile(list_path))
+        .build();
+
+    let summary = run_client(config).expect("client push with files-from succeeds");
+
+    // Verify only the selected files were transferred
+    assert_eq!(
+        fs::read(daemon.module_path().join("selected1.txt")).expect("read selected1"),
+        b"selected one"
+    );
+    assert_eq!(
+        fs::read(daemon.module_path().join("selected2.txt")).expect("read selected2"),
+        b"selected two"
+    );
+    // The excluded file should NOT be on the daemon
+    assert!(
+        !daemon.module_path().join("excluded.txt").exists(),
+        "excluded.txt should not be transferred"
+    );
+    assert!(summary.files_copied() >= 2);
 }
