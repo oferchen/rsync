@@ -1228,18 +1228,6 @@ impl FileListReader {
                 )
             };
 
-        // Step 9b: Read xattr index/data (for ALL entries, including hardlink followers).
-        // upstream: flist.c:1209-1212 - receive_xattr() is called after create_object,
-        // which means it runs for hardlink followers too.
-        let xattr_ndx = if self.preserve_xattrs {
-            Some(
-                self.xattr_cache
-                    .receive_xattr(reader, self.am_root, self.xattr_level)?,
-            )
-        } else {
-            None
-        };
-
         // Step 10: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
 
@@ -1343,12 +1331,15 @@ impl FileListReader {
             }
         }
 
-        // Step 22b: Set xattr index if present
-        if let Some(ndx) = xattr_ndx {
-            entry.set_xattr_ndx(ndx);
+        // Step 23: Read xattr index/data from wire (after ACLs).
+        // upstream: flist.c:1209-1212 - receive_xattr() is called after
+        // receive_acl() and runs for ALL entries including hardlink followers.
+        if self.preserve_xattrs {
+            let xattr_ndx = self.xattr_cache.receive_xattr(reader)?;
+            entry.set_xattr_ndx(xattr_ndx);
         }
 
-        // Step 23: Update statistics
+        // Step 24: Update statistics
         self.update_stats(&entry);
 
         // Level 2: Individual file entry
@@ -3498,6 +3489,331 @@ mod tests {
 
             // Only one ACL in cache
             assert_eq!(reader.acl_cache().access_count(), 1);
+        }
+    }
+
+    /// Tests for xattr integration in the flist read path.
+    mod xattr_integration {
+        use super::*;
+        use crate::varint::write_varint;
+
+        /// Helper to append literal xattr data to a buffer in wire format.
+        /// Each entry is (name_bytes, value_bytes).
+        fn write_literal_xattr(buf: &mut Vec<u8>, entries: &[(&[u8], &[u8])]) {
+            // ndx = 0 means literal follows
+            write_varint(buf, 0).unwrap();
+            // count
+            write_varint(buf, entries.len() as i32).unwrap();
+            for &(name, value) in entries {
+                // name_len includes NUL terminator
+                write_varint(buf, (name.len() + 1) as i32).unwrap();
+                // datum_len
+                write_varint(buf, value.len() as i32).unwrap();
+                // name bytes + NUL
+                buf.extend_from_slice(name);
+                buf.push(0);
+                // value
+                buf.extend_from_slice(value);
+            }
+        }
+
+        /// Helper to append a cache-hit xattr reference.
+        fn write_xattr_cache_hit(buf: &mut Vec<u8>, index: u32) {
+            // ndx = index + 1 (non-zero means cache hit)
+            write_varint(buf, (index + 1) as i32).unwrap();
+        }
+
+        /// Reads a file entry with xattr data and verifies the xattr index
+        /// and cached xattr list.
+        #[test]
+        fn read_entry_with_xattr() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            // Write file entry
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_file("test_xattr.txt".into(), 300, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            // Append literal xattr data (as sender would after send_file_entry)
+            write_literal_xattr(
+                &mut data,
+                &[(b"user.mime_type", b"text/plain"), (b"user.tag", b"test")],
+            );
+
+            // Read it back with preserve_xattrs
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_xattrs(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(read_entry.name(), "test_xattr.txt");
+            assert_eq!(read_entry.size(), 300);
+            assert_eq!(read_entry.xattr_ndx(), Some(0));
+
+            // Verify cached xattr list
+            let cached = reader.xattr_cache().get(0).unwrap();
+            assert_eq!(cached.len(), 2);
+            assert_eq!(cached.entries()[0].name(), b"user.mime_type");
+            assert_eq!(cached.entries()[0].datum(), b"text/plain");
+            assert_eq!(cached.entries()[1].name(), b"user.tag");
+            assert_eq!(cached.entries()[1].datum(), b"test");
+
+            // All bytes consumed
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Without preserve_xattrs, no xattr reading occurs.
+        #[test]
+        fn read_entry_without_preserve_xattrs_skips_xattr() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            // preserve_xattrs is false, so reader should NOT try to read xattr data
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert!(read_entry.xattr_ndx().is_none());
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Multiple entries reference cached xattr sets correctly.
+        #[test]
+        fn multiple_entries_share_cached_xattrs() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            // Write first file entry + literal xattr
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_file("file1.txt".into(), 100, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+            write_literal_xattr(&mut data, &[(b"user.attr", b"value")]);
+
+            // Write second file entry + cache hit referencing index 0
+            let mut entry = FileEntry::new_file("file2.txt".into(), 200, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+            write_xattr_cache_hit(&mut data, 0);
+
+            // Read them back
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_xattrs(true);
+
+            let entry1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+            let entry2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+            assert_eq!(entry1.name(), "file1.txt");
+            assert_eq!(entry1.xattr_ndx(), Some(0));
+            assert_eq!(entry2.name(), "file2.txt");
+            assert_eq!(entry2.xattr_ndx(), Some(0));
+
+            // Only one xattr set in cache
+            assert_eq!(reader.xattr_cache().len(), 1);
+
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Directory entries receive xattr data just like files.
+        #[test]
+        fn read_directory_entry_with_xattr() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_directory("mydir".into(), 0o755);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            write_literal_xattr(
+                &mut data,
+                &[(b"security.selinux", b"system_u:object_r:default_t:s0")],
+            );
+
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_xattrs(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert!(read_entry.is_dir());
+            assert_eq!(read_entry.xattr_ndx(), Some(0));
+
+            let cached = reader.xattr_cache().get(0).unwrap();
+            assert_eq!(cached.len(), 1);
+            assert_eq!(cached.entries()[0].name(), b"security.selinux");
+
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Symlink entries also receive xattr data (unlike ACLs, xattrs apply
+        /// to all file types). Upstream: xattrs.c does not exclude symlinks.
+        #[test]
+        fn read_symlink_entry_with_xattr() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
+            let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            write_literal_xattr(&mut data, &[(b"user.symattr", b"symval")]);
+
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol)
+                .with_preserve_xattrs(true)
+                .with_preserve_links(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert!(read_entry.is_symlink());
+            assert_eq!(read_entry.xattr_ndx(), Some(0));
+
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// When both ACLs and xattrs are enabled, ACLs are read first
+        /// then xattrs, matching upstream wire order.
+        #[test]
+        fn read_entry_with_acl_and_xattr() {
+            use super::super::super::write::FileListWriter;
+            use crate::acl::{AclCache, AclType, RsyncAcl, send_rsync_acl};
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            // Write file entry
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_file("both.txt".into(), 150, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            // Write ACL data first (upstream order)
+            let mut acl = RsyncAcl::new();
+            acl.user_obj = 0x06;
+            acl.group_obj = 0x04;
+            acl.other_obj = 0x04;
+            let mut acl_cache = AclCache::new();
+            send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
+
+            // Then write xattr data (after ACL on wire)
+            write_literal_xattr(&mut data, &[(b"user.key", b"val")]);
+
+            // Read it back with both enabled
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol)
+                .with_preserve_acls(true)
+                .with_preserve_xattrs(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(read_entry.name(), "both.txt");
+            assert_eq!(read_entry.acl_ndx(), Some(0));
+            assert_eq!(read_entry.xattr_ndx(), Some(0));
+
+            // Verify ACL cache
+            let cached_acl = reader.acl_cache().get_access(0).unwrap();
+            assert_eq!(cached_acl.user_obj, 0x06);
+
+            // Verify xattr cache
+            let cached_xattr = reader.xattr_cache().get(0).unwrap();
+            assert_eq!(cached_xattr.len(), 1);
+            assert_eq!(cached_xattr.entries()[0].name(), b"user.key");
+            assert_eq!(cached_xattr.entries()[0].datum(), b"val");
+
+            // All bytes consumed
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Empty xattr set is stored in cache with index.
+        #[test]
+        fn read_entry_with_empty_xattr_set() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_file("empty_xattr.txt".into(), 50, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            // Write empty literal xattr set
+            write_literal_xattr(&mut data, &[]);
+
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_xattrs(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(read_entry.xattr_ndx(), Some(0));
+
+            let cached = reader.xattr_cache().get(0).unwrap();
+            assert!(cached.is_empty());
+
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Multiple different xattr sets get distinct cache indices.
+        #[test]
+        fn multiple_distinct_xattr_sets() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            let mut writer = FileListWriter::new(protocol);
+
+            // First entry with one xattr set
+            let mut entry = FileEntry::new_file("a.txt".into(), 100, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+            write_literal_xattr(&mut data, &[(b"user.color", b"red")]);
+
+            // Second entry with a different xattr set
+            let mut entry = FileEntry::new_file("b.txt".into(), 200, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+            write_literal_xattr(&mut data, &[(b"user.color", b"blue")]);
+
+            // Third entry referencing the first set
+            let mut entry = FileEntry::new_file("c.txt".into(), 300, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+            write_xattr_cache_hit(&mut data, 0);
+
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_xattrs(true);
+
+            let e1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+            let e2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+            let e3 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+            assert_eq!(e1.xattr_ndx(), Some(0));
+            assert_eq!(e2.xattr_ndx(), Some(1));
+            assert_eq!(e3.xattr_ndx(), Some(0)); // cache hit
+
+            assert_eq!(reader.xattr_cache().len(), 2);
+
+            let first = reader.xattr_cache().get(0).unwrap();
+            assert_eq!(first.entries()[0].datum(), b"red");
+
+            let second = reader.xattr_cache().get(1).unwrap();
+            assert_eq!(second.entries()[0].datum(), b"blue");
+
+            assert_eq!(cursor.position() as usize, data.len());
         }
     }
 }
