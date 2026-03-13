@@ -144,7 +144,7 @@ pub fn send_ida_entries<W: Write>(
 /// # Upstream Reference
 ///
 /// Mirrors `recv_ida_entries()` in `acls.c` lines 697-729.
-pub fn recv_ida_entries<R: Read>(reader: &mut R) -> io::Result<(IdaEntries, u8)> {
+pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntries, u8)> {
     let count = read_varint(reader)? as usize;
     let mut entries = IdaEntries::with_capacity(count);
     let mut computed_mask: u8 = 0;
@@ -256,7 +256,7 @@ pub fn send_rsync_acl<W: Write>(
 /// # Upstream Reference
 ///
 /// Mirrors `recv_rsync_acl()` in `acls.c` lines 731-800.
-pub fn recv_rsync_acl<R: Read>(reader: &mut R) -> io::Result<RecvAclResult> {
+pub fn recv_rsync_acl<R: Read + ?Sized>(reader: &mut R) -> io::Result<RecvAclResult> {
     let ndx_plus_one = read_varint(reader)?;
     let ndx = ndx_plus_one - 1;
 
@@ -340,7 +340,7 @@ pub fn send_acl<W: Write>(
 /// # Upstream Reference
 ///
 /// Mirrors `receive_acl()` in `acls.c` (implicit in the flist receive path).
-pub fn recv_acl<R: Read>(
+pub fn recv_acl<R: Read + ?Sized>(
     reader: &mut R,
     is_directory: bool,
 ) -> io::Result<(RecvAclResult, Option<RecvAclResult>)> {
@@ -353,6 +353,99 @@ pub fn recv_acl<R: Read>(
     };
 
     Ok((access_result, default_result))
+}
+
+/// Receives a single rsync ACL from the wire and stores it in the cache.
+///
+/// Returns the cache index for the received ACL. If the sender referenced
+/// a previously cached ACL, validates the index and returns it. If literal
+/// ACL data was sent, stores it in the cache and returns the new index.
+///
+/// # Errors
+///
+/// Returns an error if the cache index is out of range (sender sent an
+/// index beyond what has been cached so far).
+///
+/// # Upstream Reference
+///
+/// Mirrors `recv_rsync_acl()` in `acls.c` lines 731-783, which both
+/// reads from wire and appends to `racl_list`, returning the index.
+fn recv_rsync_acl_cached<R: Read + ?Sized>(
+    reader: &mut R,
+    acl_type: AclType,
+    cache: &mut AclCache,
+) -> io::Result<u32> {
+    let result = recv_rsync_acl(reader)?;
+
+    match result {
+        RecvAclResult::CacheHit(ndx) => {
+            // upstream: acls.c:738 validates ndx < racl_list->count
+            let count = match acl_type {
+                AclType::Access => cache.access_count(),
+                AclType::Default => cache.default_count(),
+            };
+            if ndx as usize >= count {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "recv_acl_index: {} ACL index {} > {}",
+                        match acl_type {
+                            AclType::Access => "access",
+                            AclType::Default => "default",
+                        },
+                        ndx,
+                        count,
+                    ),
+                ));
+            }
+            Ok(ndx)
+        }
+        RecvAclResult::Literal(acl) => {
+            let ndx = match acl_type {
+                AclType::Access => cache.store_access(acl),
+                AclType::Default => cache.store_default(acl),
+            };
+            Ok(ndx)
+        }
+    }
+}
+
+/// Receives ACL data for a file entry, storing results in the cache.
+///
+/// Reads the access ACL from the wire, and for directories also reads
+/// the default ACL. Literal ACL data is stored in the cache. Returns
+/// the cache indices for the received ACLs.
+///
+/// This is the main entry point for ACL reception during flist reading.
+/// Symlinks are excluded from ACL processing, matching upstream behavior.
+///
+/// # Arguments
+///
+/// * `reader` - Input stream
+/// * `is_directory` - Whether this entry is a directory (controls default ACL)
+/// * `cache` - ACL cache for storing received ACL definitions
+///
+/// # Returns
+///
+/// Tuple of (access_acl_index, optional_default_acl_index).
+///
+/// # Upstream Reference
+///
+/// Mirrors `receive_acl()` in `acls.c` lines 786-792.
+pub fn receive_acl_cached<R: Read + ?Sized>(
+    reader: &mut R,
+    is_directory: bool,
+    cache: &mut AclCache,
+) -> io::Result<(u32, Option<u32>)> {
+    let access_ndx = recv_rsync_acl_cached(reader, AclType::Access, cache)?;
+
+    let default_ndx = if is_directory {
+        Some(recv_rsync_acl_cached(reader, AclType::Default, cache)?)
+    } else {
+        None
+    };
+
+    Ok((access_ndx, default_ndx))
 }
 
 #[cfg(test)]
