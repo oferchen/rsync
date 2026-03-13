@@ -170,16 +170,3 @@ impl CompressionAlgorithm {
         }
     }
 }
-
-/// Outcome of the protocol 30+ capability negotiation.
-///
-/// After both peers exchange their supported algorithm lists via the
-/// `negotiate_the_strings()` exchange (upstream `compat.c:534-585`), each side
-/// independently selects the first mutually supported checksum and compression
-/// algorithm. This struct captures those selections so higher layers can
-/// configure their I/O pipelines accordingly.
-///
-/// For protocol versions below 30, [`negotiate_capabilities`] returns
-/// hard-coded defaults (`MD4` / `Zlib`) without performing any wire exchange,
-/// matching upstream behaviour.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
