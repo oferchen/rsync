@@ -1123,3 +1123,487 @@ mod receive_acl_cached_tests {
         assert!(recv_cache.get_access(0).unwrap().is_empty());
     }
 }
+
+/// Tests for `get_perms` helper function.
+///
+/// Validates extraction of rwx permission bits from Unix file mode
+/// for each ACL tag type. Upstream: `rsync_acl_get_perms()` in `acls.c`.
+mod get_perms_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_user_obj_bits() {
+        // mode 0o755 = rwxr-xr-x -> user_obj = rwx = 7
+        assert_eq!(get_perms(0o755, AclTagType::UserObj), 7);
+        // mode 0o644 = rw-r--r-- -> user_obj = rw- = 6
+        assert_eq!(get_perms(0o644, AclTagType::UserObj), 6);
+        // mode 0o000 -> user_obj = 0
+        assert_eq!(get_perms(0o000, AclTagType::UserObj), 0);
+    }
+
+    #[test]
+    fn extracts_group_obj_bits() {
+        // mode 0o755 -> group_obj = r-x = 5
+        assert_eq!(get_perms(0o755, AclTagType::GroupObj), 5);
+        // mode 0o644 -> group_obj = r-- = 4
+        assert_eq!(get_perms(0o644, AclTagType::GroupObj), 4);
+        // mode 0o070 -> group_obj = rwx = 7
+        assert_eq!(get_perms(0o070, AclTagType::GroupObj), 7);
+    }
+
+    #[test]
+    fn extracts_mask_obj_bits_same_as_group() {
+        // POSIX.1e: mask shares bit position with group
+        assert_eq!(get_perms(0o750, AclTagType::MaskObj), 5);
+        assert_eq!(
+            get_perms(0o750, AclTagType::MaskObj),
+            get_perms(0o750, AclTagType::GroupObj)
+        );
+    }
+
+    #[test]
+    fn extracts_other_obj_bits() {
+        // mode 0o755 -> other_obj = r-x = 5
+        assert_eq!(get_perms(0o755, AclTagType::OtherObj), 5);
+        // mode 0o700 -> other_obj = 0
+        assert_eq!(get_perms(0o700, AclTagType::OtherObj), 0);
+        // mode 0o007 -> other_obj = rwx = 7
+        assert_eq!(get_perms(0o007, AclTagType::OtherObj), 7);
+    }
+
+    #[test]
+    fn all_permission_combinations() {
+        for user in 0..=7u32 {
+            for group in 0..=7u32 {
+                for other in 0..=7u32 {
+                    let mode = (user << 6) | (group << 3) | other;
+                    assert_eq!(get_perms(mode, AclTagType::UserObj), user as u8);
+                    assert_eq!(get_perms(mode, AclTagType::GroupObj), group as u8);
+                    assert_eq!(get_perms(mode, AclTagType::OtherObj), other as u8);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ignores_file_type_bits() {
+        // Regular file: S_IFREG (0o100000) | 0o644
+        let mode = 0o100644;
+        assert_eq!(get_perms(mode, AclTagType::UserObj), 6);
+        assert_eq!(get_perms(mode, AclTagType::GroupObj), 4);
+        assert_eq!(get_perms(mode, AclTagType::OtherObj), 4);
+    }
+
+    #[test]
+    fn ignores_setuid_setgid_sticky() {
+        // mode 0o4755 (setuid) -> permissions still 755
+        assert_eq!(get_perms(0o4755, AclTagType::UserObj), 7);
+        assert_eq!(get_perms(0o4755, AclTagType::GroupObj), 5);
+        assert_eq!(get_perms(0o4755, AclTagType::OtherObj), 5);
+
+        // mode 0o2755 (setgid)
+        assert_eq!(get_perms(0o2755, AclTagType::UserObj), 7);
+
+        // mode 0o1755 (sticky)
+        assert_eq!(get_perms(0o1755, AclTagType::OtherObj), 5);
+    }
+}
+
+/// Tests for `RsyncAcl::fake_perms`.
+///
+/// Validates creation of minimal ACLs from file mode bits.
+/// Upstream: `rsync_acl_fake_perms()` in `acls.c`.
+mod fake_perms_tests {
+    use super::*;
+
+    #[test]
+    fn populates_from_standard_mode() {
+        let mut acl = RsyncAcl::new();
+        acl.fake_perms(0o755);
+
+        assert_eq!(acl.user_obj, 7);
+        assert_eq!(acl.group_obj, 5);
+        assert_eq!(acl.other_obj, 5);
+        assert_eq!(acl.mask_obj, NO_ENTRY);
+        assert!(acl.names.is_empty());
+    }
+
+    #[test]
+    fn populates_from_restrictive_mode() {
+        let mut acl = RsyncAcl::new();
+        acl.fake_perms(0o600);
+
+        assert_eq!(acl.user_obj, 6);
+        assert_eq!(acl.group_obj, 0);
+        assert_eq!(acl.other_obj, 0);
+    }
+
+    #[test]
+    fn clears_existing_state() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.mask_obj = 0x05;
+        acl.names.push(IdAccess::user(1000, 0x07));
+
+        acl.fake_perms(0o644);
+
+        assert_eq!(acl.user_obj, 6);
+        assert_eq!(acl.group_obj, 4);
+        assert_eq!(acl.other_obj, 4);
+        assert_eq!(acl.mask_obj, NO_ENTRY);
+        assert!(acl.names.is_empty());
+    }
+
+    #[test]
+    fn zero_mode_produces_zero_perms() {
+        let mut acl = RsyncAcl::new();
+        acl.fake_perms(0o000);
+
+        assert_eq!(acl.user_obj, 0);
+        assert_eq!(acl.group_obj, 0);
+        assert_eq!(acl.other_obj, 0);
+    }
+
+    #[test]
+    fn full_mode_produces_full_perms() {
+        let mut acl = RsyncAcl::new();
+        acl.fake_perms(0o777);
+
+        assert_eq!(acl.user_obj, 7);
+        assert_eq!(acl.group_obj, 7);
+        assert_eq!(acl.other_obj, 7);
+    }
+}
+
+/// Tests for `RsyncAcl::from_mode` constructor.
+mod from_mode_tests {
+    use super::*;
+
+    #[test]
+    fn creates_acl_matching_fake_perms() {
+        let acl = RsyncAcl::from_mode(0o755);
+        let mut expected = RsyncAcl::new();
+        expected.fake_perms(0o755);
+
+        assert_eq!(acl, expected);
+    }
+
+    #[test]
+    fn standard_modes() {
+        let acl = RsyncAcl::from_mode(0o644);
+        assert_eq!(acl.user_obj, 6);
+        assert_eq!(acl.group_obj, 4);
+        assert_eq!(acl.other_obj, 4);
+        assert_eq!(acl.mask_obj, NO_ENTRY);
+        assert!(acl.names.is_empty());
+    }
+
+    #[test]
+    fn is_not_empty() {
+        let acl = RsyncAcl::from_mode(0o755);
+        assert!(!acl.is_empty());
+    }
+
+    #[test]
+    fn zero_mode_has_present_entries() {
+        let acl = RsyncAcl::from_mode(0o000);
+        // Even with zero perms, the entries are present (not NO_ENTRY)
+        assert!(acl.has_user_obj());
+        assert!(acl.has_group_obj());
+        assert!(acl.has_other_obj());
+        assert!(!acl.has_mask_obj());
+    }
+}
+
+/// Tests for `RsyncAcl::strip_perms`.
+///
+/// Validates ACL stripping to base permission entries.
+/// Upstream: `rsync_acl_strip_perms()` in `acls.c`.
+mod strip_perms_tests {
+    use super::*;
+
+    #[test]
+    fn removes_named_entries() {
+        let mut acl = RsyncAcl::from_mode(0o755);
+        acl.names.push(IdAccess::user(1000, 0x07));
+        acl.names.push(IdAccess::group(100, 0x05));
+        acl.mask_obj = 0x07;
+
+        acl.strip_perms();
+
+        assert!(acl.names.is_empty());
+    }
+
+    #[test]
+    fn replaces_group_with_mask_when_mask_present() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 7;
+        acl.group_obj = 5;
+        acl.mask_obj = 3;
+        acl.other_obj = 0;
+        acl.names.push(IdAccess::user(1000, 0x07));
+
+        acl.strip_perms();
+
+        // upstream: group_obj should be replaced by mask_obj value
+        assert_eq!(acl.group_obj, 3);
+        assert_eq!(acl.mask_obj, NO_ENTRY);
+        assert!(acl.names.is_empty());
+    }
+
+    #[test]
+    fn preserves_group_when_no_mask() {
+        let mut acl = RsyncAcl::from_mode(0o755);
+
+        acl.strip_perms();
+
+        assert_eq!(acl.group_obj, 5);
+        assert_eq!(acl.mask_obj, NO_ENTRY);
+    }
+
+    #[test]
+    fn preserves_user_and_other() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 7;
+        acl.group_obj = 5;
+        acl.mask_obj = 3;
+        acl.other_obj = 4;
+        acl.names.push(IdAccess::user(1000, 0x07));
+
+        acl.strip_perms();
+
+        assert_eq!(acl.user_obj, 7);
+        assert_eq!(acl.other_obj, 4);
+    }
+
+    #[test]
+    fn idempotent_without_mask() {
+        let mut acl = RsyncAcl::from_mode(0o644);
+        let before = acl.clone();
+
+        acl.strip_perms();
+
+        assert_eq!(acl.user_obj, before.user_obj);
+        assert_eq!(acl.group_obj, before.group_obj);
+        assert_eq!(acl.other_obj, before.other_obj);
+    }
+
+    #[test]
+    fn strip_empty_acl_is_noop() {
+        let mut acl = RsyncAcl::new();
+        acl.strip_perms();
+
+        // mask_obj stays NO_ENTRY, names stay empty
+        assert_eq!(acl.mask_obj, NO_ENTRY);
+        assert!(acl.names.is_empty());
+    }
+}
+
+/// Tests for `RsyncAcl::equal_enough`.
+///
+/// Validates semantic ACL comparison that ignores mask when no named
+/// entries exist. Upstream: `rsync_acl_equal_enough()` in `acls.c`.
+mod equal_enough_tests {
+    use super::*;
+
+    #[test]
+    fn identical_acls_are_equal() {
+        let acl = RsyncAcl::from_mode(0o755);
+        assert!(acl.equal_enough(&acl));
+    }
+
+    #[test]
+    fn different_user_obj_not_equal() {
+        let a = RsyncAcl::from_mode(0o755);
+        let b = RsyncAcl::from_mode(0o655);
+        assert!(!a.equal_enough(&b));
+    }
+
+    #[test]
+    fn different_other_obj_not_equal() {
+        let a = RsyncAcl::from_mode(0o750);
+        let b = RsyncAcl::from_mode(0o751);
+        assert!(!a.equal_enough(&b));
+    }
+
+    #[test]
+    fn different_group_obj_not_equal() {
+        let a = RsyncAcl::from_mode(0o750);
+        let b = RsyncAcl::from_mode(0o740);
+        assert!(!a.equal_enough(&b));
+    }
+
+    #[test]
+    fn mask_ignored_when_no_named_entries() {
+        // Two ACLs with same effective permissions but different mask state.
+        // Without named entries, mask is irrelevant.
+        let a = RsyncAcl::from_mode(0o755);
+
+        let mut b = RsyncAcl::new();
+        b.user_obj = 7;
+        b.group_obj = 0; // different group_obj
+        b.mask_obj = 5; // but mask provides the effective group perms
+        b.other_obj = 5;
+
+        // a has group_obj=5, no mask. b has group_obj=0, mask=5.
+        // Without named entries, effective group = mask if present, else group_obj.
+        assert!(a.equal_enough(&b));
+
+        // Reverse comparison should also hold
+        assert!(b.equal_enough(&a));
+    }
+
+    #[test]
+    fn mask_compared_when_named_entries_present() {
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 5;
+        a.mask_obj = 7;
+        a.other_obj = 5;
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let mut b = a.clone();
+        b.mask_obj = 3; // different mask
+
+        // With named entries, mask must match exactly
+        assert!(!a.equal_enough(&b));
+    }
+
+    #[test]
+    fn group_obj_compared_when_named_entries_present() {
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 5;
+        a.mask_obj = 7;
+        a.other_obj = 5;
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let mut b = a.clone();
+        b.group_obj = 3; // different group
+
+        assert!(!a.equal_enough(&b));
+    }
+
+    #[test]
+    fn different_named_entry_count_not_equal() {
+        let mut a = RsyncAcl::from_mode(0o755);
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let b = RsyncAcl::from_mode(0o755);
+
+        assert!(!a.equal_enough(&b));
+    }
+
+    #[test]
+    fn different_named_entry_id_not_equal() {
+        let mut a = RsyncAcl::from_mode(0o755);
+        a.mask_obj = 7;
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let mut b = RsyncAcl::from_mode(0o755);
+        b.mask_obj = 7;
+        b.names.push(IdAccess::user(2000, 0x07));
+
+        assert!(!a.equal_enough(&b));
+    }
+
+    #[test]
+    fn different_named_entry_perms_not_equal() {
+        let mut a = RsyncAcl::from_mode(0o755);
+        a.mask_obj = 7;
+        a.names.push(IdAccess::user(1000, 0x07));
+
+        let mut b = RsyncAcl::from_mode(0o755);
+        b.mask_obj = 7;
+        b.names.push(IdAccess::user(1000, 0x05));
+
+        assert!(!a.equal_enough(&b));
+    }
+
+    #[test]
+    fn empty_acls_are_equal() {
+        let a = RsyncAcl::new();
+        let b = RsyncAcl::new();
+        assert!(a.equal_enough(&b));
+    }
+
+    #[test]
+    fn both_masks_present_no_names_effective_group_matches() {
+        let mut a = RsyncAcl::new();
+        a.user_obj = 7;
+        a.group_obj = 3;
+        a.mask_obj = 5;
+        a.other_obj = 0;
+
+        let mut b = RsyncAcl::new();
+        b.user_obj = 7;
+        b.group_obj = 1;
+        b.mask_obj = 5;
+        b.other_obj = 0;
+
+        // No named entries - effective group is mask_obj for both = 5
+        assert!(a.equal_enough(&b));
+    }
+
+    #[test]
+    fn reflexive_with_named_entries() {
+        let mut acl = RsyncAcl::from_mode(0o755);
+        acl.mask_obj = 7;
+        acl.names.push(IdAccess::user(1000, 0x07));
+        acl.names.push(IdAccess::group(100, 0x05));
+
+        assert!(acl.equal_enough(&acl));
+    }
+}
+
+/// Tests for `IdaEntries::clear`.
+mod ida_entries_clear_tests {
+    use super::*;
+
+    #[test]
+    fn clear_empties_entries() {
+        let mut entries = IdaEntries::new();
+        entries.push(IdAccess::user(1000, 0x07));
+        entries.push(IdAccess::group(100, 0x05));
+        assert_eq!(entries.len(), 2);
+
+        entries.clear();
+
+        assert!(entries.is_empty());
+        assert_eq!(entries.len(), 0);
+    }
+
+    #[test]
+    fn clear_on_empty_is_noop() {
+        let mut entries = IdaEntries::new();
+        entries.clear();
+        assert!(entries.is_empty());
+    }
+}
+
+/// Tests for `AclTagType` enum.
+mod acl_tag_type_tests {
+    use super::*;
+
+    #[test]
+    fn clone_and_copy() {
+        let a = AclTagType::UserObj;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn debug_format() {
+        assert!(format!("{:?}", AclTagType::UserObj).contains("UserObj"));
+        assert!(format!("{:?}", AclTagType::GroupObj).contains("GroupObj"));
+        assert!(format!("{:?}", AclTagType::MaskObj).contains("MaskObj"));
+        assert!(format!("{:?}", AclTagType::OtherObj).contains("OtherObj"));
+    }
+
+    #[test]
+    fn equality() {
+        assert_eq!(AclTagType::UserObj, AclTagType::UserObj);
+        assert_ne!(AclTagType::UserObj, AclTagType::GroupObj);
+        assert_ne!(AclTagType::MaskObj, AclTagType::OtherObj);
+    }
+}
