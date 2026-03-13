@@ -520,6 +520,17 @@ impl BatchedFileListWriter {
     pub fn into_inner(self) -> FileListWriter {
         self.writer
     }
+
+    /// Backdates the batch start timestamp so that the flush timeout has
+    /// already elapsed. This makes timeout tests fully deterministic
+    /// without relying on `thread::sleep`.
+    #[cfg(test)]
+    fn expire_batch_timeout(&mut self) {
+        if self.batch_start.is_some() {
+            self.batch_start =
+                Some(Instant::now() - self.config.flush_timeout - Duration::from_millis(1));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -787,15 +798,19 @@ mod tests {
 
     #[test]
     fn check_timeout_flush() {
-        let config = BatchConfig::new().with_flush_timeout(Duration::from_millis(1));
+        let config = BatchConfig::new().with_flush_timeout(Duration::from_millis(100));
         let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
         let mut output = Vec::new();
 
         let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
         writer.add_entry(&mut output, &entry).unwrap();
 
-        // Wait for timeout
-        std::thread::sleep(Duration::from_millis(5));
+        // Before expiry: timeout has not elapsed yet
+        assert!(!writer.check_timeout_flush(&mut output).unwrap());
+        assert!(!writer.is_empty());
+
+        // Simulate timeout expiry by backdating the batch start
+        writer.expire_batch_timeout();
 
         assert!(writer.check_timeout_flush(&mut output).unwrap());
         assert!(writer.is_empty());
