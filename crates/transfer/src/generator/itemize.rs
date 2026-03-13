@@ -309,7 +309,7 @@ mod tests {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_REPORT_ATIME);
         let entry = make_file_entry("test.txt");
         let result = format_iflags(&iflags, &entry, true);
-        assert_eq!(result, ".f.....u...");
+        assert_eq!(result, ".f......u..");
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod tests {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_REPORT_CRTIME);
         let entry = make_file_entry("test.txt");
         let result = format_iflags(&iflags, &entry, true);
-        assert_eq!(result, ".f.....n...");
+        assert_eq!(result, ".f......n..");
     }
 
     #[test]
