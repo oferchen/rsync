@@ -92,7 +92,11 @@ impl ReceiverContext {
         let mut files_transferred = 0;
         let mut bytes_received = 0u64;
 
-        // First pass: create directories and symlinks from file list
+        // First pass: create directories and symlinks from file list.
+        // For --relative, ensure implied parent directories exist before
+        // directory/symlink creation to handle --no-implied-dirs.
+        // upstream: generator.c:1317-1326 - make_path() for relative_paths
+        self.ensure_relative_parents(&dest_dir);
         let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
         self.create_symlinks(&dest_dir);
 
@@ -453,7 +457,11 @@ impl ReceiverContext {
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
-        // Batch directory and symlink creation
+        // Batch directory and symlink creation.
+        // For --relative, ensure implied parent directories exist before
+        // directory/symlink creation to handle --no-implied-dirs.
+        // upstream: generator.c:1317-1326 - make_path() for relative_paths
+        self.ensure_relative_parents(&setup.dest_dir);
         let mut metadata_errors = self.create_directories(&setup.dest_dir, &setup.metadata_opts)?;
         self.create_symlinks(&setup.dest_dir);
 
@@ -580,6 +588,11 @@ impl ReceiverContext {
         };
         let mut failed_dirs = FailedDirectories::new();
         let mut metadata_errors: Vec<(PathBuf, String)> = Vec::new();
+
+        // For --relative, ensure implied parent directories exist before
+        // incremental directory creation to handle --no-implied-dirs.
+        // upstream: generator.c:1317-1326 - make_path() for relative_paths
+        self.ensure_relative_parents(&setup.dest_dir);
 
         for file_entry in &self.file_list {
             if file_entry.is_dir() {

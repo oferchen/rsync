@@ -158,6 +158,89 @@ impl ReceiverContext {
         Ok(all_errors)
     }
 
+    /// Creates implied parent directories for `--relative` path components.
+    ///
+    /// When `--relative` is active, the file list may contain entries with deep paths
+    /// (e.g., `a/b/c/file.txt`). If `--no-implied-dirs` was used, the intermediate
+    /// directories (`a/`, `a/b/`, `a/b/c/`) may not appear as explicit directory
+    /// entries in the file list. This method ensures all parent directories exist
+    /// before files, symlinks, or other entries are processed.
+    ///
+    /// Uses a set to track already-created paths, avoiding redundant `mkdir` syscalls
+    /// when many entries share common parent directories.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1317-1326` - `make_path()` for missing parents when
+    ///   `relative_paths && !implied_dirs`
+    /// - `generator.c:1472-1475` - retry `mkdir` after `make_path()` when
+    ///   `relative_paths` and initial `mkdir` returns `ENOENT`
+    pub(super) fn ensure_relative_parents(&self, dest_dir: &Path) {
+        if !self.config.flags.relative || self.config.flags.dry_run {
+            return;
+        }
+
+        let mut created: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+        for entry in &self.file_list {
+            let relative_path = entry.path();
+            if relative_path.as_os_str() == "." {
+                continue;
+            }
+
+            // Collect all ancestor directories that need creation.
+            // For path "a/b/c/file.txt", we need "a/", "a/b/", "a/b/c/".
+            // For directory entry "a/b/c/", we need "a/", "a/b/".
+            let target = if entry.is_dir() {
+                // For directories, create parents (not the dir itself - that's handled
+                // by create_directories / create_directory_incremental).
+                match relative_path.parent() {
+                    Some(p) if !p.as_os_str().is_empty() => p,
+                    _ => continue,
+                }
+            } else {
+                // For files/symlinks/etc., create all parent directories.
+                match relative_path.parent() {
+                    Some(p) if !p.as_os_str().is_empty() => p,
+                    _ => continue,
+                }
+            };
+
+            // Walk up the path to find the deepest ancestor that needs creation.
+            // Build the list of paths to create from shallowest to deepest.
+            let mut ancestors_to_create: Vec<PathBuf> = Vec::new();
+            let mut current = target;
+            loop {
+                let abs_path = dest_dir.join(current);
+                if created.contains(&abs_path) || abs_path.exists() {
+                    break;
+                }
+                ancestors_to_create.push(abs_path);
+                match current.parent() {
+                    Some(p) if !p.as_os_str().is_empty() => current = p,
+                    _ => break,
+                }
+            }
+
+            // Create from shallowest to deepest.
+            for dir_path in ancestors_to_create.into_iter().rev() {
+                if let Err(e) = fs::create_dir(&dir_path) {
+                    if e.kind() != io::ErrorKind::AlreadyExists {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to create implied parent directory {}: {}",
+                            dir_path.display(),
+                            e
+                        );
+                        break;
+                    }
+                }
+                created.insert(dir_path);
+            }
+        }
+    }
+
     /// Deletes extraneous files at the destination that are not in the received file list.
     ///
     /// Groups file list entries by parent directory, then for each destination directory,
@@ -365,6 +448,12 @@ impl ReceiverContext {
                 let _ = std::fs::remove_file(&link_path);
             } else if link_path.symlink_metadata().is_ok() {
                 let _ = std::fs::remove_file(&link_path);
+            }
+
+            // Ensure parent directory exists for --relative paths.
+            // upstream: generator.c:1317-1326 - make_path() for relative_paths
+            if let Some(parent) = link_path.parent() {
+                let _ = fs::create_dir_all(parent);
             }
 
             // upstream: generator.c:1591 - atomic_create() -> do_symlink()
