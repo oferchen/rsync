@@ -1,0 +1,608 @@
+//! Main transfer loop and goodbye handshake for the generator role.
+
+use std::fs;
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
+
+use logging::debug_log;
+use protocol::codec::{
+    NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec,
+};
+use protocol::stats::DeleteStats;
+
+use super::delta::{
+    compute_file_checksum, script_to_wire_delta, stream_whole_file_transfer,
+    write_delta_with_compression,
+};
+use super::item_flags::ItemFlags;
+use super::protocol_io::calculate_duration_ms;
+use super::{GeneratorContext, GeneratorStats, TransferLoopResult, is_early_close_error};
+use crate::adaptive_buffer::adaptive_buffer_size;
+use crate::delta_config::DeltaGeneratorConfig;
+use crate::receiver::SumHead;
+
+impl GeneratorContext {
+    /// Runs the main file transfer loop, reading NDX requests from receiver.
+    ///
+    /// This method processes file transfer requests in phases until all phases complete.
+    /// For each file index received, it reads signatures, generates deltas, and sends data.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:send_files()` - Main send loop (lines 210-462)
+    /// - `io.c:read_ndx/write_ndx` - NDX protocol encoding
+    fn run_transfer_loop<R: Read, W: Write>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut super::super::writer::ServerWriter<W>,
+        progress: &mut Option<&mut dyn super::super::TransferProgressCallback>,
+    ) -> io::Result<TransferLoopResult> {
+        use super::super::shared::TransferDeadline;
+        use super::delta::generate_delta_from_signature;
+        use super::protocol_io::read_signature_blocks;
+
+        // Phase handling: upstream sender.c line 210: max_phase = protocol_version >= 29 ? 2 : 1
+        let mut phase: i32 = 0;
+        let max_phase: i32 = if self.protocol.supports_iflags() {
+            2
+        } else {
+            1
+        };
+
+        let deadline = TransferDeadline::from_system_time(self.config.stop_at);
+
+        let mut files_transferred = 0;
+        let mut bytes_sent = 0u64;
+        // Pre-allocate to match upstream IO_BUFFER_SIZE (32KB) for write batching
+        let mut stream_buf = Vec::with_capacity(32 * 1024);
+
+        // Create NDX codecs using Strategy pattern for protocol-version-aware encoding.
+        // Upstream rsync uses separate static variables for read and write state (io.c:2244-2245).
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+
+        // During dry-run the upstream daemon may close the connection at any
+        // point after file list exchange because no actual data transfer occurs.
+        // upstream: sender.c - dry-run skips data transfer entirely.
+        let tolerant = self.config.flags.dry_run;
+
+        loop {
+            // Read NDX value from receiver.
+            // Connection may close early in dry-run or abbreviated transfers - treat
+            // as end of transfer once we have completed at least one phase.
+            let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
+                Ok(ndx) => ndx,
+                // Connection may close early in dry-run mode (upstream daemon
+                // exits after file list exchange) or after phase transitions.
+                // upstream: sender.c - dry-run skips data transfer entirely.
+                Err(e) if (phase > 0 || tolerant) && is_early_close_error(&e) => {
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
+
+            // Handle negative NDX values (upstream io.c:1736-1750, sender.c:236-258)
+            if ndx < 0 {
+                match ndx {
+                    NDX_DONE => {
+                        // Phase transition
+                        phase += 1;
+                        if phase > max_phase {
+                            break;
+                        }
+                        // upstream: sender.c:250 - echo NDX_DONE back to receiver.
+                        // During dry-run the daemon may close the pipe before we
+                        // finish echoing - treat write failures as end-of-transfer.
+                        if let Err(e) = ndx_write_codec
+                            .write_ndx_done(&mut *writer)
+                            .and_then(|()| writer.flush())
+                        {
+                            if tolerant && is_early_close_error(&e) {
+                                break;
+                            }
+                            return Err(e);
+                        }
+                        continue;
+                    }
+                    NDX_FLIST_EOF => {
+                        // End of incremental file lists (upstream io.c:1738-1741)
+                        debug_log!(Flist, 2, "received NDX_FLIST_EOF, file list complete");
+                        continue;
+                    }
+                    NDX_DEL_STATS => {
+                        // Deletion statistics (upstream main.c:238-247).
+                        // During dry-run the connection may drop mid-read.
+                        let stats = match DeleteStats::read_from(&mut *reader) {
+                            Ok(s) => s,
+                            Err(e) if tolerant && is_early_close_error(&e) => {
+                                break;
+                            }
+                            Err(e) => return Err(e),
+                        };
+                        self.accumulate_delete_stats(&stats);
+                        debug_log!(
+                            Flist,
+                            2,
+                            "received NDX_DEL_STATS: {} deletions",
+                            stats.total()
+                        );
+                        continue;
+                    }
+                    _ if ndx <= NDX_FLIST_OFFSET => {
+                        // Incremental file list directory index (upstream flist.c)
+                        debug_log!(Flist, 2, "received NDX_FLIST_OFFSET {}, not supported", ndx);
+                        continue;
+                    }
+                    _ => {
+                        // Unknown negative NDX - log and continue
+                        debug_log!(Flist, 1, "received unknown negative NDX value {}", ndx);
+                        continue;
+                    }
+                }
+            }
+
+            // Convert wire NDX to array index using segment boundary table.
+            // upstream: rsync.c:424 — i = ndx - cur_flist->ndx_start
+            let ndx = self.wire_to_flat_ndx(ndx);
+
+            // Read item flags using ItemFlags helper
+            let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
+            if self.protocol.supports_iflags() {
+                self.timing.total_bytes_read += 2;
+            }
+
+            // Read and discard optional trailing fields (basis type, xname)
+            let (_fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
+            if iflags.has_basis_type() {
+                self.timing.total_bytes_read += 1;
+            }
+            if let Some(ref xname_data) = xname {
+                self.timing.total_bytes_read += 4 + xname_data.len() as u64;
+            }
+
+            // Check if file should be transferred
+            if !iflags.needs_transfer() {
+                continue;
+            }
+
+            // Read sum_head using SumHead helper
+            let sum_head = SumHead::read(&mut *reader)?;
+            self.timing.total_bytes_read += 16;
+
+            // Validate file index
+            self.validate_file_index(ndx)?;
+
+            let file_entry = &self.file_list[ndx];
+            // Direct field access to allow subsequent mutable access to self.timing
+            // (Rust's borrow checker allows disjoint field borrows)
+            debug_assert_eq!(
+                self.file_list.len(),
+                self.full_paths.len(),
+                "file_list and full_paths must be kept in sync"
+            );
+            let source_path = &self.full_paths[ndx];
+            let source_path_display = source_path.display().to_string();
+
+            // Read signature blocks
+            let sig_blocks = read_signature_blocks(&mut *reader, &sum_head)?;
+
+            // Track bytes read for signature blocks
+            let bytes_per_block = 4 + sum_head.s2length as u64;
+            self.timing.total_bytes_read += sum_head.count as u64 * bytes_per_block;
+
+            let block_length = sum_head.blength;
+            let strong_sum_length = sum_head.s2length as u8;
+            let has_basis = !sum_head.is_empty();
+
+            // Skip non-regular files
+            if !file_entry.is_file() {
+                continue;
+            }
+
+            // Generate and send file data.
+            // We already know file_size from the file list, so no fstat needed —
+            // this gives openat + read + close = 3 syscalls per file, matching
+            // upstream's pattern (upstream does openat + fstat + read + close = 4).
+            let file_size = file_entry.size();
+            // Echo the wire NDX back to the receiver using segment boundary table.
+            // upstream: sender.c:389 — write_ndx(f_out, ndx) uses the original wire ndx
+            let ndx_i32 = self.flat_to_wire_ndx(ndx);
+
+            if has_basis {
+                // Delta path: build DeltaScript (needs random access for block matching),
+                // then hash and write in separate passes.
+                let source: Box<dyn Read> = match fs::File::open(source_path) {
+                    Ok(f) => Box::new(io::BufReader::with_capacity(
+                        adaptive_buffer_size(file_size),
+                        f,
+                    )),
+                    Err(e) => {
+                        self.record_open_failure(&mut *writer, ndx_i32, &e, &source_path_display)?;
+                        continue;
+                    }
+                };
+                let config = DeltaGeneratorConfig {
+                    block_length,
+                    sig_blocks,
+                    strong_sum_length,
+                    protocol: self.protocol,
+                    negotiated_algorithms: self.negotiated_algorithms.as_ref(),
+                    compat_flags: self.compat_flags.as_ref(),
+                    checksum_seed: self.checksum_seed,
+                };
+                let delta_script = generate_delta_from_signature(source, config)?;
+
+                self.write_ndx_and_attrs(
+                    &mut *writer,
+                    &mut ndx_write_codec,
+                    ndx_i32,
+                    &iflags,
+                    &sum_head,
+                )?;
+
+                // Compute checksum, convert to wire ops, write
+                let checksum_algorithm = self.get_checksum_algorithm();
+                let (checksum_buf, checksum_len) = compute_file_checksum(
+                    &delta_script,
+                    checksum_algorithm,
+                    self.checksum_seed,
+                    self.compat_flags.as_ref(),
+                );
+                let delta_total_bytes = delta_script.total_bytes();
+                let wire_ops = script_to_wire_delta(delta_script);
+                let compression = self.file_compression(source_path);
+                write_delta_with_compression(&mut *writer, &wire_ops, compression, source_path)?;
+                writer.write_all(&checksum_buf[..checksum_len])?;
+                bytes_sent += delta_total_bytes;
+            } else {
+                // Whole-file path: single-pass streaming (read -> hash -> write).
+                // Pre-open file to fail before sending protocol headers.
+                // upstream: sender.c:354-369 — send MSG_NO_SEND on open failure.
+                let source = match fs::File::open(source_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        self.record_open_failure(&mut *writer, ndx_i32, &e, &source_path_display)?;
+                        continue;
+                    }
+                };
+
+                self.write_ndx_and_attrs(
+                    &mut *writer,
+                    &mut ndx_write_codec,
+                    ndx_i32,
+                    &iflags,
+                    &sum_head,
+                )?;
+
+                // Stream: read -> hash -> write in one pass (no DeltaScript intermediate).
+                // No flush here — data accumulates in MultiplexWriter's 64KB buffer,
+                // auto-flushing when full. This matches upstream rsync's batched
+                // iobuf_out pattern (sender.c send_files).
+                let checksum_algorithm = self.get_checksum_algorithm();
+                let compression = self.file_compression(source_path);
+                let result = stream_whole_file_transfer(
+                    &mut *writer,
+                    source,
+                    file_size,
+                    checksum_algorithm,
+                    compression,
+                    &mut stream_buf,
+                )?;
+                writer.write_all(&result.checksum_buf[..result.checksum_len])?;
+                bytes_sent += result.total_bytes;
+            }
+            files_transferred += 1;
+
+            if let Some(cb) = progress.as_mut() {
+                let event = super::super::TransferProgressEvent {
+                    path: file_entry.path(),
+                    file_bytes: bytes_sent,
+                    total_file_bytes: Some(file_entry.size()),
+                    files_done: files_transferred,
+                    total_files: self.file_list.len(),
+                };
+                cb.on_file_transferred(&event);
+            }
+
+            // Check deadline at file boundary after sending each file.
+            // Upstream rsync (io.c:825) hard-exits via exit_cleanup(RERR_TIMEOUT).
+            // We return an error to match: the sender cannot gracefully stop because
+            // the receiver has already sent pending file requests that expect responses.
+            // The error propagates up, causing the connection to close and the remote
+            // side to detect the closed pipe and clean up.
+            if let Some(ref dl) = deadline {
+                if dl.is_reached() {
+                    return Err(TransferDeadline::as_io_error());
+                }
+            }
+        }
+
+        // Send final NDX_DONE.
+        // During dry-run the upstream daemon may have already closed the connection,
+        // making the write fail with BrokenPipe or WouldBlock.
+        // upstream: sender.c - dry-run never enters the data-transfer phase.
+        if let Err(e) = ndx_write_codec
+            .write_ndx_done(&mut *writer)
+            .and_then(|()| writer.flush())
+        {
+            if !(tolerant && is_early_close_error(&e)) {
+                return Err(e);
+            }
+        }
+
+        Ok(TransferLoopResult {
+            files_transferred,
+            bytes_sent,
+            ndx_read_codec,
+            ndx_write_codec,
+        })
+    }
+
+    /// Handles the goodbye handshake at end of transfer.
+    ///
+    /// For protocol < 29, upstream uses `read_int()` (raw 4-byte LE) to read the
+    /// receiver's goodbye NDX_DONE. For protocol >= 29, it uses `read_ndx_and_attrs()`
+    /// which for NDX_DONE returns immediately without reading iflags. Both produce
+    /// the same wire format, so the legacy NDX codec handles both correctly.
+    ///
+    /// Protocol 31+ introduces NDX_DEL_STATS during the goodbye phase. The receiver
+    /// may send deletion statistics before the final NDX_DONE. This mirrors upstream's
+    /// `read_ndx_and_attrs()` which loops over NDX_DEL_STATS, reading 5 varints of
+    /// deletion counts before continuing to expect NDX_DONE.
+    ///
+    /// Deletion statistics are only sent when `--stats` is active (INFO_GTE(STATS, 2))
+    /// and follow upstream's early/late timing:
+    /// - **Early** (delete_during or delete_before): sent when `do_stats && delete_mode`.
+    /// - **Late** (delete_delay or delete_after): sent when `do_stats`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:875-906` - `read_final_goodbye()`
+    /// - `main.c:883` - protocol < 29 uses `read_int(f_in)`
+    /// - `main.c:885-886` - protocol >= 29 uses `read_ndx_and_attrs()`
+    /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
+    /// - `main.c:225-238` - `write_del_stats()` format
+    /// - `generator.c:2376-2381` - early del_stats path
+    /// - `generator.c:2420-2425` - late del_stats path
+    pub(super) fn handle_goodbye<R: Read, W: Write>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
+        ndx_write_codec: &mut protocol::codec::NdxCodecEnum,
+    ) -> io::Result<()> {
+        if !self.protocol.supports_goodbye_exchange() {
+            return Ok(());
+        }
+
+        // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS.
+        // upstream: main.c:886 - read_ndx_and_attrs() handles NDX_DEL_STATS internally.
+        // Connection may close early in dry-run or when the remote daemon exits before
+        // completing the goodbye exchange - treat this as acceptable.
+        let ndx = match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
+            Ok(ndx) => ndx,
+            Err(e) if is_early_close_error(&e) => {
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
+        if ndx != NDX_DONE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected goodbye NDX_DONE (-1) from receiver, got {ndx}"),
+            ));
+        }
+
+        // For protocol 31+: conditionally send del_stats, echo NDX_DONE, read final NDX_DONE.
+        //
+        // Upstream gates del_stats sending on INFO_GTE(STATS, 2) (i.e. --stats was passed)
+        // and splits it into early vs late paths depending on deletion timing:
+        // - Early (generator.c:2376-2381): !(delete_during==2 || delete_after) =>
+        //   send del_stats only when (do_stats && (delete_mode || force_delete))
+        // - Late (generator.c:2420-2425): (delete_during==2 || delete_after) =>
+        //   send del_stats when do_stats
+        if self.protocol.supports_extended_goodbye() {
+            // Writes during goodbye may fail when the daemon has already closed
+            // the connection (common in dry-run mode).
+            let write_result = (|| -> io::Result<()> {
+                if self.should_send_del_stats() {
+                    ndx_write_codec.write_ndx(writer, NDX_DEL_STATS)?;
+                    self.delete_stats.write_to(writer)?;
+                    debug_log!(
+                        Flist,
+                        2,
+                        "sent NDX_DEL_STATS during goodbye: {} deletions",
+                        self.delete_stats.total()
+                    );
+                }
+                ndx_write_codec.write_ndx_done(writer)?;
+                writer.flush()
+            })();
+
+            if let Err(e) = write_result {
+                if is_early_close_error(&e) {
+                    return Ok(());
+                }
+                return Err(e);
+            }
+
+            // Read final NDX_DONE - may fail if daemon kills receiver child early
+            match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
+                Ok(final_ndx) => {
+                    if final_ndx != NDX_DONE {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx}"
+                            ),
+                        ));
+                    }
+                }
+                Err(e) if is_early_close_error(&e) => {
+                    // Connection closed during final goodbye - acceptable
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Determines whether del_stats should be sent during the goodbye phase.
+    ///
+    /// Mirrors upstream's conditional logic for `write_del_stats()` in the
+    /// generator goodbye sequence. The conditions differ for early vs late
+    /// deletion timing:
+    ///
+    /// - **Early** (`!late_delete`): `do_stats && flags.delete`
+    ///   (upstream: generator.c:2377 - `INFO_GTE(STATS, 2) && (delete_mode || force_delete)`)
+    /// - **Late** (`late_delete`): `do_stats`
+    ///   (upstream: generator.c:2422 - `INFO_GTE(STATS, 2)`)
+    pub(super) fn should_send_del_stats(&self) -> bool {
+        if !self.config.do_stats {
+            return false;
+        }
+        if self.config.deletion.late_delete {
+            // upstream: generator.c:2422 - INFO_GTE(STATS, 2) (already checked above)
+            true
+        } else {
+            // upstream: generator.c:2377 - INFO_GTE(STATS, 2) && (delete_mode || force_delete)
+            self.config.flags.delete
+        }
+    }
+
+    /// Reads the next NDX value, consuming any NDX_DEL_STATS messages.
+    ///
+    /// Upstream `read_ndx_and_attrs()` (rsync.c:337-342) loops over NDX_DEL_STATS,
+    /// calling `read_del_stats()` which reads 5 varints and accumulates counts.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:337-342` - NDX_DEL_STATS loop in `read_ndx_and_attrs()`
+    /// - `main.c:238-247` - `read_del_stats()` accumulates into global counters
+    fn read_ndx_skipping_del_stats<R: Read>(
+        &mut self,
+        reader: &mut R,
+        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
+    ) -> io::Result<i32> {
+        loop {
+            let ndx = ndx_read_codec.read_ndx(reader)?;
+            if ndx == NDX_DEL_STATS {
+                let stats = DeleteStats::read_from(reader)?;
+                self.accumulate_delete_stats(&stats);
+                debug_log!(
+                    Flist,
+                    2,
+                    "consumed NDX_DEL_STATS during goodbye: {} deletions",
+                    stats.total()
+                );
+                continue;
+            }
+            return Ok(ndx);
+        }
+    }
+
+    /// Accumulates deletion statistics from an NDX_DEL_STATS message.
+    /// (upstream: main.c:238-247 - `read_del_stats()` adds to global counters)
+    fn accumulate_delete_stats(&mut self, stats: &DeleteStats) {
+        self.delete_stats.files = self.delete_stats.files.saturating_add(stats.files);
+        self.delete_stats.dirs = self.delete_stats.dirs.saturating_add(stats.dirs);
+        self.delete_stats.symlinks = self.delete_stats.symlinks.saturating_add(stats.symlinks);
+        self.delete_stats.devices = self.delete_stats.devices.saturating_add(stats.devices);
+        self.delete_stats.specials = self.delete_stats.specials.saturating_add(stats.specials);
+    }
+
+    /// Runs the generator role to completion.
+    ///
+    /// This orchestrates the full send operation:
+    /// 1. Build file list from paths
+    /// 2. Send file list
+    /// 3. For each file: receive signature, generate delta, send delta
+    ///
+    /// The writer must be a ServerWriter to support `write_raw` for protocol
+    /// messages that bypass multiplexing (like the goodbye NDX_DONE).
+    pub fn run<R: Read, W: Write>(
+        &mut self,
+        mut reader: super::super::reader::ServerReader<R>,
+        writer: &mut super::super::writer::ServerWriter<W>,
+        paths: &[PathBuf],
+        mut progress: Option<&mut dyn super::super::TransferProgressCallback>,
+    ) -> io::Result<GeneratorStats> {
+        // Step 1: Activate input multiplex if needed (mode and protocol dependent)
+        if self.should_activate_input_multiplex() {
+            reader = reader.activate_multiplex().map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
+            })?;
+        }
+
+        // NOTE: Compression is NOT applied at the stream level.
+        // Upstream rsync uses token-level compression (send_deflated_token/recv_deflated_token)
+        // only during the delta transfer phase. The filter list and file list are plain data.
+
+        // Step 2: Receive filter list from client (server mode only)
+        self.receive_filter_list_if_server(&mut reader)?;
+
+        // Step 2b: Read files-from list if configured.
+        // upstream: flist.c:2262 — when filesfrom_fd != -1, sender reads filenames
+        // from the fd (stdin for --files-from=-) and walks each one individually
+        // instead of recursing from the positional args.
+        let files_from_paths = self.resolve_files_from_paths(paths, &mut reader)?;
+        let effective_paths: &[PathBuf] = if files_from_paths.is_empty() {
+            paths
+        } else {
+            &files_from_paths
+        };
+
+        let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
+
+        // Step 3: Build and send file list
+        self.build_file_list(effective_paths)?;
+        self.partition_file_list_for_inc_recurse();
+        let file_count = self.send_file_list(writer)?;
+
+        // Step 4: Send ID lists for non-INC_RECURSE protocols
+        self.send_id_lists(writer)?;
+
+        // Step 5: Send io_error flag for protocol < 30
+        self.send_io_error_flag(writer)?;
+
+        // Step 6: Send incremental file list segments and NDX_FLIST_EOF.
+        // Sub-lists are sent before the transfer loop (not interleaved) because
+        // we eagerly scanned all files upfront. This simplifies the receiver —
+        // it reads all sub-lists before entering its transfer loop.
+        self.send_extra_file_lists(writer)?;
+        self.send_flist_eof_if_inc_recurse(writer)?;
+
+        // Step 7: Run main transfer loop
+        let transfer_result = self.run_transfer_loop(reader, writer, &mut progress)?;
+
+        // Step 8: Handle goodbye handshake
+        //
+        // No stats are sent here. Upstream client-sender calls handle_stats(-1)
+        // which is a no-op (main.c:360-384). Stats are only written by the
+        // server-sender (am_server && am_sender) path. The client already has
+        // all stats locally via GeneratorStats.
+        let mut ndx_read_codec = transfer_result.ndx_read_codec;
+        let mut ndx_write_codec = transfer_result.ndx_write_codec;
+        self.handle_goodbye(reader, writer, &mut ndx_read_codec, &mut ndx_write_codec)?;
+
+        // Calculate timing stats for return value
+        let flist_buildtime =
+            calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
+        let flist_xfertime =
+            calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
+
+        Ok(GeneratorStats {
+            files_listed: file_count,
+            files_transferred: transfer_result.files_transferred,
+            bytes_sent: transfer_result.bytes_sent,
+            bytes_read: self.timing.total_bytes_read,
+            flist_buildtime_ms: flist_buildtime,
+            flist_xfertime_ms: flist_xfertime,
+            delete_stats: self.delete_stats,
+            io_error: self.io_error,
+        })
+    }
+}
