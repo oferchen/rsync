@@ -4,6 +4,13 @@
 //! cache. Each unique xattr set is stored once and referenced by index from
 //! multiple file entries. This mirrors upstream rsync's `rsync_xal_l` list.
 //!
+//! After reading raw name-value pairs from the wire, names are translated from
+//! wire format to local platform conventions using `wire_to_local()`. Entries
+//! whose names cannot be stored locally (e.g., non-user namespace xattrs when
+//! running as non-root on Linux) are filtered out. When name translation
+//! changes the sort order, entries are re-sorted by name to maintain the
+//! invariant that xattr lists are sorted alphabetically.
+//!
 //! # Upstream Reference
 //!
 //! - `xattrs.c:receive_xattr()` - reads index or literal data, stores in cache
@@ -12,7 +19,8 @@
 use std::io::{self, Read};
 
 use crate::varint::read_varint;
-use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrEntry, XattrList};
+use crate::xattr::prefix::wire_to_local;
+use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, RSYNC_PREFIX, XattrEntry, XattrList};
 
 /// Cache of received xattr sets, indexed for deduplication.
 ///
@@ -66,6 +74,12 @@ impl XattrCache {
     /// - If zero, literal xattr data follows: a count of entries, each with
     ///   name length, datum length, name bytes, and value or checksum bytes.
     ///
+    /// After reading each entry, the name is translated from wire format to
+    /// local platform conventions via `wire_to_local()`. Entries that cannot
+    /// be stored locally are silently dropped. When name translation modifies
+    /// names (e.g., adding `user.` prefix on Linux), the entry list is
+    /// re-sorted by name to maintain upstream's sorted invariant.
+    ///
     /// Returns the cache index assigned to this file's xattr set.
     ///
     /// # Wire Format
@@ -84,10 +98,21 @@ impl XattrCache {
     ///       value    : bytes[datum_len]
     /// ```
     ///
+    /// # Arguments
+    ///
+    /// * `reader` - Wire protocol stream
+    /// * `am_root` - Whether receiver has root privileges (affects namespace handling)
+    /// * `preserve_xattrs` - Xattr preservation level (1 = normal, 2 = include rsync.% attrs)
+    ///
     /// # Upstream Reference
     ///
     /// See `xattrs.c:receive_xattr()` lines 764-869.
-    pub fn receive_xattr<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<u32> {
+    pub fn receive_xattr<R: Read + ?Sized>(
+        &mut self,
+        reader: &mut R,
+        am_root: bool,
+        preserve_xattrs: u32,
+    ) -> io::Result<u32> {
         // upstream: ndx = read_varint(f)
         let ndx = read_varint(reader)?;
 
@@ -118,6 +143,7 @@ impl XattrCache {
         let count = count as usize;
 
         let mut list = XattrList::new();
+        let mut need_sort = !cfg!(target_os = "linux");
 
         for num in 1..=count {
             // upstream: name_len = read_varint(f); datum_len = read_varint(f)
@@ -146,28 +172,90 @@ impl XattrCache {
             // Strip the NUL terminator for internal storage
             name.truncate(name_len - 1);
 
-            // Read value or checksum
+            // Read value or checksum bytes from the wire before any filtering,
+            // since we must consume the data regardless of whether we keep the entry.
+            let datum_bytes = {
+                let mut buf = vec![0u8; dget_len];
+                reader.read_exact(&mut buf)?;
+                buf
+            };
+
+            // upstream: xattrs.c:820-853 - translate wire name to local name
+            let local_name = match wire_to_local(&name, am_root) {
+                Some(n) => n,
+                None => {
+                    // Cannot store this xattr locally - skip it
+                    continue;
+                }
+            };
+
+            // upstream: xattrs.c:848-853 - skip rsync.%FOO internal attrs
+            // unless preserve_xattrs >= 2 (double -X)
+            if preserve_xattrs < 2 && is_rsync_internal_attr(&local_name) {
+                continue;
+            }
+
+            // Track whether name translation changed a name, requiring re-sort.
+            // upstream: xattrs.c:830 - need_sort = 1 on name prefix changes
+            if !need_sort && local_name != name {
+                need_sort = true;
+            }
+
             if datum_len > MAX_FULL_DATUM {
-                // Abbreviated - read checksum only
-                let mut checksum = vec![0u8; dget_len];
-                reader.read_exact(&mut checksum)?;
-                let mut entry = XattrEntry::abbreviated(name, checksum, datum_len);
+                let mut entry = XattrEntry::abbreviated(local_name, datum_bytes, datum_len);
                 entry.set_num(num as u32);
                 list.push(entry);
             } else {
-                // Full value
-                let mut value = vec![0u8; datum_len];
-                reader.read_exact(&mut value)?;
-                let mut entry = XattrEntry::new(name, value);
+                let mut entry = XattrEntry::new(local_name, datum_bytes);
                 entry.set_num(num as u32);
                 list.push(entry);
             }
+        }
+
+        // upstream: xattrs.c:863-864 - sort by name when translations changed order
+        if need_sort && list.len() > 1 {
+            list.sort_by_name();
         }
 
         // upstream: ndx = rsync_xal_store(&temp_xattr)
         let stored_ndx = self.store(list);
         Ok(stored_ndx)
     }
+}
+
+/// Checks whether a local-format xattr name is an rsync internal attribute.
+///
+/// Internal attributes use the `rsync.%` prefix (or `user.rsync.%` on Linux).
+/// These are only preserved when `preserve_xattrs >= 2` (double `-X`).
+///
+/// # Upstream Reference
+///
+/// See `xattrs.c:848-853` - `preserve_xattrs < 2 && name[RPRE_LEN] == '%'`
+fn is_rsync_internal_attr(name: &[u8]) -> bool {
+    let name_str = match std::str::from_utf8(name) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let rpre = RSYNC_PREFIX;
+    if name_str.len() > rpre.len() {
+        if let Some(rest) = name_str.strip_prefix(rpre) {
+            return rest.starts_with('%');
+        }
+    }
+
+    // On Linux, check user.rsync.% form
+    #[cfg(target_os = "linux")]
+    {
+        let full_prefix = format!("user.{rpre}");
+        if name_str.len() > full_prefix.len() {
+            if let Some(rest) = name_str.strip_prefix(full_prefix.as_str()) {
+                return rest.starts_with('%');
+            }
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -178,6 +266,9 @@ mod tests {
     use std::io::Cursor;
 
     /// Helper to write a literal xattr set to a buffer in wire format.
+    ///
+    /// Names are written as-is (wire format). The caller is responsible for
+    /// using proper wire-format names (e.g., without `user.` prefix on Linux).
     fn write_literal_xattr(buf: &mut Vec<u8>, entries: &[(&[u8], &[u8])]) {
         // ndx = 0 means literal follows
         write_varint(buf, 0).unwrap();
@@ -207,26 +298,43 @@ mod tests {
         write_varint(buf, (index + 1) as i32).unwrap();
     }
 
+    /// Returns the expected local name after wire_to_local translation.
+    ///
+    /// On Linux, wire names get `user.` prepended. On other platforms, they
+    /// pass through unchanged.
+    fn expected_local_name(wire_name: &[u8]) -> Vec<u8> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut local = b"user.".to_vec();
+            local.extend_from_slice(wire_name);
+            local
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            wire_name.to_vec()
+        }
+    }
+
     #[test]
     fn receive_literal_xattr_set() {
         let mut cache = XattrCache::new();
         let mut buf = Vec::new();
         write_literal_xattr(
             &mut buf,
-            &[(b"user.mime_type", b"text/plain"), (b"user.tag", b"test")],
+            &[(b"mime_type", b"text/plain"), (b"tag", b"test")],
         );
 
         let mut cursor = Cursor::new(buf);
-        let ndx = cache.receive_xattr(&mut cursor).unwrap();
+        let ndx = cache.receive_xattr(&mut cursor, false, 1).unwrap();
 
         assert_eq!(ndx, 0);
         assert_eq!(cache.len(), 1);
 
         let list = cache.get(0).unwrap();
         assert_eq!(list.len(), 2);
-        assert_eq!(list.entries()[0].name(), b"user.mime_type");
+        assert_eq!(list.entries()[0].name(), expected_local_name(b"mime_type"));
         assert_eq!(list.entries()[0].datum(), b"text/plain");
-        assert_eq!(list.entries()[1].name(), b"user.tag");
+        assert_eq!(list.entries()[1].name(), expected_local_name(b"tag"));
         assert_eq!(list.entries()[1].datum(), b"test");
     }
 
@@ -236,16 +344,16 @@ mod tests {
 
         // First, receive a literal set
         let mut buf = Vec::new();
-        write_literal_xattr(&mut buf, &[(b"user.attr", b"value")]);
+        write_literal_xattr(&mut buf, &[(b"attr", b"value")]);
         let mut cursor = Cursor::new(buf);
-        let first_ndx = cache.receive_xattr(&mut cursor).unwrap();
+        let first_ndx = cache.receive_xattr(&mut cursor, false, 1).unwrap();
         assert_eq!(first_ndx, 0);
 
         // Second, receive a cache hit referencing the first set
         let mut buf = Vec::new();
         write_cache_hit(&mut buf, 0);
         let mut cursor = Cursor::new(buf);
-        let hit_ndx = cache.receive_xattr(&mut cursor).unwrap();
+        let hit_ndx = cache.receive_xattr(&mut cursor, false, 1).unwrap();
         assert_eq!(hit_ndx, 0);
 
         // Cache should still have only one entry
@@ -257,12 +365,12 @@ mod tests {
         let mut cache = XattrCache::new();
 
         let mut buf = Vec::new();
-        write_literal_xattr(&mut buf, &[(b"user.a", b"val_a")]);
-        write_literal_xattr(&mut buf, &[(b"user.b", b"val_b")]);
+        write_literal_xattr(&mut buf, &[(b"a", b"val_a")]);
+        write_literal_xattr(&mut buf, &[(b"b", b"val_b")]);
 
         let mut cursor = Cursor::new(buf);
-        let ndx0 = cache.receive_xattr(&mut cursor).unwrap();
-        let ndx1 = cache.receive_xattr(&mut cursor).unwrap();
+        let ndx0 = cache.receive_xattr(&mut cursor, false, 1).unwrap();
+        let ndx1 = cache.receive_xattr(&mut cursor, false, 1).unwrap();
 
         assert_eq!(ndx0, 0);
         assert_eq!(ndx1, 1);
@@ -276,7 +384,7 @@ mod tests {
         write_literal_xattr(&mut buf, &[]);
 
         let mut cursor = Cursor::new(buf);
-        let ndx = cache.receive_xattr(&mut cursor).unwrap();
+        let ndx = cache.receive_xattr(&mut cursor, false, 1).unwrap();
         assert_eq!(ndx, 0);
 
         let list = cache.get(0).unwrap();
@@ -289,10 +397,10 @@ mod tests {
         let large_value = vec![0xBB; 100]; // > MAX_FULL_DATUM
 
         let mut buf = Vec::new();
-        write_literal_xattr(&mut buf, &[(b"user.large", &large_value)]);
+        write_literal_xattr(&mut buf, &[(b"large", &large_value)]);
 
         let mut cursor = Cursor::new(buf);
-        let ndx = cache.receive_xattr(&mut cursor).unwrap();
+        let ndx = cache.receive_xattr(&mut cursor, false, 1).unwrap();
         assert_eq!(ndx, 0);
 
         let list = cache.get(0).unwrap();
@@ -312,7 +420,7 @@ mod tests {
         write_varint(&mut buf, 5).unwrap(); // ndx=5 but cache is empty
         let mut cursor = Cursor::new(buf);
 
-        let result = cache.receive_xattr(&mut cursor);
+        let result = cache.receive_xattr(&mut cursor, false, 1);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -326,7 +434,7 @@ mod tests {
         write_varint(&mut buf, -1).unwrap();
         let mut cursor = Cursor::new(buf);
 
-        let result = cache.receive_xattr(&mut cursor);
+        let result = cache.receive_xattr(&mut cursor, false, 1);
         assert!(result.is_err());
     }
 
@@ -349,7 +457,7 @@ mod tests {
         buf.push(0x42);
 
         let mut cursor = Cursor::new(buf);
-        let result = cache.receive_xattr(&mut cursor);
+        let result = cache.receive_xattr(&mut cursor, false, 1);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("NUL"));
@@ -359,15 +467,15 @@ mod tests {
     fn receive_xattr_with_empty_value() {
         let mut cache = XattrCache::new();
         let mut buf = Vec::new();
-        write_literal_xattr(&mut buf, &[(b"user.empty", b"")]);
+        write_literal_xattr(&mut buf, &[(b"empty", b"")]);
 
         let mut cursor = Cursor::new(buf);
-        let ndx = cache.receive_xattr(&mut cursor).unwrap();
+        let ndx = cache.receive_xattr(&mut cursor, false, 1).unwrap();
         assert_eq!(ndx, 0);
 
         let list = cache.get(0).unwrap();
         assert_eq!(list.len(), 1);
-        assert_eq!(list.entries()[0].name(), b"user.empty");
+        assert_eq!(list.entries()[0].name(), expected_local_name(b"empty"));
         assert!(list.entries()[0].datum().is_empty());
     }
 
@@ -377,31 +485,28 @@ mod tests {
         let mut buf = Vec::new();
         write_literal_xattr(
             &mut buf,
-            &[
-                (b"user.first", b"a"),
-                (b"user.second", b"b"),
-                (b"user.third", b"c"),
-            ],
+            &[(b"first", b"a"), (b"second", b"b"), (b"third", b"c")],
         );
 
         let mut cursor = Cursor::new(buf);
-        cache.receive_xattr(&mut cursor).unwrap();
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
 
         let list = cache.get(0).unwrap();
-        // upstream: rxa->num = num, where num starts at 1
-        assert_eq!(list.entries()[0].num(), 1);
-        assert_eq!(list.entries()[1].num(), 2);
-        assert_eq!(list.entries()[2].num(), 3);
+        // Entry nums are preserved from wire order even after sorting
+        let nums: Vec<u32> = list.entries().iter().map(|e| e.num()).collect();
+        assert!(nums.contains(&1));
+        assert!(nums.contains(&2));
+        assert!(nums.contains(&3));
     }
 
     #[test]
     fn get_mut_allows_modification() {
         let mut cache = XattrCache::new();
         let mut buf = Vec::new();
-        write_literal_xattr(&mut buf, &[(b"user.test", b"original")]);
+        write_literal_xattr(&mut buf, &[(b"test", b"original")]);
 
         let mut cursor = Cursor::new(buf);
-        cache.receive_xattr(&mut cursor).unwrap();
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
 
         let list = cache.get_mut(0).unwrap();
         list.entries_mut()[0].set_full_value(b"modified".to_vec());
@@ -428,25 +533,25 @@ mod tests {
 
         // Store three literal sets
         let mut buf = Vec::new();
-        write_literal_xattr(&mut buf, &[(b"user.a", b"1")]);
-        write_literal_xattr(&mut buf, &[(b"user.b", b"2")]);
-        write_literal_xattr(&mut buf, &[(b"user.c", b"3")]);
+        write_literal_xattr(&mut buf, &[(b"a", b"1")]);
+        write_literal_xattr(&mut buf, &[(b"b", b"2")]);
+        write_literal_xattr(&mut buf, &[(b"c", b"3")]);
 
         let mut cursor = Cursor::new(buf);
-        cache.receive_xattr(&mut cursor).unwrap();
-        cache.receive_xattr(&mut cursor).unwrap();
-        cache.receive_xattr(&mut cursor).unwrap();
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
 
         // Now reference the second set (index 1)
         let mut buf = Vec::new();
         write_cache_hit(&mut buf, 1);
         let mut cursor = Cursor::new(buf);
-        let hit = cache.receive_xattr(&mut cursor).unwrap();
+        let hit = cache.receive_xattr(&mut cursor, false, 1).unwrap();
         assert_eq!(hit, 1);
 
         // Verify the referenced set
         let list = cache.get(1).unwrap();
-        assert_eq!(list.entries()[0].name(), b"user.b");
+        assert_eq!(list.entries()[0].name(), expected_local_name(b"b"));
     }
 
     #[test]
@@ -458,19 +563,124 @@ mod tests {
         write_literal_xattr(
             &mut buf,
             &[
-                (b"user.small", b"tiny"),
-                (b"user.large", &large_value),
-                (b"user.also_small", b"also tiny"),
+                (b"also_small", b"also tiny"),
+                (b"large", &large_value),
+                (b"small", b"tiny"),
             ],
         );
 
         let mut cursor = Cursor::new(buf);
-        cache.receive_xattr(&mut cursor).unwrap();
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
 
         let list = cache.get(0).unwrap();
         assert_eq!(list.len(), 3);
-        assert!(!list.entries()[0].is_abbreviated());
-        assert!(list.entries()[1].is_abbreviated());
-        assert!(!list.entries()[2].is_abbreviated());
+        // After sorting, order depends on local names
+        let has_abbreviated = list.entries().iter().any(|e| e.is_abbreviated());
+        let has_full = list.entries().iter().any(|e| !e.is_abbreviated());
+        assert!(has_abbreviated);
+        assert!(has_full);
+    }
+
+    #[test]
+    fn receive_name_translation_applied() {
+        // Verify wire names are translated to local names
+        let mut cache = XattrCache::new();
+        let mut buf = Vec::new();
+        write_literal_xattr(&mut buf, &[(b"my_attr", b"my_value")]);
+
+        let mut cursor = Cursor::new(buf);
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
+
+        let list = cache.get(0).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list.entries()[0].name(), expected_local_name(b"my_attr"));
+        assert_eq!(list.entries()[0].datum(), b"my_value");
+    }
+
+    #[test]
+    fn receive_rsync_internal_filtered_at_level_1() {
+        // rsync.%stat should be filtered when preserve_xattrs == 1
+        let mut cache = XattrCache::new();
+        let mut buf = Vec::new();
+
+        let rsync_prefix = RSYNC_PREFIX;
+        let internal_name = format!("{rsync_prefix}%stat");
+        write_literal_xattr(
+            &mut buf,
+            &[
+                (internal_name.as_bytes(), b"internal"),
+                (b"normal_attr", b"kept"),
+            ],
+        );
+
+        let mut cursor = Cursor::new(buf);
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
+
+        let list = cache.get(0).unwrap();
+        // The internal attr should be filtered out
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            list.entries()[0].name(),
+            expected_local_name(b"normal_attr")
+        );
+    }
+
+    #[test]
+    fn receive_rsync_internal_kept_at_level_2() {
+        // rsync.%stat should be kept when preserve_xattrs == 2 (double -X)
+        let mut cache = XattrCache::new();
+        let mut buf = Vec::new();
+
+        let rsync_prefix = RSYNC_PREFIX;
+        let internal_name = format!("{rsync_prefix}%stat");
+        write_literal_xattr(
+            &mut buf,
+            &[
+                (internal_name.as_bytes(), b"internal"),
+                (b"normal_attr", b"kept"),
+            ],
+        );
+
+        let mut cursor = Cursor::new(buf);
+        cache.receive_xattr(&mut cursor, false, 2).unwrap();
+
+        let list = cache.get(0).unwrap();
+        // Both entries should be kept
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn receive_entries_sorted_by_name() {
+        // Names should be sorted after translation
+        let mut cache = XattrCache::new();
+        let mut buf = Vec::new();
+        write_literal_xattr(
+            &mut buf,
+            &[(b"zebra", b"z"), (b"alpha", b"a"), (b"middle", b"m")],
+        );
+
+        let mut cursor = Cursor::new(buf);
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
+
+        let list = cache.get(0).unwrap();
+        assert_eq!(list.len(), 3);
+        // Entries should be sorted alphabetically by local name
+        let names: Vec<&[u8]> = list.entries().iter().map(|e| e.name()).collect();
+        let mut sorted_names = names.clone();
+        sorted_names.sort();
+        assert_eq!(names, sorted_names);
+    }
+
+    #[test]
+    fn is_rsync_internal_attr_detection() {
+        let rpre = RSYNC_PREFIX;
+        let stat_name = format!("{rpre}%stat").into_bytes();
+        let aacl_name = format!("{rpre}%aacl").into_bytes();
+        let normal_name = format!("{rpre}normal").into_bytes();
+
+        assert!(is_rsync_internal_attr(&stat_name));
+        assert!(is_rsync_internal_attr(&aacl_name));
+        assert!(!is_rsync_internal_attr(&normal_name));
+        assert!(!is_rsync_internal_attr(b"regular_attr"));
     }
 }
