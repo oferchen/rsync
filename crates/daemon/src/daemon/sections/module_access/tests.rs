@@ -657,6 +657,139 @@ mod module_access_tests {
         assert!(config.temp_dir.is_none());
     }
 
+    // --- reference directory wiring tests ---
+
+    #[test]
+    fn apply_long_form_args_parses_compare_dest_equals_format() {
+        let args = vec![
+            "--server".to_owned(),
+            "--compare-dest=/snapshots/daily".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.reference_directories.len(), 1);
+        assert_eq!(
+            config.reference_directories[0].kind(),
+            ReferenceDirectoryKind::Compare
+        );
+        assert_eq!(
+            config.reference_directories[0].path(),
+            std::path::Path::new("/snapshots/daily")
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_compare_dest_separate_args() {
+        let args = vec![
+            "--server".to_owned(),
+            "--compare-dest".to_owned(),
+            "/snapshots/daily".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.reference_directories.len(), 1);
+        assert_eq!(
+            config.reference_directories[0].kind(),
+            ReferenceDirectoryKind::Compare
+        );
+        assert_eq!(
+            config.reference_directories[0].path(),
+            std::path::Path::new("/snapshots/daily")
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_link_dest_equals_format() {
+        let args = vec![
+            "--server".to_owned(),
+            "--link-dest=/prev/backup".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.reference_directories.len(), 1);
+        assert_eq!(
+            config.reference_directories[0].kind(),
+            ReferenceDirectoryKind::Link
+        );
+        assert_eq!(
+            config.reference_directories[0].path(),
+            std::path::Path::new("/prev/backup")
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_link_dest_separate_args() {
+        let args = vec![
+            "--server".to_owned(),
+            "--link-dest".to_owned(),
+            "/prev/backup".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.reference_directories.len(), 1);
+        assert_eq!(
+            config.reference_directories[0].kind(),
+            ReferenceDirectoryKind::Link
+        );
+        assert_eq!(
+            config.reference_directories[0].path(),
+            std::path::Path::new("/prev/backup")
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_copy_dest_equals_format() {
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=/cache/warm".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.reference_directories.len(), 1);
+        assert_eq!(
+            config.reference_directories[0].kind(),
+            ReferenceDirectoryKind::Copy
+        );
+        assert_eq!(
+            config.reference_directories[0].path(),
+            std::path::Path::new("/cache/warm")
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_multiple_link_dests() {
+        let args = vec![
+            "--server".to_owned(),
+            "--link-dest=/prev1".to_owned(),
+            "--link-dest=/prev2".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.reference_directories.len(), 2);
+        assert_eq!(
+            config.reference_directories[0].path(),
+            std::path::Path::new("/prev1")
+        );
+        assert_eq!(
+            config.reference_directories[1].path(),
+            std::path::Path::new("/prev2")
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_reference_dirs_default_empty() {
+        let args = vec!["--server".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(config.reference_directories.is_empty());
+    }
+
     // Tests for parse_daemon_dont_compress
 
     #[test]
