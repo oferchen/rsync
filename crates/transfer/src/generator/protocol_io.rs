@@ -140,6 +140,43 @@ impl GeneratorContext {
         Ok(())
     }
 
+    /// Emits a MSG_INFO frame with itemize output when conditions are met.
+    ///
+    /// Sends the formatted itemize string (`"%i %n%L\n"`) as a MSG_INFO
+    /// multiplexed message to the client. This is only done when:
+    /// - The server is in daemon/SSH mode (not client mode)
+    /// - The client requested itemize output (`-i`/`--itemize-changes`)
+    /// - The file index is valid
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:287` - `maybe_log_item()` for non-transfer items
+    /// - `sender.c:430` - `log_item()` after file transfer
+    /// - `log.c:330-340` - `rwrite()` converts FCLIENT/FINFO to `send_msg(MSG_INFO)`
+    ///   when `am_server` is true
+    pub(super) fn maybe_emit_itemize<W: Write>(
+        &self,
+        writer: &mut super::super::writer::ServerWriter<W>,
+        iflags: &super::item_flags::ItemFlags,
+        ndx: usize,
+    ) -> io::Result<()> {
+        // Only emit in server mode (daemon or SSH) when the client requested itemize
+        if self.config.connection.client_mode {
+            return Ok(());
+        }
+        if !self.config.flags.info_flags.itemize {
+            return Ok(());
+        }
+        if ndx >= self.file_list.len() {
+            return Ok(());
+        }
+
+        let entry = &self.file_list[ndx];
+        // Generator role is always the sender side
+        let line = super::itemize::format_itemize_line(iflags, entry, true);
+        writer.send_message(protocol::MessageCode::Info, line.as_bytes())
+    }
+
     /// Sends NDX_FLIST_EOF if incremental recursion is enabled.
     ///
     /// This signals to the receiver that there are no more incremental file lists.
