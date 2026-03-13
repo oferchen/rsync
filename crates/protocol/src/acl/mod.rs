@@ -37,8 +37,8 @@ mod wire;
 pub use constants::*;
 pub use entry::{AclCache, IdAccess, IdaEntries, RsyncAcl};
 pub use wire::{
-    AclType, RecvAclResult, recv_acl, recv_ida_entries, recv_rsync_acl, send_acl, send_ida_entries,
-    send_rsync_acl,
+    AclType, RecvAclResult, receive_acl_cached, recv_acl, recv_ida_entries, recv_rsync_acl,
+    send_acl, send_ida_entries, send_rsync_acl,
 };
 
 #[cfg(test)]
