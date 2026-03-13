@@ -19,6 +19,7 @@ use crate::acl::{AclCache, receive_acl_cached};
 use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
 use crate::iconv::FilenameConverter;
 use crate::varint::{read_varint, read_varint30_int};
+use crate::xattr::XattrCache;
 
 use super::entry::FileEntry;
 use super::flags::{
@@ -108,6 +109,12 @@ pub struct FileListReader {
     /// cache and referenced by index. Upstream uses `access_acl_list` and
     /// `default_acl_list` globals - we encapsulate them in `AclCache`.
     acl_cache: AclCache,
+    /// Cache of received xattr sets, indexed by position.
+    ///
+    /// Populated during file list reading when `preserve_xattrs` is true.
+    /// Each file entry stores an index into this cache rather than duplicating
+    /// the full xattr list. Mirrors upstream rsync's `rsync_xal_l`.
+    xattr_cache: XattrCache,
 }
 
 /// Result from reading metadata fields.
@@ -169,6 +176,7 @@ impl FileListReader {
             dirname_interner: PathInterner::new(),
             io_error: 0,
             acl_cache: AclCache::new(),
+            xattr_cache: XattrCache::new(),
         }
     }
 
@@ -200,6 +208,7 @@ impl FileListReader {
             dirname_interner: PathInterner::new(),
             io_error: 0,
             acl_cache: AclCache::new(),
+            xattr_cache: XattrCache::new(),
         }
     }
 
@@ -354,6 +363,24 @@ impl FileListReader {
     #[must_use]
     pub const fn acl_cache(&self) -> &AclCache {
         &self.acl_cache
+    }
+
+    /// Returns a reference to the xattr cache populated during file list reading.
+    ///
+    /// Each cached entry is an [`XattrList`](crate::xattr::XattrList) containing
+    /// the xattr name-value pairs for one or more files. File entries reference
+    /// these cached lists by index via [`FileEntry::xattr_ndx`].
+    #[must_use]
+    pub fn xattr_cache(&self) -> &XattrCache {
+        &self.xattr_cache
+    }
+
+    /// Returns a mutable reference to the xattr cache.
+    ///
+    /// Needed during the data exchange phase when abbreviated xattr values
+    /// are replaced with full values received from the sender.
+    pub fn xattr_cache_mut(&mut self) -> &mut XattrCache {
+        &mut self.xattr_cache
     }
 
     /// Returns whether varint flag encoding is enabled.
@@ -1159,7 +1186,16 @@ impl FileListReader {
                 )
             };
 
-        // Step 8: Apply encoding conversion
+        // Step 9b: Read xattr index/data (for ALL entries, including hardlink followers).
+        // upstream: flist.c:1209-1212 - receive_xattr() is called after create_object,
+        // which means it runs for hardlink followers too.
+        let xattr_ndx = if self.preserve_xattrs {
+            Some(self.xattr_cache.receive_xattr(reader)?)
+        } else {
+            None
+        };
+
+        // Step 10: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
 
         // Step 8b: Clean and validate the filename.
@@ -1260,6 +1296,11 @@ impl FileListReader {
             if let Some(ndx) = def_ndx {
                 entry.set_def_acl_ndx(ndx);
             }
+        }
+
+        // Step 22b: Set xattr index if present
+        if let Some(ndx) = xattr_ndx {
+            entry.set_xattr_ndx(ndx);
         }
 
         // Step 23: Update statistics
