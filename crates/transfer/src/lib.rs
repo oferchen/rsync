@@ -154,7 +154,7 @@ pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_han
 pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
 pub use self::shared::{ChecksumFactory, TransferDeadline};
-pub use self::writer::CountingWriter;
+pub use self::writer::{CountingWriter, MsgInfoSender};
 pub use ack_batcher::{
     AckBatcher, AckBatcherConfig, AckBatcherStats, AckEntry, AckStatus, DEFAULT_BATCH_SIZE,
     DEFAULT_BATCH_TIMEOUT_MS, MAX_BATCH_SIZE, MAX_BATCH_TIMEOUT_MS, MIN_BATCH_SIZE,
