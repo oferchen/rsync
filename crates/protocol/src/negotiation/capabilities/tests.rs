@@ -1,2483 +1,2437 @@
-#[cfg(test)]
-#[allow(clippy::uninlined_format_args)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_checksum_algorithm_roundtrip() {
-        for &name in &["md4", "md5", "sha1", "xxh64", "xxh128"] {
-            let algo = ChecksumAlgorithm::parse(name).unwrap();
-            // Note: xxh64 wire name is "xxh64" but as_str returns "xxh64"
-            // This is correct as the parsing accepts both "xxh" and "xxh64"
-            let roundtrip = algo.as_str();
-            let reparsed = ChecksumAlgorithm::parse(roundtrip).unwrap();
-            assert_eq!(algo, reparsed, "roundtrip failed for {name}");
-        }
-    }
-
-    #[test]
-    fn test_compression_algorithm_roundtrip() {
-        for &name in &["none", "zlib", "zlibx", "lz4", "zstd"] {
-            let algo = CompressionAlgorithm::parse(name).unwrap();
-            let roundtrip = algo.as_str();
-            let reparsed = CompressionAlgorithm::parse(roundtrip).unwrap();
-            assert_eq!(algo, reparsed, "roundtrip failed for {name}");
-        }
-    }
-
-    #[test]
-    fn test_xxh_alias() {
-        // "xxh" should parse to XXH64
-        let algo = ChecksumAlgorithm::parse("xxh").unwrap();
-        assert_eq!(algo, ChecksumAlgorithm::XXH64);
-    }
-
-    #[test]
-    fn test_xxhash_alias() {
-        // "xxhash" should parse to XXH64 (upstream: checksum.c valid_checksums_items)
-        let algo = ChecksumAlgorithm::parse("xxhash").unwrap();
-        assert_eq!(algo, ChecksumAlgorithm::XXH64);
-    }
-
-    #[test]
-    fn test_negotiate_proto29_uses_defaults() {
-        let protocol = ProtocolVersion::try_from(29).unwrap();
-        let mut stdin = &b""[..];
-        let mut stdout = Vec::new();
-
-        let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
-                .unwrap();
-
-        // Protocol < 30 should use defaults without any I/O
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        assert!(
-            stdout.is_empty(),
-            "no data should be sent for protocol < 30"
-        );
-    }
-
-    #[test]
-    fn test_negotiate_proto30_md5_zlib() {
-        let protocol = ProtocolVersion::try_from(30).unwrap();
-
-        // Simulate remote choosing md5 and zlib
-        // Format: vstring(len) + string, so len byte + "md5" + len byte + "zlib"
-        let client_response = b"\x03md5\x04zlib";
-        let mut stdin = &client_response[..];
-        let mut stdout = Vec::new();
-
-        let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
-                .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-
-        // Verify we sent our lists
-        let output = String::from_utf8_lossy(&stdout);
-        assert!(
-            output.contains("md5"),
-            "should send checksum list containing md5"
-        );
-        assert!(
-            output.contains("zlib"),
-            "should send compression list containing zlib"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "zstd")]
-    fn test_negotiate_proto32_zstd() {
-        let protocol = ProtocolVersion::try_from(32).unwrap();
-
-        // Simulate remote choosing md5 and zstd
-        // Format: vstring(len) + string, so len byte + "md5" + len byte + "zstd"
-        let client_response = b"\x03md5\x04zstd";
-        let mut stdin = &client_response[..];
-        let mut stdout = Vec::new();
-
-        let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
-                .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zstd);
-    }
-
-    #[test]
-    #[cfg(not(feature = "zstd"))]
-    fn test_negotiate_proto32_zlib() {
-        let protocol = ProtocolVersion::try_from(32).unwrap();
-
-        // Simulate remote choosing md5 and zlib (zstd not available in this build)
-        // Format: vstring(len) + string, so len byte + "md5" + len byte + "zlib"
-        let client_response = b"\x03md5\x04zlib";
-        let mut stdin = &client_response[..];
-        let mut stdout = Vec::new();
-
-        let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
-                .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-    }
-
-    #[test]
-    fn test_vstring_roundtrip() {
-        let test_str = "md5 md4 sha1 xxh128";
-        let mut buffer = Vec::new();
-
-        write_vstring(&mut buffer, test_str).unwrap();
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-
-        assert_eq!(received, test_str);
-    }
-
-    #[test]
-    fn test_vstring_length_limit() {
-        // Create a vstring that claims 10000 bytes (uses 2-byte format)
-        // 10000 = 0x2710, so high byte = 0x27 | 0x80 = 0xA7, low byte = 0x10
-        let mut buffer = vec![0xA7, 0x10];
-        buffer.extend_from_slice(&[b'x'; 100]); // But only provide 100 bytes
-
-        let mut reader = &buffer[..];
-        let result = read_vstring(&mut reader);
-
-        // Should fail because we can't read enough bytes
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_vstring_max_nstr_strlen_limit_rejects_oversized() {
-        // MAX_NSTR_STRLEN is 256 (upstream compat.c:91).
-        // A string of 257 bytes must be rejected.
-        let mut buffer = Vec::new();
-        let oversized = "x".repeat(257);
-        write_vstring(&mut buffer, &oversized).unwrap();
-
-        let mut reader = &buffer[..];
-        let result = read_vstring(&mut reader);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("vstring too long"),
-            "error message should mention vstring length: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_vstring_max_nstr_strlen_limit_accepts_boundary() {
-        // A string of exactly 256 bytes should be accepted.
-        let boundary = "x".repeat(256);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &boundary).unwrap();
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, boundary);
-    }
-
-    #[test]
-    fn test_vstring_two_byte_format() {
-        // Test vstring encoding for length > 127
-        let test_str = "x".repeat(200); // 200 bytes > 127, needs 2-byte format
-        let mut buffer = Vec::new();
-
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        // First byte should have high bit set (0xC8 = 0x80 | 0x00, second byte = 0xC8)
-        // 200 = 0x00C8, so [0x80, 0xC8]
-        assert_eq!(buffer[0], 0x80); // (200 >> 8) | 0x80 = 0 | 0x80 = 0x80
-        assert_eq!(buffer[1], 0xC8); // 200 & 0xFF = 0xC8
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    #[test]
-    fn test_unsupported_checksum() {
-        let result = ChecksumAlgorithm::parse("blake2");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("unsupported checksum algorithm")
-        );
-    }
-
-    #[test]
-    fn test_unsupported_compression() {
-        let result = CompressionAlgorithm::parse("bzip2");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("unsupported compression algorithm")
-        );
-    }
-
-    #[test]
-    fn test_negotiate_do_negotiation_false_uses_defaults_no_io() {
-        // When do_negotiation=false, should return defaults without any I/O
-        // This happens when client lacks VARINT_FLIST_FLAGS capability
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let mut stdin = &b""[..]; // Empty input - should not be read
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            false, // do_negotiation = false
-            true,  // send_compression
-            false, // is_daemon_mode
-            true,  // is_server
-        )
-        .unwrap();
-
-        // Should use MD5 (protocol 30+ default) and Zlib when send_compression=true
-        // upstream: compat.c:194 defaults to CPRES_ZLIB when -z active without negotiation
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        // No I/O should have occurred
-        assert!(
-            stdout.is_empty(),
-            "no data should be sent when do_negotiation=false"
-        );
-    }
-
-    #[test]
-    fn test_negotiate_compression_disabled() {
-        // When send_compression=false, should only exchange checksum list
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        // Only provide checksum list, no compression list
-        let client_response = b"\x03md5"; // Just "md5", no compression
-        let mut stdin = &client_response[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            false, // send_compression = false
-            false, // is_daemon_mode
-            true,  // is_server
-        )
-        .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        // Compression should be None when not negotiated
-        assert_eq!(result.compression, CompressionAlgorithm::None);
-
-        // Should have sent checksum list but not compression list
-        let output = String::from_utf8_lossy(&stdout);
-        assert!(output.contains("md5"), "should send checksum list");
-        // We can't easily verify compression wasn't sent without parsing,
-        // but the test passing means stdin wasn't over-read
-    }
-
-    /// Helper to generate peer algorithm data for tests.
-    fn test_peer_data(send_compression: bool) -> Vec<u8> {
-        let mut data = Vec::new();
-        write_vstring(&mut data, &SUPPORTED_CHECKSUMS.join(" ")).unwrap();
-        if send_compression {
-            write_vstring(&mut data, &supported_compressions().join(" ")).unwrap();
-        }
-        data
-    }
-
-    #[test]
-    fn test_daemon_server_sends_and_reads() {
-        // Both daemon server and client do bidirectional exchange
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let peer_data = test_peer_data(true);
-        let mut stdin = &peer_data[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true, // do_negotiation
-            true, // send_compression
-            true, // is_daemon_mode = true
-            true, // is_server = true
-        )
-        .unwrap();
-
-        // Server selects from peer's list
-        assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-
-        // Verify server sent data (bidirectional)
-        assert!(!stdout.is_empty(), "server should send capability lists");
-        let output = String::from_utf8_lossy(&stdout);
-        assert!(
-            output.contains("xxh128"),
-            "should send checksum list with xxh128"
-        );
-    }
-
-    #[test]
-    fn test_daemon_client_sends_and_reads() {
-        // Client also sends its lists in bidirectional exchange
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        let server_lists = b"\x0Exxh128 md5 md4\x0Ezstd zlib none";
-        let mut stdin = &server_lists[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            true,  // is_daemon_mode = true
-            false, // is_server = false (client)
-        )
-        .unwrap();
-
-        // Client should select first from server's list that it supports
-        assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-
-        // Client should also send (bidirectional)
-        assert!(
-            !stdout.is_empty(),
-            "client should also send capability lists (bidirectional)"
-        );
-    }
-
-    #[test]
-    fn test_daemon_mode_round_trip() {
-        // Test that server output can be consumed by client
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let peer_data = test_peer_data(true);
-
-        // Step 1: Server sends and reads
-        let mut server_stdin = &peer_data[..];
-        let mut server_output = Vec::new();
-        let server_result = negotiate_capabilities(
-            protocol,
-            &mut server_stdin,
-            &mut server_output,
-            true, // do_negotiation
-            true, // send_compression
-            true, // is_daemon_mode
-            true, // is_server
-        )
-        .unwrap();
-
-        // Step 2: Client reads server output, also sends
-        let mut client_stdin = &server_output[..];
-        let mut client_output = Vec::new();
-        let client_result = negotiate_capabilities(
-            protocol,
-            &mut client_stdin,
-            &mut client_output,
-            true,  // do_negotiation
-            true,  // send_compression
-            true,  // is_daemon_mode
-            false, // is_server = false (client)
-        )
-        .unwrap();
-
-        // Both should select compatible algorithms
-        assert_eq!(client_result.checksum, ChecksumAlgorithm::XXH128);
-        assert_eq!(server_result.checksum, ChecksumAlgorithm::XXH128);
-
-        // Client should also have sent data (bidirectional)
-        assert!(!client_output.is_empty());
-    }
-
-    #[test]
-    fn test_daemon_server_without_compression() {
-        // Server with compression disabled
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let peer_data = test_peer_data(false);
-        let mut stdin = &peer_data[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            false, // send_compression = false
-            true,  // is_daemon_mode
-            true,  // is_server
-        )
-        .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-        assert_eq!(result.compression, CompressionAlgorithm::None);
-
-        // Should have sent checksum list only
-        assert!(!stdout.is_empty());
-    }
-
-    #[test]
-    fn test_daemon_client_selects_fallback_algorithm() {
-        // Client receives server list that doesn't include our top choices
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        // Server only offers md5 and zlib (not our top preferences)
-        let server_lists = b"\x03md5\x04zlib";
-        let mut stdin = &server_lists[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            true,  // is_daemon_mode
-            false, // is_server = false
-        )
-        .unwrap();
-
-        // Should fall back to md5 and zlib since that's what server offers
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        // Client also sends its lists (bidirectional)
-        assert!(!stdout.is_empty());
-    }
-
-    #[test]
-    #[cfg(feature = "zstd")]
-    fn test_negotiate_ssh_mode_zstd() {
-        // SSH mode (is_daemon_mode=false) - bidirectional exchange
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let client_response = b"\x06xxh128\x04zstd";
-        let mut stdin = &client_response[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            false, // is_daemon_mode = false (SSH mode)
-            true,  // is_server
-        )
-        .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-        assert_eq!(result.compression, CompressionAlgorithm::Zstd);
-    }
-
-    #[test]
-    #[cfg(not(feature = "zstd"))]
-    fn test_negotiate_ssh_mode_zlib() {
-        // SSH mode (is_daemon_mode=false) - bidirectional exchange
-        // Without zstd feature, remote's zstd preference is ignored, falls back to zlib
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let client_response = b"\x06xxh128\x04zlib";
-        let mut stdin = &client_response[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            false, // is_daemon_mode = false (SSH mode)
-            true,  // is_server
-        )
-        .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-    }
-
-    #[test]
-    fn test_choose_checksum_first_match_wins() {
-        // When client sends multiple checksums, we pick the first one we support
-        let client_list = "xxh128 xxh64 md5 md4";
-        let result = choose_checksum_algorithm(client_list).unwrap();
-        // xxh128 is first and we support it
-        assert_eq!(result, ChecksumAlgorithm::XXH128);
-    }
-
-    #[test]
-    fn test_choose_checksum_fallback_to_later_match() {
-        // If first item is unsupported, pick next supported one
-        let client_list = "blake3 sha256 md5 md4";
-        let result = choose_checksum_algorithm(client_list).unwrap();
-        // blake3 and sha256 are not supported, md5 is
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    #[test]
-    fn test_choose_checksum_empty_list() {
-        // Empty list should fall back to MD5
-        let result = choose_checksum_algorithm("").unwrap();
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    #[test]
-    #[cfg(feature = "zstd")]
-    fn test_choose_compression_first_match_wins_zstd() {
-        let client_list = "zstd lz4 zlib none";
-        let result = choose_compression_algorithm(client_list).unwrap();
-        assert_eq!(result, CompressionAlgorithm::Zstd);
-    }
-
-    #[test]
-    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
-    fn test_choose_compression_first_match_wins_lz4() {
-        // Without zstd, first match should be lz4
-        let client_list = "zstd lz4 zlib none";
-        let result = choose_compression_algorithm(client_list).unwrap();
-        assert_eq!(result, CompressionAlgorithm::Lz4);
-    }
-
-    #[test]
-    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
-    fn test_choose_compression_first_match_wins_zlib() {
-        // Without zstd or lz4, first match should be zlibx (always available)
-        let client_list = "zstd lz4 zlibx zlib none";
-        let result = choose_compression_algorithm(client_list).unwrap();
-        assert_eq!(result, CompressionAlgorithm::ZlibX);
-    }
-
-    #[test]
-    fn test_choose_compression_empty_list() {
-        // Empty list should fall back to None
-        let result = choose_compression_algorithm("").unwrap();
-        assert_eq!(result, CompressionAlgorithm::None);
-    }
-
-    #[test]
-    fn test_daemon_client_handles_empty_capabilities() {
-        // Edge case: server sends empty capability lists (should fall back to defaults)
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let server_lists = b"\x00\x00"; // Two empty vstrings
-        let mut stdin = &server_lists[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            true,  // is_daemon_mode
-            false, // is_server = false
-        )
-        .unwrap();
-
-        // Should fall back to defaults when no match found
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::None);
-        // Client also sends its lists (bidirectional)
-        assert!(!stdout.is_empty());
-    }
-
-    #[test]
-    fn test_daemon_client_handles_single_algorithm() {
-        // Server offers only one checksum and compression option
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let server_lists = b"\x03md4\x04none";
-        let mut stdin = &server_lists[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            true,  // is_daemon_mode
-            false, // is_server = false
-        )
-        .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
-        assert_eq!(result.compression, CompressionAlgorithm::None);
-        // Client also sends its lists (bidirectional)
-        assert!(!stdout.is_empty());
-    }
-
-    #[test]
-    fn test_daemon_mode_malformed_input_error() {
-        // Receives malformed vstring (claims more bytes than available)
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let malformed = b"\x0Amd5"; // Claims 10 bytes but only provides 3
-        let mut stdin = &malformed[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            true,  // is_daemon_mode
-            false, // is_server = false
-        );
-
-        // Should fail with I/O error (sends first successfully, then fails reading)
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_all_modes_are_bidirectional() {
-        // Verify both SSH and daemon modes are bidirectional
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        let remote_lists = b"\x03md5\x04zlib";
-
-        // SSH mode
-        let mut stdin = &remote_lists[..];
-        let mut stdout = Vec::new();
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            true,
-            false,
-            true, // SSH mode
-        )
-        .unwrap();
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert!(!stdout.is_empty(), "SSH mode should send");
-
-        // Daemon mode (same behavior)
-        let mut stdin = &remote_lists[..];
-        let mut stdout = Vec::new();
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            true,
-            true,
-            true, // Daemon mode
-        )
-        .unwrap();
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert!(!stdout.is_empty(), "Daemon mode should also send");
-    }
-
-    #[test]
-    fn test_daemon_server_selects_from_peer_list() {
-        // Server selects from peer's algorithm list
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let peer_data = test_peer_data(true);
-        let mut stdin = &peer_data[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true, // do_negotiation
-            true, // send_compression
-            true, // is_daemon_mode
-            true, // is_server
-        )
-        .unwrap();
-
-        // Should select first in peer's list that we support
-        assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-    }
-
-    #[test]
-    fn test_daemon_client_prefers_server_order() {
-        // Client should prefer server's order (first match)
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        // Server prefers md5 over xxh128 (opposite of our preference)
-        let server_lists = b"\x07md5 md4\x09zlib none";
-        let mut stdin = &server_lists[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            true,  // is_daemon_mode
-            false, // is_server = false
-        )
-        .unwrap();
-
-        // Should pick md5 (server's first) even though xxh128 is our preference
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        // Client also sends its lists (bidirectional)
-        assert!(!stdout.is_empty());
-    }
-
-    #[test]
-    fn test_daemon_mode_respects_do_negotiation_false() {
-        // When do_negotiation=false, daemon mode should also return defaults without I/O
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let mut stdin = &b""[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            false, // do_negotiation = false
-            true,  // send_compression
-            true,  // is_daemon_mode
-            true,  // is_server
-        )
-        .unwrap();
-
-        // Should use MD5/Zlib defaults without I/O (send_compression=true)
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        assert!(stdout.is_empty(), "no I/O when do_negotiation=false");
-    }
-
-    #[test]
-    fn test_upstream_checksum_list_format() {
-        // Upstream rsync 3.4.1 sends checksums in this format:
-        // "xxh128 xxh3 xxh64 md5 md4 sha1 none"
-        let upstream_format = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
-        let result = choose_checksum_algorithm(upstream_format).unwrap();
-        // First match should be xxh128
-        assert_eq!(result, ChecksumAlgorithm::XXH128);
-    }
-
-    #[test]
-    fn test_legacy_rsync_checksum_list() {
-        // Older rsync might only offer md4 and md5
-        let legacy_format = "md5 md4";
-        let result = choose_checksum_algorithm(legacy_format).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    #[test]
-    fn test_minimal_rsync_checksum_list() {
-        // Minimal rsync might only offer none
-        let minimal_format = "none";
-        let result = choose_checksum_algorithm(minimal_format).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::None);
-    }
-
-    #[test]
-    fn test_checksum_case_sensitive() {
-        // Algorithm names are case-sensitive
-        assert!(ChecksumAlgorithm::parse("MD5").is_err());
-        assert!(ChecksumAlgorithm::parse("Md5").is_err());
-        assert!(ChecksumAlgorithm::parse("md5").is_ok());
-    }
-
-    #[test]
-    fn test_compression_case_sensitive() {
-        assert!(CompressionAlgorithm::parse("ZLIB").is_err());
-        assert!(CompressionAlgorithm::parse("Zlib").is_err());
-        assert!(CompressionAlgorithm::parse("zlib").is_ok());
-    }
-
-    #[test]
-    fn test_checksum_with_whitespace() {
-        // Lists can have multiple spaces between items
-        let list = "md5   md4     sha1";
-        let result = choose_checksum_algorithm(list).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    #[test]
-    fn test_compression_with_leading_trailing_space() {
-        // split_whitespace handles leading/trailing spaces
-        let list = "  zlib   zlibx  none  ";
-        let result = choose_compression_algorithm(list).unwrap();
-        assert_eq!(result, CompressionAlgorithm::Zlib);
-    }
-
-    #[test]
-    fn test_negotiation_result_debug() {
-        let result = NegotiationResult {
-            checksum: ChecksumAlgorithm::MD5,
-            compression: CompressionAlgorithm::Zlib,
-        };
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("MD5"));
-        assert!(debug.contains("Zlib"));
-    }
-
-    #[test]
-    fn test_negotiation_result_equality() {
-        let r1 = NegotiationResult {
-            checksum: ChecksumAlgorithm::XXH128,
-            compression: CompressionAlgorithm::None,
-        };
-        let r2 = NegotiationResult {
-            checksum: ChecksumAlgorithm::XXH128,
-            compression: CompressionAlgorithm::None,
-        };
-        let r3 = NegotiationResult {
-            checksum: ChecksumAlgorithm::MD5,
-            compression: CompressionAlgorithm::None,
-        };
-        assert_eq!(r1, r2);
-        assert_ne!(r1, r3);
-    }
-
-    #[test]
-    fn test_negotiation_result_clone() {
-        let r1 = NegotiationResult {
-            checksum: ChecksumAlgorithm::SHA1,
-            compression: CompressionAlgorithm::ZlibX,
-        };
-        let r2 = r1;
-        assert_eq!(r1.checksum, r2.checksum);
-        assert_eq!(r1.compression, r2.compression);
-    }
-
-    #[test]
-    fn test_vstring_empty_string() {
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, "").unwrap();
-        assert_eq!(buffer, vec![0x00]); // Length 0
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, "");
-    }
-
-    #[test]
-    fn test_vstring_single_byte_boundary() {
-        // Length 127 should use single-byte format
-        let test_str = "x".repeat(127);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-        assert_eq!(buffer[0], 127); // Single byte length
-        assert_eq!(buffer.len(), 1 + 127);
-    }
-
-    #[test]
-    fn test_vstring_two_byte_boundary() {
-        // Length 128 should use two-byte format
-        let test_str = "x".repeat(128);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-        assert!(buffer[0] & 0x80 != 0); // Two-byte format indicator
-        assert_eq!(buffer.len(), 2 + 128);
-    }
-
-    #[test]
-    fn test_vstring_max_single_byte() {
-        // Maximum single-byte length is 127
-        let test_str = "y".repeat(127);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    #[test]
-    fn test_vstring_moderate_length() {
-        // Test a moderate length that uses 2-byte format (within 256 limit)
-        let test_str = "z".repeat(200);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    #[test]
-    fn test_all_supported_versions_negotiate() {
-        for version_num in 28..=32 {
-            let protocol = ProtocolVersion::try_from(version_num).unwrap();
-
-            if protocol.uses_fixed_encoding() {
-                // Protocol < 30 uses defaults
-                let mut stdin = &b""[..];
-                let mut stdout = Vec::new();
-                let result = negotiate_capabilities(
-                    protocol,
-                    &mut stdin,
-                    &mut stdout,
-                    true,
-                    true,
-                    false,
-                    true,
-                )
-                .unwrap();
-                assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
-                assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-            } else {
-                // Protocol >= 30 exchanges lists
-                let client_response = b"\x03md5\x04zlib";
-                let mut stdin = &client_response[..];
-                let mut stdout = Vec::new();
-                let result = negotiate_capabilities(
-                    protocol,
-                    &mut stdin,
-                    &mut stdout,
-                    true,
-                    true,
-                    false,
-                    true,
-                )
-                .unwrap();
-                assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-                assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-            }
-        }
-    }
-
-    #[test]
-    fn test_v28_uses_legacy_defaults() {
-        let protocol = ProtocolVersion::try_from(28).unwrap();
-        let mut stdin = &b""[..];
-        let mut stdout = Vec::new();
-
-        let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
-                .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        assert!(stdout.is_empty());
-    }
-
-    #[test]
-    fn test_v29_uses_legacy_defaults() {
-        let protocol = ProtocolVersion::try_from(29).unwrap();
-        let mut stdin = &b""[..];
-        let mut stdout = Vec::new();
-
-        let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
-                .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        assert!(stdout.is_empty());
-    }
-
-    #[test]
-    fn test_v30_requires_exchange() {
-        let protocol = ProtocolVersion::try_from(30).unwrap();
-        let client_response = b"\x05xxh64\x05zlibx";
-        let mut stdin = &client_response[..];
-        let mut stdout = Vec::new();
-
-        let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
-                .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::XXH64);
-        assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
-        assert!(!stdout.is_empty()); // Should have sent our lists
-    }
-    //
-    // The vstring format uses a simple length-prefixed encoding:
-    // - For lengths 0-127: single byte = length (high bit clear)
-    // - For lengths 128-32767: two bytes = [(len >> 8) | 0x80, len & 0xFF]
-    //
-    // These tests verify the 1-byte length format for strings up to 127 bytes.
-
-    /// Tests that empty string uses 1-byte length format.
-    #[test]
-    fn phase2_10_vstring_1byte_empty_string() {
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, "").unwrap();
-
-        // Should be: 1 length byte (0x00) + 0 data bytes = 1 byte total
-        assert_eq!(buffer.len(), 1);
-        assert_eq!(buffer[0], 0x00);
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, "");
-    }
-
-    /// Tests that single-character string uses 1-byte length format.
-    #[test]
-    fn phase2_10_vstring_1byte_single_char() {
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, "x").unwrap();
-
-        // Should be: 1 length byte (0x01) + 1 data byte = 2 bytes total
-        assert_eq!(buffer.len(), 2);
-        assert_eq!(buffer[0], 0x01);
-        assert_eq!(buffer[1], b'x');
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, "x");
-    }
-
-    /// Tests all 1-byte length values (0-127).
-    #[test]
-    fn phase2_10_vstring_1byte_all_lengths() {
-        for len in 0..=127usize {
-            let test_str = "a".repeat(len);
-            let mut buffer = Vec::new();
-            write_vstring(&mut buffer, &test_str).unwrap();
-
-            // Should use 1-byte length format
-            assert_eq!(
-                buffer[0], len as u8,
-                "length {} should encode as single byte",
-                len
-            );
-            assert_eq!(buffer.len(), 1 + len, "total size should be 1 + {}", len);
-            // High bit should be clear
-            assert!(
-                buffer[0] & 0x80 == 0,
-                "high bit should be clear for length {}",
-                len
-            );
-
-            let mut reader = &buffer[..];
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received, test_str, "round-trip failed for length {}", len);
-        }
-    }
-
-    /// Tests boundary at 127 (maximum 1-byte length).
-    #[test]
-    fn phase2_10_vstring_1byte_boundary_127() {
-        let test_str = "b".repeat(127);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        // Should use single-byte format: 0x7F
-        assert_eq!(buffer[0], 0x7F);
-        assert!(buffer[0] & 0x80 == 0, "high bit should be clear");
-        assert_eq!(buffer.len(), 128); // 1 + 127
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    /// Tests that raw 1-byte length sequences decode correctly.
-    #[test]
-    fn phase2_10_vstring_1byte_decode_raw() {
-        // Test decoding raw bytes: length byte + content
-        for len in 0u8..=127 {
-            let mut data = vec![len];
-            data.extend(vec![b'x'; len as usize]);
-
-            let mut reader = &data[..];
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received.len(), len as usize);
-            assert!(received.chars().all(|c| c == 'x'));
-        }
-    }
-
-    /// Tests typical algorithm names (all use 1-byte format).
-    #[test]
-    fn phase2_10_vstring_1byte_algorithm_names() {
-        let names = [
-            "md4", "md5", "sha1", "xxh64", "xxh128", "zlib", "zlibx", "zstd", "lz4", "none",
-        ];
-        for name in names {
-            assert!(
-                name.len() <= 127,
-                "algorithm name should fit in 1-byte format"
-            );
-
-            let mut buffer = Vec::new();
-            write_vstring(&mut buffer, name).unwrap();
-
-            // Verify 1-byte format
-            assert_eq!(buffer[0], name.len() as u8);
-            assert!(buffer[0] & 0x80 == 0);
-
-            let mut reader = &buffer[..];
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received, name);
-        }
-    }
-
-    /// Tests typical space-separated algorithm lists (1-byte format).
-    #[test]
-    fn phase2_10_vstring_1byte_algorithm_lists() {
-        let lists = [
-            "md5 md4 sha1",
-            "xxh128 xxh3 xxh64 md5 md4 sha1 none",
-            "zstd lz4 zlibx zlib none",
-        ];
-        for list in lists {
-            assert!(list.len() <= 127, "list should fit in 1-byte format");
-
-            let mut buffer = Vec::new();
-            write_vstring(&mut buffer, list).unwrap();
-
-            // Verify 1-byte format
-            assert_eq!(buffer[0], list.len() as u8);
-            assert!(buffer[0] & 0x80 == 0);
-
-            let mut reader = &buffer[..];
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received, list);
-        }
-    }
-    //
-    // For lengths 128-32767, vstring uses a 2-byte length format:
-    // - First byte: (len >> 8) | 0x80 (high bit indicates 2-byte format)
-    // - Second byte: len & 0xFF
-    //
-    // This allows encoding strings up to 32767 bytes.
-
-    /// Tests boundary at 128 (minimum 2-byte length).
-    #[test]
-    fn phase2_11_vstring_2byte_boundary_128() {
-        let test_str = "c".repeat(128);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        // Should use 2-byte format: [0x80, 0x80] for length 128
-        // 128 = 0x0080, so high byte = 0x00 | 0x80 = 0x80, low byte = 0x80
-        assert_eq!(buffer[0], 0x80);
-        assert_eq!(buffer[1], 0x80);
-        assert!(
-            buffer[0] & 0x80 != 0,
-            "high bit should be set for 2-byte format"
-        );
-        assert_eq!(buffer.len(), 2 + 128); // 2 length bytes + 128 data bytes
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    /// Tests value 200 (clear case of 2-byte format).
-    #[test]
-    fn phase2_11_vstring_2byte_length_200() {
-        let test_str = "d".repeat(200);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        // 200 = 0x00C8, so high byte = 0x00 | 0x80 = 0x80, low byte = 0xC8
-        assert_eq!(buffer[0], 0x80);
-        assert_eq!(buffer[1], 0xC8);
-        assert_eq!(buffer.len(), 2 + 200);
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    /// Tests value 255 (boundary within first 256-byte range).
-    #[test]
-    fn phase2_11_vstring_2byte_length_255() {
-        let test_str = "e".repeat(255);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        // 255 = 0x00FF, so high byte = 0x00 | 0x80 = 0x80, low byte = 0xFF
-        assert_eq!(buffer[0], 0x80);
-        assert_eq!(buffer[1], 0xFF);
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    /// Tests value 256 (crosses into second high byte).
-    #[test]
-    fn phase2_11_vstring_2byte_length_256() {
-        let test_str = "f".repeat(256);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        // 256 = 0x0100, so high byte = 0x01 | 0x80 = 0x81, low byte = 0x00
-        assert_eq!(buffer[0], 0x81);
-        assert_eq!(buffer[1], 0x00);
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    /// Tests sample values across the 2-byte range.
-    #[test]
-    fn phase2_11_vstring_2byte_sample_values() {
-        // Values capped at MAX_NSTR_STRLEN=256; larger lengths need write-only tests.
-        let lengths = [128, 200, 255, 256];
-        for len in lengths {
-            let test_str = "g".repeat(len);
-            let mut buffer = Vec::new();
-            write_vstring(&mut buffer, &test_str).unwrap();
-
-            // Verify 2-byte format
-            assert!(
-                buffer[0] & 0x80 != 0,
-                "high bit should be set for length {}",
-                len
-            );
-
-            // Verify encoding: len = ((buffer[0] & 0x7F) << 8) | buffer[1]
-            let decoded_len = ((buffer[0] & 0x7F) as usize) * 256 + buffer[1] as usize;
-            assert_eq!(decoded_len, len, "length encoding mismatch for {}", len);
-
-            let mut reader = &buffer[..];
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received, test_str, "round-trip failed for length {}", len);
-        }
-    }
-
-    /// Tests decoding raw 2-byte length sequences.
-    #[test]
-    fn phase2_11_vstring_2byte_decode_raw() {
-        // Test specific 2-byte encoded lengths (all within MAX_NSTR_STRLEN=256)
-        let cases = [
-            (128, 0x80u8, 0x80u8), // 128 = 0x0080
-            (200, 0x80, 0xC8),     // 200 = 0x00C8
-            (256, 0x81, 0x00),     // 256 = 0x0100
-        ];
-
-        for (len, high, low) in cases {
-            let mut data = vec![high, low];
-            data.extend(vec![b'x'; len]);
-
-            let mut reader = &data[..];
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received.len(), len, "decode failed for length {}", len);
-        }
-    }
-
-    /// Tests truncated 2-byte length (only high byte present).
-    #[test]
-    fn phase2_11_vstring_2byte_truncated_length() {
-        // Only the high byte, missing the low byte
-        let data = [0x80u8];
-        let mut reader = &data[..];
-        let result = read_vstring(&mut reader);
-        assert!(result.is_err(), "should fail on truncated 2-byte length");
-    }
-
-    /// Tests truncated 2-byte vstring (length present but data truncated).
-    #[test]
-    fn phase2_11_vstring_2byte_truncated_data() {
-        // Length says 200 bytes, but only 50 provided
-        let mut data = vec![0x80, 0xC8]; // Length 200
-        data.extend(vec![b'x'; 50]); // Only 50 bytes
-
-        let mut reader = &data[..];
-        let result = read_vstring(&mut reader);
-        assert!(result.is_err(), "should fail on truncated data");
-    }
-
-    /// Tests multiple 2-byte vstrings in sequence.
-    #[test]
-    fn phase2_11_vstring_2byte_multiple_in_sequence() {
-        let strings = ["h".repeat(128), "i".repeat(200), "j".repeat(250)];
-        let mut buffer = Vec::new();
-
-        for s in &strings {
-            write_vstring(&mut buffer, s).unwrap();
-        }
-
-        let mut reader = &buffer[..];
-        for expected in &strings {
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received, *expected);
-        }
-    }
-    //
-    // The vstring format has limits:
-    // - Maximum encodable length: 0x7FFF (32767 bytes)
-    // - Wire/sanity limit in read_vstring: 256 bytes (MAX_NSTR_STRLEN, upstream compat.c:91)
-    //
-    // These tests verify boundary conditions and error handling.
-
-    /// Tests maximum encodable length (0x7FFF = 32767).
-    #[test]
-    fn phase2_12_vstring_max_encodable_length() {
-        let test_str = "k".repeat(0x7FFF);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        // 0x7FFF encoded as [0xFF, 0xFF] (7F | 80 = FF, FF)
-        assert_eq!(buffer[0], 0xFF);
-        assert_eq!(buffer[1], 0xFF);
-
-        // Verify round-trip (note: exceeds sanity limit, so read will fail)
-        // This test specifically verifies the ENCODING works for max length
-        assert_eq!(buffer.len(), 2 + 0x7FFF);
-    }
-
-    /// Tests that encoding length > 0x7FFF fails.
-    #[test]
-    fn phase2_12_vstring_exceeds_max_encodable() {
-        let test_str = "l".repeat(0x8000); // 32768 bytes
-        let mut buffer = Vec::new();
-        let result = write_vstring(&mut buffer, &test_str);
-
-        assert!(result.is_err(), "should reject strings > 0x7FFF bytes");
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert!(err.to_string().contains("vstring too long"));
-    }
-
-    /// Tests sanity limit in read_vstring (MAX_NSTR_STRLEN = 256 bytes).
-    #[test]
-    fn phase2_12_vstring_sanity_limit_exceeded() {
-        // Encode a length of 10000 (exceeds MAX_NSTR_STRLEN = 256)
-        // 10000 = 0x2710, so high byte = 0x27 | 0x80 = 0xA7, low byte = 0x10
-        let data = [0xA7u8, 0x10];
-
-        let mut reader = &data[..];
-        let result = read_vstring(&mut reader);
-
-        assert!(
-            result.is_err(),
-            "should reject vstrings > MAX_NSTR_STRLEN bytes"
-        );
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("vstring too long"));
-    }
-
-    /// Tests exactly at sanity limit (MAX_NSTR_STRLEN = 256 bytes).
-    #[test]
-    fn phase2_12_vstring_at_sanity_limit() {
-        let test_str = "m".repeat(256);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    /// Tests just below sanity limit (MAX_NSTR_STRLEN - 1 = 255 bytes).
-    #[test]
-    fn phase2_12_vstring_below_sanity_limit() {
-        let test_str = "n".repeat(255);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    /// Tests just above sanity limit (MAX_NSTR_STRLEN + 1 = 257 bytes).
-    #[test]
-    fn phase2_12_vstring_above_sanity_limit() {
-        // Write succeeds (max is 0x7FFF)
-        let test_str = "o".repeat(257);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        // Read fails (MAX_NSTR_STRLEN = 256)
-        let mut reader = &buffer[..];
-        let result = read_vstring(&mut reader);
-        assert!(
-            result.is_err(),
-            "should reject vstrings > MAX_NSTR_STRLEN bytes"
-        );
-    }
-
-    /// Tests typical upstream limit (256 bytes, MAX_NSTR_STRLEN).
-    #[test]
-    fn phase2_12_vstring_upstream_typical_limit() {
-        // upstream: compat.c:91 #define MAX_NSTR_STRLEN 256
-        let test_str = "p".repeat(256);
-        let mut buffer = Vec::new();
-        write_vstring(&mut buffer, &test_str).unwrap();
-
-        let mut reader = &buffer[..];
-        let received = read_vstring(&mut reader).unwrap();
-        assert_eq!(received, test_str);
-    }
-
-    /// Tests empty input (EOF) handling.
-    #[test]
-    fn phase2_12_vstring_empty_input() {
-        let data: [u8; 0] = [];
-        let mut reader = &data[..];
-        let result = read_vstring(&mut reader);
-
-        assert!(result.is_err(), "should fail on empty input");
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
-    }
-
-    /// Tests UTF-8 validation (algorithm names are ASCII but we validate).
-    #[test]
-    fn phase2_12_vstring_invalid_utf8() {
-        // Create a vstring with invalid UTF-8 bytes
-        let mut data = vec![0x03]; // Length 3
-        data.extend([0xFF, 0xFE, 0x80]); // Invalid UTF-8 sequence
-
-        let mut reader = &data[..];
-        let result = read_vstring(&mut reader);
-
-        assert!(result.is_err(), "should reject invalid UTF-8");
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("UTF-8"));
-    }
-
-    /// Tests various boundary values around encoding transitions.
-    #[test]
-    fn phase2_12_vstring_encoding_transitions() {
-        let boundaries = [
-            0,   // Minimum
-            1,   // Single char
-            127, // Max 1-byte
-            128, // Min 2-byte
-            255, // Just under MAX_NSTR_STRLEN
-            256, // At MAX_NSTR_STRLEN (upstream hard limit)
-        ];
-
-        for len in boundaries {
-            let test_str = "q".repeat(len);
-            let mut buffer = Vec::new();
-            write_vstring(&mut buffer, &test_str).unwrap();
-
-            let mut reader = &buffer[..];
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received.len(), len, "round-trip failed for length {}", len);
-        }
-    }
-
-    /// Tests that write_vstring properly handles boundary between 1 and 2 byte formats.
-    #[test]
-    fn phase2_12_vstring_format_boundary_exact() {
-        // 127 bytes should use 1-byte format
-        let s127 = "r".repeat(127);
-        let mut buf127 = Vec::new();
-        write_vstring(&mut buf127, &s127).unwrap();
-        assert!(buf127[0] & 0x80 == 0, "127 should use 1-byte format");
-
-        // 128 bytes should use 2-byte format
-        let s128 = "s".repeat(128);
-        let mut buf128 = Vec::new();
-        write_vstring(&mut buf128, &s128).unwrap();
-        assert!(buf128[0] & 0x80 != 0, "128 should use 2-byte format");
-    }
-
-    /// Tests maximum practical negotiation string from upstream.
-    #[test]
-    fn phase2_12_vstring_realistic_max_negotiation() {
-        // Realistic maximum: all supported checksums + compressions
-        // "xxh128 xxh3 xxh64 md5 md4 sha1 none" = 37 chars
-        // "zstd lz4 zlibx zlib none" = 24 chars
-        // Well under both limits
-        let checksum_list = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
-        let compression_list = "zstd lz4 zlibx zlib none";
-
-        for list in [checksum_list, compression_list] {
-            let mut buffer = Vec::new();
-            write_vstring(&mut buffer, list).unwrap();
-
-            // All realistic lists should fit in 1-byte format
-            assert!(
-                buffer[0] & 0x80 == 0,
-                "realistic list should use 1-byte format"
-            );
-
-            let mut reader = &buffer[..];
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received, list);
-        }
-    }
-
-    #[test]
-    fn phase3_write_vstring_io_error() {
-        struct FailWriter;
-        impl std::io::Write for FailWriter {
-            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-                Err(io::Error::new(io::ErrorKind::BrokenPipe, "write failed"))
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let result = write_vstring(&mut FailWriter, "test");
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
-    }
-
-    #[test]
-    fn phase3_read_vstring_io_error() {
-        struct FailReader;
-        impl std::io::Read for FailReader {
-            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-                Err(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "read failed",
-                ))
-            }
-        }
-
-        let result = read_vstring(&mut FailReader);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionReset);
-    }
-
-    #[test]
-    fn phase3_negotiate_stdin_io_error() {
-        struct FailReader;
-        impl std::io::Read for FailReader {
-            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-                Err(io::Error::new(io::ErrorKind::TimedOut, "read timeout"))
-            }
-        }
-
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut FailReader,
-            &mut stdout,
-            true,
-            true,
-            false,
-            true,
-        );
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
-    }
-
-    #[test]
-    fn phase3_negotiate_stdout_io_error() {
-        struct FailWriter;
-        impl std::io::Write for FailWriter {
-            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-                Err(io::Error::new(io::ErrorKind::WouldBlock, "write blocked"))
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let input = b"\x03md5\x04zlib";
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut &input[..],
-            &mut FailWriter,
-            true,
-            true,
-            false,
-            true,
-        );
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
-    }
-
-    #[test]
-    fn phase4_checksum_algorithm_as_str() {
-        assert_eq!(ChecksumAlgorithm::None.as_str(), "none");
-        assert_eq!(ChecksumAlgorithm::MD4.as_str(), "md4");
-        assert_eq!(ChecksumAlgorithm::MD5.as_str(), "md5");
-        assert_eq!(ChecksumAlgorithm::SHA1.as_str(), "sha1");
-        assert_eq!(ChecksumAlgorithm::XXH64.as_str(), "xxh64");
-        assert_eq!(ChecksumAlgorithm::XXH3.as_str(), "xxh3");
-        assert_eq!(ChecksumAlgorithm::XXH128.as_str(), "xxh128");
-    }
-
-    #[test]
-    fn phase4_compression_algorithm_as_str() {
-        assert_eq!(CompressionAlgorithm::None.as_str(), "none");
-        assert_eq!(CompressionAlgorithm::Zlib.as_str(), "zlib");
-        assert_eq!(CompressionAlgorithm::ZlibX.as_str(), "zlibx");
-        assert_eq!(CompressionAlgorithm::LZ4.as_str(), "lz4");
-        assert_eq!(CompressionAlgorithm::Zstd.as_str(), "zstd");
-    }
-
-    #[test]
-    fn phase4_checksum_algorithm_copy() {
-        let algo1 = ChecksumAlgorithm::MD5;
-        let algo2 = algo1; // Copy
-        assert_eq!(algo1, algo2);
-    }
-
-    #[test]
-    fn phase4_compression_algorithm_copy() {
-        let algo1 = CompressionAlgorithm::Zlib;
-        let algo2 = algo1; // Copy
-        assert_eq!(algo1, algo2);
-    }
-
-    #[test]
-    fn phase4_checksum_algorithm_debug() {
-        let debug = format!("{:?}", ChecksumAlgorithm::XXH128);
-        assert!(debug.contains("XXH128"));
-    }
-
-    #[test]
-    fn phase4_compression_algorithm_debug() {
-        let debug = format!("{:?}", CompressionAlgorithm::Zstd);
-        assert!(debug.contains("Zstd"));
-    }
-
-    #[test]
-    fn phase4_compression_to_compress_algorithm_none() {
-        let result = CompressionAlgorithm::None.to_compress_algorithm();
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[test]
-    fn phase4_compression_to_compress_algorithm_zlib() {
-        let result = CompressionAlgorithm::Zlib.to_compress_algorithm();
-        assert!(result.is_ok());
-        let algo = result.unwrap();
-        assert!(algo.is_some());
-    }
-
-    #[test]
-    fn phase4_compression_to_compress_algorithm_zlibx() {
-        // ZlibX also maps to Zlib compression
-        let result = CompressionAlgorithm::ZlibX.to_compress_algorithm();
-        assert!(result.is_ok());
-        let algo = result.unwrap();
-        assert!(algo.is_some());
-    }
-
-    #[test]
-    #[cfg(feature = "lz4")]
-    fn phase4_compression_to_compress_algorithm_lz4() {
-        let result = CompressionAlgorithm::LZ4.to_compress_algorithm();
-        assert!(result.is_ok());
-        let algo = result.unwrap();
-        assert!(algo.is_some());
-    }
-
-    #[test]
-    #[cfg(not(feature = "lz4"))]
-    fn phase4_compression_lz4_not_available() {
-        let result = CompressionAlgorithm::LZ4.to_compress_algorithm();
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert!(err.to_string().contains("LZ4"));
-    }
-
-    #[test]
-    #[cfg(feature = "zstd")]
-    fn phase4_compression_to_compress_algorithm_zstd() {
-        let result = CompressionAlgorithm::Zstd.to_compress_algorithm();
-        assert!(result.is_ok());
-        let algo = result.unwrap();
-        assert!(algo.is_some());
-    }
-
-    #[test]
-    #[cfg(not(feature = "zstd"))]
-    fn phase4_compression_zstd_not_available() {
-        let result = CompressionAlgorithm::Zstd.to_compress_algorithm();
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert!(err.to_string().contains("Zstd"));
-    }
-
-    #[test]
-    fn phase5_negotiate_only_unsupported_checksums() {
-        // If client sends only unsupported checksums, fallback to MD5
-        let list = "blake3 sha256 sha512 xxh256";
-        let result = choose_checksum_algorithm(list).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    #[test]
-    fn phase5_negotiate_only_unsupported_compressions() {
-        // If client sends only unsupported compressions, fallback to None
-        let list = "bzip2 lzma xz brotli";
-        let result = choose_compression_algorithm(list).unwrap();
-        assert_eq!(result, CompressionAlgorithm::None);
-    }
-
-    #[test]
-    fn phase5_negotiate_whitespace_only_list() {
-        let list = "   \t   \n   ";
-        let checksum = choose_checksum_algorithm(list).unwrap();
-        assert_eq!(checksum, ChecksumAlgorithm::MD5);
-
-        let compression = choose_compression_algorithm(list).unwrap();
-        assert_eq!(compression, CompressionAlgorithm::None);
-    }
-
-    #[test]
-    fn phase5_negotiate_mixed_supported_unsupported() {
-        // Mix of supported and unsupported, should pick first supported
-        let list = "blake3 unsupported xxh128 md5";
-        let result = choose_checksum_algorithm(list).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::XXH128);
-    }
-
-    #[test]
-    fn phase5_negotiate_order_preference() {
-        // First supported algorithm should win
-        let list1 = "xxh128 md5 sha1";
-        let list2 = "md5 xxh128 sha1";
-        let list3 = "sha1 md5 xxh128";
-
-        assert_eq!(
-            choose_checksum_algorithm(list1).unwrap(),
-            ChecksumAlgorithm::XXH128
-        );
-        assert_eq!(
-            choose_checksum_algorithm(list2).unwrap(),
-            ChecksumAlgorithm::MD5
-        );
-        assert_eq!(
-            choose_checksum_algorithm(list3).unwrap(),
-            ChecksumAlgorithm::SHA1
-        );
-    }
-
-    #[test]
-    fn phase5_negotiate_xxh3_support() {
-        let list = "xxh3 xxh128";
-        let result = choose_checksum_algorithm(list).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::XXH3);
-    }
-
-    #[test]
-    fn phase5_negotiate_zlibx_vs_zlib() {
-        let list = "zlibx zlib";
-        let result = choose_compression_algorithm(list).unwrap();
-        assert_eq!(result, CompressionAlgorithm::ZlibX);
-    }
-
-    #[test]
-    fn phase6_full_negotiation_all_supported_versions() {
-        for version in 28..=32 {
-            let protocol = ProtocolVersion::try_from(version).unwrap();
-
-            if protocol.uses_fixed_encoding() {
-                // Legacy: no exchange needed
-                let mut stdin = &b""[..];
-                let mut stdout = Vec::new();
-                let result = negotiate_capabilities(
-                    protocol,
-                    &mut stdin,
-                    &mut stdout,
-                    true,
-                    true,
-                    false,
-                    true,
-                )
-                .unwrap();
-                assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
-                assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-                assert!(stdout.is_empty());
-            } else {
-                // Modern: exchange required
-                let response = b"\x04sha1\x04none";
-                let mut stdin = &response[..];
-                let mut stdout = Vec::new();
-                let result = negotiate_capabilities(
-                    protocol,
-                    &mut stdin,
-                    &mut stdout,
-                    true,
-                    true,
-                    false,
-                    true,
-                )
-                .unwrap();
-                assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
-                assert_eq!(result.compression, CompressionAlgorithm::None);
-                assert!(!stdout.is_empty());
-            }
-        }
-    }
-
-    #[test]
-    fn phase6_full_negotiation_checksum_only() {
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let response = b"\x04sha1"; // Only checksum, no compression
-        let mut stdin = &response[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            false, // send_compression = false
-            false,
-            true,
-        )
-        .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
-        assert_eq!(result.compression, CompressionAlgorithm::None);
-    }
-
-    #[test]
-    fn phase7_vstring_multiple_sequential() {
-        let strings = ["first", "second", "third", "fourth"];
-        let mut buffer = Vec::new();
-
-        for s in &strings {
-            write_vstring(&mut buffer, s).unwrap();
-        }
-
-        let mut reader = &buffer[..];
-        for expected in &strings {
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received, *expected);
-        }
-    }
-
-    #[test]
-    fn phase7_vstring_mixed_sizes() {
-        let strings = [
-            "a",              // 1 byte
-            "hello world",    // 11 bytes
-            &"x".repeat(127), // max 1-byte format
-            &"y".repeat(128), // min 2-byte format
-            &"z".repeat(200), // larger 2-byte format (within 256 limit)
-        ];
-        let mut buffer = Vec::new();
-
-        for s in &strings {
-            write_vstring(&mut buffer, s).unwrap();
-        }
-
-        let mut reader = &buffer[..];
-        for expected in &strings {
-            let received = read_vstring(&mut reader).unwrap();
-            assert_eq!(received, *expected);
-        }
-    }
-
-    #[test]
-    fn phase8_negotiation_result_copy() {
-        let r1 = NegotiationResult {
-            checksum: ChecksumAlgorithm::XXH128,
-            compression: CompressionAlgorithm::ZlibX,
-        };
-        let r2 = r1; // Copy
-        assert_eq!(r1.checksum, r2.checksum);
-        assert_eq!(r1.compression, r2.compression);
-    }
-
-    #[test]
-    fn phase8_negotiation_result_all_combinations() {
-        let checksums = [
-            ChecksumAlgorithm::None,
-            ChecksumAlgorithm::MD4,
-            ChecksumAlgorithm::MD5,
-            ChecksumAlgorithm::SHA1,
-            ChecksumAlgorithm::XXH64,
-            ChecksumAlgorithm::XXH3,
-            ChecksumAlgorithm::XXH128,
-        ];
-        let compressions = [
-            CompressionAlgorithm::None,
-            CompressionAlgorithm::Zlib,
-            CompressionAlgorithm::ZlibX,
-            CompressionAlgorithm::LZ4,
-            CompressionAlgorithm::Zstd,
-        ];
-
-        for &checksum in &checksums {
-            for &compression in &compressions {
-                let result = NegotiationResult {
-                    checksum,
-                    compression,
-                };
-                assert_eq!(result.checksum, checksum);
-                assert_eq!(result.compression, compression);
-            }
-        }
-    }
-    //
-    // These tests verify graceful fallback behavior when:
-    // 1. Server doesn't support a requested capability
-    // 2. Client sends unknown capability strings
-    // 3. Features must degrade gracefully
-    //
-    // Upstream rsync (compat.c) implements graceful degradation when
-    // capabilities cannot be negotiated, falling back to safe defaults.
-
-    /// Tests fallback when server offers only algorithms client doesn't prefer.
-    /// Client wants xxh128, but server only offers md5/md4/sha1.
-    #[test]
-    fn capability_fallback_server_missing_preferred_checksum() {
-        // Remote only offers legacy checksums, not modern xxhash variants
-        let remote_list = "md5 md4 sha1";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // Should fall back to first supported algorithm: md5
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    /// Tests fallback when server offers only legacy MD4.
-    #[test]
-    fn capability_fallback_server_only_md4() {
-        let remote_list = "md4";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::MD4);
-    }
-
-    /// Tests fallback when server offers only 'none' checksum.
-    #[test]
-    fn capability_fallback_server_only_none_checksum() {
-        let remote_list = "none";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::None);
-    }
-
-    /// Tests fallback when server offers compression we don't have compiled in.
-    #[test]
-    fn capability_fallback_server_offers_unavailable_compression() {
-        // Server offers brotli (not supported) first, then zlib
-        let remote_list = "brotli lzma xz zlib";
-        let result = choose_compression_algorithm(remote_list).unwrap();
-        // Should skip unsupported and use zlib
-        assert_eq!(result, CompressionAlgorithm::Zlib);
-    }
-
-    /// Tests fallback when server offers only unavailable compressions.
-    #[test]
-    fn capability_fallback_server_only_unavailable_compression() {
-        let remote_list = "brotli lzma xz";
-        let result = choose_compression_algorithm(remote_list).unwrap();
-        // Should fall back to None when nothing matches
-        assert_eq!(result, CompressionAlgorithm::None);
-    }
-
-    /// Tests fallback when server offers only 'none' compression.
-    #[test]
-    fn capability_fallback_server_only_none_compression() {
-        let remote_list = "none";
-        let result = choose_compression_algorithm(remote_list).unwrap();
-        assert_eq!(result, CompressionAlgorithm::None);
-    }
-
-    /// Tests handling of completely unknown checksum algorithm names.
-    #[test]
-    fn capability_fallback_unknown_checksum_strings() {
-        // All algorithm names are unknown
-        let remote_list = "blake2b blake3 argon2 scrypt";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // Should fall back to default (MD5)
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    /// Tests handling of completely unknown compression algorithm names.
-    #[test]
-    fn capability_fallback_unknown_compression_strings() {
-        let remote_list = "snappy lzo lzf brotli";
-        let result = choose_compression_algorithm(remote_list).unwrap();
-        // Should fall back to None
-        assert_eq!(result, CompressionAlgorithm::None);
-    }
-
-    /// Tests mixed known and unknown checksums - unknown first.
-    #[test]
-    fn capability_fallback_mixed_unknown_known_checksum() {
-        let remote_list = "blake3 blake2b sha1 md5";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // Should skip unknown and pick first known (sha1)
-        assert_eq!(result, ChecksumAlgorithm::SHA1);
-    }
-
-    /// Tests mixed known and unknown compressions - unknown first.
-    #[test]
-    fn capability_fallback_mixed_unknown_known_compression() {
-        let remote_list = "snappy lzo zlibx zlib";
-        let result = choose_compression_algorithm(remote_list).unwrap();
-        // Should skip unknown and pick first known (zlibx)
-        assert_eq!(result, CompressionAlgorithm::ZlibX);
-    }
-
-    /// Tests handling of malformed algorithm names (typos, case errors).
-    #[test]
-    fn capability_fallback_malformed_algorithm_names() {
-        // Various malformed names that might occur due to typos or bugs
-        let remote_list = "MD5 Md5 mD5 md-5 md_5 md55 mdv md5!";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // None match (case-sensitive, exact match required), falls back to MD5
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    /// Tests handling of empty algorithm string between spaces.
-    #[test]
-    fn capability_fallback_empty_between_spaces() {
-        let remote_list = "blake3  sha1"; // Double space
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // split_whitespace handles this correctly
-        assert_eq!(result, ChecksumAlgorithm::SHA1);
-    }
-
-    /// Tests handling of numeric-only strings.
-    #[test]
-    fn capability_fallback_numeric_strings() {
-        let remote_list = "123 456 789";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // None are valid, falls back to MD5
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    /// Tests handling of special characters in algorithm names.
-    #[test]
-    fn capability_fallback_special_chars() {
-        let remote_list = "md5@ sha1# xxh* md5-v2";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // None match exactly, falls back to MD5
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    /// Tests handling of very long unknown algorithm names.
-    #[test]
-    fn capability_fallback_long_unknown_names() {
-        let long_name = "a".repeat(100);
-        let remote_list = format!("{} {}", long_name, "md5");
-        let result = choose_checksum_algorithm(&remote_list).unwrap();
-        // Long name is unknown, should use md5
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    /// Tests handling of unicode in algorithm names.
-    /// Non-breaking space (\u{00A0}) is Unicode whitespace, so split_whitespace()
-    /// will treat "md5\u{00A0}fake" as two tokens: "md5" and "fake".
-    /// Therefore "md5" is found and selected.
-    #[test]
-    fn capability_fallback_unicode_names() {
-        let remote_list = "md5\u{00A0}fake sha1 zlib";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // \u{00A0} is Unicode whitespace, so "md5" is a valid token and matches
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
-
-    /// Tests graceful degradation from modern to legacy checksums.
-    #[test]
-    fn capability_fallback_graceful_checksum_degradation() {
-        // Simulate negotiating with increasingly legacy servers
-
-        // Modern server: full support
-        let modern_list = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
-        assert_eq!(
-            choose_checksum_algorithm(modern_list).unwrap(),
-            ChecksumAlgorithm::XXH128
-        );
-
-        // Intermediate server: no xxh128, has xxh64
-        let intermediate_list = "xxh64 md5 md4 sha1 none";
-        assert_eq!(
-            choose_checksum_algorithm(intermediate_list).unwrap(),
-            ChecksumAlgorithm::XXH64
-        );
-
-        // Legacy server: only md5 and md4
-        let legacy_list = "md5 md4 none";
-        assert_eq!(
-            choose_checksum_algorithm(legacy_list).unwrap(),
-            ChecksumAlgorithm::MD5
-        );
-
-        // Very old server: only md4
-        let ancient_list = "md4 none";
-        assert_eq!(
-            choose_checksum_algorithm(ancient_list).unwrap(),
-            ChecksumAlgorithm::MD4
-        );
-    }
-
-    /// Tests graceful degradation from modern to legacy compression.
-    #[test]
-    fn capability_fallback_graceful_compression_degradation() {
-        // Simulate negotiating with increasingly legacy servers
-
-        // Modern server: has zstd
-        #[cfg(feature = "zstd")]
-        {
-            let modern_list = "zstd lz4 zlibx zlib none";
-            assert_eq!(
-                choose_compression_algorithm(modern_list).unwrap(),
-                CompressionAlgorithm::Zstd
-            );
-        }
-
-        // Server without zstd: use lz4 if available
-        #[cfg(feature = "lz4")]
-        {
-            let no_zstd_list = "lz4 zlibx zlib none";
-            assert_eq!(
-                choose_compression_algorithm(no_zstd_list).unwrap(),
-                CompressionAlgorithm::LZ4
-            );
-        }
-
-        // Server with only zlib variants
-        let zlib_only = "zlibx zlib none";
-        assert_eq!(
-            choose_compression_algorithm(zlib_only).unwrap(),
-            CompressionAlgorithm::ZlibX
-        );
-
-        // Server preferring classic zlib
-        let classic_zlib = "zlib none";
-        assert_eq!(
-            choose_compression_algorithm(classic_zlib).unwrap(),
-            CompressionAlgorithm::Zlib
-        );
-    }
-
-    /// Tests protocol version fallback behavior.
-    #[test]
-    fn capability_fallback_protocol_version_behavior() {
-        // Protocol 28-29: Uses legacy defaults without negotiation
-        for version in [28, 29] {
-            let protocol = ProtocolVersion::try_from(version).unwrap();
+use std::io;
+
+use super::algorithms::{SUPPORTED_CHECKSUMS, supported_compressions};
+use super::negotiate::{
+    choose_checksum_algorithm, choose_compression_algorithm, read_vstring, write_vstring,
+};
+use super::*;
+use crate::ProtocolVersion;
+
+#[test]
+fn test_checksum_algorithm_roundtrip() {
+    for &name in &["md4", "md5", "sha1", "xxh64", "xxh128"] {
+        let algo = ChecksumAlgorithm::parse(name).unwrap();
+        // Note: xxh64 wire name is "xxh64" but as_str returns "xxh64"
+        // This is correct as the parsing accepts both "xxh" and "xxh64"
+        let roundtrip = algo.as_str();
+        let reparsed = ChecksumAlgorithm::parse(roundtrip).unwrap();
+        assert_eq!(algo, reparsed, "roundtrip failed for {name}");
+    }
+}
+
+#[test]
+fn test_compression_algorithm_roundtrip() {
+    for &name in &["none", "zlib", "zlibx", "lz4", "zstd"] {
+        let algo = CompressionAlgorithm::parse(name).unwrap();
+        let roundtrip = algo.as_str();
+        let reparsed = CompressionAlgorithm::parse(roundtrip).unwrap();
+        assert_eq!(algo, reparsed, "roundtrip failed for {name}");
+    }
+}
+
+#[test]
+fn test_xxh_alias() {
+    // "xxh" should parse to XXH64
+    let algo = ChecksumAlgorithm::parse("xxh").unwrap();
+    assert_eq!(algo, ChecksumAlgorithm::XXH64);
+}
+
+#[test]
+fn test_xxhash_alias() {
+    // "xxhash" should parse to XXH64 (upstream: checksum.c valid_checksums_items)
+    let algo = ChecksumAlgorithm::parse("xxhash").unwrap();
+    assert_eq!(algo, ChecksumAlgorithm::XXH64);
+}
+
+#[test]
+fn test_negotiate_proto29_uses_defaults() {
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
+
+    // Protocol < 30 should use defaults without any I/O
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    assert!(
+        stdout.is_empty(),
+        "no data should be sent for protocol < 30"
+    );
+}
+
+#[test]
+fn test_negotiate_proto30_md5_zlib() {
+    let protocol = ProtocolVersion::try_from(30).unwrap();
+
+    // Simulate remote choosing md5 and zlib
+    // Format: vstring(len) + string, so len byte + "md5" + len byte + "zlib"
+    let client_response = b"\x03md5\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+
+    // Verify we sent our lists
+    let output = String::from_utf8_lossy(&stdout);
+    assert!(
+        output.contains("md5"),
+        "should send checksum list containing md5"
+    );
+    assert!(
+        output.contains("zlib"),
+        "should send compression list containing zlib"
+    );
+}
+
+#[test]
+#[cfg(feature = "zstd")]
+fn test_negotiate_proto32_zstd() {
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+
+    // Simulate remote choosing md5 and zstd
+    // Format: vstring(len) + string, so len byte + "md5" + len byte + "zstd"
+    let client_response = b"\x03md5\x04zstd";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zstd);
+}
+
+#[test]
+#[cfg(not(feature = "zstd"))]
+fn test_negotiate_proto32_zlib() {
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+
+    // Simulate remote choosing md5 and zlib (zstd not available in this build)
+    // Format: vstring(len) + string, so len byte + "md5" + len byte + "zlib"
+    let client_response = b"\x03md5\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+}
+
+#[test]
+fn test_vstring_roundtrip() {
+    let test_str = "md5 md4 sha1 xxh128";
+    let mut buffer = Vec::new();
+
+    write_vstring(&mut buffer, test_str).unwrap();
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+
+    assert_eq!(received, test_str);
+}
+
+#[test]
+fn test_vstring_length_limit() {
+    // Create a vstring that claims 10000 bytes (uses 2-byte format)
+    // 10000 = 0x2710, so high byte = 0x27 | 0x80 = 0xA7, low byte = 0x10
+    let mut buffer = vec![0xA7, 0x10];
+    buffer.extend_from_slice(&[b'x'; 100]); // But only provide 100 bytes
+
+    let mut reader = &buffer[..];
+    let result = read_vstring(&mut reader);
+
+    // Should fail because we can't read enough bytes
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_vstring_max_nstr_strlen_limit_rejects_oversized() {
+    // MAX_NSTR_STRLEN is 256 (upstream compat.c:91).
+    // A string of 257 bytes must be rejected.
+    let mut buffer = Vec::new();
+    let oversized = "x".repeat(257);
+    write_vstring(&mut buffer, &oversized).unwrap();
+
+    let mut reader = &buffer[..];
+    let result = read_vstring(&mut reader);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("vstring too long"),
+        "error message should mention vstring length: {}",
+        err
+    );
+}
+
+#[test]
+fn test_vstring_max_nstr_strlen_limit_accepts_boundary() {
+    // A string of exactly 256 bytes should be accepted.
+    let boundary = "x".repeat(256);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &boundary).unwrap();
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, boundary);
+}
+
+#[test]
+fn test_vstring_two_byte_format() {
+    // Test vstring encoding for length > 127
+    let test_str = "x".repeat(200); // 200 bytes > 127, needs 2-byte format
+    let mut buffer = Vec::new();
+
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    // First byte should have high bit set (0xC8 = 0x80 | 0x00, second byte = 0xC8)
+    // 200 = 0x00C8, so [0x80, 0xC8]
+    assert_eq!(buffer[0], 0x80); // (200 >> 8) | 0x80 = 0 | 0x80 = 0x80
+    assert_eq!(buffer[1], 0xC8); // 200 & 0xFF = 0xC8
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+#[test]
+fn test_unsupported_checksum() {
+    let result = ChecksumAlgorithm::parse("blake2");
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported checksum algorithm")
+    );
+}
+
+#[test]
+fn test_unsupported_compression() {
+    let result = CompressionAlgorithm::parse("bzip2");
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported compression algorithm")
+    );
+}
+
+#[test]
+fn test_negotiate_do_negotiation_false_uses_defaults_no_io() {
+    // When do_negotiation=false, should return defaults without any I/O
+    // This happens when client lacks VARINT_FLIST_FLAGS capability
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..]; // Empty input - should not be read
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        false, // do_negotiation = false
+        true,  // send_compression
+        false, // is_daemon_mode
+        true,  // is_server
+    )
+    .unwrap();
+
+    // Should use MD5 (protocol 30+ default) and Zlib when send_compression=true
+    // upstream: compat.c:194 defaults to CPRES_ZLIB when -z active without negotiation
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    // No I/O should have occurred
+    assert!(
+        stdout.is_empty(),
+        "no data should be sent when do_negotiation=false"
+    );
+}
+
+#[test]
+fn test_negotiate_compression_disabled() {
+    // When send_compression=false, should only exchange checksum list
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Only provide checksum list, no compression list
+    let client_response = b"\x03md5"; // Just "md5", no compression
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        false, // send_compression = false
+        false, // is_daemon_mode
+        true,  // is_server
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    // Compression should be None when not negotiated
+    assert_eq!(result.compression, CompressionAlgorithm::None);
+
+    // Should have sent checksum list but not compression list
+    let output = String::from_utf8_lossy(&stdout);
+    assert!(output.contains("md5"), "should send checksum list");
+    // We can't easily verify compression wasn't sent without parsing,
+    // but the test passing means stdin wasn't over-read
+}
+
+/// Helper to generate peer algorithm data for tests.
+fn test_peer_data(send_compression: bool) -> Vec<u8> {
+    let mut data = Vec::new();
+    write_vstring(&mut data, &SUPPORTED_CHECKSUMS.join(" ")).unwrap();
+    if send_compression {
+        write_vstring(&mut data, &supported_compressions().join(" ")).unwrap();
+    }
+    data
+}
+
+#[test]
+fn test_daemon_server_sends_and_reads() {
+    // Both daemon server and client do bidirectional exchange
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = test_peer_data(true);
+    let mut stdin = &peer_data[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true, // do_negotiation
+        true, // send_compression
+        true, // is_daemon_mode = true
+        true, // is_server = true
+    )
+    .unwrap();
+
+    // Server selects from peer's list
+    assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+
+    // Verify server sent data (bidirectional)
+    assert!(!stdout.is_empty(), "server should send capability lists");
+    let output = String::from_utf8_lossy(&stdout);
+    assert!(
+        output.contains("xxh128"),
+        "should send checksum list with xxh128"
+    );
+}
+
+#[test]
+fn test_daemon_client_sends_and_reads() {
+    // Client also sends its lists in bidirectional exchange
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    let server_lists = b"\x0Exxh128 md5 md4\x0Ezstd zlib none";
+    let mut stdin = &server_lists[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        true,  // is_daemon_mode = true
+        false, // is_server = false (client)
+    )
+    .unwrap();
+
+    // Client should select first from server's list that it supports
+    assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+
+    // Client should also send (bidirectional)
+    assert!(
+        !stdout.is_empty(),
+        "client should also send capability lists (bidirectional)"
+    );
+}
+
+#[test]
+fn test_daemon_mode_round_trip() {
+    // Test that server output can be consumed by client
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = test_peer_data(true);
+
+    // Step 1: Server sends and reads
+    let mut server_stdin = &peer_data[..];
+    let mut server_output = Vec::new();
+    let server_result = negotiate_capabilities(
+        protocol,
+        &mut server_stdin,
+        &mut server_output,
+        true, // do_negotiation
+        true, // send_compression
+        true, // is_daemon_mode
+        true, // is_server
+    )
+    .unwrap();
+
+    // Step 2: Client reads server output, also sends
+    let mut client_stdin = &server_output[..];
+    let mut client_output = Vec::new();
+    let client_result = negotiate_capabilities(
+        protocol,
+        &mut client_stdin,
+        &mut client_output,
+        true,  // do_negotiation
+        true,  // send_compression
+        true,  // is_daemon_mode
+        false, // is_server = false (client)
+    )
+    .unwrap();
+
+    // Both should select compatible algorithms
+    assert_eq!(client_result.checksum, ChecksumAlgorithm::XXH128);
+    assert_eq!(server_result.checksum, ChecksumAlgorithm::XXH128);
+
+    // Client should also have sent data (bidirectional)
+    assert!(!client_output.is_empty());
+}
+
+#[test]
+fn test_daemon_server_without_compression() {
+    // Server with compression disabled
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = test_peer_data(false);
+    let mut stdin = &peer_data[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        false, // send_compression = false
+        true,  // is_daemon_mode
+        true,  // is_server
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+    assert_eq!(result.compression, CompressionAlgorithm::None);
+
+    // Should have sent checksum list only
+    assert!(!stdout.is_empty());
+}
+
+#[test]
+fn test_daemon_client_selects_fallback_algorithm() {
+    // Client receives server list that doesn't include our top choices
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Server only offers md5 and zlib (not our top preferences)
+    let server_lists = b"\x03md5\x04zlib";
+    let mut stdin = &server_lists[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        true,  // is_daemon_mode
+        false, // is_server = false
+    )
+    .unwrap();
+
+    // Should fall back to md5 and zlib since that's what server offers
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    // Client also sends its lists (bidirectional)
+    assert!(!stdout.is_empty());
+}
+
+#[test]
+#[cfg(feature = "zstd")]
+fn test_negotiate_ssh_mode_zstd() {
+    // SSH mode (is_daemon_mode=false) - bidirectional exchange
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let client_response = b"\x06xxh128\x04zstd";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        false, // is_daemon_mode = false (SSH mode)
+        true,  // is_server
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+    assert_eq!(result.compression, CompressionAlgorithm::Zstd);
+}
+
+#[test]
+#[cfg(not(feature = "zstd"))]
+fn test_negotiate_ssh_mode_zlib() {
+    // SSH mode (is_daemon_mode=false) - bidirectional exchange
+    // Without zstd feature, remote's zstd preference is ignored, falls back to zlib
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let client_response = b"\x06xxh128\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        false, // is_daemon_mode = false (SSH mode)
+        true,  // is_server
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+}
+
+#[test]
+fn test_choose_checksum_first_match_wins() {
+    // When client sends multiple checksums, we pick the first one we support
+    let client_list = "xxh128 xxh64 md5 md4";
+    let result = choose_checksum_algorithm(client_list).unwrap();
+    // xxh128 is first and we support it
+    assert_eq!(result, ChecksumAlgorithm::XXH128);
+}
+
+#[test]
+fn test_choose_checksum_fallback_to_later_match() {
+    // If first item is unsupported, pick next supported one
+    let client_list = "blake3 sha256 md5 md4";
+    let result = choose_checksum_algorithm(client_list).unwrap();
+    // blake3 and sha256 are not supported, md5 is
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+#[test]
+fn test_choose_checksum_empty_list() {
+    // Empty list should fall back to MD5
+    let result = choose_checksum_algorithm("").unwrap();
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+#[test]
+#[cfg(feature = "zstd")]
+fn test_choose_compression_first_match_wins_zstd() {
+    let client_list = "zstd lz4 zlib none";
+    let result = choose_compression_algorithm(client_list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::Zstd);
+}
+
+#[test]
+#[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+fn test_choose_compression_first_match_wins_lz4() {
+    // Without zstd, first match should be lz4
+    let client_list = "zstd lz4 zlib none";
+    let result = choose_compression_algorithm(client_list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::Lz4);
+}
+
+#[test]
+#[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+fn test_choose_compression_first_match_wins_zlib() {
+    // Without zstd or lz4, first match should be zlibx (always available)
+    let client_list = "zstd lz4 zlibx zlib none";
+    let result = choose_compression_algorithm(client_list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::ZlibX);
+}
+
+#[test]
+fn test_choose_compression_empty_list() {
+    // Empty list should fall back to None
+    let result = choose_compression_algorithm("").unwrap();
+    assert_eq!(result, CompressionAlgorithm::None);
+}
+
+#[test]
+fn test_daemon_client_handles_empty_capabilities() {
+    // Edge case: server sends empty capability lists (should fall back to defaults)
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let server_lists = b"\x00\x00"; // Two empty vstrings
+    let mut stdin = &server_lists[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        true,  // is_daemon_mode
+        false, // is_server = false
+    )
+    .unwrap();
+
+    // Should fall back to defaults when no match found
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::None);
+    // Client also sends its lists (bidirectional)
+    assert!(!stdout.is_empty());
+}
+
+#[test]
+fn test_daemon_client_handles_single_algorithm() {
+    // Server offers only one checksum and compression option
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let server_lists = b"\x03md4\x04none";
+    let mut stdin = &server_lists[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        true,  // is_daemon_mode
+        false, // is_server = false
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+    assert_eq!(result.compression, CompressionAlgorithm::None);
+    // Client also sends its lists (bidirectional)
+    assert!(!stdout.is_empty());
+}
+
+#[test]
+fn test_daemon_mode_malformed_input_error() {
+    // Receives malformed vstring (claims more bytes than available)
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let malformed = b"\x0Amd5"; // Claims 10 bytes but only provides 3
+    let mut stdin = &malformed[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        true,  // is_daemon_mode
+        false, // is_server = false
+    );
+
+    // Should fail with I/O error (sends first successfully, then fails reading)
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_all_modes_are_bidirectional() {
+    // Verify both SSH and daemon modes are bidirectional
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    let remote_lists = b"\x03md5\x04zlib";
+
+    // SSH mode
+    let mut stdin = &remote_lists[..];
+    let mut stdout = Vec::new();
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,
+        true,
+        false,
+        true, // SSH mode
+    )
+    .unwrap();
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert!(!stdout.is_empty(), "SSH mode should send");
+
+    // Daemon mode (same behavior)
+    let mut stdin = &remote_lists[..];
+    let mut stdout = Vec::new();
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,
+        true,
+        true,
+        true, // Daemon mode
+    )
+    .unwrap();
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert!(!stdout.is_empty(), "Daemon mode should also send");
+}
+
+#[test]
+fn test_daemon_server_selects_from_peer_list() {
+    // Server selects from peer's algorithm list
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let peer_data = test_peer_data(true);
+    let mut stdin = &peer_data[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true, // do_negotiation
+        true, // send_compression
+        true, // is_daemon_mode
+        true, // is_server
+    )
+    .unwrap();
+
+    // Should select first in peer's list that we support
+    assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+}
+
+#[test]
+fn test_daemon_client_prefers_server_order() {
+    // Client should prefer server's order (first match)
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Server prefers md5 over xxh128 (opposite of our preference)
+    let server_lists = b"\x07md5 md4\x09zlib none";
+    let mut stdin = &server_lists[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        true,  // is_daemon_mode
+        false, // is_server = false
+    )
+    .unwrap();
+
+    // Should pick md5 (server's first) even though xxh128 is our preference
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    // Client also sends its lists (bidirectional)
+    assert!(!stdout.is_empty());
+}
+
+#[test]
+fn test_daemon_mode_respects_do_negotiation_false() {
+    // When do_negotiation=false, daemon mode should also return defaults without I/O
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        false, // do_negotiation = false
+        true,  // send_compression
+        true,  // is_daemon_mode
+        true,  // is_server
+    )
+    .unwrap();
+
+    // Should use MD5/Zlib defaults without I/O (send_compression=true)
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    assert!(stdout.is_empty(), "no I/O when do_negotiation=false");
+}
+
+#[test]
+fn test_upstream_checksum_list_format() {
+    // Upstream rsync 3.4.1 sends checksums in this format:
+    // "xxh128 xxh3 xxh64 md5 md4 sha1 none"
+    let upstream_format = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
+    let result = choose_checksum_algorithm(upstream_format).unwrap();
+    // First match should be xxh128
+    assert_eq!(result, ChecksumAlgorithm::XXH128);
+}
+
+#[test]
+fn test_legacy_rsync_checksum_list() {
+    // Older rsync might only offer md4 and md5
+    let legacy_format = "md5 md4";
+    let result = choose_checksum_algorithm(legacy_format).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+#[test]
+fn test_minimal_rsync_checksum_list() {
+    // Minimal rsync might only offer none
+    let minimal_format = "none";
+    let result = choose_checksum_algorithm(minimal_format).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::None);
+}
+
+#[test]
+fn test_checksum_case_sensitive() {
+    // Algorithm names are case-sensitive
+    assert!(ChecksumAlgorithm::parse("MD5").is_err());
+    assert!(ChecksumAlgorithm::parse("Md5").is_err());
+    assert!(ChecksumAlgorithm::parse("md5").is_ok());
+}
+
+#[test]
+fn test_compression_case_sensitive() {
+    assert!(CompressionAlgorithm::parse("ZLIB").is_err());
+    assert!(CompressionAlgorithm::parse("Zlib").is_err());
+    assert!(CompressionAlgorithm::parse("zlib").is_ok());
+}
+
+#[test]
+fn test_checksum_with_whitespace() {
+    // Lists can have multiple spaces between items
+    let list = "md5   md4     sha1";
+    let result = choose_checksum_algorithm(list).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+#[test]
+fn test_compression_with_leading_trailing_space() {
+    // split_whitespace handles leading/trailing spaces
+    let list = "  zlib   zlibx  none  ";
+    let result = choose_compression_algorithm(list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::Zlib);
+}
+
+#[test]
+fn test_negotiation_result_debug() {
+    let result = NegotiationResult {
+        checksum: ChecksumAlgorithm::MD5,
+        compression: CompressionAlgorithm::Zlib,
+    };
+    let debug = format!("{:?}", result);
+    assert!(debug.contains("MD5"));
+    assert!(debug.contains("Zlib"));
+}
+
+#[test]
+fn test_negotiation_result_equality() {
+    let r1 = NegotiationResult {
+        checksum: ChecksumAlgorithm::XXH128,
+        compression: CompressionAlgorithm::None,
+    };
+    let r2 = NegotiationResult {
+        checksum: ChecksumAlgorithm::XXH128,
+        compression: CompressionAlgorithm::None,
+    };
+    let r3 = NegotiationResult {
+        checksum: ChecksumAlgorithm::MD5,
+        compression: CompressionAlgorithm::None,
+    };
+    assert_eq!(r1, r2);
+    assert_ne!(r1, r3);
+}
+
+#[test]
+fn test_negotiation_result_clone() {
+    let r1 = NegotiationResult {
+        checksum: ChecksumAlgorithm::SHA1,
+        compression: CompressionAlgorithm::ZlibX,
+    };
+    let r2 = r1;
+    assert_eq!(r1.checksum, r2.checksum);
+    assert_eq!(r1.compression, r2.compression);
+}
+
+#[test]
+fn test_vstring_empty_string() {
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, "").unwrap();
+    assert_eq!(buffer, vec![0x00]); // Length 0
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, "");
+}
+
+#[test]
+fn test_vstring_single_byte_boundary() {
+    // Length 127 should use single-byte format
+    let test_str = "x".repeat(127);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+    assert_eq!(buffer[0], 127); // Single byte length
+    assert_eq!(buffer.len(), 1 + 127);
+}
+
+#[test]
+fn test_vstring_two_byte_boundary() {
+    // Length 128 should use two-byte format
+    let test_str = "x".repeat(128);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+    assert!(buffer[0] & 0x80 != 0); // Two-byte format indicator
+    assert_eq!(buffer.len(), 2 + 128);
+}
+
+#[test]
+fn test_vstring_max_single_byte() {
+    // Maximum single-byte length is 127
+    let test_str = "y".repeat(127);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+#[test]
+fn test_vstring_moderate_length() {
+    // Test a moderate length that uses 2-byte format (within 256 limit)
+    let test_str = "z".repeat(200);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+#[test]
+fn test_all_supported_versions_negotiate() {
+    for version_num in 28..=32 {
+        let protocol = ProtocolVersion::try_from(version_num).unwrap();
+
+        if protocol.uses_fixed_encoding() {
+            // Protocol < 30 uses defaults
             let mut stdin = &b""[..];
             let mut stdout = Vec::new();
-
-            let result = negotiate_capabilities(
-                protocol,
-                &mut stdin,
-                &mut stdout,
-                true,  // do_negotiation
-                true,  // send_compression
-                false, // is_daemon_mode
-                true,  // is_server
-            )
-            .unwrap();
-
-            // Legacy protocols use MD4 and Zlib as defaults
+            let result =
+                negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                    .unwrap();
             assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
             assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-            // No I/O should occur for legacy protocols
-            assert!(stdout.is_empty());
+        } else {
+            // Protocol >= 30 exchanges lists
+            let client_response = b"\x03md5\x04zlib";
+            let mut stdin = &client_response[..];
+            let mut stdout = Vec::new();
+            let result =
+                negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                    .unwrap();
+            assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+            assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+        }
+    }
+}
+
+#[test]
+fn test_v28_uses_legacy_defaults() {
+    let protocol = ProtocolVersion::try_from(28).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    assert!(stdout.is_empty());
+}
+
+#[test]
+fn test_v29_uses_legacy_defaults() {
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    assert!(stdout.is_empty());
+}
+
+#[test]
+fn test_v30_requires_exchange() {
+    let protocol = ProtocolVersion::try_from(30).unwrap();
+    let client_response = b"\x05xxh64\x05zlibx";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::XXH64);
+    assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
+    assert!(!stdout.is_empty()); // Should have sent our lists
+}
+//
+// The vstring format uses a simple length-prefixed encoding:
+// - For lengths 0-127: single byte = length (high bit clear)
+// - For lengths 128-32767: two bytes = [(len >> 8) | 0x80, len & 0xFF]
+//
+// These tests verify the 1-byte length format for strings up to 127 bytes.
+
+/// Tests that empty string uses 1-byte length format.
+#[test]
+fn phase2_10_vstring_1byte_empty_string() {
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, "").unwrap();
+
+    // Should be: 1 length byte (0x00) + 0 data bytes = 1 byte total
+    assert_eq!(buffer.len(), 1);
+    assert_eq!(buffer[0], 0x00);
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, "");
+}
+
+/// Tests that single-character string uses 1-byte length format.
+#[test]
+fn phase2_10_vstring_1byte_single_char() {
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, "x").unwrap();
+
+    // Should be: 1 length byte (0x01) + 1 data byte = 2 bytes total
+    assert_eq!(buffer.len(), 2);
+    assert_eq!(buffer[0], 0x01);
+    assert_eq!(buffer[1], b'x');
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, "x");
+}
+
+/// Tests all 1-byte length values (0-127).
+#[test]
+fn phase2_10_vstring_1byte_all_lengths() {
+    for len in 0..=127usize {
+        let test_str = "a".repeat(len);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // Should use 1-byte length format
+        assert_eq!(
+            buffer[0], len as u8,
+            "length {} should encode as single byte",
+            len
+        );
+        assert_eq!(buffer.len(), 1 + len, "total size should be 1 + {}", len);
+        // High bit should be clear
+        assert!(
+            buffer[0] & 0x80 == 0,
+            "high bit should be clear for length {}",
+            len
+        );
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str, "round-trip failed for length {}", len);
+    }
+}
+
+/// Tests boundary at 127 (maximum 1-byte length).
+#[test]
+fn phase2_10_vstring_1byte_boundary_127() {
+    let test_str = "b".repeat(127);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    // Should use single-byte format: 0x7F
+    assert_eq!(buffer[0], 0x7F);
+    assert!(buffer[0] & 0x80 == 0, "high bit should be clear");
+    assert_eq!(buffer.len(), 128); // 1 + 127
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+/// Tests that raw 1-byte length sequences decode correctly.
+#[test]
+fn phase2_10_vstring_1byte_decode_raw() {
+    // Test decoding raw bytes: length byte + content
+    for len in 0u8..=127 {
+        let mut data = vec![len];
+        data.extend(vec![b'x'; len as usize]);
+
+        let mut reader = &data[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received.len(), len as usize);
+        assert!(received.chars().all(|c| c == 'x'));
+    }
+}
+
+/// Tests typical algorithm names (all use 1-byte format).
+#[test]
+fn phase2_10_vstring_1byte_algorithm_names() {
+    let names = [
+        "md4", "md5", "sha1", "xxh64", "xxh128", "zlib", "zlibx", "zstd", "lz4", "none",
+    ];
+    for name in names {
+        assert!(
+            name.len() <= 127,
+            "algorithm name should fit in 1-byte format"
+        );
+
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, name).unwrap();
+
+        // Verify 1-byte format
+        assert_eq!(buffer[0], name.len() as u8);
+        assert!(buffer[0] & 0x80 == 0);
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, name);
+    }
+}
+
+/// Tests typical space-separated algorithm lists (1-byte format).
+#[test]
+fn phase2_10_vstring_1byte_algorithm_lists() {
+    let lists = [
+        "md5 md4 sha1",
+        "xxh128 xxh3 xxh64 md5 md4 sha1 none",
+        "zstd lz4 zlibx zlib none",
+    ];
+    for list in lists {
+        assert!(list.len() <= 127, "list should fit in 1-byte format");
+
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, list).unwrap();
+
+        // Verify 1-byte format
+        assert_eq!(buffer[0], list.len() as u8);
+        assert!(buffer[0] & 0x80 == 0);
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, list);
+    }
+}
+//
+// For lengths 128-32767, vstring uses a 2-byte length format:
+// - First byte: (len >> 8) | 0x80 (high bit indicates 2-byte format)
+// - Second byte: len & 0xFF
+//
+// This allows encoding strings up to 32767 bytes.
+
+/// Tests boundary at 128 (minimum 2-byte length).
+#[test]
+fn phase2_11_vstring_2byte_boundary_128() {
+    let test_str = "c".repeat(128);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    // Should use 2-byte format: [0x80, 0x80] for length 128
+    // 128 = 0x0080, so high byte = 0x00 | 0x80 = 0x80, low byte = 0x80
+    assert_eq!(buffer[0], 0x80);
+    assert_eq!(buffer[1], 0x80);
+    assert!(
+        buffer[0] & 0x80 != 0,
+        "high bit should be set for 2-byte format"
+    );
+    assert_eq!(buffer.len(), 2 + 128); // 2 length bytes + 128 data bytes
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+/// Tests value 200 (clear case of 2-byte format).
+#[test]
+fn phase2_11_vstring_2byte_length_200() {
+    let test_str = "d".repeat(200);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    // 200 = 0x00C8, so high byte = 0x00 | 0x80 = 0x80, low byte = 0xC8
+    assert_eq!(buffer[0], 0x80);
+    assert_eq!(buffer[1], 0xC8);
+    assert_eq!(buffer.len(), 2 + 200);
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+/// Tests value 255 (boundary within first 256-byte range).
+#[test]
+fn phase2_11_vstring_2byte_length_255() {
+    let test_str = "e".repeat(255);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    // 255 = 0x00FF, so high byte = 0x00 | 0x80 = 0x80, low byte = 0xFF
+    assert_eq!(buffer[0], 0x80);
+    assert_eq!(buffer[1], 0xFF);
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+/// Tests value 256 (crosses into second high byte).
+#[test]
+fn phase2_11_vstring_2byte_length_256() {
+    let test_str = "f".repeat(256);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    // 256 = 0x0100, so high byte = 0x01 | 0x80 = 0x81, low byte = 0x00
+    assert_eq!(buffer[0], 0x81);
+    assert_eq!(buffer[1], 0x00);
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+/// Tests sample values across the 2-byte range.
+#[test]
+fn phase2_11_vstring_2byte_sample_values() {
+    // Values capped at MAX_NSTR_STRLEN=256; larger lengths need write-only tests.
+    let lengths = [128, 200, 255, 256];
+    for len in lengths {
+        let test_str = "g".repeat(len);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // Verify 2-byte format
+        assert!(
+            buffer[0] & 0x80 != 0,
+            "high bit should be set for length {}",
+            len
+        );
+
+        // Verify encoding: len = ((buffer[0] & 0x7F) << 8) | buffer[1]
+        let decoded_len = ((buffer[0] & 0x7F) as usize) * 256 + buffer[1] as usize;
+        assert_eq!(decoded_len, len, "length encoding mismatch for {}", len);
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str, "round-trip failed for length {}", len);
+    }
+}
+
+/// Tests decoding raw 2-byte length sequences.
+#[test]
+fn phase2_11_vstring_2byte_decode_raw() {
+    // Test specific 2-byte encoded lengths (all within MAX_NSTR_STRLEN=256)
+    let cases = [
+        (128, 0x80u8, 0x80u8), // 128 = 0x0080
+        (200, 0x80, 0xC8),     // 200 = 0x00C8
+        (256, 0x81, 0x00),     // 256 = 0x0100
+    ];
+
+    for (len, high, low) in cases {
+        let mut data = vec![high, low];
+        data.extend(vec![b'x'; len]);
+
+        let mut reader = &data[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received.len(), len, "decode failed for length {}", len);
+    }
+}
+
+/// Tests truncated 2-byte length (only high byte present).
+#[test]
+fn phase2_11_vstring_2byte_truncated_length() {
+    // Only the high byte, missing the low byte
+    let data = [0x80u8];
+    let mut reader = &data[..];
+    let result = read_vstring(&mut reader);
+    assert!(result.is_err(), "should fail on truncated 2-byte length");
+}
+
+/// Tests truncated 2-byte vstring (length present but data truncated).
+#[test]
+fn phase2_11_vstring_2byte_truncated_data() {
+    // Length says 200 bytes, but only 50 provided
+    let mut data = vec![0x80, 0xC8]; // Length 200
+    data.extend(vec![b'x'; 50]); // Only 50 bytes
+
+    let mut reader = &data[..];
+    let result = read_vstring(&mut reader);
+    assert!(result.is_err(), "should fail on truncated data");
+}
+
+/// Tests multiple 2-byte vstrings in sequence.
+#[test]
+fn phase2_11_vstring_2byte_multiple_in_sequence() {
+    let strings = ["h".repeat(128), "i".repeat(200), "j".repeat(250)];
+    let mut buffer = Vec::new();
+
+    for s in &strings {
+        write_vstring(&mut buffer, s).unwrap();
+    }
+
+    let mut reader = &buffer[..];
+    for expected in &strings {
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, *expected);
+    }
+}
+//
+// The vstring format has limits:
+// - Maximum encodable length: 0x7FFF (32767 bytes)
+// - Wire/sanity limit in read_vstring: 256 bytes (MAX_NSTR_STRLEN, upstream compat.c:91)
+//
+// These tests verify boundary conditions and error handling.
+
+/// Tests maximum encodable length (0x7FFF = 32767).
+#[test]
+fn phase2_12_vstring_max_encodable_length() {
+    let test_str = "k".repeat(0x7FFF);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    // 0x7FFF encoded as [0xFF, 0xFF] (7F | 80 = FF, FF)
+    assert_eq!(buffer[0], 0xFF);
+    assert_eq!(buffer[1], 0xFF);
+
+    // Verify round-trip (note: exceeds sanity limit, so read will fail)
+    // This test specifically verifies the ENCODING works for max length
+    assert_eq!(buffer.len(), 2 + 0x7FFF);
+}
+
+/// Tests that encoding length > 0x7FFF fails.
+#[test]
+fn phase2_12_vstring_exceeds_max_encodable() {
+    let test_str = "l".repeat(0x8000); // 32768 bytes
+    let mut buffer = Vec::new();
+    let result = write_vstring(&mut buffer, &test_str);
+
+    assert!(result.is_err(), "should reject strings > 0x7FFF bytes");
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert!(err.to_string().contains("vstring too long"));
+}
+
+/// Tests sanity limit in read_vstring (MAX_NSTR_STRLEN = 256 bytes).
+#[test]
+fn phase2_12_vstring_sanity_limit_exceeded() {
+    // Encode a length of 10000 (exceeds MAX_NSTR_STRLEN = 256)
+    // 10000 = 0x2710, so high byte = 0x27 | 0x80 = 0xA7, low byte = 0x10
+    let data = [0xA7u8, 0x10];
+
+    let mut reader = &data[..];
+    let result = read_vstring(&mut reader);
+
+    assert!(
+        result.is_err(),
+        "should reject vstrings > MAX_NSTR_STRLEN bytes"
+    );
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("vstring too long"));
+}
+
+/// Tests exactly at sanity limit (MAX_NSTR_STRLEN = 256 bytes).
+#[test]
+fn phase2_12_vstring_at_sanity_limit() {
+    let test_str = "m".repeat(256);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+/// Tests just below sanity limit (MAX_NSTR_STRLEN - 1 = 255 bytes).
+#[test]
+fn phase2_12_vstring_below_sanity_limit() {
+    let test_str = "n".repeat(255);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+/// Tests just above sanity limit (MAX_NSTR_STRLEN + 1 = 257 bytes).
+#[test]
+fn phase2_12_vstring_above_sanity_limit() {
+    // Write succeeds (max is 0x7FFF)
+    let test_str = "o".repeat(257);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    // Read fails (MAX_NSTR_STRLEN = 256)
+    let mut reader = &buffer[..];
+    let result = read_vstring(&mut reader);
+    assert!(
+        result.is_err(),
+        "should reject vstrings > MAX_NSTR_STRLEN bytes"
+    );
+}
+
+/// Tests typical upstream limit (256 bytes, MAX_NSTR_STRLEN).
+#[test]
+fn phase2_12_vstring_upstream_typical_limit() {
+    // upstream: compat.c:91 #define MAX_NSTR_STRLEN 256
+    let test_str = "p".repeat(256);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &test_str).unwrap();
+
+    let mut reader = &buffer[..];
+    let received = read_vstring(&mut reader).unwrap();
+    assert_eq!(received, test_str);
+}
+
+/// Tests empty input (EOF) handling.
+#[test]
+fn phase2_12_vstring_empty_input() {
+    let data: [u8; 0] = [];
+    let mut reader = &data[..];
+    let result = read_vstring(&mut reader);
+
+    assert!(result.is_err(), "should fail on empty input");
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+}
+
+/// Tests UTF-8 validation (algorithm names are ASCII but we validate).
+#[test]
+fn phase2_12_vstring_invalid_utf8() {
+    // Create a vstring with invalid UTF-8 bytes
+    let mut data = vec![0x03]; // Length 3
+    data.extend([0xFF, 0xFE, 0x80]); // Invalid UTF-8 sequence
+
+    let mut reader = &data[..];
+    let result = read_vstring(&mut reader);
+
+    assert!(result.is_err(), "should reject invalid UTF-8");
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("UTF-8"));
+}
+
+/// Tests various boundary values around encoding transitions.
+#[test]
+fn phase2_12_vstring_encoding_transitions() {
+    let boundaries = [
+        0,   // Minimum
+        1,   // Single char
+        127, // Max 1-byte
+        128, // Min 2-byte
+        255, // Just under MAX_NSTR_STRLEN
+        256, // At MAX_NSTR_STRLEN (upstream hard limit)
+    ];
+
+    for len in boundaries {
+        let test_str = "q".repeat(len);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received.len(), len, "round-trip failed for length {}", len);
+    }
+}
+
+/// Tests that write_vstring properly handles boundary between 1 and 2 byte formats.
+#[test]
+fn phase2_12_vstring_format_boundary_exact() {
+    // 127 bytes should use 1-byte format
+    let s127 = "r".repeat(127);
+    let mut buf127 = Vec::new();
+    write_vstring(&mut buf127, &s127).unwrap();
+    assert!(buf127[0] & 0x80 == 0, "127 should use 1-byte format");
+
+    // 128 bytes should use 2-byte format
+    let s128 = "s".repeat(128);
+    let mut buf128 = Vec::new();
+    write_vstring(&mut buf128, &s128).unwrap();
+    assert!(buf128[0] & 0x80 != 0, "128 should use 2-byte format");
+}
+
+/// Tests maximum practical negotiation string from upstream.
+#[test]
+fn phase2_12_vstring_realistic_max_negotiation() {
+    // Realistic maximum: all supported checksums + compressions
+    // "xxh128 xxh3 xxh64 md5 md4 sha1 none" = 37 chars
+    // "zstd lz4 zlibx zlib none" = 24 chars
+    // Well under both limits
+    let checksum_list = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
+    let compression_list = "zstd lz4 zlibx zlib none";
+
+    for list in [checksum_list, compression_list] {
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, list).unwrap();
+
+        // All realistic lists should fit in 1-byte format
+        assert!(
+            buffer[0] & 0x80 == 0,
+            "realistic list should use 1-byte format"
+        );
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, list);
+    }
+}
+
+#[test]
+fn phase3_write_vstring_io_error() {
+    struct FailWriter;
+    impl std::io::Write for FailWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "write failed"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
     }
 
-    /// Tests do_negotiation=false fallback (client lacks VARINT_FLIST_FLAGS).
-    #[test]
-    fn capability_fallback_no_varint_flist_flags() {
-        // When client lacks VARINT_FLIST_FLAGS capability, we skip negotiation
-        // and use protocol 30+ defaults without any wire exchange
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-        let mut stdin = &b""[..]; // No input needed
+    let result = write_vstring(&mut FailWriter, "test");
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+}
+
+#[test]
+fn phase3_read_vstring_io_error() {
+    struct FailReader;
+    impl std::io::Read for FailReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "read failed",
+            ))
+        }
+    }
+
+    let result = read_vstring(&mut FailReader);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionReset);
+}
+
+#[test]
+fn phase3_negotiate_stdin_io_error() {
+    struct FailReader;
+    impl std::io::Read for FailReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::TimedOut, "read timeout"))
+        }
+    }
+
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut FailReader,
+        &mut stdout,
+        true,
+        true,
+        false,
+        true,
+    );
+
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+}
+
+#[test]
+fn phase3_negotiate_stdout_io_error() {
+    struct FailWriter;
+    impl std::io::Write for FailWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::WouldBlock, "write blocked"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let input = b"\x03md5\x04zlib";
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut &input[..],
+        &mut FailWriter,
+        true,
+        true,
+        false,
+        true,
+    );
+
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+}
+
+#[test]
+fn phase4_checksum_algorithm_as_str() {
+    assert_eq!(ChecksumAlgorithm::None.as_str(), "none");
+    assert_eq!(ChecksumAlgorithm::MD4.as_str(), "md4");
+    assert_eq!(ChecksumAlgorithm::MD5.as_str(), "md5");
+    assert_eq!(ChecksumAlgorithm::SHA1.as_str(), "sha1");
+    assert_eq!(ChecksumAlgorithm::XXH64.as_str(), "xxh64");
+    assert_eq!(ChecksumAlgorithm::XXH3.as_str(), "xxh3");
+    assert_eq!(ChecksumAlgorithm::XXH128.as_str(), "xxh128");
+}
+
+#[test]
+fn phase4_compression_algorithm_as_str() {
+    assert_eq!(CompressionAlgorithm::None.as_str(), "none");
+    assert_eq!(CompressionAlgorithm::Zlib.as_str(), "zlib");
+    assert_eq!(CompressionAlgorithm::ZlibX.as_str(), "zlibx");
+    assert_eq!(CompressionAlgorithm::LZ4.as_str(), "lz4");
+    assert_eq!(CompressionAlgorithm::Zstd.as_str(), "zstd");
+}
+
+#[test]
+fn phase4_checksum_algorithm_copy() {
+    let algo1 = ChecksumAlgorithm::MD5;
+    let algo2 = algo1; // Copy
+    assert_eq!(algo1, algo2);
+}
+
+#[test]
+fn phase4_compression_algorithm_copy() {
+    let algo1 = CompressionAlgorithm::Zlib;
+    let algo2 = algo1; // Copy
+    assert_eq!(algo1, algo2);
+}
+
+#[test]
+fn phase4_checksum_algorithm_debug() {
+    let debug = format!("{:?}", ChecksumAlgorithm::XXH128);
+    assert!(debug.contains("XXH128"));
+}
+
+#[test]
+fn phase4_compression_algorithm_debug() {
+    let debug = format!("{:?}", CompressionAlgorithm::Zstd);
+    assert!(debug.contains("Zstd"));
+}
+
+#[test]
+fn phase4_compression_to_compress_algorithm_none() {
+    let result = CompressionAlgorithm::None.to_compress_algorithm();
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_none());
+}
+
+#[test]
+fn phase4_compression_to_compress_algorithm_zlib() {
+    let result = CompressionAlgorithm::Zlib.to_compress_algorithm();
+    assert!(result.is_ok());
+    let algo = result.unwrap();
+    assert!(algo.is_some());
+}
+
+#[test]
+fn phase4_compression_to_compress_algorithm_zlibx() {
+    // ZlibX also maps to Zlib compression
+    let result = CompressionAlgorithm::ZlibX.to_compress_algorithm();
+    assert!(result.is_ok());
+    let algo = result.unwrap();
+    assert!(algo.is_some());
+}
+
+#[test]
+#[cfg(feature = "lz4")]
+fn phase4_compression_to_compress_algorithm_lz4() {
+    let result = CompressionAlgorithm::LZ4.to_compress_algorithm();
+    assert!(result.is_ok());
+    let algo = result.unwrap();
+    assert!(algo.is_some());
+}
+
+#[test]
+#[cfg(not(feature = "lz4"))]
+fn phase4_compression_lz4_not_available() {
+    let result = CompressionAlgorithm::LZ4.to_compress_algorithm();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert!(err.to_string().contains("LZ4"));
+}
+
+#[test]
+#[cfg(feature = "zstd")]
+fn phase4_compression_to_compress_algorithm_zstd() {
+    let result = CompressionAlgorithm::Zstd.to_compress_algorithm();
+    assert!(result.is_ok());
+    let algo = result.unwrap();
+    assert!(algo.is_some());
+}
+
+#[test]
+#[cfg(not(feature = "zstd"))]
+fn phase4_compression_zstd_not_available() {
+    let result = CompressionAlgorithm::Zstd.to_compress_algorithm();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert!(err.to_string().contains("Zstd"));
+}
+
+#[test]
+fn phase5_negotiate_only_unsupported_checksums() {
+    // If client sends only unsupported checksums, fallback to MD5
+    let list = "blake3 sha256 sha512 xxh256";
+    let result = choose_checksum_algorithm(list).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+#[test]
+fn phase5_negotiate_only_unsupported_compressions() {
+    // If client sends only unsupported compressions, fallback to None
+    let list = "bzip2 lzma xz brotli";
+    let result = choose_compression_algorithm(list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::None);
+}
+
+#[test]
+fn phase5_negotiate_whitespace_only_list() {
+    let list = "   \t   \n   ";
+    let checksum = choose_checksum_algorithm(list).unwrap();
+    assert_eq!(checksum, ChecksumAlgorithm::MD5);
+
+    let compression = choose_compression_algorithm(list).unwrap();
+    assert_eq!(compression, CompressionAlgorithm::None);
+}
+
+#[test]
+fn phase5_negotiate_mixed_supported_unsupported() {
+    // Mix of supported and unsupported, should pick first supported
+    let list = "blake3 unsupported xxh128 md5";
+    let result = choose_checksum_algorithm(list).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::XXH128);
+}
+
+#[test]
+fn phase5_negotiate_order_preference() {
+    // First supported algorithm should win
+    let list1 = "xxh128 md5 sha1";
+    let list2 = "md5 xxh128 sha1";
+    let list3 = "sha1 md5 xxh128";
+
+    assert_eq!(
+        choose_checksum_algorithm(list1).unwrap(),
+        ChecksumAlgorithm::XXH128
+    );
+    assert_eq!(
+        choose_checksum_algorithm(list2).unwrap(),
+        ChecksumAlgorithm::MD5
+    );
+    assert_eq!(
+        choose_checksum_algorithm(list3).unwrap(),
+        ChecksumAlgorithm::SHA1
+    );
+}
+
+#[test]
+fn phase5_negotiate_xxh3_support() {
+    let list = "xxh3 xxh128";
+    let result = choose_checksum_algorithm(list).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::XXH3);
+}
+
+#[test]
+fn phase5_negotiate_zlibx_vs_zlib() {
+    let list = "zlibx zlib";
+    let result = choose_compression_algorithm(list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::ZlibX);
+}
+
+#[test]
+fn phase6_full_negotiation_all_supported_versions() {
+    for version in 28..=32 {
+        let protocol = ProtocolVersion::try_from(version).unwrap();
+
+        if protocol.uses_fixed_encoding() {
+            // Legacy: no exchange needed
+            let mut stdin = &b""[..];
+            let mut stdout = Vec::new();
+            let result =
+                negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                    .unwrap();
+            assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+            assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+            assert!(stdout.is_empty());
+        } else {
+            // Modern: exchange required
+            let response = b"\x04sha1\x04none";
+            let mut stdin = &response[..];
+            let mut stdout = Vec::new();
+            let result =
+                negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                    .unwrap();
+            assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
+            assert_eq!(result.compression, CompressionAlgorithm::None);
+            assert!(!stdout.is_empty());
+        }
+    }
+}
+
+#[test]
+fn phase6_full_negotiation_checksum_only() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let response = b"\x04sha1"; // Only checksum, no compression
+    let mut stdin = &response[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        false, // send_compression = false
+        false,
+        true,
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
+    assert_eq!(result.compression, CompressionAlgorithm::None);
+}
+
+#[test]
+fn phase7_vstring_multiple_sequential() {
+    let strings = ["first", "second", "third", "fourth"];
+    let mut buffer = Vec::new();
+
+    for s in &strings {
+        write_vstring(&mut buffer, s).unwrap();
+    }
+
+    let mut reader = &buffer[..];
+    for expected in &strings {
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, *expected);
+    }
+}
+
+#[test]
+fn phase7_vstring_mixed_sizes() {
+    let strings = [
+        "a",              // 1 byte
+        "hello world",    // 11 bytes
+        &"x".repeat(127), // max 1-byte format
+        &"y".repeat(128), // min 2-byte format
+        &"z".repeat(200), // larger 2-byte format (within 256 limit)
+    ];
+    let mut buffer = Vec::new();
+
+    for s in &strings {
+        write_vstring(&mut buffer, s).unwrap();
+    }
+
+    let mut reader = &buffer[..];
+    for expected in &strings {
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, *expected);
+    }
+}
+
+#[test]
+fn phase8_negotiation_result_copy() {
+    let r1 = NegotiationResult {
+        checksum: ChecksumAlgorithm::XXH128,
+        compression: CompressionAlgorithm::ZlibX,
+    };
+    let r2 = r1; // Copy
+    assert_eq!(r1.checksum, r2.checksum);
+    assert_eq!(r1.compression, r2.compression);
+}
+
+#[test]
+fn phase8_negotiation_result_all_combinations() {
+    let checksums = [
+        ChecksumAlgorithm::None,
+        ChecksumAlgorithm::MD4,
+        ChecksumAlgorithm::MD5,
+        ChecksumAlgorithm::SHA1,
+        ChecksumAlgorithm::XXH64,
+        ChecksumAlgorithm::XXH3,
+        ChecksumAlgorithm::XXH128,
+    ];
+    let compressions = [
+        CompressionAlgorithm::None,
+        CompressionAlgorithm::Zlib,
+        CompressionAlgorithm::ZlibX,
+        CompressionAlgorithm::LZ4,
+        CompressionAlgorithm::Zstd,
+    ];
+
+    for &checksum in &checksums {
+        for &compression in &compressions {
+            let result = NegotiationResult {
+                checksum,
+                compression,
+            };
+            assert_eq!(result.checksum, checksum);
+            assert_eq!(result.compression, compression);
+        }
+    }
+}
+//
+// These tests verify graceful fallback behavior when:
+// 1. Server doesn't support a requested capability
+// 2. Client sends unknown capability strings
+// 3. Features must degrade gracefully
+//
+// Upstream rsync (compat.c) implements graceful degradation when
+// capabilities cannot be negotiated, falling back to safe defaults.
+
+/// Tests fallback when server offers only algorithms client doesn't prefer.
+/// Client wants xxh128, but server only offers md5/md4/sha1.
+#[test]
+fn capability_fallback_server_missing_preferred_checksum() {
+    // Remote only offers legacy checksums, not modern xxhash variants
+    let remote_list = "md5 md4 sha1";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // Should fall back to first supported algorithm: md5
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+/// Tests fallback when server offers only legacy MD4.
+#[test]
+fn capability_fallback_server_only_md4() {
+    let remote_list = "md4";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::MD4);
+}
+
+/// Tests fallback when server offers only 'none' checksum.
+#[test]
+fn capability_fallback_server_only_none_checksum() {
+    let remote_list = "none";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::None);
+}
+
+/// Tests fallback when server offers compression we don't have compiled in.
+#[test]
+fn capability_fallback_server_offers_unavailable_compression() {
+    // Server offers brotli (not supported) first, then zlib
+    let remote_list = "brotli lzma xz zlib";
+    let result = choose_compression_algorithm(remote_list).unwrap();
+    // Should skip unsupported and use zlib
+    assert_eq!(result, CompressionAlgorithm::Zlib);
+}
+
+/// Tests fallback when server offers only unavailable compressions.
+#[test]
+fn capability_fallback_server_only_unavailable_compression() {
+    let remote_list = "brotli lzma xz";
+    let result = choose_compression_algorithm(remote_list).unwrap();
+    // Should fall back to None when nothing matches
+    assert_eq!(result, CompressionAlgorithm::None);
+}
+
+/// Tests fallback when server offers only 'none' compression.
+#[test]
+fn capability_fallback_server_only_none_compression() {
+    let remote_list = "none";
+    let result = choose_compression_algorithm(remote_list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::None);
+}
+
+/// Tests handling of completely unknown checksum algorithm names.
+#[test]
+fn capability_fallback_unknown_checksum_strings() {
+    // All algorithm names are unknown
+    let remote_list = "blake2b blake3 argon2 scrypt";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // Should fall back to default (MD5)
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+/// Tests handling of completely unknown compression algorithm names.
+#[test]
+fn capability_fallback_unknown_compression_strings() {
+    let remote_list = "snappy lzo lzf brotli";
+    let result = choose_compression_algorithm(remote_list).unwrap();
+    // Should fall back to None
+    assert_eq!(result, CompressionAlgorithm::None);
+}
+
+/// Tests mixed known and unknown checksums - unknown first.
+#[test]
+fn capability_fallback_mixed_unknown_known_checksum() {
+    let remote_list = "blake3 blake2b sha1 md5";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // Should skip unknown and pick first known (sha1)
+    assert_eq!(result, ChecksumAlgorithm::SHA1);
+}
+
+/// Tests mixed known and unknown compressions - unknown first.
+#[test]
+fn capability_fallback_mixed_unknown_known_compression() {
+    let remote_list = "snappy lzo zlibx zlib";
+    let result = choose_compression_algorithm(remote_list).unwrap();
+    // Should skip unknown and pick first known (zlibx)
+    assert_eq!(result, CompressionAlgorithm::ZlibX);
+}
+
+/// Tests handling of malformed algorithm names (typos, case errors).
+#[test]
+fn capability_fallback_malformed_algorithm_names() {
+    // Various malformed names that might occur due to typos or bugs
+    let remote_list = "MD5 Md5 mD5 md-5 md_5 md55 mdv md5!";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // None match (case-sensitive, exact match required), falls back to MD5
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+/// Tests handling of empty algorithm string between spaces.
+#[test]
+fn capability_fallback_empty_between_spaces() {
+    let remote_list = "blake3  sha1"; // Double space
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // split_whitespace handles this correctly
+    assert_eq!(result, ChecksumAlgorithm::SHA1);
+}
+
+/// Tests handling of numeric-only strings.
+#[test]
+fn capability_fallback_numeric_strings() {
+    let remote_list = "123 456 789";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // None are valid, falls back to MD5
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+/// Tests handling of special characters in algorithm names.
+#[test]
+fn capability_fallback_special_chars() {
+    let remote_list = "md5@ sha1# xxh* md5-v2";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // None match exactly, falls back to MD5
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+/// Tests handling of very long unknown algorithm names.
+#[test]
+fn capability_fallback_long_unknown_names() {
+    let long_name = "a".repeat(100);
+    let remote_list = format!("{} {}", long_name, "md5");
+    let result = choose_checksum_algorithm(&remote_list).unwrap();
+    // Long name is unknown, should use md5
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+/// Tests handling of unicode in algorithm names.
+/// Non-breaking space (\u{00A0}) is Unicode whitespace, so split_whitespace()
+/// will treat "md5\u{00A0}fake" as two tokens: "md5" and "fake".
+/// Therefore "md5" is found and selected.
+#[test]
+fn capability_fallback_unicode_names() {
+    let remote_list = "md5\u{00A0}fake sha1 zlib";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // \u{00A0} is Unicode whitespace, so "md5" is a valid token and matches
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+/// Tests graceful degradation from modern to legacy checksums.
+#[test]
+fn capability_fallback_graceful_checksum_degradation() {
+    // Simulate negotiating with increasingly legacy servers
+
+    // Modern server: full support
+    let modern_list = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
+    assert_eq!(
+        choose_checksum_algorithm(modern_list).unwrap(),
+        ChecksumAlgorithm::XXH128
+    );
+
+    // Intermediate server: no xxh128, has xxh64
+    let intermediate_list = "xxh64 md5 md4 sha1 none";
+    assert_eq!(
+        choose_checksum_algorithm(intermediate_list).unwrap(),
+        ChecksumAlgorithm::XXH64
+    );
+
+    // Legacy server: only md5 and md4
+    let legacy_list = "md5 md4 none";
+    assert_eq!(
+        choose_checksum_algorithm(legacy_list).unwrap(),
+        ChecksumAlgorithm::MD5
+    );
+
+    // Very old server: only md4
+    let ancient_list = "md4 none";
+    assert_eq!(
+        choose_checksum_algorithm(ancient_list).unwrap(),
+        ChecksumAlgorithm::MD4
+    );
+}
+
+/// Tests graceful degradation from modern to legacy compression.
+#[test]
+fn capability_fallback_graceful_compression_degradation() {
+    // Simulate negotiating with increasingly legacy servers
+
+    // Modern server: has zstd
+    #[cfg(feature = "zstd")]
+    {
+        let modern_list = "zstd lz4 zlibx zlib none";
+        assert_eq!(
+            choose_compression_algorithm(modern_list).unwrap(),
+            CompressionAlgorithm::Zstd
+        );
+    }
+
+    // Server without zstd: use lz4 if available
+    #[cfg(feature = "lz4")]
+    {
+        let no_zstd_list = "lz4 zlibx zlib none";
+        assert_eq!(
+            choose_compression_algorithm(no_zstd_list).unwrap(),
+            CompressionAlgorithm::LZ4
+        );
+    }
+
+    // Server with only zlib variants
+    let zlib_only = "zlibx zlib none";
+    assert_eq!(
+        choose_compression_algorithm(zlib_only).unwrap(),
+        CompressionAlgorithm::ZlibX
+    );
+
+    // Server preferring classic zlib
+    let classic_zlib = "zlib none";
+    assert_eq!(
+        choose_compression_algorithm(classic_zlib).unwrap(),
+        CompressionAlgorithm::Zlib
+    );
+}
+
+/// Tests protocol version fallback behavior.
+#[test]
+fn capability_fallback_protocol_version_behavior() {
+    // Protocol 28-29: Uses legacy defaults without negotiation
+    for version in [28, 29] {
+        let protocol = ProtocolVersion::try_from(version).unwrap();
+        let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
         let result = negotiate_capabilities(
             protocol,
             &mut stdin,
             &mut stdout,
-            false, // do_negotiation = false (client lacks capability)
+            true,  // do_negotiation
             true,  // send_compression
             false, // is_daemon_mode
             true,  // is_server
         )
         .unwrap();
 
-        // Should use MD5 (protocol 30+ default) and Zlib (upstream: compat.c:194
-        // defaults to CPRES_ZLIB when -z is active but no vstring negotiation)
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        // Legacy protocols use MD4 and Zlib as defaults
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        // No data should be sent when do_negotiation is false
+        // No I/O should occur for legacy protocols
         assert!(stdout.is_empty());
     }
+}
 
-    /// Tests graceful handling when remote sends preference order we disagree with.
-    #[test]
-    fn capability_fallback_disagreeing_preference_order() {
-        // Remote prefers md4 over md5, but we still respect their order
-        let remote_list = "md4 md5 sha1";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // We pick first from THEIR list that we support
-        assert_eq!(result, ChecksumAlgorithm::MD4);
-    }
+/// Tests do_negotiation=false fallback (client lacks VARINT_FLIST_FLAGS).
+#[test]
+fn capability_fallback_no_varint_flist_flags() {
+    // When client lacks VARINT_FLIST_FLAGS capability, we skip negotiation
+    // and use protocol 30+ defaults without any wire exchange
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..]; // No input needed
+    let mut stdout = Vec::new();
 
-    /// Tests that we handle duplicate algorithm names gracefully.
-    #[test]
-    fn capability_fallback_duplicate_algorithms() {
-        let remote_list = "md5 md5 md5 sha1 sha1";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // Should still work, picks first md5
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        false, // do_negotiation = false (client lacks capability)
+        true,  // send_compression
+        false, // is_daemon_mode
+        true,  // is_server
+    )
+    .unwrap();
+
+    // Should use MD5 (protocol 30+ default) and Zlib (upstream: compat.c:194
+    // defaults to CPRES_ZLIB when -z is active but no vstring negotiation)
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    // No data should be sent when do_negotiation is false
+    assert!(stdout.is_empty());
+}
+
+/// Tests graceful handling when remote sends preference order we disagree with.
+#[test]
+fn capability_fallback_disagreeing_preference_order() {
+    // Remote prefers md4 over md5, but we still respect their order
+    let remote_list = "md4 md5 sha1";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // We pick first from THEIR list that we support
+    assert_eq!(result, ChecksumAlgorithm::MD4);
+}
+
+/// Tests that we handle duplicate algorithm names gracefully.
+#[test]
+fn capability_fallback_duplicate_algorithms() {
+    let remote_list = "md5 md5 md5 sha1 sha1";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // Should still work, picks first md5
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+/// Tests full negotiation where remote only supports legacy checksums.
+#[test]
+fn capability_fallback_full_negotiation_legacy_remote() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Remote is a legacy server that only knows md5 and zlib
+    let remote_response = b"\x03md5\x04zlib";
+    let mut stdin = &remote_response[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        false, // is_daemon_mode
+        true,  // is_server
+    )
+    .unwrap();
+
+    // We should accept their capabilities
+    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+    assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+}
+
+/// Tests full negotiation where remote only supports 'none' for both.
+#[test]
+fn capability_fallback_full_negotiation_none_only() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Remote disables both checksum and compression
+    let remote_response = b"\x04none\x04none";
+    let mut stdin = &remote_response[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        true,  // send_compression
+        false, // is_daemon_mode
+        true,  // is_server
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::None);
+    assert_eq!(result.compression, CompressionAlgorithm::None);
+}
+
+/// Tests negotiation fallback with compression disabled.
+#[test]
+fn capability_fallback_compression_disabled() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Only checksum negotiation, no compression
+    let remote_response = b"\x04sha1";
+    let mut stdin = &remote_response[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,  // do_negotiation
+        false, // send_compression = false
+        false, // is_daemon_mode
+        true,  // is_server
+    )
+    .unwrap();
+
+    assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
+    // Compression should be None when not negotiated
+    assert_eq!(result.compression, CompressionAlgorithm::None);
+}
+
+/// Tests that ChecksumAlgorithm::parse returns error for unknown names.
+#[test]
+fn capability_fallback_checksum_parse_unknown() {
+    let result = ChecksumAlgorithm::parse("blake2");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("unsupported checksum algorithm"));
+    assert!(err.to_string().contains("blake2"));
+}
+
+/// Tests that CompressionAlgorithm::parse returns error for unknown names.
+#[test]
+fn capability_fallback_compression_parse_unknown() {
+    let result = CompressionAlgorithm::parse("bzip2");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string()
+            .contains("unsupported compression algorithm")
+    );
+    assert!(err.to_string().contains("bzip2"));
+}
+
+/// Tests that xxh alias parsing works correctly for fallback.
+#[test]
+fn capability_fallback_xxh_alias_in_list() {
+    // "xxh" should be recognized as xxh64
+    let remote_list = "xxh md5";
+    let result = choose_checksum_algorithm(remote_list).unwrap();
+    // Note: "xxh" parses to XXH64, but SUPPORTED_CHECKSUMS has "xxh64" not "xxh"
+    // So this should skip "xxh" and match "md5"
+    assert_eq!(result, ChecksumAlgorithm::XXH64);
+}
+
+/// Tests that algorithm names must be exact matches.
+#[test]
+fn capability_fallback_exact_match_required() {
+    // These should NOT match any algorithm
+    let test_cases = [
+        ("md5-hmac", ChecksumAlgorithm::MD5),   // suffix
+        ("prefix-md5", ChecksumAlgorithm::MD5), // prefix
+        ("MD5", ChecksumAlgorithm::MD5),        // uppercase
+        ("Md5", ChecksumAlgorithm::MD5),        // mixed case
+    ];
+
+    for (name, _) in test_cases {
+        let list = name;
+        let result = choose_checksum_algorithm(list).unwrap();
+        // Should fall back to MD5 (default), not match the variant
         assert_eq!(result, ChecksumAlgorithm::MD5);
     }
+}
 
-    /// Tests full negotiation where remote only supports legacy checksums.
-    #[test]
-    fn capability_fallback_full_negotiation_legacy_remote() {
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        // Remote is a legacy server that only knows md5 and zlib
-        let remote_response = b"\x03md5\x04zlib";
-        let mut stdin = &remote_response[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            false, // is_daemon_mode
-            true,  // is_server
-        )
-        .unwrap();
-
-        // We should accept their capabilities
-        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+/// Tests behavior with extremely long algorithm lists.
+#[test]
+fn capability_fallback_very_long_list() {
+    // Generate a list with 1000 unknown algorithms followed by md5
+    let mut list = Vec::new();
+    for i in 0..1000 {
+        list.push(format!("unknown_{}", i));
     }
+    list.push("md5".to_string());
+    let remote_list = list.join(" ");
 
-    /// Tests full negotiation where remote only supports 'none' for both.
-    #[test]
-    fn capability_fallback_full_negotiation_none_only() {
-        let protocol = ProtocolVersion::try_from(31).unwrap();
+    let result = choose_checksum_algorithm(&remote_list).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
 
-        // Remote disables both checksum and compression
-        let remote_response = b"\x04none\x04none";
-        let mut stdin = &remote_response[..];
-        let mut stdout = Vec::new();
+/// Tests behavior with list containing only whitespace variations.
+#[test]
+fn capability_fallback_whitespace_variations() {
+    // Various whitespace-only or whitespace-heavy lists
+    let lists = [
+        "   ",                // only spaces
+        "\t\t\t",             // only tabs
+        "  \t  \n  ",         // mixed whitespace
+        "   md5   ",          // md5 with lots of space
+        "  \t md5 \n sha1  ", // mixed with valid algorithms
+    ];
 
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            true,  // send_compression
-            false, // is_daemon_mode
-            true,  // is_server
-        )
-        .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::None);
-        assert_eq!(result.compression, CompressionAlgorithm::None);
-    }
-
-    /// Tests negotiation fallback with compression disabled.
-    #[test]
-    fn capability_fallback_compression_disabled() {
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        // Only checksum negotiation, no compression
-        let remote_response = b"\x04sha1";
-        let mut stdin = &remote_response[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,  // do_negotiation
-            false, // send_compression = false
-            false, // is_daemon_mode
-            true,  // is_server
-        )
-        .unwrap();
-
-        assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
-        // Compression should be None when not negotiated
-        assert_eq!(result.compression, CompressionAlgorithm::None);
-    }
-
-    /// Tests that ChecksumAlgorithm::parse returns error for unknown names.
-    #[test]
-    fn capability_fallback_checksum_parse_unknown() {
-        let result = ChecksumAlgorithm::parse("blake2");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("unsupported checksum algorithm"));
-        assert!(err.to_string().contains("blake2"));
-    }
-
-    /// Tests that CompressionAlgorithm::parse returns error for unknown names.
-    #[test]
-    fn capability_fallback_compression_parse_unknown() {
-        let result = CompressionAlgorithm::parse("bzip2");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    for list in lists {
+        let result = choose_checksum_algorithm(list).unwrap();
+        // Should either find md5/sha1 or fall back to MD5
         assert!(
-            err.to_string()
-                .contains("unsupported compression algorithm")
+            result == ChecksumAlgorithm::MD5 || result == ChecksumAlgorithm::SHA1,
+            "list '{}' should result in MD5 or SHA1",
+            list.escape_debug()
         );
-        assert!(err.to_string().contains("bzip2"));
     }
+}
 
-    /// Tests that xxh alias parsing works correctly for fallback.
-    #[test]
-    fn capability_fallback_xxh_alias_in_list() {
-        // "xxh" should be recognized as xxh64
-        let remote_list = "xxh md5";
-        let result = choose_checksum_algorithm(remote_list).unwrap();
-        // Note: "xxh" parses to XXH64, but SUPPORTED_CHECKSUMS has "xxh64" not "xxh"
-        // So this should skip "xxh" and match "md5"
-        assert_eq!(result, ChecksumAlgorithm::XXH64);
-    }
+/// Tests that negotiation handles truncated input gracefully.
+#[test]
+fn capability_fallback_truncated_vstring() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    /// Tests that algorithm names must be exact matches.
-    #[test]
-    fn capability_fallback_exact_match_required() {
-        // These should NOT match any algorithm
-        let test_cases = [
-            ("md5-hmac", ChecksumAlgorithm::MD5),   // suffix
-            ("prefix-md5", ChecksumAlgorithm::MD5), // prefix
-            ("MD5", ChecksumAlgorithm::MD5),        // uppercase
-            ("Md5", ChecksumAlgorithm::MD5),        // mixed case
-        ];
+    // Truncated input - claims 10 bytes but only provides 3
+    let truncated = [0x0A, b'm', b'd', b'5']; // Length 10, but only 3 bytes follow
+    let mut stdin = &truncated[..];
+    let mut stdout = Vec::new();
 
-        for (name, _) in test_cases {
-            let list = name;
-            let result = choose_checksum_algorithm(list).unwrap();
-            // Should fall back to MD5 (default), not match the variant
-            assert_eq!(result, ChecksumAlgorithm::MD5);
-        }
-    }
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, true);
 
-    /// Tests behavior with extremely long algorithm lists.
-    #[test]
-    fn capability_fallback_very_long_list() {
-        // Generate a list with 1000 unknown algorithms followed by md5
-        let mut list = Vec::new();
-        for i in 0..1000 {
-            list.push(format!("unknown_{}", i));
-        }
-        list.push("md5".to_string());
-        let remote_list = list.join(" ");
+    // Should fail with UnexpectedEof
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+}
 
-        let result = choose_checksum_algorithm(&remote_list).unwrap();
-        assert_eq!(result, ChecksumAlgorithm::MD5);
-    }
+/// Tests handling of empty vstring (length 0).
+#[test]
+fn capability_fallback_empty_vstring() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    /// Tests behavior with list containing only whitespace variations.
-    #[test]
-    fn capability_fallback_whitespace_variations() {
-        // Various whitespace-only or whitespace-heavy lists
-        let lists = [
-            "   ",                // only spaces
-            "\t\t\t",             // only tabs
-            "  \t  \n  ",         // mixed whitespace
-            "   md5   ",          // md5 with lots of space
-            "  \t md5 \n sha1  ", // mixed with valid algorithms
-        ];
+    // Empty checksum list vstring: length=0
+    let empty_vstring = [0x00]; // Zero-length vstring
+    let mut stdin = &empty_vstring[..];
+    let mut stdout = Vec::new();
 
-        for list in lists {
-            let result = choose_checksum_algorithm(list).unwrap();
-            // Should either find md5/sha1 or fall back to MD5
-            assert!(
-                result == ChecksumAlgorithm::MD5 || result == ChecksumAlgorithm::SHA1,
-                "list '{}' should result in MD5 or SHA1",
-                list.escape_debug()
+    let result = negotiate_capabilities(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        true,
+        false, // no compression
+        false,
+        true,
+    );
+
+    // Should succeed with MD5 fallback (empty list → default)
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
+}
+
+/// Tests that all protocol versions handle fallback consistently.
+#[test]
+fn capability_fallback_all_protocol_versions() {
+    for version in 28..=32 {
+        let protocol = ProtocolVersion::try_from(version).unwrap();
+
+        // For legacy protocols, no exchange happens
+        if protocol.uses_fixed_encoding() {
+            let mut stdin = &b""[..];
+            let mut stdout = Vec::new();
+            let result =
+                negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                    .unwrap();
+            assert_eq!(
+                result.checksum,
+                ChecksumAlgorithm::MD4,
+                "Protocol {} should use MD4",
+                version
             );
-        }
-    }
-
-    /// Tests that negotiation handles truncated input gracefully.
-    #[test]
-    fn capability_fallback_truncated_vstring() {
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        // Truncated input - claims 10 bytes but only provides 3
-        let truncated = [0x0A, b'm', b'd', b'5']; // Length 10, but only 3 bytes follow
-        let mut stdin = &truncated[..];
-        let mut stdout = Vec::new();
-
-        let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, true);
-
-        // Should fail with UnexpectedEof
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
-    }
-
-    /// Tests handling of empty vstring (length 0).
-    #[test]
-    fn capability_fallback_empty_vstring() {
-        let protocol = ProtocolVersion::try_from(31).unwrap();
-
-        // Empty checksum list vstring: length=0
-        let empty_vstring = [0x00]; // Zero-length vstring
-        let mut stdin = &empty_vstring[..];
-        let mut stdout = Vec::new();
-
-        let result = negotiate_capabilities(
-            protocol,
-            &mut stdin,
-            &mut stdout,
-            true,
-            false, // no compression
-            false,
-            true,
-        );
-
-        // Should succeed with MD5 fallback (empty list → default)
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
-    }
-
-    /// Tests that all protocol versions handle fallback consistently.
-    #[test]
-    fn capability_fallback_all_protocol_versions() {
-        for version in 28..=32 {
-            let protocol = ProtocolVersion::try_from(version).unwrap();
-
-            // For legacy protocols, no exchange happens
-            if protocol.uses_fixed_encoding() {
-                let mut stdin = &b""[..];
-                let mut stdout = Vec::new();
-                let result = negotiate_capabilities(
-                    protocol,
-                    &mut stdin,
-                    &mut stdout,
-                    true,
-                    true,
-                    false,
-                    true,
-                )
-                .unwrap();
-                assert_eq!(
-                    result.checksum,
-                    ChecksumAlgorithm::MD4,
-                    "Protocol {} should use MD4",
-                    version
-                );
-            } else {
-                // For modern protocols, test with a fallback scenario
-                let remote = b"\x03md5\x04zlib";
-                let mut stdin = &remote[..];
-                let mut stdout = Vec::new();
-                let result = negotiate_capabilities(
-                    protocol,
-                    &mut stdin,
-                    &mut stdout,
-                    true,
-                    true,
-                    false,
-                    true,
-                )
-                .unwrap();
-                assert_eq!(
-                    result.checksum,
-                    ChecksumAlgorithm::MD5,
-                    "Protocol {} should accept MD5",
-                    version
-                );
-            }
+        } else {
+            // For modern protocols, test with a fallback scenario
+            let remote = b"\x03md5\x04zlib";
+            let mut stdin = &remote[..];
+            let mut stdout = Vec::new();
+            let result =
+                negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                    .unwrap();
+            assert_eq!(
+                result.checksum,
+                ChecksumAlgorithm::MD5,
+                "Protocol {} should accept MD5",
+                version
+            );
         }
     }
 }
