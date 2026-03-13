@@ -277,7 +277,7 @@ pub fn negotiate_capabilities_with_override(
 /// This matches upstream's algorithm selection logic where "the client picks
 /// the first name in the server's list that is also in the client's list"
 /// (from server perspective: pick first in client's list we support).
-fn choose_checksum_algorithm(client_list: &str) -> io::Result<ChecksumAlgorithm> {
+pub(super) fn choose_checksum_algorithm(client_list: &str) -> io::Result<ChecksumAlgorithm> {
     for algo in client_list.split_whitespace() {
         // Try to parse each algorithm the client supports
         if let Ok(checksum) = ChecksumAlgorithm::parse(algo) {
@@ -295,7 +295,7 @@ fn choose_checksum_algorithm(client_list: &str) -> io::Result<ChecksumAlgorithm>
 /// Chooses a compression algorithm from the client's list.
 ///
 /// Selects the first algorithm in the client's list that we also support.
-fn choose_compression_algorithm(client_list: &str) -> io::Result<CompressionAlgorithm> {
+pub(super) fn choose_compression_algorithm(client_list: &str) -> io::Result<CompressionAlgorithm> {
     let supported = supported_compressions();
     for algo in client_list.split_whitespace() {
         // Try to parse each algorithm the client supports
@@ -319,7 +319,7 @@ fn choose_compression_algorithm(client_list: &str) -> io::Result<CompressionAlgo
 ///
 /// This is DIFFERENT from varint encoding! Varint uses 7 bits per byte with
 /// continuation bits, while vstring uses a simpler 1-or-2 byte format.
-fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
+pub(super) fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
     let bytes = s.as_bytes();
     let len = bytes.len();
 
@@ -354,7 +354,7 @@ fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 /// - Then read `len` bytes of string data
 ///
 /// This is DIFFERENT from varint encoding!
-fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
+pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
     // upstream: compat.c:91 #define MAX_NSTR_STRLEN 256
     const MAX_NSTR_STRLEN: usize = 256;
 
