@@ -301,6 +301,39 @@ impl ReceiverContext {
         let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
         !self.config.connection.client_mode && receiver_wants_list
     }
+
+    /// Returns whether itemize emission should be active.
+    ///
+    /// MSG_INFO itemize frames are only emitted when:
+    /// - Running in server mode (daemon or SSH) - not client mode
+    /// - The client requested `--itemize-changes` (`-i`)
+    #[must_use]
+    const fn should_emit_itemize(&self) -> bool {
+        !self.config.connection.client_mode && self.config.flags.info_flags.itemize
+    }
+
+    /// Emits a MSG_INFO frame with itemize output for a file entry.
+    ///
+    /// Formats the itemize string (`"%i %n%L\n"`) and sends it as a MSG_INFO
+    /// multiplexed message. Uses `is_sender: false` since the daemon is receiving
+    /// files (producing `>` direction indicator).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2260` - `itemize()` in receiver's generator context
+    /// - `log.c:330-340` - `rwrite()` converts to `send_msg(MSG_INFO)` when `am_server`
+    fn emit_itemize<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        iflags: &crate::generator::ItemFlags,
+        entry: &protocol::flist::FileEntry,
+    ) -> std::io::Result<()> {
+        if !self.should_emit_itemize() {
+            return Ok(());
+        }
+        let line = crate::generator::itemize::format_itemize_line(iflags, entry, false);
+        writer.send_msg_info(line.as_bytes())
+    }
 }
 
 /// Shared configuration produced by [`ReceiverContext::setup_transfer`].
