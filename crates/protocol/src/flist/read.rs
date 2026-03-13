@@ -15,6 +15,7 @@ use logging::debug_log;
 
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
+use crate::acl::{AclCache, receive_acl_cached};
 use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
 use crate::iconv::FilenameConverter;
 use crate::varint::{read_varint, read_varint30_int};
@@ -100,6 +101,13 @@ pub struct FileListReader {
     /// returning `Ok(None)` and accumulating the error here for the caller to
     /// inspect after the file list is fully read.
     io_error: i32,
+    /// ACL cache for tracking received ACL definitions.
+    ///
+    /// When `preserve_acls` is enabled, ACL data is read from the wire after
+    /// the checksum for each entry. Literal ACL definitions are stored in this
+    /// cache and referenced by index. Upstream uses `access_acl_list` and
+    /// `default_acl_list` globals - we encapsulate them in `AclCache`.
+    acl_cache: AclCache,
 }
 
 /// Result from reading metadata fields.
@@ -160,6 +168,7 @@ impl FileListReader {
             relative_paths: false,
             dirname_interner: PathInterner::new(),
             io_error: 0,
+            acl_cache: AclCache::new(),
         }
     }
 
@@ -190,6 +199,7 @@ impl FileListReader {
             relative_paths: false,
             dirname_interner: PathInterner::new(),
             io_error: 0,
+            acl_cache: AclCache::new(),
         }
     }
 
@@ -335,6 +345,15 @@ impl FileListReader {
     #[must_use]
     pub const fn io_error(&self) -> i32 {
         self.io_error
+    }
+
+    /// Returns a reference to the ACL cache.
+    ///
+    /// Callers can use this to look up ACL definitions by index after
+    /// reading the file list.
+    #[must_use]
+    pub const fn acl_cache(&self) -> &AclCache {
+        &self.acl_cache
     }
 
     /// Returns whether varint flag encoding is enabled.
@@ -1231,7 +1250,19 @@ impl FileListReader {
             entry.set_checksum(sum);
         }
 
-        // Step 22: Update statistics
+        // Step 22: Read ACLs from the wire (after checksum, before xattrs).
+        // upstream: flist.c:1205-1207 - ACLs are read for all non-symlink entries,
+        // including abbreviated hardlink followers. Symlinks never carry ACLs.
+        if self.preserve_acls && !entry.is_symlink() {
+            let (access_ndx, def_ndx) =
+                receive_acl_cached(reader, entry.is_dir(), &mut self.acl_cache)?;
+            entry.set_acl_ndx(access_ndx);
+            if let Some(ndx) = def_ndx {
+                entry.set_def_acl_ndx(ndx);
+            }
+        }
+
+        // Step 23: Update statistics
         self.update_stats(&entry);
 
         // Level 2: Individual file entry
@@ -3179,5 +3210,208 @@ mod tests {
             buf.len(),
             "must consume all written bytes"
         );
+    }
+
+    /// Tests for ACL integration in the flist read path.
+    mod acl_integration {
+        use super::*;
+        use crate::acl::{AclCache, AclType, RsyncAcl, send_acl, send_rsync_acl};
+
+        /// Writes a file entry followed by ACL data, then reads it back
+        /// with `preserve_acls` enabled.
+        #[test]
+        fn read_entry_with_access_acl() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            // Write file entry
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_file("test_acl.txt".into(), 200, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            // Write ACL data (as sender would after send_file_entry)
+            // upstream: flist.c send_acl() is called after send_file_entry()
+            let mut acl = RsyncAcl::new();
+            acl.user_obj = 0x06; // rw-
+            acl.group_obj = 0x04; // r--
+            acl.other_obj = 0x04; // r--
+            let mut acl_cache = AclCache::new();
+            send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
+
+            // Read it back with preserve_acls
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_acls(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(read_entry.name(), "test_acl.txt");
+            assert_eq!(read_entry.size(), 200);
+            assert_eq!(read_entry.acl_ndx(), Some(0));
+            assert!(read_entry.def_acl_ndx().is_none());
+
+            // Verify cached ACL matches what was sent
+            let cached = reader.acl_cache().get_access(0).unwrap();
+            assert_eq!(cached.user_obj, 0x06);
+            assert_eq!(cached.group_obj, 0x04);
+            assert_eq!(cached.other_obj, 0x04);
+
+            // All bytes consumed
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Writes a directory entry with access + default ACL, reads it back.
+        #[test]
+        fn read_directory_entry_with_access_and_default_acl() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            // Write directory entry
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_directory("mydir".into(), 0o755);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            // Write access + default ACLs
+            let access_acl = {
+                let mut a = RsyncAcl::new();
+                a.user_obj = 0x07;
+                a.group_obj = 0x05;
+                a.other_obj = 0x05;
+                a
+            };
+            let default_acl = {
+                let mut a = RsyncAcl::new();
+                a.user_obj = 0x07;
+                a.group_obj = 0x05;
+                a.other_obj = 0x00;
+                a
+            };
+            let mut acl_cache = AclCache::new();
+            send_acl(
+                &mut data,
+                &access_acl,
+                Some(&default_acl),
+                true,
+                &mut acl_cache,
+            )
+            .unwrap();
+
+            // Read it back
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_acls(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(read_entry.name(), "mydir");
+            assert!(read_entry.is_dir());
+            assert_eq!(read_entry.acl_ndx(), Some(0));
+            assert_eq!(read_entry.def_acl_ndx(), Some(0));
+
+            let cached_access = reader.acl_cache().get_access(0).unwrap();
+            assert_eq!(cached_access.user_obj, 0x07);
+            assert_eq!(cached_access.other_obj, 0x05);
+
+            let cached_default = reader.acl_cache().get_default(0).unwrap();
+            assert_eq!(cached_default.user_obj, 0x07);
+            assert_eq!(cached_default.other_obj, 0x00);
+
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// ACLs are NOT read for symlink entries (matching upstream behavior).
+        #[test]
+        fn read_symlink_entry_skips_acl() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            // Write symlink entry
+            let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
+            let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            // No ACL data follows for symlinks (sender doesn't send it)
+
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol)
+                .with_preserve_acls(true)
+                .with_preserve_links(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert!(read_entry.is_symlink());
+            assert!(read_entry.acl_ndx().is_none());
+
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Without preserve_acls, no ACL reading occurs even if data follows.
+        #[test]
+        fn read_entry_without_preserve_acls_skips_acl() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+
+            let mut writer = FileListWriter::new(protocol);
+            let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o100644);
+            entry.set_mtime(1700000000, 0);
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            // preserve_acls is false, so reader should NOT try to read ACL data
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert!(read_entry.acl_ndx().is_none());
+            assert_eq!(cursor.position() as usize, data.len());
+        }
+
+        /// Multiple entries share cached ACLs correctly.
+        #[test]
+        fn multiple_entries_share_cached_acls() {
+            use super::super::super::write::FileListWriter;
+
+            let protocol = test_protocol();
+            let mut data = Vec::new();
+            let mut acl_cache = AclCache::new();
+
+            let acl = {
+                let mut a = RsyncAcl::new();
+                a.user_obj = 0x07;
+                a.group_obj = 0x05;
+                a.other_obj = 0x04;
+                a
+            };
+
+            // Write two file entries with the same ACL
+            let mut writer = FileListWriter::new(protocol);
+            for name in &["file1.txt", "file2.txt"] {
+                let mut entry = FileEntry::new_file((*name).into(), 100, 0o100644);
+                entry.set_mtime(1700000000, 0);
+                writer.write_entry(&mut data, &entry).unwrap();
+                send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
+            }
+
+            // Read them back
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_acls(true);
+
+            let entry1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+            let entry2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+            assert_eq!(entry1.name(), "file1.txt");
+            assert_eq!(entry1.acl_ndx(), Some(0));
+            assert_eq!(entry2.name(), "file2.txt");
+            // Second entry gets cache hit - same index
+            assert_eq!(entry2.acl_ndx(), Some(0));
+
+            // Only one ACL in cache
+            assert_eq!(reader.acl_cache().access_count(), 1);
+        }
     }
 }

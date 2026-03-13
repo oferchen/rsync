@@ -151,8 +151,12 @@ pub struct FileEntry {
     hardlink_ino: Option<i64>,
     /// File checksum for --checksum mode (variable length, up to 32 bytes).
     checksum: Option<Vec<u8>>,
-    /// ACL index for --acls mode (index into ACL list, protocol 30+).
+    /// Access ACL index for --acls mode (index into access ACL list, protocol 30+).
     acl_ndx: Option<u32>,
+    /// Default ACL index for directories in --acls mode (index into default ACL list).
+    ///
+    /// Only meaningful for directories. Corresponds to upstream's `F_DIR_DEFACL`.
+    def_acl_ndx: Option<u32>,
     /// Extended attribute index for --xattrs mode (index into xattr list).
     xattr_ndx: Option<u32>,
 
@@ -207,6 +211,7 @@ impl Clone for FileEntry {
             hardlink_ino: self.hardlink_ino,
             checksum: self.checksum.clone(),
             acl_ndx: self.acl_ndx,
+            def_acl_ndx: self.def_acl_ndx,
             xattr_ndx: self.xattr_ndx,
             mode: self.mode,
             mtime_nsec: self.mtime_nsec,
@@ -238,6 +243,7 @@ impl std::fmt::Debug for FileEntry {
             .field("hardlink_ino", &self.hardlink_ino)
             .field("checksum", &self.checksum)
             .field("acl_ndx", &self.acl_ndx)
+            .field("def_acl_ndx", &self.def_acl_ndx)
             .field("xattr_ndx", &self.xattr_ndx)
             .field("mode", &self.mode)
             .field("mtime_nsec", &self.mtime_nsec)
@@ -268,6 +274,7 @@ impl PartialEq for FileEntry {
             && self.hardlink_ino == other.hardlink_ino
             && self.checksum == other.checksum
             && self.acl_ndx == other.acl_ndx
+            && self.def_acl_ndx == other.def_acl_ndx
             && self.xattr_ndx == other.xattr_ndx
             && self.mode == other.mode
             && self.mtime_nsec == other.mtime_nsec
@@ -313,6 +320,7 @@ impl FileEntry {
             hardlink_ino: None,
             checksum: None,
             acl_ndx: None,
+            def_acl_ndx: None,
             xattr_ndx: None,
             mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime_nsec: 0,
@@ -402,6 +410,7 @@ impl FileEntry {
             hardlink_ino: None,
             checksum: None,
             acl_ndx: None,
+            def_acl_ndx: None,
             xattr_ndx: None,
             mode,
             mtime_nsec,
@@ -464,6 +473,7 @@ impl FileEntry {
             hardlink_ino: None,
             checksum: None,
             acl_ndx: None,
+            def_acl_ndx: None,
             xattr_ndx: None,
             mode,
             mtime_nsec,
@@ -841,16 +851,32 @@ impl FileEntry {
         self.checksum = Some(sum);
     }
 
-    /// Returns the ACL index if set (for --acls mode).
+    /// Returns the access ACL index if set (for --acls mode).
     #[inline]
     #[must_use]
     pub const fn acl_ndx(&self) -> Option<u32> {
         self.acl_ndx
     }
 
-    /// Sets the ACL index (for --acls mode).
+    /// Sets the access ACL index (for --acls mode).
     pub const fn set_acl_ndx(&mut self, ndx: u32) {
         self.acl_ndx = Some(ndx);
+    }
+
+    /// Returns the default ACL index if set (for directories in --acls mode).
+    ///
+    /// Corresponds to upstream's `F_DIR_DEFACL`. Only meaningful for directories.
+    #[inline]
+    #[must_use]
+    pub const fn def_acl_ndx(&self) -> Option<u32> {
+        self.def_acl_ndx
+    }
+
+    /// Sets the default ACL index (for directories in --acls mode).
+    ///
+    /// Corresponds to upstream's `F_DIR_DEFACL`. Only meaningful for directories.
+    pub const fn set_def_acl_ndx(&mut self, ndx: u32) {
+        self.def_acl_ndx = Some(ndx);
     }
 
     /// Returns the extended attribute index if set (for --xattrs mode).
