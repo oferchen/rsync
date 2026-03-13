@@ -1,8 +1,10 @@
+#[cfg(feature = "incremental-flist")]
+use super::PHASE1_CHECKSUM_LENGTH;
 use super::directory::FailedDirectories;
 use super::stats::TransferStats;
 use super::wire::SenderAttrs;
 use super::wire::SumHead;
-use super::{PHASE1_CHECKSUM_LENGTH, REDO_CHECKSUM_LENGTH, ReceiverContext};
+use super::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 use crate::config::ServerConfig;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::error::{
