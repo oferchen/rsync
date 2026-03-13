@@ -6,7 +6,7 @@ use compress::algorithm::CompressionAlgorithm;
 use transfer::setup::build_capability_string;
 
 use super::builder::RemoteInvocationBuilder;
-use super::transfer_role::{determine_transfer_role, operand_is_remote};
+use super::transfer_role::determine_transfer_role;
 use super::{RemoteOperands, RemoteRole, TransferSpec};
 use crate::client::config::{ClientConfig, TransferTimeout};
 
