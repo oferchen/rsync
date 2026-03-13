@@ -43,6 +43,11 @@ pub struct XattrEntry {
     datum_len: usize,
     /// Transfer state for abbreviation protocol.
     state: XattrState,
+    /// 1-based entry number within its xattr list.
+    ///
+    /// Used by the abbreviation request protocol to identify specific entries.
+    /// Mirrors upstream rsync's `rxa->num` field in `xattrs.c`.
+    num: u32,
 }
 
 impl XattrEntry {
@@ -55,6 +60,7 @@ impl XattrEntry {
             datum,
             datum_len,
             state: XattrState::Done,
+            num: 0,
         }
     }
 
@@ -67,6 +73,7 @@ impl XattrEntry {
             datum: checksum,
             datum_len: original_len,
             state: XattrState::Abbrev,
+            num: 0,
         }
     }
 
@@ -114,6 +121,18 @@ impl XattrEntry {
     /// Sets the transfer state.
     pub fn set_state(&mut self, state: XattrState) {
         self.state = state;
+    }
+
+    /// Returns the 1-based entry number within its xattr list.
+    ///
+    /// Used by the abbreviation request protocol. Mirrors upstream `rxa->num`.
+    pub const fn num(&self) -> u32 {
+        self.num
+    }
+
+    /// Sets the 1-based entry number within its xattr list.
+    pub fn set_num(&mut self, num: u32) {
+        self.num = num;
     }
 
     /// Marks this entry as needing its full value sent (XSTATE_TODO).
