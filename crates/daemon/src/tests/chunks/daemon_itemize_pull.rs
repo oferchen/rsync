@@ -24,7 +24,7 @@
 #[cfg(unix)]
 #[test]
 fn daemon_itemize_pull_reports_events() {
-    use core::client::summary::ClientEventKind;
+    use core::client::ClientEventKind;
 
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
