@@ -136,6 +136,50 @@ pub fn mknod(_path: &Path, _mode: ModeType, _device: DeviceType) -> io::Result<(
     ))
 }
 
+/// Normalizes a filename to NFC (composed) Unicode form.
+///
+/// macOS HFS+/APFS stores filenames in NFD (decomposed) form, while Linux
+/// and most other systems use NFC (composed). When transferring files between
+/// platforms, the same visual filename (e.g., "cafe\u{0301}" vs "caf\u{00e9}")
+/// may have different byte representations, causing delete-pass and quick-check
+/// filename comparisons to fail.
+///
+/// On macOS this normalizes both the `read_dir` result and the file-list entry
+/// name to NFC before comparison. On all other platforms this is a no-op that
+/// returns the input unchanged, avoiding any allocation overhead.
+///
+/// # Upstream Reference
+///
+/// Upstream rsync handles this via `--iconv` when transferring between
+/// systems with different filename encodings. This function provides the
+/// equivalent normalization for the common macOS NFD case.
+#[cfg(target_os = "macos")]
+pub fn normalize_filename(name: &std::ffi::OsStr) -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStrExt;
+    use unicode_normalization::UnicodeNormalization;
+
+    let bytes = name.as_bytes();
+    // Fast path: if all bytes are ASCII, no normalization needed.
+    if bytes.iter().all(|&b| b.is_ascii()) {
+        return name.to_os_string();
+    }
+    // Convert to UTF-8 for normalization. Non-UTF-8 filenames pass through
+    // unchanged - they cannot contain decomposed Unicode sequences.
+    match std::str::from_utf8(bytes) {
+        Ok(s) => {
+            let normalized: String = s.nfc().collect();
+            std::ffi::OsString::from(normalized)
+        }
+        Err(_) => name.to_os_string(),
+    }
+}
+
+/// No-op stub on non-macOS platforms - returns the input unchanged.
+#[cfg(not(target_os = "macos"))]
+pub fn normalize_filename(name: &std::ffi::OsStr) -> std::ffi::OsString {
+    name.to_os_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +237,40 @@ mod tests {
             mknod(path, 0, 0).unwrap_err().kind(),
             io::ErrorKind::Unsupported
         );
+    }
+
+    #[test]
+    fn normalize_filename_ascii_unchanged() {
+        let name = std::ffi::OsStr::new("hello.txt");
+        let result = normalize_filename(name);
+        assert_eq!(result, name);
+    }
+
+    #[test]
+    fn normalize_filename_nfc_unchanged() {
+        // "caf\u{00e9}" is already NFC (composed e-acute)
+        let name = std::ffi::OsStr::new("caf\u{00e9}");
+        let result = normalize_filename(name);
+        assert_eq!(result, name);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn normalize_filename_nfd_to_nfc() {
+        // "cafe\u{0301}" is NFD (e + combining acute) - should normalize to NFC
+        let nfd = std::ffi::OsStr::new("cafe\u{0301}");
+        let nfc = std::ffi::OsStr::new("caf\u{00e9}");
+        let result = normalize_filename(nfd);
+        assert_eq!(result, nfc);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn normalize_filename_complex_nfd() {
+        // "u\u{0308}ber" (u + combining diaeresis) -> "\u{00fc}ber" (u-umlaut)
+        let nfd = std::ffi::OsStr::new("u\u{0308}ber");
+        let nfc = std::ffi::OsStr::new("\u{00fc}ber");
+        let result = normalize_filename(nfd);
+        assert_eq!(result, nfc);
     }
 }
