@@ -1251,6 +1251,17 @@ fn build_server_config_for_generator(
     server_config.stop_at = config.stop_at();
     server_config.reference_directories = config.reference_directories().to_vec();
 
+    // upstream: clientserver.c — when --files-from references a remote file
+    // (colon prefix), the daemon receiver opens the file locally and forwards
+    // its content to the client sender via start_filesfrom_forwarding(). The
+    // client sender reads file names from the protocol stream (f_in) using
+    // read_line(filesfrom_fd, ...) in send_file_list(). Configure the generator
+    // to read from the protocol stream so it picks up the forwarded names.
+    if config.files_from().is_remote() {
+        server_config.file_selection.files_from_path = Some("-".to_owned());
+        server_config.file_selection.from0 = true;
+    }
+
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
 }
@@ -1936,9 +1947,35 @@ mod tests {
             // files_from_path should be None - the paths are in args
             assert!(
                 server_config.file_selection.files_from_path.is_none(),
-                "generator in daemon push should not have files_from_path"
+                "generator in daemon push should not have files_from_path for local source"
             );
             assert_eq!(server_config.args.len(), 2);
+        }
+
+        #[test]
+        fn generator_config_sets_files_from_for_remote_source() {
+            // When pushing to daemon with a remote --files-from (colon prefix),
+            // the daemon opens the file locally and forwards names over the
+            // socket. The generator must read from the protocol stream.
+            let config = ClientConfig::builder()
+                .files_from(crate::client::config::FilesFromSource::RemoteFile(
+                    "/srv/list.txt".to_owned(),
+                ))
+                .build();
+
+            let local_paths = vec!["src/".to_owned()];
+            let server_config =
+                build_server_config_for_generator(&config, &local_paths, Vec::new()).unwrap();
+
+            assert_eq!(
+                server_config.file_selection.files_from_path.as_deref(),
+                Some("-"),
+                "generator should read files-from from protocol stream for remote source"
+            );
+            assert!(
+                server_config.file_selection.from0,
+                "remote files-from uses NUL-separated wire format"
+            );
         }
     }
 
