@@ -2477,7 +2477,7 @@ mod receiver_itemize_tests {
 
         assert_eq!(writer.messages.len(), 1);
         let msg = String::from_utf8_lossy(&writer.messages[0]);
-        assert_eq!(msg, ">f.........\n");
+        assert_eq!(msg, ">f......... data.bin\n");
     }
 
     #[test]
