@@ -1,10 +1,8 @@
-//! crates/daemon/src/daemon/session_registry.rs
+//! Concurrent session tracking for the daemon accept loop.
 //!
-//! Concurrent session tracking using DashMap.
-//!
-//! This module provides a thread-safe registry for tracking active daemon
-//! sessions. It enables concurrent queries about session state without
-//! blocking the main accept loop.
+//! Provides a thread-safe registry backed by `DashMap` for tracking active
+//! daemon sessions. Multiple threads can query and update session state
+//! without blocking the main accept loop.
 
 #![allow(dead_code)]
 
