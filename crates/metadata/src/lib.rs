@@ -154,18 +154,18 @@ pub use nfsv4_acl_stub as nfsv4_acl;
 
 pub mod fake_super;
 
-// Export sync_acls from the appropriate platform module
+// Export sync_acls and apply_acls_from_cache from the appropriate platform module
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
 ))]
-pub use acl_exacl::sync_acls;
+pub use acl_exacl::{apply_acls_from_cache, sync_acls};
 
 #[cfg(all(
     feature = "acl",
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
-pub use acl_stub::sync_acls;
+pub use acl_stub::{apply_acls_from_cache, sync_acls};
 
 // Universal no-op for all other platforms (acl feature disabled or uncovered OS)
 #[cfg(not(any(all(
@@ -179,7 +179,7 @@ pub use acl_stub::sync_acls;
         target_os = "watchos"
     )
 ),)))]
-pub use acl_noop::sync_acls;
+pub use acl_noop::{apply_acls_from_cache, sync_acls};
 
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
