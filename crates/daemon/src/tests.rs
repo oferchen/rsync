@@ -198,6 +198,7 @@ include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_pull.rs");
 // Daemon files-from push test
 include!("tests/chunks/daemon_files_from_push.rs");
 include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_push.rs");
+include!("tests/chunks/daemon_safe_links_receive.rs");
 include!("tests/chunks/daemon_compare_dest_push.rs");
 // Daemon relative receive end-to-end test
 include!("tests/chunks/daemon_relative_receive.rs");
