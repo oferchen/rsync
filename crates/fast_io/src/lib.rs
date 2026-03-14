@@ -62,7 +62,7 @@ pub use mmap_reader::MmapReader;
 
 pub use io_uring::{
     IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
-    IoUringWriter, IoUringWriterFactory, is_io_uring_available, writer_from_file,
+    IoUringWriter, IoUringWriterFactory, is_io_uring_available, reader_from_path, writer_from_file,
 };
 
 #[cfg(unix)]

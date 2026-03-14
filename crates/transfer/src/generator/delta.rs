@@ -158,9 +158,9 @@ pub fn generate_delta_from_signature<R: Read>(
 ///
 /// Mirrors upstream `match.c` interleaved pattern where `sum_update()` and
 /// `send_token()` happen on the same data pass.
-pub(super) fn stream_whole_file_transfer<W: Write>(
+pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     writer: &mut W,
-    mut source: fs::File,
+    mut source: R,
     file_size: u64,
     checksum_algorithm: ChecksumAlgorithm,
     compression: Option<CompressionAlgorithm>,
