@@ -120,6 +120,17 @@ impl ClientConfig {
     pub const fn protect_args(&self) -> Option<bool> {
         self.protect_args
     }
+
+    /// Returns the forced protocol version, if any.
+    ///
+    /// When set, the client advertises this version during the daemon handshake
+    /// instead of `ProtocolVersion::NEWEST`. This mirrors the upstream
+    /// `--protocol` flag which clamps the negotiation ceiling.
+    #[must_use]
+    #[doc(alias = "--protocol")]
+    pub const fn protocol_version(&self) -> Option<protocol::ProtocolVersion> {
+        self.protocol_version
+    }
 }
 
 #[cfg(test)]

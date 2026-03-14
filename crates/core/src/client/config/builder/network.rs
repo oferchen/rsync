@@ -134,6 +134,18 @@ impl ClientConfigBuilder {
         self.early_input = path;
         self
     }
+
+    /// Forces a specific protocol version for daemon handshake negotiation.
+    ///
+    /// When set, the client advertises this version instead of
+    /// `ProtocolVersion::NEWEST`, clamping the negotiation ceiling. This
+    /// mirrors the upstream `--protocol` flag.
+    #[must_use]
+    #[doc(alias = "--protocol")]
+    pub const fn protocol_version(mut self, version: Option<protocol::ProtocolVersion>) -> Self {
+        self.protocol_version = version;
+        self
+    }
 }
 
 #[cfg(test)]
