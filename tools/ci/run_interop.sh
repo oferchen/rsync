@@ -1152,9 +1152,8 @@ run_ssh_interop_test() {
 # Remaining known failures:
 KNOWN_FAILURES=(
   # --- upstream→oc (daemon receive) ---
-  # ACLs/xattrs: our daemon does not yet apply ACL/xattr to destination files.
+  # ACLs: our daemon does not yet wire ACL application in receiver path.
   "up:acls"
-  "up:xattrs"
   # hardlinks-relative: combined -H -R needs hardlink ordering fix.
   "up:hardlinks-relative"
   # protocol-31: upstream 3.0.9 does not support protocol 31.
