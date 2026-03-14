@@ -4,6 +4,7 @@
 ))]
 
 use crate::MetadataError;
+use protocol::acl::AclCache;
 use std::path::Path;
 use std::sync::Once;
 
@@ -59,6 +60,23 @@ pub fn sync_acls(
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
     let _ = (source, destination, follow_symlinks);
+    warn_acl_unsupported();
+    Ok(())
+}
+
+/// Applies parsed ACLs from an [`AclCache`] to a destination file.
+///
+/// On iOS/tvOS/watchOS platforms without ACL support, emits a one-time
+/// warning and returns `Ok(())`.
+#[allow(clippy::module_name_repetitions)]
+pub fn apply_acls_from_cache(
+    destination: &Path,
+    cache: &AclCache,
+    access_ndx: u32,
+    default_ndx: Option<u32>,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    let _ = (destination, cache, access_ndx, default_ndx, follow_symlinks);
     warn_acl_unsupported();
     Ok(())
 }
