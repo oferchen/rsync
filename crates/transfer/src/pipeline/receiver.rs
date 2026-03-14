@@ -386,6 +386,7 @@ mod tests {
                 is_device_target: false,
                 is_inplace: false,
                 temp_dir: None,
+                xattr_list: None,
             })))
             .unwrap();
 
@@ -596,6 +597,7 @@ mod tests {
                     is_device_target: false,
                     is_inplace: false,
                     temp_dir: None,
+                    xattr_list: None,
                 }),
                 data: b"test data".to_vec(),
             })
