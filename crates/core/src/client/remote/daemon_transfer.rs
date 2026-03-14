@@ -858,6 +858,56 @@ fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> u32 {
     }
 }
 
+/// Reads the `--files-from` source and serializes it into the wire format
+/// for forwarding to a remote daemon.
+///
+/// Handles both `Stdin` (reads from standard input) and `LocalFile` (reads
+/// from the given path). The output is NUL-separated filenames terminated
+/// by a double-NUL sentinel, matching the format expected by
+/// [`protocol::read_files_from_stream`] on the remote side.
+///
+/// The `--from0` flag controls whether the input is already NUL-delimited.
+///
+/// # Upstream Reference
+///
+/// - `io.c:forward_filesfrom_data()` - reads from local fd, writes to socket
+/// - `main.c:1354-1356` - `start_filesfrom_forwarding(filesfrom_fd)`
+fn read_files_from_for_forwarding(config: &ClientConfig) -> Result<Vec<u8>, ClientError> {
+    use super::super::config::FilesFromSource;
+
+    let eol_nulls = config.from0();
+    let mut wire_data = Vec::new();
+
+    match config.files_from() {
+        FilesFromSource::Stdin => {
+            let stdin = std::io::stdin();
+            let mut reader = stdin.lock();
+            protocol::forward_files_from(&mut reader, &mut wire_data, eol_nulls).map_err(|e| {
+                invalid_argument_error(&format!("failed to read --files-from stdin: {e}"), 23)
+            })?;
+        }
+        FilesFromSource::LocalFile(path) => {
+            let mut file = std::fs::File::open(path).map_err(|e| {
+                invalid_argument_error(
+                    &format!("failed to open --files-from {}: {e}", path.display()),
+                    23,
+                )
+            })?;
+            protocol::forward_files_from(&mut file, &mut wire_data, eol_nulls).map_err(|e| {
+                invalid_argument_error(
+                    &format!("failed to read --files-from {}: {e}", path.display()),
+                    23,
+                )
+            })?;
+        }
+        FilesFromSource::None | FilesFromSource::RemoteFile(_) => {
+            // Nothing to forward - remote files are read by the server directly.
+        }
+    }
+
+    Ok(wire_data)
+}
+
 /// Executes a pull transfer (remote → local).
 ///
 /// In a pull transfer, the local side acts as the receiver and the remote side
@@ -913,7 +963,17 @@ fn run_pull_transfer(
         checksum_seed: 0,
     };
 
-    let server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
+    let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
+
+    // upstream: main.c:1354-1356 — when pulling with --files-from pointing to
+    // a local file or stdin, the client reads the file list locally and forwards
+    // it to the daemon's generator over the protocol stream. Pre-read the data
+    // here so run_server_with_handshake can inject it after filter list exchange.
+    if config.files_from().is_local_forwarded() {
+        let data = read_files_from_for_forwarding(config)?;
+        server_config.connection.files_from_data = Some(data);
+    }
+
     let start = Instant::now();
     let server_stats =
         run_server_with_handshake_over_stream(server_config, handshake, &mut stream, None)?;
@@ -2072,6 +2132,138 @@ mod tests {
                 !args.iter().any(|a| a.starts_with("--files-from")),
                 "should not include --files-from: {args:?}"
             );
+        }
+    }
+
+    mod files_from_forwarding_tests {
+        use super::*;
+        use crate::client::config::{ClientConfigBuilder, FilesFromSource};
+        use std::io::Cursor;
+
+        fn test_builder() -> ClientConfigBuilder {
+            ClientConfigBuilder::default().transfer_args(["/src", "rsync://host/mod/"])
+        }
+
+        #[test]
+        fn read_from_local_file_newline_delimited() {
+            let dir = tempfile::tempdir().unwrap();
+            let list_file = dir.path().join("list.txt");
+            std::fs::write(&list_file, "file1.txt\nfile2.txt\nsubdir/file3.txt\n").unwrap();
+
+            let config = test_builder()
+                .files_from(FilesFromSource::LocalFile(list_file))
+                .build();
+
+            let data = read_files_from_for_forwarding(&config).unwrap();
+
+            // Verify the wire data is NUL-separated with double-NUL terminator.
+            let mut reader = Cursor::new(&data);
+            let filenames = protocol::read_files_from_stream(&mut reader).unwrap();
+            assert_eq!(
+                filenames,
+                vec!["file1.txt", "file2.txt", "subdir/file3.txt"]
+            );
+        }
+
+        #[test]
+        fn read_from_local_file_nul_delimited() {
+            let dir = tempfile::tempdir().unwrap();
+            let list_file = dir.path().join("list.txt");
+            std::fs::write(&list_file, "alpha.txt\0beta.txt\0").unwrap();
+
+            let config = test_builder()
+                .files_from(FilesFromSource::LocalFile(list_file))
+                .from0(true)
+                .build();
+
+            let data = read_files_from_for_forwarding(&config).unwrap();
+
+            let mut reader = Cursor::new(&data);
+            let filenames = protocol::read_files_from_stream(&mut reader).unwrap();
+            assert_eq!(filenames, vec!["alpha.txt", "beta.txt"]);
+        }
+
+        #[test]
+        fn read_from_nonexistent_file_returns_error() {
+            let config = test_builder()
+                .files_from(FilesFromSource::LocalFile(std::path::PathBuf::from(
+                    "/nonexistent/list.txt",
+                )))
+                .build();
+
+            let err = read_files_from_for_forwarding(&config).unwrap_err();
+            assert!(err.to_string().contains("failed to open --files-from"));
+        }
+
+        #[test]
+        fn no_forwarding_for_none() {
+            let config = test_builder().build();
+
+            let data = read_files_from_for_forwarding(&config).unwrap();
+            assert!(data.is_empty());
+        }
+
+        #[test]
+        fn no_forwarding_for_remote_file() {
+            let config = test_builder()
+                .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
+                .build();
+
+            let data = read_files_from_for_forwarding(&config).unwrap();
+            assert!(data.is_empty());
+        }
+
+        #[test]
+        fn empty_local_file_produces_terminator() {
+            let dir = tempfile::tempdir().unwrap();
+            let list_file = dir.path().join("empty.txt");
+            std::fs::write(&list_file, "").unwrap();
+
+            let config = test_builder()
+                .files_from(FilesFromSource::LocalFile(list_file))
+                .build();
+
+            let data = read_files_from_for_forwarding(&config).unwrap();
+
+            // Empty input produces double-NUL terminator.
+            assert_eq!(data, b"\0\0");
+
+            let mut reader = Cursor::new(&data);
+            let filenames = protocol::read_files_from_stream(&mut reader).unwrap();
+            assert!(filenames.is_empty());
+        }
+
+        #[test]
+        fn roundtrip_with_crlf_line_endings() {
+            let dir = tempfile::tempdir().unwrap();
+            let list_file = dir.path().join("list.txt");
+            std::fs::write(&list_file, "file1.txt\r\nfile2.txt\r\n").unwrap();
+
+            let config = test_builder()
+                .files_from(FilesFromSource::LocalFile(list_file))
+                .build();
+
+            let data = read_files_from_for_forwarding(&config).unwrap();
+
+            let mut reader = Cursor::new(&data);
+            let filenames = protocol::read_files_from_stream(&mut reader).unwrap();
+            assert_eq!(filenames, vec!["file1.txt", "file2.txt"]);
+        }
+
+        #[test]
+        fn files_from_data_on_connection_config() {
+            use transfer::config::ConnectionConfig;
+
+            // Verify that files_from_data can be set and retrieved.
+            let mut conn = ConnectionConfig::default();
+            assert!(conn.files_from_data.is_none());
+
+            conn.files_from_data = Some(b"file1.txt\0file2.txt\0\0".to_vec());
+            assert!(conn.files_from_data.is_some());
+
+            let data = conn.files_from_data.take().unwrap();
+            assert_eq!(data, b"file1.txt\0file2.txt\0\0");
+            assert!(conn.files_from_data.is_none());
         }
     }
 }
