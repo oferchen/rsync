@@ -254,6 +254,7 @@ mod tests {
         assert_eq!(result, name);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn normalize_filename_nfd_to_nfc() {
         // "cafe\u{0301}" is NFD (e + combining acute) - should normalize to NFC
@@ -263,6 +264,7 @@ mod tests {
         assert_eq!(result, nfc);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn normalize_filename_complex_nfd() {
         // "u\u{0308}ber" (u + combining diaeresis) -> "\u{00fc}ber" (u-umlaut)
