@@ -415,6 +415,11 @@ impl ReceiverContext {
                 apply_metadata_from_file_entry(&file_path, file_entry, &metadata_opts)
             {
                 metadata_errors.push((file_path.clone(), meta_err.to_string()));
+            } else if let Some(ref xattr_list) = self.resolve_xattr_list(file_entry) {
+                // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
+                if let Err(e) = metadata::apply_xattrs_from_list(&file_path, xattr_list, true) {
+                    metadata_errors.push((file_path.clone(), e.to_string()));
+                }
             }
 
             bytes_received += total_bytes;
@@ -914,6 +919,7 @@ impl ReceiverContext {
                     config: &request_config,
                 };
 
+                let xattr_list = self.resolve_xattr_list(file_entry);
                 let result = process_file_response_streaming(
                     reader,
                     &mut ndx_read_codec,
@@ -924,6 +930,7 @@ impl ReceiverContext {
                     pipelined_receiver.buf_return_rx(),
                     0,
                     Some(file_entry.clone()),
+                    xattr_list,
                 )?;
 
                 pipelined_receiver.note_commit_sent(
@@ -1094,6 +1101,13 @@ impl ReceiverContext {
                         apply_metadata_with_cached_stat(&file_path, entry, metadata_opts, dest_meta)
                     {
                         metadata_errors.push((file_path, e.to_string()));
+                    } else if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
+                        // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
+                        if let Err(e) =
+                            metadata::apply_xattrs_from_list(&file_path, xattr_list, true)
+                        {
+                            metadata_errors.push((file_path, e.to_string()));
+                        }
                     }
                     continue;
                 }
