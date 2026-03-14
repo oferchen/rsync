@@ -101,7 +101,7 @@ impl ReceiverContext {
         self.ensure_relative_parents(&dest_dir);
         let mut metadata_errors =
             self.create_directories(&dest_dir, &metadata_opts, acl_cache.as_deref())?;
-        self.create_symlinks(&dest_dir);
+        self.create_symlinks(&dest_dir, writer);
 
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
@@ -440,7 +440,7 @@ impl ReceiverContext {
         }
 
         // Create hard links for follower entries now that leaders are transferred.
-        self.create_hardlinks(&dest_dir);
+        self.create_hardlinks(&dest_dir, writer);
 
         self.finalize_transfer(reader, writer)?;
 
@@ -485,13 +485,13 @@ impl ReceiverContext {
             &setup.metadata_opts,
             setup.acl_cache.as_deref(),
         )?;
-        self.create_symlinks(&setup.dest_dir);
+        self.create_symlinks(&setup.dest_dir, writer);
 
         // Delete extraneous files at destination (--delete-before pass).
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;
         if self.config.flags.delete {
-            let (ds, exceeded) = self.delete_extraneous_files(&setup.dest_dir)?;
+            let (ds, exceeded) = self.delete_extraneous_files(&setup.dest_dir, writer)?;
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
         }
@@ -571,7 +571,7 @@ impl ReceiverContext {
         }
 
         // Create hard links for follower entries now that leaders are transferred.
-        self.create_hardlinks(&setup.dest_dir);
+        self.create_hardlinks(&setup.dest_dir, writer);
 
         // Finalize handshake
         self.finalize_transfer(reader, writer)?;
@@ -620,29 +620,37 @@ impl ReceiverContext {
 
         for file_entry in &self.file_list {
             if file_entry.is_dir() {
-                let created = self.create_directory_incremental(
+                let result = self.create_directory_incremental(
                     &setup.dest_dir,
                     file_entry,
                     &setup.metadata_opts,
                     &mut failed_dirs,
                     setup.acl_cache.as_deref(),
                 )?;
-                if created {
-                    stats.directories_created += 1;
-                    // upstream: generator.c:1432 - itemize new directory
-                    let iflags = crate::generator::ItemFlags::from_raw(
-                        crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
-                            | crate::generator::ItemFlags::ITEM_IS_NEW,
-                    );
-                    let _ = self.emit_itemize(writer, &iflags, file_entry);
-                } else {
-                    stats.directories_failed += 1;
+                match result {
+                    Some(true) => {
+                        stats.directories_created += 1;
+                        // upstream: generator.c:1432 - itemize new directory
+                        let iflags = crate::generator::ItemFlags::from_raw(
+                            crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
+                                | crate::generator::ItemFlags::ITEM_IS_NEW,
+                        );
+                        let _ = self.emit_itemize(writer, &iflags, file_entry);
+                    }
+                    Some(false) => {
+                        // upstream: generator.c:2260 - existing dir, metadata only
+                        let iflags = crate::generator::ItemFlags::from_raw(0);
+                        let _ = self.emit_itemize(writer, &iflags, file_entry);
+                    }
+                    None => {
+                        stats.directories_failed += 1;
+                    }
                 }
             }
         }
 
         // Create symlinks after directories are in place
-        self.create_symlinks(&setup.dest_dir);
+        self.create_symlinks(&setup.dest_dir, writer);
 
         let files_to_transfer = self.build_files_to_transfer(
             writer,
@@ -697,7 +705,7 @@ impl ReceiverContext {
         }
 
         // Create hard links for follower entries now that leaders are transferred.
-        self.create_hardlinks(&setup.dest_dir);
+        self.create_hardlinks(&setup.dest_dir, writer);
 
         // Finalize
         stats.files_transferred = files_transferred;
