@@ -329,3 +329,5 @@ include!("tests/chunks/runtime_options_last_detach_flag_wins.rs");
 include!("tests/chunks/runtime_options_no_detach_disables_detach.rs");
 // Daemon safe-links + copy-links push integration tests
 include!("tests/chunks/daemon_safe_links_copy_links_push.rs");
+// Daemon Unicode emoji filename roundtrip test
+include!("tests/chunks/daemon_unicode_emoji_filenames.rs");
