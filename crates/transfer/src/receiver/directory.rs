@@ -14,7 +14,9 @@ use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
 use protocol::xattr::XattrList;
 
-use super::{PARALLEL_STAT_THRESHOLD, ReceiverContext};
+use protocol::acl::AclCache;
+
+use super::{PARALLEL_STAT_THRESHOLD, ReceiverContext, apply_acls_from_receiver_cache};
 
 /// Tracks directories that failed to create.
 ///
@@ -76,6 +78,7 @@ impl ReceiverContext {
         &self,
         dest_dir: &std::path::Path,
         metadata_opts: &MetadataOptions,
+        acl_cache: Option<&AclCache>,
     ) -> io::Result<Vec<(PathBuf, String)>> {
         // upstream: receiver.c:693 - dry_run skips all filesystem modifications
         if self.config.flags.dry_run {
@@ -145,6 +148,7 @@ impl ReceiverContext {
             })
             .collect();
 
+        let acl_cache_clone = acl_cache.cloned();
         let results = crate::parallel_io::map_blocking(
             entry_snapshots,
             PARALLEL_STAT_THRESHOLD,
@@ -152,6 +156,15 @@ impl ReceiverContext {
                 if let Err(e) =
                     apply_metadata_from_file_entry(&dir_path, &entry, &metadata_opts_clone)
                 {
+                    return Some((dir_path, e.to_string()));
+                }
+                // Apply cached ACLs after metadata
+                if let Err(e) = apply_acls_from_receiver_cache(
+                    &dir_path,
+                    &entry,
+                    acl_cache_clone.as_ref(),
+                    true, // directories always follow symlinks
+                ) {
                     return Some((dir_path, e.to_string()));
                 }
                 // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
@@ -688,6 +701,7 @@ impl ReceiverContext {
         entry: &FileEntry,
         metadata_opts: &MetadataOptions,
         failed_dirs: &mut FailedDirectories,
+        acl_cache: Option<&AclCache>,
     ) -> io::Result<bool> {
         let relative_path = entry.path();
         let dir_path = if relative_path.as_os_str() == "." {
@@ -751,6 +765,19 @@ impl ReceiverContext {
                         e
                     );
                 }
+            }
+        }
+
+        // Apply cached ACLs after metadata (non-fatal errors)
+        if let Err(e) = apply_acls_from_receiver_cache(&dir_path, entry, acl_cache, true) {
+            if self.config.flags.verbose && self.config.connection.client_mode {
+                info_log!(
+                    Misc,
+                    1,
+                    "warning: ACL error for {}: {}",
+                    dir_path.display(),
+                    e
+                );
             }
         }
 
