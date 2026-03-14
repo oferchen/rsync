@@ -335,3 +335,5 @@ include!("tests/chunks/daemon_safe_links_copy_links_push.rs");
 include!("tests/chunks/daemon_unicode_emoji_filenames.rs");
 // Daemon xattr preservation push test
 include!("tests/chunks/daemon_xattr_push.rs");
+// Daemon ACL push end-to-end test
+include!("tests/chunks/daemon_acl_push.rs");
