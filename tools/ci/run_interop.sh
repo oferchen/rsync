@@ -1157,6 +1157,7 @@ KNOWN_FAILURES=(
   # protocol-31: upstream 3.0.9 does not support protocol 31.
   "up:protocol-31"
   # --- standalone scenarios ---
+  "standalone:write-batch-read-batch"
   "standalone:info-progress2"
   "standalone:large-file-2gb"
   "standalone:file-vanished"

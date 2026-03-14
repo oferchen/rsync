@@ -35,6 +35,9 @@ rustix = { version = "0.38", features = ["fs", "process"] }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
 filetime = { version = "0.2", optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-fs = { path = "../apple-fs" }
+
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
 
