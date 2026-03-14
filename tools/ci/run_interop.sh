@@ -1167,9 +1167,6 @@ KNOWN_FAILURES=(
   "oc:itemize"
 
   # --- upstream→oc (daemon receive) ---
-  # relative: --relative path handling still fails for upstream→oc daemon
-  # transfers on native protocol and forced protocols >= 30.
-  "up:relative"
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
   "up:acls"
   "up:xattrs"
