@@ -10,19 +10,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Configuration for protocol tracing
+/// Configuration for file-based protocol tracing.
+///
+/// Daemon mode closes stderr, so this provides an alternative
+/// debugging path that writes all I/O operations to trace files
+/// in a configurable directory.
 #[derive(Clone)]
 pub struct TraceConfig {
-    /// Base directory for trace files
+    /// Base directory for trace files.
     pub trace_dir: String,
-    /// Prefix for trace file names (e.g., "client", "server")
+    /// Prefix for trace file names (e.g., "client", "server").
     pub prefix: String,
-    /// Whether to enable tracing
+    /// Whether tracing is active. When false, all trace operations are no-ops.
     pub enabled: bool,
 }
 
 impl TraceConfig {
-    /// Create a disabled trace configuration
+    /// Creates a disabled trace configuration with default paths.
     pub fn disabled() -> Self {
         Self {
             trace_dir: "/tmp/rsync-trace".to_owned(),
@@ -31,7 +35,7 @@ impl TraceConfig {
         }
     }
 
-    /// Create an enabled trace configuration with the given prefix
+    /// Creates an enabled trace configuration with the given prefix.
     pub fn enabled(prefix: &str) -> Self {
         Self {
             trace_dir: "/tmp/rsync-trace".to_owned(),
@@ -41,7 +45,10 @@ impl TraceConfig {
     }
 }
 
-/// Wrapper for Read that logs all bytes read
+/// Wrapper for `Read` that logs all bytes read to a trace file.
+///
+/// Each read operation is recorded as hex and ASCII dumps in a
+/// timestamped log file under the configured trace directory.
 pub struct TracingReader<R> {
     inner: R,
     config: TraceConfig,
@@ -49,7 +56,7 @@ pub struct TracingReader<R> {
 }
 
 impl<R: Read> TracingReader<R> {
-    /// Create a new tracing reader that wraps the given reader
+    /// Creates a new tracing reader that wraps the given reader.
     pub fn new(inner: R, config: TraceConfig) -> Self {
         let sequence = TRACE_COUNTER.fetch_add(1, Ordering::SeqCst);
 
@@ -119,7 +126,10 @@ impl<R: Read> Read for TracingReader<R> {
     }
 }
 
-/// Wrapper for Write that logs all bytes written
+/// Wrapper for `Write` that logs all bytes written to a trace file.
+///
+/// Each write operation is recorded as hex and ASCII dumps in a
+/// timestamped log file under the configured trace directory.
 pub struct TracingWriter<W> {
     inner: W,
     config: TraceConfig,
@@ -127,7 +137,7 @@ pub struct TracingWriter<W> {
 }
 
 impl<W: Write> TracingWriter<W> {
-    /// Create a new tracing writer that wraps the given writer
+    /// Creates a new tracing writer that wraps the given writer.
     pub fn new(inner: W, config: TraceConfig) -> Self {
         let sequence = TRACE_COUNTER.fetch_add(1, Ordering::SeqCst);
 
