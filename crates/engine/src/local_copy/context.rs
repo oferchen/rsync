@@ -44,6 +44,7 @@ use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use filters::FilterRule;
+use protocol::flist::FileListWriter;
 
 pub(crate) struct CopyOutcome {
     summary: LocalCopySummary,
@@ -117,6 +118,13 @@ pub(crate) struct CopyContext<'a> {
     ///
     /// upstream: receiver.c — `handle_partial_dir(partialptr, PDIR_DELETE)`
     delay_staging_dirs: HashSet<PathBuf>,
+    /// Protocol flist encoder for batch mode.
+    ///
+    /// When batch mode is active, file entries are encoded using the protocol
+    /// wire format (same as network transfers) so the batch file body matches
+    /// upstream rsync's raw stream tee. The writer maintains cross-entry
+    /// compression state (name prefix sharing, same-mode flags, etc.).
+    batch_flist_writer: Option<FileListWriter>,
 }
 
 pub(crate) struct FinalizeMetadataParams<'a> {
