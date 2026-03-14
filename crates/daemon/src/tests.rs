@@ -327,3 +327,5 @@ include!("tests/chunks/runtime_options_detach_enables_detach.rs");
 include!("tests/chunks/runtime_options_detach_parsed_default_matches_platform.rs");
 include!("tests/chunks/runtime_options_last_detach_flag_wins.rs");
 include!("tests/chunks/runtime_options_no_detach_disables_detach.rs");
+// Daemon safe-links + copy-links push integration tests
+include!("tests/chunks/daemon_safe_links_copy_links_push.rs");
