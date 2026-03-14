@@ -459,6 +459,14 @@ impl ReceiverContext {
             if self.config.flags.safe_links
                 && crate::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative_path)
             {
+                // upstream: generator.c:1554 - log skipped unsafe symlinks
+                info_log!(
+                    Name,
+                    1,
+                    "skipping unsafe symlink \"{}\" -> \"{}\"",
+                    relative_path.display(),
+                    target.display()
+                );
                 continue;
             }
 

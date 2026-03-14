@@ -193,10 +193,11 @@ include!("tests/chunks/daemon_dry_run_push_across_protocol_versions.rs");
 include!("tests/chunks/daemon_copy_links_push_resolves_symlinks.rs");
 // Daemon fuzzy level 2 end-to-end test
 include!("tests/chunks/daemon_fuzzy_level2_pulls_basis_from_sibling_directories.rs");
-// Daemon safe-links symlink filtering test
+// Daemon safe-links symlink filtering tests
 include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_pull.rs");
 // Daemon files-from push test
 include!("tests/chunks/daemon_files_from_push.rs");
+include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_push.rs");
 // Daemon mode negotiation tests
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
