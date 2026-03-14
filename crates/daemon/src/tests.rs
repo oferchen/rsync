@@ -205,6 +205,8 @@ include!("tests/chunks/daemon_relative_receive.rs");
 // Daemon itemize end-to-end tests
 include!("tests/chunks/daemon_itemize_push.rs");
 include!("tests/chunks/daemon_itemize_pull.rs");
+// Daemon delta transfer end-to-end test
+include!("tests/chunks/daemon_delta_transfer.rs");
 // Daemon mode negotiation tests
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
