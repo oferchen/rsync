@@ -378,6 +378,19 @@ pub fn run_server_with_handshake<W: Write>(
         )?;
         writer.flush()?;
     }
+
+    // upstream: main.c:1354-1356 — after sending filter list, forward
+    // pre-read --files-from data to the remote daemon's generator so it
+    // can build the file list from the forwarded filenames.
+    // This applies only in client-mode pull (Receiver), where the daemon's
+    // generator reads filenames from the protocol stream.
+    if config.connection.client_mode && config.role == ServerRole::Receiver {
+        if let Some(data) = config.connection.files_from_data.take() {
+            writer.write_all(&data)?;
+            writer.flush()?;
+        }
+    }
+
     // upstream: main.c:1249-1250 — server sends MSG_IO_TIMEOUT to client.
     if !config.connection.client_mode
         && let Some(timeout_secs) = handshake.io_timeout
