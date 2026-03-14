@@ -94,9 +94,10 @@ pub const PIPELINE_THRESHOLD: usize = 4;
 /// Default buffer size for reading chunks (64 KiB).
 const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 
-/// Input specification for checksum computation.
+/// Input specification for a single checksum computation.
 ///
-/// Contains a reader and optional size hint for optimization.
+/// Pairs a reader with an optional size hint so the pipeline can
+/// decide whether to enable double-buffering for this input.
 #[derive(Debug)]
 pub struct ChecksumInput<R> {
     /// The reader to compute checksums from.

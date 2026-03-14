@@ -67,25 +67,29 @@ use crate::RollingDigest;
 use crate::strong::StrongDigest;
 
 /// Configuration for the double-buffered checksum pipeline.
+///
+/// Controls buffer sizing, pipelining thresholds, and whether
+/// a background I/O thread is spawned at all.
 #[derive(Clone, Copy, Debug)]
 pub struct PipelineConfig {
-    /// Size of each buffer in bytes.
+    /// Size of each read buffer in bytes.
     ///
-    /// Larger buffers improve throughput but increase memory usage.
-    /// Default: 64 KiB
+    /// Two buffers of this size are used for double-buffering.
+    /// Larger values improve throughput but increase memory usage.
+    /// Default: 64 KiB.
     pub block_size: usize,
 
     /// Minimum file size to enable pipelining.
     ///
-    /// Files smaller than this will use direct (non-pipelined) reading
-    /// to avoid thread overhead for trivial workloads.
-    /// Default: 256 KiB
+    /// Files smaller than this threshold use synchronous reading
+    /// to avoid thread-spawn overhead for trivial workloads.
+    /// Default: 256 KiB.
     pub min_file_size: u64,
 
     /// Whether to use pipelining.
     ///
-    /// When false, reads are done synchronously without spawning a thread.
-    /// Default: true
+    /// When false, reads are always synchronous regardless of file size.
+    /// Default: true.
     pub enabled: bool,
 }
 
@@ -403,14 +407,17 @@ fn read_exact_or_eof<R: Read>(reader: &mut R, buffer: &mut [u8]) -> io::Result<u
     Ok(total_read)
 }
 
-/// Result of computing checksums for a single block.
+/// Result of computing both rolling and strong checksums for a single block.
+///
+/// Produced by the double-buffered reader pipeline. Contains the same
+/// data as upstream rsync's per-block checksum pair sent during delta-transfer.
 #[derive(Clone, Debug)]
 pub struct BlockChecksums<D> {
-    /// The rolling checksum (weak hash).
+    /// Rolling checksum (weak hash) for fast block matching.
     pub rolling: RollingDigest,
-    /// The strong checksum digest.
+    /// Strong checksum digest for collision verification.
     pub strong: D,
-    /// Number of bytes in this block.
+    /// Number of bytes in this block (may be less than block size for the final block).
     pub len: usize,
 }
 
@@ -483,8 +490,9 @@ where
 
 /// Streaming iterator for pipelined checksum computation.
 ///
-/// Unlike `compute_checksums_pipelined`, this allows processing checksums
-/// one at a time without collecting all results into a vector.
+/// Unlike `compute_checksums_pipelined`, this processes checksums one at
+/// a time without collecting all results into a vector - useful when the
+/// caller needs to interleave checksum results with network writes.
 pub struct PipelinedChecksumIterator<D, R>
 where
     D: StrongDigest,

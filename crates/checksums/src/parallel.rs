@@ -208,12 +208,16 @@ where
         .collect()
 }
 
-/// Result of computing both rolling and strong checksums for a block.
+/// Result of computing both rolling and strong checksums for a single block.
+///
+/// Mirrors the upstream rsync `sum_struct` sent by the generator during
+/// delta-transfer. The `rolling` value is used for hash table lookup in
+/// `hash_search()`, and `strong` confirms matches found by the weak hash.
 #[derive(Clone, Debug)]
 pub struct BlockSignature<D> {
-    /// The rolling checksum (weak hash) for fast matching.
+    /// Packed 32-bit rolling checksum (`(s2 << 16) | s1`) for hash table lookup.
     pub rolling: u32,
-    /// The strong digest for collision verification.
+    /// Strong digest for collision verification after a rolling checksum match.
     pub strong: D,
 }
 
@@ -326,14 +330,17 @@ where
         .collect()
 }
 
-/// Result of hashing a single file.
+/// Result of hashing a single file during parallel file processing.
+///
+/// Contains both the digest and original path so callers can correlate
+/// results with file list entries after parallel computation.
 #[derive(Debug)]
 pub struct FileHashResult<D> {
-    /// The path of the file that was hashed.
+    /// Path of the hashed file.
     pub path: PathBuf,
-    /// The computed digest, or an error if the file could not be read.
+    /// Computed digest, or the I/O error encountered when reading the file.
     pub digest: Result<D, io::Error>,
-    /// The size of the file in bytes (0 if file could not be read).
+    /// File size in bytes (0 if the file could not be read).
     pub size: u64,
 }
 

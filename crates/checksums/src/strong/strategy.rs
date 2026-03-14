@@ -197,21 +197,27 @@ impl fmt::Display for ChecksumDigest {
 /// data, making it suitable for algorithm selection and comparison.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum ChecksumAlgorithmKind {
-    /// MD4 - Legacy algorithm for rsync protocol < 30.
+    /// MD4 - legacy algorithm for rsync protocol < 30.
+    ///
+    /// Upstream rsync uses MD4 as the default strong checksum for older protocol
+    /// versions. See upstream `checksum.c:get_checksum2()`.
     Md4,
-    /// MD5 - Default for rsync protocol >= 30.
+    /// MD5 - default for rsync protocol >= 30.
+    ///
+    /// Upstream rsync switched to MD5 in protocol 30. Supports seeded hashing
+    /// with configurable ordering via `CHECKSUM_SEED_FIX`.
     Md5,
-    /// SHA-1 - Optional stronger algorithm.
+    /// SHA-1 - negotiated via checksum capability strings (protocol 31+).
     Sha1,
-    /// SHA-256 - Cryptographically secure option.
+    /// SHA-256 - cryptographically secure option for daemon authentication.
     Sha256,
-    /// SHA-512 - Maximum security option.
+    /// SHA-512 - maximum security option for daemon authentication.
     Sha512,
-    /// XXH64 - Fast 64-bit non-cryptographic hash.
+    /// XXH64 - fast 64-bit non-cryptographic hash for block matching.
     Xxh64,
-    /// XXH3 - Fastest 64-bit non-cryptographic hash.
+    /// XXH3 - fastest 64-bit non-cryptographic hash, negotiated via `-e.LsfxCIvu`.
     Xxh3,
-    /// XXH3-128 - Fast 128-bit non-cryptographic hash.
+    /// XXH3-128 - fast 128-bit non-cryptographic hash with lower collision rate than XXH3-64.
     Xxh3_128,
 }
 
@@ -338,9 +344,10 @@ pub trait ChecksumStrategy: Send + Sync {
     }
 }
 
-/// MD4 checksum strategy.
+/// MD4 checksum strategy for rsync protocol versions < 30.
 ///
-/// Used by rsync protocol versions < 30 as the default strong checksum.
+/// Upstream rsync selects MD4 as the default strong checksum when the
+/// negotiated protocol version is below 30. See upstream `checksum.c`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Md4Strategy;
 
@@ -366,10 +373,11 @@ impl ChecksumStrategy for Md4Strategy {
     }
 }
 
-/// MD5 checksum strategy with optional seeding.
+/// MD5 checksum strategy with optional seeding for rsync protocol versions >= 30.
 ///
-/// Used by rsync protocol versions >= 30. Supports seeded hashing with
-/// configurable seed ordering for protocol compatibility.
+/// Supports seeded hashing with configurable seed ordering. The
+/// `CHECKSUM_SEED_FIX` flag controls whether the seed is hashed before
+/// (proper) or after (legacy) the file data - see upstream `checksum.c`.
 #[derive(Clone, Copy, Debug)]
 pub struct Md5Strategy {
     seed: Md5Seed,
@@ -427,7 +435,9 @@ impl ChecksumStrategy for Md5Strategy {
     }
 }
 
-/// SHA-1 checksum strategy.
+/// SHA-1 checksum strategy (160-bit output).
+///
+/// Negotiated via checksum capability strings in protocol 31+.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sha1Strategy;
 
@@ -453,7 +463,9 @@ impl ChecksumStrategy for Sha1Strategy {
     }
 }
 
-/// SHA-256 checksum strategy.
+/// SHA-256 checksum strategy (256-bit output).
+///
+/// Used for daemon authentication and high-security transfers.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sha256Strategy;
 
@@ -479,7 +491,9 @@ impl ChecksumStrategy for Sha256Strategy {
     }
 }
 
-/// SHA-512 checksum strategy.
+/// SHA-512 checksum strategy (512-bit output).
+///
+/// Provides maximum collision resistance among the supported algorithms.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sha512Strategy;
 
@@ -505,7 +519,9 @@ impl ChecksumStrategy for Sha512Strategy {
     }
 }
 
-/// XXH64 checksum strategy with seeding.
+/// XXH64 checksum strategy with seeding (64-bit output).
+///
+/// Used by rsync protocol >= 30 for block checksums when XXH3 is not negotiated.
 #[derive(Clone, Copy, Debug)]
 pub struct Xxh64Strategy {
     seed: u64,
@@ -546,6 +562,9 @@ impl ChecksumStrategy for Xxh64Strategy {
 }
 
 /// XXH3 (64-bit) checksum strategy with seeding.
+///
+/// Fastest available hash - negotiated via the `-e.LsfxCIvu` capability string.
+/// One-shot calls use runtime SIMD detection (AVX2/NEON).
 #[derive(Clone, Copy, Debug)]
 pub struct Xxh3Strategy {
     seed: u64,
@@ -585,7 +604,10 @@ impl ChecksumStrategy for Xxh3Strategy {
     }
 }
 
-/// XXH3-128 checksum strategy with seeding.
+/// XXH3-128 checksum strategy with seeding (128-bit output).
+///
+/// Provides lower collision probability than XXH3-64 while maintaining
+/// comparable throughput. One-shot calls use runtime SIMD detection.
 #[derive(Clone, Copy, Debug)]
 pub struct Xxh3_128Strategy {
     seed: u64,
@@ -625,14 +647,17 @@ impl ChecksumStrategy for Xxh3_128Strategy {
     }
 }
 
-/// Configuration for MD5 seed handling.
+/// Configuration for MD5 seed handling in the strategy pattern.
+///
+/// Wraps the `Md5Seed` options for use with `SeedConfig`.
+/// See `Md5Seed` for details on seed ordering semantics.
 #[derive(Clone, Copy, Debug)]
 pub enum Md5SeedConfig {
-    /// No seed (default MD5 behavior).
+    /// No seed - equivalent to standard MD5 behavior.
     None,
-    /// Proper seed ordering (seed hashed before data) - protocol 30+.
+    /// Seed hashed before data (protocol 30+ with `CHECKSUM_SEED_FIX`).
     Proper(i32),
-    /// Legacy seed ordering (seed hashed after data) - protocol < 30.
+    /// Seed hashed after data (legacy protocol behavior).
     Legacy(i32),
 }
 
