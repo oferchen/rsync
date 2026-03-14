@@ -11,6 +11,23 @@ use logging::{debug_log, info_log};
 
 use crate::local_copy::{CopyContext, LocalCopyAction, LocalCopyError, LocalCopyRecord};
 
+/// Normalizes a filename for cross-platform comparison.
+///
+/// On macOS, converts NFD (decomposed) filenames to NFC (composed) so that
+/// names from `read_dir` (which returns NFD on HFS+/APFS) match names from
+/// the source file list (typically NFC from Linux). On all other platforms
+/// this returns the input as-is.
+#[cfg(target_os = "macos")]
+fn normalize_filename_for_compare(name: &OsStr) -> OsString {
+    apple_fs::normalize_filename(name)
+}
+
+/// No-op on non-macOS platforms - direct byte comparison is correct.
+#[cfg(not(target_os = "macos"))]
+fn normalize_filename_for_compare(name: &OsStr) -> OsString {
+    name.to_os_string()
+}
+
 /// Deletes entries in `destination` that are not in `source_entries`.
 ///
 /// The `source_entries` parameter accepts any slice of types convertible to `&OsStr`,
@@ -23,8 +40,12 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
     source_entries: &[S],
 ) -> Result<(), LocalCopyError> {
     let mut skipped_due_to_limit = 0u64;
-    // Build HashSet from references without cloning - use OsStr for comparison
-    let keep: HashSet<&OsStr> = source_entries.iter().map(|s| s.as_ref()).collect();
+    // Build HashSet of normalized filenames for cross-platform comparison.
+    // On macOS, normalizes to NFC so NFD names from read_dir match NFC source names.
+    let keep: HashSet<OsString> = source_entries
+        .iter()
+        .map(|s| normalize_filename_for_compare(s.as_ref()))
+        .collect();
 
     let read_dir = match fs::read_dir(destination) {
         Ok(iter) => iter,
@@ -54,14 +75,15 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
         let entry = entry
             .map_err(|error| LocalCopyError::io("read destination entry", destination, error))?;
         let name = entry.file_name();
+        let normalized_name = normalize_filename_for_compare(&name);
 
-        if keep.contains(name.as_os_str()) {
+        if keep.contains(&normalized_name) {
             continue;
         }
 
         // Protect relative partial-dir from deletion (upstream rsync behavior).
         if let Some(ref protected) = protected_partial_dir_name {
-            if name.as_os_str() == protected.as_os_str() {
+            if normalized_name == *protected {
                 continue;
             }
         }
