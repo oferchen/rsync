@@ -1,7 +1,9 @@
 use crate::error::MetadataError;
+use protocol::xattr::XattrList;
 use std::collections::HashSet;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 /// Checks whether an xattr name is permitted for the current privilege level.
@@ -134,9 +136,71 @@ pub fn sync_xattrs(
     Ok(())
 }
 
+/// Applies parsed xattrs from a wire protocol [`XattrList`] to a destination file.
+///
+/// This is the receiver-side counterpart to [`sync_xattrs`], used when xattr
+/// data arrives over the wire rather than being read from a local source file.
+/// The `XattrList` entries are expected to already have local-format names
+/// (translated via `wire_to_local()` during file list reception).
+///
+/// The function performs a full synchronization:
+/// - Sets each non-abbreviated entry from the list on the destination.
+/// - Removes destination xattrs not present in the source list.
+/// - Skips abbreviated entries (checksum-only) that lack full values.
+/// - Respects platform namespace filtering via privilege checks.
+///
+/// # Arguments
+///
+/// * `destination` - Path to apply xattrs to.
+/// * `xattr_list` - Parsed xattr name-value pairs from the wire protocol.
+/// * `follow_symlinks` - Whether to follow symlinks when setting xattrs.
+///
+/// # Upstream Reference
+///
+/// Mirrors `xattrs.c:set_xattr()` - applies received xattr data to destination files.
+pub fn apply_xattrs_from_list(
+    destination: &Path,
+    xattr_list: &XattrList,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    let mut applied_names: HashSet<OsString> = HashSet::with_capacity(xattr_list.len());
+
+    for entry in xattr_list.iter() {
+        // Skip abbreviated entries - they only contain a checksum, not the actual value
+        if entry.is_abbreviated() {
+            continue;
+        }
+
+        let name_str = entry.name_str();
+        if !is_xattr_permitted(&name_str) {
+            continue;
+        }
+
+        let os_name = OsStr::from_bytes(entry.name());
+        let os_name_owned = os_name.to_os_string();
+
+        write_attribute(destination, &os_name_owned, entry.datum(), follow_symlinks)?;
+        applied_names.insert(os_name_owned);
+    }
+
+    // Remove destination xattrs not in the source list
+    let dest_attrs = list_attributes(destination, follow_symlinks)?;
+    for name in &dest_attrs {
+        if !applied_names.contains(name) {
+            let name_str = name.to_string_lossy();
+            if is_xattr_permitted(&name_str) {
+                remove_attribute(destination, name, follow_symlinks)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use protocol::xattr::XattrEntry;
     use std::ffi::OsStr;
     use std::fs;
     use tempfile::tempdir;
@@ -421,5 +485,224 @@ mod tests {
                 .expect("preserved"),
             b"keep_me"
         );
+    }
+
+    /// Returns the expected local xattr name for test entries.
+    ///
+    /// On Linux, names need the `user.` prefix. On macOS/BSD, names are used
+    /// as-is since there is no namespace prefix requirement.
+    fn test_xattr_name(base: &str) -> Vec<u8> {
+        #[cfg(target_os = "linux")]
+        {
+            format!("user.{base}").into_bytes()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            base.as_bytes().to_vec()
+        }
+    }
+
+    #[test]
+    fn apply_xattrs_from_list_sets_attributes() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new(
+            test_xattr_name("attr1"),
+            b"value1".to_vec(),
+        ));
+        list.push(XattrEntry::new(
+            test_xattr_name("attr2"),
+            b"value2".to_vec(),
+        ));
+
+        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+
+        let attr1_name = OsString::from(String::from_utf8(test_xattr_name("attr1")).unwrap());
+        let attr2_name = OsString::from(String::from_utf8(test_xattr_name("attr2")).unwrap());
+
+        assert_eq!(
+            read_attribute(&file, &attr1_name, false)
+                .expect("read")
+                .expect("attr1"),
+            b"value1"
+        );
+        assert_eq!(
+            read_attribute(&file, &attr2_name, false)
+                .expect("read")
+                .expect("attr2"),
+            b"value2"
+        );
+    }
+
+    #[test]
+    fn apply_xattrs_from_list_removes_stale_dest_attrs() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        // Pre-set an xattr on the destination that is not in the source list
+        let stale_name = OsString::from(String::from_utf8(test_xattr_name("stale")).unwrap());
+        write_attribute(&file, &stale_name, b"old", false).expect("write stale");
+
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new(
+            test_xattr_name("kept"),
+            b"new_value".to_vec(),
+        ));
+
+        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+
+        // Stale attr should be removed
+        assert!(
+            read_attribute(&file, &stale_name, false)
+                .expect("read")
+                .is_none()
+        );
+
+        // New attr should be present
+        let kept_name = OsString::from(String::from_utf8(test_xattr_name("kept")).unwrap());
+        assert_eq!(
+            read_attribute(&file, &kept_name, false)
+                .expect("read")
+                .expect("kept"),
+            b"new_value"
+        );
+    }
+
+    #[test]
+    fn apply_xattrs_from_list_skips_abbreviated_entries() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let mut list = XattrList::new();
+        // Abbreviated entry - only has checksum, not full value
+        list.push(XattrEntry::abbreviated(
+            test_xattr_name("abbrev"),
+            vec![0xAA; 16],
+            100,
+        ));
+        // Full entry
+        list.push(XattrEntry::new(
+            test_xattr_name("full"),
+            b"full_value".to_vec(),
+        ));
+
+        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+
+        // Abbreviated entry should not be set
+        let abbrev_name = OsString::from(String::from_utf8(test_xattr_name("abbrev")).unwrap());
+        assert!(
+            read_attribute(&file, &abbrev_name, false)
+                .expect("read")
+                .is_none()
+        );
+
+        // Full entry should be set
+        let full_name = OsString::from(String::from_utf8(test_xattr_name("full")).unwrap());
+        assert_eq!(
+            read_attribute(&file, &full_name, false)
+                .expect("read")
+                .expect("full"),
+            b"full_value"
+        );
+    }
+
+    #[test]
+    fn apply_xattrs_from_list_empty_list_clears_all() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        // Pre-set xattrs on destination
+        let attr_name = OsString::from(String::from_utf8(test_xattr_name("existing")).unwrap());
+        write_attribute(&file, &attr_name, b"value", false).expect("write existing");
+
+        let list = XattrList::new();
+        apply_xattrs_from_list(&file, &list, false).expect("apply empty list");
+
+        // All permitted xattrs should be removed
+        assert!(
+            read_attribute(&file, &attr_name, false)
+                .expect("read")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn apply_xattrs_from_list_overwrites_existing() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let attr_name_str = String::from_utf8(test_xattr_name("shared")).unwrap();
+        let attr_name = OsString::from(&attr_name_str);
+        write_attribute(&file, &attr_name, b"old_value", false).expect("write old");
+
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new(
+            test_xattr_name("shared"),
+            b"new_value".to_vec(),
+        ));
+
+        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+
+        assert_eq!(
+            read_attribute(&file, &attr_name, false)
+                .expect("read")
+                .expect("shared"),
+            b"new_value"
+        );
+    }
+
+    #[test]
+    fn apply_xattrs_from_list_with_empty_value() {
+        let dir = tempdir().expect("create temp dir");
+        let file = dir.path().join("dest.txt");
+        fs::write(&file, "content").expect("write file");
+
+        if !xattrs_supported(&file) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let mut list = XattrList::new();
+        list.push(XattrEntry::new(test_xattr_name("empty_val"), b"".to_vec()));
+
+        apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
+
+        let attr_name = OsString::from(String::from_utf8(test_xattr_name("empty_val")).unwrap());
+        let value = read_attribute(&file, &attr_name, false)
+            .expect("read")
+            .expect("empty_val should exist");
+        assert!(value.is_empty());
     }
 }
