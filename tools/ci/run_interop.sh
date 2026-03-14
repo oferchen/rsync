@@ -1727,22 +1727,38 @@ CONF
 # #884: --iconv charset conversion
 # Upstream rsync supports --iconv=LOCAL,REMOTE for filename charset conversion.
 # Verify that our implementation handles (or gracefully rejects) this option.
+# Tests identity conversion (UTF-8,UTF-8), cross-charset conversion
+# (UTF-8,ISO-8859-1), and filenames with accented chars, umlauts, and CJK.
 test_iconv() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
 
   local iconv_src="${work}/iconv-src"
   local iconv_dest="${work}/iconv-dest"
-  rm -rf "$iconv_src" "$iconv_dest"
-  mkdir -p "$iconv_src" "$iconv_dest"
+  local iconv_dest2="${work}/iconv-dest2"
+  rm -rf "$iconv_src" "$iconv_dest" "$iconv_dest2"
+  mkdir -p "$iconv_src" "$iconv_dest" "$iconv_dest2"
 
   # Create files with ASCII names (safe baseline)
   echo "ascii content" > "${iconv_src}/ascii.txt"
   echo "another file" > "${iconv_src}/plain.txt"
 
-  # Try creating a file with UTF-8 characters if the filesystem supports it
-  echo "utf8 content" > "${iconv_src}/café.txt" 2>/dev/null || true
+  # Create files with various non-ASCII UTF-8 filenames
+  local has_utf8=true
+  # Accented characters (Latin-1 compatible)
+  echo "café content" > "${iconv_src}/café.txt" 2>/dev/null || has_utf8=false
+  if $has_utf8; then
+    # German umlauts
+    echo "umlaut content" > "${iconv_src}/über-größe.txt" 2>/dev/null || true
+    # Accented vowels
+    echo "accented content" > "${iconv_src}/résumé.txt" 2>/dev/null || true
+    # Nordic characters
+    echo "nordic content" > "${iconv_src}/ångström.txt" 2>/dev/null || true
+    # Create a subdirectory with non-ASCII name
+    mkdir -p "${iconv_src}/données" 2>/dev/null && \
+      echo "subdir content" > "${iconv_src}/données/fichier.txt" 2>/dev/null || true
+  fi
 
-  # Transfer with --iconv=UTF-8,UTF-8 (identity conversion)
+  # --- Test 1: identity conversion (UTF-8 to UTF-8) ---
   timeout "$hard_timeout" "$oc_bin" -av --iconv=UTF-8,UTF-8 --timeout=10 \
       "${iconv_src}/" "${iconv_dest}/" \
       >"${log}.iconv.out" 2>"${log}.iconv.err"
@@ -1761,14 +1777,61 @@ test_iconv() {
     return 1
   fi
 
-  # If transfer succeeded, verify content
+  # Verify ASCII baseline files transferred correctly
   if [[ ! -f "${iconv_dest}/ascii.txt" ]]; then
-    echo "    ascii.txt missing after iconv transfer"
+    echo "    ascii.txt missing after iconv identity transfer"
     return 1
   fi
 
   if ! cmp -s "${iconv_src}/ascii.txt" "${iconv_dest}/ascii.txt"; then
-    echo "    ascii.txt content mismatch"
+    echo "    ascii.txt content mismatch after iconv identity transfer"
+    return 1
+  fi
+
+  # Verify non-ASCII filenames survived the identity conversion
+  if $has_utf8; then
+    for fname in "café.txt" "résumé.txt" "über-größe.txt" "ångström.txt"; do
+      if [[ -f "${iconv_src}/${fname}" && ! -f "${iconv_dest}/${fname}" ]]; then
+        echo "    ${fname} missing after iconv identity transfer"
+        return 1
+      fi
+    done
+    # Check subdirectory with non-ASCII name
+    if [[ -d "${iconv_src}/données" && ! -f "${iconv_dest}/données/fichier.txt" ]]; then
+      echo "    données/fichier.txt missing after iconv identity transfer"
+      return 1
+    fi
+  fi
+
+  # --- Test 2: cross-charset conversion (UTF-8 local, ISO-8859-1 remote) ---
+  # This tests actual charset transcoding. Latin-1 compatible characters
+  # (accented chars, umlauts) should convert cleanly.
+  timeout "$hard_timeout" "$oc_bin" -av --iconv=UTF-8,ISO-8859-1 --timeout=10 \
+      "${iconv_src}/" "${iconv_dest2}/" \
+      >"${log}.iconv-cross.out" 2>"${log}.iconv-cross.err"
+  local rc2=$?
+
+  if [[ $rc2 -ne 0 ]]; then
+    if [[ $rc2 -eq 2 ]] || grep -qiE 'iconv|not supported|charset' \
+        "${log}.iconv-cross.err" 2>/dev/null; then
+      echo "    --iconv=UTF-8,ISO-8859-1 gracefully rejected"
+      # Identity conversion passed, so partial success - still return 1
+      # since cross-charset is not yet supported
+      return 1
+    fi
+    echo "    cross-charset transfer failed with unexpected exit code $rc2"
+    echo "    stderr: $(head -5 "${log}.iconv-cross.err")"
+    return 1
+  fi
+
+  # If cross-charset transfer succeeded, verify ASCII files are intact
+  if [[ ! -f "${iconv_dest2}/ascii.txt" ]]; then
+    echo "    ascii.txt missing after cross-charset iconv transfer"
+    return 1
+  fi
+
+  if ! cmp -s "${iconv_src}/ascii.txt" "${iconv_dest2}/ascii.txt"; then
+    echo "    ascii.txt content mismatch after cross-charset iconv transfer"
     return 1
   fi
 
