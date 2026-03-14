@@ -42,9 +42,16 @@ use super::openssl_support;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Md5Seed {
-    /// Seed value to mix into the hash.
+    /// Seed value to mix into the hash, or `None` for standard unseeded MD5.
+    ///
+    /// Upstream rsync transmits the checksum seed as a 32-bit little-endian
+    /// integer. The value is typically the transfer session ID.
     pub value: Option<i32>,
-    /// Whether to use proper ordering (seed-before-data) vs old ordering (seed-after-data).
+    /// Whether to hash the seed before the data (`true`) or after (`false`).
+    ///
+    /// Protocol 30+ with `CHECKSUM_SEED_FIX` uses proper ordering (seed first).
+    /// Older protocols hash the seed after the data (legacy ordering).
+    /// See upstream `checksum.c:get_checksum2()`.
     pub proper_order: bool,
 }
 
