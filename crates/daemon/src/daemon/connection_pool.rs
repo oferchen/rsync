@@ -1,11 +1,9 @@
-//! crates/daemon/src/daemon/connection_pool.rs
+//! Thread-safe connection pool with per-IP rate limiting.
 //!
-//! Thread-safe connection pool using DashMap for concurrent access.
-//!
-//! This module provides connection tracking and rate limiting capabilities
-//! that complement the file-based `ConnectionLimiter` for cross-process limits.
-//! The pool uses DashMap for lock-free concurrent access, allowing multiple
-//! threads to query and update connection state without blocking.
+//! Provides connection tracking and rate limiting capabilities that complement
+//! the file-based `ConnectionLimiter` for cross-process limits. Uses `DashMap`
+//! for lock-free concurrent access, allowing multiple threads to query and
+//! update connection state without blocking.
 
 #![allow(dead_code)]
 

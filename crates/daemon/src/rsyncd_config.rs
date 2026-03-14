@@ -44,7 +44,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Errors that can occur while parsing configuration files.
+/// Error returned when parsing or validating an `rsyncd.conf` file fails.
+///
+/// Carries the file path and line number (when available) so callers can
+/// produce precise diagnostics.
 #[derive(Debug, Clone)]
 pub struct ConfigError {
     #[allow(dead_code)]
@@ -115,9 +118,11 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// Global configuration parameters.
+/// Global configuration parameters from the top of `rsyncd.conf`.
 ///
-/// These parameters appear before any module sections in the configuration file.
+/// These parameters appear before any `[module]` section and control
+/// daemon-wide behaviour such as bind address, port, logging, and privilege
+/// dropping. Upstream: `loadparm.c` global parameter table.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GlobalConfig {
     port: u16,
@@ -241,9 +246,12 @@ impl GlobalConfig {
     }
 }
 
-/// Per-module configuration parameters.
+/// Per-module configuration parameters from a `[name]` section in `rsyncd.conf`.
 ///
-/// Each module represents a directory tree that can be accessed by clients.
+/// Each module represents a directory tree that clients can access. Modules
+/// control access (auth users, hosts allow/deny), chroot behaviour, transfer
+/// options, and pre/post-transfer exec hooks.
+/// Upstream: `loadparm.c` local parameter table.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModuleConfig {
     name: String,
@@ -285,7 +293,9 @@ impl ModuleConfig {
         &self.name
     }
 
-    /// Returns the module path (required).
+    /// Returns the filesystem path this module serves (required).
+    ///
+    /// Upstream: `loadparm.c` - `path` parameter. Must be an absolute path.
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -330,22 +340,33 @@ impl ModuleConfig {
         self.lock_file.as_deref()
     }
 
-    /// Returns the list of authorized users.
+    /// Returns the list of authorized users for challenge-response authentication.
+    ///
+    /// When non-empty, clients must authenticate before accessing the module.
+    /// Upstream: `loadparm.c` - `auth users` parameter.
     pub fn auth_users(&self) -> &[String] {
         &self.auth_users
     }
 
-    /// Returns the secrets file path, if specified.
+    /// Returns the path to the secrets file for password lookup, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `secrets file` parameter. Must have mode 0600.
     pub fn secrets_file(&self) -> Option<&Path> {
         self.secrets_file.as_deref()
     }
 
-    /// Returns the list of allowed host patterns.
+    /// Returns the list of allowed host patterns (glob or CIDR).
+    ///
+    /// When non-empty, only matching hosts may connect.
+    /// Upstream: `loadparm.c` - `hosts allow` parameter.
     pub fn hosts_allow(&self) -> &[String] {
         &self.hosts_allow
     }
 
-    /// Returns the list of denied host patterns.
+    /// Returns the list of denied host patterns (glob or CIDR).
+    ///
+    /// Matching hosts are rejected before authentication.
+    /// Upstream: `loadparm.c` - `hosts deny` parameter.
     pub fn hosts_deny(&self) -> &[String] {
         &self.hosts_deny
     }
@@ -360,7 +381,10 @@ impl ModuleConfig {
         &self.include
     }
 
-    /// Returns the list of filter rules.
+    /// Returns the list of server-side filter rules applied before the transfer.
+    ///
+    /// These rules restrict which paths the client can access, independent of
+    /// any client-side filters. Upstream: `loadparm.c` - `filter` parameter.
     pub fn filter(&self) -> &[String] {
         &self.filter
     }
@@ -378,17 +402,26 @@ impl ModuleConfig {
         self.max_verbosity
     }
 
-    /// Returns whether to use chroot (default: true).
+    /// Returns whether the daemon chroots into the module path (default: true).
+    ///
+    /// Chroot isolates each module to its own filesystem subtree.
+    /// Upstream: `loadparm.c` - `use chroot` parameter.
     pub fn use_chroot(&self) -> bool {
         self.use_chroot
     }
 
-    /// Returns whether to use numeric IDs (default: false).
+    /// Returns whether to skip name-to-ID mapping and use raw numeric UIDs/GIDs (default: false).
+    ///
+    /// Upstream: `loadparm.c` - `numeric ids` parameter.
     pub fn numeric_ids(&self) -> bool {
         self.numeric_ids
     }
 
-    /// Returns whether fake super is enabled (default: false).
+    /// Returns whether `--fake-super` is forced for this module (default: false).
+    ///
+    /// When enabled, the daemon stores ownership and special-file metadata in
+    /// extended attributes instead of requiring root privileges.
+    /// Upstream: `loadparm.c` - `fake super` parameter.
     pub fn fake_super(&self) -> bool {
         self.fake_super
     }
@@ -398,12 +431,19 @@ impl ModuleConfig {
         self.transfer_logging
     }
 
-    /// Returns the list of refused options.
+    /// Returns the list of client options the daemon refuses for this module.
+    ///
+    /// Any client request containing a refused option is rejected before
+    /// the transfer starts. Upstream: `loadparm.c` - `refuse options` parameter.
     pub fn refuse_options(&self) -> &[String] {
         &self.refuse_options
     }
 
-    /// Returns the list of file patterns that won't be compressed.
+    /// Returns file-suffix patterns that should not be delta-compressed.
+    ///
+    /// Files matching these patterns (e.g., `*.gz`, `*.jpg`) are already
+    /// compressed and skip the zlib/zstd stage. Upstream: `loadparm.c` -
+    /// `dont compress` parameter.
     pub fn dont_compress(&self) -> &[String] {
         &self.dont_compress
     }
@@ -451,7 +491,10 @@ impl ModuleConfig {
     }
 }
 
-/// Complete daemon configuration including global parameters and modules.
+/// Parsed representation of a complete `rsyncd.conf` file.
+///
+/// Combines the global parameter section with zero or more per-module
+/// sections. Obtain via [`RsyncdConfig::from_file`] or [`RsyncdConfig::parse`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct RsyncdConfig {
     global: GlobalConfig,

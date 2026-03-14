@@ -1,19 +1,11 @@
-//! crates/daemon/src/daemon/async_session.rs
+//! Tokio-based async session handling for the rsync daemon.
 //!
-//! Async session handling for the rsync daemon.
+//! Provides async alternatives to the synchronous session handling path,
+//! available only when the `async` feature is enabled. Includes a TCP
+//! listener with configurable connection limits, per-session timeout support,
+//! `SessionRegistry` integration for concurrent session tracking, and
+//! graceful shutdown via broadcast channels.
 //!
-//! This module provides tokio-based async alternatives to synchronous session
-//! handling. It is only available when the `async` feature is enabled.
-//!
-//! # Features
-//!
-//! - Async TCP listener with configurable connection limits
-//! - Async session handling with timeout support
-//! - Integration with SessionRegistry for concurrent session tracking
-//! - Graceful shutdown support via cancellation tokens
-
-#![allow(dead_code)]
-
 //! # Example
 //!
 //! ```ignore
@@ -26,6 +18,8 @@
 //! let listener = AsyncDaemonListener::bind(config).await?;
 //! listener.serve().await?;
 //! ```
+
+#![allow(dead_code)]
 
 use std::io;
 use std::net::SocketAddr;

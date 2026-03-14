@@ -1,11 +1,9 @@
-//! crates/daemon/src/daemon.rs
-//!
 //! Implementation details backing [`crate::run_daemon`].
 //!
-//! The module hosts the listener loop, authentication helpers, and
-//! connection-management utilities that were previously embedded in
-//! `lib.rs`, keeping the crate root lightweight while preserving existing
-//! functionality.
+//! Hosts the TCP listener loop, `@RSYNCD:` greeting negotiation, module
+//! authentication, and per-connection session management. Configuration is
+//! loaded from `oc-rsyncd.conf` and parsed into [`RuntimeOptions`] before the
+//! accept loop starts.
 
 use dns_lookup::{lookup_addr, lookup_host};
 
@@ -150,11 +148,15 @@ include!("daemon/sections/group_expansion.rs");
 
 /// Runs the daemon orchestration using the provided configuration.
 ///
-/// The helper binds a TCP listener (defaulting to `0.0.0.0:873`), accepts a
-/// single connection, performs the legacy ASCII handshake, and replies with a
-/// deterministic `@ERROR` message explaining that module serving is not yet
-/// available. This behaviour gives higher layers a concrete negotiation target
-/// while keeping the observable output stable.
+/// Parses runtime options from the `DaemonConfig` arguments, loads
+/// `rsyncd.conf`, binds a TCP listener (defaulting to `0.0.0.0:873`), and
+/// enters the connection accept loop. Each accepted connection is handled in
+/// a dedicated thread with `catch_unwind` crash isolation.
+///
+/// # Errors
+///
+/// Returns a `DaemonError` if option parsing, config loading, or socket
+/// binding fails.
 #[cfg_attr(feature = "tracing", instrument(skip(config), name = "daemon_run"))]
 pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     let options = RuntimeOptions::parse_with_brand(
