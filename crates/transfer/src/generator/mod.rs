@@ -499,6 +499,44 @@ impl GeneratorContext {
         Some(algo)
     }
 
+    /// Opens a source file for reading, using io_uring for large files when available.
+    ///
+    /// Files at or above the io_uring read threshold (1 MB) use `reader_from_path`,
+    /// which creates an io_uring-backed reader on Linux 5.6+ (respecting the
+    /// `--no-io-uring` flag). Smaller files use a standard `BufReader` to avoid
+    /// the overhead of creating an io_uring ring per file.
+    ///
+    /// This threshold-based dual-path mirrors the existing pattern used for
+    /// parallel stat (PARALLEL_STAT_THRESHOLD) and adaptive buffer sizing.
+    fn open_source_reader(
+        &self,
+        path: &std::path::Path,
+        file_size: u64,
+    ) -> std::io::Result<Box<dyn std::io::Read>> {
+        use crate::adaptive_buffer::adaptive_buffer_size;
+
+        // 1 MB threshold: io_uring ring creation has fixed overhead that only
+        // pays off for larger reads where batched syscalls reduce total cost.
+        const IO_URING_READ_THRESHOLD: u64 = 1024 * 1024;
+
+        if file_size >= IO_URING_READ_THRESHOLD
+            && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
+        {
+            match fast_io::reader_from_path(path, self.config.write.io_uring_policy) {
+                Ok(r) => return Ok(Box::new(r)),
+                Err(_) => {
+                    // Fall through to standard BufReader on io_uring failure
+                }
+            }
+        }
+
+        let f = std::fs::File::open(path)?;
+        Ok(Box::new(std::io::BufReader::with_capacity(
+            adaptive_buffer_size(file_size),
+            f,
+        )))
+    }
+
     /// Validates that a file index is within bounds of the file list.
     fn validate_file_index(&self, ndx: usize) -> std::io::Result<()> {
         if ndx >= self.file_list.len() {

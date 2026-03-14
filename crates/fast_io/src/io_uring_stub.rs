@@ -435,6 +435,23 @@ pub fn writer_from_file(
     ))
 }
 
+/// Creates a reader from a file path, respecting the io_uring policy.
+///
+/// On non-Linux platforms, `Enabled` returns an error since io_uring is unavailable.
+/// `Auto` and `Disabled` both use standard buffered I/O.
+pub fn reader_from_path<P: AsRef<Path>>(
+    path: P,
+    policy: crate::IoUringPolicy,
+) -> io::Result<IoUringOrStdReader> {
+    if matches!(policy, crate::IoUringPolicy::Enabled) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring requested via --io-uring but not available on this platform",
+        ));
+    }
+    Ok(IoUringOrStdReader::Std(StdFileReader::open(path.as_ref())?))
+}
+
 /// Reads an entire file using standard I/O (io_uring not available).
 pub fn read_file<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
     let factory = IoUringReaderFactory::default();
