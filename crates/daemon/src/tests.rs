@@ -341,3 +341,11 @@ include!("tests/chunks/daemon_xattr_push.rs");
 include!("tests/chunks/daemon_acl_push.rs");
 // Daemon INC_RECURSE push end-to-end test
 include!("tests/chunks/daemon_inc_recurse_push.rs");
+// Daemon checksum mode push end-to-end test
+include!("tests/chunks/daemon_checksum_push.rs");
+// Daemon compress push end-to-end test
+include!("tests/chunks/daemon_compress_push.rs");
+// Daemon delete push end-to-end test
+include!("tests/chunks/daemon_delete_push.rs");
+// Daemon inplace push end-to-end test
+include!("tests/chunks/daemon_inplace_push.rs");
