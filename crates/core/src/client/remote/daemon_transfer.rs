@@ -676,12 +676,12 @@ fn build_full_daemon_args(
     // Capability flags for protocol 30+.
     // upstream: options.c:2707-2713 (via maybe_add_e_option appended to argstr)
     //
-    // is_sender means "daemon is sender" (pull = true, push = false).
-    // INC_RECURSE is advertised for pull transfers where our receiver handles
-    // incremental file lists from the daemon sender. For push transfers,
-    // sender-side INC_RECURSE is not advertised until fully validated.
+    // Upstream always advertises 'i' (INC_RECURSE) regardless of transfer
+    // direction - the server decides whether to enable it based on
+    // allow_inc_recurse conditions.
+    // upstream: options.c:2707-2713
     if protocol.as_u8() >= 30 {
-        args.push(build_capability_string(is_sender));
+        args.push(build_capability_string(true));
     }
 
     // --- Long-form arguments (upstream server_options() options.c:2737-2980) ---
