@@ -1,6 +1,12 @@
-//! Wire protocol encoding and decoding for xattrs.
+//! Wire protocol encoding and decoding for extended attributes.
 //!
-//! Implements the send/receive functions for xattr data exchange.
+//! Implements the send/receive functions for xattr data exchange between
+//! rsync peers. Supports both full-value and abbreviated (checksum-only)
+//! transmission for bandwidth efficiency on large xattr values.
+//!
+//! # Upstream Reference
+//!
+//! - `xattrs.c` - `send_xattr_request()`, `recv_xattr_request()`, `send_xattr()`
 
 use std::io::{self, Read, Write};
 

@@ -1,13 +1,13 @@
-/// Platform-normalized mode encoding for the rsync wire protocol.
-///
-/// On Unix, file mode values use the canonical POSIX bit patterns (e.g., `S_IFLNK = 0o120000`),
-/// so these functions are identity operations. On Windows, where `_S_IFLNK` may have a
-/// different value, these functions convert between the platform-native representation
-/// and the canonical POSIX wire format.
-///
-/// # Upstream Reference
-///
-/// - `ifuncs.h:44-63`: `to_wire_mode()` and `from_wire_mode()`
+//! Platform-normalized mode encoding for the rsync wire protocol.
+//!
+//! On Unix, file mode values use the canonical POSIX bit patterns (e.g., `S_IFLNK = 0o120000`),
+//! so these functions are identity operations. On Windows, where `_S_IFLNK` may have a
+//! different value, these functions convert between the platform-native representation
+//! and the canonical POSIX wire format.
+//!
+//! # Upstream Reference
+//!
+//! - `ifuncs.h:44-63`: `to_wire_mode()` and `from_wire_mode()`
 
 /// Canonical POSIX symlink mode bits used on the wire.
 #[cfg(windows)]

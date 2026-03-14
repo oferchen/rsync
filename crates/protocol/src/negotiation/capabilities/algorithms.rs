@@ -37,19 +37,19 @@ pub(super) fn supported_compressions() -> Vec<&'static str> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChecksumAlgorithm {
-    /// No checksum (for listing directories, etc.)
+    /// No checksum - used for directory listings and dry-run modes.
     None,
-    /// MD4 checksum (legacy, protocol < 30 default)
+    /// MD4 checksum - legacy default for protocol versions below 30.
     MD4,
-    /// MD5 checksum (protocol 30+ default)
+    /// MD5 checksum - default for protocol 30+ when negotiation is unavailable.
     MD5,
-    /// SHA1 checksum
+    /// SHA-1 checksum - available but rarely preferred over faster alternatives.
     SHA1,
-    /// XXHash 64-bit
+    /// XXHash 64-bit - fast non-cryptographic hash with good distribution.
     XXH64,
-    /// XXHash 3 (fast)
+    /// XXHash 3 - fastest available hash, preferred for protocol 30+ with negotiation.
     XXH3,
-    /// XXHash 128-bit
+    /// XXHash 128-bit - strongest non-cryptographic hash, preferred when available.
     XXH128,
 }
 
@@ -99,15 +99,15 @@ impl ChecksumAlgorithm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CompressionAlgorithm {
-    /// No compression
+    /// No compression - data is transferred uncompressed.
     None,
-    /// Zlib compression (legacy)
+    /// Zlib compression - legacy default for all protocol versions.
     Zlib,
-    /// Zlib with matched data excluded (more compatible)
+    /// Zlib with matched data excluded - avoids re-compressing block-match data.
     ZlibX,
-    /// LZ4 compression (fast)
+    /// LZ4 compression - fast compression with lower CPU overhead than zlib.
     LZ4,
-    /// Zstandard compression (modern, efficient)
+    /// Zstandard compression - modern codec with high ratio and fast decompression.
     Zstd,
 }
 
