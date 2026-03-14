@@ -199,6 +199,225 @@ mod integration {
     }
 
     #[test]
+    fn test_batch_header_and_file_entries_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("full_roundtrip.batch");
+
+        let protocol_version = 31;
+        let checksum_seed = 0xCAFE_BABEu32 as i32;
+        let compat_flags_val = 0x07;
+
+        // -- Write phase --
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(checksum_seed)
+        .with_compat_flags(compat_flags_val);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            preserve_gid: true,
+            preserve_links: true,
+            preserve_devices: false,
+            preserve_hard_links: true,
+            always_checksum: false,
+            xfer_dirs: true,
+            do_compression: true,
+            iconv: false,
+            preserve_acls: true,
+            preserve_xattrs: true,
+            inplace: false,
+            append: false,
+            append_verify: false,
+        };
+
+        writer.write_header(flags).unwrap();
+
+        // Write file entries with varying metadata
+        let entries = vec![
+            crate::format::FileEntry {
+                path: "src/main.rs".to_owned(),
+                mode: 0o100644,
+                size: 2048,
+                mtime: 1_700_000_000,
+                uid: Some(1000),
+                gid: Some(1000),
+            },
+            crate::format::FileEntry {
+                path: "README.md".to_owned(),
+                mode: 0o100644,
+                size: 512,
+                mtime: 1_699_000_000,
+                uid: None,
+                gid: None,
+            },
+            crate::format::FileEntry {
+                path: "bin/tool".to_owned(),
+                mode: 0o100755,
+                size: 65536,
+                mtime: 1_698_000_000,
+                uid: Some(0),
+                gid: Some(0),
+            },
+        ];
+
+        for entry in &entries {
+            writer.write_file_entry(entry).unwrap();
+        }
+
+        writer.finalize().unwrap();
+
+        // -- Read phase --
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            0, // intentionally different - reader should adopt from header
+        );
+
+        let mut reader = BatchReader::new(read_config).unwrap();
+        let read_flags = reader.read_header().unwrap();
+
+        // Verify header fields
+        let header = reader.header().unwrap();
+        assert_eq!(header.protocol_version, protocol_version);
+        assert_eq!(header.checksum_seed, checksum_seed);
+        assert_eq!(header.compat_flags, Some(compat_flags_val));
+
+        // Verify the reader adopted the protocol version from the header
+        assert_eq!(reader.config().protocol_version, protocol_version);
+
+        // Verify stream flags match exactly
+        assert_eq!(read_flags, flags);
+
+        // Verify file entries round-trip correctly
+        for expected in &entries {
+            let actual = reader
+                .read_file_entry()
+                .unwrap()
+                .expect("expected a file entry");
+            assert_eq!(
+                actual.path, expected.path,
+                "path mismatch for {}",
+                expected.path
+            );
+            assert_eq!(
+                actual.mode, expected.mode,
+                "mode mismatch for {}",
+                expected.path
+            );
+            assert_eq!(
+                actual.size, expected.size,
+                "size mismatch for {}",
+                expected.path
+            );
+            assert_eq!(
+                actual.mtime, expected.mtime,
+                "mtime mismatch for {}",
+                expected.path
+            );
+            assert_eq!(
+                actual.uid, expected.uid,
+                "uid mismatch for {}",
+                expected.path
+            );
+            assert_eq!(
+                actual.gid, expected.gid,
+                "gid mismatch for {}",
+                expected.path
+            );
+        }
+
+        // No more entries
+        let trailing = reader.read_file_entry().unwrap();
+        assert!(trailing.is_none(), "expected no more file entries");
+    }
+
+    #[test]
+    fn test_batch_header_and_stats_roundtrip_protocol_28() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("proto28_roundtrip.batch");
+
+        let protocol_version = 28;
+        let checksum_seed = 42;
+
+        // -- Write phase --
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(checksum_seed);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_hard_links: true,
+            always_checksum: true,
+            // Protocol-29+ and protocol-30+ fields should be masked out
+            xfer_dirs: true,
+            preserve_acls: true,
+            ..Default::default()
+        };
+
+        writer.write_header(flags).unwrap();
+
+        let stats = crate::format::BatchStats {
+            total_read: 4096,
+            total_written: 8192,
+            total_size: 1_000_000,
+            flist_buildtime: None,
+            flist_xfertime: None,
+        };
+        writer.write_stats(&stats).unwrap();
+        writer.finalize().unwrap();
+
+        // -- Read phase --
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            28,
+        );
+
+        let mut reader = BatchReader::new(read_config).unwrap();
+        let read_flags = reader.read_header().unwrap();
+
+        let header = reader.header().unwrap();
+        assert_eq!(header.protocol_version, protocol_version);
+        assert_eq!(header.checksum_seed, checksum_seed);
+        assert!(
+            header.compat_flags.is_none(),
+            "protocol 28 has no compat flags"
+        );
+
+        // Protocol-29+ bits should be masked out
+        assert!(read_flags.recurse);
+        assert!(read_flags.preserve_hard_links);
+        assert!(read_flags.always_checksum);
+        assert!(
+            !read_flags.xfer_dirs,
+            "xfer_dirs should be masked for protocol 28"
+        );
+        assert!(
+            !read_flags.preserve_acls,
+            "preserve_acls should be masked for protocol 28"
+        );
+
+        // Read stats back
+        let read_stats = reader.read_stats().unwrap();
+        assert_eq!(read_stats.total_read, stats.total_read);
+        assert_eq!(read_stats.total_written, stats.total_written);
+        assert_eq!(read_stats.total_size, stats.total_size);
+        assert!(read_stats.flist_buildtime.is_none());
+        assert!(read_stats.flist_xfertime.is_none());
+    }
+
+    #[test]
     fn test_batch_file_corruption() {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("corrupt.batch");
