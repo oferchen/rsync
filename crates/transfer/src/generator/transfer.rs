@@ -1,6 +1,5 @@
 //! Main transfer loop and goodbye handshake for the generator role.
 
-use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
@@ -17,7 +16,6 @@ use super::delta::{
 use super::item_flags::ItemFlags;
 use super::protocol_io::calculate_duration_ms;
 use super::{GeneratorContext, GeneratorStats, TransferLoopResult, is_early_close_error};
-use crate::adaptive_buffer::adaptive_buffer_size;
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::receiver::SumHead;
 
@@ -213,11 +211,8 @@ impl GeneratorContext {
             if has_basis {
                 // Delta path: build DeltaScript (needs random access for block matching),
                 // then hash and write in separate passes.
-                let source: Box<dyn Read> = match fs::File::open(source_path) {
-                    Ok(f) => Box::new(io::BufReader::with_capacity(
-                        adaptive_buffer_size(file_size),
-                        f,
-                    )),
+                let source: Box<dyn Read> = match self.open_source_reader(source_path, file_size) {
+                    Ok(r) => r,
                     Err(e) => {
                         self.record_open_failure(&mut *writer, ndx_i32, &e, &source_path_display)?;
                         continue;
@@ -260,8 +255,8 @@ impl GeneratorContext {
                 // Whole-file path: single-pass streaming (read -> hash -> write).
                 // Pre-open file to fail before sending protocol headers.
                 // upstream: sender.c:354-369 — send MSG_NO_SEND on open failure.
-                let source = match fs::File::open(source_path) {
-                    Ok(f) => f,
+                let source: Box<dyn Read> = match self.open_source_reader(source_path, file_size) {
+                    Ok(r) => r,
                     Err(e) => {
                         self.record_open_failure(&mut *writer, ndx_i32, &e, &source_path_display)?;
                         continue;
