@@ -242,6 +242,7 @@ pub struct ClientConfigBuilder {
     from0: bool,
     no_motd: bool,
     daemon_params: Vec<String>,
+    protocol_version: Option<protocol::ProtocolVersion>,
     #[cfg(all(unix, feature = "acl"))]
     preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
@@ -394,6 +395,7 @@ impl ClientConfigBuilder {
             from0: self.from0,
             no_motd: self.no_motd,
             daemon_params: self.daemon_params,
+            protocol_version: self.protocol_version,
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls: self.preserve_acls,
             #[cfg(all(unix, feature = "xattr"))]
