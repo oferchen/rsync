@@ -195,6 +195,8 @@ include!("tests/chunks/daemon_copy_links_push_resolves_symlinks.rs");
 include!("tests/chunks/daemon_fuzzy_level2_pulls_basis_from_sibling_directories.rs");
 // Daemon safe-links symlink filtering test
 include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_pull.rs");
+// Daemon files-from push test
+include!("tests/chunks/daemon_files_from_push.rs");
 // Daemon mode negotiation tests
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
