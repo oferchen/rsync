@@ -41,7 +41,9 @@ mod wire;
 
 use std::num::NonZeroU8;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use protocol::acl::AclCache;
 use protocol::flist::{FileEntry, FileListReader};
 use protocol::idlist::IdList;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
@@ -364,4 +366,41 @@ struct PipelineSetup {
     metadata_opts: metadata::MetadataOptions,
     checksum_length: NonZeroU8,
     checksum_algorithm: signature::SignatureAlgorithm,
+    /// ACL cache populated during flist reception. Shared with the disk commit
+    /// thread via `Arc` so cached ACLs can be applied after file metadata.
+    /// `None` when `--acls` is not active.
+    acl_cache: Option<Arc<AclCache>>,
+}
+
+/// Applies ACLs from the receiver's ACL cache to a destination file.
+///
+/// Looks up the file entry's `acl_ndx` and optional `def_acl_ndx` in the cache
+/// and applies the corresponding ACL to `destination`. No-op when `acl_cache`
+/// is `None` or the entry has no ACL index.
+///
+/// # Upstream Reference
+///
+/// Mirrors upstream `set_file_attrs()` in receiver.c which calls `set_acl()`
+/// after setting permissions, times, and ownership.
+fn apply_acls_from_receiver_cache(
+    destination: &std::path::Path,
+    entry: &FileEntry,
+    acl_cache: Option<&AclCache>,
+    follow_symlinks: bool,
+) -> Result<(), metadata::MetadataError> {
+    let cache = match acl_cache {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+    let access_ndx = match entry.acl_ndx() {
+        Some(ndx) => ndx,
+        None => return Ok(()),
+    };
+    metadata::apply_acls_from_cache(
+        destination,
+        cache,
+        access_ndx,
+        entry.def_acl_ndx(),
+        follow_symlinks,
+    )
 }

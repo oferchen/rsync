@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use logging::info_log;
 use protocol::CompatibilityFlags;
@@ -26,7 +27,7 @@ use super::stats::{SenderStats, TransferStats};
 use super::wire::{SenderAttrs, SumHead, write_signature_blocks};
 use super::{
     PARALLEL_STAT_THRESHOLD, PHASE1_CHECKSUM_LENGTH, PipelineSetup, REDO_CHECKSUM_LENGTH,
-    ReceiverContext,
+    ReceiverContext, apply_acls_from_receiver_cache,
 };
 
 use crate::adaptive_buffer::adaptive_writer_capacity;
@@ -86,6 +87,7 @@ impl ReceiverContext {
             metadata_opts,
             checksum_length,
             checksum_algorithm,
+            acl_cache,
         } = setup;
 
         // Transfer loop: for each file, generate signature, receive delta, apply
@@ -97,7 +99,8 @@ impl ReceiverContext {
         // directory/symlink creation to handle --no-implied-dirs.
         // upstream: generator.c:1317-1326 - make_path() for relative_paths
         self.ensure_relative_parents(&dest_dir);
-        let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
+        let mut metadata_errors =
+            self.create_directories(&dest_dir, &metadata_opts, acl_cache.as_deref())?;
         self.create_symlinks(&dest_dir);
 
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
@@ -422,6 +425,16 @@ impl ReceiverContext {
                 }
             }
 
+            // Apply cached ACLs after metadata (best-effort)
+            if let Err(acl_err) = apply_acls_from_receiver_cache(
+                &file_path,
+                file_entry,
+                acl_cache.as_deref(),
+                !file_entry.is_symlink(),
+            ) {
+                metadata_errors.push((file_path.clone(), acl_err.to_string()));
+            }
+
             bytes_received += total_bytes;
             files_transferred += 1;
         }
@@ -467,7 +480,11 @@ impl ReceiverContext {
         // directory/symlink creation to handle --no-implied-dirs.
         // upstream: generator.c:1317-1326 - make_path() for relative_paths
         self.ensure_relative_parents(&setup.dest_dir);
-        let mut metadata_errors = self.create_directories(&setup.dest_dir, &setup.metadata_opts)?;
+        let mut metadata_errors = self.create_directories(
+            &setup.dest_dir,
+            &setup.metadata_opts,
+            setup.acl_cache.as_deref(),
+        )?;
         self.create_symlinks(&setup.dest_dir);
 
         // Delete extraneous files at destination (--delete-before pass).
@@ -492,6 +509,7 @@ impl ReceiverContext {
             None,
             &mut metadata_errors,
             &mut stats,
+            setup.acl_cache.as_deref(),
         );
 
         // Run pipelined transfer with decoupled network/disk I/O (phase 1)
@@ -607,6 +625,7 @@ impl ReceiverContext {
                     file_entry,
                     &setup.metadata_opts,
                     &mut failed_dirs,
+                    setup.acl_cache.as_deref(),
                 )?;
                 if created {
                     stats.directories_created += 1;
@@ -632,6 +651,7 @@ impl ReceiverContext {
             Some(&failed_dirs),
             &mut metadata_errors,
             &mut stats,
+            setup.acl_cache.as_deref(),
         );
 
         // Run pipelined transfer with decoupled network/disk I/O (phase 1)
@@ -751,6 +771,17 @@ impl ReceiverContext {
             .first()
             .map_or_else(|| PathBuf::from("."), PathBuf::from);
 
+        // Extract ACL cache from the flist reader when --acls is active.
+        // The cache is fully populated during flist reception and only read
+        // during transfer, so sharing via Arc is safe.
+        let acl_cache = if self.config.flags.acls {
+            self.flist_reader_cache
+                .as_ref()
+                .map(|r| Arc::new(r.acl_cache().clone()))
+        } else {
+            None
+        };
+
         Ok((
             reader,
             file_count,
@@ -759,6 +790,7 @@ impl ReceiverContext {
                 metadata_opts,
                 checksum_length,
                 checksum_algorithm,
+                acl_cache,
             },
         ))
     }
@@ -837,6 +869,7 @@ impl ReceiverContext {
             do_fsync: self.config.write.fsync,
             metadata_opts: Some(setup.metadata_opts.clone()),
             backup,
+            acl_cache: setup.acl_cache.clone(),
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);
@@ -1002,6 +1035,7 @@ impl ReceiverContext {
         failed_dirs: Option<&FailedDirectories>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         stats: &mut TransferStats,
+        acl_cache: Option<&protocol::acl::AclCache>,
     ) -> Vec<(usize, &'a FileEntry)> {
         // upstream: receiver.c:693 - dry_run (!do_xfers) skips all file transfers
         if self.config.flags.dry_run {
@@ -1100,6 +1134,14 @@ impl ReceiverContext {
                     if let Err(e) =
                         apply_metadata_with_cached_stat(&file_path, entry, metadata_opts, dest_meta)
                     {
+                        metadata_errors.push((file_path.clone(), e.to_string()));
+                    }
+                    if let Err(e) = apply_acls_from_receiver_cache(
+                        &file_path,
+                        entry,
+                        acl_cache,
+                        !entry.is_symlink(),
+                    ) {
                         metadata_errors.push((file_path, e.to_string()));
                     } else if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
                         // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
@@ -1124,6 +1166,7 @@ impl ReceiverContext {
                     always_checksum,
                     metadata_opts,
                     metadata_errors,
+                    acl_cache,
                 ) {
                     continue;
                 }
