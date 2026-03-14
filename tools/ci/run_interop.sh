@@ -1162,10 +1162,6 @@ KNOWN_FAILURES=(
   # dry-run: upstream daemon closes connection during dry-run handshake,
   # causing "Resource temporarily unavailable" (os error 11) on all protocols.
   "oc:dry-run"
-  # itemize: our client does not capture/relay itemize output (-i) from the
-  # upstream daemon transfer - no itemize lines appear in stdout.
-  "oc:itemize"
-
   # --- upstream→oc (daemon receive) ---
   # relative: --relative path handling still fails for upstream→oc daemon
   # transfers on native protocol and forced protocols >= 30.
@@ -1179,10 +1175,6 @@ KNOWN_FAILURES=(
   # protocol-31: upstream 3.0.9 does not support protocol 31, causing
   # negotiation failure when our daemon offers it.
   "up:protocol-31"
-  # itemize: our daemon does not relay itemize output (-i) back to the
-  # upstream sender - no itemize lines appear in the transfer output.
-  "up:itemize"
-
   # --- standalone scenario known failures ---
   # write-batch/read-batch: batch file support not yet implemented.
   "standalone:write-batch-read-batch"
