@@ -201,6 +201,8 @@ include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_push.rs");
 include!("tests/chunks/daemon_compare_dest_push.rs");
 // Daemon relative receive end-to-end test
 include!("tests/chunks/daemon_relative_receive.rs");
+// Daemon itemize push end-to-end test
+include!("tests/chunks/daemon_itemize_push.rs");
 // Daemon mode negotiation tests
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
