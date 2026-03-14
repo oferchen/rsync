@@ -1152,8 +1152,6 @@ run_ssh_interop_test() {
 # Remaining known failures:
 KNOWN_FAILURES=(
   # --- upstream→oc (daemon receive) ---
-  # hardlinks-relative: combined -H -R needs hardlink ordering fix.
-  "up:hardlinks-relative"
   # protocol-31: upstream 3.0.9 does not support protocol 31.
   "up:protocol-31"
   # --- standalone scenarios ---

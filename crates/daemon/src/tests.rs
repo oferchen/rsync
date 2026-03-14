@@ -202,6 +202,8 @@ include!("tests/chunks/daemon_safe_links_receive.rs");
 include!("tests/chunks/daemon_compare_dest_push.rs");
 // Daemon relative receive end-to-end test
 include!("tests/chunks/daemon_relative_receive.rs");
+// Daemon combined hardlinks + relative receive end-to-end test
+include!("tests/chunks/daemon_hardlinks_relative_receive.rs");
 // Daemon itemize end-to-end tests
 include!("tests/chunks/daemon_itemize_push.rs");
 include!("tests/chunks/daemon_itemize_pull.rs");
