@@ -16,6 +16,8 @@ use protocol::xattr::XattrList;
 
 use protocol::acl::AclCache;
 
+use crate::generator::ItemFlags;
+
 use super::{PARALLEL_STAT_THRESHOLD, ReceiverContext, apply_acls_from_receiver_cache};
 
 /// Tracks directories that failed to create.
@@ -283,9 +285,10 @@ impl ReceiverContext {
     /// - `generator.c:delete_in_dir()` - scans one directory, removes unlisted entries
     /// - `generator.c:do_delete_pass()` - full tree walk deletion sweep
     /// - `main.c:1367` - `deletion_count >= max_delete` check
-    pub(super) fn delete_extraneous_files(
+    pub(super) fn delete_extraneous_files<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
+        writer: &mut W,
     ) -> io::Result<(DeleteStats, bool)> {
         use std::collections::{HashMap, HashSet};
         use std::sync::Arc;
@@ -330,7 +333,10 @@ impl ReceiverContext {
         let dir_children = Arc::new(dir_children);
         let dest_dir_owned = dest_dir.to_path_buf();
 
-        let per_dir_results = crate::parallel_io::map_blocking(
+        // Collect deleted relative paths for post-parallel itemize emission.
+        // The writer is not Send, so MSG_INFO frames are emitted sequentially
+        // after parallel deletion completes.
+        let per_dir_results: Vec<(DeleteStats, Vec<PathBuf>)> = crate::parallel_io::map_blocking(
             dirs_to_scan,
             PARALLEL_STAT_THRESHOLD,
             move |dir_relative| {
@@ -342,15 +348,16 @@ impl ReceiverContext {
 
                 let keep = match dir_children.get(&dir_relative) {
                     Some(set) => set,
-                    None => return DeleteStats::new(),
+                    None => return (DeleteStats::new(), Vec::new()),
                 };
 
                 let read_dir = match fs::read_dir(&dest_path) {
                     Ok(iter) => iter,
-                    Err(_) => return DeleteStats::new(),
+                    Err(_) => return (DeleteStats::new(), Vec::new()),
                 };
 
                 let mut stats = DeleteStats::new();
+                let mut deleted_paths = Vec::new();
                 for entry in read_dir {
                     let entry = match entry {
                         Ok(e) => e,
@@ -383,6 +390,8 @@ impl ReceiverContext {
 
                     match result {
                         Ok(()) => {
+                            // Compute relative path for itemize output
+                            let rel = dir_relative.join(&name);
                             if is_dir {
                                 info_log!(Del, 1, "deleting directory {}", path.display());
                                 stats.dirs += 1;
@@ -393,6 +402,7 @@ impl ReceiverContext {
                                 info_log!(Del, 1, "deleting {}", path.display());
                                 stats.files += 1;
                             }
+                            deleted_paths.push(rel);
                         }
                         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                         Err(e) => {
@@ -400,17 +410,25 @@ impl ReceiverContext {
                         }
                     }
                 }
-                stats
+                (stats, deleted_paths)
             },
         );
 
         let mut combined = DeleteStats::new();
-        for s in per_dir_results {
+        for (s, deleted_paths) in &per_dir_results {
             combined.files = combined.files.saturating_add(s.files);
             combined.dirs = combined.dirs.saturating_add(s.dirs);
             combined.symlinks = combined.symlinks.saturating_add(s.symlinks);
             combined.devices = combined.devices.saturating_add(s.devices);
             combined.specials = combined.specials.saturating_add(s.specials);
+
+            // upstream: log.c:log_delete() - emit "*deleting" itemize for each deleted item
+            if self.should_emit_itemize() {
+                for rel_path in deleted_paths {
+                    let line = format!("*deleting   {}\n", rel_path.display());
+                    let _ = writer.send_msg_info(line.as_bytes());
+                }
+            }
         }
 
         // Limit is exceeded when we had candidates beyond the allowed count.
@@ -431,12 +449,19 @@ impl ReceiverContext {
     /// Existing symlinks pointing to the correct target are skipped (quick-check).
     /// Existing files/symlinks at the destination path are removed before creation.
     ///
+    /// Emits MSG_INFO itemize frames for each symlink created or found up-to-date
+    /// when the daemon has itemize output enabled.
+    ///
     /// # Upstream Reference
     ///
     /// - `generator.c:1544` - `if (preserve_links && ftype == FT_SYMLINK)`
     /// - `generator.c:1591` - `atomic_create(file, fname, sl, ...)`
     #[cfg(unix)]
-    pub(super) fn create_symlinks(&self, dest_dir: &Path) {
+    pub(super) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        dest_dir: &Path,
+        writer: &mut W,
+    ) {
         if !self.config.flags.links || self.config.flags.dry_run {
             return;
         }
@@ -467,6 +492,9 @@ impl ReceiverContext {
             // upstream: generator.c:1561 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
                 if existing_target == *target {
+                    // upstream: generator.c:1565 - symlink up-to-date, metadata only
+                    let iflags = ItemFlags::from_raw(0);
+                    let _ = self.emit_itemize(writer, &iflags, entry);
                     continue;
                 }
                 let _ = std::fs::remove_file(&link_path);
@@ -490,13 +518,23 @@ impl ReceiverContext {
                     target.display(),
                     e
                 );
+            } else {
+                // upstream: generator.c:1594 - itemize new symlink after creation
+                let iflags =
+                    ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+                let _ = self.emit_itemize(writer, &iflags, entry);
             }
         }
     }
 
     /// No-op on non-Unix platforms where symlinks are not supported.
     #[cfg(not(unix))]
-    pub(super) fn create_symlinks(&self, _dest_dir: &Path) {}
+    pub(super) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        _dest_dir: &Path,
+        _writer: &mut W,
+    ) {
+    }
 
     /// Creates hard links for hardlink follower entries after the leader has been transferred.
     ///
@@ -515,7 +553,11 @@ impl ReceiverContext {
     /// - `hlink.c:hard_link_check()` - skips followers, links to leader
     /// - `hlink.c:finish_hard_link()` - creates links after leader transfer completes
     /// - `generator.c:1539` - `F_HLINK_NOT_FIRST` check before `hard_link_check()`
-    pub(super) fn create_hardlinks(&self, dest_dir: &Path) {
+    pub(super) fn create_hardlinks<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        dest_dir: &Path,
+        writer: &mut W,
+    ) {
         if !self.config.flags.hard_links || self.config.flags.dry_run {
             return;
         }
@@ -580,6 +622,9 @@ impl ReceiverContext {
                         if link_meta.dev() == leader_meta.dev()
                             && link_meta.ino() == leader_meta.ino()
                         {
+                            // upstream: hlink.c - hardlink already correct, metadata only
+                            let iflags = ItemFlags::from_raw(0);
+                            let _ = self.emit_itemize(writer, &iflags, entry);
                             continue;
                         }
                     }
@@ -607,13 +652,21 @@ impl ReceiverContext {
                     leader_path.display(),
                     e
                 );
+            } else {
+                // upstream: hlink.c:finish_hard_link() - itemize new hardlink
+                let iflags = ItemFlags::from_raw(
+                    ItemFlags::ITEM_LOCAL_CHANGE
+                        | ItemFlags::ITEM_XNAME_FOLLOWS
+                        | ItemFlags::ITEM_IS_NEW,
+                );
+                let _ = self.emit_itemize(writer, &iflags, entry);
             }
         }
 
         // Protocol 28-29: use (dev, ino) pairs to identify hardlink groups.
         // Build groups from entries that have hardlink_dev/ino set but no hardlink_idx.
         if self.protocol.as_u8() < 30 {
-            self.create_hardlinks_pre30(dest_dir);
+            self.create_hardlinks_pre30(dest_dir, writer);
         }
     }
 
@@ -622,7 +675,11 @@ impl ReceiverContext {
     /// In protocols before 30, hardlinks are identified by matching (dev, ino)
     /// pairs across file list entries. The first entry with a given (dev, ino) is
     /// the leader; subsequent entries are followers that should be hard-linked.
-    fn create_hardlinks_pre30(&self, dest_dir: &Path) {
+    fn create_hardlinks_pre30<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        dest_dir: &Path,
+        writer: &mut W,
+    ) {
         use std::collections::HashMap;
 
         // Map from (dev, ino) -> first file's destination path.
@@ -661,6 +718,8 @@ impl ReceiverContext {
                                 if link_meta.dev() == leader_meta.dev()
                                     && link_meta.ino() == leader_meta.ino()
                                 {
+                                    let iflags = ItemFlags::from_raw(0);
+                                    let _ = self.emit_itemize(writer, &iflags, entry);
                                     continue;
                                 }
                             }
@@ -685,6 +744,13 @@ impl ReceiverContext {
                             leader_path.display(),
                             e
                         );
+                    } else {
+                        let iflags = ItemFlags::from_raw(
+                            ItemFlags::ITEM_LOCAL_CHANGE
+                                | ItemFlags::ITEM_XNAME_FOLLOWS
+                                | ItemFlags::ITEM_IS_NEW,
+                        );
+                        let _ = self.emit_itemize(writer, &iflags, entry);
                     }
                 }
             }
@@ -693,8 +759,10 @@ impl ReceiverContext {
 
     /// Creates a single directory during incremental processing.
     ///
-    /// On success, returns `Ok(true)`. On failure or skip, marks the directory
-    /// as failed and returns `Ok(false)`. Only returns `Err` for unrecoverable errors.
+    /// Returns `Ok(None)` on failure or skip (marks dir as failed).
+    /// Returns `Ok(Some(true))` when a new directory was created.
+    /// Returns `Ok(Some(false))` when an existing directory had metadata applied.
+    /// Only returns `Err` for unrecoverable errors.
     pub(super) fn create_directory_incremental(
         &self,
         dest_dir: &std::path::Path,
@@ -702,7 +770,7 @@ impl ReceiverContext {
         metadata_opts: &MetadataOptions,
         failed_dirs: &mut FailedDirectories,
         acl_cache: Option<&AclCache>,
-    ) -> io::Result<bool> {
+    ) -> io::Result<Option<bool>> {
         let relative_path = entry.path();
         let dir_path = if relative_path.as_os_str() == "." {
             dest_dir.to_path_buf()
@@ -722,11 +790,12 @@ impl ReceiverContext {
                 );
             }
             failed_dirs.mark_failed(entry.name());
-            return Ok(false);
+            return Ok(None);
         }
 
         // Try to create the directory
-        if !dir_path.exists() {
+        let is_new = !dir_path.exists();
+        if is_new {
             if let Err(e) = fs::create_dir_all(&dir_path) {
                 if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(
@@ -738,7 +807,7 @@ impl ReceiverContext {
                     );
                 }
                 failed_dirs.mark_failed(entry.name());
-                return Ok(false);
+                return Ok(None);
             }
         }
 
@@ -789,6 +858,6 @@ impl ReceiverContext {
             }
         }
 
-        Ok(true)
+        Ok(Some(is_new))
     }
 }

@@ -1855,10 +1855,10 @@ mod create_directory_incremental_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
 
         assert!(result.is_ok());
-        assert!(result.unwrap()); // Returns true for success
+        assert_eq!(result.unwrap(), Some(true)); // Returns Some(true) for new dir
         assert!(dest.join("subdir").exists());
         assert_eq!(failed.count(), 0);
     }
@@ -1877,10 +1877,10 @@ mod create_directory_incremental_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
 
         assert!(result.is_ok());
-        assert!(!result.unwrap()); // Returns false for skipped
+        assert_eq!(result.unwrap(), None); // Returns None for skipped
         assert!(!dest.join("failed_parent/child").exists());
         assert_eq!(failed.count(), 2); // Parent + child marked as failed
     }
@@ -1990,10 +1990,10 @@ mod incremental_mode_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
 
         assert!(result.is_ok());
-        assert!(result.unwrap());
+        assert_eq!(result.unwrap(), Some(true));
         assert!(dest.join("a/b/c").exists());
     }
 
