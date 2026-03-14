@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 
 use protocol::flist::FileEntry;
+use protocol::xattr::XattrList;
 
 use crate::delta_apply::ChecksumVerifier;
 
@@ -85,6 +86,17 @@ pub struct BeginMessage {
     /// When set, temp files are created here instead of alongside the destination.
     /// Mirrors upstream `--temp-dir` / daemon `temp dir` module parameter.
     pub temp_dir: Option<PathBuf>,
+    /// Xattr list resolved from the wire protocol cache for this file.
+    ///
+    /// When `Some`, the disk thread applies these xattrs after metadata
+    /// application. Populated by looking up the file entry's `xattr_ndx` in
+    /// the `XattrCache` during begin message construction.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `xattrs.c:set_xattr()` called from `set_file_attrs()` in
+    /// `receiver.c` after file transfer completes.
+    pub xattr_list: Option<XattrList>,
 }
 
 /// Computed checksum digest returned by the disk thread.
