@@ -20,6 +20,8 @@ sd-notify = ["dep:sd-notify", "core/sd-notify"]
 async = ["dep:tokio", "core/async"]
 # Concurrent session tracking - enables efficient shared state for multi-session daemons
 concurrent-sessions = ["dep:dashmap"]
+# Extended attributes (xattr) preservation during transfers
+xattr = ["core/xattr"]
 # Structured logging instrumentation for daemon diagnostics
 tracing = ["dep:tracing", "core/tracing"]
 
@@ -58,3 +60,6 @@ checksums = { path = "../checksums", default-features = false }
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
 filetime = "0.2"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+xattr = "1.6"
