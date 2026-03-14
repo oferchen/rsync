@@ -1855,7 +1855,7 @@ mod create_directory_incremental_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
 
         assert!(result.is_ok());
         assert!(result.unwrap()); // Returns true for success
@@ -1877,7 +1877,7 @@ mod create_directory_incremental_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
 
         assert!(result.is_ok());
         assert!(!result.unwrap()); // Returns false for skipped
@@ -1990,7 +1990,7 @@ mod incremental_mode_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
 
         assert!(result.is_ok());
         assert!(result.unwrap());
