@@ -339,3 +339,5 @@ include!("tests/chunks/daemon_unicode_emoji_filenames.rs");
 include!("tests/chunks/daemon_xattr_push.rs");
 // Daemon ACL push end-to-end test
 include!("tests/chunks/daemon_acl_push.rs");
+// Daemon INC_RECURSE push end-to-end test
+include!("tests/chunks/daemon_inc_recurse_push.rs");
