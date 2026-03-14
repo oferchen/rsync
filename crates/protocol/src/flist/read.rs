@@ -486,12 +486,14 @@ impl FileListReader {
         }
 
         // Read extended flags
+        // upstream: flist.c:2628 - extended flags only exist in protocol >= 28.
+        // In protocol < 28, bit 2 is XMIT_SAME_RDEV_pre28, not XMIT_EXTENDED_FLAGS.
         let (ext_byte, ext16_byte) = if use_varint {
             (
                 ((flags_value >> 8) & 0xFF) as u8,
                 ((flags_value >> 16) & 0xFF) as u8,
             )
-        } else if (flags_value as u8 & XMIT_EXTENDED_FLAGS) != 0 {
+        } else if self.protocol.as_u8() >= 28 && (flags_value as u8 & XMIT_EXTENDED_FLAGS) != 0 {
             let mut buf = [0u8; 1];
             reader.read_exact(&mut buf)?;
             (buf[0], 0u8)
@@ -661,11 +663,15 @@ impl FileListReader {
         };
 
         // 6. Read UID and optional user name
+        // upstream: flist.c:880-890 - XMIT_USER_NAME_FOLLOWS only exists in
+        // protocol >= 30. In protocol 28-29 that bit position is
+        // XMIT_SAME_DEV_pre30, so we must not interpret it as name_follows.
+        let uid_name_follows = self.protocol.as_u8() >= 30 && flags.user_name_follows();
         let (uid, user_name) = if self.preserve_uid {
             let (id, name) = read_owner_id(
                 reader,
                 flags.same_uid(),
-                flags.user_name_follows(),
+                uid_name_follows,
                 self.state.prev_uid(),
                 self.protocol.uses_fixed_encoding(),
             )?;
@@ -676,11 +682,15 @@ impl FileListReader {
         };
 
         // 7. Read GID and optional group name
+        // upstream: flist.c:891-902 - XMIT_GROUP_NAME_FOLLOWS only exists in
+        // protocol >= 30. In protocol 28-29 that bit position is
+        // XMIT_RDEV_MINOR_8_pre30.
+        let gid_name_follows = self.protocol.as_u8() >= 30 && flags.group_name_follows();
         let (gid, group_name) = if self.preserve_gid {
             let (id, name) = read_owner_id(
                 reader,
                 flags.same_gid(),
-                flags.group_name_follows(),
+                gid_name_follows,
                 self.state.prev_gid(),
                 self.protocol.uses_fixed_encoding(),
             )?;
