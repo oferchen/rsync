@@ -63,13 +63,16 @@ impl BatchReader {
                 ))
             })?;
 
-            // Validate protocol version
-            if header.protocol_version != self.config.protocol_version {
-                return Err(BatchError::InvalidFormat(format!(
-                    "Protocol version mismatch: batch has {}, expected {}",
-                    header.protocol_version, self.config.protocol_version
-                )));
-            }
+            // Adopt the protocol version from the batch header.
+            // upstream: batch.c - the reader uses whatever version the batch
+            // was written with, so batch files from older rsync versions
+            // (e.g., proto 30 from 3.0.9, proto 31 from 3.1.3) work.
+            self.config.protocol_version = header.protocol_version;
+            self.config.compat_flags = if header.protocol_version >= 30 {
+                Some(self.config.compat_flags.unwrap_or(0))
+            } else {
+                None
+            };
 
             let flags = header.stream_flags;
             self.header = Some(header);
@@ -324,7 +327,7 @@ mod tests {
         }
 
         #[test]
-        fn protocol_mismatch() {
+        fn adopts_protocol_version_from_header() {
             let temp_dir = TempDir::new().unwrap();
             let batch_path = temp_dir.path().join("test.batch");
             create_test_batch(&batch_path);
@@ -336,8 +339,11 @@ mod tests {
             );
 
             let mut reader = BatchReader::new(config).unwrap();
-            let result = reader.read_header();
-            assert!(result.is_err());
+            reader.read_header().unwrap();
+
+            // Config should adopt the protocol version from the batch header
+            assert_eq!(reader.config().protocol_version, 30);
+            assert_eq!(reader.header().unwrap().protocol_version, 30);
         }
     }
 
