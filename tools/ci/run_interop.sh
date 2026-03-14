@@ -1326,8 +1326,10 @@ test_large_file_2gb() {
   rm -rf "$large_src" "$large_dest"
   mkdir -p "$large_src" "$large_dest"
 
-  # Create a sparse 2200MB file (fast, uses no real disk)
-  if ! truncate -s 2200M "${large_src}/bigfile.dat"; then
+  # Create a sparse 3GB file - exceeds 2GB to validate 64-bit size
+  # handling in the wire protocol. Sparse creation uses no real disk.
+  local expected_size=3221225472  # 3 * 1024^3
+  if ! truncate -s 3G "${large_src}/bigfile.dat"; then
     echo "    truncate not available or failed"
     return 1
   fi
@@ -1335,31 +1337,88 @@ test_large_file_2gb() {
   # Write a small marker at the start so we can verify content
   echo "large-file-marker" > "${large_src}/marker.txt"
 
-  # Local transfer with oc-rsync
-  if ! timeout 120 "$oc_bin" -avS --timeout=60 \
-      "${large_src}/" "${large_dest}/" \
-      >"${log}.large.out" 2>"${log}.large.err"; then
-    echo "    large file transfer failed (exit=$?)"
-    echo "    stderr: $(head -5 "${log}.large.err")"
+  # Compute source checksum before transfer
+  local src_cksum
+  if command -v md5sum >/dev/null 2>&1; then
+    src_cksum=$(md5sum "${large_src}/bigfile.dat" | awk '{print $1}')
+  elif command -v md5 >/dev/null 2>&1; then
+    src_cksum=$(md5 -q "${large_src}/bigfile.dat")
+  else
+    echo "    no md5sum or md5 command available"
     return 1
   fi
+
+  # Transfer via oc-rsync daemon to exercise 64-bit wire protocol sizes.
+  # Start a dedicated daemon instance with large_dest as the module path.
+  local large_conf="${work}/large-file.conf"
+  local large_pid="${work}/large-file.pid"
+  local large_log="${work}/large-file.log"
+  cat > "$large_conf" <<CONF
+pid file = ${large_pid}
+port = ${oc_port}
+use chroot = false
+
+[largefile]
+path = ${large_dest}
+comment = large file 2gb test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$large_conf" "$large_log" "$upstream_binary" "$large_pid" "$oc_port"
+
+  # Push large file to daemon via rsync:// protocol
+  if ! timeout 180 "$upstream_binary" -avS --timeout=120 \
+      "${large_src}/" "rsync://127.0.0.1:${oc_port}/largefile" \
+      >"${log}.large.out" 2>"${log}.large.err"; then
+    echo "    large file daemon transfer failed (exit=$?)"
+    echo "    stderr: $(head -5 "${log}.large.err")"
+    stop_oc_daemon
+    rm -rf "$large_src" "$large_dest"
+    return 1
+  fi
+
+  stop_oc_daemon
 
   if [[ ! -f "${large_dest}/bigfile.dat" ]]; then
     echo "    bigfile.dat missing from dest"
+    rm -rf "$large_src" "$large_dest"
     return 1
   fi
 
-  # Verify size matches (2200 * 1024 * 1024 = 2306867200 bytes)
+  # Verify size matches - must be exactly 3GB (3221225472 bytes)
   local src_size dest_size
   src_size=$(stat -c %s "${large_src}/bigfile.dat" 2>/dev/null || stat -f %z "${large_src}/bigfile.dat" 2>/dev/null)
   dest_size=$(stat -c %s "${large_dest}/bigfile.dat" 2>/dev/null || stat -f %z "${large_dest}/bigfile.dat" 2>/dev/null)
   if [[ "$src_size" != "$dest_size" ]]; then
     echo "    size mismatch: src=${src_size} dest=${dest_size}"
+    rm -rf "$large_src" "$large_dest"
+    return 1
+  fi
+
+  if [[ "$dest_size" != "$expected_size" ]]; then
+    echo "    unexpected dest size: ${dest_size} (expected ${expected_size})"
+    rm -rf "$large_src" "$large_dest"
+    return 1
+  fi
+
+  # Verify checksum matches to confirm data integrity
+  local dest_cksum
+  if command -v md5sum >/dev/null 2>&1; then
+    dest_cksum=$(md5sum "${large_dest}/bigfile.dat" | awk '{print $1}')
+  elif command -v md5 >/dev/null 2>&1; then
+    dest_cksum=$(md5 -q "${large_dest}/bigfile.dat")
+  fi
+
+  if [[ "$src_cksum" != "$dest_cksum" ]]; then
+    echo "    checksum mismatch: src=${src_cksum} dest=${dest_cksum}"
+    rm -rf "$large_src" "$large_dest"
     return 1
   fi
 
   if ! cmp -s "${large_src}/marker.txt" "${large_dest}/marker.txt"; then
     echo "    marker.txt content mismatch"
+    rm -rf "$large_src" "$large_dest"
     return 1
   fi
 
