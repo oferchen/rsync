@@ -535,6 +535,7 @@ pub fn process_file_response_streaming<R: Read>(
     buf_return_rx: &spsc::Receiver<Vec<u8>>,
     file_entry_index: usize,
     file_entry: Option<FileEntry>,
+    xattr_list: Option<protocol::xattr::XattrList>,
 ) -> io::Result<StreamingResult> {
     let expected_ndx = pending.ndx();
 
@@ -577,6 +578,7 @@ pub fn process_file_response_streaming<R: Read>(
             || (ctx.config.inplace_partial
                 && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir)),
         temp_dir: ctx.config.temp_dir.map(Path::to_path_buf),
+        xattr_list,
     });
 
     // Open basis file for block references
