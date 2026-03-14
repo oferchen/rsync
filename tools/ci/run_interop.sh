@@ -1152,10 +1152,6 @@ run_ssh_interop_test() {
 # Remaining known failures:
 KNOWN_FAILURES=(
   # --- oc→upstream (client push) ---
-  # ACLs/xattrs: upstream daemon may reject these capabilities if built without
-  # --enable-acl-support / --enable-xattr-support, causing connection reset.
-  "oc:acls"
-  "oc:xattrs"
   # --- upstream→oc (daemon receive) ---
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
   "up:acls"
