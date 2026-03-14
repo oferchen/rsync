@@ -85,6 +85,22 @@ pub struct ConnectionConfig {
     pub iconv: Option<FilenameConverter>,
     /// Optional compression level for zlib compression (0-9).
     pub compression_level: Option<CompressionLevel>,
+    /// Pre-read `--files-from` data for forwarding to a remote daemon.
+    ///
+    /// When the client has `--files-from` pointing to stdin or a local file,
+    /// the data is read upfront and stored here. During a pull transfer the
+    /// client forwards this data to the daemon's generator over the protocol
+    /// stream so it can build its file list from the forwarded filenames.
+    ///
+    /// The data is in the wire format produced by
+    /// [`protocol::forward_files_from`]: NUL-separated filenames terminated
+    /// by a double-NUL sentinel.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:forward_filesfrom_data()` - forwards local file to socket
+    /// - `main.c:1354-1356` - `start_filesfrom_forwarding(filesfrom_fd)`
+    pub files_from_data: Option<Vec<u8>>,
 }
 
 /// File selection and filtering options.

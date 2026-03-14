@@ -156,3 +156,59 @@ fn size_limits_can_be_configured() {
     assert_eq!(cfg.file_selection.min_file_size, Some(100));
     assert_eq!(cfg.file_selection.max_file_size, Some(1000));
 }
+
+#[test]
+fn files_from_data_defaults_to_none() {
+    let cfg = ServerConfig::from_flag_string_and_args(
+        ServerRole::Receiver,
+        String::new(),
+        vec![OsString::from("/p")],
+    )
+    .expect("ok");
+    assert!(cfg.connection.files_from_data.is_none());
+}
+
+#[test]
+fn files_from_data_can_be_set_and_taken() {
+    let mut cfg = ServerConfig::from_flag_string_and_args(
+        ServerRole::Receiver,
+        String::new(),
+        vec![OsString::from("/p")],
+    )
+    .expect("ok");
+
+    let wire_data = b"file1.txt\0file2.txt\0\0".to_vec();
+    cfg.connection.files_from_data = Some(wire_data.clone());
+
+    assert!(cfg.connection.files_from_data.is_some());
+
+    let taken = cfg.connection.files_from_data.take().unwrap();
+    assert_eq!(taken, wire_data);
+    assert!(cfg.connection.files_from_data.is_none());
+}
+
+#[test]
+fn files_from_data_roundtrip_with_protocol_wire_format() {
+    use std::io::Cursor;
+
+    let mut cfg = ServerConfig::from_flag_string_and_args(
+        ServerRole::Receiver,
+        String::new(),
+        vec![OsString::from("/p")],
+    )
+    .expect("ok");
+
+    // Simulate pre-read files-from data in wire format.
+    let mut wire_data = Vec::new();
+    let input = b"alpha.txt\nbeta.txt\ngamma/delta.txt\n";
+    let mut reader = Cursor::new(input);
+    protocol::forward_files_from(&mut reader, &mut wire_data, false).unwrap();
+
+    cfg.connection.files_from_data = Some(wire_data.clone());
+
+    // Verify the data can be read back using the protocol reader.
+    let data = cfg.connection.files_from_data.take().unwrap();
+    let mut wire_reader = Cursor::new(&data);
+    let filenames = protocol::read_files_from_stream(&mut wire_reader).unwrap();
+    assert_eq!(filenames, vec!["alpha.txt", "beta.txt", "gamma/delta.txt"]);
+}
