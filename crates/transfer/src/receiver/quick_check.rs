@@ -14,6 +14,9 @@ use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 use crate::delta_apply::ChecksumVerifier;
 
 use metadata::{MetadataOptions, apply_metadata_from_file_entry};
+use protocol::acl::AclCache;
+
+use super::apply_acls_from_receiver_cache;
 
 /// Returns true if this file entry is a hardlink follower that should be
 /// created as a hard link rather than transferred via delta.
@@ -124,6 +127,7 @@ pub(super) fn dest_mtime_newer(dest_meta: &fs::Metadata, source_entry: &FileEntr
 /// - `generator.c:983` - match_level 3 with `COMPARE_DEST` returns -2 (skip)
 /// - `generator.c:991` - match_level 3 with `LINK_DEST` calls `hard_link_one()`
 /// - `generator.c:1021` - match_level >= 2 with `COPY_DEST` copies locally
+#[allow(clippy::too_many_arguments)]
 pub(super) fn try_reference_dest(
     entry: &FileEntry,
     dest_dir: &Path,
@@ -133,6 +137,7 @@ pub(super) fn try_reference_dest(
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
+    acl_cache: Option<&AclCache>,
 ) -> bool {
     if reference_directories.is_empty() {
         return false;
@@ -172,6 +177,14 @@ pub(super) fn try_reference_dest(
                 if fs::hard_link(&ref_path, &dest_path).is_ok() {
                     if let Err(e) = apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
                     {
+                        metadata_errors.push((dest_path.clone(), e.to_string()));
+                    }
+                    if let Err(e) = apply_acls_from_receiver_cache(
+                        &dest_path,
+                        entry,
+                        acl_cache,
+                        !entry.is_symlink(),
+                    ) {
                         metadata_errors.push((dest_path, e.to_string()));
                     }
                     return true;
@@ -185,6 +198,14 @@ pub(super) fn try_reference_dest(
                 if fs::copy(&ref_path, &dest_path).is_ok() {
                     if let Err(e) = apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
                     {
+                        metadata_errors.push((dest_path.clone(), e.to_string()));
+                    }
+                    if let Err(e) = apply_acls_from_receiver_cache(
+                        &dest_path,
+                        entry,
+                        acl_cache,
+                        !entry.is_symlink(),
+                    ) {
                         metadata_errors.push((dest_path, e.to_string()));
                     }
                     return true;

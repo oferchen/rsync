@@ -23,12 +23,14 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, IoSlice, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crate::pipeline::spsc;
 
 use engine::compute_backup_path;
 use metadata::MetadataOptions;
+use protocol::acl::AclCache;
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::pipeline::messages::{BeginMessage, CommitResult, ComputedChecksum, FileMessage};
@@ -222,6 +224,9 @@ pub struct DiskCommitConfig {
     /// Backup configuration. When `Some`, existing files are renamed to a
     /// backup path before being overwritten.
     pub backup: Option<BackupConfig>,
+    /// ACL cache from flist reception, shared via `Arc` for thread safety.
+    /// When `Some`, the disk thread applies cached ACLs after metadata.
+    pub acl_cache: Option<Arc<AclCache>>,
 }
 
 impl Default for DiskCommitConfig {
@@ -231,6 +236,7 @@ impl Default for DiskCommitConfig {
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
             metadata_opts: None,
             backup: None,
+            acl_cache: None,
         }
     }
 }
@@ -401,37 +407,13 @@ fn process_file(
                 let metadata_error = if begin.is_device_target {
                     None
                 } else {
-                    let meta_err = match (&config.metadata_opts, &begin.file_entry) {
-                        (Some(opts), Some(entry)) => {
-                            match metadata::apply_metadata_from_file_entry(
-                                &begin.file_path,
-                                entry,
-                                opts,
-                            ) {
-                                Ok(()) => None,
-                                Err(e) => Some((begin.file_path.clone(), e.to_string())),
-                            }
-                        }
-                        _ => None,
-                    };
-
-                    // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
-                    if meta_err.is_none() {
-                        if let Some(ref xattr_list) = begin.xattr_list {
-                            match metadata::apply_xattrs_from_list(
-                                &begin.file_path,
-                                xattr_list,
-                                true,
-                            ) {
-                                Ok(()) => None,
-                                Err(e) => Some((begin.file_path.clone(), e.to_string())),
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        meta_err
-                    }
+                    apply_metadata_acls_and_xattrs(
+                        &begin.file_path,
+                        begin.file_entry.as_ref(),
+                        config.metadata_opts.as_ref(),
+                        config.acl_cache.as_deref(),
+                        begin.xattr_list.as_ref(),
+                    )
                 };
 
                 // Finalize per-file checksum and return to network thread.
@@ -536,29 +518,13 @@ fn process_whole_file(
     cleanup_guard.keep();
 
     // Apply metadata — mirrors upstream finish_transfer() → set_file_attrs().
-    let metadata_error = match (&config.metadata_opts, &begin.file_entry) {
-        (Some(opts), Some(entry)) => {
-            match metadata::apply_metadata_from_file_entry(&begin.file_path, entry, opts) {
-                Ok(()) => None,
-                Err(e) => Some((begin.file_path.clone(), e.to_string())),
-            }
-        }
-        _ => None,
-    };
-
-    // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
-    let metadata_error = if metadata_error.is_none() {
-        if let Some(ref xattr_list) = begin.xattr_list {
-            match metadata::apply_xattrs_from_list(&begin.file_path, xattr_list, true) {
-                Ok(()) => None,
-                Err(e) => Some((begin.file_path.clone(), e.to_string())),
-            }
-        } else {
-            None
-        }
-    } else {
-        metadata_error
-    };
+    let metadata_error = apply_metadata_acls_and_xattrs(
+        &begin.file_path,
+        begin.file_entry.as_ref(),
+        config.metadata_opts.as_ref(),
+        config.acl_cache.as_deref(),
+        begin.xattr_list.as_ref(),
+    );
 
     let computed_checksum = checksum_verifier.map(|verifier| {
         let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -613,6 +579,57 @@ fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard
         let (file, guard) = open_tmpfile(&begin.file_path, begin.temp_dir.as_deref())?;
         Ok((file, guard, true))
     }
+}
+
+/// Applies file metadata, ACLs, and xattrs from the receiver's caches.
+///
+/// Combines `apply_metadata_from_file_entry` with `apply_acls_from_cache` and
+/// `apply_xattrs_from_list` into a single call that mirrors upstream
+/// `set_file_attrs()` in receiver.c. ACLs are applied after permissions so that
+/// any ACL mask is set on the final mode. Xattrs are applied last.
+///
+/// Returns `Some((path, error_message))` on failure, `None` on success or when
+/// no metadata/entry is available.
+fn apply_metadata_acls_and_xattrs(
+    file_path: &Path,
+    file_entry: Option<&protocol::flist::FileEntry>,
+    metadata_opts: Option<&MetadataOptions>,
+    acl_cache: Option<&AclCache>,
+    xattr_list: Option<&protocol::xattr::XattrList>,
+) -> Option<(PathBuf, String)> {
+    let (opts, entry) = match (metadata_opts, file_entry) {
+        (Some(o), Some(e)) => (o, e),
+        _ => return None,
+    };
+
+    if let Err(e) = metadata::apply_metadata_from_file_entry(file_path, entry, opts) {
+        return Some((file_path.to_path_buf(), e.to_string()));
+    }
+
+    // upstream: set_file_attrs() calls set_acl() after perms/times/ownership
+    if let Some(cache) = acl_cache {
+        if let Some(access_ndx) = entry.acl_ndx() {
+            let follow = !entry.is_symlink();
+            if let Err(e) = metadata::apply_acls_from_cache(
+                file_path,
+                cache,
+                access_ndx,
+                entry.def_acl_ndx(),
+                follow,
+            ) {
+                return Some((file_path.to_path_buf(), e.to_string()));
+            }
+        }
+    }
+
+    // upstream: xattrs.c:set_xattr() - apply xattrs after metadata and ACLs
+    if let Some(xattr_list) = xattr_list {
+        if let Err(e) = metadata::apply_xattrs_from_list(file_path, xattr_list, true) {
+            return Some((file_path.to_path_buf(), e.to_string()));
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
