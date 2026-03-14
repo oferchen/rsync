@@ -198,6 +198,7 @@ include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_pull.rs");
 // Daemon files-from push test
 include!("tests/chunks/daemon_files_from_push.rs");
 include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_push.rs");
+include!("tests/chunks/daemon_compare_dest_push.rs");
 // Daemon mode negotiation tests
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
