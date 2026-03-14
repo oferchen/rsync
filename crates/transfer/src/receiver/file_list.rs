@@ -9,6 +9,8 @@ use std::io::{self, Read};
 use logging::{debug_log, info_log};
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
+use std::collections::HashMap;
+
 use protocol::flist::{
     FileEntry, FileListReader, IncrementalFileList, IncrementalFileListBuilder, sort_file_list,
 };
@@ -71,6 +73,7 @@ impl ReceiverContext {
         // Upstream: flist_sort_and_clean() is called after recv_id_list()
         // See flist.c:2736 - both sides must sort to ensure matching NDX indices.
         sort_file_list(&mut self.file_list, self.config.qsort);
+        match_hard_links(&mut self.file_list);
 
         // Cache the reader so receive_extra_file_lists() inherits the compression
         // state (prev_name, prev_mode, etc.), matching upstream's static variables.
@@ -162,6 +165,7 @@ impl ReceiverContext {
             // Use unstable sort (true) - sub-list entries have unique paths within
             // a directory, so stability is irrelevant and unstable is ~15% faster.
             sort_file_list(&mut self.file_list[flat_start..], true);
+            match_hard_links(&mut self.file_list[flat_start..]);
 
             // Record ndx_segments entry for this sub-list (already computed above).
             self.ndx_segments.push((flat_start, seg_ndx_start));
@@ -578,6 +582,7 @@ impl<R: Read> IncrementalFileListReceiver<R> {
 
         // Sort to match sender's order for NDX indexing
         sort_file_list(&mut entries, self.use_qsort);
+        match_hard_links(&mut entries);
 
         Ok(entries)
     }
@@ -597,6 +602,41 @@ impl<R: Read> Iterator for IncrementalFileListReceiver<R> {
             Ok(Some(entry)) => Some(Ok(entry)),
             Ok(None) => None,
             Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+/// Reassigns hardlink leader/follower flags based on sorted order.
+///
+/// The sender sets `XMIT_HLINK_FIRST` during `send_file_entry()` based on readdir
+/// (scan) order - the first file encountered with a given (dev, ino) pair gets the
+/// flag. After sorting, the first file in sorted order may differ from the readdir
+/// leader, especially when `--relative` introduces deep path components that change
+/// the sort order.
+///
+/// This function mirrors upstream `hlink.c:match_hard_links()`: it groups entries by
+/// `hardlink_idx` and assigns `XMIT_HLINK_FIRST` to the first entry in each group
+/// in sorted (positional) order, clearing it on all others.
+///
+/// Must be called after `sort_file_list()` and before any code that inspects
+/// `hlink_first()` to decide leader vs follower (transfer, quick-check, hardlink
+/// creation).
+fn match_hard_links(entries: &mut [FileEntry]) {
+    // Collect the first sorted position for each hardlink group.
+    // Key: hardlink_idx (gnum), Value: index into entries slice.
+    let mut first_in_group: HashMap<u32, usize> = HashMap::new();
+
+    for (i, entry) in entries.iter().enumerate() {
+        if let Some(idx) = entry.hardlink_idx() {
+            first_in_group.entry(idx).or_insert(i);
+        }
+    }
+
+    // Reassign flags: first in sorted order gets HLINK_FIRST, others lose it.
+    for (i, entry) in entries.iter_mut().enumerate() {
+        if let Some(idx) = entry.hardlink_idx() {
+            let is_leader = first_in_group.get(&idx) == Some(&i);
+            entry.flags_mut().set_hlink_first(is_leader);
         }
     }
 }

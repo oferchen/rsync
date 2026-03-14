@@ -682,6 +682,14 @@ impl FileEntry {
         self.flags = flags;
     }
 
+    /// Returns a mutable reference to the wire format flags.
+    ///
+    /// Used by `match_hard_links()` to reassign leader/follower status in-place
+    /// after sorting without copying the entire flags struct.
+    pub fn flags_mut(&mut self) -> &mut super::flags::FileFlags {
+        &mut self.flags
+    }
+
     /// Returns true if this entry is a directory.
     #[inline]
     #[must_use]
