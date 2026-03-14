@@ -1,11 +1,12 @@
 //! Universal no-op ACL stub for platforms without ACL support.
 //!
-//! This module provides a no-op `sync_acls` for platforms where ACL
-//! preservation is not available — either because the `acl` feature
-//! is disabled, or because the platform has no ACL implementation
-//! (e.g., Windows, Android).
+//! This module provides no-op `sync_acls` and `apply_acls_from_cache` for
+//! platforms where ACL preservation is not available - either because the
+//! `acl` feature is disabled, or because the platform has no ACL
+//! implementation (e.g., Windows, Android).
 
 use crate::MetadataError;
+use protocol::acl::AclCache;
 use std::path::Path;
 use std::sync::Once;
 
@@ -30,6 +31,22 @@ fn warn_acl_unsupported() {
 pub fn sync_acls(
     _source: &Path,
     _destination: &Path,
+    _follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    warn_acl_unsupported();
+    Ok(())
+}
+
+/// Applies parsed ACLs from an [`AclCache`] to a destination file.
+///
+/// On platforms without ACL support, emits a one-time warning and
+/// returns `Ok(())`.
+#[allow(clippy::module_name_repetitions)]
+pub fn apply_acls_from_cache(
+    _destination: &Path,
+    _cache: &AclCache,
+    _access_ndx: u32,
+    _default_ndx: Option<u32>,
     _follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
     warn_acl_unsupported();

@@ -1047,3 +1047,130 @@ mod concurrent_tests {
         }
     }
 }
+
+#[cfg(all(
+    feature = "acl",
+    any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+))]
+mod apply_acls_from_cache_tests {
+    use super::*;
+    use metadata::apply_acls_from_cache;
+    use protocol::acl::{AclCache, RsyncAcl};
+
+    #[test]
+    fn apply_from_cache_basic_file() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("test.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let mut cache = AclCache::new();
+        let acl = RsyncAcl::from_mode(0o644);
+        let ndx = cache.store_access(acl);
+
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_from_cache_skips_symlinks() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("test.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let mut cache = AclCache::new();
+        let acl = RsyncAcl::from_mode(0o644);
+        let ndx = cache.store_access(acl);
+
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_from_cache_empty_acl() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("test.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let mut cache = AclCache::new();
+        let acl = RsyncAcl::new();
+        let ndx = cache.store_access(acl);
+
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_from_cache_missing_index() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("test.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let cache = AclCache::new();
+        let result = apply_acls_from_cache(&file, &cache, 42, None, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_from_cache_multiple_files_same_acl() {
+        let temp = tempdir().expect("tempdir");
+
+        let mut cache = AclCache::new();
+        let acl = RsyncAcl::from_mode(0o755);
+        let ndx = cache.store_access(acl);
+
+        for i in 0..3 {
+            let file = temp.path().join(format!("file_{i}.txt"));
+            fs::write(&file, b"data").expect("write file");
+            let result = apply_acls_from_cache(&file, &cache, ndx, None, true);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn apply_from_cache_directory_with_default_acl() {
+        let temp = tempdir().expect("tempdir");
+        let dir = temp.path().join("subdir");
+        fs::create_dir(&dir).expect("create dir");
+
+        let mut cache = AclCache::new();
+        let access = RsyncAcl::from_mode(0o755);
+        let default = RsyncAcl::from_mode(0o755);
+        let access_ndx = cache.store_access(access);
+        let default_ndx = cache.store_default(default);
+
+        let result = apply_acls_from_cache(&dir, &cache, access_ndx, Some(default_ndx), true);
+        assert!(result.is_ok());
+    }
+}
+
+#[cfg(not(all(
+    feature = "acl",
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+)))]
+mod noop_apply_acls_tests {
+    use super::*;
+    use metadata::apply_acls_from_cache;
+    use protocol::acl::{AclCache, RsyncAcl};
+
+    #[test]
+    fn noop_apply_from_cache_returns_ok() {
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("test.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let mut cache = AclCache::new();
+        let acl = RsyncAcl::from_mode(0o644);
+        let ndx = cache.store_access(acl);
+
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true);
+        assert!(result.is_ok());
+    }
+}
