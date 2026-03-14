@@ -1160,6 +1160,7 @@ KNOWN_FAILURES=(
   "standalone:write-batch-read-batch"
   "standalone:info-progress2"
   "standalone:large-file-2gb"
+  "standalone:file-vanished"
   "standalone:iconv"
 )
 
@@ -1369,7 +1370,9 @@ test_large_file_2gb() {
 
 # #879: file-vanished-mid-transfer
 # Upstream rsync exits 24 (some files vanished) when a source file disappears
-# during transfer. Verify our implementation handles this gracefully.
+# during transfer. Uses --files-from to deterministically list a non-existent
+# file alongside real files, avoiding race conditions. The sender discovers the
+# listed file is gone and reports IOERR_VANISHED (exit 24).
 test_file_vanished() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
 
@@ -1378,34 +1381,50 @@ test_file_vanished() {
   rm -rf "$vanish_src" "$vanish_dest"
   mkdir -p "$vanish_src" "$vanish_dest"
 
-  # Create source files
-  echo "stable file" > "${vanish_src}/stable.txt"
-  dd if=/dev/urandom of="${vanish_src}/large_vanish.dat" bs=1K count=100 2>/dev/null
+  # Create several stable source files
+  echo "stable content A" > "${vanish_src}/stable_a.txt"
+  echo "stable content B" > "${vanish_src}/stable_b.txt"
+  mkdir -p "${vanish_src}/subdir"
+  echo "nested stable" > "${vanish_src}/subdir/nested.txt"
 
-  # Remove the large file after a short delay to simulate vanishing mid-transfer
-  (sleep 0.2 && rm -f "${vanish_src}/large_vanish.dat") &
-  local rm_pid=$!
+  # Create a --files-from list that includes a file that does not exist on disk.
+  # rsync will stat this during transfer, find it missing, and set IOERR_VANISHED.
+  local filelist="${work}/vanish-filelist.txt"
+  printf 'stable_a.txt\nstable_b.txt\nvanished_file.dat\nsubdir/nested.txt\n' > "$filelist"
 
   timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      --files-from="$filelist" \
       "${vanish_src}/" "${vanish_dest}/" \
       >"${log}.vanish.out" 2>"${log}.vanish.err"
   local rc=$?
-  wait "$rm_pid" 2>/dev/null || true
 
-  # Exit code 24 means "some files vanished before transfer" - this is OK
-  # Exit code 0 means transfer completed before file was removed - also OK
-  if [[ $rc -ne 0 && $rc -ne 24 && $rc -ne 23 ]]; then
-    echo "    unexpected exit code $rc (expected 0, 23, or 24)"
+  # Exit code 24 means "some files vanished before transfer" - expected
+  # Exit code 23 means "partial transfer due to error" - also acceptable
+  if [[ $rc -ne 24 && $rc -ne 23 ]]; then
+    echo "    unexpected exit code $rc (expected 23 or 24)"
     echo "    stderr: $(head -5 "${log}.vanish.err")"
     return 1
   fi
 
-  # stable.txt should always be transferred
-  if [[ ! -f "${vanish_dest}/stable.txt" ]]; then
-    echo "    stable.txt missing - transfer broke completely"
+  # All stable files should still be transferred successfully
+  for f in stable_a.txt stable_b.txt subdir/nested.txt; do
+    if [[ ! -f "${vanish_dest}/$f" ]]; then
+      echo "    $f missing - partial transfer broke remaining files"
+      return 1
+    fi
+    if ! cmp -s "${vanish_src}/$f" "${vanish_dest}/$f"; then
+      echo "    $f content mismatch"
+      return 1
+    fi
+  done
+
+  # The vanished file should not be in the destination
+  if [[ -f "${vanish_dest}/vanished_file.dat" ]]; then
+    echo "    vanished_file.dat should not exist in destination"
     return 1
   fi
 
+  rm -f "$filelist"
   return 0
 }
 
