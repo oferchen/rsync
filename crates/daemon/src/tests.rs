@@ -197,6 +197,8 @@ include!("tests/chunks/daemon_fuzzy_level2_pulls_basis_from_sibling_directories.
 include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_pull.rs");
 // Daemon files-from push test
 include!("tests/chunks/daemon_files_from_push.rs");
+// Daemon files-from stdin pull test
+include!("tests/chunks/daemon_files_from_stdin_push.rs");
 include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_push.rs");
 include!("tests/chunks/daemon_safe_links_receive.rs");
 include!("tests/chunks/daemon_compare_dest_push.rs");
