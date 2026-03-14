@@ -128,6 +128,51 @@ pub fn writer_from_file(
     }
 }
 
+/// Creates a reader from a file path, respecting the io_uring policy.
+///
+/// This is the read-side counterpart to [`writer_from_file`]. Used by the
+/// sender/generator to read source files with io_uring when available.
+///
+/// The `policy` parameter controls io_uring usage:
+/// - `Auto`: use io_uring when available, fall back to standard buffered I/O
+/// - `Enabled`: require io_uring, return error if unavailable
+/// - `Disabled`: always use standard buffered I/O
+pub fn reader_from_path<P: AsRef<std::path::Path>>(
+    path: P,
+    policy: crate::IoUringPolicy,
+) -> io::Result<IoUringOrStdReader> {
+    let config = IoUringConfig::default();
+
+    match policy {
+        crate::IoUringPolicy::Auto => {
+            if is_io_uring_available() {
+                match IoUringReader::open(path.as_ref(), &config) {
+                    Ok(r) => return Ok(IoUringOrStdReader::IoUring(r)),
+                    Err(_) => { /* fall through to standard I/O */ }
+                }
+            }
+            Ok(IoUringOrStdReader::Std(crate::traits::StdFileReader::open(
+                path.as_ref(),
+            )?))
+        }
+        crate::IoUringPolicy::Enabled => {
+            if !is_io_uring_available() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "io_uring requested via --io-uring but not available on this system",
+                ));
+            }
+            Ok(IoUringOrStdReader::IoUring(IoUringReader::open(
+                path.as_ref(),
+                &config,
+            )?))
+        }
+        crate::IoUringPolicy::Disabled => Ok(IoUringOrStdReader::Std(
+            crate::traits::StdFileReader::open(path.as_ref())?,
+        )),
+    }
+}
+
 /// Writes data to a file using io_uring if available, falling back to standard I/O.
 ///
 /// This is a convenience function for one-off file writes.
