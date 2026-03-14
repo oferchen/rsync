@@ -24,6 +24,8 @@ concurrent-sessions = ["dep:dashmap"]
 xattr = ["core/xattr"]
 # Structured logging instrumentation for daemon diagnostics
 tracing = ["dep:tracing", "core/tracing"]
+# ACL (Access Control Lists) support on Unix systems
+acl = ["core/acl", "metadata/acl"]
 
 [dependencies]
 clap = { version = "4.5.49", features = ["std"] }
@@ -63,3 +65,4 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = "1.6"
+exacl = { workspace = true }
