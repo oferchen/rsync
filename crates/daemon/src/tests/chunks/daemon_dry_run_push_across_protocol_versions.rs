@@ -1,13 +1,13 @@
 // End-to-end test for `--dry-run` push over daemon protocol across versions.
 //
 // Verifies that a push transfer with `--dry-run` works correctly at protocol
-// versions 31 and 32. For each version, the test confirms that:
+// versions 28 through 32. For each version, the test confirms that:
 // - The transfer completes successfully.
 // - Files that would be transferred are reported in the summary.
 // - No files are actually written to the destination module.
 //
-// Protocol 31 and 32 differ in wire format details (varint encoding, checksum
-// negotiation) but dry-run semantics must be identical.
+// Protocols 28-32 differ in wire format details (fixed vs varint encoding,
+// checksum negotiation, compat flags) but dry-run semantics must be identical.
 //
 // Upstream reference:
 // - clientserver.c - daemon closes socket early during dry-run push
@@ -131,4 +131,34 @@ fn daemon_dry_run_push_protocol_31() {
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
     run_dry_run_push_at_protocol(ProtocolVersion::V31);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_dry_run_push_protocol_30() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
+
+    run_dry_run_push_at_protocol(ProtocolVersion::V30);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_dry_run_push_protocol_29() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
+
+    run_dry_run_push_at_protocol(ProtocolVersion::V29);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_dry_run_push_protocol_28() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
+
+    run_dry_run_push_at_protocol(ProtocolVersion::V28);
 }
