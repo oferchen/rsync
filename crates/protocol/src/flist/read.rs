@@ -3670,16 +3670,18 @@ mod tests {
             send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
 
             // Write xattr data second (upstream wire order)
+            // Wire format uses names without the "user." namespace prefix
+            // (prefix is stripped on send, restored by wire_to_local on receive)
             // ndx = 0 means literal follows
             write_varint(&mut data, 0).unwrap();
             // count = 1
             write_varint(&mut data, 1).unwrap();
-            // name_len = 10 (includes NUL)
-            write_varint(&mut data, 10).unwrap();
+            // name_len = 5 (includes NUL)
+            write_varint(&mut data, 5).unwrap();
             // datum_len = 5
             write_varint(&mut data, 5).unwrap();
-            // name bytes + NUL
-            data.extend_from_slice(b"user.test\0");
+            // name bytes + NUL (wire format: no "user." prefix)
+            data.extend_from_slice(b"test\0");
             // value
             data.extend_from_slice(b"hello");
 
@@ -3700,7 +3702,10 @@ mod tests {
             // Verify cached xattr
             let cached_xattr = reader.xattr_cache().get(0).unwrap();
             assert_eq!(cached_xattr.len(), 1);
+            #[cfg(target_os = "linux")]
             assert_eq!(cached_xattr.entries()[0].name(), b"user.test");
+            #[cfg(not(target_os = "linux"))]
+            assert_eq!(cached_xattr.entries()[0].name(), b"test");
             assert_eq!(cached_xattr.entries()[0].datum(), b"hello");
 
             assert_eq!(cursor.position() as usize, data.len());
@@ -3746,11 +3751,12 @@ mod tests {
             .unwrap();
 
             // Write xattr data (after ACLs, matching upstream order)
+            // Wire format: names without "user." namespace prefix
             write_varint(&mut data, 0).unwrap();
             write_varint(&mut data, 1).unwrap();
-            write_varint(&mut data, 11).unwrap(); // name_len with NUL
+            write_varint(&mut data, 6).unwrap(); // name_len with NUL
             write_varint(&mut data, 3).unwrap(); // datum_len
-            data.extend_from_slice(b"user.label\0"); // 10 chars + NUL = 11
+            data.extend_from_slice(b"label\0"); // 5 chars + NUL = 6
             data.extend_from_slice(b"foo");
 
             let mut cursor = Cursor::new(&data[..]);
@@ -3789,12 +3795,12 @@ mod tests {
             writer.write_entry(&mut data, &entry).unwrap();
 
             // No ACL data for symlinks (sender doesn't send it)
-            // Write xattr data directly
+            // Write xattr data directly (wire format: no "user." prefix)
             write_varint(&mut data, 0).unwrap();
             write_varint(&mut data, 1).unwrap();
-            write_varint(&mut data, 11).unwrap(); // name_len with NUL
+            write_varint(&mut data, 6).unwrap(); // name_len with NUL
             write_varint(&mut data, 4).unwrap(); // datum_len
-            data.extend_from_slice(b"user.label\0"); // 11 bytes
+            data.extend_from_slice(b"label\0"); // 5 chars + NUL = 6
             data.extend_from_slice(b"test");
 
             let mut cursor = Cursor::new(&data[..]);
