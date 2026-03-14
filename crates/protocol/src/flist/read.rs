@@ -1335,9 +1335,9 @@ impl FileListReader {
         // upstream: flist.c:1209-1212 - receive_xattr() is called after
         // receive_acl() and runs for ALL entries including hardlink followers.
         if self.preserve_xattrs {
-            let xattr_ndx = self
-                .xattr_cache
-                .receive_xattr(reader, self.am_root, self.xattr_level)?;
+            let xattr_ndx =
+                self.xattr_cache
+                    .receive_xattr(reader, self.am_root, self.xattr_level)?;
             entry.set_xattr_ndx(xattr_ndx);
         }
 
