@@ -532,7 +532,7 @@ mod error_handling {
     }
 
     #[test]
-    fn protocol_version_mismatch_error() {
+    fn protocol_version_adopted_from_header() {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("version_mismatch.batch");
 
@@ -546,7 +546,9 @@ mod error_handling {
         writer.write_header(BatchFlags::default()).unwrap();
         writer.finalize().unwrap();
 
-        // Try to read with protocol 31
+        // Read with protocol 31 - upstream rsync adopts whatever version
+        // the batch was written with, so this should succeed.
+        // upstream: batch.c - the reader uses the batch header's version.
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -556,13 +558,16 @@ mod error_handling {
         let mut reader = BatchReader::new(read_config).unwrap();
         let result = reader.read_header();
 
-        assert!(result.is_err(), "Protocol mismatch should cause an error");
-        let err = result.unwrap_err();
-        let err_msg = err.to_string();
         assert!(
-            err_msg.contains("mismatch") || err_msg.contains("Protocol"),
-            "Error message should mention protocol mismatch: {err_msg}"
+            result.is_ok(),
+            "Reader should adopt protocol version from header, not reject it"
         );
+        assert_eq!(
+            reader.config().protocol_version,
+            30,
+            "Reader should adopt protocol version 30 from the batch header"
+        );
+        assert_eq!(reader.header().unwrap().protocol_version, 30);
     }
 
     #[test]
