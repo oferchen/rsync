@@ -21,8 +21,8 @@
 //! - [`run`] mirrors upstream `rsyncd` by accepting argument iterators together
 //!   with writable handles for standard output and error streams.
 //! - [`DaemonConfig`] stores the caller-provided daemon arguments. A
-//!   [`DaemonConfigBuilder`] exposes an API that higher layers will expand once
-//!   full daemon support lands.
+//!   [`DaemonConfigBuilder`] provides a fluent API for assembling the
+//!   configuration with branding, arguments, and default-path control.
 //! - The runtime honours the branded `OC_RSYNC_CONFIG` and
 //!   `OC_RSYNC_SECRETS` environment variables and falls back to the legacy
 //!   `RSYNCD_CONFIG`/`RSYNCD_SECRETS` overrides when the branded values are
@@ -36,15 +36,14 @@
 //!   serves one or more connections. It recognises both the legacy ASCII
 //!   prologue and the binary negotiation used by modern clients, ensuring
 //!   graceful diagnostics regardless of the handshake style. Requests for
-//!   `#list` reuse the configured module table, while module transfers continue
-//!   to emit availability diagnostics until the full engine lands.
+//!   `#list` reuse the configured module table, and module transfers are
+//!   executed natively via the Rust transfer engine.
 //! - Authentication mirrors upstream rsync: the daemon issues a base64-encoded
 //!   challenge, verifies the client's response against the configured secrets
-//!   file using MD5, and only then reports that transfers are unavailable while
-//!   the data path is under construction.
-//! - A dedicated help renderer returns a deterministic description of the limited
-//!   daemon capabilities available today, keeping the help text aligned with actual
-//!   behaviour until the parity help renderer is implemented.
+//!   file, and supports SHA-512, SHA-256, SHA-1, MD5, and MD4 digest
+//!   algorithms negotiated via the greeting line.
+//! - A dedicated help renderer returns a description of supported daemon
+//!   capabilities, adjusting branding based on the invoked binary name.
 //!
 //! # Process Model
 //!
@@ -84,8 +83,8 @@
 //! # Errors
 //!
 //! Parsing failures surface as exit code `1` and emit the `clap`-generated
-//! diagnostic. Transfer attempts report that daemon functionality is currently
-//! unavailable, also using exit code `1`.
+//! diagnostic. Transfer errors use the exit code matching the upstream rsync
+//! error category (e.g., `10` for socket I/O, `2` for protocol errors).
 //!
 //! # Examples
 //!
