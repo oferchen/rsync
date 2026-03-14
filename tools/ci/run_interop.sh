@@ -1152,16 +1152,10 @@ run_ssh_interop_test() {
 # Remaining known failures:
 KNOWN_FAILURES=(
   # --- oc→upstream (client push) ---
-  # files-from: upstream daemon sends a pre-multiplex handshake byte that our
-  # client does not yet consume (clientserver.c:1152 write_byte(f_out, 0)).
-  "oc:files-from"
   # ACLs/xattrs: upstream daemon may reject these capabilities if built without
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # dry-run: upstream daemon closes connection during dry-run handshake,
-  # causing "Resource temporarily unavailable" (os error 11) on all protocols.
-  "oc:dry-run"
   # --- upstream→oc (daemon receive) ---
   # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
   "up:acls"
