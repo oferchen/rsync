@@ -3823,7 +3823,25 @@ mod tests {
         use super::*;
         use crate::varint::write_varint;
 
+        /// Returns the expected local name after wire-to-local translation.
+        ///
+        /// On Linux, wire names get `user.` prepended. On other platforms,
+        /// they pass through unchanged.
+        fn expected_local_name(wire_name: &[u8]) -> Vec<u8> {
+            #[cfg(target_os = "linux")]
+            {
+                let mut local = b"user.".to_vec();
+                local.extend_from_slice(wire_name);
+                local
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                wire_name.to_vec()
+            }
+        }
+
         /// Helper to append literal xattr data to a buffer in wire format.
+        /// Names must be in wire format (without `user.` prefix).
         /// Each entry is (name_bytes, value_bytes).
         fn write_literal_xattr(buf: &mut Vec<u8>, entries: &[(&[u8], &[u8])]) {
             // ndx = 0 means literal follows
@@ -3864,10 +3882,10 @@ mod tests {
             entry.set_mtime(1700000000, 0);
             writer.write_entry(&mut data, &entry).unwrap();
 
-            // Append literal xattr data (as sender would after send_file_entry)
+            // Append literal xattr data in wire format (without user. prefix)
             write_literal_xattr(
                 &mut data,
-                &[(b"user.mime_type", b"text/plain"), (b"user.tag", b"test")],
+                &[(b"mime_type", b"text/plain"), (b"tag", b"test")],
             );
 
             // Read it back with preserve_xattrs
@@ -3882,9 +3900,12 @@ mod tests {
             // Verify cached xattr list
             let cached = reader.xattr_cache().get(0).unwrap();
             assert_eq!(cached.len(), 2);
-            assert_eq!(cached.entries()[0].name(), b"user.mime_type");
+            assert_eq!(
+                cached.entries()[0].name(),
+                expected_local_name(b"mime_type")
+            );
             assert_eq!(cached.entries()[0].datum(), b"text/plain");
-            assert_eq!(cached.entries()[1].name(), b"user.tag");
+            assert_eq!(cached.entries()[1].name(), expected_local_name(b"tag"));
             assert_eq!(cached.entries()[1].datum(), b"test");
 
             // All bytes consumed
@@ -3926,7 +3947,7 @@ mod tests {
             let mut entry = FileEntry::new_file("file1.txt".into(), 100, 0o100644);
             entry.set_mtime(1700000000, 0);
             writer.write_entry(&mut data, &entry).unwrap();
-            write_literal_xattr(&mut data, &[(b"user.attr", b"value")]);
+            write_literal_xattr(&mut data, &[(b"attr", b"value")]);
 
             // Write second file entry + cache hit referencing index 0
             let mut entry = FileEntry::new_file("file2.txt".into(), 200, 0o100644);
@@ -3967,7 +3988,7 @@ mod tests {
 
             write_literal_xattr(
                 &mut data,
-                &[(b"security.selinux", b"system_u:object_r:default_t:s0")],
+                &[(b"selinux_context", b"system_u:object_r:default_t:s0")],
             );
 
             let mut cursor = Cursor::new(&data[..]);
@@ -3979,7 +4000,10 @@ mod tests {
 
             let cached = reader.xattr_cache().get(0).unwrap();
             assert_eq!(cached.len(), 1);
-            assert_eq!(cached.entries()[0].name(), b"security.selinux");
+            assert_eq!(
+                cached.entries()[0].name(),
+                expected_local_name(b"selinux_context")
+            );
 
             assert_eq!(cursor.position() as usize, data.len());
         }
@@ -3998,7 +4022,7 @@ mod tests {
             entry.set_mtime(1700000000, 0);
             writer.write_entry(&mut data, &entry).unwrap();
 
-            write_literal_xattr(&mut data, &[(b"user.symattr", b"symval")]);
+            write_literal_xattr(&mut data, &[(b"symattr", b"symval")]);
 
             let mut cursor = Cursor::new(&data[..]);
             let mut reader = FileListReader::new(protocol)
@@ -4037,7 +4061,7 @@ mod tests {
             send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
 
             // Then write xattr data (after ACL on wire)
-            write_literal_xattr(&mut data, &[(b"user.key", b"val")]);
+            write_literal_xattr(&mut data, &[(b"key", b"val")]);
 
             // Read it back with both enabled
             let mut cursor = Cursor::new(&data[..]);
@@ -4057,7 +4081,10 @@ mod tests {
             // Verify xattr cache
             let cached_xattr = reader.xattr_cache().get(0).unwrap();
             assert_eq!(cached_xattr.len(), 1);
-            assert_eq!(cached_xattr.entries()[0].name(), b"user.key");
+            assert_eq!(
+                cached_xattr.entries()[0].name(),
+                expected_local_name(b"key")
+            );
             assert_eq!(cached_xattr.entries()[0].datum(), b"val");
 
             // All bytes consumed
@@ -4106,13 +4133,13 @@ mod tests {
             let mut entry = FileEntry::new_file("a.txt".into(), 100, 0o100644);
             entry.set_mtime(1700000000, 0);
             writer.write_entry(&mut data, &entry).unwrap();
-            write_literal_xattr(&mut data, &[(b"user.color", b"red")]);
+            write_literal_xattr(&mut data, &[(b"color", b"red")]);
 
             // Second entry with a different xattr set
             let mut entry = FileEntry::new_file("b.txt".into(), 200, 0o100644);
             entry.set_mtime(1700000000, 0);
             writer.write_entry(&mut data, &entry).unwrap();
-            write_literal_xattr(&mut data, &[(b"user.color", b"blue")]);
+            write_literal_xattr(&mut data, &[(b"color", b"blue")]);
 
             // Third entry referencing the first set
             let mut entry = FileEntry::new_file("c.txt".into(), 300, 0o100644);
