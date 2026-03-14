@@ -166,6 +166,7 @@ pub struct ClientConfig {
     pub(super) from0: bool,
     pub(super) no_motd: bool,
     pub(super) daemon_params: Vec<String>,
+    pub(super) protocol_version: Option<protocol::ProtocolVersion>,
     #[cfg(all(unix, feature = "acl"))]
     pub(super) preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
@@ -288,6 +289,7 @@ impl Default for ClientConfig {
             from0: false,
             no_motd: false,
             daemon_params: Vec::new(),
+            protocol_version: None,
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls: false,
             #[cfg(all(unix, feature = "xattr"))]
