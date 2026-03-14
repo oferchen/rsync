@@ -63,6 +63,8 @@ oc_pid=""
 up_pid=""
 oc_pid_file_current=""
 up_pid_file_current=""
+oc_port_current=""
+up_port_current=""
 workdir=""
 hard_timeout=30
 
@@ -459,6 +461,10 @@ stop_oc_daemon() {
     wait "${oc_pid}" >/dev/null 2>&1 || true
     oc_pid=""
   fi
+  if [[ -n "${oc_port_current}" ]]; then
+    wait_for_port_free "${oc_port_current}" 10
+    oc_port_current=""
+  fi
   if [[ -n "${oc_pid_file_current:-}" ]]; then
     rm -f "${oc_pid_file_current}"
     oc_pid_file_current=""
@@ -480,6 +486,10 @@ stop_upstream_daemon() {
     wait "${up_pid}" >/dev/null 2>&1 || true
     up_pid=""
   fi
+  if [[ -n "${up_port_current}" ]]; then
+    wait_for_port_free "${up_port_current}" 10
+    up_port_current=""
+  fi
   if [[ -n "${up_pid_file_current:-}" ]]; then
     rm -f "${up_pid_file_current}"
     up_pid_file_current=""
@@ -496,7 +506,23 @@ cleanup() {
   exit "$exit_code"
 }
 
+# Allocate an ephemeral port from the kernel.
+# Binds port 0 on 127.0.0.1, records the assigned port, then releases it.
+# The kernel picks from the ephemeral range (32768-60999 on Linux) and avoids
+# recently used ports, eliminating TIME_WAIT collisions between test phases.
+allocate_ephemeral_port() {
+  python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', 0))
+print(s.getsockname()[1])
+s.close()
+"
+}
+
 # Wait for a TCP port to become reachable, with timeout.
+# Returns non-zero on failure - callers must handle this as a hard error.
 wait_for_port() {
   local port=$1
   local max_wait=${2:-10}
@@ -509,8 +535,26 @@ wait_for_port() {
     sleep 0.5
     elapsed=$((elapsed + 1))
   done
-  echo "Warning: port $port not ready after ${max_wait}s" >&2
+  echo "ERROR: port $port not ready after ${max_wait}s" >&2
   return 1
+}
+
+# Wait for a TCP port to stop accepting connections (released after daemon shutdown).
+# Prevents the next daemon from racing against TIME_WAIT on the old socket.
+wait_for_port_free() {
+  local port=$1
+  local max_wait=${2:-10}
+  local elapsed=0
+
+  while [ $elapsed -lt $max_wait ]; do
+    if ! (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.5
+    elapsed=$((elapsed + 1))
+  done
+  echo "Warning: port $port still in use after ${max_wait}s" >&2
+  return 0
 }
 
 # IMPORTANT: oc-rsync --daemon needs the port on CLI, otherwise it binds to 873 (privileged)
@@ -526,12 +570,17 @@ start_oc_daemon() {
   stop_oc_daemon
 
   oc_pid_file_current="$pid_file"
+  oc_port_current="$port"
 
   RUST_BACKTRACE=1 \
   OC_RSYNC_DAEMON_FALLBACK=0 \
     "$oc_binary" --daemon --no-detach --config "$config" --port "$port" --log-file "$log_file" </dev/null &
   oc_pid=$!
-  wait_for_port "$port" 10 || true
+  if ! wait_for_port "$port" 10; then
+    echo "FATAL: oc-rsync daemon failed to bind port $port" >&2
+    stop_oc_daemon
+    return 1
+  fi
 }
 
 start_upstream_daemon() {
@@ -549,7 +598,12 @@ start_upstream_daemon() {
   local port
   port=$(grep -oP 'port\s*=\s*\K\d+' "$config" 2>/dev/null || echo "")
   if [[ -n "$port" ]]; then
-    wait_for_port "$port" 10 || true
+    up_port_current="$port"
+    if ! wait_for_port "$port" 10; then
+      echo "FATAL: upstream rsync daemon failed to bind port $port" >&2
+      stop_upstream_daemon
+      return 1
+    fi
   else
     sleep 1
   fi
@@ -2241,7 +2295,6 @@ if [[ ${uid} -eq 0 ]]; then
   printf -v up_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
 fi
 
-port_base=2873
 failed=()
 
 for version in "${versions[@]}"; do
@@ -2252,11 +2305,12 @@ for version in "${versions[@]}"; do
     continue
   fi
 
-  echo "Running interoperability checks against upstream rsync ${version}"
-  if ! run_interop_case "$version" "$upstream_binary" "$port_base" $((port_base + 1)); then
+  oc_port=$(allocate_ephemeral_port)
+  up_port=$(allocate_ephemeral_port)
+  echo "Running interoperability checks against upstream rsync ${version} (ports: oc=${oc_port} up=${up_port})"
+  if ! run_interop_case "$version" "$upstream_binary" "$oc_port" "$up_port"; then
     failed+=("$version")
   fi
-  port_base=$((port_base + 2))
 done
 
 # =====================================================================
@@ -2276,26 +2330,28 @@ for version in "${versions[@]}"; do
     continue
   fi
 
+  oc_port=$(allocate_ephemeral_port)
+  up_port=$(allocate_ephemeral_port)
   echo ""
-  echo "=== Comprehensive: upstream ${version} (native protocol) ==="
+  echo "=== Comprehensive: upstream ${version} (native protocol) (ports: oc=${oc_port} up=${up_port}) ==="
   if ! run_comprehensive_interop_case "$version" "$upstream_binary" \
-      "$port_base" $((port_base + 1)); then
+      "$oc_port" "$up_port"; then
     failed+=("${version}-comprehensive")
   fi
-  port_base=$((port_base + 2))
 done
 
 # Protocol version forcing tests: all 5 protocols via upstream 3.4.1
 newest_binary="${upstream_install_root}/3.4.1/bin/rsync"
 if [[ -x "$newest_binary" ]]; then
   for proto in 28 29 30 31 32; do
+    oc_port=$(allocate_ephemeral_port)
+    up_port=$(allocate_ephemeral_port)
     echo ""
-    echo "=== Protocol ${proto} (forced via --protocol=${proto}) ==="
+    echo "=== Protocol ${proto} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
     if ! run_comprehensive_interop_case "3.4.1" "$newest_binary" \
-        "$port_base" $((port_base + 1)) "--protocol=${proto}"; then
+        "$oc_port" "$up_port" "--protocol=${proto}"; then
       failed+=("proto${proto}")
     fi
-    port_base=$((port_base + 2))
   done
 else
   echo "Skipping protocol forcing tests (3.4.1 binary unavailable)"
@@ -2321,11 +2377,12 @@ if [[ ! -x "$standalone_binary" ]]; then
 fi
 
 if [[ -x "$standalone_binary" ]]; then
+  oc_port=$(allocate_ephemeral_port)
+  up_port=$(allocate_ephemeral_port)
   if ! run_standalone_interop_tests "$standalone_binary" \
-      "$port_base" $((port_base + 1)); then
+      "$oc_port" "$up_port"; then
     failed+=("standalone")
   fi
-  port_base=$((port_base + 2))
 else
   echo "Skipping standalone tests (no upstream binary available)"
 fi
