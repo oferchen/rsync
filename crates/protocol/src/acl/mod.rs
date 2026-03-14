@@ -31,10 +31,14 @@
 //! - `acls.c` lines 670-800: `recv_acl_access`, `recv_ida_entries`, `recv_rsync_acl`
 
 mod constants;
+mod definition;
 mod entry;
 mod wire;
 
 pub use constants::*;
+pub use definition::{
+    AclDefinition, AclEntry, AclPerms, AclTag, read_acl_definition, write_acl_definition,
+};
 pub use entry::{AclCache, AclTagType, IdAccess, IdaEntries, RsyncAcl, get_perms};
 pub use wire::{
     AclType, RecvAclResult, receive_acl_cached, recv_acl, recv_ida_entries, recv_rsync_acl,
