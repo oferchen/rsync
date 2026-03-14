@@ -4,7 +4,7 @@
 //!
 //! The [`DaemonError`] type centralises exit-code handling and formatted
 //! diagnostics for the daemon entry points. Keeping the implementation in a
-//! dedicated module allows the sprawling runtime logic in `lib.rs` to focus on
+//! dedicated module allows the runtime logic in `daemon.rs` to focus on
 //! protocol and configuration handling while still constructing consistent
 //! messages that honour workspace branding conventions.
 //!
