@@ -251,18 +251,24 @@ pub(crate) fn plan_directory_entries<'a>(
                                     metadata_override = None;
                                 }
                             }
-                            Err(error) => {
-                                return Err(error);
+                            Err(_) => {
+                                // upstream: flist.c:1277-1282 - dangling symlink
+                                // whose target was to be dereferenced by
+                                // --copy-unsafe-links; log and skip.
+                                eprintln!("symlink has no referent: {}", entry.path.display());
+                                context.record_io_error();
+                                keep_name = false;
+                                action = EntryAction::SkipNonRegular;
                             }
                         }
                     }
                 }
-                Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "read symbolic link",
-                        entry.path.clone(),
-                        error,
-                    ));
+                Err(_) => {
+                    // Cannot read symlink target - skip with I/O error.
+                    eprintln!("symlink has no referent: {}", entry.path.display());
+                    context.record_io_error();
+                    keep_name = false;
+                    action = EntryAction::SkipNonRegular;
                 }
             }
         }
@@ -446,61 +452,73 @@ fn plan_directory_entries_with_prefetch<'a>(
                     Ok(target) => {
                         let safety_rel = context.strip_safety_prefix(relative_path.as_path());
                         if !symlink_target_is_safe(target, safety_rel) {
-                            // Use prefetched metadata or re-fetch
+                            // Use prefetched metadata or re-fetch; dangling
+                            // symlinks yield None and are skipped below.
+                            let fetched_meta;
                             let target_metadata =
                                 if let Some(ref meta_result) = prefetch.symlink_target_metadata {
-                                    meta_result.as_ref().map_err(|e| {
-                                        LocalCopyError::io(
-                                            "read symlink target metadata",
-                                            entry.path.clone(),
-                                            std::io::Error::other(e.to_string()),
-                                        )
-                                    })?
+                                    meta_result.as_ref().ok()
                                 } else {
-                                    &follow_symlink_metadata(entry.path.as_path())?
+                                    match follow_symlink_metadata(entry.path.as_path()) {
+                                        Ok(m) => {
+                                            fetched_meta = m;
+                                            Some(&fetched_meta)
+                                        }
+                                        Err(_) => None,
+                                    }
                                 };
 
-                            let target_type = target_metadata.file_type();
-                            if target_type.is_dir() {
-                                action = EntryAction::CopyDirectory;
-                                metadata_override = Some(target_metadata.clone());
-                            } else if target_type.is_file() {
-                                action = EntryAction::CopyFile;
-                                metadata_override = Some(target_metadata.clone());
-                            } else if is_fifo(target_type) {
-                                if context.specials_enabled() {
-                                    action = EntryAction::CopyFifo;
+                            if let Some(target_metadata) = target_metadata {
+                                let target_type = target_metadata.file_type();
+                                if target_type.is_dir() {
+                                    action = EntryAction::CopyDirectory;
                                     metadata_override = Some(target_metadata.clone());
-                                } else {
-                                    keep_name = false;
-                                    action = EntryAction::SkipNonRegular;
-                                    metadata_override = None;
-                                }
-                            } else if is_device(target_type) {
-                                if context.copy_devices_as_files_enabled() {
-                                    action = EntryAction::CopyDeviceAsFile;
+                                } else if target_type.is_file() {
+                                    action = EntryAction::CopyFile;
                                     metadata_override = Some(target_metadata.clone());
-                                } else if context.devices_enabled() {
-                                    action = EntryAction::CopyDevice;
-                                    metadata_override = Some(target_metadata.clone());
+                                } else if is_fifo(target_type) {
+                                    if context.specials_enabled() {
+                                        action = EntryAction::CopyFifo;
+                                        metadata_override = Some(target_metadata.clone());
+                                    } else {
+                                        keep_name = false;
+                                        action = EntryAction::SkipNonRegular;
+                                        metadata_override = None;
+                                    }
+                                } else if is_device(target_type) {
+                                    if context.copy_devices_as_files_enabled() {
+                                        action = EntryAction::CopyDeviceAsFile;
+                                        metadata_override = Some(target_metadata.clone());
+                                    } else if context.devices_enabled() {
+                                        action = EntryAction::CopyDevice;
+                                        metadata_override = Some(target_metadata.clone());
+                                    } else {
+                                        keep_name = false;
+                                        action = EntryAction::SkipNonRegular;
+                                        metadata_override = None;
+                                    }
                                 } else {
                                     keep_name = false;
                                     action = EntryAction::SkipNonRegular;
                                     metadata_override = None;
                                 }
                             } else {
+                                // upstream: flist.c:1277-1282 - dangling symlink
+                                // whose target was to be dereferenced by
+                                // --copy-unsafe-links; log and skip.
+                                eprintln!("symlink has no referent: {}", entry.path.display());
+                                context.record_io_error();
                                 keep_name = false;
                                 action = EntryAction::SkipNonRegular;
-                                metadata_override = None;
                             }
                         }
                     }
-                    Err(e) => {
-                        return Err(LocalCopyError::io(
-                            "read symbolic link",
-                            entry.path.clone(),
-                            std::io::Error::other(e.to_string()),
-                        ));
+                    Err(_) => {
+                        // Cannot read symlink target - skip with I/O error.
+                        eprintln!("symlink has no referent: {}", entry.path.display());
+                        context.record_io_error();
+                        keep_name = false;
+                        action = EntryAction::SkipNonRegular;
                     }
                 }
             }

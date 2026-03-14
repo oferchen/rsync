@@ -1160,7 +1160,6 @@ KNOWN_FAILURES=(
   "standalone:write-batch-read-batch"
   "standalone:info-progress2"
   "standalone:large-file-2gb"
-  "standalone:copy-unsafe-safe-links"
   "standalone:iconv"
 )
 
