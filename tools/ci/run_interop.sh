@@ -1151,32 +1151,19 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- oc→upstream (client push) ---
   # --- upstream→oc (daemon receive) ---
-  # ACLs/xattrs: our daemon does not implement ACL/xattr receive.
+  # ACLs/xattrs: our daemon does not yet apply ACL/xattr to destination files.
   "up:acls"
   "up:xattrs"
-  # hardlinks-relative: combined -H -R still fails - needs relative fix plus
-  # hardlink ordering adjustments.
+  # hardlinks-relative: combined -H -R needs hardlink ordering fix.
   "up:hardlinks-relative"
-  # protocol-31: upstream 3.0.9 does not support protocol 31, causing
-  # negotiation failure when our daemon offers it.
+  # protocol-31: upstream 3.0.9 does not support protocol 31.
   "up:protocol-31"
-  # --- standalone scenario known failures ---
-  # write-batch/read-batch: batch file support not yet implemented.
+  # --- standalone scenarios ---
   "standalone:write-batch-read-batch"
-  # info-progress2: --info=progress2 output not yet wired in our client/daemon.
   "standalone:info-progress2"
-  # large-file-2gb: large file (>2GB) transfer not yet validated end-to-end.
   "standalone:large-file-2gb"
-  # file-vanished: now handled — IOERR_VANISHED + exit code 24
-  # copy-unsafe-safe-links: --copy-unsafe-links + --safe-links interaction
-  # not yet implemented.
   "standalone:copy-unsafe-safe-links"
-  # pre-post-xfer-exec: validated via #881.
-  # read-only-module: validated via #882.
-  # wrong-password-auth: validated via #883.
-  # iconv: --iconv charset conversion not yet implemented.
   "standalone:iconv"
 )
 
