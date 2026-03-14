@@ -447,6 +447,15 @@ CONF
 stop_oc_daemon() {
   if [[ -n "${oc_pid}" ]]; then
     kill "${oc_pid}" >/dev/null 2>&1 || true
+    # Wait up to 5 seconds for graceful shutdown, then SIGKILL
+    local i=0
+    while kill -0 "${oc_pid}" 2>/dev/null && [ $i -lt 10 ]; do
+      sleep 0.5
+      i=$((i + 1))
+    done
+    if kill -0 "${oc_pid}" 2>/dev/null; then
+      kill -9 "${oc_pid}" >/dev/null 2>&1 || true
+    fi
     wait "${oc_pid}" >/dev/null 2>&1 || true
     oc_pid=""
   fi
@@ -459,6 +468,15 @@ stop_oc_daemon() {
 stop_upstream_daemon() {
   if [[ -n "${up_pid}" ]]; then
     kill "${up_pid}" >/dev/null 2>&1 || true
+    # Wait up to 5 seconds for graceful shutdown, then SIGKILL
+    local i=0
+    while kill -0 "${up_pid}" 2>/dev/null && [ $i -lt 10 ]; do
+      sleep 0.5
+      i=$((i + 1))
+    done
+    if kill -0 "${up_pid}" 2>/dev/null; then
+      kill -9 "${up_pid}" >/dev/null 2>&1 || true
+    fi
     wait "${up_pid}" >/dev/null 2>&1 || true
     up_pid=""
   fi
