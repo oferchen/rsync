@@ -333,3 +333,5 @@ include!("tests/chunks/runtime_options_no_detach_disables_detach.rs");
 include!("tests/chunks/daemon_safe_links_copy_links_push.rs");
 // Daemon Unicode emoji filename roundtrip test
 include!("tests/chunks/daemon_unicode_emoji_filenames.rs");
+// Daemon xattr preservation push test
+include!("tests/chunks/daemon_xattr_push.rs");
