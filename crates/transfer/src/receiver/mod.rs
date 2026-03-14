@@ -289,6 +289,28 @@ impl ReceiverContext {
         self.gid_list.match_id(remote_gid)
     }
 
+    /// Resolves the xattr list for a file entry from the cached `FileListReader`.
+    ///
+    /// Returns `None` if xattrs are not being preserved, if the file entry has no
+    /// xattr index, or if the cache lookup fails. The returned `XattrList` is
+    /// cloned from the cache for use by the disk commit thread.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `xattrs.c:set_xattr()` which looks up `F_XATTR(file)` in the
+    /// global xattr list cache `rsync_xal_l`.
+    fn resolve_xattr_list(
+        &self,
+        entry: &protocol::flist::FileEntry,
+    ) -> Option<protocol::xattr::XattrList> {
+        if !self.config.flags.xattrs {
+            return None;
+        }
+        let ndx = entry.xattr_ndx()?;
+        let reader = self.flist_reader_cache.as_ref()?;
+        reader.xattr_cache().get(ndx as usize).cloned()
+    }
+
     /// Determines if filter list should be read from sender.
     ///
     /// For a daemon receiver, the filter list is only read when:

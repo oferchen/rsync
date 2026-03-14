@@ -401,7 +401,7 @@ fn process_file(
                 let metadata_error = if begin.is_device_target {
                     None
                 } else {
-                    match (&config.metadata_opts, &begin.file_entry) {
+                    let meta_err = match (&config.metadata_opts, &begin.file_entry) {
                         (Some(opts), Some(entry)) => {
                             match metadata::apply_metadata_from_file_entry(
                                 &begin.file_path,
@@ -413,6 +413,24 @@ fn process_file(
                             }
                         }
                         _ => None,
+                    };
+
+                    // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
+                    if meta_err.is_none() {
+                        if let Some(ref xattr_list) = begin.xattr_list {
+                            match metadata::apply_xattrs_from_list(
+                                &begin.file_path,
+                                xattr_list,
+                                true,
+                            ) {
+                                Ok(()) => None,
+                                Err(e) => Some((begin.file_path.clone(), e.to_string())),
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        meta_err
                     }
                 };
 
@@ -528,6 +546,20 @@ fn process_whole_file(
         _ => None,
     };
 
+    // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
+    let metadata_error = if metadata_error.is_none() {
+        if let Some(ref xattr_list) = begin.xattr_list {
+            match metadata::apply_xattrs_from_list(&begin.file_path, xattr_list, true) {
+                Ok(()) => None,
+                Err(e) => Some((begin.file_path.clone(), e.to_string())),
+            }
+        } else {
+            None
+        }
+    } else {
+        metadata_error
+    };
+
     let computed_checksum = checksum_verifier.map(|verifier| {
         let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         let len = verifier.finalize_into(&mut buf);
@@ -620,6 +652,7 @@ mod tests {
                 is_device_target: false,
                 is_inplace: false,
                 temp_dir: None,
+                xattr_list: None,
             })))
             .unwrap();
 
@@ -657,6 +690,7 @@ mod tests {
                 is_device_target: false,
                 is_inplace: false,
                 temp_dir: None,
+                xattr_list: None,
             })))
             .unwrap();
 
@@ -698,6 +732,7 @@ mod tests {
                     is_device_target: false,
                     is_inplace: false,
                     temp_dir: None,
+                    xattr_list: None,
                 })))
                 .unwrap();
 
@@ -746,6 +781,7 @@ mod tests {
                 is_device_target: false,
                 is_inplace: false,
                 temp_dir: None,
+                xattr_list: None,
             })))
             .unwrap();
 
@@ -780,6 +816,7 @@ mod tests {
                 is_device_target: false,
                 is_inplace: false,
                 temp_dir: None,
+                xattr_list: None,
             })))
             .unwrap();
 
@@ -823,6 +860,7 @@ mod tests {
                     is_device_target: false,
                     is_inplace: false,
                     temp_dir: None,
+                    xattr_list: None,
                 }),
                 data: b"whole dat".to_vec(),
             })

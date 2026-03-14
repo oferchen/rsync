@@ -12,6 +12,7 @@ use logging::{debug_log, info_log};
 use metadata::{MetadataOptions, apply_metadata_from_file_entry};
 use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
+use protocol::xattr::XattrList;
 
 use super::{PARALLEL_STAT_THRESHOLD, ReceiverContext};
 
@@ -124,12 +125,13 @@ impl ReceiverContext {
 
         // Build owned data for parallel metadata application, skipping failed dirs.
         let metadata_opts_clone = metadata_opts.clone();
-        let entry_snapshots: Vec<(PathBuf, FileEntry)> = dir_entries
+        let entry_snapshots: Vec<(PathBuf, FileEntry, Option<XattrList>)> = dir_entries
             .into_iter()
             .filter(|(_, dir_path)| !failed_dir_paths.contains(dir_path))
             .map(|(idx, dir_path)| {
                 let entry = &self.file_list[idx];
-                (dir_path, entry.clone())
+                let xattr_list = self.resolve_xattr_list(entry);
+                (dir_path, entry.clone(), xattr_list)
             })
             .collect();
         let dir_creation_errors: Vec<(PathBuf, String)> = failed_dir_paths
@@ -146,10 +148,19 @@ impl ReceiverContext {
         let results = crate::parallel_io::map_blocking(
             entry_snapshots,
             PARALLEL_STAT_THRESHOLD,
-            move |(dir_path, entry)| {
-                apply_metadata_from_file_entry(&dir_path, &entry, &metadata_opts_clone)
-                    .err()
-                    .map(|e| (dir_path, e.to_string()))
+            move |(dir_path, entry, xattr_list)| {
+                if let Err(e) =
+                    apply_metadata_from_file_entry(&dir_path, &entry, &metadata_opts_clone)
+                {
+                    return Some((dir_path, e.to_string()));
+                }
+                // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
+                if let Some(ref xattr_list) = xattr_list {
+                    if let Err(e) = metadata::apply_xattrs_from_list(&dir_path, xattr_list, true) {
+                        return Some((dir_path, e.to_string()));
+                    }
+                }
+                None
             },
         );
 
@@ -727,6 +738,19 @@ impl ReceiverContext {
                     dir_path.display(),
                     e
                 );
+            }
+        } else if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
+            // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
+            if let Err(e) = metadata::apply_xattrs_from_list(&dir_path, xattr_list, true) {
+                if self.config.flags.verbose && self.config.connection.client_mode {
+                    info_log!(
+                        Misc,
+                        1,
+                        "warning: xattr error for {}: {}",
+                        dir_path.display(),
+                        e
+                    );
+                }
             }
         }
 
