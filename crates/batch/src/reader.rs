@@ -8,6 +8,10 @@ use crate::format::{BatchFlags, BatchHeader, BatchStats, FileEntry};
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 
+use protocol::CompatibilityFlags;
+use protocol::ProtocolVersion;
+use protocol::flist::FileListReader;
+
 /// Reader for batch mode operations.
 ///
 /// Reads and replays a previously recorded batch file, applying the
@@ -185,9 +189,13 @@ impl BatchReader {
         }
     }
 
-    /// Read a file entry from the batch file.
+    /// Read a file entry from the batch file using local encoding.
     ///
     /// Returns the next file list entry, or None if end of file list is reached.
+    ///
+    /// **Note:** This uses a local serialization format that is not compatible
+    /// with upstream rsync's batch files. For protocol-compatible batch files,
+    /// use [`read_protocol_flist`](Self::read_protocol_flist) instead.
     pub fn read_file_entry(&mut self) -> BatchResult<Option<FileEntry>> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(
@@ -215,6 +223,88 @@ impl BatchReader {
         } else {
             Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
+    }
+
+    /// Read the entire file list from the batch file using the protocol flist
+    /// decoder.
+    ///
+    /// This method decodes file list entries using the same wire format that
+    /// upstream rsync uses in batch files - a raw tee of the protocol stream.
+    /// The decoder is configured using the protocol version and compatibility
+    /// flags from the batch header, plus the stream flags (preserve_uid, etc.)
+    /// that were recorded when the batch was written.
+    ///
+    /// Returns all decoded file entries. After this call, the batch file reader
+    /// is positioned at the start of the delta operations section.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `batch.c` — batch file body is a raw protocol stream tee
+    /// - `flist.c:recv_file_entry()` — wire format decoded by `FileListReader`
+    pub fn read_protocol_flist(&mut self) -> BatchResult<Vec<protocol::flist::FileEntry>> {
+        if self.header.is_none() {
+            return Err(BatchError::Io(io::Error::other(
+                "Must read header before protocol flist",
+            )));
+        }
+
+        let header = self.header.as_ref().expect("header checked above");
+        let flags = header.stream_flags;
+
+        let protocol_version =
+            ProtocolVersion::try_from(header.protocol_version as u8).map_err(|_| {
+                BatchError::InvalidFormat(format!(
+                    "unsupported protocol version {} in batch header",
+                    header.protocol_version,
+                ))
+            })?;
+
+        // Build the flist reader, configuring preserve flags to match the
+        // options that were active when the batch was written.
+        let mut flist_reader = if let Some(cf) = header.compat_flags {
+            let compat = CompatibilityFlags::from_bits(cf as u32);
+            FileListReader::with_compat_flags(protocol_version, compat)
+        } else {
+            FileListReader::new(protocol_version)
+        };
+        flist_reader = flist_reader
+            .with_preserve_uid(flags.preserve_uid)
+            .with_preserve_gid(flags.preserve_gid)
+            .with_preserve_links(flags.preserve_links)
+            .with_preserve_devices(flags.preserve_devices)
+            .with_preserve_hard_links(flags.preserve_hard_links);
+
+        let reader = self
+            .batch_file
+            .as_mut()
+            .ok_or_else(|| BatchError::Io(io::Error::other("Batch file not open")))?;
+
+        let mut entries = Vec::new();
+        loop {
+            match flist_reader.read_entry(reader) {
+                Ok(Some(entry)) => entries.push(entry),
+                Ok(None) => break,
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => {
+                    return Err(BatchError::Io(io::Error::new(
+                        e.kind(),
+                        format!("Failed to read protocol flist entry: {e}"),
+                    )));
+                }
+            }
+        }
+
+        Ok(entries)
+    }
+
+    /// Returns a mutable reference to the underlying batch file reader.
+    ///
+    /// This is useful when callers need direct access to the stream, for
+    /// example to pass it to protocol-level decoders like `read_delta`.
+    ///
+    /// Returns `None` if the batch file has not been opened or has been closed.
+    pub fn inner_reader(&mut self) -> Option<&mut BufReader<File>> {
+        self.batch_file.as_mut()
     }
 }
 
