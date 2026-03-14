@@ -20,6 +20,23 @@ use crate::generator::ItemFlags;
 
 use super::{PARALLEL_STAT_THRESHOLD, ReceiverContext, apply_acls_from_receiver_cache};
 
+/// Normalizes a filename for cross-platform comparison.
+///
+/// On macOS, converts NFD (decomposed) filenames to NFC (composed) so that
+/// names from `read_dir` (which returns NFD on HFS+/APFS) match names from
+/// the sender's file list (typically NFC from Linux). On all other platforms
+/// this returns the input as-is with no allocation overhead.
+#[cfg(target_os = "macos")]
+fn normalize_filename_for_compare(name: &std::ffi::OsStr) -> std::ffi::OsString {
+    apple_fs::normalize_filename(name)
+}
+
+/// No-op on non-macOS platforms - direct byte comparison is correct.
+#[cfg(not(target_os = "macos"))]
+fn normalize_filename_for_compare(name: &std::ffi::OsStr) -> std::ffi::OsString {
+    name.to_os_string()
+}
+
 /// Tracks directories that failed to create.
 ///
 /// Children of failed directories are skipped during incremental processing.
@@ -298,6 +315,8 @@ impl ReceiverContext {
 
         // Build directory -> children map from the file list.
         // Use owned OsString keys so the map can be shared across threads.
+        // On macOS, normalize filenames to NFC so that NFD names from read_dir
+        // match NFC names from the sender's file list.
         let mut dir_children: HashMap<PathBuf, HashSet<std::ffi::OsString>> = HashMap::new();
 
         for entry in &self.file_list {
@@ -319,7 +338,7 @@ impl ReceiverContext {
                 dir_children
                     .entry(parent)
                     .or_default()
-                    .insert(name.to_os_string());
+                    .insert(normalize_filename_for_compare(name));
             }
         }
 
@@ -364,7 +383,8 @@ impl ReceiverContext {
                         Err(_) => continue,
                     };
                     let name = entry.file_name();
-                    if keep.contains(&name) {
+                    let normalized = normalize_filename_for_compare(&name);
+                    if keep.contains(&normalized) {
                         continue;
                     }
 
