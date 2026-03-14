@@ -1206,10 +1206,13 @@ run_standalone_test() {
 }
 
 # #876: write-batch / read-batch roundtrip
-# Writes a batch file with upstream rsync, then reads it back with oc-rsync
-# (and vice versa) to verify batch file format compatibility.
+# Tests batch file format compatibility in three ways:
+# 1. Local: upstream writes batch, oc-rsync reads it (and vice versa)
+# 2. Daemon: oc-rsync pushes to oc-rsync daemon with --write-batch, then
+#    replays --read-batch to a fresh destination
 test_write_batch_read_batch() {
-  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
 
   local batch_dir="${work}/batch-test"
   local dest1="${batch_dir}/dest1"
@@ -1217,6 +1220,8 @@ test_write_batch_read_batch() {
   local batch_file="${batch_dir}/batch.rsync"
   rm -rf "$batch_dir"
   mkdir -p "$dest1" "$dest2"
+
+  # --- Local roundtrip ---
 
   # Step 1: upstream rsync writes a batch file
   if ! timeout "$hard_timeout" "$upstream_binary" -av \
@@ -1276,6 +1281,70 @@ test_write_batch_read_batch() {
 
   if ! comp_verify_transfer "$src_dir" "$dest4"; then
     echo "    content mismatch after reverse read-batch"
+    return 1
+  fi
+
+  # --- Daemon roundtrip ---
+  # Push files to oc-rsync daemon with --write-batch to capture a batch file,
+  # then replay --read-batch to a fresh destination and verify.
+
+  local daemon_dest="${batch_dir}/daemon-dest"
+  local replay_dest="${batch_dir}/replay-dest"
+  local batch_daemon="${batch_dir}/batch-daemon.rsync"
+  mkdir -p "$daemon_dest" "$replay_dest"
+
+  local daemon_conf="${batch_dir}/daemon-batch.conf"
+  local daemon_pid="${batch_dir}/daemon-batch.pid"
+  local daemon_log="${batch_dir}/daemon-batch.log"
+  cat > "$daemon_conf" <<CONF
+pid file = ${daemon_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${daemon_dest}
+comment = batch daemon test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$daemon_conf" "$daemon_log" "$upstream_binary" "$daemon_pid" "$oc_port"
+
+  # Step 4: oc-rsync pushes to daemon with --write-batch
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      --write-batch="$batch_daemon" --timeout=10 \
+      "${src_dir}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.write-batch-daemon.out" 2>"${log}.write-batch-daemon.err"; then
+    echo "    write-batch failed (daemon push, exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  if [[ ! -f "$batch_daemon" ]]; then
+    echo "    daemon batch file not created"
+    return 1
+  fi
+
+  # Verify daemon destination matches source
+  if ! comp_verify_transfer "$src_dir" "$daemon_dest"; then
+    echo "    content mismatch after daemon push"
+    return 1
+  fi
+
+  # Step 5: replay the batch file to a fresh destination
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      --read-batch="$batch_daemon" --timeout=10 \
+      "${replay_dest}/" \
+      >"${log}.read-batch-daemon.out" 2>"${log}.read-batch-daemon.err"; then
+    echo "    read-batch failed (daemon batch replay, exit=$?)"
+    return 1
+  fi
+
+  # Verify replayed destination matches source
+  if ! comp_verify_transfer "$src_dir" "$replay_dest"; then
+    echo "    content mismatch after daemon batch replay"
     return 1
   fi
 
@@ -1815,6 +1884,9 @@ run_standalone_interop_tests() {
 
     # Some tests need ports
     case "$name" in
+      write-batch-read-batch)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
       large-file-2gb)
         test_args+=("$oc_port" "$upstream_port")
         ;;
