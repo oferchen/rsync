@@ -38,6 +38,24 @@ impl<'a> CopyContext<'a> {
             DeferredSync::new(SyncStrategy::None)
         };
 
+        let batch_flist_writer = options.get_batch_writer().map(|batch_writer_arc| {
+            let guard = batch_writer_arc.lock().unwrap();
+            let proto_version = guard.config().protocol_version;
+            drop(guard);
+            // Protocol version from batch config is i32; convert to u8 for ProtocolVersion
+            let protocol = protocol::ProtocolVersion::try_from(proto_version as u8)
+                .unwrap_or(protocol::ProtocolVersion::NEWEST);
+            protocol::flist::FileListWriter::new(protocol)
+                .with_preserve_uid(options.preserve_owner())
+                .with_preserve_gid(options.preserve_group())
+                .with_preserve_links(options.links_enabled())
+                .with_preserve_devices(options.devices_enabled())
+                .with_preserve_specials(options.specials_enabled())
+                .with_preserve_hard_links(options.hard_links_enabled())
+                .with_preserve_atimes(options.preserve_atimes())
+                .with_preserve_crtimes(options.preserve_crtimes())
+        });
+
         Self {
             mode,
             options,
@@ -71,6 +89,7 @@ impl<'a> CopyContext<'a> {
             io_errors_occurred: false,
             verified_parents: HashSet::new(),
             delay_staging_dirs: HashSet::new(),
+            batch_flist_writer,
         }
     }
 
