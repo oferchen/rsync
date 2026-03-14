@@ -52,7 +52,7 @@ use std::time::Duration;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use engine::batch::BatchWriter;
+use engine::batch::{BatchStats, BatchWriter};
 use engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyExecution,
     LocalCopyOptions, LocalCopyPlan,
@@ -373,7 +373,7 @@ fn run_client_internal(
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {
-        // Finalize and close the batch file
+        // Write trailing stats and close the batch file
         {
             let mut writer = writer_arc.lock().map_err(|_| {
                 use crate::message::Role;
@@ -383,6 +383,34 @@ fn run_client_internal(
                     rsync_error!(1, "batch writer lock poisoned").with_role(Role::Client),
                 )
             })?;
+
+            // upstream: main.c:374-383 - write_varlong30(batch_fd, stats.total_read, 3)
+            let proto = batch_cfg.protocol_version;
+            let stats = BatchStats {
+                total_read: summary.bytes_received() as i64,
+                total_written: summary.bytes_sent() as i64,
+                total_size: summary.total_source_bytes() as i64,
+                flist_buildtime: if proto >= 29 {
+                    Some(summary.file_list_generation_time().as_millis() as i64)
+                } else {
+                    None
+                },
+                flist_xfertime: if proto >= 29 {
+                    Some(summary.file_list_transfer_time().as_millis() as i64)
+                } else {
+                    None
+                },
+            };
+            if let Err(e) = writer.write_stats(&stats) {
+                use crate::message::Role;
+                use crate::rsync_error;
+                let msg = format!("failed to write batch stats: {e}");
+                return Err(ClientError::new(
+                    1,
+                    rsync_error!(1, "{}", msg).with_role(Role::Client),
+                ));
+            }
+
             if let Err(e) = writer.flush() {
                 use crate::message::Role;
                 use crate::rsync_error;
