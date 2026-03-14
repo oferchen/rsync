@@ -303,6 +303,20 @@ impl FileFlags {
         self.extended & XMIT_HLINK_FIRST != 0
     }
 
+    /// Sets or clears the hardlink-first flag.
+    ///
+    /// Called by `match_hard_links()` after sorting to reassign leader/follower
+    /// status based on sorted order rather than wire (readdir) order.
+    /// Upstream: `hlink.c:match_hard_links()` reassigns `FLAG_HLINK_FIRST`.
+    #[inline]
+    pub fn set_hlink_first(&mut self, first: bool) {
+        if first {
+            self.extended |= XMIT_HLINK_FIRST;
+        } else {
+            self.extended &= !XMIT_HLINK_FIRST;
+        }
+    }
+
     /// Returns true if a user name follows the UID.
     #[inline]
     #[must_use]
