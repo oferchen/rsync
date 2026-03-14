@@ -511,4 +511,15 @@ impl<'a> CopyContext<'a> {
     ) -> Option<&std::sync::Arc<std::sync::Mutex<crate::batch::BatchWriter>>> {
         self.options.get_batch_writer()
     }
+
+    /// Access the protocol flist writer for batch mode encoding.
+    ///
+    /// Returns a mutable reference to the [`FileListWriter`] used to encode
+    /// file entries in the protocol wire format for batch files. The writer
+    /// maintains cross-entry compression state.
+    pub(super) fn batch_flist_writer_mut(
+        &mut self,
+    ) -> Option<&mut protocol::flist::FileListWriter> {
+        self.batch_flist_writer.as_mut()
+    }
 }
