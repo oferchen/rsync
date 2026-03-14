@@ -184,6 +184,7 @@ pub fn run_daemon_transfer(
         output_motd,
         config.daemon_params(),
         config.early_input(),
+        config.protocol_version(),
     )?;
 
     // For pull (we receive), the daemon is the sender, so is_sender=true.
@@ -288,6 +289,7 @@ fn perform_daemon_handshake(
     output_motd: bool,
     daemon_params: &[String],
     early_input: Option<&Path>,
+    protocol_override: Option<ProtocolVersion>,
 ) -> Result<ProtocolVersion, ClientError> {
     let mut reader = BufReader::new(
         stream
@@ -317,9 +319,10 @@ fn perform_daemon_handshake(
 
     // upstream: compat.c:832-845 — for protocol 30+, client must include
     // supported auth digests. Order follows checksum.c:71-84.
+    let our_version = protocol_override.unwrap_or(ProtocolVersion::NEWEST);
     let client_version = format!(
         "@RSYNCD: {}.0 sha512 sha256 sha1 md5 md4\n",
-        ProtocolVersion::NEWEST.as_u8()
+        our_version.as_u8()
     );
     stream.write_all(client_version.as_bytes()).map_err(|e| {
         socket_error(
@@ -436,10 +439,8 @@ fn perform_daemon_handshake(
 
     // Negotiate to minimum of our version and daemon's version
     // (mirrors upstream exchange_protocols lines 211-227)
-    let our_protocol = ProtocolVersion::NEWEST.as_u8();
-    let negotiated = if our_protocol < remote_protocol.as_u8() {
-        // SAFETY: NEWEST is a valid protocol version by construction
-        ProtocolVersion::try_from(our_protocol).expect("NEWEST protocol version is always valid")
+    let negotiated = if our_version.as_u8() < remote_protocol.as_u8() {
+        our_version
     } else {
         remote_protocol
     };
