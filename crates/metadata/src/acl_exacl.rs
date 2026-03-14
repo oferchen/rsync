@@ -56,7 +56,8 @@ use std::path::Path;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use exacl::AclOption;
-use exacl::{getfacl, setfacl};
+use exacl::{AclEntry, Perm, getfacl, setfacl};
+use protocol::acl::{AclCache, NAME_IS_USER, RsyncAcl};
 
 use crate::MetadataError;
 
@@ -327,9 +328,175 @@ fn is_unsupported_error(e: &io::Error) -> bool {
     }
 }
 
+/// Converts rsync permission bits (3-bit rwx) to [`exacl::Perm`] flags.
+fn rsync_perms_to_exacl(bits: u8) -> Perm {
+    let mut perms = Perm::empty();
+    if bits & 0x04 != 0 {
+        perms |= Perm::READ;
+    }
+    if bits & 0x02 != 0 {
+        perms |= Perm::WRITE;
+    }
+    if bits & 0x01 != 0 {
+        perms |= Perm::EXECUTE;
+    }
+    perms
+}
+
+/// Converts a [`RsyncAcl`] from the wire protocol into a list of [`AclEntry`]
+/// values suitable for [`exacl::setfacl`].
+///
+/// On Linux/FreeBSD, the resulting list contains POSIX ACL entries (user_obj,
+/// group_obj, mask, other, plus named user/group entries). On macOS, only
+/// named user/group entries are emitted as extended ACL entries since the
+/// base permissions are managed separately through file mode bits.
+///
+/// # Upstream Reference
+///
+/// Mirrors `set_rsync_acl()` in `acls.c` lines 835-928 which reconstructs
+/// a system ACL from the wire protocol `rsync_acl` struct.
+fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
+    let mut entries = Vec::new();
+
+    // Base entries (user_obj, group_obj, other_obj, mask_obj) are only
+    // used on Linux/FreeBSD where POSIX ACLs include these. On macOS,
+    // the base mode bits are managed separately.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        if acl.has_user_obj() {
+            entries.push(AclEntry::allow_user(
+                "",
+                rsync_perms_to_exacl(acl.user_obj),
+                None,
+            ));
+        }
+        if acl.has_group_obj() {
+            entries.push(AclEntry::allow_group(
+                "",
+                rsync_perms_to_exacl(acl.group_obj),
+                None,
+            ));
+        }
+        if acl.has_mask_obj() {
+            entries.push(AclEntry::allow_mask(
+                rsync_perms_to_exacl(acl.mask_obj),
+                None,
+            ));
+        }
+        if acl.has_other_obj() {
+            entries.push(AclEntry::allow_other(
+                rsync_perms_to_exacl(acl.other_obj),
+                None,
+            ));
+        }
+    }
+
+    // Named user/group entries
+    for ida in acl.names.iter() {
+        let perms = rsync_perms_to_exacl(ida.permissions() as u8);
+        let name = ida.id.to_string();
+
+        if ida.access & NAME_IS_USER != 0 {
+            entries.push(AclEntry::allow_user(&name, perms, None));
+        } else {
+            entries.push(AclEntry::allow_group(&name, perms, None));
+        }
+    }
+
+    entries
+}
+
+/// Applies parsed ACLs from an [`AclCache`] to a destination file.
+///
+/// This is the receiver-side function for applying ACLs that arrived over
+/// the wire protocol. The sender encodes ACLs during file list transmission
+/// and the receiver stores them in an [`AclCache`]. This function looks up
+/// the ACL by index and applies it to the destination path using `setfacl`.
+///
+/// For directories, both the access ACL and optional default ACL are applied.
+/// Symbolic links are skipped since they do not support ACLs on any platform.
+///
+/// # Arguments
+///
+/// * `destination` - Path to apply ACLs to.
+/// * `cache` - The ACL cache populated during file list reception.
+/// * `access_ndx` - Index into the access ACL cache.
+/// * `default_ndx` - Optional index into the default ACL cache (directories only).
+/// * `follow_symlinks` - Whether to follow symlinks. If `false`, returns immediately.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if applying the ACL fails. Errors from filesystems
+/// that do not support ACLs are silently ignored.
+///
+/// # Upstream Reference
+///
+/// Mirrors `set_acl()` in `acls.c` lines 930-1001 which applies cached
+/// ACLs to destination files during the receiver's metadata application phase.
+#[allow(clippy::module_name_repetitions)]
+pub fn apply_acls_from_cache(
+    destination: &Path,
+    cache: &AclCache,
+    access_ndx: u32,
+    default_ndx: Option<u32>,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    // Symbolic links do not support ACLs
+    if !follow_symlinks {
+        return Ok(());
+    }
+
+    // Apply access ACL
+    if let Some(acl) = cache.get_access(access_ndx) {
+        let entries = rsync_acl_to_entries(acl);
+        if !entries.is_empty() {
+            if let Err(e) = setfacl(&[destination], &entries, None) {
+                if !is_unsupported_error(&e) {
+                    return Err(MetadataError::new(
+                        "apply ACL from cache",
+                        destination,
+                        io::Error::other(e.to_string()),
+                    ));
+                }
+            }
+        } else {
+            // Empty ACL - reset to permission bits
+            reset_acl_from_mode(destination)?;
+        }
+    }
+
+    // Apply default ACL for directories (Linux/FreeBSD only)
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if let Some(def_ndx) = default_ndx {
+        if let Some(def_acl) = cache.get_default(def_ndx) {
+            let entries = rsync_acl_to_entries(def_acl);
+            if !entries.is_empty() {
+                if let Err(e) = setfacl(&[destination], &entries, Some(AclOption::DEFAULT_ACL)) {
+                    if !is_unsupported_error(&e) {
+                        return Err(MetadataError::new(
+                            "apply default ACL from cache",
+                            destination,
+                            io::Error::other(e.to_string()),
+                        ));
+                    }
+                }
+            } else {
+                clear_default_acl(destination)?;
+            }
+        }
+    }
+
+    // Suppress unused variable warning on macOS where default ACLs are not used
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    let _ = default_ndx;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use exacl::AclEntryKind;
     use std::fs::File;
     use tempfile::tempdir;
 
@@ -424,5 +591,133 @@ mod tests {
                 "should detect OS error code {code} as unsupported"
             );
         }
+    }
+
+    #[test]
+    fn rsync_perms_to_exacl_all_bits() {
+        assert_eq!(rsync_perms_to_exacl(0x00), Perm::empty());
+        assert_eq!(rsync_perms_to_exacl(0x01), Perm::EXECUTE);
+        assert_eq!(rsync_perms_to_exacl(0x02), Perm::WRITE);
+        assert_eq!(rsync_perms_to_exacl(0x04), Perm::READ);
+        assert_eq!(
+            rsync_perms_to_exacl(0x07),
+            Perm::READ | Perm::WRITE | Perm::EXECUTE
+        );
+        assert_eq!(rsync_perms_to_exacl(0x05), Perm::READ | Perm::EXECUTE);
+    }
+
+    #[test]
+    fn rsync_acl_to_entries_empty_acl() {
+        let acl = RsyncAcl::new();
+        let entries = rsync_acl_to_entries(&acl);
+        assert!(entries.is_empty());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn rsync_acl_to_entries_base_entries() {
+        let acl = RsyncAcl::from_mode(0o754);
+        let entries = rsync_acl_to_entries(&acl);
+
+        // user_obj(rwx) + group_obj(r-x) + other_obj(r--)
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].kind, AclEntryKind::User);
+        assert_eq!(entries[0].name, "");
+        assert_eq!(entries[0].perms, Perm::READ | Perm::WRITE | Perm::EXECUTE);
+        assert_eq!(entries[1].kind, AclEntryKind::Group);
+        assert_eq!(entries[1].name, "");
+        assert_eq!(entries[1].perms, Perm::READ | Perm::EXECUTE);
+        assert_eq!(entries[2].kind, AclEntryKind::Other);
+        assert_eq!(entries[2].name, "");
+        assert_eq!(entries[2].perms, Perm::READ);
+    }
+
+    #[test]
+    fn rsync_acl_to_entries_named_user_and_group() {
+        use protocol::acl::IdAccess;
+
+        let mut acl = RsyncAcl::from_mode(0o755);
+        acl.names.push(IdAccess::user(1000, 0x07));
+        acl.names.push(IdAccess::group(100, 0x05));
+
+        let entries = rsync_acl_to_entries(&acl);
+
+        // Find named entries (skip base entries on Linux/FreeBSD)
+        let named: Vec<_> = entries.iter().filter(|e| !e.name.is_empty()).collect();
+        assert_eq!(named.len(), 2);
+        assert_eq!(named[0].kind, AclEntryKind::User);
+        assert_eq!(named[0].name, "1000");
+        assert_eq!(named[0].perms, Perm::READ | Perm::WRITE | Perm::EXECUTE);
+        assert_eq!(named[1].kind, AclEntryKind::Group);
+        assert_eq!(named[1].name, "100");
+        assert_eq!(named[1].perms, Perm::READ | Perm::EXECUTE);
+    }
+
+    #[test]
+    fn apply_acls_from_cache_skips_symlinks() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("test");
+        File::create(&file).expect("create file");
+
+        let cache = AclCache::new();
+        let result = apply_acls_from_cache(&file, &cache, 0, None, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_acls_from_cache_applies_basic_acl() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("test");
+        File::create(&file).expect("create file");
+
+        let mut cache = AclCache::new();
+        let acl = RsyncAcl::from_mode(0o644);
+        let ndx = cache.store_access(acl);
+
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_acls_from_cache_empty_acl_resets() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("test");
+        File::create(&file).expect("create file");
+
+        let mut cache = AclCache::new();
+        let acl = RsyncAcl::new();
+        let ndx = cache.store_access(acl);
+
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn apply_acls_from_cache_directory_with_default() {
+        let dir = tempdir().expect("tempdir");
+        let subdir = dir.path().join("subdir");
+        std::fs::create_dir(&subdir).expect("create subdir");
+
+        let mut cache = AclCache::new();
+        let access = RsyncAcl::from_mode(0o755);
+        let default = RsyncAcl::from_mode(0o755);
+        let access_ndx = cache.store_access(access);
+        let default_ndx = cache.store_default(default);
+
+        let result = apply_acls_from_cache(&subdir, &cache, access_ndx, Some(default_ndx), true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_acls_from_cache_missing_index_is_noop() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("test");
+        File::create(&file).expect("create file");
+
+        let cache = AclCache::new();
+        // Index 99 does not exist - should be a no-op, not an error
+        let result = apply_acls_from_cache(&file, &cache, 99, None, true);
+        assert!(result.is_ok());
     }
 }
