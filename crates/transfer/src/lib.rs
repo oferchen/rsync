@@ -186,6 +186,35 @@ pub enum ServerStats {
 /// On failure, contains the [`io::Error`] that caused the transfer to abort.
 pub type ServerResult = io::Result<ServerStats>;
 
+/// Determines whether the output stream should use multiplexed framing.
+///
+/// Upstream rsync activates multiplex output differently depending on
+/// the execution context:
+///
+/// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1247-1248).
+/// - **Client sender** (push): always for protocol >= 30 (main.c:1300-1301).
+/// - **Client receiver** (pull): only when `need_messages_from_generator` is set
+///   (main.c:1344-1347), which requires INC_RECURSE negotiation (compat.c:776).
+///   The remote server's input demuxing mirrors this expectation - sending
+///   multiplexed frames to a server expecting plain I/O causes a deadlock.
+fn requires_multiplex_output(
+    client_mode: bool,
+    role: ServerRole,
+    protocol: protocol::ProtocolVersion,
+    compat_flags: Option<protocol::CompatibilityFlags>,
+) -> bool {
+    if client_mode {
+        match role {
+            ServerRole::Generator => protocol.supports_generator_messages(),
+            ServerRole::Receiver => {
+                compat_flags.is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE))
+            }
+        }
+    } else {
+        protocol.supports_multiplex_io()
+    }
+}
+
 /// Executes the native server entry point over standard I/O.
 ///
 /// The implementation performs the protocol handshake before dispatching to the
@@ -343,15 +372,12 @@ pub fn run_server_with_handshake<W: Write>(
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
-    // upstream: main.c:1246-1248 — server activates multiplex_out for proto >= 23.
-    // upstream: main.c:1296-1345 — client activates for proto >= 30 (need_messages).
-    let should_activate_output_multiplex = if config.connection.client_mode {
-        handshake.protocol.supports_generator_messages()
-    } else {
-        handshake.protocol.supports_multiplex_io()
-    };
-
-    if should_activate_output_multiplex {
+    if requires_multiplex_output(
+        config.connection.client_mode,
+        config.role,
+        handshake.protocol,
+        setup_result.compat_flags,
+    ) {
         writer = writer.activate_multiplex()?;
     }
 
