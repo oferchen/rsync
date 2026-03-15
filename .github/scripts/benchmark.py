@@ -142,21 +142,33 @@ def wait_for_port(port, timeout=10):
     return False
 
 
+PER_RUN_TIMEOUT = 120  # seconds per individual rsync invocation
+
+
 def benchmark(cmd, runs=5):
     """Run a command multiple times and return timing statistics."""
     times = []
-    for _ in range(runs):
+    for i in range(runs):
         start = time.perf_counter()
-        result = subprocess.run(cmd, shell=True, capture_output=True)
-        elapsed = time.perf_counter() - start
-        if result.returncode != 0:
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, timeout=PER_RUN_TIMEOUT,
+            )
+            elapsed = time.perf_counter() - start
+            if result.returncode != 0:
+                print(
+                    f"WARNING: exit {result.returncode}: {cmd}",
+                    file=sys.stderr,
+                )
+                stderr = result.stderr.decode(errors="replace").strip()
+                if stderr:
+                    print(f"  stderr: {stderr[:200]}", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            elapsed = time.perf_counter() - start
             print(
-                f"WARNING: exit {result.returncode}: {cmd}",
+                f"ERROR: timeout after {PER_RUN_TIMEOUT}s (run {i+1}/{runs}): {cmd}",
                 file=sys.stderr,
             )
-            stderr = result.stderr.decode(errors="replace").strip()
-            if stderr:
-                print(f"  stderr: {stderr[:200]}", file=sys.stderr)
         times.append(elapsed)
     return {
         "mean": sum(times) / len(times),
