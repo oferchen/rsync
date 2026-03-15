@@ -1087,6 +1087,7 @@ fn is_dry_run_remote_close(error: &std::io::Error) -> bool {
             | std::io::ErrorKind::ConnectionReset
             | std::io::ErrorKind::ConnectionAborted
             | std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::WouldBlock
     )
 }
 
@@ -1263,6 +1264,24 @@ fn build_server_config_for_generator(
     if config.files_from().is_remote() {
         server_config.file_selection.files_from_path = Some("-".to_owned());
         server_config.file_selection.from0 = true;
+    }
+
+    // upstream: options.c:2944 — when the client is the sender and --files-from
+    // points to a local file, the sender reads the list directly (not via the
+    // protocol stream). Set files_from_path so the generator's
+    // resolve_files_from_paths() reads from the local file.
+    use super::super::config::FilesFromSource;
+    match config.files_from() {
+        FilesFromSource::LocalFile(path) => {
+            server_config.file_selection.files_from_path =
+                Some(path.to_string_lossy().to_string());
+            server_config.file_selection.from0 = config.from0();
+        }
+        FilesFromSource::Stdin => {
+            server_config.file_selection.files_from_path = Some("-".to_owned());
+            server_config.file_selection.from0 = config.from0();
+        }
+        _ => {}
     }
 
     flags::apply_common_server_flags(config, &mut server_config);
