@@ -35,7 +35,10 @@ fn setup_test_directory() -> TempDir {
 fn oc_rsync_binary() -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     for profile in ["debug", "release", "dist"] {
-        let path = PathBuf::from(manifest_dir).join("target").join(profile).join("oc-rsync");
+        let path = PathBuf::from(manifest_dir)
+            .join("target")
+            .join(profile)
+            .join("oc-rsync");
         if path.exists() {
             return path;
         }
