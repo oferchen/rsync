@@ -193,23 +193,20 @@ pub type ServerResult = io::Result<ServerStats>;
 ///
 /// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1247-1248).
 /// - **Client sender** (push): always for protocol >= 30 (main.c:1300-1301).
-/// - **Client receiver** (pull): only when `need_messages_from_generator` is set
-///   (main.c:1344-1347), which requires INC_RECURSE negotiation (compat.c:776).
-///   The remote server's input demuxing mirrors this expectation - sending
-///   multiplexed frames to a server expecting plain I/O causes a deadlock.
+/// - **Client receiver** (pull): when `need_messages_from_generator` is set
+///   (main.c:1344-1347). Upstream sets this unconditionally for protocol >= 30
+///   (compat.c:776), so the client always activates multiplex output for pull.
 fn requires_multiplex_output(
     client_mode: bool,
-    role: ServerRole,
+    _role: ServerRole,
     protocol: protocol::ProtocolVersion,
-    compat_flags: Option<protocol::CompatibilityFlags>,
+    _compat_flags: Option<protocol::CompatibilityFlags>,
 ) -> bool {
     if client_mode {
-        match role {
-            ServerRole::Generator => protocol.supports_generator_messages(),
-            ServerRole::Receiver => {
-                compat_flags.is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE))
-            }
-        }
+        // upstream: both sender (main.c:1300) and receiver (main.c:1344)
+        // activate multiplex output when need_messages_from_generator is set,
+        // which is unconditional for protocol >= 30 (compat.c:776).
+        protocol.supports_generator_messages()
     } else {
         protocol.supports_multiplex_io()
     }
@@ -239,13 +236,7 @@ pub fn run_server_stdio(
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
     // Perform protocol handshake
-    eprintln!("[SSH-DIAG] starting handshake (client_mode={})", config.connection.client_mode);
     let handshake = perform_handshake(stdin, stdout)?;
-    eprintln!(
-        "[SSH-DIAG] handshake OK: protocol={}, client_args={:?}",
-        handshake.protocol.as_u8(),
-        handshake.client_args.is_some()
-    );
     run_server_with_handshake(config, handshake, stdin, stdout, progress)
 }
 
@@ -330,17 +321,7 @@ pub fn run_server_with_handshake<W: Write>(
         checksum_seed: config.checksum_seed,
         allow_inc_recurse,
     };
-    eprintln!(
-        "[SSH-DIAG] setup_protocol: is_server={}, is_daemon_mode={}, do_compression={}, allow_inc_recurse={}",
-        is_server, is_daemon_mode, do_compression, allow_inc_recurse
-    );
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
-    eprintln!(
-        "[SSH-DIAG] setup_protocol OK: compat_flags={:?}, seed={}, algorithms={:?}",
-        setup_result.compat_flags.map(|f| f.bits()),
-        setup_result.checksum_seed,
-        setup_result.negotiated_algorithms
-    );
 
     handshake.negotiated_algorithms = setup_result.negotiated_algorithms;
     handshake.compat_flags = setup_result.compat_flags;
@@ -394,10 +375,6 @@ pub fn run_server_with_handshake<W: Write>(
         handshake.protocol,
         setup_result.compat_flags,
     );
-    eprintln!(
-        "[SSH-DIAG] multiplex_output={}, role={:?}, protocol={}",
-        mplex_out, config.role, handshake.protocol.as_u8()
-    );
     if mplex_out {
         writer = writer.activate_multiplex()?;
     }
@@ -417,10 +394,6 @@ pub fn run_server_with_handshake<W: Write>(
         false
     };
 
-    eprintln!(
-        "[SSH-DIAG] should_send_filter_list={}, delete={}, prune={}",
-        should_send_filter_list, config.flags.delete, config.flags.prune_empty_dirs
-    );
     if should_send_filter_list {
         protocol::filters::write_filter_list(
             &mut writer,
@@ -455,7 +428,6 @@ pub fn run_server_with_handshake<W: Write>(
     // Input multiplex activation deferred to each role after reading filter list.
     let chained_reader = reader;
 
-    eprintln!("[SSH-DIAG] dispatching to role={:?}", config.role);
     match config.role {
         ServerRole::Receiver => {
             let mut ctx = ReceiverContext::new(&handshake, config);
