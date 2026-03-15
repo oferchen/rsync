@@ -107,9 +107,18 @@ jobs:
           mkdir -p "$SRC/subdir"
           echo "nested" > "$SRC/subdir/nested.txt"
 
+          # Verify binaries
+          echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
+          echo "remote rsync: $(rsync --version 2>&1 | head -1)"
+
           # SSH pull: oc-rsync client ← upstream rsync server
           echo "=== SSH pull: oc-rsync ← upstream rsync ==="
-          timeout 60 "$OC_RSYNC" -av --timeout=30 "localhost:$SRC/" "$DST/"
+          timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" 2>&1 || {
+            echo "SSH pull failed with exit $?"
+            echo "Retrying with strace on remote side..."
+            timeout 60 "$OC_RSYNC" -av --timeout=30 -e "ssh" "localhost:$SRC/" "$DST/" 2>&1 || true
+            exit 1
+          }
           diff -r "$SRC" "$DST"
           echo "PASS: SSH pull initial sync"
 
