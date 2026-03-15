@@ -1273,8 +1273,7 @@ fn build_server_config_for_generator(
     use super::super::config::FilesFromSource;
     match config.files_from() {
         FilesFromSource::LocalFile(path) => {
-            server_config.file_selection.files_from_path =
-                Some(path.to_string_lossy().to_string());
+            server_config.file_selection.files_from_path = Some(path.to_string_lossy().to_string());
             server_config.file_selection.from0 = config.from0();
         }
         FilesFromSource::Stdin => {
