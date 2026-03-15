@@ -206,8 +206,9 @@ fn requires_multiplex_output(
     if client_mode {
         match role {
             ServerRole::Generator => protocol.supports_generator_messages(),
-            ServerRole::Receiver => compat_flags
-                .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE)),
+            ServerRole::Receiver => {
+                compat_flags.is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE))
+            }
         }
     } else {
         protocol.supports_multiplex_io()
