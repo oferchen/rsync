@@ -208,7 +208,7 @@ pub fn send_rsync_acl<W: Write>(
         AclType::Default => cache.find_default(acl),
     };
 
-    // Send index + 1 (0 means literal data follows)
+    // upstream: ndx + 1 convention (0 means literal data follows)
     let ndx = cached_index.map(|i| i as i32).unwrap_or(-1);
     write_varint(writer, ndx + 1)?;
 
@@ -216,14 +216,12 @@ pub fn send_rsync_acl<W: Write>(
         return Ok(());
     }
 
-    // Store in cache for future matches
     let acl_clone = acl.clone();
     match acl_type {
         AclType::Access => cache.store_access(acl_clone),
         AclType::Default => cache.store_default(acl_clone),
     };
 
-    // Send literal ACL data
     let flags = acl.flags();
     writer.write_all(&[flags])?;
 
@@ -264,7 +262,6 @@ pub fn recv_rsync_acl<R: Read + ?Sized>(reader: &mut R) -> io::Result<RecvAclRes
         return Ok(RecvAclResult::CacheHit(ndx as u32));
     }
 
-    // Read literal ACL
     let mut flags_buf = [0u8; 1];
     reader.read_exact(&mut flags_buf)?;
     let flags = flags_buf[0];
