@@ -66,7 +66,10 @@ COLOR_BG = "#0d1117"
 FONT = "Arial, Helvetica, sans-serif"
 FONT_MONO = "monospace"
 
-MODE_ORDER = ["local", "ssh_pull", "ssh_push", "daemon_pull", "daemon_push", "checksum_openssl"]
+MODE_ORDER = [
+    "local", "ssh_pull", "ssh_push", "daemon_pull", "daemon_push",
+    "checksum_openssl", "io_uring",
+]
 MODE_LABELS = {
     "local": "Local Copy",
     "ssh_pull": "SSH Pull",
@@ -74,6 +77,7 @@ MODE_LABELS = {
     "daemon_pull": "Daemon Pull",
     "daemon_push": "Daemon Push",
     "checksum_openssl": "Checksum: OpenSSL vs Pure Rust",
+    "io_uring": "io_uring vs Standard I/O",
 }
 MODE_CLI_HINTS = {
     "local": "rsync -av src/ dst/",
@@ -82,10 +86,12 @@ MODE_CLI_HINTS = {
     "daemon_pull": "rsync -av rsync://host/mod/ dst/",
     "daemon_push": "rsync -av src/ rsync://host/mod/",
     "checksum_openssl": "rsync -avc src/ dst/",
+    "io_uring": "--io-uring vs --no-io-uring",
 }
 
-# Modes where bars represent pure-Rust vs OpenSSL instead of upstream vs oc-rsync
+# Modes where bars represent alternative labels instead of upstream vs oc-rsync
 OPENSSL_MODES = {"checksum_openssl"}
+IO_URING_MODES = {"io_uring"}
 
 CLI_HINT_HEIGHT = 16
 
@@ -188,6 +194,9 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
             if mode in OPENSSL_MODES:
                 bar1_color, bar1_label = COLOR_PURE_RUST, "pure Rust"
                 bar2_color, bar2_label = COLOR_OPENSSL, "OpenSSL"
+            elif mode in IO_URING_MODES:
+                bar1_color, bar1_label = COLOR_UPSTREAM, "standard I/O"
+                bar2_color, bar2_label = COLOR_OC_RSYNC, "io_uring"
             else:
                 bar1_color, bar1_label = COLOR_UPSTREAM, "upstream"
                 bar2_color, bar2_label = COLOR_OC_RSYNC, "oc-rsync"
