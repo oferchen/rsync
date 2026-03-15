@@ -27,7 +27,7 @@ jobs:
   benchmark:
     name: Performance Benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -92,22 +92,6 @@ jobs:
       - name: Install upstream rsync to PATH
         run: sudo cp target/interop/upstream-src/rsync-3.4.1/rsync /usr/local/bin/rsync
 
-      - name: Run criterion benchmarks
-        id: criterion
-        run: |
-          # Run internal optimization benchmarks
-          cargo bench -p checksums --bench checksums_benchmark -- --noplot > /dev/null 2>&1 || true
-          cargo bench -p engine --bench optimizations_benchmark -- --noplot 2>&1 | tee criterion_output.txt || true
-
-          # Extract key metrics for buffer pool
-          echo "## Internal Optimization Benchmarks" > criterion_report.md
-          echo "" >> criterion_report.md
-          echo "### Buffer Pool Performance" >> criterion_report.md
-          echo "" >> criterion_report.md
-          echo '```' >> criterion_report.md
-          grep -A1 "buffer_allocation\|sequential_buffer_ops\|concurrent_buffer" criterion_output.txt | head -50 >> criterion_report.md || echo "No buffer pool benchmarks found" >> criterion_report.md
-          echo '```' >> criterion_report.md
-
       - name: Run benchmark
         id: benchmark
         env:
@@ -134,8 +118,6 @@ jobs:
             benchmark_report.md
             benchmark.svg
             benchmark.png
-            criterion_report.md
-            criterion_output.txt
 
       - name: Add benchmark to release notes
         if: startsWith(github.ref, 'refs/tags/')
@@ -147,21 +129,11 @@ jobs:
           # Get current release body (wait for release to exist on tag push)
           CURRENT_BODY=$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo "")
 
-          # Append benchmark reports
-          CRITERION_REPORT=""
-          if [ -f criterion_report.md ]; then
-            CRITERION_REPORT=$(cat criterion_report.md)
-          fi
-
           NEW_BODY="${CURRENT_BODY}
 
           ---
 
-          $(cat benchmark_report.md)
-
-          ---
-
-          ${CRITERION_REPORT}"
+          $(cat benchmark_report.md)"
 
           # Update release
           gh release edit "$TAG" --notes "$NEW_BODY" || echo "Could not update release notes"
