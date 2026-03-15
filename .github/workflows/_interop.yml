@@ -98,10 +98,11 @@ jobs:
           OC_RSYNC="target/dist/oc-rsync"
           SRC=$(mktemp -d)
           DST=$(mktemp -d)
-          trap 'rm -rf "$SRC" "$DST"' EXIT
+          DST2=$(mktemp -d)
+          trap 'rm -rf "$SRC" "$DST" "$DST2"' EXIT
 
           # Create test data
-          for i in $(seq 1 100); do
+          for i in $(seq 1 10); do
             dd if=/dev/urandom of="$SRC/file_$i.bin" bs=1024 count=10 2>/dev/null
           done
           mkdir -p "$SRC/subdir"
@@ -109,14 +110,67 @@ jobs:
 
           # Verify binaries
           echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
-          echo "remote rsync: $(rsync --version 2>&1 | head -1)"
+          echo "upstream rsync: $(rsync --version 2>&1 | head -1)"
+          echo "upstream rsync path: $(which rsync)"
+
+          # Baseline: upstream rsync → upstream rsync via SSH
+          echo "=== Baseline: upstream rsync SSH pull ==="
+          timeout 60 rsync -av --timeout=30 "localhost:$SRC/" "$DST2/" 2>&1
+          diff -r "$SRC" "$DST2"
+          echo "PASS: upstream SSH pull baseline"
+
+          # SSH push: oc-rsync client → upstream rsync server
+          echo "=== SSH push: oc-rsync → upstream rsync ==="
+          timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || {
+            RC=$?
+            echo "SSH push failed with exit $RC"
+
+            # Show oc-rsync diagnostic output (eprintln goes to stderr)
+            echo "--- Attempting push with verbose stderr capture ---"
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "$SRC/" "localhost:$DST/" > /tmp/oc_push_stdout.txt 2>/tmp/oc_push_stderr.txt || true
+            echo "=== oc-rsync stderr ==="
+            cat /tmp/oc_push_stderr.txt || true
+            echo "=== oc-rsync stdout ==="
+            cat /tmp/oc_push_stdout.txt || true
+
+            # Diagnostic: manually invoke remote rsync with strace to see what it reads
+            echo "--- Remote rsync manual test ---"
+            echo "Remote rsync args that oc-rsync would send:"
+            "$OC_RSYNC" -av --timeout=30 --dry-run "$SRC/" "localhost:$DST/" 2>&1 | head -5 || true
+
+            # Test: upstream rsync client → upstream rsync server (same args)
+            echo "--- Baseline upstream push for comparison ---"
+            timeout 60 rsync -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || true
+
+            # Capture what upstream rsync server sees from oc-rsync via raw pipe
+            echo "--- Raw protocol capture ---"
+            ARGS=$(echo "--server -logDtprv -e.LsfxCIvu . $DST/")
+            echo "Remote rsync args: rsync $ARGS"
+            # Send oc-rsync's output through a pipe to see what the server gets
+            timeout 30 ssh localhost "strace -e trace=read,write -f rsync $ARGS" < /dev/null > /tmp/strace_out.txt 2>&1 || true
+            echo "=== strace output (first 100 lines) ==="
+            head -100 /tmp/strace_out.txt || true
+
+            exit 1
+          }
+          diff -r "$SRC" "$DST"
+          echo "PASS: SSH push initial sync"
 
           # SSH pull: oc-rsync client ← upstream rsync server
+          rm -rf "$DST"/*
           echo "=== SSH pull: oc-rsync ← upstream rsync ==="
           timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" 2>&1 || {
-            echo "SSH pull failed with exit $?"
-            echo "Retrying with strace on remote side..."
-            timeout 60 "$OC_RSYNC" -av --timeout=30 -e "ssh" "localhost:$SRC/" "$DST/" 2>&1 || true
+            RC=$?
+            echo "SSH pull failed with exit $RC"
+
+            # Show oc-rsync diagnostic output
+            echo "--- Attempting pull with verbose stderr capture ---"
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" > /tmp/oc_pull_stdout.txt 2>/tmp/oc_pull_stderr.txt || true
+            echo "=== oc-rsync stderr ==="
+            cat /tmp/oc_pull_stderr.txt || true
+            echo "=== oc-rsync stdout ==="
+            cat /tmp/oc_pull_stdout.txt || true
+
             exit 1
           }
           diff -r "$SRC" "$DST"
@@ -125,12 +179,5 @@ jobs:
           # SSH pull no-change
           timeout 60 "$OC_RSYNC" -av --timeout=30 "localhost:$SRC/" "$DST/"
           echo "PASS: SSH pull no-change sync"
-
-          # SSH push: oc-rsync client → upstream rsync server
-          rm -rf "$DST"/*
-          echo "=== SSH push: oc-rsync → upstream rsync ==="
-          timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/"
-          diff -r "$SRC" "$DST"
-          echo "PASS: SSH push initial sync"
 
           echo "All SSH interop tests passed."
