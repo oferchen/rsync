@@ -560,13 +560,21 @@ impl GeneratorContext {
         // Step 3: Build and send file list
         self.build_file_list(effective_paths)?;
         self.partition_file_list_for_inc_recurse();
+        eprintln!(
+            "[SSH-DIAG] Generator: built file list with {} entries, inc_recurse={}",
+            self.file_list.len(),
+            self.inc_recurse()
+        );
         let file_count = self.send_file_list(writer)?;
+        eprintln!("[SSH-DIAG] Generator: sent file list ({} entries)", file_count);
 
         // Step 4: Send ID lists for non-INC_RECURSE protocols
         self.send_id_lists(writer)?;
+        eprintln!("[SSH-DIAG] Generator: sent ID lists");
 
         // Step 5: Send io_error flag for protocol < 30
         self.send_io_error_flag(writer)?;
+        eprintln!("[SSH-DIAG] Generator: sent io_error flag");
 
         // Step 6: Send incremental file list segments and NDX_FLIST_EOF.
         // Sub-lists are sent before the transfer loop (not interleaved) because
@@ -574,9 +582,12 @@ impl GeneratorContext {
         // it reads all sub-lists before entering its transfer loop.
         self.send_extra_file_lists(writer)?;
         self.send_flist_eof_if_inc_recurse(writer)?;
+        eprintln!("[SSH-DIAG] Generator: sent extra file lists / flist_eof");
 
         // Step 7: Run main transfer loop
+        eprintln!("[SSH-DIAG] Generator: entering transfer loop");
         let transfer_result = self.run_transfer_loop(reader, writer, &mut progress)?;
+        eprintln!("[SSH-DIAG] Generator: transfer loop complete");
 
         // Step 8: Handle goodbye handshake
         //

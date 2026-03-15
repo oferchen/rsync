@@ -121,7 +121,38 @@ jobs:
 
           # SSH push: oc-rsync client → upstream rsync server
           echo "=== SSH push: oc-rsync → upstream rsync ==="
-          timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/"
+          timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || {
+            RC=$?
+            echo "SSH push failed with exit $RC"
+
+            # Show oc-rsync diagnostic output (eprintln goes to stderr)
+            echo "--- Attempting push with verbose stderr capture ---"
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "$SRC/" "localhost:$DST/" > /tmp/oc_push_stdout.txt 2>/tmp/oc_push_stderr.txt || true
+            echo "=== oc-rsync stderr ==="
+            cat /tmp/oc_push_stderr.txt || true
+            echo "=== oc-rsync stdout ==="
+            cat /tmp/oc_push_stdout.txt || true
+
+            # Diagnostic: manually invoke remote rsync with strace to see what it reads
+            echo "--- Remote rsync manual test ---"
+            echo "Remote rsync args that oc-rsync would send:"
+            "$OC_RSYNC" -av --timeout=30 --dry-run "$SRC/" "localhost:$DST/" 2>&1 | head -5 || true
+
+            # Test: upstream rsync client → upstream rsync server (same args)
+            echo "--- Baseline upstream push for comparison ---"
+            timeout 60 rsync -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || true
+
+            # Capture what upstream rsync server sees from oc-rsync via raw pipe
+            echo "--- Raw protocol capture ---"
+            ARGS=$(echo "--server -logDtprv -e.LsfxCIvu . $DST/")
+            echo "Remote rsync args: rsync $ARGS"
+            # Send oc-rsync's output through a pipe to see what the server gets
+            timeout 30 ssh localhost "strace -e trace=read,write -f rsync $ARGS" < /dev/null > /tmp/strace_out.txt 2>&1 || true
+            echo "=== strace output (first 100 lines) ==="
+            head -100 /tmp/strace_out.txt || true
+
+            exit 1
+          }
           diff -r "$SRC" "$DST"
           echo "PASS: SSH push initial sync"
 
@@ -132,13 +163,13 @@ jobs:
             RC=$?
             echo "SSH pull failed with exit $RC"
 
-            # Diagnostic: capture remote rsync stderr separately
-            echo "--- Remote rsync verbose output ---"
-            timeout 30 ssh localhost "rsync --server --sender -logDtprvvv --timeout=30 -e.LsfxCIvu . $SRC/" > /tmp/rsync_stdout.bin 2>/tmp/rsync_stderr.txt < /dev/null || true
-            echo "Remote stderr:"
-            cat /tmp/rsync_stderr.txt || true
-            echo "Remote stdout (hex, first 128 bytes):"
-            xxd -l 128 /tmp/rsync_stdout.bin || true
+            # Show oc-rsync diagnostic output
+            echo "--- Attempting pull with verbose stderr capture ---"
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" > /tmp/oc_pull_stdout.txt 2>/tmp/oc_pull_stderr.txt || true
+            echo "=== oc-rsync stderr ==="
+            cat /tmp/oc_pull_stderr.txt || true
+            echo "=== oc-rsync stdout ==="
+            cat /tmp/oc_pull_stdout.txt || true
 
             exit 1
           }

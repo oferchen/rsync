@@ -239,7 +239,13 @@ pub fn run_server_stdio(
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
     // Perform protocol handshake
+    eprintln!("[SSH-DIAG] starting handshake (client_mode={})", config.connection.client_mode);
     let handshake = perform_handshake(stdin, stdout)?;
+    eprintln!(
+        "[SSH-DIAG] handshake OK: protocol={}, client_args={:?}",
+        handshake.protocol.as_u8(),
+        handshake.client_args.is_some()
+    );
     run_server_with_handshake(config, handshake, stdin, stdout, progress)
 }
 
@@ -324,7 +330,17 @@ pub fn run_server_with_handshake<W: Write>(
         checksum_seed: config.checksum_seed,
         allow_inc_recurse,
     };
+    eprintln!(
+        "[SSH-DIAG] setup_protocol: is_server={}, is_daemon_mode={}, do_compression={}, allow_inc_recurse={}",
+        is_server, is_daemon_mode, do_compression, allow_inc_recurse
+    );
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
+    eprintln!(
+        "[SSH-DIAG] setup_protocol OK: compat_flags={:?}, seed={}, algorithms={:?}",
+        setup_result.compat_flags.map(|f| f.bits()),
+        setup_result.checksum_seed,
+        setup_result.negotiated_algorithms
+    );
 
     handshake.negotiated_algorithms = setup_result.negotiated_algorithms;
     handshake.compat_flags = setup_result.compat_flags;
@@ -372,12 +388,17 @@ pub fn run_server_with_handshake<W: Write>(
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
-    if requires_multiplex_output(
+    let mplex_out = requires_multiplex_output(
         config.connection.client_mode,
         config.role,
         handshake.protocol,
         setup_result.compat_flags,
-    ) {
+    );
+    eprintln!(
+        "[SSH-DIAG] multiplex_output={}, role={:?}, protocol={}",
+        mplex_out, config.role, handshake.protocol.as_u8()
+    );
+    if mplex_out {
         writer = writer.activate_multiplex()?;
     }
 
@@ -396,6 +417,10 @@ pub fn run_server_with_handshake<W: Write>(
         false
     };
 
+    eprintln!(
+        "[SSH-DIAG] should_send_filter_list={}, delete={}, prune={}",
+        should_send_filter_list, config.flags.delete, config.flags.prune_empty_dirs
+    );
     if should_send_filter_list {
         protocol::filters::write_filter_list(
             &mut writer,
@@ -430,6 +455,7 @@ pub fn run_server_with_handshake<W: Write>(
     // Input multiplex activation deferred to each role after reading filter list.
     let chained_reader = reader;
 
+    eprintln!("[SSH-DIAG] dispatching to role={:?}", config.role);
     match config.role {
         ServerRole::Receiver => {
             let mut ctx = ReceiverContext::new(&handshake, config);
