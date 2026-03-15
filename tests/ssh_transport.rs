@@ -72,21 +72,18 @@ fn test_ssh_push_single_file() {
     let remote_dest = format!("localhost:{}", dest_dir.path().join("file1.txt").display());
 
     let output = std::process::Command::new(oc_rsync_binary())
+        .arg("--timeout=30")
         .arg(&source_file)
         .arg(&remote_dest)
         .output()
         .expect("Failed to execute oc-rsync");
 
-    // For now, we expect this to fail gracefully if SSH is not set up
-    // In a CI environment with SSH configured, this should succeed
     if output.status.success() {
-        // Verify the file was transferred
         let dest_file = dest_dir.path().join("file1.txt");
         assert!(dest_file.exists(), "Destination file should exist");
         let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
         assert_eq!(content, "Hello, World!");
     } else {
-        // SSH not configured, test is informational only
         let stderr = String::from_utf8_lossy(&output.stderr);
         eprintln!("SSH push test skipped (SSH not configured): {stderr}");
     }
@@ -103,13 +100,13 @@ fn test_ssh_pull_single_file() {
     let dest_file = dest_dir.path().join("file2.txt");
 
     let output = std::process::Command::new(oc_rsync_binary())
+        .arg("--timeout=30")
         .arg(&remote_source)
         .arg(&dest_file)
         .output()
         .expect("Failed to execute oc-rsync");
 
     if output.status.success() {
-        // Verify the file was transferred
         assert!(dest_file.exists(), "Destination file should exist");
         let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
         assert_eq!(content, "Test content 2");
@@ -128,6 +125,7 @@ fn test_ssh_push_recursive_directory() {
     let remote_dest = format!("localhost:{}/", dest_dir.path().display());
 
     let output = std::process::Command::new(oc_rsync_binary())
+        .arg("--timeout=30")
         .arg("-r")
         .arg(format!("{}/", source_dir.path().display()))
         .arg(&remote_dest)
@@ -135,7 +133,6 @@ fn test_ssh_push_recursive_directory() {
         .expect("Failed to execute oc-rsync");
 
     if output.status.success() {
-        // Verify the directory structure was transferred
         assert!(dest_dir.path().join("file1.txt").exists());
         assert!(dest_dir.path().join("file2.txt").exists());
         assert!(dest_dir.path().join("subdir").join("file3.txt").exists());
