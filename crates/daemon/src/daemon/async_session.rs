@@ -467,13 +467,11 @@ async fn handle_async_session(
     let mut bytes_received: u64 = 0;
     let mut bytes_sent: u64 = 0;
 
-    // Send greeting
-    let greeting = format!("@RSYNCD: {}.0\n", 32); // Protocol version 32
+    let greeting = format!("@RSYNCD: {}.0\n", 32);
     writer.write_all(greeting.as_bytes()).await?;
     writer.flush().await?;
     bytes_sent += greeting.len() as u64;
 
-    // Read client version with timeout
     let mut line_buf = String::new();
     let read_result = timeout(config.read_timeout, reader.read_line(&mut line_buf)).await;
 
@@ -496,7 +494,6 @@ async fn handle_async_session(
         Err(_) => return Err(AsyncDaemonError::Timeout(config.read_timeout)),
     };
 
-    // Parse client version
     let _client_version = if version_line.starts_with("@RSYNCD:") {
         version_line
             .strip_prefix("@RSYNCD:")
@@ -509,7 +506,6 @@ async fn handle_async_session(
     #[cfg(feature = "concurrent-sessions")]
     registry.set_state(session_id, SessionState::Listing);
 
-    // Read module request with timeout
     line_buf.clear();
     let read_result = timeout(config.read_timeout, reader.read_line(&mut line_buf)).await;
 
