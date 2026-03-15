@@ -95,7 +95,7 @@ jobs:
       - name: Run SSH interop tests
         run: |
           set -euo pipefail
-          OC_RSYNC="target/debug/oc-rsync"
+          OC_RSYNC="target/dist/oc-rsync"
           SRC=$(mktemp -d)
           DST=$(mktemp -d)
           trap 'rm -rf "$SRC" "$DST"' EXIT
