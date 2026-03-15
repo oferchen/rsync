@@ -24,6 +24,16 @@ IO_URING_MODES = {
     "io_uring": "io_uring vs Standard I/O",
 }
 
+EXTRA_MODES = {
+    "compression": "Compression",
+    "delta": "Delta Transfer",
+    "large_file": "Large File (1GB)",
+    "many_small": "Many Small Files (100K)",
+    "sparse": "Sparse Files",
+}
+
+MEMORY_MODE = "memory"
+
 
 def ratio_indicator(ratio):
     if ratio < 0.95:
@@ -105,6 +115,48 @@ def main():
 
         print()
 
+    # Extra benchmark modes (compression, delta, large file, many small, sparse)
+    for mode, label in EXTRA_MODES.items():
+        tests = by_mode.get(mode, [])
+        if not tests:
+            continue
+
+        print(f"### {label}\n")
+        print("| Test | Upstream | oc-rsync | Ratio |")
+        print("|------|----------|----------|-------|")
+
+        for t in tests:
+            up = t["upstream"]["mean"]
+            oc = t["oc_rsync"]["mean"]
+            ratio = t["ratio"]
+            ind = ratio_indicator(ratio)
+            print(f"| {t['name']} | {up:.3f}s | {oc:.3f}s | {ind} {ratio:.2f}x |")
+
+        print()
+
+    # Memory usage (peak RSS)
+    mem_tests = by_mode.get(MEMORY_MODE, [])
+    if mem_tests:
+        print("### Memory Usage (Peak RSS)\n")
+        print("| Test | Upstream | oc-rsync | Time Ratio | RSS Upstream | RSS oc-rsync |")
+        print("|------|----------|----------|------------|-------------|-------------|")
+
+        for t in mem_tests:
+            up = t["upstream"]["mean"]
+            oc = t["oc_rsync"]["mean"]
+            ratio = t["ratio"]
+            ind = ratio_indicator(ratio)
+            up_rss = t["upstream"].get("peak_rss_kb")
+            oc_rss = t["oc_rsync"].get("peak_rss_kb")
+            up_rss_str = f"{up_rss / 1024:.1f}MB" if up_rss else "N/A"
+            oc_rss_str = f"{oc_rss / 1024:.1f}MB" if oc_rss else "N/A"
+            print(
+                f"| {t['name']} | {up:.3f}s | {oc:.3f}s "
+                f"| {ind} {ratio:.2f}x | {up_rss_str} | {oc_rss_str} |"
+            )
+
+        print()
+
     # Summary
     summary = data["summary"]
     print(f"### Summary\n")
@@ -113,7 +165,9 @@ def main():
 
     print("| Mode | Avg Ratio |")
     print("|------|-----------|")
-    for mode, label in MODE_LABELS.items():
+    all_labels = {**MODE_LABELS, **OPENSSL_MODES, **IO_URING_MODES, **EXTRA_MODES}
+    all_labels[MEMORY_MODE] = "Memory Usage"
+    for mode, label in all_labels.items():
         if mode in summary.get("by_mode", {}):
             r = summary["by_mode"][mode]
             print(f"| {label} | {r:.2f}x |")
