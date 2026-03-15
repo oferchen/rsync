@@ -8,6 +8,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use tempfile::TempDir;
 
@@ -51,27 +52,106 @@ fn rsync_path_arg() -> String {
     format!("--rsync-path={}", oc_rsync_binary().display())
 }
 
+/// Checks whether SSH to localhost is available (port open + key auth works).
+/// Returns false if sshd is not running or authentication would prompt.
+fn ssh_localhost_available() -> bool {
+    std::process::Command::new("ssh")
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=3",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "localhost",
+            "true",
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Maximum time to wait for an SSH transfer test before killing the process.
+const SSH_TEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Runs oc-rsync with the given args and a process-level timeout.
+/// Returns None if the process times out (killed).
+fn run_oc_rsync_with_timeout(args: &[&str]) -> Option<std::process::Output> {
+    let mut child = std::process::Command::new(oc_rsync_binary())
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn oc-rsync");
+
+    let deadline = std::time::Instant::now() + SSH_TEST_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = child
+                    .stdout
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = Vec::new();
+                        std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                        buf
+                    })
+                    .unwrap_or_default();
+                let stderr = child
+                    .stderr
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = Vec::new();
+                        std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                        buf
+                    })
+                    .unwrap_or_default();
+                return Some(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    child.kill().ok();
+                    child.wait().ok();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => {
+                child.kill().ok();
+                child.wait().ok();
+                return None;
+            }
+        }
+    }
+}
+
 #[test]
 #[ignore] // Requires SSH server setup
 fn test_ssh_push_single_file() {
+    if !ssh_localhost_available() {
+        eprintln!("SSH push test skipped: localhost SSH not available");
+        return;
+    }
+
     let source_dir = setup_test_directory();
     let dest_dir = TempDir::new().expect("Failed to create dest directory");
 
-    // For this test to work, you need:
-    // 1. SSH server running on localhost
-    // 2. SSH key authentication configured
-    // 3. The test assumes localhost:22 is accessible
-
     let source_file = source_dir.path().join("file1.txt");
     let remote_dest = format!("localhost:{}", dest_dir.path().join("file1.txt").display());
+    let rsync_path = rsync_path_arg();
 
-    let output = std::process::Command::new(oc_rsync_binary())
-        .args(["--timeout=30", &rsync_path_arg()])
-        .arg(&source_file)
-        .arg(&remote_dest)
-        .output()
-        .expect("Failed to execute oc-rsync");
+    let output = run_oc_rsync_with_timeout(&[
+        "--timeout=30",
+        &rsync_path,
+        &source_file.to_string_lossy(),
+        &remote_dest,
+    ]);
 
+    let output = output.expect("SSH push timed out - possible deadlock");
     if output.status.success() {
         let dest_file = dest_dir.path().join("file1.txt");
         assert!(dest_file.exists(), "Destination file should exist");
@@ -79,59 +159,75 @@ fn test_ssh_push_single_file() {
         assert_eq!(content, "Hello, World!");
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("SSH push test skipped (SSH not configured): {stderr}");
+        panic!("SSH push failed: {stderr}");
     }
 }
 
 #[test]
 #[ignore] // Requires SSH server setup
 fn test_ssh_pull_single_file() {
+    if !ssh_localhost_available() {
+        eprintln!("SSH pull test skipped: localhost SSH not available");
+        return;
+    }
+
     let source_dir = setup_test_directory();
     let dest_dir = TempDir::new().expect("Failed to create dest directory");
 
     let source_file = source_dir.path().join("file2.txt");
     let remote_source = format!("localhost:{}", source_file.display());
     let dest_file = dest_dir.path().join("file2.txt");
+    let rsync_path = rsync_path_arg();
 
-    let output = std::process::Command::new(oc_rsync_binary())
-        .args(["--timeout=30", &rsync_path_arg()])
-        .arg(&remote_source)
-        .arg(&dest_file)
-        .output()
-        .expect("Failed to execute oc-rsync");
+    let output = run_oc_rsync_with_timeout(&[
+        "--timeout=30",
+        &rsync_path,
+        &remote_source,
+        &dest_file.to_string_lossy(),
+    ]);
 
+    let output = output.expect("SSH pull timed out - possible deadlock");
     if output.status.success() {
         assert!(dest_file.exists(), "Destination file should exist");
         let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
         assert_eq!(content, "Test content 2");
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("SSH pull test skipped (SSH not configured): {stderr}");
+        panic!("SSH pull failed: {stderr}");
     }
 }
 
 #[test]
 #[ignore] // Requires SSH server setup
 fn test_ssh_push_recursive_directory() {
+    if !ssh_localhost_available() {
+        eprintln!("SSH recursive push test skipped: localhost SSH not available");
+        return;
+    }
+
     let source_dir = setup_test_directory();
     let dest_dir = TempDir::new().expect("Failed to create dest directory");
 
     let remote_dest = format!("localhost:{}/", dest_dir.path().display());
+    let source_path = format!("{}/", source_dir.path().display());
+    let rsync_path = rsync_path_arg();
 
-    let output = std::process::Command::new(oc_rsync_binary())
-        .args(["--timeout=30", &rsync_path_arg(), "-r"])
-        .arg(format!("{}/", source_dir.path().display()))
-        .arg(&remote_dest)
-        .output()
-        .expect("Failed to execute oc-rsync");
+    let output = run_oc_rsync_with_timeout(&[
+        "--timeout=30",
+        &rsync_path,
+        "-r",
+        &source_path,
+        &remote_dest,
+    ]);
 
+    let output = output.expect("SSH recursive push timed out - possible deadlock");
     if output.status.success() {
         assert!(dest_dir.path().join("file1.txt").exists());
         assert!(dest_dir.path().join("file2.txt").exists());
         assert!(dest_dir.path().join("subdir").join("file3.txt").exists());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("SSH recursive push test skipped (SSH not configured): {stderr}");
+        panic!("SSH recursive push failed: {stderr}");
     }
 }
 
@@ -368,20 +464,6 @@ fn test_remote_invocation_with_default_rsync_path() {
     // First argument should be default "rsync"
     assert_eq!(args[0].to_string_lossy(), "rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");
-}
-
-#[test]
-#[ignore] // Requires SSH setup
-fn test_ssh_with_custom_port() {
-    // This test would require an actual SSH server setup
-    // It should:
-    // 1. Set up a test SSH server on a custom port
-    // 2. Create a config with custom remote shell: ssh -p <port>
-    // 3. Execute a transfer
-    // 4. Verify it works correctly
-    //
-    // For now, this is marked as ignored and serves as documentation
-    // for future integration testing.
 }
 
 #[test]
