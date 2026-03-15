@@ -951,6 +951,11 @@ impl ReceiverContext {
                     break;
                 }
 
+                // upstream: io.c perform_io() flushes buffered output while
+                // waiting for input via select(). Flush pending file requests
+                // so the generator can see them before we block reading its response.
+                writer.flush()?;
+
                 // Process one response
                 let pending = pipeline.pop().expect("pipeline not empty");
                 let (file_idx, file_path, file_entry, is_new_file) =
