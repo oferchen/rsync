@@ -51,6 +51,8 @@ COLOR_UPSTREAM = "#6e7681"
 COLOR_OC_RSYNC = "#58a6ff"
 COLOR_PURE_RUST = "#58a6ff"
 COLOR_OPENSSL = "#d2a8ff"
+COLOR_STD_IO = "#da8b45"
+COLOR_IO_URING = "#3fb950"
 COLOR_TITLE = "#e6edf3"
 COLOR_SUBTITLE = "#8b949e"
 COLOR_MODE_HEADER = "#e6edf3"
@@ -195,8 +197,8 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
                 bar1_color, bar1_label = COLOR_PURE_RUST, "pure Rust"
                 bar2_color, bar2_label = COLOR_OPENSSL, "OpenSSL"
             elif mode in IO_URING_MODES:
-                bar1_color, bar1_label = COLOR_UPSTREAM, "standard I/O"
-                bar2_color, bar2_label = COLOR_OC_RSYNC, "io_uring"
+                bar1_color, bar1_label = COLOR_STD_IO, "standard I/O"
+                bar2_color, bar2_label = COLOR_IO_URING, "io_uring"
             else:
                 bar1_color, bar1_label = COLOR_UPSTREAM, "upstream"
                 bar2_color, bar2_label = COLOR_OC_RSYNC, "oc-rsync"
@@ -356,7 +358,12 @@ class ChartBuilder:
             self._add_bar(pair.oc_rsync, scale)
             self._add_speedup(pair)
 
-    def add_legend(self, y: float, has_openssl: bool = False) -> None:
+    def add_legend(
+        self,
+        y: float,
+        has_openssl: bool = False,
+        has_io_uring: bool = False,
+    ) -> None:
         cx = CHART_WIDTH / 2
         self._parts.append(f'<g transform="translate({cx - 160}, {y:.0f})">')
         self._parts.append(
@@ -371,18 +378,36 @@ class ChartBuilder:
         self._parts.append(
             f'<text x="186" y="10" font-size="11" fill="{COLOR_LABEL}">oc-rsync</text>'
         )
+        row = 0
         if has_openssl:
+            row += 1
+            ry = row * 18
             self._parts.append(
-                f'<rect x="0" y="18" width="12" height="12" rx="2" fill="{COLOR_PURE_RUST}"/>'
+                f'<rect x="0" y="{ry}" width="12" height="12" rx="2" fill="{COLOR_PURE_RUST}"/>'
             )
             self._parts.append(
-                f'<text x="16" y="28" font-size="11" fill="{COLOR_LABEL}">oc-rsync (pure Rust)</text>'
+                f'<text x="16" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">oc-rsync (pure Rust)</text>'
             )
             self._parts.append(
-                f'<rect x="210" y="18" width="12" height="12" rx="2" fill="{COLOR_OPENSSL}"/>'
+                f'<rect x="210" y="{ry}" width="12" height="12" rx="2" fill="{COLOR_OPENSSL}"/>'
             )
             self._parts.append(
-                f'<text x="226" y="28" font-size="11" fill="{COLOR_LABEL}">oc-rsync (OpenSSL)</text>'
+                f'<text x="226" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">oc-rsync (OpenSSL)</text>'
+            )
+        if has_io_uring:
+            row += 1
+            ry = row * 18
+            self._parts.append(
+                f'<rect x="0" y="{ry}" width="12" height="12" rx="2" fill="{COLOR_STD_IO}"/>'
+            )
+            self._parts.append(
+                f'<text x="16" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">standard I/O</text>'
+            )
+            self._parts.append(
+                f'<rect x="170" y="{ry}" width="12" height="12" rx="2" fill="{COLOR_IO_URING}"/>'
+            )
+            self._parts.append(
+                f'<text x="186" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">io_uring</text>'
             )
         self._parts.append("</g>")
 
@@ -438,10 +463,11 @@ def generate_chart(data: dict) -> str:
         tests_by_mode.setdefault(t["mode"], []).append(t)
 
     has_openssl = any(m in OPENSSL_MODES for m in tests_by_mode)
+    has_io_uring = any(m in IO_URING_MODES for m in tests_by_mode)
     layout = compute_layout(tests_by_mode)
 
-    # Extra height for second legend row when OpenSSL tests are present
-    extra_legend = 18 if has_openssl else 0
+    extra_legend_rows = int(has_openssl) + int(has_io_uring)
+    extra_legend = extra_legend_rows * 18
     chart_height = layout.chart_height + extra_legend
 
     builder = ChartBuilder(CHART_WIDTH, chart_height)
@@ -459,7 +485,7 @@ def generate_chart(data: dict) -> str:
     for group in layout.groups:
         builder.add_mode_group(group, layout.scale)
 
-    builder.add_legend(chart_height - 30 - extra_legend, has_openssl)
+    builder.add_legend(chart_height - 30 - extra_legend, has_openssl, has_io_uring)
 
     return builder.render()
 
