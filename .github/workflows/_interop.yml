@@ -73,5 +73,64 @@ jobs:
           echo "Building upstream rsync ${{ inputs.upstream_rsync_version }}..."
           bash tools/ci/run_interop.sh build-only
 
+      - name: Set up SSH loopback
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Install upstream rsync to PATH
+        run: |
+          UPSTREAM="target/interop/upstream-src/rsync-3.4.1/rsync"
+          if [ -f "$UPSTREAM" ]; then
+            sudo cp "$UPSTREAM" /usr/local/bin/rsync
+          fi
+
       - name: Run interop tests
         run: bash tools/ci/run_interop.sh
+
+      - name: Run SSH interop tests
+        run: |
+          set -euo pipefail
+          OC_RSYNC="target/dist/oc-rsync"
+          SRC=$(mktemp -d)
+          DST=$(mktemp -d)
+          trap 'rm -rf "$SRC" "$DST"' EXIT
+
+          # Create test data
+          for i in $(seq 1 100); do
+            dd if=/dev/urandom of="$SRC/file_$i.bin" bs=1024 count=10 2>/dev/null
+          done
+          mkdir -p "$SRC/subdir"
+          echo "nested" > "$SRC/subdir/nested.txt"
+
+          # Verify binaries
+          echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
+          echo "remote rsync: $(rsync --version 2>&1 | head -1)"
+
+          # SSH pull: oc-rsync client ← upstream rsync server
+          echo "=== SSH pull: oc-rsync ← upstream rsync ==="
+          timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" 2>&1 || {
+            echo "SSH pull failed with exit $?"
+            echo "Retrying with strace on remote side..."
+            timeout 60 "$OC_RSYNC" -av --timeout=30 -e "ssh" "localhost:$SRC/" "$DST/" 2>&1 || true
+            exit 1
+          }
+          diff -r "$SRC" "$DST"
+          echo "PASS: SSH pull initial sync"
+
+          # SSH pull no-change
+          timeout 60 "$OC_RSYNC" -av --timeout=30 "localhost:$SRC/" "$DST/"
+          echo "PASS: SSH pull no-change sync"
+
+          # SSH push: oc-rsync client → upstream rsync server
+          rm -rf "$DST"/*
+          echo "=== SSH push: oc-rsync → upstream rsync ==="
+          timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/"
+          diff -r "$SRC" "$DST"
+          echo "PASS: SSH push initial sync"
+
+          echo "All SSH interop tests passed."
