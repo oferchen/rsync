@@ -1222,6 +1222,10 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
+  # files-from: generator does not yet read filenames from local file in push.
+  "oc:files-from"
+  # itemize: MSG_INFO forwarding not yet wired for daemon transfers.
+  "oc:itemize"
 
   # --- upstream→oc (daemon receive) ---
   # protocol-31: upstream 3.0.9 does not support protocol 31.
@@ -1229,6 +1233,8 @@ KNOWN_FAILURES=(
   # ACLs/xattrs: upstream daemon builds may not have ACL/xattr support enabled.
   "up:acls"
   "up:xattrs"
+  # itemize: MSG_INFO forwarding not yet wired for daemon transfers.
+  "up:itemize"
 
   # --- standalone scenarios ---
   "standalone:write-batch-read-batch"

@@ -1950,27 +1950,25 @@ mod tests {
         }
 
         #[test]
-        fn generator_config_does_not_set_files_from_for_push() {
-            // When pushing to daemon, the CLI has already expanded the files-from
-            // entries into transfer operands. The generator should NOT have
-            // files_from_path set, because it gets the paths from args directly.
+        fn generator_config_sets_files_from_for_local_file_push() {
+            // upstream: options.c:2944 - when the client is the sender and
+            // --files-from points to a local file, the generator reads filenames
+            // directly from the file (not via the protocol stream).
             let config = ClientConfig::builder()
                 .files_from(crate::client::config::FilesFromSource::LocalFile(
                     std::path::PathBuf::from("/tmp/list.txt"),
                 ))
                 .build();
 
-            // local_paths already contain the expanded file entries
-            let local_paths = vec!["src/file1.txt".to_owned(), "src/file2.txt".to_owned()];
+            let local_paths = vec!["src/".to_owned()];
             let server_config =
                 build_server_config_for_generator(&config, &local_paths, Vec::new()).unwrap();
 
-            // files_from_path should be None - the paths are in args
-            assert!(
-                server_config.file_selection.files_from_path.is_none(),
-                "generator in daemon push should not have files_from_path for local source"
+            assert_eq!(
+                server_config.file_selection.files_from_path.as_deref(),
+                Some("/tmp/list.txt"),
+                "generator should read files-from from local file for push"
             );
-            assert_eq!(server_config.args.len(), 2);
         }
 
         #[test]
