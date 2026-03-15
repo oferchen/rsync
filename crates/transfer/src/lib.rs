@@ -193,23 +193,20 @@ pub type ServerResult = io::Result<ServerStats>;
 ///
 /// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1247-1248).
 /// - **Client sender** (push): always for protocol >= 30 (main.c:1300-1301).
-/// - **Client receiver** (pull): only when `need_messages_from_generator` is set
-///   (main.c:1344-1347), which requires INC_RECURSE negotiation (compat.c:776).
-///   The remote server's input demuxing mirrors this expectation - sending
-///   multiplexed frames to a server expecting plain I/O causes a deadlock.
+/// - **Client receiver** (pull): when `need_messages_from_generator` is set
+///   (main.c:1344-1347). Upstream sets this unconditionally for protocol >= 30
+///   (compat.c:776), so the client always activates multiplex output for pull.
 fn requires_multiplex_output(
     client_mode: bool,
-    role: ServerRole,
+    _role: ServerRole,
     protocol: protocol::ProtocolVersion,
-    compat_flags: Option<protocol::CompatibilityFlags>,
+    _compat_flags: Option<protocol::CompatibilityFlags>,
 ) -> bool {
     if client_mode {
-        match role {
-            ServerRole::Generator => protocol.supports_generator_messages(),
-            ServerRole::Receiver => {
-                compat_flags.is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE))
-            }
-        }
+        // upstream: both sender (main.c:1300) and receiver (main.c:1344)
+        // activate multiplex output when need_messages_from_generator is set,
+        // which is unconditional for protocol >= 30 (compat.c:776).
+        protocol.supports_generator_messages()
     } else {
         protocol.supports_multiplex_io()
     }
@@ -372,12 +369,13 @@ pub fn run_server_with_handshake<W: Write>(
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
-    if requires_multiplex_output(
+    let mplex_out = requires_multiplex_output(
         config.connection.client_mode,
         config.role,
         handshake.protocol,
         setup_result.compat_flags,
-    ) {
+    );
+    if mplex_out {
         writer = writer.activate_multiplex()?;
     }
 

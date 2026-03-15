@@ -65,6 +65,12 @@ impl GeneratorContext {
         let tolerant = self.config.flags.dry_run;
 
         loop {
+            // upstream: io.c perform_io() flushes buffered output while waiting
+            // for input via select(). Our Read/Write traits are independent, so
+            // we must explicitly flush before blocking on read to prevent deadlock
+            // when buffered delta data hasn't reached the receiver yet.
+            writer.flush()?;
+
             // Read NDX value from receiver.
             // Connection may close early in dry-run or abbreviated transfers - treat
             // as end of transfer once we have completed at least one phase.
@@ -272,9 +278,8 @@ impl GeneratorContext {
                 )?;
 
                 // Stream: read -> hash -> write in one pass (no DeltaScript intermediate).
-                // No flush here — data accumulates in MultiplexWriter's 64KB buffer,
-                // auto-flushing when full. This matches upstream rsync's batched
-                // iobuf_out pattern (sender.c send_files).
+                // The loop-top flush before read_ndx() ensures all buffered data
+                // reaches the receiver before we block waiting for the next request.
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let compression = self.file_compression(source_path);
                 let result = stream_whole_file_transfer(

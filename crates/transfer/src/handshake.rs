@@ -5,10 +5,13 @@
 //! their supported protocol versions and negotiate a common version to use.
 //!
 //! For server mode (invoked via `--server`), the sequence is:
-//! 1. Read the client's protocol version advertisement from stdin
-//! 2. Select the highest mutually supported version
-//! 3. Write our version advertisement to stdout
+//! 1. Write our maximum protocol version to stdout (upstream: compat.c:603)
+//! 2. Read the remote's protocol version from stdin (upstream: compat.c:604)
+//! 3. Negotiate to the highest mutually supported version
 //! 4. Proceed with the negotiated protocol version
+//!
+//! Both sides write before reading to avoid deadlock when both ends are the
+//! same implementation.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 
@@ -44,38 +47,37 @@ pub struct HandshakeResult {
 
 /// Performs the server-side protocol version handshake.
 ///
-/// This reads the client's version advertisement, selects a common version,
-/// and writes our response. Returns the negotiated version.
+/// This writes our maximum protocol version, reads the remote's version, and
+/// negotiates the highest common version. Returns the negotiated version.
 ///
 /// # Protocol
 ///
-/// The client sends a 4-byte binary version advertisement:
+/// Each side sends a 4-byte binary version advertisement:
 /// - Byte 0: Protocol version (e.g., 32)
 /// - Byte 1: Protocol sub-version (usually 0)
 /// - Bytes 2-3: Reserved/compatibility flags
-///
-/// The server responds with the same format.
 pub fn perform_handshake(
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
 ) -> io::Result<HandshakeResult> {
-    // Read the client's version advertisement
-    let client_version = read_client_version(stdin)?;
+    // upstream: compat.c:602-604 - write our max version first, then read.
+    // Both sides do this simultaneously; reversing the order deadlocks when
+    // both ends are oc-rsync (each waits for the other to write first).
+    write_server_version(stdout, ProtocolVersion::NEWEST)?;
+    stdout.flush()?;
 
-    // Select highest mutually supported version
-    let negotiated = select_highest_mutual([client_version]).map_err(|e| {
+    let remote_version = read_client_version(stdin)?;
+
+    // Negotiate: pick the highest mutually supported version
+    let negotiated = select_highest_mutual([remote_version]).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
-                "client protocol version {} is not supported by this server: {e}",
-                client_version.as_u8()
+                "remote protocol version {} is not supported: {e}",
+                remote_version.as_u8()
             ),
         )
     })?;
-
-    // Write our version advertisement
-    write_server_version(stdout, negotiated)?;
-    stdout.flush()?;
 
     Ok(HandshakeResult {
         protocol: negotiated,
