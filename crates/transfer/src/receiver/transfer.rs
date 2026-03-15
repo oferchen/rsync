@@ -826,6 +826,12 @@ impl ReceiverContext {
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
 
+        // Early return when there's nothing to transfer - avoids spawning
+        // the disk-commit thread, creating codecs, and pipeline state.
+        if files_to_transfer.is_empty() {
+            return Ok((0, 0, Vec::new()));
+        }
+
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
 
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());

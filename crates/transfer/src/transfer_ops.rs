@@ -185,7 +185,9 @@ pub fn send_file_request<W: Write + ?Sized>(
     if let Some(ref sig) = signature {
         write_signature_blocks(writer, sig, sum_head.s2length)?;
     }
-    writer.flush()?;
+    // No flush here - the pipeline loop flushes before blocking on response
+    // reads. Per-file flushes defeat buffer batching, causing 1 sendto per
+    // ~20-byte request instead of upstream's batched iobuf_out pattern.
 
     // Create pending transfer for response processing
     let pending = match (signature, basis_path) {
