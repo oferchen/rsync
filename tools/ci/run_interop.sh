@@ -888,9 +888,21 @@ comp_run_scenario() {
   if [[ "$resolved_flags" == *"--files-from=filelist.txt"* ]]; then
     resolved_flags="${resolved_flags/--files-from=filelist.txt/--files-from=${ddir}/filelist.txt}"
   fi
-  timeout "$hard_timeout" $client $resolved_flags --timeout=10 \
-      "${sdir}/" "$url" >"$transfer_log.out" 2>"$transfer_log.err"
-  local rc=$?
+  # When -R (--relative) is active, use relative source paths so the
+  # destination receives files as hello.txt instead of /full/path/hello.txt.
+  # upstream: rsync -avR /abs/src/ dst/ preserves the full absolute path,
+  # but rsync -avR . dst/ (from within src/) preserves only relative paths.
+  local rc=0
+  if [[ "$resolved_flags" == *"R"* ]]; then
+    local abs_client
+    abs_client=$(command -v "$client" 2>/dev/null || echo "$client")
+    [[ "$abs_client" != /* ]] && abs_client="$(cd "$(dirname "$client")" && pwd)/$(basename "$client")"
+    (cd "$sdir" && timeout "$hard_timeout" "$abs_client" $resolved_flags --timeout=10 \
+        . "$url" >"$transfer_log.out" 2>"$transfer_log.err") || rc=$?
+  else
+    timeout "$hard_timeout" $client $resolved_flags --timeout=10 \
+        "${sdir}/" "$url" >"$transfer_log.out" 2>"$transfer_log.err" || rc=$?
+  fi
   cat "$transfer_log.err" >> "$log"
 
   # Clean up per-scenario source augmentation
@@ -1210,12 +1222,10 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # dry-run: half-closed socket causes Resource temporarily unavailable.
-  "oc:dry-run"
-  # itemize: MSG_INFO frame emission not yet wired for daemon push.
-  "oc:itemize"
-  # files-from: filter list not applied correctly in daemon push path.
+  # files-from: generator does not yet read filenames from local file in push.
   "oc:files-from"
+  # itemize: MSG_INFO forwarding not yet wired for daemon transfers.
+  "oc:itemize"
 
   # --- upstream→oc (daemon receive) ---
   # protocol-31: upstream 3.0.9 does not support protocol 31.
@@ -1223,12 +1233,8 @@ KNOWN_FAILURES=(
   # ACLs/xattrs: upstream daemon builds may not have ACL/xattr support enabled.
   "up:acls"
   "up:xattrs"
-  # relative: --relative path reconstruction incomplete in daemon receive.
-  "up:relative"
-  # itemize: no file transfer itemize lines emitted in daemon receive.
+  # itemize: MSG_INFO forwarding not yet wired for daemon transfers.
   "up:itemize"
-  # hardlinks-relative: combined -H -R file ordering issue in daemon receive.
-  "up:hardlinks-relative"
 
   # --- standalone scenarios ---
   "standalone:write-batch-read-batch"
