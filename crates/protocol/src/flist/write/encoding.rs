@@ -67,19 +67,16 @@ impl FileListWriter {
         suffix_len: usize,
         xflags: u32,
     ) -> io::Result<()> {
-        // Write same_len if XMIT_SAME_NAME is set
         if xflags & (XMIT_SAME_NAME as u32) != 0 {
             writer.write_all(&[same_len as u8])?;
         }
 
-        // Write suffix length
         if xflags & (XMIT_LONG_NAME as u32) != 0 {
             self.codec.write_long_name_len(writer, suffix_len)?;
         } else {
             writer.write_all(&[suffix_len as u8])?;
         }
 
-        // Write suffix bytes
         writer.write_all(&name[same_len..])
     }
 
@@ -140,12 +137,10 @@ impl FileListWriter {
             (0, 0)
         };
 
-        // Write major if not same as previous
         if xflags & ((XMIT_SAME_RDEV_MAJOR as u32) << 8) == 0 {
             write_varint30_int(writer, major as i32, self.protocol.as_u8())?;
         }
 
-        // Write minor (always)
         if self.protocol.as_u8() >= 30 {
             write_varint(writer, minor as i32)?;
         } else {
@@ -158,7 +153,6 @@ impl FileListWriter {
             }
         }
 
-        // Update compression state
         self.state.update_rdev_major(major);
 
         Ok(())
@@ -179,7 +173,6 @@ impl FileListWriter {
             return Ok(());
         }
 
-        // Only write index if XMIT_HLINKED is set and XMIT_HLINK_FIRST is NOT set
         let hlinked = (xflags & ((XMIT_HLINKED as u32) << 8)) != 0;
         let hlink_first = (xflags & ((XMIT_HLINK_FIRST as u32) << 8)) != 0;
 
@@ -222,17 +215,13 @@ impl FileListWriter {
 
         let ino = entry.hardlink_ino().unwrap_or(0);
 
-        // Write dev if not same as previous
         let same_dev = (xflags & ((XMIT_SAME_DEV_PRE30 as u32) << 8)) != 0;
         if !same_dev {
-            // Write dev + 1 (upstream convention)
+            // upstream: dev + 1 convention (0 reserved as sentinel)
             crate::write_longint(writer, dev + 1)?;
         }
 
-        // Always write ino
         crate::write_longint(writer, ino)?;
-
-        // Update compression state
         self.state.update_hardlink_dev(dev);
 
         Ok(())
@@ -265,7 +254,6 @@ impl FileListWriter {
         let zeros = [0u8; MAX_CSUM_LEN];
 
         if is_regular {
-            // Write actual checksum from entry, or zeros if not set
             if let Some(sum) = entry.checksum() {
                 let len = sum.len().min(self.flist_csum_len);
                 writer.write_all(&sum[..len])?;

@@ -174,13 +174,9 @@ impl AckEntry {
     /// - status: 1 byte
     /// - if error: error_len (u16 LE) + error_msg bytes
     pub fn write<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<()> {
-        // Write NDX
         writer.write_all(&self.ndx.to_le_bytes())?;
-
-        // Write status
         writer.write_all(&[self.status as u8])?;
 
-        // Write error message if present
         if let Some(ref msg) = self.error_msg {
             let msg_bytes = msg.as_bytes();
             let len = msg_bytes.len().min(u16::MAX as usize) as u16;
@@ -193,17 +189,14 @@ impl AckEntry {
 
     /// Reads an ACK entry from the wire.
     pub fn read<R: io::Read + ?Sized>(reader: &mut R) -> io::Result<Self> {
-        // Read NDX
         let mut ndx_buf = [0u8; 4];
         reader.read_exact(&mut ndx_buf)?;
         let ndx = i32::from_le_bytes(ndx_buf);
 
-        // Read status
         let mut status_buf = [0u8; 1];
         reader.read_exact(&mut status_buf)?;
         let status = AckStatus::from_u8(status_buf[0]);
 
-        // Read error message if status indicates error
         let error_msg = if status.is_error() {
             let mut len_buf = [0u8; 2];
             reader.read_exact(&mut len_buf)?;
@@ -457,11 +450,9 @@ impl AckBatcher {
             return Ok(());
         }
 
-        // Write count
         let count = batch.len().min(u16::MAX as usize) as u16;
         writer.write_all(&count.to_le_bytes())?;
 
-        // Write entries
         for entry in batch.iter().take(count as usize) {
             entry.write(writer)?;
         }
@@ -471,12 +462,10 @@ impl AckBatcher {
 
     /// Reads a batch of ACKs from the wire.
     pub fn read_batch<R: io::Read + ?Sized>(reader: &mut R) -> io::Result<Vec<AckEntry>> {
-        // Read count
         let mut count_buf = [0u8; 2];
         reader.read_exact(&mut count_buf)?;
         let count = u16::from_le_bytes(count_buf) as usize;
 
-        // Read entries
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
             entries.push(AckEntry::read(reader)?);
