@@ -442,8 +442,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
         if self.config.preserve_permissions() {
             flags.push('p');
-        }
-        if self.config.preserve_executability() {
+        } else if self.config.preserve_executability() {
+            // upstream: options.c:2672-2675 - 'E' is only sent when
+            // preserve_perms is false (else-if). When perms are preserved,
+            // executability is implicitly included.
             flags.push('E');
         }
         if self.config.recursive() {
@@ -476,7 +478,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.dirs() && !self.config.recursive() {
             flags.push('d');
         }
-        if self.config.whole_file() {
+        // upstream: options.c:2644-2648 - only send 'W' when explicitly set
+        // (whole_file > 0). The default for remote transfers is no-whole-file;
+        // upstream never sends --no-whole-file because it's the default.
+        if self.config.whole_file_raw() == Some(true) {
             flags.push('W');
         }
         if self.config.sparse() {

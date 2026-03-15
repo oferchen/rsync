@@ -540,6 +540,24 @@ fn includes_executability_flag() {
     assert!(flags.contains('E'), "expected 'E' in flags: {flags}");
 }
 
+/// upstream: options.c:2674 - 'E' is only sent when preserve_perms is false.
+#[test]
+fn executability_suppressed_when_permissions_set() {
+    let config = ClientConfig::builder()
+        .permissions(true)
+        .executability(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/path");
+
+    let flags = args[2].to_string_lossy();
+    assert!(flags.contains('p'), "expected 'p' in flags: {flags}");
+    assert!(
+        !flags.contains('E'),
+        "'E' must not appear when 'p' is set: {flags}"
+    );
+}
+
 #[test]
 fn includes_fuzzy_flag() {
     let config = ClientConfig::builder().fuzzy(true).build();
@@ -881,9 +899,11 @@ fn default_config_produces_expected_flags() {
         flags.contains('r'),
         "default builder enables recursive: {flags}"
     );
+    // upstream: options.c:2644-2648 - 'W' is only sent when explicitly set.
+    // The default for remote transfers is no-whole-file.
     assert!(
-        flags.contains('W'),
-        "default whole_file is auto (true): {flags}"
+        !flags.contains('W'),
+        "default whole_file (auto) must not send 'W': {flags}"
     );
 }
 
@@ -1909,7 +1929,8 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('t', "times"),
         ('U', "atimes"),
         ('p', "permissions"),
-        ('E', "executability"),
+        // upstream: options.c:2674 - 'E' is only sent when preserve_perms
+        // is false (else-if), so it is absent when 'p' is also set.
         ('r', "recursive"),
         ('z', "compress"),
         ('c', "checksum"),

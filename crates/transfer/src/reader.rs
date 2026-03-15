@@ -439,7 +439,13 @@ impl<R: Read> Read for MultiplexReader<R> {
             // Dispatch based on message type
             match code {
                 protocol::MessageCode::Data => {
-                    // MSG_DATA: return payload for protocol processing
+                    // upstream: io.c io_start_multiplex_out() sends a length-0
+                    // MSG_DATA frame as a multiplex activation marker. Returning
+                    // Ok(0) from Read::read() signals EOF in Rust, so we must
+                    // skip empty data frames and continue to the next message.
+                    if self.buffer.is_empty() {
+                        continue;
+                    }
                     let to_copy = self.buffer.len().min(buf.len());
                     buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
                     self.pos = to_copy;
