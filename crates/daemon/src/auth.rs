@@ -277,7 +277,6 @@ impl SecretsFile {
                 continue;
             }
 
-            // Parse username:password
             if let Some((user, password)) = line.split_once(':') {
                 entries.insert(user.to_string(), password.to_string());
             } else {
@@ -323,10 +322,7 @@ impl SecretsFile {
     /// # }
     /// ```
     pub fn from_file(path: &Path) -> io::Result<Self> {
-        // Check permissions before reading
         Self::check_permissions(path)?;
-
-        // Read and parse
         let content = fs::read_to_string(path)?;
         Self::parse(&content)
     }

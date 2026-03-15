@@ -620,7 +620,6 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            // Parse key = value
             let (key, value) = line.split_once('=').ok_or_else(|| {
                 ConfigError::parse_error(
                     self.path,

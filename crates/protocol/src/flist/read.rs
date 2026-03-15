@@ -448,7 +448,6 @@ impl FileListReader {
     fn read_flags<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<FlagsResult> {
         let use_varint = self.use_varint_flags();
 
-        // Read primary flags
         let flags_value = if use_varint {
             read_varint(reader)?
         } else {
@@ -619,10 +618,8 @@ impl FileListReader {
         // 3. Read crtime if preserving crtimes (BEFORE mode, per upstream)
         let crtime = if self.preserve_crtimes {
             if flags.crtime_eq_mtime() {
-                // Creation time equals mtime
                 Some(mtime)
             } else {
-                // Read crtime from wire
                 let crtime = crate::read_varlong(reader, 4)?;
                 Some(crtime)
             }

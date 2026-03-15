@@ -56,17 +56,14 @@ impl FileListWriter {
         entry: &FileEntry,
         xflags: u32,
     ) -> io::Result<()> {
-        // Write mtime if different
         if xflags & (XMIT_SAME_TIME as u32) == 0 {
             self.codec.write_mtime(writer, entry.mtime())?;
         }
 
-        // Write nsec if flag set (protocol 31+)
         if (xflags & ((XMIT_MOD_NSEC as u32) << 8)) != 0 {
             write_varint(writer, entry.mtime_nsec() as i32)?;
         }
 
-        // Write crtime if preserving and different from mtime
         if self.preserve.crtimes && (xflags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16)) == 0 {
             crate::write_varlong(writer, entry.crtime(), 4)?;
         }
