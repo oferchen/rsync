@@ -33,28 +33,22 @@ fn setup_test_directory() -> TempDir {
 
 /// Test helper to get the path to the oc-rsync binary.
 fn oc_rsync_binary() -> PathBuf {
-    // Try to find the binary in target/debug or target/release
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let debug_path = PathBuf::from(manifest_dir)
-        .join("target")
-        .join("debug")
-        .join("oc-rsync");
-
-    if debug_path.exists() {
-        return debug_path;
+    for profile in ["debug", "release", "dist"] {
+        let path = PathBuf::from(manifest_dir)
+            .join("target")
+            .join(profile)
+            .join("oc-rsync");
+        if path.exists() {
+            return path;
+        }
     }
-
-    let release_path = PathBuf::from(manifest_dir)
-        .join("target")
-        .join("release")
-        .join("oc-rsync");
-
-    if release_path.exists() {
-        return release_path;
-    }
-
-    // Fallback: assume it's in PATH
     PathBuf::from("oc-rsync")
+}
+
+/// Returns `--rsync-path=<binary>` so the SSH remote side uses our binary.
+fn rsync_path_arg() -> String {
+    format!("--rsync-path={}", oc_rsync_binary().display())
 }
 
 #[test]
@@ -72,21 +66,18 @@ fn test_ssh_push_single_file() {
     let remote_dest = format!("localhost:{}", dest_dir.path().join("file1.txt").display());
 
     let output = std::process::Command::new(oc_rsync_binary())
+        .args(["--timeout=30", &rsync_path_arg()])
         .arg(&source_file)
         .arg(&remote_dest)
         .output()
         .expect("Failed to execute oc-rsync");
 
-    // For now, we expect this to fail gracefully if SSH is not set up
-    // In a CI environment with SSH configured, this should succeed
     if output.status.success() {
-        // Verify the file was transferred
         let dest_file = dest_dir.path().join("file1.txt");
         assert!(dest_file.exists(), "Destination file should exist");
         let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
         assert_eq!(content, "Hello, World!");
     } else {
-        // SSH not configured, test is informational only
         let stderr = String::from_utf8_lossy(&output.stderr);
         eprintln!("SSH push test skipped (SSH not configured): {stderr}");
     }
@@ -103,13 +94,13 @@ fn test_ssh_pull_single_file() {
     let dest_file = dest_dir.path().join("file2.txt");
 
     let output = std::process::Command::new(oc_rsync_binary())
+        .args(["--timeout=30", &rsync_path_arg()])
         .arg(&remote_source)
         .arg(&dest_file)
         .output()
         .expect("Failed to execute oc-rsync");
 
     if output.status.success() {
-        // Verify the file was transferred
         assert!(dest_file.exists(), "Destination file should exist");
         let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
         assert_eq!(content, "Test content 2");
@@ -128,14 +119,13 @@ fn test_ssh_push_recursive_directory() {
     let remote_dest = format!("localhost:{}/", dest_dir.path().display());
 
     let output = std::process::Command::new(oc_rsync_binary())
-        .arg("-r")
+        .args(["--timeout=30", &rsync_path_arg(), "-r"])
         .arg(format!("{}/", source_dir.path().display()))
         .arg(&remote_dest)
         .output()
         .expect("Failed to execute oc-rsync");
 
     if output.status.success() {
-        // Verify the directory structure was transferred
         assert!(dest_dir.path().join("file1.txt").exists());
         assert!(dest_dir.path().join("file2.txt").exists());
         assert!(dest_dir.path().join("subdir").join("file3.txt").exists());

@@ -110,6 +110,20 @@ jobs:
       - name: Run tests
         run: cargo nextest run --workspace --all-features
 
+      - name: Set up SSH loopback
+        if: matrix.toolchain == 'stable'
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Run SSH integration tests
+        if: matrix.toolchain == 'stable'
+        run: cargo nextest run --workspace --all-features --run-ignored ignored-only -E 'test(ssh)'
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
