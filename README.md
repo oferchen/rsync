@@ -14,7 +14,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 **Release:** 0.5.9 (alpha)
 
-Local, SSH, and daemon transfers are fully functional with native delta algorithm, metadata preservation, and all core options. Daemon mode handles negotiation, authentication, module access control, and file transfers natively. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
+Local, SSH, and daemon transfers are fully functional with native delta algorithm, metadata preservation, and all core options. Daemon mode handles negotiation, authentication, module access control, and file transfers natively. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1 across protocols 28-32.
 
 | Area | Status |
 |------|--------|
@@ -29,24 +29,46 @@ Local, SSH, and daemon transfers are fully functional with native delta algorith
 | Sparse files, hardlinks, symlinks | Complete |
 | ACLs (-A), xattrs (-X) | Unix only |
 | --compress (zlib, zstd, lz4) | Complete |
-| Batch files | Complete |
-| Incremental recursion | Complete |
+| Batch files (write + read) | Complete |
+| Incremental recursion (push + pull) | Complete |
 | Daemon daemonization (--detach) | Complete |
-| Daemon syslog | Pending |
+| Daemon syslog | Complete |
+| Daemon chroot & privilege drop | Complete |
+| Daemon pre/post-xfer exec | Complete |
 | SIMD checksums (AVX2, SSE2, NEON) | Complete |
 | Hardlink preservation | Complete |
+| --files-from (local, stdin, remote) | Complete |
+| --compare-dest, --link-dest, --copy-dest | Complete |
+| --iconv charset conversion | Complete |
+| Fuzzy matching (level 1 & 2) | Complete |
+| Protocol 28-32 wire compatibility | Complete |
+| io_uring (Linux 5.6+, optional) | Complete |
 | Linux, macOS | Full support |
 | Windows | Partial (no ACLs/xattrs) |
 
 ### Interop Testing
 
-Tested against upstream rsync **3.0.9**, **3.1.3**, and **3.4.1** in CI. Both push and pull directions are verified for daemon transfers with options including `--delete`, `--compress`, `--checksum`, `--size-only`, `--hard-links`, `--numeric-ids`, `--exclude`, and `--inplace`.
+Tested against upstream rsync **3.0.9**, **3.1.3**, and **3.4.1** in CI across protocols 28-32. Both push (oc-rsync client to upstream daemon) and pull (upstream client to oc-rsync daemon) directions are verified for over 30 scenarios:
+
+- Transfer modes: `--checksum`, `--whole-file`, `--ignore-times`, `--update`, `--append`
+- Deletion: `--delete`, `--delete-during`, `--delete-after`, `--delete-excluded`
+- Compression: `--compress`, `--compress-level`, zlib/zlibx negotiation
+- Metadata: `--hard-links`, `--numeric-ids`, `--acls`, `--xattrs`, `--sparse`
+- Reference dirs: `--compare-dest`, `--link-dest`, `--copy-dest`
+- File selection: `--files-from`, `--exclude`, `--include`, `--filter`
+- Special modes: `--inplace`, `--delay-updates`, `--partial`, `--partial-dir`
+- Path handling: `--relative`, `--one-file-system`, `--safe-links`, `--copy-links`
+- Batch: `--write-batch` / `--read-batch` roundtrip (oc-rsync and upstream)
+- Output: `--itemize-changes`, `--dry-run`, `--bwlimit`
+- Protocol: forced `--protocol=28` through `--protocol=32`
+- Devices: device nodes, special files (`-D`)
+- Auth: daemon module authentication
 
 ### Performance
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Threaded architecture replaces upstream's fork-based pipeline for local transfers, reducing syscall overhead and context switches.
+Threaded architecture replaces upstream's fork-based pipeline for local transfers, reducing syscall overhead and context switches. Optional io_uring support on Linux 5.6+ for async file I/O (`--io-uring` / `--no-io-uring`).
 
 ---
 
@@ -92,20 +114,36 @@ cargo build --workspace --release
 
 ## Usage
 
-Works like `rsync`:
+Works like `rsync` - drop-in compatible:
 
 ```bash
 # Local sync
 oc-rsync -av ./source/ ./dest/
 
-# Remote pull
+# Remote pull (SSH)
 oc-rsync -av user@host:/remote/path/ ./local/
 
-# Remote push
+# Remote push (SSH)
 oc-rsync -av ./local/ user@host:/remote/path/
 
-# Daemon mode
+# Daemon pull
+oc-rsync -av rsync://host/module/ ./local/
+
+# Daemon push
+oc-rsync -av ./local/ rsync://host/module/
+
+# Run as daemon
 oc-rsync --daemon --config=/etc/oc-rsyncd/oc-rsyncd.conf
+
+# Delta transfer with compression
+oc-rsync -avz --compress-level=3 ./source/ ./dest/
+
+# Checksum-based sync with deletion
+oc-rsync -avc --delete ./source/ ./dest/
+
+# Batch mode (record and replay)
+oc-rsync -av --write-batch=changes ./source/ ./dest/
+oc-rsync -av --read-batch=changes ./other-dest/
 ```
 
 For supported options: `oc-rsync --help`
