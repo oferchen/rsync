@@ -20,6 +20,10 @@ OPENSSL_MODES = {
     "checksum_openssl": "Checksum: OpenSSL vs Pure Rust",
 }
 
+IO_URING_MODES = {
+    "io_uring": "io_uring vs Standard I/O",
+}
+
 
 def ratio_indicator(ratio):
     if ratio < 0.95:
@@ -79,6 +83,25 @@ def main():
             ratio = t["ratio"]
             ind = ratio_indicator(ratio)
             print(f"| {t['name']} | {pure:.3f}s | {ssl:.3f}s | {ind} {ratio:.2f}x |")
+
+        print()
+
+    # io_uring vs standard I/O comparison
+    for mode, label in IO_URING_MODES.items():
+        tests = by_mode.get(mode, [])
+        if not tests:
+            continue
+
+        print(f"### {label}\n")
+        print("| Test | Standard I/O | io_uring | Ratio |")
+        print("|------|-------------|----------|-------|")
+
+        for t in tests:
+            std = t["upstream"]["mean"]
+            uring = t["oc_rsync"]["mean"]
+            ratio = t["ratio"]
+            ind = ratio_indicator(ratio)
+            print(f"| {t['name']} | {std:.3f}s | {uring:.3f}s | {ind} {ratio:.2f}x |")
 
         print()
 

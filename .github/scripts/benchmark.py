@@ -17,6 +17,7 @@ import time
 UPSTREAM = "target/interop/upstream-src/rsync-3.4.1/rsync"
 OC_RSYNC = "target/release/oc-rsync"
 OC_RSYNC_OPENSSL = os.environ.get("OC_RSYNC_OPENSSL", "")
+IS_LINUX = sys.platform.startswith("linux")
 
 TESTS = [
     # Local copy
@@ -344,6 +345,67 @@ def main():
                 f"WARNING: OC_RSYNC_OPENSSL={OC_RSYNC_OPENSSL} not found, skipping",
                 file=sys.stderr,
             )
+
+        # io_uring vs standard I/O comparison (Linux only)
+        if IS_LINUX:
+            print("Running io_uring vs standard I/O comparison...", file=sys.stderr)
+            dst_uring = f"{tmpdir}/dst_uring"
+            dst_no_uring = f"{tmpdir}/dst_no_uring"
+
+            io_uring_tests = [
+                {
+                    "id": "io_uring_local",
+                    "name": "Local initial sync",
+                    "mode": "io_uring",
+                    "args": "-av {src}/ {{dst}}/",
+                },
+                {
+                    "id": "io_uring_daemon_pull",
+                    "name": "Daemon pull initial",
+                    "mode": "io_uring",
+                    "args": f"-av --timeout=30 rsync://localhost:{port}/bench/ {{dst}}/",
+                },
+                {
+                    "id": "io_uring_ssh_pull",
+                    "name": "SSH pull initial",
+                    "mode": "io_uring",
+                    "args": "-av --timeout=30 localhost:{src}/ {{dst}}/".format(src=src),
+                },
+            ]
+
+            for test in io_uring_tests:
+                print(f"Running: [io_uring] {test['name']}...", file=sys.stderr)
+
+                # Run with --io-uring (enabled)
+                shutil.rmtree(dst_uring, ignore_errors=True)
+                os.makedirs(dst_uring, exist_ok=True)
+                uring_args = test["args"].format(dst=dst_uring)
+                uring_result = benchmark(f"{OC_RSYNC} --io-uring {uring_args}")
+
+                # Run with --no-io-uring (disabled)
+                shutil.rmtree(dst_no_uring, ignore_errors=True)
+                os.makedirs(dst_no_uring, exist_ok=True)
+                no_uring_args = test["args"].format(dst=dst_no_uring)
+                no_uring_result = benchmark(f"{OC_RSYNC} --no-io-uring {no_uring_args}")
+
+                ratio = (
+                    uring_result["mean"] / no_uring_result["mean"]
+                    if no_uring_result["mean"] > 0
+                    else 0
+                )
+
+                results["tests"].append(
+                    {
+                        "id": test["id"],
+                        "name": test["name"],
+                        "mode": "io_uring",
+                        "upstream": no_uring_result,
+                        "oc_rsync": uring_result,
+                        "ratio": round(ratio, 2),
+                    }
+                )
+        else:
+            print("Skipping io_uring tests (not Linux).", file=sys.stderr)
 
         # Calculate summary
         ratios = [t["ratio"] for t in results["tests"]]
