@@ -549,7 +549,8 @@ jobs:
           shared-key: release-macos-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
           key: ${{ matrix.arch }}
 
-      - name: Install OpenSSL
+      - name: Install OpenSSL (native arch only)
+        if: matrix.arch == 'aarch64'
         shell: bash
         run: |
           brew update
