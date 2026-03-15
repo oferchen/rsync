@@ -369,35 +369,36 @@ def main():
                     "id": "io_uring_local",
                     "name": "Local initial sync",
                     "mode": "io_uring",
-                    "args": "-av {src}/ {{dst}}/",
+                    "args": "-av {src}/ {dst}/",
                 },
                 {
                     "id": "io_uring_daemon_pull",
                     "name": "Daemon pull initial",
                     "mode": "io_uring",
-                    "args": f"-av --timeout=30 rsync://localhost:{port}/bench/ {{dst}}/",
+                    "args": "-av --timeout=30 rsync://localhost:{port}/bench/ {dst}/",
                 },
                 {
                     "id": "io_uring_ssh_pull",
                     "name": "SSH pull initial",
                     "mode": "io_uring",
-                    "args": "-av --timeout=30 localhost:{src}/ {{dst}}/".format(src=src),
+                    "args": "-av --timeout=30 localhost:{src}/ {dst}/",
                 },
             ]
 
             for test in io_uring_tests:
                 print(f"Running: [io_uring] {test['name']}...", file=sys.stderr)
+                args_tpl = test["args"]
 
                 # Run with --io-uring (enabled)
                 shutil.rmtree(dst_uring, ignore_errors=True)
                 os.makedirs(dst_uring, exist_ok=True)
-                uring_args = test["args"].format(dst=dst_uring)
+                uring_args = args_tpl.format(src=src, dst=dst_uring, port=port)
                 uring_result = benchmark(f"{OC_RSYNC} --io-uring {uring_args}")
 
                 # Run with --no-io-uring (disabled)
                 shutil.rmtree(dst_no_uring, ignore_errors=True)
                 os.makedirs(dst_no_uring, exist_ok=True)
-                no_uring_args = test["args"].format(dst=dst_no_uring)
+                no_uring_args = args_tpl.format(src=src, dst=dst_no_uring, port=port)
                 no_uring_result = benchmark(f"{OC_RSYNC} --no-io-uring {no_uring_args}")
 
                 ratio = (
