@@ -676,14 +676,15 @@ fn build_full_daemon_args(
     // Capability flags for protocol 30+.
     // upstream: options.c:2707-2713 (via maybe_add_e_option appended to argstr)
     //
-    // Advertise 'i' (INC_RECURSE) only for pull (receiver) direction.
-    // Sender-side INC_RECURSE file list partitioning does not yet produce
-    // correctly grouped sub-lists that upstream's strict dirname validation
-    // in flist.c:receive_file_entry() requires, so we disable it for push
-    // until the sender emits proper incremental directory segments.
+    // Advertise 'i' (INC_RECURSE) only for pull direction (is_sender=true,
+    // meaning daemon is the sender). Sender-side INC_RECURSE file list
+    // partitioning does not yet produce correctly grouped sub-lists that
+    // upstream's strict dirname validation in flist.c:receive_file_entry()
+    // requires, so we disable it for push (is_sender=false) until the
+    // sender emits proper incremental directory segments.
     // upstream: compat.c:720 set_allow_inc_recurse()
     if protocol.as_u8() >= 30 {
-        args.push(build_capability_string(!is_sender));
+        args.push(build_capability_string(is_sender));
     }
 
     // --- Long-form arguments (upstream server_options() options.c:2737-2980) ---
