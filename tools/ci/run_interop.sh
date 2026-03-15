@@ -1237,25 +1237,13 @@ KNOWN_FAILURES=(
   "up:itemize"
 
   # --- standalone scenarios ---
-  "standalone:write-batch-read-batch"
   "standalone:info-progress2"
   "standalone:large-file-2gb"
-  "standalone:file-vanished"
   "standalone:iconv"
 )
 
 is_known_failure() {
   local direction=$1 name=$2 forced_proto=$3
-  # Protocol 28/29 upstream→oc: blanket known limitation.
-  # Legacy protocol codecs are not fully wired for forced-protocol daemon
-  # transfers at protocol 28/29.
-  if [[ "$direction" == "up" && -n "$forced_proto" && "$forced_proto" -le 29 ]]; then
-    return 0
-  fi
-  # Protocol 28/29 oc→upstream: same limitation for forced-protocol push.
-  if [[ "$direction" == "oc" && -n "$forced_proto" && "$forced_proto" -le 29 ]]; then
-    return 0
-  fi
   local key="${direction}:${name}"
   for kf in "${KNOWN_FAILURES[@]}"; do
     [[ "$kf" == "$key" ]] && return 0
