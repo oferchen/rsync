@@ -35,7 +35,7 @@ fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
 /// Result of parsing the top-level daemon CLI arguments.
 ///
 /// `show_help` and `show_version` are handled before the daemon loop starts.
-/// `remainder` is forwarded to [`RuntimeOptions`] for full option parsing.
+/// `remainder` is forwarded to `RuntimeOptions` for full option parsing.
 pub(crate) struct ParsedArgs {
     pub(crate) program_name: ProgramName,
     pub(crate) show_help: bool,
@@ -78,12 +78,11 @@ pub(crate) fn clap_command(program_name: &'static str) -> Command {
 /// Parses the top-level daemon arguments, extracting `--help` and `--version`.
 ///
 /// All unrecognised flags are captured in [`ParsedArgs::remainder`] for
-/// downstream processing by [`RuntimeOptions::parse_with_brand`].
+/// downstream processing by `RuntimeOptions::parse_with_brand`.
 ///
 /// # Errors
 ///
-/// Returns a clap error if argument parsing fails (e.g., unrecognised flags
-/// that clap's lenient mode cannot absorb).
+/// Returns a clap error if argument parsing fails.
 pub(crate) fn parse_args<I, S>(arguments: I) -> Result<ParsedArgs, clap::Error>
 where
     I: IntoIterator<Item = S>,

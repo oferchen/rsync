@@ -109,6 +109,7 @@ impl WinCopyResult {
 /// let result = copy_file_optimized(&src, &dst).expect("copy should succeed");
 /// assert_eq!(result.bytes_copied(), 4);
 /// ```
+#[must_use]
 pub fn copy_file_optimized(src: &Path, dst: &Path) -> io::Result<WinCopyResult> {
     // Get source file size to determine if we should use no-buffering
     let metadata = std::fs::metadata(src)?;
@@ -169,6 +170,7 @@ pub fn copy_file_optimized(src: &Path, dst: &Path) -> io::Result<WinCopyResult> 
 /// # #[cfg(not(target_os = "windows"))]
 /// # assert!(result.is_err());
 /// ```
+#[must_use]
 pub fn try_win_copy(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Result<u64> {
     try_win_copy_impl(src, dst, use_no_buffering)
 }
@@ -201,6 +203,7 @@ pub fn try_win_copy(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Resul
 /// let bytes = copy_file_standard(&src, &dst).expect("copy should succeed");
 /// assert_eq!(bytes, 9);
 /// ```
+#[must_use]
 pub fn copy_file_standard(src: &Path, dst: &Path) -> io::Result<u64> {
     std::fs::copy(src, dst)
 }
@@ -212,6 +215,7 @@ mod ffi {
     use std::io;
 
     /// Call `CopyFileExW` with the given null-terminated wide-string paths.
+    #[must_use]
     pub fn copy_file_ex_w(src_wide: &[u16], dst_wide: &[u16], flags: u32) -> io::Result<()> {
         // SAFETY: src_wide and dst_wide are null-terminated UTF-16 slices
         // produced by OsStrExt::encode_wide + chain(once(0)).

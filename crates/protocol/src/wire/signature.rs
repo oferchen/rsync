@@ -162,6 +162,7 @@ pub fn write_signature<W: Write>(
 /// println!("Signature has {block_count} blocks of {block_length} bytes");
 /// # Ok::<(), std::io::Error>(())
 /// ```
+#[must_use]
 #[inline]
 pub fn read_signature<R: Read>(reader: &mut R) -> io::Result<(u32, u32, u8, Vec<SignatureBlock>)> {
     let block_count = read_varint(reader)? as u32;

@@ -1423,6 +1423,7 @@ impl LocalCopyOptionsBuilder {
     /// # Errors
     ///
     /// Returns a [`BuilderError`] if the configuration is invalid.
+    #[must_use]
     pub fn build(self) -> Result<LocalCopyOptions, BuilderError> {
         self.validate()?;
         Ok(self.build_unchecked())

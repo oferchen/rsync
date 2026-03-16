@@ -20,6 +20,7 @@ use super::paths::{
 ///
 /// Returns an error if the file exists but cannot be removed due to permissions
 /// or other I/O errors.
+#[must_use]
 pub fn remove_existing_destination(path: &Path) -> Result<(), LocalCopyError> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -198,6 +199,7 @@ impl DestinationWriteGuard {
     /// - The rename or copy operation fails
     /// - The destination cannot be removed
     /// - Permission is denied
+    #[must_use]
     pub fn commit(mut self) -> Result<(), LocalCopyError> {
         // upstream: util1.c:robust_rename() — retry up to 4 times on ETXTBSY
         let mut tries = 4u32;

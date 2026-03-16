@@ -8,23 +8,23 @@ use protocol::ProtocolVersion;
 
 use super::messages::fail_with_message;
 
-/// Error text when `--rsync-path` is used without a remote connection.
+/// Error shown when `--rsync-path` is used without a remote target.
 pub(crate) const RSYNC_PATH_REMOTE_ONLY_MESSAGE: &str =
     "the --rsync-path option may only be used with remote connections";
-/// Error text when `--remote-option` is used without a remote connection.
+/// Error shown when `--remote-option` is used without a remote target.
 pub(crate) const REMOTE_OPTION_REMOTE_ONLY_MESSAGE: &str =
     "the --remote-option option may only be used with remote connections";
-/// Error text when `--protocol` is used outside daemon mode.
+/// Error shown when `--protocol` is used outside a daemon connection.
 pub(crate) const PROTOCOL_DAEMON_ONLY_MESSAGE: &str =
     "the --protocol option may only be used when accessing an rsync daemon";
-/// Error text when `--password-file` is used outside daemon mode.
+/// Error shown when `--password-file` is used outside a daemon connection.
 pub(crate) const PASSWORD_FILE_DAEMON_ONLY_MESSAGE: &str =
     "the --password-file option may only be used when accessing an rsync daemon";
-/// Error text when `--connect-program` is used outside daemon mode.
+/// Error shown when `--connect-program` is used outside a daemon connection.
 pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
     "the --connect-program option may only be used when accessing an rsync daemon";
 
-/// Rejects options that require a remote or daemon connection in local-only mode.
+/// Rejects options that require a remote or daemon connection when running locally.
 pub(super) fn validate_local_only_options<Err>(
     desired_protocol: Option<ProtocolVersion>,
     password_file: Option<&PathBuf>,

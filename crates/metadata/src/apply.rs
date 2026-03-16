@@ -603,39 +603,11 @@ fn set_timestamp_with_fd(
     Ok(())
 }
 
-/// Applies metadata from a protocol FileEntry to the destination file.
+/// Applies metadata from a protocol [`protocol::flist::FileEntry`] to the destination file.
 ///
-/// This is the receiver-side counterpart to [`apply_file_metadata`] that works
-/// directly with FileEntry metadata from the wire protocol, avoiding the need
-/// to construct an [`fs::Metadata`] instance.
-///
-/// # Arguments
-/// - `destination`: Path to the file to apply metadata to
-/// - `entry`: FileEntry containing metadata from sender
-/// - `options`: Controls which metadata fields are preserved
-///
-/// # Errors
-/// Returns [`MetadataError`] if any filesystem operation fails.
-///
-/// # Examples
-///
-/// ```no_run
-/// use metadata::{apply_metadata_from_file_entry, MetadataOptions};
-/// use protocol::flist::FileEntry;
-/// use std::path::Path;
-///
-/// # fn example(file_entry: &FileEntry) -> Result<(), metadata::MetadataError> {
-/// let dest_path = Path::new("/path/to/reconstructed/file.txt");
-///
-/// // Apply metadata with permissions and timestamps
-/// let options = MetadataOptions::new()
-///     .preserve_permissions(true)
-///     .preserve_times(true);
-///
-/// apply_metadata_from_file_entry(dest_path, file_entry, &options)?;
-/// # Ok(())
-/// # }
-/// ```
+/// Receiver-side counterpart to [`apply_file_metadata`] that works directly
+/// with wire-protocol metadata, avoiding the need to construct an
+/// [`fs::Metadata`] instance.
 pub fn apply_metadata_from_file_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -698,7 +670,6 @@ pub fn apply_metadata_with_attrs_flags(
     }
 
     // upstream: rsync.c:604 — `if (!(flags & ATTRS_SKIP_ATIME))`
-    // When SKIP_MTIME is active but SKIP_ATIME is not, apply atime independently.
     if options.atimes() && attrs_flags.skip_mtime() && !attrs_flags.skip_atime() {
         apply_atime_only_from_entry(destination, entry, cached_meta.as_ref())?;
     }
@@ -790,7 +761,7 @@ fn apply_ownership_from_entry(
                 let desired_gid = group.map(|g| g.as_raw()).unwrap_or(current_gid);
                 current_uid != desired_uid || current_gid != desired_gid
             }
-            None => true, // Can't stat, try chown anyway
+            None => true,
         };
 
         if needs_chown {
@@ -821,7 +792,6 @@ fn apply_ownership_via_fake_super(
     let gid = gid.unwrap_or(0);
 
     let rdev = if entry.file_type().is_device() {
-        // Get major/minor directly from the entry - they're already decoded
         match (entry.rdev_major(), entry.rdev_minor()) {
             (Some(major), Some(minor)) => Some((major, minor)),
             _ => None,
@@ -881,8 +851,6 @@ fn apply_permissions_from_entry(
         }
 
         if let Some(chmod) = options.chmod() {
-            // Use cached metadata when available; after permissions were just set above,
-            // fall back to a fresh stat so chmod sees the updated mode.
             let fresh_meta;
             let current_meta = if options.permissions() {
                 fresh_meta = fs::metadata(destination)
@@ -896,7 +864,6 @@ fn apply_permissions_from_entry(
                 &fresh_meta
             };
             let current_mode = current_meta.permissions().mode();
-
             let new_mode = chmod.apply(current_mode, current_meta.file_type());
             if new_mode != current_mode {
                 let new_permissions = PermissionsExt::from_mode(new_mode);
@@ -940,8 +907,7 @@ fn apply_timestamps_from_entry(
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-    // upstream: rsync preserves the source atime when --atimes is set; otherwise
-    // mtime is used for both atime and mtime.
+    // upstream: rsync preserves the source atime when --atimes is set
     let atime = if options.atimes() && entry.atime() != 0 {
         FileTime::from_unix_time(entry.atime(), 0)
     } else {
@@ -1024,7 +990,7 @@ fn apply_atime_only_from_entry(
 /// functions where source metadata is available directly (not via `FileEntry`).
 /// On platforms where `created()` is unavailable, this is a no-op.
 ///
-/// upstream: `rsync.c:615` - crtime application after file transfer
+/// Mirrors `rsync.c:615` crtime application after file transfer.
 fn apply_crtime_from_source_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -1055,13 +1021,14 @@ fn apply_crtime_from_entry(
 
 /// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
 ///
+/// Upstream rsync uses `utimensat` for mtime/atime; crtime requires
+/// `setattrlist` on macOS since there is no POSIX equivalent.
+///
 /// # Safety
 ///
 /// Calls into the libc `setattrlist` function through FFI. The `attrlist`
 /// struct and buffer are stack-allocated with correct layout and size,
 /// and the path is converted to a NUL-terminated C string before passing.
-///
-/// upstream: `rsync.c` uses `utimensat` for mtime/atime; crtime uses `setattrlist` on macOS
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {

@@ -535,6 +535,7 @@ impl DebugFlagSettings {
     }
 }
 
+/// Parses comma-separated `--debug=FLAG` values into accumulated settings.
 pub(crate) fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings, Message> {
     let mut settings = DebugFlagSettings::default();
 

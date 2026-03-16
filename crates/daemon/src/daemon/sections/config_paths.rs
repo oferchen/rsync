@@ -105,8 +105,7 @@ fn default_config_path_if_present(brand: Brand) -> Option<OsString> {
 
 /// Returns the first existing default secrets file path for the given brand.
 ///
-/// Probes brand-specific candidate paths (e.g., `/etc/oc-rsyncd/rsyncd.secrets`,
-/// `/etc/rsyncd.secrets`) and returns the first one that exists on disk.
+/// Probes brand-specific candidate paths and returns the first one that exists on disk.
 pub(crate) fn default_secrets_path_if_present(brand: Brand) -> Option<OsString> {
     #[cfg(test)]
     if let Some(paths) = TEST_SECRETS_CANDIDATES.with(|cell| cell.borrow().clone()) {

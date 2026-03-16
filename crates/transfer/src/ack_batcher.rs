@@ -173,6 +173,7 @@ impl AckEntry {
     /// - ndx: 4 bytes (i32 LE)
     /// - status: 1 byte
     /// - if error: error_len (u16 LE) + error_msg bytes
+    #[must_use]
     pub fn write<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<()> {
         writer.write_all(&self.ndx.to_le_bytes())?;
         writer.write_all(&[self.status as u8])?;
@@ -188,6 +189,7 @@ impl AckEntry {
     }
 
     /// Reads an ACK entry from the wire.
+    #[must_use]
     pub fn read<R: io::Read + ?Sized>(reader: &mut R) -> io::Result<Self> {
         let mut ndx_buf = [0u8; 4];
         reader.read_exact(&mut ndx_buf)?;
@@ -445,6 +447,7 @@ impl AckBatcher {
     /// Wire format:
     /// - count: u16 LE (number of ACKs)
     /// - entries: sequence of AckEntry
+    #[must_use]
     pub fn write_batch<W: Write + ?Sized>(batch: &[AckEntry], writer: &mut W) -> io::Result<()> {
         if batch.is_empty() {
             return Ok(());
@@ -461,6 +464,7 @@ impl AckBatcher {
     }
 
     /// Reads a batch of ACKs from the wire.
+    #[must_use]
     pub fn read_batch<R: io::Read + ?Sized>(reader: &mut R) -> io::Result<Vec<AckEntry>> {
         let mut count_buf = [0u8; 2];
         reader.read_exact(&mut count_buf)?;
@@ -477,6 +481,7 @@ impl AckBatcher {
     /// Flushes the batch to the given writer if flush conditions are met.
     ///
     /// Returns the number of ACKs flushed, or 0 if no flush was needed.
+    #[must_use]
     pub fn flush_if_needed<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<usize> {
         if !self.should_flush() {
             return Ok(0);
@@ -494,6 +499,7 @@ impl AckBatcher {
     /// Forces a flush of all pending ACKs.
     ///
     /// Returns the number of ACKs flushed.
+    #[must_use]
     pub fn force_flush<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<usize> {
         if self.pending.is_empty() {
             return Ok(0);

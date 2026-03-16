@@ -63,6 +63,7 @@ impl SparseWriter {
     /// # Returns
     ///
     /// An I/O error if the write fails.
+    #[must_use]
     pub fn write_region(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         if data.is_empty() {
             return Ok(());
@@ -100,6 +101,7 @@ impl SparseWriter {
     /// # Returns
     ///
     /// An I/O error if finishing fails.
+    #[must_use]
     pub fn finish(mut self, total_size: u64) -> io::Result<()> {
         if self.sparse_enabled {
             let path = std::path::Path::new("");

@@ -20,6 +20,7 @@ const FADVISE_THRESHOLD: u64 = 256 * 1024; // 256KB
 ///
 /// Files smaller than 256KB are skipped (overhead not worthwhile).
 /// On non-Linux platforms, this is a no-op.
+#[must_use]
 pub fn advise_sequential_read(file: &File, file_size: u64) -> io::Result<()> {
     if file_size < FADVISE_THRESHOLD {
         return Ok(()); // Too small to benefit
@@ -31,6 +32,7 @@ pub fn advise_sequential_read(file: &File, file_size: u64) -> io::Result<()> {
 ///
 /// After finishing a transfer, this hint allows the kernel to evict
 /// the file's pages from the page cache, freeing memory for other uses.
+#[must_use]
 pub fn advise_dontneed(file: &File, file_size: u64) -> io::Result<()> {
     advise_dontneed_impl(file, file_size)
 }

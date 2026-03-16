@@ -10,8 +10,11 @@ use core::{
     rsync_error,
 };
 
+/// Parsed result of a `--compress-level` argument.
 pub(crate) enum CompressLevelArg {
+    /// Compression explicitly disabled (level 0).
     Disable,
+    /// A valid compression level between 1 and 9.
     Level(NonZeroU8),
 }
 
