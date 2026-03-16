@@ -10,7 +10,7 @@
 //! handling for local filesystem transfers. Patterns honour anchored matches
 //! (leading `/`), directory-only rules (trailing `/`), and recursive wildcards
 //! using the same glob semantics exposed by upstream rsync. Rules are evaluated
-//! sequentially with the last matching include/exclude directive determining
+//! sequentially with the first matching include/exclude directive determining
 //! whether a path is copied. `protect` directives accumulate alongside these
 //! rules to prevent matching destination paths from being removed during
 //! `--delete` sweeps.
@@ -31,7 +31,7 @@
 //!
 //! # Invariants
 //!
-//! - Include/exclude rules are applied in definition order. The last matching
+//! - Include/exclude rules are applied in definition order. The first matching
 //!   rule wins and defaults to `Include` when no rule matches.
 //! - Trailing `/` marks a directory-only rule. The directory itself must match
 //!   the rule to trigger exclusion; descendants are excluded automatically.
@@ -78,7 +78,7 @@ mod action;
 mod compiled;
 /// CVS exclusion patterns for rsync's `--cvs-exclude` (`-C`) option.
 pub mod cvs;
-/// DEBUG_FILTER tracing for filter/exclude operations.
+/// Structured tracing for filter rule evaluation and statistics.
 pub mod debug_filter;
 mod decision;
 mod error;

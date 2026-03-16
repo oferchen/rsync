@@ -1,4 +1,3 @@
-//! crates/logging/src/lib.rs
 //! Logging and verbosity flag system for info and debug output control.
 //!
 //! This crate provides a thread-local verbosity configuration system that controls

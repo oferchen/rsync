@@ -27,15 +27,10 @@ pub mod cached_sort;
 pub mod parallel;
 pub mod traits;
 
-// These modules already handle all platforms internally via #[cfg] blocks:
-// - copy_file_range: uses Linux copy_file_range syscall, falls back to read/write
-// - sendfile: uses Linux sendfile syscall, falls back to read/write
-// - syscall_batch: uses Linux statx + libc, falls back to std::fs + filetime
 pub mod copy_file_range;
 pub mod sendfile;
 pub mod syscall_batch;
 
-// mmap_reader depends on memmap2 (Unix-only dependency), so needs a stub
 #[cfg(unix)]
 pub mod mmap_reader;
 #[cfg(not(unix))]

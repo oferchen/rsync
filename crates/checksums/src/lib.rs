@@ -355,7 +355,6 @@
 //! - [`parallel`] module for concurrent computation (always compiled)
 //! - [`RollingChecksum`] for sliding window checksum details
 #![cfg_attr(docsrs, feature(doc_cfg))]
-// Allow unsafe code for SIMD intrinsics in simd_batch module
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 

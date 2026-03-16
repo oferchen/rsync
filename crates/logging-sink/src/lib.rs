@@ -2,8 +2,6 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
-//! crates/logging-sink/src/lib.rs
-//!
 //! # Overview
 //!
 //! `logging-sink` provides reusable message sink primitives that operate on the

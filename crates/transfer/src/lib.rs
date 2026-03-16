@@ -2,7 +2,7 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-//! Server-side transfer engine for the Rust rsync implementation.
+//! Transfer coordination between sender, receiver, and generator roles.
 //!
 //! This crate provides the server-side entry points for `--server` mode,
 //! handling both Receiver and Generator roles as negotiated with the client.
@@ -30,6 +30,38 @@
 //! Within a transfer, the receiver uses a **request pipeline** ([`pipeline`]) to overlap
 //! signature generation and delta application with network I/O, and an **ACK batcher**
 //! ([`ack_batcher`]) to amortize per-file acknowledgment overhead.
+//!
+//! # Key Modules
+//!
+//! - [`setup`] - Protocol compatibility exchange, capability negotiation, and seed exchange.
+//! - [`generator`] - Generator role: walks the file tree, sends the file list, reads
+//!   signatures, generates and transmits delta streams.
+//! - [`receiver`] - Receiver role: receives the file list, produces signatures from basis
+//!   files, receives delta streams, applies them, and commits metadata.
+//! - [`delta_apply`] - Applies a delta stream to a basis file to reconstruct the target,
+//!   mirroring upstream `receiver.c:receive_data()`.
+//! - [`map_file`] - Memory-mapped file abstraction used to provide basis-file data during
+//!   signature generation and delta application without copying.
+//! - [`transfer_ops`] - Per-file transfer helpers shared between pipelined request handling
+//!   and single-file transfer paths.
+//! - [`pipeline`] - Bounded-concurrency request pipeline that overlaps network I/O with
+//!   signature and delta processing, reducing per-file round-trip latency.
+//! - [`disk_commit`] - SPSC disk-commit channel that decouples network receives from disk
+//!   writes. The network thread enqueues completed delta buffers; a dedicated disk thread
+//!   drains the queue and commits files, preventing disk latency from stalling the wire.
+//!
+//! # Wire Protocol and Pipelining
+//!
+//! Multiplex framing (`MSG_DATA`, `MSG_ERROR`, `MSG_INFO`, `MSG_IO_ERROR`) is activated
+//! after the raw-mode setup exchange. The receiver role activates multiplex input once
+//! the filter list has been read. All subsequent I/O travels through the framed stream,
+//! allowing out-of-band error messages to be interleaved with data.
+//!
+//! The [`pipeline`] module maintains a sliding window of in-flight file requests so the
+//! receiver can issue the next signature before the current delta arrives, keeping both
+//! the network and disk busy. The [`disk_commit`] SPSC channel ensures that disk writes
+//! never block the network reader: the consumer thread calls `fsync` and renames temp
+//! files while the producer continues receiving the next delta over the wire.
 //!
 //! # Roles
 //!

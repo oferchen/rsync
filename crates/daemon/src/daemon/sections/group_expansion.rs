@@ -1,8 +1,7 @@
 // Group expansion for `@group` syntax in auth_users.
 //
-// This module provides functionality to expand `@group` references in
-// auth_users lists to their member usernames, matching upstream rsync's
-// daemon authentication behavior.
+// Expands `@group` references in auth_users lists to their member usernames,
+// matching upstream rsync's daemon authentication behavior.
 //
 // # Syntax
 //
