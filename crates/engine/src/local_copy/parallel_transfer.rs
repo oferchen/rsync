@@ -92,7 +92,6 @@ pub struct BatchStats {
 
 /// Copy a single file, creating parent directories as needed.
 fn copy_single(job: &TransferJob, index: usize) -> TransferResult {
-    // Ensure parent directory exists
     if let Some(parent) = job.dst.parent() {
         if !parent.exists() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -107,7 +106,6 @@ fn copy_single(job: &TransferJob, index: usize) -> TransferResult {
         }
     }
 
-    // Copy the file
     match std::fs::copy(&job.src, &job.dst) {
         Ok(bytes) => TransferResult {
             index,
@@ -137,39 +135,33 @@ pub fn execute_batch(jobs: &[TransferJob]) -> (Vec<TransferResult>, BatchStats) 
         return (Vec::new(), BatchStats::default());
     }
 
-    // If batch is too small, use sequential
     if jobs.len() < PARALLEL_THRESHOLD {
         return execute_sequential(jobs);
     }
 
-    // Partition jobs by size
     let (small_jobs, large_jobs) = partition_by_size(jobs);
 
     let mut all_results = Vec::with_capacity(jobs.len());
     let mut parallel_used = false;
 
-    // Process small files in parallel if there are enough
     if small_jobs.len() >= PARALLEL_THRESHOLD {
         parallel_used = true;
         let (small_results, _) =
             execute_parallel(&small_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
         all_results.extend(small_results);
     } else {
-        // Process small files sequentially
         let (small_results, _) =
             execute_sequential(&small_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
         all_results.extend(small_results);
     }
 
-    // Process large files sequentially
     let (large_results, _) =
         execute_sequential(&large_jobs.iter().map(|&j| j.clone()).collect::<Vec<_>>());
     all_results.extend(large_results);
 
-    // Sort results by original index to maintain ordering
+    // Sort results by original index to maintain ordering.
     all_results.sort_by_key(|r| r.index);
 
-    // Compute statistics
     let stats = compute_stats(&all_results, parallel_used);
 
     (all_results, stats)
@@ -196,7 +188,7 @@ pub fn execute_parallel(jobs: &[TransferJob]) -> (Vec<TransferResult>, BatchStat
         .map(|(index, job)| copy_single(job, index))
         .collect();
 
-    // Sort by index to maintain original ordering
+    // Sort by index to maintain original ordering.
     results.sort_by_key(|r| r.index);
 
     let stats = compute_stats(&results, true);
