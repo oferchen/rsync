@@ -63,11 +63,7 @@ fn mtime_strategy() -> impl Strategy<Value = i64> {
 
 /// Generates a UID/GID value.
 fn id_strategy() -> impl Strategy<Value = u32> {
-    prop_oneof![
-        Just(0u32),
-        1u32..=1000,
-        1001u32..=65535,
-    ]
+    prop_oneof![Just(0u32), 1u32..=1000, 1001u32..=65535,]
 }
 
 /// Generates a device major/minor number.
