@@ -91,54 +91,28 @@ impl FileType {
     }
 }
 
-/// A single entry in the rsync file list.
+/// Rarely-used metadata fields for file entries.
 ///
-/// Contains all metadata needed to synchronize a filesystem object, including
-/// the relative path, size, modification time, mode, ownership, and optional
-/// device/symlink information.
-///
-/// # Path Interning
-///
-/// The `dirname` field holds a reference-counted parent directory path that can
-/// be shared across entries in the same directory. When entries are built through
-/// [`super::read::FileListReader`], the reader's [`super::intern::PathInterner`]
-/// ensures that entries sharing a parent directory point to the same `Arc<Path>`
-/// allocation. This mirrors upstream rsync's `file_struct.dirname` shared pointer
-/// (upstream: flist.c).
-///
-/// Field order is optimized to minimize padding: 8-byte aligned fields first,
-/// then 4-byte, then smaller fields.
-pub struct FileEntry {
-    // 8-byte aligned fields (24 bytes each)
-    /// Relative path of the entry within the transfer.
-    name: PathBuf,
-    /// Interned parent directory path, shared across entries in the same directory.
-    ///
-    /// For a path like `"src/lib/foo.rs"`, dirname is `"src/lib"`. For root-level
-    /// entries like `"foo.rs"`, dirname is the empty path `""`. When set by the
-    /// `PathInterner`, multiple entries with the same parent share a single
-    /// heap allocation via `Arc`.
-    dirname: Arc<Path>,
+/// These fields are only populated when specific flags are active (e.g.
+/// `--hard-links`, `--devices`, `--acls`, `--xattrs`, `--atimes`, `--crtimes`,
+/// `--checksum`). Storing them behind `Option<Box<...>>` in `FileEntry` avoids
+/// ~200 bytes of inline overhead per entry when they're unused - matching
+/// upstream rsync's conditional field allocation in `file_struct`
+/// (upstream: flist.c:make_file()).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FileEntryExtras {
     /// Symlink target path (for symlinks).
     link_target: Option<PathBuf>,
     /// User name for cross-system ownership mapping (protocol 30+).
     user_name: Option<String>,
     /// Group name for cross-system ownership mapping (protocol 30+).
     group_name: Option<String>,
-
-    // 8-byte aligned fields
-    /// File size in bytes (0 for directories and special files).
-    size: u64,
-    /// Modification time as seconds since Unix epoch.
-    mtime: i64,
     /// Access time as seconds since Unix epoch (protocol 30+, --atimes).
     atime: i64,
     /// Creation time as seconds since Unix epoch (protocol 30+, --crtimes).
     crtime: i64,
-    /// User ID (None if not preserving ownership).
-    uid: Option<u32>,
-    /// Group ID (None if not preserving ownership).
-    gid: Option<u32>,
+    /// Access time nanoseconds (protocol 32+, --atimes).
+    atime_nsec: u32,
     /// Device major number (for block/char devices).
     rdev_major: Option<u32>,
     /// Device minor number (for block/char devices).
@@ -159,14 +133,64 @@ pub struct FileEntry {
     def_acl_ndx: Option<u32>,
     /// Extended attribute index for --xattrs mode (index into xattr list).
     xattr_ndx: Option<u32>,
+}
+
+/// A single entry in the rsync file list.
+///
+/// Contains all metadata needed to synchronize a filesystem object, including
+/// the relative path, size, modification time, mode, ownership, and optional
+/// device/symlink information.
+///
+/// # Memory Layout
+///
+/// Hot-path fields (name, size, mtime, mode, uid/gid) are stored inline.
+/// Rarely-used fields (symlink targets, device numbers, hardlink info,
+/// ACL/xattr indices, atime/crtime) are stored in a boxed `FileEntryExtras`
+/// that is only allocated when at least one such field is set. This reduces
+/// the common-case inline size from ~295 bytes to ~88 bytes - matching
+/// upstream rsync's conditional field allocation pattern.
+///
+/// # Path Interning
+///
+/// The `dirname` field holds a reference-counted parent directory path that can
+/// be shared across entries in the same directory. When entries are built through
+/// [`super::read::FileListReader`], the reader's [`super::intern::PathInterner`]
+/// ensures that entries sharing a parent directory point to the same `Arc<Path>`
+/// allocation. This mirrors upstream rsync's `file_struct.dirname` shared pointer
+/// (upstream: flist.c).
+///
+/// Field order is optimized to minimize padding: 8-byte aligned fields first,
+/// then 4-byte, then smaller fields.
+pub struct FileEntry {
+    // 8-byte aligned fields
+    /// Relative path of the entry within the transfer.
+    name: PathBuf,
+    /// Interned parent directory path, shared across entries in the same directory.
+    ///
+    /// For a path like `"src/lib/foo.rs"`, dirname is `"src/lib"`. For root-level
+    /// entries like `"foo.rs"`, dirname is the empty path `""`. When set by the
+    /// `PathInterner`, multiple entries with the same parent share a single
+    /// heap allocation via `Arc`.
+    dirname: Arc<Path>,
+    /// File size in bytes (0 for directories and special files).
+    size: u64,
+    /// Modification time as seconds since Unix epoch.
+    mtime: i64,
+    /// User ID (None if not preserving ownership).
+    uid: Option<u32>,
+    /// Group ID (None if not preserving ownership).
+    gid: Option<u32>,
+    /// Rarely-used fields, boxed to reduce inline size.
+    ///
+    /// `None` for regular files in typical transfers (no symlinks, devices,
+    /// hardlinks, ACLs, xattrs, atimes, crtimes, or checksums).
+    extras: Option<Box<FileEntryExtras>>,
 
     // 4-byte aligned fields
     /// Unix mode bits (type + permissions).
     mode: u32,
     /// Modification time nanoseconds (protocol 31+).
     mtime_nsec: u32,
-    /// Access time nanoseconds (protocol 32+, --atimes).
-    atime_nsec: u32,
 
     // 2-byte aligned fields
     /// Entry flags from wire format.
@@ -195,27 +219,13 @@ impl Clone for FileEntry {
         Self {
             name: self.name.clone(),
             dirname: Arc::clone(&self.dirname),
-            link_target: self.link_target.clone(),
-            user_name: self.user_name.clone(),
-            group_name: self.group_name.clone(),
             size: self.size,
             mtime: self.mtime,
-            atime: self.atime,
-            crtime: self.crtime,
             uid: self.uid,
             gid: self.gid,
-            rdev_major: self.rdev_major,
-            rdev_minor: self.rdev_minor,
-            hardlink_idx: self.hardlink_idx,
-            hardlink_dev: self.hardlink_dev,
-            hardlink_ino: self.hardlink_ino,
-            checksum: self.checksum.clone(),
-            acl_ndx: self.acl_ndx,
-            def_acl_ndx: self.def_acl_ndx,
-            xattr_ndx: self.xattr_ndx,
+            extras: self.extras.clone(),
             mode: self.mode,
             mtime_nsec: self.mtime_nsec,
-            atime_nsec: self.atime_nsec,
             flags: self.flags,
             content_dir: self.content_dir,
         }
@@ -224,33 +234,21 @@ impl Clone for FileEntry {
 
 impl std::fmt::Debug for FileEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FileEntry")
-            .field("name", &self.name)
+        let mut s = f.debug_struct("FileEntry");
+        s.field("name", &self.name)
             .field("dirname", &self.dirname)
-            .field("link_target", &self.link_target)
-            .field("user_name", &self.user_name)
-            .field("group_name", &self.group_name)
             .field("size", &self.size)
             .field("mtime", &self.mtime)
-            .field("atime", &self.atime)
-            .field("crtime", &self.crtime)
             .field("uid", &self.uid)
             .field("gid", &self.gid)
-            .field("rdev_major", &self.rdev_major)
-            .field("rdev_minor", &self.rdev_minor)
-            .field("hardlink_idx", &self.hardlink_idx)
-            .field("hardlink_dev", &self.hardlink_dev)
-            .field("hardlink_ino", &self.hardlink_ino)
-            .field("checksum", &self.checksum)
-            .field("acl_ndx", &self.acl_ndx)
-            .field("def_acl_ndx", &self.def_acl_ndx)
-            .field("xattr_ndx", &self.xattr_ndx)
             .field("mode", &self.mode)
             .field("mtime_nsec", &self.mtime_nsec)
-            .field("atime_nsec", &self.atime_nsec)
             .field("flags", &self.flags)
-            .field("content_dir", &self.content_dir)
-            .finish()
+            .field("content_dir", &self.content_dir);
+        if let Some(extras) = &self.extras {
+            s.field("extras", extras);
+        }
+        s.finish()
     }
 }
 
@@ -258,35 +256,27 @@ impl std::fmt::Debug for FileEntry {
 impl PartialEq for FileEntry {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
-            && self.link_target == other.link_target
-            && self.user_name == other.user_name
-            && self.group_name == other.group_name
             && self.size == other.size
             && self.mtime == other.mtime
-            && self.atime == other.atime
-            && self.crtime == other.crtime
             && self.uid == other.uid
             && self.gid == other.gid
-            && self.rdev_major == other.rdev_major
-            && self.rdev_minor == other.rdev_minor
-            && self.hardlink_idx == other.hardlink_idx
-            && self.hardlink_dev == other.hardlink_dev
-            && self.hardlink_ino == other.hardlink_ino
-            && self.checksum == other.checksum
-            && self.acl_ndx == other.acl_ndx
-            && self.def_acl_ndx == other.def_acl_ndx
-            && self.xattr_ndx == other.xattr_ndx
             && self.mode == other.mode
             && self.mtime_nsec == other.mtime_nsec
-            && self.atime_nsec == other.atime_nsec
             && self.flags == other.flags
             && self.content_dir == other.content_dir
+            && self.extras == other.extras
     }
 }
 
 impl Eq for FileEntry {}
 
 impl FileEntry {
+    /// Returns a mutable reference to the extras, allocating if needed.
+    #[inline]
+    fn extras_mut(&mut self) -> &mut FileEntryExtras {
+        self.extras.get_or_insert_with(|| Box::new(FileEntryExtras::default()))
+    }
+
     /// Core constructor with all parameters - Template Method pattern.
     ///
     /// All public constructors delegate to this method to ensure consistent
@@ -301,30 +291,22 @@ impl FileEntry {
         link_target: Option<PathBuf>,
     ) -> Self {
         let dirname = extract_dirname(&name);
+        let extras = link_target.map(|lt| {
+            Box::new(FileEntryExtras {
+                link_target: Some(lt),
+                ..FileEntryExtras::default()
+            })
+        });
         Self {
             name,
             dirname,
-            link_target,
-            user_name: None,
-            group_name: None,
             size,
             mtime: 0,
-            atime: 0,
-            crtime: 0,
             uid: None,
             gid: None,
-            rdev_major: None,
-            rdev_minor: None,
-            hardlink_idx: None,
-            hardlink_dev: None,
-            hardlink_ino: None,
-            checksum: None,
-            acl_ndx: None,
-            def_acl_ndx: None,
-            xattr_ndx: None,
+            extras,
             mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime_nsec: 0,
-            atime_nsec: 0,
             flags: super::flags::FileFlags::default(),
             content_dir: true, // Directories have content by default
         }
@@ -394,27 +376,13 @@ impl FileEntry {
         Self {
             name,
             dirname,
-            link_target: None,
-            user_name: None,
-            group_name: None,
             size,
             mtime,
-            atime: 0,
-            crtime: 0,
             uid: None,
             gid: None,
-            rdev_major: None,
-            rdev_minor: None,
-            hardlink_idx: None,
-            hardlink_dev: None,
-            hardlink_ino: None,
-            checksum: None,
-            acl_ndx: None,
-            def_acl_ndx: None,
-            xattr_ndx: None,
+            extras: None,
             mode,
             mtime_nsec,
-            atime_nsec: 0,
             flags,
             content_dir: true,
         }
@@ -457,27 +425,13 @@ impl FileEntry {
         Self {
             name: path,
             dirname,
-            link_target: None,
-            user_name: None,
-            group_name: None,
             size,
             mtime,
-            atime: 0,
-            crtime: 0,
             uid: None,
             gid: None,
-            rdev_major: None,
-            rdev_minor: None,
-            hardlink_idx: None,
-            hardlink_dev: None,
-            hardlink_ino: None,
-            checksum: None,
-            acl_ndx: None,
-            def_acl_ndx: None,
-            xattr_ndx: None,
+            extras: None,
             mode,
             mtime_nsec,
-            atime_nsec: 0,
             flags,
             content_dir: true,
         }
@@ -653,20 +607,20 @@ impl FileEntry {
 
     /// Returns the symlink target if this is a symlink.
     #[must_use]
-    pub const fn link_target(&self) -> Option<&PathBuf> {
-        self.link_target.as_ref()
+    pub fn link_target(&self) -> Option<&PathBuf> {
+        self.extras.as_ref().and_then(|e| e.link_target.as_ref())
     }
 
     /// Returns the device major number if this is a device.
     #[must_use]
-    pub const fn rdev_major(&self) -> Option<u32> {
-        self.rdev_major
+    pub fn rdev_major(&self) -> Option<u32> {
+        self.extras.as_ref().and_then(|e| e.rdev_major)
     }
 
     /// Returns the device minor number if this is a device.
     #[must_use]
-    pub const fn rdev_minor(&self) -> Option<u32> {
-        self.rdev_minor
+    pub fn rdev_minor(&self) -> Option<u32> {
+        self.extras.as_ref().and_then(|e| e.rdev_minor)
     }
 
     /// Returns the wire format flags.
@@ -730,81 +684,82 @@ impl FileEntry {
     /// Returns the user name if set.
     #[must_use]
     pub fn user_name(&self) -> Option<&str> {
-        self.user_name.as_deref()
+        self.extras.as_ref().and_then(|e| e.user_name.as_deref())
     }
 
     /// Sets the user name for cross-system ownership mapping.
     pub fn set_user_name(&mut self, name: String) {
-        self.user_name = Some(name);
+        self.extras_mut().user_name = Some(name);
     }
 
     /// Returns the group name if set.
     #[must_use]
     pub fn group_name(&self) -> Option<&str> {
-        self.group_name.as_deref()
+        self.extras.as_ref().and_then(|e| e.group_name.as_deref())
     }
 
     /// Sets the group name for cross-system ownership mapping.
     pub fn set_group_name(&mut self, name: String) {
-        self.group_name = Some(name);
+        self.extras_mut().group_name = Some(name);
     }
 
     /// Sets the symlink target.
     pub fn set_link_target(&mut self, target: PathBuf) {
-        self.link_target = Some(target);
+        self.extras_mut().link_target = Some(target);
     }
 
     /// Sets the device numbers.
-    pub const fn set_rdev(&mut self, major: u32, minor: u32) {
-        self.rdev_major = Some(major);
-        self.rdev_minor = Some(minor);
+    pub fn set_rdev(&mut self, major: u32, minor: u32) {
+        let e = self.extras_mut();
+        e.rdev_major = Some(major);
+        e.rdev_minor = Some(minor);
     }
 
     /// Returns the hardlink index if this entry is a hardlink.
     #[must_use]
-    pub const fn hardlink_idx(&self) -> Option<u32> {
-        self.hardlink_idx
+    pub fn hardlink_idx(&self) -> Option<u32> {
+        self.extras.as_ref().and_then(|e| e.hardlink_idx)
     }
 
     /// Sets the hardlink index for this entry.
-    pub const fn set_hardlink_idx(&mut self, idx: u32) {
-        self.hardlink_idx = Some(idx);
+    pub fn set_hardlink_idx(&mut self, idx: u32) {
+        self.extras_mut().hardlink_idx = Some(idx);
     }
 
     /// Returns the access time as seconds since Unix epoch.
     #[inline]
     #[must_use]
-    pub const fn atime(&self) -> i64 {
-        self.atime
+    pub fn atime(&self) -> i64 {
+        self.extras.as_ref().map_or(0, |e| e.atime)
     }
 
     /// Sets the access time (seconds only, nanoseconds unchanged).
-    pub const fn set_atime(&mut self, secs: i64) {
-        self.atime = secs;
+    pub fn set_atime(&mut self, secs: i64) {
+        self.extras_mut().atime = secs;
     }
 
     /// Returns the access time nanoseconds.
     #[inline]
     #[must_use]
-    pub const fn atime_nsec(&self) -> u32 {
-        self.atime_nsec
+    pub fn atime_nsec(&self) -> u32 {
+        self.extras.as_ref().map_or(0, |e| e.atime_nsec)
     }
 
     /// Sets the access time nanoseconds.
-    pub const fn set_atime_nsec(&mut self, nsec: u32) {
-        self.atime_nsec = nsec;
+    pub fn set_atime_nsec(&mut self, nsec: u32) {
+        self.extras_mut().atime_nsec = nsec;
     }
 
     /// Returns the creation time as seconds since Unix epoch.
     #[inline]
     #[must_use]
-    pub const fn crtime(&self) -> i64 {
-        self.crtime
+    pub fn crtime(&self) -> i64 {
+        self.extras.as_ref().map_or(0, |e| e.crtime)
     }
 
     /// Sets the creation time.
-    pub const fn set_crtime(&mut self, secs: i64) {
-        self.crtime = secs;
+    pub fn set_crtime(&mut self, secs: i64) {
+        self.extras_mut().crtime = secs;
     }
 
     /// Returns whether this directory has content to transfer.
@@ -826,49 +781,49 @@ impl FileEntry {
     /// Returns the hardlink device number (for protocol < 30).
     #[inline]
     #[must_use]
-    pub const fn hardlink_dev(&self) -> Option<i64> {
-        self.hardlink_dev
+    pub fn hardlink_dev(&self) -> Option<i64> {
+        self.extras.as_ref().and_then(|e| e.hardlink_dev)
     }
 
     /// Sets the hardlink device number (for protocol < 30).
-    pub const fn set_hardlink_dev(&mut self, dev: i64) {
-        self.hardlink_dev = Some(dev);
+    pub fn set_hardlink_dev(&mut self, dev: i64) {
+        self.extras_mut().hardlink_dev = Some(dev);
     }
 
     /// Returns the hardlink inode number (for protocol < 30).
     #[inline]
     #[must_use]
-    pub const fn hardlink_ino(&self) -> Option<i64> {
-        self.hardlink_ino
+    pub fn hardlink_ino(&self) -> Option<i64> {
+        self.extras.as_ref().and_then(|e| e.hardlink_ino)
     }
 
     /// Sets the hardlink inode number (for protocol < 30).
-    pub const fn set_hardlink_ino(&mut self, ino: i64) {
-        self.hardlink_ino = Some(ino);
+    pub fn set_hardlink_ino(&mut self, ino: i64) {
+        self.extras_mut().hardlink_ino = Some(ino);
     }
 
     /// Returns the file checksum if set (for --checksum mode).
     #[inline]
     #[must_use]
     pub fn checksum(&self) -> Option<&[u8]> {
-        self.checksum.as_deref()
+        self.extras.as_ref().and_then(|e| e.checksum.as_deref())
     }
 
     /// Sets the file checksum (for --checksum mode).
     pub fn set_checksum(&mut self, sum: Vec<u8>) {
-        self.checksum = Some(sum);
+        self.extras_mut().checksum = Some(sum);
     }
 
     /// Returns the access ACL index if set (for --acls mode).
     #[inline]
     #[must_use]
-    pub const fn acl_ndx(&self) -> Option<u32> {
-        self.acl_ndx
+    pub fn acl_ndx(&self) -> Option<u32> {
+        self.extras.as_ref().and_then(|e| e.acl_ndx)
     }
 
     /// Sets the access ACL index (for --acls mode).
-    pub const fn set_acl_ndx(&mut self, ndx: u32) {
-        self.acl_ndx = Some(ndx);
+    pub fn set_acl_ndx(&mut self, ndx: u32) {
+        self.extras_mut().acl_ndx = Some(ndx);
     }
 
     /// Returns the default ACL index if set (for directories in --acls mode).
@@ -876,27 +831,27 @@ impl FileEntry {
     /// Corresponds to upstream's `F_DIR_DEFACL`. Only meaningful for directories.
     #[inline]
     #[must_use]
-    pub const fn def_acl_ndx(&self) -> Option<u32> {
-        self.def_acl_ndx
+    pub fn def_acl_ndx(&self) -> Option<u32> {
+        self.extras.as_ref().and_then(|e| e.def_acl_ndx)
     }
 
     /// Sets the default ACL index (for directories in --acls mode).
     ///
     /// Corresponds to upstream's `F_DIR_DEFACL`. Only meaningful for directories.
-    pub const fn set_def_acl_ndx(&mut self, ndx: u32) {
-        self.def_acl_ndx = Some(ndx);
+    pub fn set_def_acl_ndx(&mut self, ndx: u32) {
+        self.extras_mut().def_acl_ndx = Some(ndx);
     }
 
     /// Returns the extended attribute index if set (for --xattrs mode).
     #[inline]
     #[must_use]
-    pub const fn xattr_ndx(&self) -> Option<u32> {
-        self.xattr_ndx
+    pub fn xattr_ndx(&self) -> Option<u32> {
+        self.extras.as_ref().and_then(|e| e.xattr_ndx)
     }
 
     /// Sets the extended attribute index (for --xattrs mode).
-    pub const fn set_xattr_ndx(&mut self, ndx: u32) {
-        self.xattr_ndx = Some(ndx);
+    pub fn set_xattr_ndx(&mut self, ndx: u32) {
+        self.extras_mut().xattr_ndx = Some(ndx);
     }
 
     /// Returns true if this entry is a block or character device.
@@ -1225,5 +1180,98 @@ mod tests {
         entry2.set_dirname(Arc::clone(&dir));
 
         assert!(Arc::ptr_eq(entry1.dirname(), entry2.dirname()));
+    }
+
+    /// Verifies the struct size optimization: FileEntry should be <= 96 bytes
+    /// inline (down from ~295 bytes before the Box<FileEntryExtras> refactor).
+    /// This guards against accidental field additions that bloat the hot path.
+    #[test]
+    fn file_entry_size_optimized() {
+        let size = std::mem::size_of::<FileEntry>();
+        // Target: ~88 bytes. Allow up to 96 for alignment padding.
+        assert!(
+            size <= 96,
+            "FileEntry is {size} bytes; expected <= 96. \
+             Did you add a field to FileEntry instead of FileEntryExtras?"
+        );
+    }
+
+    /// Regular file entries should not allocate extras.
+    #[test]
+    fn regular_file_no_extras() {
+        let entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
+        assert!(
+            entry.extras.is_none(),
+            "Regular files should not allocate extras"
+        );
+    }
+
+    /// Symlink entries should allocate extras for the link target.
+    #[test]
+    fn symlink_has_extras() {
+        let entry = FileEntry::new_symlink("link".into(), "target".into());
+        assert!(entry.extras.is_some());
+        assert_eq!(
+            entry.link_target().map(|p| p.as_path()),
+            Some("target".as_ref())
+        );
+    }
+
+    /// Extras should be lazily allocated on first setter call.
+    #[test]
+    fn extras_lazy_allocation() {
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        assert!(entry.extras.is_none());
+
+        entry.set_atime(1700000000);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.atime(), 1700000000);
+    }
+
+    /// Default values for extras getters when extras is None.
+    #[test]
+    fn extras_default_values() {
+        let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        assert_eq!(entry.atime(), 0);
+        assert_eq!(entry.atime_nsec(), 0);
+        assert_eq!(entry.crtime(), 0);
+        assert_eq!(entry.link_target(), None);
+        assert_eq!(entry.user_name(), None);
+        assert_eq!(entry.group_name(), None);
+        assert_eq!(entry.rdev_major(), None);
+        assert_eq!(entry.rdev_minor(), None);
+        assert_eq!(entry.hardlink_idx(), None);
+        assert_eq!(entry.hardlink_dev(), None);
+        assert_eq!(entry.hardlink_ino(), None);
+        assert_eq!(entry.checksum(), None);
+        assert_eq!(entry.acl_ndx(), None);
+        assert_eq!(entry.def_acl_ndx(), None);
+        assert_eq!(entry.xattr_ndx(), None);
+    }
+
+    /// Clone preserves extras correctly.
+    #[test]
+    fn clone_with_extras() {
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        entry.set_atime(1700000000);
+        entry.set_checksum(vec![1, 2, 3]);
+        entry.set_hardlink_idx(42);
+
+        let cloned = entry.clone();
+        assert_eq!(cloned.atime(), 1700000000);
+        assert_eq!(cloned.checksum(), Some(&[1, 2, 3][..]));
+        assert_eq!(cloned.hardlink_idx(), Some(42));
+        assert_eq!(entry, cloned);
+    }
+
+    /// PartialEq handles None vs Some extras correctly.
+    #[test]
+    fn equality_with_different_extras() {
+        let entry1 = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        let mut entry2 = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        assert_eq!(entry1, entry2);
+
+        entry2.set_atime(1);
+        assert_ne!(entry1, entry2);
     }
 }
