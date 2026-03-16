@@ -141,11 +141,7 @@ pub(crate) fn format_iflags(
         }
     } else {
         // upstream: log.c:716-717 - non-symlink: T when !preserve_mtimes
-        if !ctx.preserve_mtimes {
-            'T'
-        } else {
-            't'
-        }
+        if !ctx.preserve_mtimes { 'T' } else { 't' }
     };
 
     // upstream: log.c:720-722 - perms, owner, group
@@ -440,8 +436,7 @@ mod tests {
     /// upstream: log.c:716-717 - non-symlink with preserve_mtimes shows lowercase 't'
     #[test]
     fn file_time_with_preserve_mtimes_shows_lowercase_t() {
-        let iflags =
-            ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
+        let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
         let entry = make_file_entry("test.txt");
         let result = format_iflags(&iflags, &entry, false, &default_ctx());
         assert_eq!(result, ">f..t......");
@@ -450,8 +445,7 @@ mod tests {
     /// upstream: log.c:716-717 - non-symlink without preserve_mtimes shows uppercase 'T'
     #[test]
     fn file_time_without_preserve_mtimes_shows_uppercase_t() {
-        let iflags =
-            ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
+        let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
         let entry = make_file_entry("test.txt");
         let result = format_iflags(&iflags, &entry, false, &no_times_ctx());
         assert_eq!(result, ">f..T......");
@@ -461,8 +455,7 @@ mod tests {
     /// shows lowercase 't'
     #[test]
     fn symlink_time_with_full_support_shows_lowercase_t() {
-        let iflags =
-            ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
+        let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
         let entry = make_symlink_entry("link");
         let result = format_iflags(&iflags, &entry, false, &default_ctx());
         assert_eq!(result, ">L..t......");
@@ -471,8 +464,7 @@ mod tests {
     /// upstream: log.c:709 - symlink without preserve_mtimes shows uppercase 'T'
     #[test]
     fn symlink_time_without_preserve_mtimes_shows_uppercase_t() {
-        let iflags =
-            ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
+        let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
         let entry = make_symlink_entry("link");
         let result = format_iflags(&iflags, &entry, false, &no_times_ctx());
         assert_eq!(result, ">L..T......");
@@ -481,8 +473,7 @@ mod tests {
     /// upstream: log.c:709 - symlink without receiver_symlink_times shows uppercase 'T'
     #[test]
     fn symlink_time_without_receiver_symlink_times_shows_uppercase_t() {
-        let iflags =
-            ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
+        let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
         let entry = make_symlink_entry("link");
         let result = format_iflags(&iflags, &entry, false, &no_symlink_times_ctx());
         assert_eq!(result, ">L..T......");
@@ -508,9 +499,7 @@ mod tests {
     #[test]
     fn file_report_size_bit_not_confused_with_timefail() {
         let iflags = ItemFlags::from_raw(
-            ItemFlags::ITEM_TRANSFER
-                | ItemFlags::ITEM_REPORT_TIME
-                | ItemFlags::ITEM_REPORT_SIZE, // same bit as TIMEFAIL
+            ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME | ItemFlags::ITEM_REPORT_SIZE, // same bit as TIMEFAIL
         );
         let entry = make_file_entry("test.txt");
         let result = format_iflags(&iflags, &entry, false, &default_ctx());
@@ -521,9 +510,8 @@ mod tests {
     /// upstream: log.c:716-717 - directory without preserve_mtimes shows uppercase 'T'
     #[test]
     fn directory_time_without_preserve_mtimes_shows_uppercase_t() {
-        let iflags = ItemFlags::from_raw(
-            ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_REPORT_TIME,
-        );
+        let iflags =
+            ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_REPORT_TIME);
         let entry = make_dir_entry("subdir");
         let result = format_iflags(&iflags, &entry, true, &no_times_ctx());
         assert_eq!(result, "cd..T......");
