@@ -313,6 +313,27 @@ impl ReceiverContext {
         reader.xattr_cache().get(ndx as usize).cloned()
     }
 
+    /// Determines if input multiplex should be activated based on mode and protocol.
+    ///
+    /// The activation threshold differs by mode:
+    ///
+    /// **Client mode** (daemon pull - `main.c:1342-1343` `client_run !am_sender`):
+    /// - `if (protocol_version >= 23) io_start_multiplex_in(f_in);`
+    ///
+    /// **Server mode** (daemon/SSH receiver - `main.c:1167-1168` `do_recv`):
+    /// - `if (protocol_version >= 30) io_start_multiplex_in(f_in);`
+    /// - Protocol < 30 uses `io_start_buffering_in()` instead (no multiplex).
+    #[must_use]
+    pub(crate) const fn should_activate_input_multiplex(&self) -> bool {
+        if self.config.connection.client_mode {
+            // Client mode: >= 23 (upstream main.c:1342-1343)
+            self.protocol.supports_multiplex_io()
+        } else {
+            // Server mode: >= 30 (upstream main.c:1167-1168)
+            self.protocol.uses_binary_negotiation()
+        }
+    }
+
     /// Determines if filter list should be read from sender.
     ///
     /// For a daemon receiver, the filter list is only read when:
