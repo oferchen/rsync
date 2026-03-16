@@ -8,7 +8,7 @@
 use proptest::prelude::*;
 use protocol::{
     decode_varint, encode_varint_to_vec, read_longint, read_varint, read_varlong, write_longint,
-    write_varint, write_varlong,
+    write_varlong,
 };
 use std::io::Cursor;
 
@@ -51,8 +51,8 @@ proptest! {
         let expected = expected_varint_len(value);
         prop_assert_eq!(
             encoded.len(), expected,
-            "value {value} (0x{value:08X}): expected {expected} bytes, got {}",
-            encoded.len()
+            "value {} (0x{:08X}): expected {} bytes, got {}",
+            value, value, expected, encoded.len()
         );
     }
 
@@ -78,8 +78,8 @@ proptest! {
             };
             prop_assert!(
                 (value as u32) > prev_tier_max,
-                "value {value} fits in {} bytes but encoded as {len}",
-                len - 1
+                "value {} fits in {} bytes but encoded as {}",
+                value, len - 1, len
             );
         }
     }
@@ -155,9 +155,9 @@ proptest! {
 
         let is_inline = (0..=0x7FFF_FFFF_i64).contains(&value);
         if is_inline {
-            prop_assert_eq!(encoded.len(), 4, "inline value {value} should be 4 bytes");
+            prop_assert_eq!(encoded.len(), 4, "inline value {} should be 4 bytes", value);
         } else {
-            prop_assert_eq!(encoded.len(), 12, "extended value {value} should be 12 bytes");
+            prop_assert_eq!(encoded.len(), 12, "extended value {} should be 12 bytes", value);
         }
     }
 
@@ -178,7 +178,7 @@ proptest! {
         write_longint(&mut encoded, value)?;
         prop_assert_eq!(
             encoded.len(), 4,
-            "value {value} fits in 4 bytes but got {} bytes", encoded.len()
+            "value {} fits in 4 bytes but got {} bytes", value, encoded.len()
         );
     }
 }
@@ -228,7 +228,7 @@ proptest! {
         // Must be at least min_bytes (leading byte + min_bytes-1 data bytes)
         prop_assert!(
             encoded.len() >= min_bytes as usize,
-            "encoded {} bytes, min is {min_bytes}", encoded.len()
+            "encoded {} bytes, min is {}", encoded.len(), min_bytes
         );
     }
 
