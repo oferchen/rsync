@@ -23,11 +23,10 @@ pub mod md4;
 
 pub use md5_dispatcher::Backend;
 
-/// MD5 digest type (16 bytes / 128 bits).
-/// Also used for MD4 (same output size).
+/// MD5 digest type (16 bytes / 128 bits). Also used for MD4 (same output size).
 pub type Digest = [u8; 16];
 
-/// Compute MD5 digests for multiple inputs in parallel.
+/// Computes MD5 digests for multiple inputs in parallel.
 ///
 /// Uses SIMD instructions when available to process multiple hashes
 /// simultaneously. Returns digests in the same order as inputs.
@@ -35,15 +34,15 @@ pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
     md5_dispatcher::global().digest_batch(inputs)
 }
 
-/// Compute MD5 digest for a single input.
+/// Computes an MD5 digest for a single input.
 #[allow(dead_code)]
 pub fn digest(input: &[u8]) -> Digest {
     md5_dispatcher::global().digest(input)
 }
 
-/// Get the currently active SIMD backend.
+/// Returns the currently active SIMD backend.
 ///
-/// Useful for logging or diagnostics.
+/// Useful for logging or diagnostics to confirm which instruction set is in use.
 #[allow(dead_code)]
 pub fn active_backend() -> Backend {
     md5_dispatcher::global().backend()
