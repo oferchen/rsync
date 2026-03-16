@@ -89,6 +89,27 @@ pub fn copy_file_contents(source: &File, destination: &File, length: u64) -> io:
     copy_file_contents_readwrite(source, destination, length)
 }
 
+/// Like [`copy_file_contents`] but uses a caller-provided buffer for the
+/// read/write fallback path, avoiding per-file heap allocation.
+///
+/// The buffer pool in the engine crate manages reusable buffers across files.
+/// Passing that buffer here eliminates the 256KB `Vec` allocation that the
+/// standard fallback path creates for every file, which is significant for
+/// workloads with many small files (e.g., 100K x 100B).
+pub fn copy_file_contents_buffered(
+    source: &File,
+    destination: &File,
+    length: u64,
+    buffer: &mut [u8],
+) -> io::Result<u64> {
+    if length >= COPY_FILE_RANGE_THRESHOLD {
+        if let Ok(copied) = try_copy_file_range(source, destination, length) {
+            return Ok(copied);
+        }
+    }
+    copy_file_contents_readwrite_with_buffer(source, destination, length, buffer)
+}
+
 /// Attempts zero-copy transfer via `copy_file_range` syscall.
 ///
 /// This function directly invokes the Linux `copy_file_range` syscall for optimal
@@ -217,6 +238,37 @@ fn copy_file_contents_readwrite(source: &File, destination: &File, length: u64) 
         remaining -= n as u64;
     }
     writer.flush()?;
+
+    Ok(total)
+}
+
+/// Read/write path using a caller-provided buffer.
+///
+/// Avoids the per-file 256KB heap allocation in [`copy_file_contents_readwrite`]
+/// by reusing a buffer from the engine's buffer pool.
+fn copy_file_contents_readwrite_with_buffer(
+    source: &File,
+    destination: &File,
+    length: u64,
+    buffer: &mut [u8],
+) -> io::Result<u64> {
+    use std::io::{Read, Write};
+
+    let mut source = source;
+    let mut destination = destination;
+    let mut total = 0u64;
+    let mut remaining = length;
+
+    while remaining > 0 {
+        let to_read = (remaining as usize).min(buffer.len());
+        let n = source.read(&mut buffer[..to_read])?;
+        if n == 0 {
+            break;
+        }
+        destination.write_all(&buffer[..n])?;
+        total += n as u64;
+        remaining -= n as u64;
+    }
 
     Ok(total)
 }
