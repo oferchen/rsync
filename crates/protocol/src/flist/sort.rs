@@ -22,6 +22,35 @@ use memchr::memrchr;
 
 use super::FileEntry;
 
+/// Cached sort metadata for a file entry, precomputed once before sorting.
+///
+/// Avoids per-comparison `memrchr` and `is_dir()` calls during the O(n log n)
+/// sort phase. For 100K entries (~1.7M comparisons), this eliminates ~3.4M
+/// `memrchr` calls and ~3.4M mode bitmask checks.
+#[derive(Clone, Copy)]
+struct SortKey {
+    index: u32,
+    is_dir: bool,
+    /// Precomputed position of last '/' in name bytes, or `u32::MAX` if none.
+    last_slash: u32,
+}
+
+impl SortKey {
+    fn new(index: usize, entry: &FileEntry) -> Self {
+        let bytes = entry.name_bytes();
+        let last_slash = memrchr(b'/', bytes).map_or(u32::MAX, |p| p as u32);
+        Self {
+            index: index as u32,
+            is_dir: entry.is_dir(),
+            last_slash,
+        }
+    }
+
+    fn has_slash_at_or_after(&self, pos: usize) -> bool {
+        self.last_slash != u32::MAX && self.last_slash as usize >= pos
+    }
+}
+
 /// Compares two file entries according to rsync's sorting rules.
 ///
 /// This mirrors upstream's `f_name_cmp()` from `flist.c`.
@@ -50,10 +79,16 @@ use super::FileEntry;
 /// (upstream: flist.c:3217).
 #[must_use]
 pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
-    // Use byte comparison directly - rsync protocol uses bytes, not UTF-8
-    let bytes_a = a.name_bytes();
-    let bytes_b = b.name_bytes();
+    let key_a = SortKey::new(0, a);
+    let key_b = SortKey::new(0, b);
+    compare_with_keys(a.name_bytes(), &key_a, b.name_bytes(), &key_b)
+}
 
+/// Inner comparison using precomputed sort keys.
+///
+/// Separated from `compare_file_entries` so the sort loop can pass cached
+/// `SortKey` values without recomputing `memrchr` and `is_dir` per call.
+fn compare_with_keys(bytes_a: &[u8], key_a: &SortKey, bytes_b: &[u8], key_b: &SortKey) -> Ordering {
     // "." always comes first
     match (bytes_a == b".", bytes_b == b".") {
         (true, true) => return Ordering::Equal,
@@ -62,16 +97,8 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
         (false, false) => {}
     }
 
-    // For directories, conceptually append '/' for comparison purposes.
-    // This matches upstream rsync's f_name_cmp() which treats directories
-    // as having an implicit trailing slash.
-    let a_is_dir = a.is_dir();
-    let b_is_dir = b.is_dir();
-
-    // Precompute last '/' position for O(1) "has separator remaining?" queries.
-    // memrchr uses SIMD on supported platforms, making this a single fast pass.
-    let last_slash_a = memrchr(b'/', bytes_a);
-    let last_slash_b = memrchr(b'/', bytes_b);
+    let a_is_dir = key_a.is_dir;
+    let b_is_dir = key_b.is_dir;
 
     // Compare byte by byte, treating directory names as having implicit '/'
     let mut i = 0;
@@ -109,10 +136,9 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 
         if ch_a != ch_b {
             // At the divergence point, determine if each entry has deeper path
-            // components remaining. A '/' exists at or after position `i` iff the
-            // precomputed last_slash position is >= i.
-            let a_has_sep = last_slash_a.is_some_and(|pos| pos >= i);
-            let b_has_sep = last_slash_b.is_some_and(|pos| pos >= i);
+            // components remaining. Uses precomputed last_slash for O(1) lookup.
+            let a_has_sep = key_a.has_slash_at_or_after(i);
+            let b_has_sep = key_b.has_slash_at_or_after(i);
 
             // Entry is "directory-like at this level" if it has more path components
             // (separator found ahead) or if it's a directory entry in its final component
@@ -158,28 +184,47 @@ pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool) {
         return;
     }
 
-    // Sort indices — only 8-byte values are shuffled during the sort,
-    // reducing memory bandwidth by ~20x vs moving full FileEntry structs.
-    let mut indices: Vec<usize> = (0..n).collect();
-    let cmp = |&a: &usize, &b: &usize| compare_file_entries(&file_list[a], &file_list[b]);
+    // Precompute sort keys (is_dir + last_slash) once per entry.
+    // Eliminates ~3.4M memrchr calls for 100K entries (~1.7M comparisons * 2).
+    let mut keys: Vec<SortKey> = file_list
+        .iter()
+        .enumerate()
+        .map(|(i, e)| SortKey::new(i, e))
+        .collect();
+
+    let cmp = |a: &SortKey, b: &SortKey| {
+        compare_with_keys(
+            file_list[a.index as usize].name_bytes(),
+            a,
+            file_list[b.index as usize].name_bytes(),
+            b,
+        )
+    };
     if use_qsort {
-        indices.sort_unstable_by(cmp);
+        keys.sort_unstable_by(cmp);
     } else {
-        indices.sort_by(cmp);
+        keys.sort_by(cmp);
     }
 
     // Apply the permutation in-place using cycle chasing.
-    // Each element is moved exactly once.
-    let mut placed = vec![false; n];
+    // Each element is moved exactly once. Uses a bitset (n/64 u64s)
+    // instead of Vec<bool> (n bytes) to reduce memory and improve
+    // cache behavior for the placed-tracking.
+    let mut placed = vec![0u64; n.div_ceil(64)];
     for i in 0..n {
-        if placed[i] || indices[i] == i {
-            placed[i] = true;
+        let word = i / 64;
+        let bit = 1u64 << (i % 64);
+        let idx = keys[i].index as usize;
+        if placed[word] & bit != 0 || idx == i {
+            placed[word] |= bit;
             continue;
         }
         let mut j = i;
         loop {
-            let target = indices[j];
-            placed[j] = true;
+            let target = keys[j].index as usize;
+            let jw = j / 64;
+            let jb = 1u64 << (j % 64);
+            placed[jw] |= jb;
             if target == i {
                 break;
             }
