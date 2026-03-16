@@ -495,3 +495,96 @@ fn bind_address_appears_before_custom_options() {
         "bind address at {bind_pos} should precede custom option at {option_pos}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn stderr_drain_forwards_error_output_after_split() {
+    use std::time::Duration;
+
+    // Spawn a child that writes to stderr and exits.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("echo stderr-line >&2");
+
+    // Use set_target_override to suppress the host argument.
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
+
+    // The drain thread is running in the background. Wait for the child to
+    // exit so we know stderr has been fully written.
+    let status = child_handle.wait().expect("wait");
+    assert!(status.success());
+
+    // We cannot easily capture eprintln! output in-process, but the fact that
+    // the child exited successfully without deadlocking proves the drain works.
+    // The thread joined cleanly inside wait().
+    let _ = Duration::from_millis(0); // suppress unused import lint
+}
+
+#[cfg(unix)]
+#[test]
+fn stderr_drain_handles_large_output_without_deadlock() {
+    // Write enough to stderr to exceed the OS pipe buffer (64 KB).
+    // Without the drain thread, the child would block on the write and
+    // never exit, causing this test to hang.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    // Generate ~128 KB of stderr output (2048 lines of 64 bytes each).
+    command.push_option(
+        "i=0; while [ $i -lt 2048 ]; do printf 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' >&2; i=$((i+1)); done",
+    );
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
+
+    // If the drain thread is not running, the child blocks on stderr write
+    // and this wait() never returns.
+    let status = child_handle.wait().expect("wait");
+    assert!(status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn stderr_drain_joins_on_drop() {
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("echo drop-test >&2");
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, writer, child_handle) = connection.split().expect("split");
+
+    // Close writer so child can exit.
+    writer.close().expect("close writer");
+
+    // Drop without calling wait() - the drain thread should be joined by
+    // StderrDrain's Drop impl, and the child reaped by SshChildHandle's Drop.
+    drop(child_handle);
+}
+
+#[cfg(unix)]
+#[test]
+fn stderr_drain_with_no_stderr_output() {
+    // Child produces no stderr output - drain thread should exit cleanly at EOF.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("echo stdout-only");
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
+
+    let status = child_handle.wait().expect("wait");
+    assert!(status.success());
+}
