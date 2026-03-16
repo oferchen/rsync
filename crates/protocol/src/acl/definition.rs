@@ -305,6 +305,7 @@ impl IntoIterator for AclDefinition {
 ///
 /// Mirrors the literal-data branch of `recv_rsync_acl()` in `acls.c`
 /// lines 740-800.
+#[must_use]
 pub fn read_acl_definition<R: Read>(reader: &mut R) -> io::Result<AclDefinition> {
     let mut flags_buf = [0u8; 1];
     reader.read_exact(&mut flags_buf)?;

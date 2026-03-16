@@ -27,6 +27,7 @@ impl MessageHeader {
     }
 
     /// Parses a header from the beginning of `bytes`.
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Result<Self, EnvelopeError> {
         if bytes.len() < HEADER_LEN {
             return Err(EnvelopeError::TruncatedHeader {
@@ -64,6 +65,7 @@ impl MessageHeader {
     }
 
     /// Encodes this header into the caller-provided slice without allocating.
+    #[must_use]
     pub fn encode_into_slice(self, out: &mut [u8]) -> Result<(), EnvelopeError> {
         if out.len() < HEADER_LEN {
             return Err(EnvelopeError::TruncatedHeader { actual: out.len() });

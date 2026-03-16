@@ -36,6 +36,7 @@ use std::io::{self, Read, Write};
 /// # Upstream Reference
 ///
 /// Mirrors `send_protected_args()` in upstream `main.c`.
+#[must_use]
 pub fn send_secluded_args<W: Write>(writer: &mut W, args: &[&str]) -> io::Result<()> {
     for arg in args {
         writer.write_all(arg.as_bytes())?;
@@ -62,6 +63,7 @@ pub fn send_secluded_args<W: Write>(writer: &mut W, args: &[&str]) -> io::Result
 ///
 /// Returns an error if the reader encounters an I/O error or reaches EOF
 /// before the terminating empty argument.
+#[must_use]
 pub fn recv_secluded_args<R: Read>(reader: &mut R) -> io::Result<Vec<String>> {
     let mut args = Vec::new();
     let mut current = Vec::new();

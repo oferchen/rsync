@@ -224,6 +224,7 @@ impl<W: Write> MplexWriter<W> {
     /// # }
     /// # example().unwrap();
     /// ```
+    #[must_use]
     pub fn write_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
         // Flush buffered DATA first to maintain ordering
         self.flush_buffer()?;
@@ -253,6 +254,7 @@ impl<W: Write> MplexWriter<W> {
     /// # }
     /// # example().unwrap();
     /// ```
+    #[must_use]
     pub fn write_data(&mut self, data: &[u8]) -> io::Result<()> {
         // Flush buffered data first
         self.flush_buffer()?;
@@ -295,6 +297,7 @@ impl<W: Write> MplexWriter<W> {
     /// # }
     /// # example().unwrap();
     /// ```
+    #[must_use]
     pub fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
         // Flush buffered data first
         self.flush_buffer()?;
@@ -326,6 +329,7 @@ impl<W: Write> MplexWriter<W> {
     /// # }
     /// # example().unwrap();
     /// ```
+    #[must_use]
     #[inline]
     pub fn write_keepalive(&mut self) -> io::Result<()> {
         self.write_message(MessageCode::NoOp, &[])
@@ -334,6 +338,7 @@ impl<W: Write> MplexWriter<W> {
     /// Convenience method for writing an error message.
     ///
     /// Equivalent to `write_message(MessageCode::Error, msg.as_bytes())`.
+    #[must_use]
     #[inline]
     pub fn write_error(&mut self, msg: &str) -> io::Result<()> {
         self.write_message(MessageCode::Error, msg.as_bytes())
@@ -342,6 +347,7 @@ impl<W: Write> MplexWriter<W> {
     /// Convenience method for writing a warning message.
     ///
     /// Equivalent to `write_message(MessageCode::Warning, msg.as_bytes())`.
+    #[must_use]
     #[inline]
     pub fn write_warning(&mut self, msg: &str) -> io::Result<()> {
         self.write_message(MessageCode::Warning, msg.as_bytes())
@@ -350,6 +356,7 @@ impl<W: Write> MplexWriter<W> {
     /// Convenience method for writing an info message.
     ///
     /// Equivalent to `write_message(MessageCode::Info, msg.as_bytes())`.
+    #[must_use]
     #[inline]
     pub fn write_info(&mut self, msg: &str) -> io::Result<()> {
         self.write_message(MessageCode::Info, msg.as_bytes())

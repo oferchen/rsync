@@ -16,6 +16,7 @@ use super::helpers::{
 /// The payload length is validated against [`crate::MAX_PAYLOAD_LENGTH`], mirroring the
 /// 24-bit limit imposed by the C implementation. Violations result in
 /// [`io::ErrorKind::InvalidInput`].
+#[must_use]
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
     debug_log!(Io, 3, "mux send: code={:?} len={}", code, payload.len());
     let payload_len = ensure_payload_length(payload.len())?;
@@ -32,6 +33,7 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
 /// [`::core::ops::DerefMut`], and the upstream-compatible encoding is reused through the same vectored write
 /// path. [`MessageFrame::encode_into_writer`] forwards to this helper for ergonomic access from an
 /// owned frame.
+#[must_use]
 pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<()> {
     let header = frame.header()?;
     write_validated_message(writer, header, frame.payload())

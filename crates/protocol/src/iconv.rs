@@ -209,6 +209,7 @@ impl FilenameConverter {
     /// # Errors
     ///
     /// Returns an error if either encoding name is not recognized.
+    #[must_use]
     #[cfg(feature = "iconv")]
     pub fn new(local_charset: &str, remote_charset: &str) -> Result<Self, ConversionError> {
         let local_normalized = normalize_encoding_name(local_charset);
@@ -227,6 +228,7 @@ impl FilenameConverter {
     }
 
     /// Stub implementation when iconv feature is disabled.
+    #[must_use]
     #[cfg(not(feature = "iconv"))]
     pub fn new(local_charset: &str, remote_charset: &str) -> Result<Self, ConversionError> {
         let local_normalized = normalize_encoding_name(local_charset);
@@ -292,6 +294,7 @@ impl FilenameConverter {
     ///
     /// The filename bytes converted to local encoding. Returns the input
     /// unchanged if no conversion is needed or the iconv feature is disabled.
+    #[must_use]
     #[cfg(feature = "iconv")]
     pub fn remote_to_local<'a>(&self, bytes: &'a [u8]) -> Result<Cow<'a, [u8]>, ConversionError> {
         if self.is_identity() {
@@ -337,6 +340,7 @@ impl FilenameConverter {
     ///
     /// The filename bytes converted to remote encoding. Returns the input
     /// unchanged if no conversion is needed or the iconv feature is disabled.
+    #[must_use]
     #[cfg(feature = "iconv")]
     pub fn local_to_remote<'a>(&self, bytes: &'a [u8]) -> Result<Cow<'a, [u8]>, ConversionError> {
         if self.is_identity() {
@@ -371,6 +375,7 @@ impl FilenameConverter {
     }
 
     /// No-op conversion when iconv feature is disabled.
+    #[must_use]
     #[cfg(not(feature = "iconv"))]
     #[allow(clippy::unnecessary_wraps)]
     pub fn remote_to_local<'a>(&self, bytes: &'a [u8]) -> Result<Cow<'a, [u8]>, ConversionError> {
@@ -378,6 +383,7 @@ impl FilenameConverter {
     }
 
     /// No-op conversion when iconv feature is disabled.
+    #[must_use]
     #[cfg(not(feature = "iconv"))]
     #[allow(clippy::unnecessary_wraps)]
     pub fn local_to_remote<'a>(&self, bytes: &'a [u8]) -> Result<Cow<'a, [u8]>, ConversionError> {
@@ -419,6 +425,7 @@ impl FilenameConverter {
     /// # Errors
     ///
     /// Returns `EncodingError::ConversionFailed` if the conversion fails.
+    #[must_use]
     #[cfg(feature = "iconv")]
     pub fn to_remote(&self, local_name: &str) -> Result<String, EncodingError> {
         if self.is_identity() {
@@ -452,6 +459,7 @@ impl FilenameConverter {
     }
 
     /// Stub implementation when iconv feature is disabled.
+    #[must_use]
     #[cfg(not(feature = "iconv"))]
     pub fn to_remote(&self, local_name: &str) -> Result<String, EncodingError> {
         Ok(local_name.to_string())
@@ -466,6 +474,7 @@ impl FilenameConverter {
     /// # Errors
     ///
     /// Returns `EncodingError::ConversionFailed` if the conversion fails.
+    #[must_use]
     #[cfg(feature = "iconv")]
     pub fn to_local(&self, remote_name: &[u8]) -> Result<String, EncodingError> {
         if self.is_identity() {
@@ -504,6 +513,7 @@ impl FilenameConverter {
     }
 
     /// Stub implementation when iconv feature is disabled.
+    #[must_use]
     #[cfg(not(feature = "iconv"))]
     pub fn to_local(&self, remote_name: &[u8]) -> Result<String, EncodingError> {
         String::from_utf8(remote_name.to_vec()).map_err(|_| EncodingError::ConversionFailed {

@@ -144,6 +144,7 @@ pub fn send_ida_entries<W: Write>(
 /// # Upstream Reference
 ///
 /// Mirrors `recv_ida_entries()` in `acls.c` lines 697-729.
+#[must_use]
 pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntries, u8)> {
     let count = read_varint(reader)? as usize;
     let mut entries = IdaEntries::with_capacity(count);
@@ -254,6 +255,7 @@ pub fn send_rsync_acl<W: Write>(
 /// # Upstream Reference
 ///
 /// Mirrors `recv_rsync_acl()` in `acls.c` lines 731-800.
+#[must_use]
 pub fn recv_rsync_acl<R: Read + ?Sized>(reader: &mut R) -> io::Result<RecvAclResult> {
     let ndx_plus_one = read_varint(reader)?;
     let ndx = ndx_plus_one - 1;
