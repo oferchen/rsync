@@ -97,9 +97,13 @@ const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Default port used for the development daemon listener.
 const DEFAULT_PORT: u16 = 873;
 
+/// Environment variable that overrides the default config file path (branded).
 pub(crate) const BRANDED_CONFIG_ENV: &str = "OC_RSYNC_CONFIG";
+/// Legacy environment variable for config file override; checked when `OC_RSYNC_CONFIG` is unset.
 pub(crate) const LEGACY_CONFIG_ENV: &str = "RSYNCD_CONFIG";
+/// Environment variable that overrides the default secrets file path (branded).
 pub(crate) const BRANDED_SECRETS_ENV: &str = "OC_RSYNC_SECRETS";
+/// Legacy environment variable for secrets file override; checked when `OC_RSYNC_SECRETS` is unset.
 pub(crate) const LEGACY_SECRETS_ENV: &str = "RSYNCD_SECRETS";
 /// Timeout applied to accepted sockets to avoid hanging handshakes.
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
@@ -123,13 +127,6 @@ const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
 /// Error payload returned when updating the connection lock file fails.
 const MODULE_LOCK_ERROR_PAYLOAD: &str =
     "@ERROR: failed to update module connection lock; please try again later";
-// Deterministic help text describing the currently supported daemon surface.
-//
-// The snapshot adjusts the banner, usage line, and default configuration path
-// to reflect the supplied [`Brand`], ensuring invocations via compatibility
-// symlinks and the canonical single `oc-rsync` binary emit brand-appropriate help
-// output.
-
 include!("daemon/module_state.rs");
 
 type SharedLogSink = Arc<Mutex<MessageSink<std::fs::File>>>;
@@ -169,6 +166,10 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
 
 include!("daemon/sections/cli_args.rs");
 
+/// Writes a [`Message`] to the given [`MessageSink`].
+///
+/// Delegates to `sink.write(message)`, providing a uniform call site for
+/// diagnostic output across daemon entry points.
 pub(crate) fn write_message<W: Write>(
     message: &Message,
     sink: &mut MessageSink<W>,

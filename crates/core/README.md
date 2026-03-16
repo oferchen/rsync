@@ -1,82 +1,68 @@
 # core
 
-`core` centralises workspace-wide facilities that are reused by the
-`oc-rsync` client (including daemon mode via `oc-rsync --daemon`) together with supporting transport crates. The
-crate focuses on user-visible message formatting, source-location remapping, and
-shared configuration types so diagnostics mirror upstream rsync while pointing
-at the Rust implementation.
+The `core` crate is the orchestration facade for all rsync transfers. Both the
+CLI binary and daemon mode route every transfer through this crate. It
+aggregates the workspace-wide shared infrastructure - configuration, error
+codes, authentication, I/O helpers, and the client/server entry points - into
+a single re-export surface so upper layers have a single dependency.
 
-## Design
+## Crate Position in the Dependency Graph
 
-- [`message`](src/message.rs) exposes [`Message`](src/message/struct.Message.html)
-  alongside helpers such as [`message_source!`](src/message/macro.message_source.html)
-  for capturing repo-relative source locations. Higher layers construct
-  diagnostics through this API so trailer roles and version suffixes remain
-  consistent.
-- [`branding`](src/branding.rs) centralises branded program names alongside the
-  default configuration and secrets paths installed by the packaging tooling.
-- [`version`](src/version/mod.rs) holds the oc-rsync release version and the
-  compiled feature set consumed by the CLI when rendering `--version` output.
-- [`client`](src/client.rs) defines configuration builders and entry points used
-  by the CLI wrapper. Today the facade orchestrates the local copy pipeline and
-  falls back to the system `rsync` binary for remote transfers while the native
-  delta engine is completed.
-- [`fallback`](src/fallback.rs) interprets delegation overrides shared by the
-  CLI and daemon binaries.
-- [`bandwidth`](src/bandwidth.rs) re-exports the [`bandwidth`](../bandwidth/README.md)
-  crate so callers share the same parsing and pacing primitives.
-- [`signal`](src/signal/mod.rs) provides Unix signal handling for graceful
-  shutdown and cleanup, matching upstream rsync's signal behavior for SIGINT,
-  SIGTERM, SIGHUP, and SIGPIPE.
+```
+cli ──► core ──► engine, protocol, transport, flist, rsync_io
+                 core ──► checksums, filters, compress, bandwidth, metadata
+```
+
+`core` sits directly below `cli` and above the implementation crates. It does
+not contain protocol or engine logic itself - it imports those crates and
+exposes a unified API.
+
+## Key Types and Their Roles
+
+- [`client::ClientConfig`] - transfer configuration built by the CLI before
+  invoking the engine. Constructed via `ClientConfig::builder()`.
+- [`client::run_client`] - main entry point for all CLI-initiated transfers
+  (local copy, SSH, and daemon). Returns [`client::ClientSummary`] on success
+  or [`client::ClientError`] on failure.
+- [`client::ClientError`] - carries the upstream-compatible exit code and the
+  fully formatted [`message::Message`] diagnostic. Never uses `unwrap` or
+  `expect` on fallible paths.
+- [`server`] (re-export of the `transfer` crate) - server-side orchestration
+  consumed by the daemon and by the server half of SSH transfers.
+- [`exit_code`] - centralized exit code definitions that match upstream
+  rsync's `errcode.h` exactly.
+- [`message`] - message formatting utilities that produce upstream-compatible
+  diagnostics with role trailers (`[sender=...]`, `[daemon=...]`, etc.).
+- [`auth`] - shared daemon authentication helpers (challenge/response, secrets
+  file parsing).
+- [`timeout`] - connection and I/O timeout configuration shared by all
+  transport modes.
+- [`signal`] - Unix signal handling for graceful shutdown (SIGINT, SIGTERM,
+  SIGHUP, SIGPIPE).
+- [`remote_shell`] - SSH argument construction and remote shell command
+  parsing.
+- [`bandwidth`] - re-export of the `bandwidth` crate for rate-limit parsing
+  and pacing.
+- [`version`] - oc-rsync release version and compiled feature set, used by
+  the CLI `--version` output.
+- [`flist`] (re-export) - file list generation and transmission, mirroring
+  upstream `flist.c`.
+- [`io`] (re-export of `rsync_io`) - multiplexed socket and pipe I/O,
+  mirroring upstream `io.c`.
 
 ## Invariants
 
-- [`client::run_client`](src/client.rs) reports the delta-transfer engine gap
-  using the same wording that the CLI emits when delegation occurs.
-- Message trailers always include the oc-rsync version string and reference
-  the caller's role (sender, receiver, generator, server, or daemon).
-- Source locations are normalised to repo-relative POSIX-style paths, keeping
-  diagnostics stable across platforms.
-- Formatting a [`Message`](src/message/struct.Message.html) touches only the
-  stored payload and metadata so diagnostics avoid unnecessary allocations.
+- No `unwrap` or `expect` on any fallible path. All errors are propagated via
+  `Result` and routed through [`client::ClientError`].
+- Exit codes always match the upstream rsync `errcode.h` values.
+- Message trailers include the oc-rsync version string and the caller's role.
+- Source locations in diagnostics are normalised to repo-relative POSIX paths,
+  keeping error output stable across platforms.
 
 ## Error Handling
 
-The crate does not define new error types. Instead, it supplies builders that
-attach upstream error codes to [`Message`](src/message/struct.Message.html)
-values via [`Message::error`](src/message/struct.Message.html#method.error). The
-resulting diagnostics can be rendered directly or wrapped in higher level error
-structures such as [`client::ClientError`](src/client/struct.ClientError.html).
-
-## Example
-
-Create an error message using the helper APIs and render it into the canonical
-user-facing form:
-
-```rust,ignore
-// Note: This example uses `ignore` because the crate name "core" conflicts
-// with Rust's standard library `core` crate in doctest contexts.
-use core::{message::Message, message::Role, message_source};
-
-let rendered = Message::error(23, "delta-transfer failure")
-    .with_role(Role::Sender)
-    .with_source(message_source!())
-    .to_string();
-
-assert!(rendered.contains("rsync error: delta-transfer failure (code 23)"));
-assert!(rendered.contains("[sender="));  // includes version trailer
-```
-
-## See also
-
-- [`core::message::strings`](src/message/strings.rs) exposes upstream-aligned
-  exit-code wording so higher layers render identical diagnostics.
-- [`client::ClientConfig`](src/client/struct.ClientConfig.html) mirrors the
-  structure populated by the CLI before invoking the transfer engine.
-- [`client::ModuleListRequest`](src/client/struct.ModuleListRequest.html) parses
-  daemon operands and retrieves module listings via the legacy `@RSYNCD:`
-  handshake.
-- [`fallback::fallback_override`](src/fallback/fn.fallback_override.html)
-  interprets shared delegation overrides for CLI and daemon wrappers.
-- [`rsync_exit_code!`](src/message/macro.rsync_exit_code.html) constructs
-  canonical exit-code diagnostics while capturing the caller's source location.
+Errors are typed via `thiserror` and carry upstream-compatible exit codes.
+[`client::ClientError`] is the top-level error type for transfer failures. The
+[`exit_code`] module maps every failure mode to its upstream exit code value.
+Path context is attached to I/O errors via an extension trait so diagnostics
+always include the affected file path.

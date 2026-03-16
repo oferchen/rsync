@@ -1,8 +1,86 @@
+//! Wire protocol implementation for rsync protocol versions 28-32.
+//!
+//! This crate implements the negotiation and multiplexing primitives for the
+//! rsync wire protocol. It mirrors upstream rsync 3.4.1 behaviour so that
+//! higher layers can negotiate protocol versions, interpret legacy daemon
+//! banners, exchange multiplexed `MSG_*` frames, encode file lists, and
+//! perform delta transfers without depending on the original C sources.
+//!
+//! ## Protocol Version Support
+//!
+//! Supported protocol versions: **28 through 32** (inclusive), matching
+//! upstream rsync 2.6.x through 3.4.x. The negotiated version is represented
+//! by [`ProtocolVersion`], and [`SUPPORTED_PROTOCOLS`] lists all supported
+//! numbers in descending order. [`select_highest_mutual`] derives the
+//! highest version both peers advertise.
+//!
+//! ## Key Modules
+//!
+//! - [`flist`] - File list encoding and decoding (file entries, attributes).
+//! - [`codec`] - Protocol version-aware wire encoding (Strategy pattern).
+//!   Includes [`codec::ProtocolCodec`] for general encoding and
+//!   [`codec::NdxCodec`] for file-list index encoding.
+//! - [`wire`] - Wire protocol serialization for signatures, deltas, and file
+//!   entries.
+//! - [`multiplex`] / `envelope` - `MSG_*` control/data framing used once a
+//!   session is negotiated. [`MplexReader`] and [`MplexWriter`] handle the
+//!   24-bit-payload multiplexed channel.
+//! - [`varint`] - Variable-length integer codec matching upstream rsync's
+//!   `varint`/`varlong` encoding.
+//! - [`negotiation`] - Incremental sniffers that classify handshake style
+//!   (binary vs. legacy ASCII) without losing buffered bytes.
+//! - [`acl`] - ACL wire protocol encoding and decoding.
+//! - [`xattr`] - Extended attribute wire protocol encoding and decoding.
+//! - [`compatibility`] - Post-negotiation compatibility flags shared by peers.
+//! - [`filters`] - Filter list wire protocol encoding and decoding.
+//! - [`stats`] - Transfer and delete statistics wire format.
+//! - [`state`] - Type-safe state machine for rsync protocol phases.
+//!
+//! ## Golden Byte Tests
+//!
+//! `tests/golden_handshakes.rs` contains golden byte tests that pin the exact
+//! wire bytes for handshake sequences across all supported protocol versions.
+//! Any change to wire format must update the golden fixtures and justify the
+//! deviation from upstream rsync behaviour.
+//!
+//! ## Invariants
+//!
+//! - [`SUPPORTED_PROTOCOLS`] always lists protocol numbers in descending order
+//!   (32 through 28).
+//! - Legacy negotiation helpers never drop or duplicate bytes: sniffed
+//!   prefixes can be replayed verbatim into the parsing routines.
+//! - Multiplexed message headers clamp payload lengths to the 24-bit limit
+//!   used by upstream rsync.
+//!
+//! ## Examples
+//!
+//! Detect negotiation style from a buffered prologue:
+//!
+//! ```rust
+//! use protocol::{detect_negotiation_prologue, NegotiationPrologue};
+//!
+//! assert_eq!(
+//!     detect_negotiation_prologue(b"@RSYNCD: 30.0\n"),
+//!     NegotiationPrologue::LegacyAscii
+//! );
+//! assert_eq!(
+//!     detect_negotiation_prologue(&[0x00, 0x20, 0x00, 0x00]),
+//!     NegotiationPrologue::Binary
+//! );
+//! ```
+//!
+//! Derive the highest mutually supported protocol version:
+//!
+//! ```rust
+//! use protocol::{select_highest_mutual, ProtocolVersion};
+//!
+//! let negotiated = select_highest_mutual([32, 31]).expect("mutual version exists");
+//! assert_eq!(negotiated, ProtocolVersion::NEWEST);
+//! ```
 #![deny(unsafe_code)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![doc = include_str!("../README.md")]
 
 /// ACL (Access Control List) wire protocol encoding and decoding.
 pub mod acl;
