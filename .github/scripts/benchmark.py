@@ -7,6 +7,7 @@ Outputs JSON results to stdout.
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -123,6 +124,111 @@ OPENSSL_TESTS = [
 ]
 
 
+COMPRESSION_TESTS = [
+    {
+        "id": "compress_zlib_initial",
+        "name": "zlib initial sync",
+        "mode": "compression",
+        "args": "-avz {src}/ {dst}/",
+        "reset": True,
+    },
+    {
+        "id": "compress_zlib_nochange",
+        "name": "zlib no-change sync",
+        "mode": "compression",
+        "args": "-avz {src}/ {dst}/",
+        "reset": False,
+    },
+    {
+        "id": "compress_zstd_initial",
+        "name": "zstd initial sync",
+        "mode": "compression",
+        "args": "-av --compress-choice=zstd {src}/ {dst}/",
+        "reset": True,
+    },
+    {
+        "id": "compress_zstd_nochange",
+        "name": "zstd no-change sync",
+        "mode": "compression",
+        "args": "-av --compress-choice=zstd {src}/ {dst}/",
+        "reset": False,
+    },
+]
+
+DELTA_TESTS = [
+    {
+        "id": "delta_local",
+        "name": "Local delta sync",
+        "mode": "delta",
+        "args": "-av {src}/ {dst}/",
+    },
+    {
+        "id": "delta_checksum",
+        "name": "Local delta checksum sync",
+        "mode": "delta",
+        "args": "-avc {src}/ {dst}/",
+    },
+]
+
+LARGE_FILE_TESTS = [
+    {
+        "id": "large_file_initial",
+        "name": "1GB file initial sync",
+        "mode": "large_file",
+        "args": "-av {src}/ {dst}/",
+        "reset": True,
+    },
+    {
+        "id": "large_file_nochange",
+        "name": "1GB file no-change sync",
+        "mode": "large_file",
+        "args": "-av {src}/ {dst}/",
+        "reset": False,
+    },
+    {
+        "id": "large_file_delta",
+        "name": "1GB file delta sync",
+        "mode": "large_file",
+        "args": "-av {src}/ {dst}/",
+        "reset": False,
+    },
+]
+
+MANY_SMALL_FILES_TESTS = [
+    {
+        "id": "many_small_initial",
+        "name": "100K files initial sync",
+        "mode": "many_small",
+        "args": "-av {src}/ {dst}/",
+        "reset": True,
+    },
+    {
+        "id": "many_small_nochange",
+        "name": "100K files no-change sync",
+        "mode": "many_small",
+        "args": "-av {src}/ {dst}/",
+        "reset": False,
+    },
+]
+
+SPARSE_TESTS = [
+    {
+        "id": "sparse_initial",
+        "name": "Sparse initial sync",
+        "mode": "sparse",
+        "args": "-avS {src}/ {dst}/",
+        "reset": True,
+    },
+    {
+        "id": "sparse_nochange",
+        "name": "Sparse no-change sync",
+        "mode": "sparse",
+        "args": "-avS {src}/ {dst}/",
+        "reset": False,
+    },
+]
+
+
 def find_free_port():
     """Find an available TCP port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -143,6 +249,60 @@ def wait_for_port(port, timeout=10):
 
 
 PER_RUN_TIMEOUT = 120  # seconds per individual rsync invocation
+
+
+def parse_peak_rss_kb(stderr_text):
+    """Extract peak RSS in KB from /usr/bin/time output.
+
+    Linux (-v): 'Maximum resident set size (kbytes): 12345'
+    macOS (-l): '12345  maximum resident set size' (bytes, convert to KB)
+    """
+    m = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", stderr_text)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(\d+)\s+maximum resident set size", stderr_text)
+    if m:
+        return int(m.group(1)) // 1024
+    return None
+
+
+def benchmark_rss(cmd, runs=3):
+    """Run a command with /usr/bin/time and return timing + peak RSS stats."""
+    time_flag = "-v" if IS_LINUX else "-l"
+    wrapped = f"/usr/bin/time {time_flag} {cmd}"
+    times = []
+    rss_values = []
+    for i in range(runs):
+        start = time.perf_counter()
+        try:
+            result = subprocess.run(
+                wrapped, shell=True, capture_output=True, timeout=PER_RUN_TIMEOUT,
+            )
+            elapsed = time.perf_counter() - start
+            stderr = result.stderr.decode(errors="replace")
+            if result.returncode != 0:
+                print(f"WARNING: exit {result.returncode}: {cmd}", file=sys.stderr)
+                if stderr.strip():
+                    print(f"  stderr: {stderr[:200]}", file=sys.stderr)
+            rss = parse_peak_rss_kb(stderr)
+            if rss is not None:
+                rss_values.append(rss)
+        except subprocess.TimeoutExpired:
+            elapsed = time.perf_counter() - start
+            print(
+                f"ERROR: timeout after {PER_RUN_TIMEOUT}s (run {i+1}/{runs}): {cmd}",
+                file=sys.stderr,
+            )
+        times.append(elapsed)
+    result = {
+        "mean": sum(times) / len(times),
+        "min": min(times),
+        "max": max(times),
+    }
+    if rss_values:
+        result["peak_rss_kb"] = max(rss_values)
+        result["avg_rss_kb"] = sum(rss_values) // len(rss_values)
+    return result
 
 
 def benchmark(cmd, runs=5):
@@ -419,6 +579,285 @@ def main():
                 )
         else:
             print("Skipping io_uring tests (not Linux).", file=sys.stderr)
+
+        # Compression benchmarks (zlib and zstd)
+        print("Running compression benchmarks...", file=sys.stderr)
+        dst_comp_up = f"{tmpdir}/dst_comp_up"
+        dst_comp_oc = f"{tmpdir}/dst_comp_oc"
+
+        def reset_comp_dst():
+            shutil.rmtree(dst_comp_up, ignore_errors=True)
+            shutil.rmtree(dst_comp_oc, ignore_errors=True)
+            os.makedirs(dst_comp_up, exist_ok=True)
+            os.makedirs(dst_comp_oc, exist_ok=True)
+
+        for test in COMPRESSION_TESTS:
+            print(f"Running: [compression] {test['name']}...", file=sys.stderr)
+            if test["reset"]:
+                reset_comp_dst()
+            up_args = test["args"].format(src=src, dst=dst_comp_up, port=port)
+            oc_args = test["args"].format(src=src, dst=dst_comp_oc, port=port)
+            up_result = benchmark(f"{UPSTREAM} {up_args}")
+            oc_result = benchmark(f"{OC_RSYNC} {oc_args}")
+            ratio = (
+                oc_result["mean"] / up_result["mean"]
+                if up_result["mean"] > 0
+                else 0
+            )
+            results["tests"].append({
+                "id": test["id"],
+                "name": test["name"],
+                "mode": "compression",
+                "upstream": up_result,
+                "oc_rsync": oc_result,
+                "ratio": round(ratio, 2),
+            })
+
+        # Delta transfer benchmarks (modify files then re-sync)
+        print("Running delta transfer benchmarks...", file=sys.stderr)
+        dst_delta_up = f"{tmpdir}/dst_delta_up"
+        dst_delta_oc = f"{tmpdir}/dst_delta_oc"
+
+        # Initial sync to populate destinations
+        shutil.rmtree(dst_delta_up, ignore_errors=True)
+        shutil.rmtree(dst_delta_oc, ignore_errors=True)
+        os.makedirs(dst_delta_up, exist_ok=True)
+        os.makedirs(dst_delta_oc, exist_ok=True)
+        subprocess.run(
+            f"{UPSTREAM} -av {src}/ {dst_delta_up}/",
+            shell=True, capture_output=True, timeout=PER_RUN_TIMEOUT,
+        )
+        subprocess.run(
+            f"{OC_RSYNC} -av {src}/ {dst_delta_oc}/",
+            shell=True, capture_output=True, timeout=PER_RUN_TIMEOUT,
+        )
+
+        # Modify ~10% of medium files (append 4KB to trigger delta)
+        for i in range(0, 400, 10):
+            path = f"{src}/medium/file_{i}.bin"
+            with open(path, "ab") as f:
+                f.write(os.urandom(4096))
+
+        for test in DELTA_TESTS:
+            print(f"Running: [delta] {test['name']}...", file=sys.stderr)
+            up_args = test["args"].format(src=src, dst=dst_delta_up, port=port)
+            oc_args = test["args"].format(src=src, dst=dst_delta_oc, port=port)
+            up_result = benchmark(f"{UPSTREAM} {up_args}")
+            oc_result = benchmark(f"{OC_RSYNC} {oc_args}")
+            ratio = (
+                oc_result["mean"] / up_result["mean"]
+                if up_result["mean"] > 0
+                else 0
+            )
+            results["tests"].append({
+                "id": test["id"],
+                "name": test["name"],
+                "mode": "delta",
+                "upstream": up_result,
+                "oc_rsync": oc_result,
+                "ratio": round(ratio, 2),
+            })
+
+        # Restore modified files to original size for subsequent benchmarks
+        for i in range(0, 400, 10):
+            path = f"{src}/medium/file_{i}.bin"
+            with open(path, "r+b") as f:
+                f.truncate(100 * 1024)
+
+        # Large single file benchmark (1GB)
+        print("Running large file benchmarks...", file=sys.stderr)
+        large_src = f"{tmpdir}/large_src"
+        dst_large_up = f"{tmpdir}/dst_large_up"
+        dst_large_oc = f"{tmpdir}/dst_large_oc"
+        os.makedirs(large_src, exist_ok=True)
+
+        large_file_path = f"{large_src}/bigfile.dat"
+        with open(large_file_path, "wb") as f:
+            # Write 1GB in 1MB chunks
+            for _ in range(1024):
+                f.write(os.urandom(1024 * 1024))
+
+        for test in LARGE_FILE_TESTS:
+            print(f"Running: [large_file] {test['name']}...", file=sys.stderr)
+            if test["reset"]:
+                shutil.rmtree(dst_large_up, ignore_errors=True)
+                shutil.rmtree(dst_large_oc, ignore_errors=True)
+                os.makedirs(dst_large_up, exist_ok=True)
+                os.makedirs(dst_large_oc, exist_ok=True)
+
+            # For delta test, modify a 64KB region in the middle of the file
+            if test["id"] == "large_file_delta":
+                with open(large_file_path, "r+b") as f:
+                    f.seek(512 * 1024 * 1024)
+                    f.write(os.urandom(64 * 1024))
+
+            up_args = test["args"].format(
+                src=large_src, dst=dst_large_up, port=port,
+            )
+            oc_args = test["args"].format(
+                src=large_src, dst=dst_large_oc, port=port,
+            )
+            up_result = benchmark(f"{UPSTREAM} {up_args}", runs=3)
+            oc_result = benchmark(f"{OC_RSYNC} {oc_args}", runs=3)
+            ratio = (
+                oc_result["mean"] / up_result["mean"]
+                if up_result["mean"] > 0
+                else 0
+            )
+            results["tests"].append({
+                "id": test["id"],
+                "name": test["name"],
+                "mode": "large_file",
+                "upstream": up_result,
+                "oc_rsync": oc_result,
+                "ratio": round(ratio, 2),
+            })
+
+        # Many small files benchmark (100K files)
+        print("Running many small files benchmarks...", file=sys.stderr)
+        many_src = f"{tmpdir}/many_src"
+        dst_many_up = f"{tmpdir}/dst_many_up"
+        dst_many_oc = f"{tmpdir}/dst_many_oc"
+
+        # Create 100K files x 100B across 100 directories
+        for d in range(100):
+            dir_path = f"{many_src}/d{d:03d}"
+            os.makedirs(dir_path, exist_ok=True)
+            for i in range(1000):
+                with open(f"{dir_path}/f{i:04d}.txt", "wb") as f:
+                    f.write(os.urandom(100))
+
+        for test in MANY_SMALL_FILES_TESTS:
+            print(f"Running: [many_small] {test['name']}...", file=sys.stderr)
+            if test["reset"]:
+                shutil.rmtree(dst_many_up, ignore_errors=True)
+                shutil.rmtree(dst_many_oc, ignore_errors=True)
+                os.makedirs(dst_many_up, exist_ok=True)
+                os.makedirs(dst_many_oc, exist_ok=True)
+            up_args = test["args"].format(
+                src=many_src, dst=dst_many_up, port=port,
+            )
+            oc_args = test["args"].format(
+                src=many_src, dst=dst_many_oc, port=port,
+            )
+            up_result = benchmark(f"{UPSTREAM} {up_args}", runs=3)
+            oc_result = benchmark(f"{OC_RSYNC} {oc_args}", runs=3)
+            ratio = (
+                oc_result["mean"] / up_result["mean"]
+                if up_result["mean"] > 0
+                else 0
+            )
+            results["tests"].append({
+                "id": test["id"],
+                "name": test["name"],
+                "mode": "many_small",
+                "upstream": up_result,
+                "oc_rsync": oc_result,
+                "ratio": round(ratio, 2),
+            })
+
+        # Memory usage (peak RSS) benchmark
+        print("Running memory usage benchmarks...", file=sys.stderr)
+        dst_mem_up = f"{tmpdir}/dst_mem_up"
+        dst_mem_oc = f"{tmpdir}/dst_mem_oc"
+
+        memory_tests = [
+            {
+                "id": "memory_initial",
+                "name": "Initial sync (10K files)",
+                "src": src,
+                "args": "-av {src}/ {dst}/",
+                "reset": True,
+            },
+            {
+                "id": "memory_large_file",
+                "name": "1GB file sync",
+                "src": large_src,
+                "args": "-av {src}/ {dst}/",
+                "reset": True,
+            },
+            {
+                "id": "memory_many_files",
+                "name": "100K files sync",
+                "src": many_src,
+                "args": "-av {src}/ {dst}/",
+                "reset": True,
+            },
+        ]
+
+        for test in memory_tests:
+            print(f"Running: [memory] {test['name']}...", file=sys.stderr)
+            if test["reset"]:
+                shutil.rmtree(dst_mem_up, ignore_errors=True)
+                shutil.rmtree(dst_mem_oc, ignore_errors=True)
+                os.makedirs(dst_mem_up, exist_ok=True)
+                os.makedirs(dst_mem_oc, exist_ok=True)
+            up_args = test["args"].format(
+                src=test["src"], dst=dst_mem_up, port=port,
+            )
+            oc_args = test["args"].format(
+                src=test["src"], dst=dst_mem_oc, port=port,
+            )
+            up_result = benchmark_rss(f"{UPSTREAM} {up_args}")
+            oc_result = benchmark_rss(f"{OC_RSYNC} {oc_args}")
+            ratio = (
+                oc_result["mean"] / up_result["mean"]
+                if up_result["mean"] > 0
+                else 0
+            )
+            results["tests"].append({
+                "id": test["id"],
+                "name": test["name"],
+                "mode": "memory",
+                "upstream": up_result,
+                "oc_rsync": oc_result,
+                "ratio": round(ratio, 2),
+            })
+
+        # Sparse file benchmark
+        print("Running sparse file benchmarks...", file=sys.stderr)
+        sparse_src = f"{tmpdir}/sparse_src"
+        dst_sparse_up = f"{tmpdir}/dst_sparse_up"
+        dst_sparse_oc = f"{tmpdir}/dst_sparse_oc"
+        os.makedirs(sparse_src, exist_ok=True)
+
+        # Create files with large zero runs (simulating sparse data)
+        for i in range(50):
+            path = f"{sparse_src}/sparse_{i}.dat"
+            with open(path, "wb") as f:
+                # 10MB file: 1MB data, 8MB zeros, 1MB data
+                f.write(os.urandom(1024 * 1024))
+                f.write(b"\0" * (8 * 1024 * 1024))
+                f.write(os.urandom(1024 * 1024))
+
+        for test in SPARSE_TESTS:
+            print(f"Running: [sparse] {test['name']}...", file=sys.stderr)
+            if test["reset"]:
+                shutil.rmtree(dst_sparse_up, ignore_errors=True)
+                shutil.rmtree(dst_sparse_oc, ignore_errors=True)
+                os.makedirs(dst_sparse_up, exist_ok=True)
+                os.makedirs(dst_sparse_oc, exist_ok=True)
+            up_args = test["args"].format(
+                src=sparse_src, dst=dst_sparse_up, port=port,
+            )
+            oc_args = test["args"].format(
+                src=sparse_src, dst=dst_sparse_oc, port=port,
+            )
+            up_result = benchmark(f"{UPSTREAM} {up_args}", runs=3)
+            oc_result = benchmark(f"{OC_RSYNC} {oc_args}", runs=3)
+            ratio = (
+                oc_result["mean"] / up_result["mean"]
+                if up_result["mean"] > 0
+                else 0
+            )
+            results["tests"].append({
+                "id": test["id"],
+                "name": test["name"],
+                "mode": "sparse",
+                "upstream": up_result,
+                "oc_rsync": oc_result,
+                "ratio": round(ratio, 2),
+            })
 
         # Calculate summary
         ratios = [t["ratio"] for t in results["tests"]]

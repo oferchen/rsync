@@ -38,8 +38,10 @@ use crate::temp_guard::{TempFileGuard, open_tmpfile};
 
 /// Default bounded-channel capacity.
 ///
-/// 32 slots × ~32 KB average chunk ≈ 1 MB peak memory from buffered messages.
-pub const DEFAULT_CHANNEL_CAPACITY: usize = 32;
+/// 128 slots × ~32 KB average chunk ≈ 4 MB peak memory from buffered messages.
+/// Larger capacity reduces spin-wait contention when the disk thread falls
+/// behind, keeping the network thread productive instead of busy-spinning.
+pub const DEFAULT_CHANNEL_CAPACITY: usize = 128;
 
 /// Fixed write buffer size matching upstream's `wf_writeBufSize = WRITE_SIZE * 8`
 /// (fileio.c:161). Upstream always uses 256 KB regardless of file size.

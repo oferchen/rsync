@@ -70,7 +70,8 @@ FONT_MONO = "monospace"
 
 MODE_ORDER = [
     "local", "ssh_pull", "ssh_push", "daemon_pull", "daemon_push",
-    "checksum_openssl", "io_uring",
+    "compression", "delta", "large_file", "many_small", "sparse",
+    "memory", "checksum_openssl", "io_uring",
 ]
 MODE_LABELS = {
     "local": "Local Copy",
@@ -78,6 +79,12 @@ MODE_LABELS = {
     "ssh_push": "SSH Push",
     "daemon_pull": "Daemon Pull",
     "daemon_push": "Daemon Push",
+    "compression": "Compression",
+    "delta": "Delta Transfer",
+    "large_file": "Large File (1GB)",
+    "many_small": "Many Small Files (100K)",
+    "sparse": "Sparse Files",
+    "memory": "Memory Usage",
     "checksum_openssl": "Checksum: OpenSSL vs Pure Rust",
     "io_uring": "io_uring vs Standard I/O",
 }
@@ -87,6 +94,12 @@ MODE_CLI_HINTS = {
     "ssh_push": "rsync -av src/ host:dst/",
     "daemon_pull": "rsync -av rsync://host/mod/ dst/",
     "daemon_push": "rsync -av src/ rsync://host/mod/",
+    "compression": "rsync -avz / --compress-choice=zstd",
+    "delta": "rsync -av (modified files)",
+    "large_file": "rsync -av (1GB file)",
+    "many_small": "rsync -av (100K x 100B files)",
+    "sparse": "rsync -avS (sparse files)",
+    "memory": "rsync -av (peak RSS measurement)",
     "checksum_openssl": "rsync -avc src/ dst/",
     "io_uring": "--io-uring vs --no-io-uring",
 }
