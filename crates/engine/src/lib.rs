@@ -2,41 +2,114 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
-//! # Overview
+//! Transfer engine - delta pipeline, local-copy executor, and sparse I/O.
 //!
-//! `engine` hosts transfer-oriented building blocks that power the Rust
-//! rsync implementation. The crate provides deterministic local filesystem
-//! copies and delta-transfer primitives used by the `transfer` crate's
-//! remote pipeline (sender/receiver/generator roles).
+//! # Purpose
 //!
-//! # Design
+//! `engine` implements the core transfer primitives for the rsync
+//! reimplementation. It sits between the high-level `core` orchestration facade
+//! and the low-level `protocol`, `checksums`, `compress`, and `metadata` crates.
+//! Both the CLI local-copy path and the remote sender/receiver/generator roles
+//! in the `transfer` crate drive their file operations through this crate.
 //!
-//! Functionality is decomposed into focused modules. The [`local_copy`] module
-//! exposes [`local_copy::LocalCopyPlan`] which performs
-//! recursive copies of regular files, directories, symbolic links, and FIFOs
-//! while preserving permissions and timestamps through the [`metadata`]
-//! helpers. The [`delta`] module mirrors upstream rsync's signature layout
-//! heuristics matching upstream rsync's block sizing, while [`signature`]
-//! turns those layouts into
-//! rsync-compatible rolling/strong checksum streams ready for transmission. The
-//! design keeps path parsing and copying logic in the engine layer so both the
-//! CLI and daemon facades can drive local transfers through a single interface.
+//! # Capabilities
+//!
+//! ## Delta pipeline
+//!
+//! The [`delta`] module implements rsync's block-matching pipeline:
+//! - [`SignatureLayout`] / [`calculate_signature_layout`] - upstream-compatible
+//!   block-size heuristics (mirrors `rsync.c:read_batch_protocol()`).
+//! - [`DeltaGenerator`] - produces [`DeltaToken`] streams (`LITERAL` / `COPY`)
+//!   by matching rolling checksums against a [`DeltaSignatureIndex`].
+//! - [`apply_delta`] - reconstructs destination data from a [`DeltaScript`].
+//! - [`generate_delta`] / [`generate_file_signature`] - end-to-end helpers used
+//!   by the sender and generator roles.
+//!
+//! ## Local-copy executor
+//!
+//! [`local_copy::LocalCopyPlan`] drives recursive, wire-compatible local
+//! transfers (regular files, directories, symbolic links, FIFOs). Key features:
+//! - Temp-file write + atomic rename (`--inplace` bypasses the rename).
+//! - Sparse file support via [`SparseWriter`] / [`SparseReader`] / [`SparseDetector`]
+//!   with 16-byte `u128` zero-run detection and a single seek-per-zero-run invariant.
+//! - Deletion passes controlled by [`DeleteTiming`] (before/after transfer).
+//! - Backup paths computed by [`compute_backup_path`].
+//! - Reference-directory comparisons via [`ReferenceDirectory`].
+//! - Filter-program execution via the `local_copy::filter_program` submodule.
+//! - Directory merging via the `local_copy::dir_merge` submodule.
+//!
+//! ## Buffer reuse and vectored I/O
+//!
+//! `local_copy::buffer_pool` provides a `BufferPool` with RAII `PooledBuffer`
+//! handles that return allocations to a shared pool on drop, eliminating
+//! per-file heap churn on the hot transfer path. The concurrent delta pipeline
+//! (`local_copy::concurrent_delta`) uses vectored writes to batch small I/O
+//! operations, reducing syscall overhead on high-file-count transfers.
+//!
+//! ## Parallel transfers
+//!
+//! `local_copy::parallel_transfer` uses rayon to apply delta operations across
+//! multiple files concurrently. The `parallel` feature enables this path; it
+//! falls back to sequential execution when disabled.
+//!
+//! ## Fuzzy matching
+//!
+//! [`FuzzyMatcher`] / [`compute_similarity_score`] locate similar basis files
+//! for the `--fuzzy` option, reducing literal-data transmission when an exact
+//! basis is absent.
+//!
+//! ## Hardlink tracking
+//!
+//! [`HardlinkResolver`] / [`HardlinkTracker`] detect and re-create hardlink
+//! groups across the destination tree, matching upstream rsync's `--hard-links`
+//! semantics.
+//!
+//! ## Batch mode
+//!
+//! The re-exported `batch` module supports offline transfer workflows: write a
+//! batch file with [`BatchWriter`], replay it later with [`BatchReader`] /
+//! `batch::replay::replay`.
+//!
+//! ## Async I/O (optional)
+//!
+//! When compiled with the `async` feature, [`AsyncFileCopier`] and
+//! [`AsyncBatchCopier`] provide tokio-based async file copy with progress
+//! reporting via [`CopyProgress`].
+//!
+//! # Dependency position
+//!
+//! ```text
+//! core
+//!  └── engine
+//!       ├── protocol    (wire framing, checksums, multiplex)
+//!       ├── checksums   (rolling rsum, MD4/MD5/XXH3, SIMD)
+//!       ├── signature   (signature layout + generation)
+//!       ├── compress    (zlib/zstd/lz4 codecs)
+//!       ├── metadata    (perms/uid/gid/mtime/xattrs/ACLs)
+//!       ├── filters     (include/exclude rule evaluation)
+//!       ├── bandwidth   (rate-limiting)
+//!       ├── batch       (batch-mode file I/O)
+//!       ├── matching    (fuzzy basis-file scoring)
+//!       └── fast_io     (io_uring on Linux 5.6+, std fallback)
+//! ```
 //!
 //! # Invariants
 //!
-//! - Plans derived from CLI-style operands never modify the source list after
-//!   construction, allowing callers to inspect the planned operations before
-//!   execution.
-//! - Copy operations apply metadata only after file contents are written,
-//!   matching upstream rsync's ordering.
-//! - Errors preserve enough context (path, action, exit code) for higher layers
-//!   to render canonical diagnostics without re-parsing strings.
+//! - Plans derived from CLI operands are immutable after construction; callers
+//!   may inspect planned operations before executing them.
+//! - File contents are written before metadata is applied, matching upstream
+//!   rsync's ordering.
+//! - Errors preserve path, action, and exit-code context so `core` can surface
+//!   canonical diagnostics without re-parsing strings.
 //!
 //! # Errors
 //!
-//! [`local_copy::LocalCopyError`] classifies invalid operands separately from
-//! I/O failures. Each error records the exit code that upstream rsync would have
-//! used, allowing the `core` crate to surface identical diagnostics.
+//! [`local_copy::LocalCopyError`] separates invalid-operand errors from I/O
+//! failures. Each variant records the exit code upstream rsync would emit,
+//! letting `core` produce identical diagnostics.
+//!
+//! [`EngineError`] is the top-level error type for operations that span
+//! multiple subsystems (delta, walk, hardlinks).
 //!
 //! # Examples
 //!
@@ -46,31 +119,18 @@
 //! use engine::local_copy::LocalCopyPlan;
 //! use std::ffi::OsString;
 //!
-//! let operands = vec![OsString::from("src.txt"), OsString::from("dst.txt")];
-//! let plan = LocalCopyPlan::from_operands(&operands).expect("plan succeeds");
-//! // Plan execution copies the file once the surrounding code has created it.
 //! # let temp = tempfile::tempdir().unwrap();
 //! # let source = temp.path().join("src.txt");
 //! # std::fs::write(&source, b"data").unwrap();
 //! # let destination = temp.path().join("dst.txt");
 //! # std::fs::write(&destination, b"").unwrap();
-//! # let operands = vec![
-//! #     source.clone().into_os_string(),
-//! #     destination.clone().into_os_string(),
-//! # ];
-//! # let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+//! let operands = vec![
+//!     source.into_os_string(),
+//!     destination.into_os_string(),
+//! ];
+//! let plan = LocalCopyPlan::from_operands(&operands).expect("plan succeeds");
 //! plan.execute().expect("copy succeeds");
 //! ```
-//!
-//! # See also
-//!
-//! - `core::client` integrates the plan builder to power the `rsync`
-//!   binary's local copy mode.
-//! - [`delta`] exposes block-size and checksum heuristics that will be wired into
-//!   the delta-transfer engine.
-//! - [`signature`] generates rolling and strong checksum pairs from those
-//!   layouts so forthcoming protocol layers can transmit signatures without
-//!   shelling out to upstream rsync.
 
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
