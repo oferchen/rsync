@@ -904,10 +904,12 @@ impl ReceiverContext {
         } else {
             None
         };
+        let file_list_arc = Arc::new(self.file_list.clone());
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
             use_sparse: self.config.flags.sparse,
             temp_dir: self.config.temp_dir.as_ref().map(PathBuf::from),
+            file_list: Some(file_list_arc),
             metadata_opts: Some(setup.metadata_opts.clone()),
             backup,
             acl_cache: setup.acl_cache.clone(),
@@ -1012,6 +1014,7 @@ impl ReceiverContext {
                 };
 
                 let xattr_list = self.resolve_xattr_list(file_entry);
+                let is_device_target = self.config.write.write_devices && file_entry.is_device();
                 let result = process_file_response_streaming(
                     reader,
                     &mut ndx_read_codec,
@@ -1020,8 +1023,8 @@ impl ReceiverContext {
                     &mut checksum_verifier,
                     pipelined_receiver.file_sender(),
                     pipelined_receiver.buf_return_rx(),
-                    0,
-                    Some(file_entry.clone()),
+                    file_idx,
+                    is_device_target,
                     xattr_list,
                 )?;
 
