@@ -1222,8 +1222,6 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # files-from: generator does not yet read filenames from local file in push.
-  "oc:files-from"
   # itemize: MSG_INFO forwarding not yet wired for daemon transfers.
   "oc:itemize"
 

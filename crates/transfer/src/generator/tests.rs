@@ -2114,6 +2114,67 @@ mod files_from {
     }
 
     #[test]
+    fn build_file_list_with_base_produces_correct_relative_names() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
+        std::fs::write(src.join("hello.txt"), "hello").unwrap();
+        std::fs::write(src.join("subdir/file.txt"), "nested").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        let file_paths = vec![
+            src.join("hello.txt"),
+            src.join("subdir/file.txt"),
+        ];
+        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+
+        // Dot entry + 2 files + 1 parent dir "subdir"
+        assert!(count >= 3, "expected at least 3 entries, got {count}");
+
+        // Verify that file entries have correct relative names (not empty).
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            names.contains(&"hello.txt"),
+            "expected hello.txt in {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("file.txt")),
+            "expected file.txt in {names:?}"
+        );
+        // The dot entry should be present.
+        assert!(names.contains(&"."), "expected dot entry in {names:?}");
+    }
+
+    #[test]
+    fn build_file_list_with_base_skips_missing_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("exists.txt"), "data").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        let file_paths = vec![
+            src.join("exists.txt"),
+            src.join("missing.txt"),
+        ];
+        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+
+        // Dot entry + exists.txt; missing.txt is skipped with io_error.
+        assert_eq!(count, 2, "dot + exists.txt");
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(names.contains(&"exists.txt"));
+        assert!(!names.contains(&"missing.txt"));
+    }
+
+    #[test]
     fn read_files_from_local_path_line_delimited() {
         let temp_dir = TempDir::new().unwrap();
         let list_file = temp_dir.path().join("list.txt");
