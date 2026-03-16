@@ -154,8 +154,8 @@ fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
         allow_inc_recurse: false,
     };
 
-    let result = setup_protocol(&mut stdout, &mut stdin, &config)
-        .expect("protocol 29 setup should succeed");
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("protocol 29 setup should succeed");
 
     assert!(
         result.negotiated_algorithms.is_none(),
@@ -353,8 +353,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
     // Combined: 0xA1 = 161 (requires 2-byte rsync varint encoding)
     // Rsync varint encoding of 161: [0x80, 0xA1] (marker byte, then value byte)
     let mut peer_data: Vec<u8> = vec![
-        0x80,
-        0xA1, // varint for 161 (VARINT_FLIST_FLAGS | INC_RECURSE | CHECKSUM_SEED_FIX)
+        0x80, 0xA1, // varint for 161 (VARINT_FLIST_FLAGS | INC_RECURSE | CHECKSUM_SEED_FIX)
         0x00, // empty checksum list (end marker)
     ];
     peer_data.extend_from_slice(&0x12345678_i32.to_le_bytes()); // seed
@@ -484,8 +483,8 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
         allow_inc_recurse: false,
     };
 
-    let result = setup_protocol(&mut stdout, &mut stdin, &config)
-        .expect("protocol 30 setup should succeed");
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("protocol 30 setup should succeed");
 
     assert!(
         result.compat_flags.is_some(),
@@ -620,8 +619,8 @@ fn setup_protocol_server_fixed_seed_is_deterministic() {
 
     let mut stdout2 = Vec::new();
     let mut stdin2 = &b""[..];
-    let result2 = setup_protocol(&mut stdout2, &mut stdin2, &config)
-        .expect("second setup should succeed");
+    let result2 =
+        setup_protocol(&mut stdout2, &mut stdin2, &config).expect("second setup should succeed");
 
     assert_eq!(
         result1.checksum_seed, result2.checksum_seed,
@@ -643,8 +642,8 @@ fn setup_protocol_server_seed_zero_uses_time_based_generation() {
 
     let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(0));
 
-    let result = setup_protocol(&mut stdout, &mut stdin, &config)
-        .expect("setup with seed=0 should succeed");
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("setup with seed=0 should succeed");
 
     // Seed=0 generates time-based seed, which should be non-zero in practice
     // (unless time and PID happen to XOR to 0, extremely unlikely)
@@ -845,8 +844,7 @@ fn write_compat_flags_v_flag_low_value_readable_by_read_varint() {
     let flags = CompatibilityFlags::EMPTY;
     let mut output = Vec::new();
 
-    let written_flags =
-        write_compat_flags(&mut output, flags, "V").expect("write should succeed");
+    let written_flags = write_compat_flags(&mut output, flags, "V").expect("write should succeed");
 
     // Even with EMPTY input, 'V' sets CF_VARINT_FLIST_FLAGS (0x80)
     assert_eq!(written_flags.bits(), 0x80);
@@ -947,8 +945,8 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         allow_inc_recurse: false,
     };
 
-    let result_v = setup_protocol(&mut stdout_v, &mut stdin, &config_v)
-        .expect("V-only setup should succeed");
+    let result_v =
+        setup_protocol(&mut stdout_v, &mut stdin, &config_v).expect("V-only setup should succeed");
 
     // Both v and V
     let mut stdin = &b"\x00"[..];
