@@ -336,6 +336,21 @@ impl ReceiverContext {
         !self.config.connection.client_mode && self.config.flags.info_flags.itemize
     }
 
+    /// Builds the display context for itemize time-position rendering.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:708-710` - symlink time: `T` when `!preserve_mtimes || !receiver_symlink_times`
+    /// - `log.c:716-717` - non-symlink time: `T` when `!preserve_mtimes`
+    fn itemize_context(&self) -> crate::generator::itemize::ItemizeContext {
+        crate::generator::itemize::ItemizeContext {
+            preserve_mtimes: self.config.flags.times,
+            receiver_symlink_times: self
+                .compat_flags
+                .is_some_and(|f| f.contains(protocol::CompatibilityFlags::SYMLINK_TIMES)),
+        }
+    }
+
     /// Emits a MSG_INFO frame with itemize output for a file entry.
     ///
     /// Formats the itemize string (`"%i %n%L\n"`) and sends it as a MSG_INFO
@@ -355,7 +370,8 @@ impl ReceiverContext {
         if !self.should_emit_itemize() {
             return Ok(());
         }
-        let line = crate::generator::itemize::format_itemize_line(iflags, entry, false);
+        let ctx = self.itemize_context();
+        let line = crate::generator::itemize::format_itemize_line(iflags, entry, false, &ctx);
         writer.send_msg_info(line.as_bytes())
     }
 }
