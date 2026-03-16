@@ -1,9 +1,15 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::sync::OnceLock;
 
 use crate::local_copy::LocalCopyError;
+
+/// Cached process ID to avoid a `getpid` syscall per temp file.
+fn cached_pid() -> u32 {
+    static PID: OnceLock<u32> = OnceLock::new();
+    *PID.get_or_init(std::process::id)
+}
 
 pub(crate) fn partial_destination_path(destination: &Path) -> PathBuf {
     let file_name = destination.file_name().map_or_else(
@@ -44,7 +50,7 @@ pub(crate) fn temporary_destination_path(
         || "temp".to_owned(),
         |name| name.to_string_lossy().to_string(),
     );
-    let temp_name = format!(".~tmp~{file_name}.{}.{}", process::id(), unique);
+    let temp_name = format!(".~tmp~{file_name}.{}.{}", cached_pid(), unique);
     match temp_dir {
         Some(dir) => dir.join(temp_name),
         None => destination.with_file_name(temp_name),
