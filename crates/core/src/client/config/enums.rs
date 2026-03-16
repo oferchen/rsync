@@ -75,6 +75,7 @@ impl HumanReadableMode {
     /// accepts the numeric levels used by upstream `rsync`. A dedicated error
     /// type captures empty inputs and out-of-range values so callers can emit
     /// diagnostics that match the original CLI.
+    #[must_use]
     pub fn parse(text: &str) -> Result<Self, HumanReadableModeParseError> {
         let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
         if trimmed.is_empty() {
@@ -218,6 +219,7 @@ pub struct StrongChecksumChoice {
 
 impl StrongChecksumChoice {
     /// Parses a `--checksum-choice` argument and resolves the negotiated algorithms.
+    #[must_use]
     pub fn parse(text: &str) -> Result<Self, Message> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
@@ -365,6 +367,7 @@ impl CompressionSetting {
     /// `0` disables compression, mirroring upstream rsync's interpretation of
     /// `--compress-level=0`. Values outside the supported range return
     /// [`CompressionLevelError`].
+    #[must_use]
     pub fn try_from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
         if level == 0 {
             Ok(Self::Disabled)

@@ -30,7 +30,6 @@ fn lock_recorded_sleep_session() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poison| poison.into_inner())
 }
 
-#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Guard that provides exclusive access to the recorded sleep durations.
 ///
 /// Tests obtain a [`RecordedSleepSession`] at the start of a scenario, call
@@ -40,6 +39,7 @@ fn lock_recorded_sleep_session() -> MutexGuard<'static, ()> {
 /// not drain or append to the shared buffer while assertions run, eliminating
 /// the data races observed when multiple tests exercised the limiter in
 /// parallel.
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 pub struct RecordedSleepSession<'a> {
     _guard: MutexGuard<'a, ()>,
 }
@@ -309,7 +309,6 @@ where
     }
 }
 
-#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Iterator over the durations captured by a [`RecordedSleepSession`].
 ///
 /// The iterator keeps the underlying buffer intact, allowing tests to inspect
@@ -318,6 +317,7 @@ where
 /// via [`RecordedSleepSession::iter`]. It also implements
 /// [`DoubleEndedIterator`](std::iter::DoubleEndedIterator) so callers can walk
 /// the recorded sleeps in reverse order without draining them.
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 pub struct RecordedSleepIter<'a> {
     guard: MutexGuard<'static, Vec<Duration>>,
     index: usize,
@@ -365,11 +365,11 @@ impl ExactSizeIterator for RecordedSleepIter<'_> {
 
 impl FusedIterator for RecordedSleepIter<'_> {}
 
-#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Obtains a guard that serialises access to recorded sleep durations.
 ///
 /// Callers can invoke this helper directly or rely on the [`Default`]
 /// implementation for [`RecordedSleepSession`] when constructing helper structs.
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 #[must_use]
 pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
     RecordedSleepSession {

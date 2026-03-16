@@ -68,6 +68,7 @@ impl BandwidthLimit {
     }
 
     /// Parses a textual `--bwlimit` value into an optional [`BandwidthLimit`].
+    #[must_use]
     pub fn parse(text: &str) -> Result<Option<Self>, BandwidthParseError> {
         let components = bandwidth::parse_bandwidth_limit(text)?;
         Ok(Self::from_components(components))

@@ -201,6 +201,7 @@ extern "C" fn handle_sigpipe(_signum: libc::c_int) {
 /// # Ok(())
 /// # }
 /// ```
+#[must_use]
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
     unsafe {
         // Install SIGINT handler

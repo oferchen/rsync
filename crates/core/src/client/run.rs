@@ -107,6 +107,7 @@ use super::summary::ClientSummary;
 /// println!("Copied {} files", summary.files_copied());
 /// # Ok::<(), core::client::ClientError>(())
 /// ```
+#[must_use]
 #[cfg_attr(feature = "tracing", instrument(skip(config)))]
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     run_client_internal(config, None)
