@@ -828,7 +828,13 @@ impl ReceiverContext {
 
         // Early return when there's nothing to transfer - avoids spawning
         // the disk-commit thread, creating codecs, and pipeline state.
+        // Flush buffered itemize messages from build_files_to_transfer()
+        // so the generator sees them before the NDX_DONE handshake.
+        // Without this, itemize output is delayed until finalize_transfer(),
+        // adding ~45ms latency on the no-change path.
+        // upstream: generator.c sends itemize immediately per-file via rwrite()
         if files_to_transfer.is_empty() {
+            writer.flush()?;
             return Ok((0, 0, Vec::new()));
         }
 
