@@ -138,6 +138,8 @@ pub mod role;
 pub mod setup;
 /// Shared abstractions used by generator and receiver roles.
 pub mod shared;
+/// Path sanitization mirroring upstream `util1.c:sanitize_path()`.
+pub mod sanitize_path;
 /// Symlink target safety analysis mirroring upstream `util1.c:unsafe_symlink()`.
 pub mod symlink_safety;
 /// RAII guard for temporary file cleanup.
