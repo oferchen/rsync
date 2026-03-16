@@ -366,7 +366,11 @@ pub(super) fn execute_transfer(
             .truncate(should_truncate)
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?
-    } else if existing_metadata.is_none() && !partial_enabled && !delay_updates_enabled {
+    } else if existing_metadata.is_none()
+        && !partial_enabled
+        && !delay_updates_enabled
+        && context.temp_directory_path().is_none()
+    {
         // Direct write: destination does not exist, so there is nothing to
         // corrupt on interruption. Skip temp-file creation and rename to
         // halve the filesystem metadata overhead. The error handler already
