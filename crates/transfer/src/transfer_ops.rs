@@ -80,7 +80,7 @@ pub struct RequestConfig<'a> {
     /// Whether to fsync after write.
     pub do_fsync: bool,
     /// Temporary directory for staging received files before final placement.
-    pub temp_dir: Option<&'a std::path::Path>,
+    pub temp_dir: Option<&'a Path>,
     /// Whether to write data directly to device files (`--write-devices`).
     ///
     /// When true, device file targets are opened with `O_WRONLY` and receive
