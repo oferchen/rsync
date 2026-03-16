@@ -72,6 +72,7 @@ impl ChecksumAlgorithm {
     /// Accepts "xxhash" as an alias for XXH64, matching upstream rsync's
     /// `valid_checksums_items` table in `checksum.c` where both "xxh64" and
     /// "xxhash" map to `CSUM_XXH64`.
+    #[must_use]
     pub fn parse(name: &str) -> io::Result<Self> {
         match name {
             "none" => Ok(Self::None),
@@ -124,6 +125,7 @@ impl CompressionAlgorithm {
     }
 
     /// Parses an algorithm from its wire protocol name.
+    #[must_use]
     pub fn parse(name: &str) -> io::Result<Self> {
         match name {
             "none" => Ok(Self::None),

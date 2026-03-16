@@ -34,6 +34,7 @@ impl<R: Read> ServerReader<R> {
     }
 
     /// Activates multiplex mode, wrapping the reader in a demultiplexer
+    #[must_use]
     pub fn activate_multiplex(self) -> io::Result<Self> {
         match self {
             Self::Plain(reader) => Ok(Self::Multiplex(MultiplexReader::new(reader))),
@@ -60,6 +61,7 @@ impl<R: Read> ServerReader<R> {
     /// - The reader is not in multiplex mode (decompression requires multiplex first)
     /// - Compression is already active
     /// - The compression algorithm is not supported in this build
+    #[must_use]
     pub fn activate_compression(self, algorithm: CompressionAlgorithm) -> io::Result<Self> {
         match self {
             Self::Multiplex(mux) => {
@@ -91,6 +93,7 @@ impl<R: Read> ServerReader<R> {
     /// data spans a frame boundary.
     ///
     /// Callers should fall back to `Read::read_exact()` when this returns `None`.
+    #[must_use]
     pub fn try_borrow_exact(&mut self, len: usize) -> io::Result<Option<&[u8]>> {
         match self {
             Self::Multiplex(mux) => mux.try_borrow_exact(len),

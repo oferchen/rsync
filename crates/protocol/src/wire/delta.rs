@@ -205,6 +205,7 @@ pub fn write_token_end<W: Write>(writer: &mut W) -> io::Result<()> {
 /// Returns an error if writing to the underlying stream fails.
 ///
 /// Reference: `match.c:match_sums()` lines 404-408 (whole file case)
+#[must_use]
 pub fn write_whole_file_delta<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
     write_token_literal(writer, data)?;
     write_token_end(writer)
@@ -253,6 +254,7 @@ pub fn write_whole_file_delta<W: Write>(writer: &mut W, data: &[u8]) -> io::Resu
 /// let mut buf = Vec::new();
 /// write_token_stream(&mut buf, &ops).unwrap();
 /// ```
+#[must_use]
 pub fn write_token_stream<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Result<()> {
     for op in ops {
         match op {
@@ -303,6 +305,7 @@ pub fn write_token_stream<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Resu
 /// let token = read_token(&mut &data[..]).unwrap();
 /// assert_eq!(token, None); // End of stream
 /// ```
+#[must_use]
 pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
     let token = read_int(reader)?;
     if token == 0 {
@@ -378,6 +381,7 @@ pub enum DeltaOp {
 /// # Errors
 ///
 /// Returns an error if writing to the underlying stream fails.
+#[must_use]
 pub fn write_delta_op<W: Write>(writer: &mut W, op: &DeltaOp) -> io::Result<()> {
     match op {
         DeltaOp::Literal(data) => {
@@ -407,6 +411,7 @@ pub fn write_delta_op<W: Write>(writer: &mut W, op: &DeltaOp) -> io::Result<()> 
 /// Returns an error if:
 /// - Reading from the underlying stream fails
 /// - An invalid opcode is encountered (not 0x00 or 0x01)
+#[must_use]
 pub fn read_delta_op<R: Read>(reader: &mut R) -> io::Result<DeltaOp> {
     let mut opcode = [0u8; 1];
     reader.read_exact(&mut opcode)?;
@@ -454,6 +459,7 @@ pub fn read_delta_op<R: Read>(reader: &mut R) -> io::Result<DeltaOp> {
 /// # Errors
 ///
 /// Returns an error if writing to the underlying stream fails.
+#[must_use]
 pub fn write_delta<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Result<()> {
     write_varint(writer, ops.len() as i32)?;
     for op in ops {
@@ -472,6 +478,7 @@ pub fn write_delta<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Result<()> 
 /// Returns an error if:
 /// - Reading from the underlying stream fails
 /// - An invalid opcode is encountered in any delta operation
+#[must_use]
 pub fn read_delta<R: Read>(reader: &mut R) -> io::Result<Vec<DeltaOp>> {
     let raw_count = read_varint(reader)?;
     if raw_count < 0 {

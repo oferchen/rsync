@@ -183,7 +183,6 @@ pub fn apply_xattrs_from_list(
         applied_names.insert(os_name_owned);
     }
 
-    // Remove destination xattrs not in the source list
     let dest_attrs = list_attributes(destination, follow_symlinks)?;
     for name in &dest_attrs {
         if !applied_names.contains(name) {

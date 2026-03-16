@@ -157,7 +157,6 @@ fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
         }
     }
 
-    // Fall back to regular stat
     let metadata = fs::metadata(path)?;
     Ok(CachedMetadata {
         mode: metadata.mode(),

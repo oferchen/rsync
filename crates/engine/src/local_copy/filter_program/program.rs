@@ -56,6 +56,7 @@ pub struct FilterProgram {
 
 impl FilterProgram {
     /// Builds a [`FilterProgram`] from the supplied entries.
+    #[must_use]
     pub fn new<I>(entries: I) -> Result<Self, FilterProgramError>
     where
         I: IntoIterator<Item = FilterProgramEntry>,

@@ -35,6 +35,7 @@ pub(crate) struct MetadataSettings {
     pub(crate) group_mapping: Option<GroupMapping>,
 }
 
+/// Raw CLI flag values that feed into metadata preservation computation.
 pub(crate) struct MetadataInputs<'a> {
     pub(crate) archive: bool,
     pub(crate) parsed_chown: Option<&'a ParsedChown>,
