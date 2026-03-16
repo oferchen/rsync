@@ -329,7 +329,6 @@ fn set_file_times(
 
     #[cfg(not(unix))]
     {
-        // Use the filetime crate as a portable fallback on non-Unix platforms.
         let ft_atime = atime.map(filetime::FileTime::from_system_time);
         let ft_mtime = mtime.map(filetime::FileTime::from_system_time);
 
@@ -361,7 +360,6 @@ fn timespec_from_option(time: Option<SystemTime>) -> libc::timespec {
             }
         }
         None => {
-            // UTIME_OMIT: don't change this timestamp
             libc::timespec {
                 tv_sec: 0,
                 tv_nsec: libc::UTIME_OMIT,

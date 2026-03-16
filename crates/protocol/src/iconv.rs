@@ -301,7 +301,6 @@ impl FilenameConverter {
             return Ok(Cow::Borrowed(bytes));
         }
 
-        // First decode from remote encoding to UTF-8 internal representation
         let (decoded, _, had_errors) = self.remote_encoding.decode(bytes);
         if had_errors {
             return Err(ConversionError::with_bytes(
@@ -313,7 +312,6 @@ impl FilenameConverter {
             ));
         }
 
-        // Then encode to local encoding
         let (encoded, _, had_errors) = self.local_encoding.encode(&decoded);
         if had_errors {
             return Err(ConversionError::with_bytes(
@@ -347,7 +345,6 @@ impl FilenameConverter {
             return Ok(Cow::Borrowed(bytes));
         }
 
-        // First decode from local encoding to UTF-8 internal representation
         let (decoded, _, had_errors) = self.local_encoding.decode(bytes);
         if had_errors {
             return Err(ConversionError::with_bytes(
@@ -359,7 +356,6 @@ impl FilenameConverter {
             ));
         }
 
-        // Then encode to remote encoding
         let (encoded, _, had_errors) = self.remote_encoding.encode(&decoded);
         if had_errors {
             return Err(ConversionError::with_bytes(
