@@ -17,7 +17,7 @@
 
 use std::io::Cursor;
 
-use protocol::flist::{FileEntry, FileListReader, FileListWriter, PreserveFlags};
+use protocol::flist::{FileEntry, FileListReader, FileListWriter};
 use protocol::{ProtocolVersion, write_int, write_longint};
 
 fn proto28() -> ProtocolVersion {
