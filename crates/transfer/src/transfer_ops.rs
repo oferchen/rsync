@@ -571,7 +571,6 @@ pub fn process_file_response_streaming<R: Read>(
         file_path,
         target_size,
         file_entry_index,
-        use_sparse: ctx.config.use_sparse,
         checksum_verifier: Some(disk_verifier),
         file_entry,
         is_device_target,
@@ -579,7 +578,6 @@ pub fn process_file_response_streaming<R: Read>(
         is_inplace: ctx.config.inplace
             || (ctx.config.inplace_partial
                 && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir)),
-        temp_dir: ctx.config.temp_dir.map(Path::to_path_buf),
         xattr_list,
     });
 
