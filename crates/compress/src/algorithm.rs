@@ -31,9 +31,24 @@ impl CompressionAlgorithm {
     }
 
     /// Returns the default compression algorithm used when callers enable `--compress`.
+    ///
+    /// Matches upstream rsync 3.4.1 negotiation precedence: zstd > lz4 > zlib.
+    /// Upstream `compat.c:valid_compressions_items[]` lists zstd first, so when
+    /// both peers support zstd (protocol 32+), it wins negotiation.
     #[must_use]
     pub const fn default_algorithm() -> Self {
-        CompressionAlgorithm::Zlib
+        #[cfg(feature = "zstd")]
+        {
+            CompressionAlgorithm::Zstd
+        }
+        #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+        {
+            CompressionAlgorithm::Lz4
+        }
+        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+        {
+            CompressionAlgorithm::Zlib
+        }
     }
 
     /// Returns the set of algorithms available in the current build.
@@ -164,12 +179,16 @@ mod tests {
     }
 
     #[test]
-    fn default_algorithm_is_zlib() {
-        assert_eq!(
-            CompressionAlgorithm::default_algorithm(),
-            CompressionAlgorithm::Zlib
-        );
-        assert_eq!(CompressionAlgorithm::default(), CompressionAlgorithm::Zlib);
+    fn default_algorithm_matches_upstream_precedence() {
+        let default = CompressionAlgorithm::default_algorithm();
+        // Upstream rsync 3.4.1 negotiation precedence: zstd > lz4 > zlib
+        #[cfg(feature = "zstd")]
+        assert_eq!(default, CompressionAlgorithm::Zstd);
+        #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+        assert_eq!(default, CompressionAlgorithm::Lz4);
+        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+        assert_eq!(default, CompressionAlgorithm::Zlib);
+        assert_eq!(CompressionAlgorithm::default(), default);
     }
 
     #[test]
