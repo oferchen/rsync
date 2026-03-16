@@ -274,7 +274,8 @@ impl FileEntry {
     /// Returns a mutable reference to the extras, allocating if needed.
     #[inline]
     fn extras_mut(&mut self) -> &mut FileEntryExtras {
-        self.extras.get_or_insert_with(|| Box::new(FileEntryExtras::default()))
+        self.extras
+            .get_or_insert_with(|| Box::new(FileEntryExtras::default()))
     }
 
     /// Core constructor with all parameters - Template Method pattern.
