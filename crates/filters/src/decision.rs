@@ -7,11 +7,18 @@ use crate::{FilterAction, compiled::CompiledRule};
 /// Internal rule storage shared by [`FilterSet`](crate::FilterSet) instances.
 #[derive(Debug, Default)]
 pub(crate) struct FilterSetInner {
+    /// Compiled include and exclude rules, evaluated in order for transfer decisions.
     pub(crate) include_exclude: Vec<CompiledRule>,
+    /// Compiled protect and risk rules, evaluated independently for deletion decisions.
     pub(crate) protect_risk: Vec<CompiledRule>,
 }
 
 impl FilterSetInner {
+    /// Evaluates `path` against all compiled rules and returns the combined decision.
+    ///
+    /// Transfer and protection rules are evaluated independently. The
+    /// `context` determines which rules are considered and which side
+    /// (sender/receiver) governs applicability.
     pub(crate) fn decision(
         &self,
         path: &Path,
@@ -156,7 +163,11 @@ where
 /// Whether a filter evaluation is for the transfer or deletion phase.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecisionContext {
+    /// Evaluate whether a path should be copied. Uses sender-side rules and
+    /// includes perishable rules.
     Transfer,
+    /// Evaluate whether a path may be deleted by `--delete`. Uses receiver-side
+    /// rules and excludes perishable rules.
     Deletion,
 }
 
@@ -169,22 +180,29 @@ pub(crate) struct FilterDecision {
 }
 
 impl FilterDecision {
+    /// Returns `true` if the path is allowed by transfer (include/exclude) rules.
     pub(crate) const fn allows_transfer(self) -> bool {
         self.transfer_allowed
     }
 
+    /// Returns `true` if the path may be deleted: it is included by
+    /// receiver-side rules and not guarded by a protect rule.
     pub(crate) const fn allows_deletion(self) -> bool {
         self.transfer_allowed && !self.protected
     }
 
+    /// Returns `true` if the path may be removed by `--delete-excluded`:
+    /// it is excluded by receiver-side rules and not guarded by a protect rule.
     pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
         self.excluded_for_delete_excluded && !self.protected
     }
 
+    /// Marks the path as protected, preventing deletion regardless of transfer rules.
     pub(crate) const fn protect(&mut self) {
         self.protected = true;
     }
 
+    /// Removes protection, re-allowing deletion when transfer rules permit.
     pub(crate) const fn unprotect(&mut self) {
         self.protected = false;
     }
