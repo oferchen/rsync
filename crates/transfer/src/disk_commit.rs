@@ -218,6 +218,11 @@ pub struct DiskCommitConfig {
     pub do_fsync: bool,
     /// Bounded channel capacity (back-pressure threshold).
     pub channel_capacity: usize,
+    /// Whether to use sparse file writing.
+    pub use_sparse: bool,
+    /// Temporary directory for staging received files before final placement.
+    /// Shared across all files in a transfer session.
+    pub temp_dir: Option<PathBuf>,
     /// Metadata options for applying file attributes after commit.
     /// When `Some`, the disk thread applies metadata (mtime, perms, ownership)
     /// immediately after rename — mirroring upstream `finish_transfer()` →
@@ -236,6 +241,8 @@ impl Default for DiskCommitConfig {
         Self {
             do_fsync: false,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
+            use_sparse: false,
+            temp_dir: None,
             metadata_opts: None,
             backup: None,
             acl_cache: None,
@@ -321,11 +328,11 @@ fn process_file(
     begin: BeginMessage,
     write_buf: &mut Vec<u8>,
 ) -> io::Result<CommitResult> {
-    let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin)?;
+    let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
     let mut output = ReusableBufWriter::new(file, write_buf);
 
-    let mut sparse_state = if begin.use_sparse {
+    let mut sparse_state = if config.use_sparse {
         Some(SparseWriteState::default())
     } else {
         None
@@ -468,7 +475,7 @@ fn process_whole_file(
     data: Vec<u8>,
     write_buf: &mut Vec<u8>,
 ) -> io::Result<CommitResult> {
-    let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin)?;
+    let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
     let mut output = ReusableBufWriter::new(file, write_buf);
     let bytes_written = data.len() as u64;
@@ -479,7 +486,7 @@ fn process_whole_file(
         verifier.update(&data);
     }
 
-    if begin.use_sparse {
+    if config.use_sparse {
         let mut sparse = SparseWriteState::default();
         sparse.write(&mut output, &data)?;
         let _final_pos = sparse.finish(&mut output)?;
@@ -562,7 +569,10 @@ fn process_whole_file(
 ///
 /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` — inplace write to device
 /// - `receiver.c:855-860`: opens destination directly when inplace
-fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard, bool)> {
+fn open_output_file(
+    begin: &BeginMessage,
+    config: &DiskCommitConfig,
+) -> io::Result<(fs::File, TempFileGuard, bool)> {
     if begin.is_device_target {
         // Device files: open existing device for writing (no create, no truncate).
         // Uses inplace semantics — no temp file + rename.
@@ -578,7 +588,7 @@ fn open_output_file(begin: &BeginMessage) -> io::Result<(fs::File, TempFileGuard
             .open(&begin.file_path)?;
         Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
     } else {
-        let (file, guard) = open_tmpfile(&begin.file_path, begin.temp_dir.as_deref())?;
+        let (file, guard) = open_tmpfile(&begin.file_path, config.temp_dir.as_deref())?;
         Ok((file, guard, true))
     }
 }
@@ -665,12 +675,10 @@ mod tests {
                 file_path: file_path.clone(),
                 target_size: 1024,
                 file_entry_index: 0,
-                use_sparse: false,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
-                temp_dir: None,
                 xattr_list: None,
             })))
             .unwrap();
@@ -703,12 +711,10 @@ mod tests {
                 file_path: file_path.clone(),
                 target_size: 100,
                 file_entry_index: 1,
-                use_sparse: false,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
-                temp_dir: None,
                 xattr_list: None,
             })))
             .unwrap();
@@ -745,12 +751,10 @@ mod tests {
                     file_path: path.clone(),
                     target_size: data.len() as u64,
                     file_entry_index: i,
-                    use_sparse: false,
                     checksum_verifier: None,
                     file_entry: None,
                     is_device_target: false,
                     is_inplace: false,
-                    temp_dir: None,
                     xattr_list: None,
                 })))
                 .unwrap();
@@ -794,12 +798,10 @@ mod tests {
                 file_path: file_path.clone(),
                 target_size: 300,
                 file_entry_index: 0,
-                use_sparse: false,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
-                temp_dir: None,
                 xattr_list: None,
             })))
             .unwrap();
@@ -829,12 +831,10 @@ mod tests {
                 file_path: file_path.clone(),
                 target_size: 100,
                 file_entry_index: 0,
-                use_sparse: false,
                 checksum_verifier: None,
                 file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
-                temp_dir: None,
                 xattr_list: None,
             })))
             .unwrap();
@@ -873,12 +873,10 @@ mod tests {
                     file_path: file_path.clone(),
                     target_size: 9,
                     file_entry_index: 0,
-                    use_sparse: false,
                     checksum_verifier: None,
                     file_entry: None,
                     is_device_target: false,
                     is_inplace: false,
-                    temp_dir: None,
                     xattr_list: None,
                 }),
                 data: b"whole dat".to_vec(),
