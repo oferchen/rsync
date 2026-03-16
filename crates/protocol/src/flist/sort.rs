@@ -210,7 +210,7 @@ pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool) {
     // Each element is moved exactly once. Uses a bitset (n/64 u64s)
     // instead of Vec<bool> (n bytes) to reduce memory and improve
     // cache behavior for the placed-tracking.
-    let mut placed = vec![0u64; (n + 63) / 64];
+    let mut placed = vec![0u64; n.div_ceil(64)];
     for i in 0..n {
         let word = i / 64;
         let bit = 1u64 << (i % 64);
