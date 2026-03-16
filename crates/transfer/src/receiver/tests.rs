@@ -2721,9 +2721,7 @@ mod sanitize_file_list {
     #[test]
     fn absolute_path_allowed_with_relative_flag() {
         // upstream: absolute paths are allowed when --relative is active
-        let entries = vec![
-            FileEntry::new_file("/rooted/file.txt".into(), 10, 0o644),
-        ];
+        let entries = vec![FileEntry::new_file("/rooted/file.txt".into(), 10, 0o644)];
         let mut ctx = receiver_with_trust_and_relative(entries, false);
         let removed = ctx.sanitize_file_list();
         assert_eq!(removed, 0);
