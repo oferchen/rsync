@@ -70,7 +70,10 @@ fn golden_v28_regular_file_first_entry() {
         0xA4, 0x81, 0x00, 0x00,
     ];
 
-    assert_eq!(buf, expected, "wire bytes mismatch for protocol 28 regular file");
+    assert_eq!(
+        buf, expected,
+        "wire bytes mismatch for protocol 28 regular file"
+    );
 }
 
 #[test]
@@ -192,7 +195,10 @@ fn golden_v28_directory_first_entry() {
         0xED, 0x41, 0x00, 0x00,
     ];
 
-    assert_eq!(buf, expected, "wire bytes mismatch for protocol 28 directory");
+    assert_eq!(
+        buf, expected,
+        "wire bytes mismatch for protocol 28 directory"
+    );
 }
 
 #[test]
@@ -305,7 +311,11 @@ fn golden_v28_end_marker() {
     let mut buf = Vec::new();
     writer.write_end(&mut buf, None).unwrap();
 
-    assert_eq!(buf, [0x00], "protocol 28 end marker must be a single zero byte");
+    assert_eq!(
+        buf,
+        [0x00],
+        "protocol 28 end marker must be a single zero byte"
+    );
 }
 
 #[test]
@@ -346,7 +356,11 @@ fn golden_v28_checksum_md4_regular_file() {
     // flags(1) + name_len(1) + name(9) + size(4) + mtime(4) + mode(4) = 23
     // Then 16 bytes of checksum (all zeros since no checksum was set on entry)
     assert_eq!(buf.len(), 23 + md4_len);
-    assert_eq!(&buf[23..], &[0u8; 16], "MD4 checksum should be 16 zero bytes");
+    assert_eq!(
+        &buf[23..],
+        &[0u8; 16],
+        "MD4 checksum should be 16 zero bytes"
+    );
 }
 
 #[test]
@@ -429,8 +443,16 @@ fn golden_v28_uid_gid_fixed_encoding() {
     // After flags(1) + name_len(1) + name(9) + size(4) + mtime(4) + mode(4) = 23
     // uid: write_int(1000) = 4-byte LE: [0xE8, 0x03, 0x00, 0x00]
     // gid: write_int(1000) = 4-byte LE: [0xE8, 0x03, 0x00, 0x00]
-    assert_eq!(&buf[23..27], [0xE8, 0x03, 0x00, 0x00], "UID must be 4-byte LE");
-    assert_eq!(&buf[27..31], [0xE8, 0x03, 0x00, 0x00], "GID must be 4-byte LE");
+    assert_eq!(
+        &buf[23..27],
+        [0xE8, 0x03, 0x00, 0x00],
+        "UID must be 4-byte LE"
+    );
+    assert_eq!(
+        &buf[27..31],
+        [0xE8, 0x03, 0x00, 0x00],
+        "GID must be 4-byte LE"
+    );
     assert_eq!(buf.len(), 31);
 }
 
