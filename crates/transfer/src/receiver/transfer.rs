@@ -906,6 +906,8 @@ impl ReceiverContext {
         };
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
+            use_sparse: self.config.flags.sparse,
+            temp_dir: self.config.temp_dir.as_ref().map(PathBuf::from),
             metadata_opts: Some(setup.metadata_opts.clone()),
             backup,
             acl_cache: setup.acl_cache.clone(),
