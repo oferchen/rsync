@@ -61,18 +61,21 @@ impl ChmodModifiers {
 
     /// Applies the modifiers to the provided mode, returning the updated value.
     #[cfg(unix)]
+    #[must_use]
     pub fn apply(&self, mode: u32, file_type: std::fs::FileType) -> u32 {
         apply_clauses(&self.clauses, mode, file_type)
     }
 
     /// Applies the modifiers on non-Unix platforms.
     #[cfg(not(unix))]
+    #[must_use]
     pub fn apply(&self, mode: u32, _file_type: std::fs::FileType) -> u32 {
         let _ = mode;
         mode
     }
 
     /// Returns `true` when no clauses are present.
+    #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.clauses.is_empty()
     }

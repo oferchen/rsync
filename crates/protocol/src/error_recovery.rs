@@ -102,6 +102,7 @@ impl PartialTransferState {
     /// );
     /// assert_eq!(state.bytes_received, 1024);
     /// ```
+    #[must_use]
     pub fn new(
         path: PathBuf,
         bytes_received: u64,
@@ -133,6 +134,7 @@ impl PartialTransferState {
     /// let empty = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 0, 2048, None);
     /// assert!(!empty.is_resumable());
     /// ```
+    #[must_use]
     pub fn is_resumable(&self) -> bool {
         self.bytes_received > 0 && self.bytes_received < self.expected_size
     }
@@ -148,6 +150,7 @@ impl PartialTransferState {
     /// let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
     /// assert_eq!(state.bytes_remaining(), 1024);
     /// ```
+    #[must_use]
     pub fn bytes_remaining(&self) -> u64 {
         self.expected_size.saturating_sub(self.bytes_received)
     }
@@ -172,6 +175,7 @@ impl PartialTransferLog {
     /// let log = PartialTransferLog::new();
     /// assert_eq!(log.count(), 0);
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -233,6 +237,7 @@ impl PartialTransferLog {
     /// log.record_partial(state);
     /// assert_eq!(log.count(), 1);
     /// ```
+    #[must_use]
     pub fn count(&self) -> usize {
         self.entries.len()
     }
@@ -293,6 +298,7 @@ impl PartialTransferLog {
 /// let err = io::Error::from(io::ErrorKind::ConnectionReset);
 /// assert_eq!(classify_error(err), ErrorSeverity::Fatal);
 /// ```
+#[must_use]
 pub fn classify_error(error: io::Error) -> ErrorSeverity {
     use io::ErrorKind::*;
 
@@ -339,6 +345,7 @@ pub fn classify_error(error: io::Error) -> ErrorSeverity {
 /// let err = TransferError::DiskFull;
 /// assert!(!should_retry(&err, 1, 3));
 /// ```
+#[must_use]
 pub fn should_retry(error: &TransferError, attempt: u32, max_retries: u32) -> bool {
     // Don't retry if we've exceeded the limit
     if attempt >= max_retries {
@@ -407,6 +414,7 @@ pub enum RecoveryAction {
 /// let error = TransferError::DiskFull;
 /// assert_eq!(determine_recovery(&error, None), RecoveryAction::Abort);
 /// ```
+#[must_use]
 pub fn determine_recovery(
     error: &TransferError,
     partial: Option<&PartialTransferState>,

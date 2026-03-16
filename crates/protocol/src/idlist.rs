@@ -80,12 +80,14 @@ impl IdList {
 
     /// Returns the number of IDs in the list.
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns true if the list is empty.
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -94,6 +96,7 @@ impl IdList {
     ///
     /// Use this to check before performing expensive name lookups.
     #[inline]
+    #[must_use]
     pub fn contains(&self, id: u32) -> bool {
         self.entries.contains_key(&id)
     }
@@ -126,6 +129,7 @@ impl IdList {
     /// Returns the mapped local ID if the remote ID was in the received list,
     /// otherwise returns the remote ID unchanged (fallback to numeric ID).
     #[inline]
+    #[must_use]
     pub fn match_id(&self, remote_id: u32) -> u32 {
         self.entries
             .get(&remote_id)

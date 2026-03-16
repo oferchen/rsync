@@ -82,6 +82,7 @@ pub fn sync_nfsv4_acls(
 /// Checks if a file has an NFSv4 ACL.
 ///
 /// On platforms without xattr support, always returns `false`.
+#[must_use]
 pub fn has_nfsv4_acl(_path: &Path, _follow_symlinks: bool) -> bool {
     false
 }

@@ -427,6 +427,7 @@ impl Nfs4Acl {
     ///
     /// A byte vector containing the serialized ACL. For an empty ACL,
     /// returns an empty vector.
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut data = Vec::new();
 
@@ -635,6 +636,7 @@ pub fn sync_nfsv4_acls(
 ///
 /// This function suppresses all errors and returns `false` if any error occurs.
 /// Use [`get_nfsv4_acl`] if you need to distinguish between errors and missing ACLs.
+#[must_use]
 pub fn has_nfsv4_acl(path: &Path, follow_symlinks: bool) -> bool {
     get_nfsv4_acl(path, follow_symlinks)
         .map(|acl| acl.is_some())

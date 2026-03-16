@@ -35,16 +35,19 @@ pub struct XattrCache {
 
 impl XattrCache {
     /// Creates an empty xattr cache.
+    #[must_use]
     pub fn new() -> Self {
         Self { lists: Vec::new() }
     }
 
     /// Returns the number of cached xattr sets.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.lists.len()
     }
 
     /// Returns true if the cache is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.lists.is_empty()
     }
@@ -60,6 +63,7 @@ impl XattrCache {
     }
 
     /// Stores an xattr list in the cache and returns its index.
+    #[must_use]
     pub fn store(&mut self, list: XattrList) -> u32 {
         let index = self.lists.len();
         self.lists.push(list);
