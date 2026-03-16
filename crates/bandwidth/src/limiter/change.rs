@@ -86,7 +86,14 @@ impl FromIterator<LimiterChange> for LimiterChange {
     }
 }
 
-/// Applies a module-specific bandwidth cap to an optional limiter, mirroring upstream precedence rules.
+/// Applies a bandwidth cap to an optional limiter, honouring upstream precedence rules.
+///
+/// When `limit_specified` is `false` and `burst_specified` is `false` the function
+/// returns [`LimiterChange::Unchanged`] without touching the limiter. Otherwise the
+/// strictest rate wins: if a limiter already exists its rate is kept when it is lower
+/// than `limit`. A `limit` of `None` with `limit_specified = true` disables
+/// throttling by taking the existing limiter and returning
+/// [`LimiterChange::Disabled`].
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,
