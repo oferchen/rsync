@@ -1998,3 +1998,210 @@ mod integration_scenarios {
         }
     }
 }
+
+mod protocol_flist_round_trip {
+    //! Tests that verify writing protocol flist entries to a batch file
+    //! and reading them back using `read_protocol_flist`.
+    //!
+    //! This validates the end-to-end batch file format: header + protocol
+    //! flist wire entries + end-of-list marker.
+
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Helper: write a batch file with protocol flist entries and an end-of-list
+    /// marker, mimicking what the engine does during `--write-batch`.
+    fn write_batch_with_protocol_flist(
+        temp_dir: &TempDir,
+        name: &str,
+        entries: &[protocol::flist::FileEntry],
+    ) -> String {
+        let batch_path = temp_dir.path().join(name);
+        let path_str = batch_path.to_string_lossy().to_string();
+        let protocol_version = 32;
+
+        let config = BatchConfig::new(BatchMode::Write, path_str.clone(), protocol_version)
+            .with_checksum_seed(42)
+            .with_compat_flags(0);
+
+        let mut writer = BatchWriter::new(config).unwrap();
+
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            preserve_gid: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        // Encode file list entries using the protocol wire format
+        let proto = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let flist_writer = protocol::flist::FileListWriter::new(proto)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        for entry in entries {
+            let mut buf = Vec::with_capacity(128);
+            flist_writer.write_entry(&mut buf, entry).unwrap();
+            writer.write_data(&buf).unwrap();
+        }
+
+        // Write the end-of-list marker - this is critical for read_protocol_flist
+        let mut end_buf = Vec::with_capacity(4);
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        writer.finalize().unwrap();
+        path_str
+    }
+
+    #[test]
+    fn write_and_read_single_file_entry() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let mut entry = protocol::flist::FileEntry::new_file(PathBuf::from("hello.txt"), 1024, 0o100644);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let path = write_batch_with_protocol_flist(&temp_dir, "single.batch", &[entry]);
+
+        let config = BatchConfig::new(BatchMode::Read, path, 32);
+        let mut reader = BatchReader::new(config).unwrap();
+        reader.read_header().unwrap();
+
+        let entries = reader.read_protocol_flist().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name(), "hello.txt");
+        assert_eq!(entries[0].size(), 1024);
+    }
+
+    #[test]
+    fn write_and_read_multiple_entries() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let entries = vec![
+            {
+                let mut e = protocol::flist::FileEntry::new_directory(PathBuf::from("."), 0o40755);
+                e.set_mtime(1_700_000_000, 0);
+                e
+            },
+            {
+                let mut e = protocol::flist::FileEntry::new_file(PathBuf::from("file_a.txt"), 100, 0o100644);
+                e.set_mtime(1_700_000_001, 0);
+                e
+            },
+            {
+                let mut e = protocol::flist::FileEntry::new_file(PathBuf::from("file_b.txt"), 200, 0o100644);
+                e.set_mtime(1_700_000_002, 0);
+                e
+            },
+        ];
+
+        let path = write_batch_with_protocol_flist(&temp_dir, "multi.batch", &entries);
+
+        let config = BatchConfig::new(BatchMode::Read, path, 32);
+        let mut reader = BatchReader::new(config).unwrap();
+        reader.read_header().unwrap();
+
+        let read_entries = reader.read_protocol_flist().unwrap();
+        assert_eq!(read_entries.len(), 3);
+        assert_eq!(read_entries[0].name(), ".");
+        assert_eq!(read_entries[1].name(), "file_a.txt");
+        assert_eq!(read_entries[1].size(), 100);
+        assert_eq!(read_entries[2].name(), "file_b.txt");
+        assert_eq!(read_entries[2].size(), 200);
+    }
+
+    #[test]
+    fn write_and_read_empty_flist() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let path = write_batch_with_protocol_flist(&temp_dir, "empty_flist.batch", &[]);
+
+        let config = BatchConfig::new(BatchMode::Read, path, 32);
+        let mut reader = BatchReader::new(config).unwrap();
+        reader.read_header().unwrap();
+
+        let entries = reader.read_protocol_flist().unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn write_and_read_with_trailing_data_after_flist() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("trailing.batch");
+        let path_str = batch_path.to_string_lossy().to_string();
+        let protocol_version = 32;
+
+        let config =
+            BatchConfig::new(BatchMode::Write, path_str.clone(), protocol_version)
+                .with_checksum_seed(0);
+
+        let mut writer = BatchWriter::new(config).unwrap();
+
+        let flags = BatchFlags {
+            recurse: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let proto = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let flist_writer = protocol::flist::FileListWriter::new(proto);
+
+        let mut entry = protocol::flist::FileEntry::new_file(PathBuf::from("test.txt"), 42, 0o100644);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // End-of-list marker
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // Trailing delta data (simulated)
+        writer.write_data(b"delta payload here").unwrap();
+
+        writer.finalize().unwrap();
+
+        // Read back - flist should stop at the end marker, not consume delta data
+        let config = BatchConfig::new(BatchMode::Read, path_str, 32);
+        let mut reader = BatchReader::new(config).unwrap();
+        reader.read_header().unwrap();
+
+        let entries = reader.read_protocol_flist().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name(), "test.txt");
+
+        // Remaining data should still be readable
+        let mut trailing = vec![0u8; 18];
+        let n = reader.read_data(&mut trailing).unwrap();
+        assert_eq!(&trailing[..n], b"delta payload here");
+    }
+
+    #[test]
+    fn header_flags_round_trip_through_protocol_flist() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let entries = vec![{
+            let mut e = protocol::flist::FileEntry::new_file(PathBuf::from("flagtest.txt"), 10, 0o100644);
+            e.set_mtime(1_700_000_000, 0);
+            e
+        }];
+
+        let path = write_batch_with_protocol_flist(&temp_dir, "flags.batch", &entries);
+
+        let config = BatchConfig::new(BatchMode::Read, path, 32);
+        let mut reader = BatchReader::new(config).unwrap();
+        let flags = reader.read_header().unwrap();
+
+        assert!(flags.recurse);
+        assert!(flags.preserve_uid);
+        assert!(flags.preserve_gid);
+        assert!(!flags.always_checksum);
+
+        let header = reader.header().unwrap();
+        assert_eq!(header.checksum_seed, 42);
+        assert_eq!(header.protocol_version, 32);
+    }
+}
