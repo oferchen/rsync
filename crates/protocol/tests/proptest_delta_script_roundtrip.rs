@@ -35,11 +35,9 @@ fn arb_literal(max_len: usize) -> impl Strategy<Value = DeltaOp> {
 /// The internal format encodes block_index as a varint (i32), so we cap at
 /// `i32::MAX` to stay in the representable range.
 fn arb_copy() -> impl Strategy<Value = DeltaOp> {
-    (0u32..=0x7FFF_FFFFu32, 1u32..=0x7FFF_FFFFu32).prop_map(|(block_index, length)| {
-        DeltaOp::Copy {
-            block_index,
-            length,
-        }
+    (0u32..=0x7FFF_FFFFu32, 1u32..=0x7FFF_FFFFu32).prop_map(|(block_index, length)| DeltaOp::Copy {
+        block_index,
+        length,
     })
 }
 

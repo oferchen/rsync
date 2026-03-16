@@ -263,16 +263,18 @@ impl PipelinedReceiver {
                 if self.redo_enabled {
                     // upstream: receiver.c:960-968 — WARNING, will try again
                     eprintln!(
-                        "WARNING: {:?} failed verification -- update discarded (will try again).",
+                        "WARNING: {:?} failed verification -- update discarded (will try again).{}",
                         pending.file_path,
+                        crate::role_trailer::receiver(),
                     );
                     self.redo_indices.push(pending.file_index);
                     return Ok(());
                 }
                 // upstream: receiver.c:957-959 — ERROR in phase 2 (redoing)
                 eprintln!(
-                    "ERROR: {:?} failed verification -- update discarded.",
+                    "ERROR: {:?} failed verification -- update discarded.{}",
                     pending.file_path,
+                    crate::role_trailer::receiver(),
                 );
                 // In phase 2, upstream logs the error but continues the transfer.
                 return Ok(());
