@@ -223,9 +223,13 @@ pub struct DiskCommitConfig {
     /// Temporary directory for staging received files before final placement.
     /// Shared across all files in a transfer session.
     pub temp_dir: Option<PathBuf>,
+    /// Shared file list for metadata application. The disk thread looks up
+    /// entries by `file_entry_index` instead of receiving cloned entries
+    /// per file, eliminating ~88-295 bytes of cloning per file.
+    pub file_list: Option<Arc<Vec<protocol::flist::FileEntry>>>,
     /// Metadata options for applying file attributes after commit.
     /// When `Some`, the disk thread applies metadata (mtime, perms, ownership)
-    /// immediately after rename — mirroring upstream `finish_transfer()` →
+    /// immediately after rename - mirroring upstream `finish_transfer()` ->
     /// `set_file_attrs()` in receiver.c.
     pub metadata_opts: Option<MetadataOptions>,
     /// Backup configuration. When `Some`, existing files are renamed to a
@@ -243,6 +247,7 @@ impl Default for DiskCommitConfig {
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
             use_sparse: false,
             temp_dir: None,
+            file_list: None,
             metadata_opts: None,
             backup: None,
             acl_cache: None,
@@ -413,12 +418,16 @@ fn process_file(
                 // finish_transfer() → set_file_attrs() in receiver.c.
                 // Skip metadata for device targets: changing perms/ownership on
                 // a device node after writing data is not appropriate.
+                let file_entry = config
+                    .file_list
+                    .as_ref()
+                    .and_then(|fl| fl.get(begin.file_entry_index));
                 let metadata_error = if begin.is_device_target {
                     None
                 } else {
                     apply_metadata_acls_and_xattrs(
                         &begin.file_path,
-                        begin.file_entry.as_ref(),
+                        file_entry,
                         config.metadata_opts.as_ref(),
                         config.acl_cache.as_deref(),
                         begin.xattr_list.as_ref(),
@@ -526,10 +535,14 @@ fn process_whole_file(
     }
     cleanup_guard.keep();
 
-    // Apply metadata — mirrors upstream finish_transfer() → set_file_attrs().
+    // Apply metadata - mirrors upstream finish_transfer() -> set_file_attrs().
+    let file_entry = config
+        .file_list
+        .as_ref()
+        .and_then(|fl| fl.get(begin.file_entry_index));
     let metadata_error = apply_metadata_acls_and_xattrs(
         &begin.file_path,
-        begin.file_entry.as_ref(),
+        file_entry,
         config.metadata_opts.as_ref(),
         config.acl_cache.as_deref(),
         begin.xattr_list.as_ref(),
@@ -676,7 +689,6 @@ mod tests {
                 target_size: 1024,
                 file_entry_index: 0,
                 checksum_verifier: None,
-                file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
                 xattr_list: None,
@@ -712,7 +724,6 @@ mod tests {
                 target_size: 100,
                 file_entry_index: 1,
                 checksum_verifier: None,
-                file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
                 xattr_list: None,
@@ -752,7 +763,6 @@ mod tests {
                     target_size: data.len() as u64,
                     file_entry_index: i,
                     checksum_verifier: None,
-                    file_entry: None,
                     is_device_target: false,
                     is_inplace: false,
                     xattr_list: None,
@@ -799,7 +809,6 @@ mod tests {
                 target_size: 300,
                 file_entry_index: 0,
                 checksum_verifier: None,
-                file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
                 xattr_list: None,
@@ -832,7 +841,6 @@ mod tests {
                 target_size: 100,
                 file_entry_index: 0,
                 checksum_verifier: None,
-                file_entry: None,
                 is_device_target: false,
                 is_inplace: false,
                 xattr_list: None,
@@ -874,7 +882,6 @@ mod tests {
                     target_size: 9,
                     file_entry_index: 0,
                     checksum_verifier: None,
-                    file_entry: None,
                     is_device_target: false,
                     is_inplace: false,
                     xattr_list: None,
