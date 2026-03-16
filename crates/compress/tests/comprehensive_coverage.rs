@@ -993,11 +993,15 @@ mod algorithm {
 
     #[test]
     fn compression_algorithm_default() {
-        assert_eq!(
-            CompressionAlgorithm::default_algorithm(),
-            CompressionAlgorithm::Zlib
-        );
-        assert_eq!(CompressionAlgorithm::default(), CompressionAlgorithm::Zlib);
+        let default = CompressionAlgorithm::default_algorithm();
+        // Upstream rsync 3.4.1 negotiation precedence: zstd > lz4 > zlib
+        #[cfg(feature = "zstd")]
+        assert_eq!(default, CompressionAlgorithm::Zstd);
+        #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+        assert_eq!(default, CompressionAlgorithm::Lz4);
+        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+        assert_eq!(default, CompressionAlgorithm::Zlib);
+        assert_eq!(CompressionAlgorithm::default(), default);
     }
 
     #[test]

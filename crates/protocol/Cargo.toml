@@ -16,8 +16,13 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 # Compression algorithm features (match compress crate features)
+default = ["zlib-ng"]
 lz4 = ["compress/lz4"]
 zstd = ["compress/zstd"]
+# zlib-ng backend (C library with SIMD: SSE2, AVX2, NEON) - matches upstream rsync performance
+zlib-ng = ["flate2/zlib-ng", "compress/zlib-ng"]
+# Pure Rust fallback - no C compiler required, slower than zlib-ng
+zlib-rs = ["flate2/zlib-rs"]
 # Filename encoding conversion (iconv)
 iconv = ["encoding_rs"]
 # Async codec support using tokio-util
@@ -31,7 +36,8 @@ tracing = ["dep:tracing"]
 bytes = { version = "1.9", optional = true }
 compress = { path = "../compress" }
 encoding_rs = { version = "0.8", optional = true }
-flate2 = { version = "1.0", default-features = false, features = ["zlib-rs"] }
+# Default: miniz_oxide (pure Rust fallback). zlib-ng/zlib-rs override via features.
+flate2 = "1.0"
 logging = { path = "../logging" }
 md-5 = { version = "0.10", default-features = false, features = ["std"] }
 memchr = "2.7"

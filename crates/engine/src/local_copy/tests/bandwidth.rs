@@ -218,6 +218,7 @@ fn execute_with_compression_limits_post_compress_bandwidth() {
     let limit = NonZeroU64::new(2 * 1024).expect("limit");
     let options = LocalCopyOptions::default()
         .compress(true)
+        .with_compression_algorithm(CompressionAlgorithm::Zlib)
         .bandwidth_limit(Some(limit));
 
     let summary = plan

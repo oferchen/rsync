@@ -15,16 +15,17 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["zstd", "lz4"]
+default = ["zstd", "lz4", "zlib-ng"]
 zstd = ["dep:zstd"]
 lz4 = ["dep:lz4_flex"]
-# Use zlib-ng for maximum performance (requires C compiler)
+# zlib-ng backend (C library with SIMD: SSE2, AVX2, NEON) - matches upstream rsync performance
 zlib-ng = ["flate2/zlib-ng"]
+# Pure Rust fallback - no C compiler required, slower than zlib-ng
+zlib-rs = ["flate2/zlib-rs"]
 
 [dependencies]
-# zlib-rs backend: pure Rust with SIMD optimizations (SSE4.2, AVX2, AVX-512)
-# Fastest backend overall, no C compiler required
-flate2 = { version = "1.0", default-features = false, features = ["zlib-rs"] }
+# Default: miniz_oxide (pure Rust fallback). zlib-ng/zlib-rs override via features.
+flate2 = "1.0"
 zstd = { version = "0.13", optional = true }
 lz4_flex = { version = "0.11", optional = true, default-features = false, features = ["frame", "safe-encode", "safe-decode"] }
 thiserror = "2.0"

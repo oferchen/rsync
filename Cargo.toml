@@ -43,6 +43,8 @@ default = [
 zstd = ["core/zstd"]
 # lz4 compression - Extremely fast, lower compression ratio
 lz4 = ["core/lz4"]
+# zlib-ng backend (C library with SIMD: SSE2, AVX2, NEON) - faster than pure Rust zlib-rs
+zlib-ng = ["core/zlib-ng"]
 
 # ============================================================================
 # Metadata Features
