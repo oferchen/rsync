@@ -102,9 +102,8 @@ impl Write for TracingStream {
     }
 }
 
-/// Formats a byte slice as a hex string with space separators.
-///
-/// Used internally for logging byte sequences.
+/// Formats up to `max_len` bytes as a space-separated lowercase hex string,
+/// appending ` ...` when the slice is truncated.
 #[cfg(test)]
 fn format_hex_bytes(bytes: &[u8], max_len: usize) -> String {
     let display_len = bytes.len().min(max_len);

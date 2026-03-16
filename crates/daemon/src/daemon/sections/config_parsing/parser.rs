@@ -1,8 +1,8 @@
-// Main config file parser.
-//
-// Entry point for rsyncd.conf parsing with recursive include detection,
-// line-by-line dispatch to module or global directive handlers, and
-// final assembly of the parsed result.
+//! Main config file parser.
+//!
+//! Entry point for rsyncd.conf parsing with recursive include detection,
+//! line-by-line dispatch to module or global directive handlers, and
+//! final assembly of the parsed result.
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
 pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {

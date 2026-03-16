@@ -54,6 +54,9 @@ where
     None
 }
 
+/// Returns the first path in `paths` that is an existing file, or `None`.
+///
+/// Used to probe the ordered list of candidate config file locations.
 pub(crate) fn first_existing_config_path<I, P>(paths: I) -> Option<OsString>
 where
     I: IntoIterator<Item = P>,
@@ -100,6 +103,10 @@ fn default_config_path_if_present(brand: Brand) -> Option<OsString> {
     first_existing_config_path(brand.config_path_candidate_strs())
 }
 
+/// Returns the first existing default secrets file path for the given brand.
+///
+/// Probes brand-specific candidate paths (e.g., `/etc/oc-rsyncd/rsyncd.secrets`,
+/// `/etc/rsyncd.secrets`) and returns the first one that exists on disk.
 pub(crate) fn default_secrets_path_if_present(brand: Brand) -> Option<OsString> {
     #[cfg(test)]
     if let Some(paths) = TEST_SECRETS_CANDIDATES.with(|cell| cell.borrow().clone()) {

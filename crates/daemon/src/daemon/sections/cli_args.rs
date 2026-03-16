@@ -1,6 +1,9 @@
+/// Identifies the invoked daemon binary, controlling branding and help text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProgramName {
+    /// Upstream-compatible `rsyncd` branding.
     Rsyncd,
+    /// OC-branded `oc-rsyncd` binary.
     OcRsyncd,
 }
 
@@ -29,7 +32,10 @@ fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
     }
 }
 
-/// Parsed command produced by [`parse_args`].
+/// Result of parsing the top-level daemon CLI arguments.
+///
+/// `show_help` and `show_version` are handled before the daemon loop starts.
+/// `remainder` is forwarded to [`RuntimeOptions`] for full option parsing.
 pub(crate) struct ParsedArgs {
     pub(crate) program_name: ProgramName,
     pub(crate) show_help: bool,
@@ -37,7 +43,10 @@ pub(crate) struct ParsedArgs {
     pub(crate) remainder: Vec<OsString>,
 }
 
-/// Internal helper constructing the clap command used by [`parse_args`].
+/// Builds the clap [`Command`] used by [`parse_args`].
+///
+/// Only `--help` and `--version` are extracted here; all other flags are
+/// collected as `remainder` and forwarded to the daemon option parser.
 pub(crate) fn clap_command(program_name: &'static str) -> Command {
     Command::new(program_name)
         .disable_help_flag(true)
@@ -66,6 +75,15 @@ pub(crate) fn clap_command(program_name: &'static str) -> Command {
         )
 }
 
+/// Parses the top-level daemon arguments, extracting `--help` and `--version`.
+///
+/// All unrecognised flags are captured in [`ParsedArgs::remainder`] for
+/// downstream processing by [`RuntimeOptions::parse_with_brand`].
+///
+/// # Errors
+///
+/// Returns a clap error if argument parsing fails (e.g., unrecognised flags
+/// that clap's lenient mode cannot absorb).
 pub(crate) fn parse_args<I, S>(arguments: I) -> Result<ParsedArgs, clap::Error>
 where
     I: IntoIterator<Item = S>,
@@ -96,6 +114,7 @@ where
     })
 }
 
+/// Returns the daemon help text for the given program name.
 pub(crate) fn render_help(program_name: ProgramName) -> String {
     help_text(program_name.brand())
 }
