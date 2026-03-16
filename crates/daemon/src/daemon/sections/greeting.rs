@@ -43,6 +43,9 @@ pub(crate) fn legacy_daemon_greeting() -> String {
     legacy_daemon_greeting_for_protocol(ProtocolVersion::NEWEST)
 }
 
+/// Reads one line from `reader`, stripping trailing `\r` and `\n`.
+///
+/// Returns `Ok(None)` on EOF, or `Ok(Some(line))` with the stripped content.
 pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     let mut line = String::new();
     let bytes = reader.read_line(&mut line)?;
@@ -77,6 +80,11 @@ fn advertise_capabilities(
     }
 }
 
+/// Returns the `@RSYNCD: capabilities` lines to advertise to the client.
+///
+/// Emits `modules` unconditionally when modules are present, and appends
+/// `authlist` when at least one module requires authentication. Returns an
+/// empty vec when no modules are configured.
 pub(crate) fn advertised_capability_lines(modules: &[ModuleRuntime]) -> Vec<String> {
     if modules.is_empty() {
         return Vec::new();
