@@ -138,9 +138,9 @@ pub mod token_reader;
 pub mod transfer_ops;
 
 pub use self::adaptive_buffer::{
-    AdaptiveTokenBuffer, LARGE_BUFFER_SIZE, MEDIUM_BUFFER_SIZE, MEDIUM_FILE_THRESHOLD,
-    SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD, adaptive_buffer_size, adaptive_token_capacity,
-    adaptive_writer_capacity,
+    AdaptiveTokenBuffer, HUGE_BUFFER_SIZE, HUGE_FILE_THRESHOLD, LARGE_BUFFER_SIZE,
+    MEDIUM_BUFFER_SIZE, MEDIUM_FILE_THRESHOLD, SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD,
+    adaptive_buffer_size, adaptive_token_capacity, adaptive_writer_capacity,
 };
 pub use self::config::{
     FileSelectionConfig, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig,
