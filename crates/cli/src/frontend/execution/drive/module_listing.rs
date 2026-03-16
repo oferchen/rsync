@@ -30,6 +30,8 @@ pub(super) struct ModuleListingInputs<'a> {
     pub blocking_io: Option<bool>,
 }
 
+/// Attempts a daemon module listing if the operands indicate one; returns `None`
+/// when a normal transfer should proceed instead.
 pub(super) fn maybe_handle_module_listing<Out, Err>(
     stdout: &mut Out,
     stderr: &mut MessageSink<Err>,

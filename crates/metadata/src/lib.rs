@@ -68,22 +68,18 @@
 //! - `core::client` integrates these helpers for local filesystem copies.
 //! - [`filetime`] for lower-level timestamp manipulation utilities.
 
-// Cross-platform ACL support using exacl (Linux, macOS, FreeBSD)
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
 ))]
 mod acl_exacl;
 
-// Stub for Apple platforms that don't support ACLs (iOS, tvOS, watchOS)
 #[cfg(all(
     feature = "acl",
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 mod acl_stub;
 
-// Universal no-op for platforms without any ACL implementation
-// (covers: acl feature disabled, or acl enabled on uncovered platforms like Windows)
 #[cfg(not(any(all(
     feature = "acl",
     any(
@@ -154,7 +150,6 @@ pub use nfsv4_acl_stub as nfsv4_acl;
 
 pub mod fake_super;
 
-// Export sync_acls and apply_acls_from_cache from the appropriate platform module
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
@@ -167,7 +162,6 @@ pub use acl_exacl::{apply_acls_from_cache, sync_acls};
 ))]
 pub use acl_stub::{apply_acls_from_cache, sync_acls};
 
-// Universal no-op for all other platforms (acl feature disabled or uncovered OS)
 #[cfg(not(any(all(
     feature = "acl",
     any(

@@ -1,15 +1,15 @@
-// PROXY protocol v1/v2 header parsing for daemon connections.
-//
-// When `proxy protocol = true` is set in the daemon configuration, the
-// daemon reads a PROXY protocol header from the TCP stream BEFORE the
-// `@RSYNCD:` greeting. This allows load balancers and proxies (e.g.,
-// HAProxy) to convey the original client address.
-//
-// upstream: clientserver.c:1298 - `if (lp_proxy_protocol() && !read_proxy_protocol_header(f_in))`
-//
-// References:
-// - PROXY protocol v1: <https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt>
-// - PROXY protocol v2: same document, section 2.2
+//! PROXY protocol v1/v2 header parsing for daemon connections.
+//!
+//! When `proxy protocol = true` is set in the daemon configuration, the
+//! daemon reads a PROXY protocol header from the TCP stream BEFORE the
+//! `@RSYNCD:` greeting. This allows load balancers and proxies (e.g.,
+//! HAProxy) to convey the original client address.
+//!
+//! upstream: clientserver.c:1298 - `if (lp_proxy_protocol() && !read_proxy_protocol_header(f_in))`
+//!
+//! References:
+//! - PROXY protocol v1: <https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt>
+//! - PROXY protocol v2: same document, section 2.2
 
 /// Binary signature that opens every PROXY protocol v2 header.
 ///

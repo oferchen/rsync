@@ -1,4 +1,4 @@
-// Transfer execution - stream setup, handshake building, and transfer lifecycle.
+//! Transfer execution - stream setup, handshake building, and transfer lifecycle.
 
 /// Validates that the module path exists.
 ///

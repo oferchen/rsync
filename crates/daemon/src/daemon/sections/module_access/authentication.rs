@@ -1,6 +1,6 @@
-// Authentication - challenge-response authentication for protected modules.
-//
-// upstream: authenticate.c, compat.c:858
+//! Challenge-response authentication for protected modules.
+//!
+//! upstream: authenticate.c, compat.c:858
 
 /// Result of a module authentication attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]

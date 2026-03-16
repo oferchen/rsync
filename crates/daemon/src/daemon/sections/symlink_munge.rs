@@ -1,6 +1,6 @@
-// Re-export core munge/unmunge functions from the metadata crate.
-// The canonical implementation lives in `metadata::symlink_munge` so that
-// both the daemon and the client-side transfer path share the same logic.
+//! Re-export core munge/unmunge functions from the metadata crate.
+//! The canonical implementation lives in `metadata::symlink_munge` so that
+//! both the daemon and the client-side transfer path share the same logic.
 #[allow(unused_imports)]
 pub(crate) use ::metadata::symlink_munge::{munge_symlink, unmunge_symlink};
 

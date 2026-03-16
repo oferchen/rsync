@@ -94,10 +94,7 @@ pub fn send_msgs_vectored<W: Write>(
     // Build IoSlice array: alternating headers and payloads
     let mut slices = Vec::with_capacity(messages.len() * 2);
     for (i, (_, payload)) in messages.iter().enumerate() {
-        // Add header slice
         slices.push(IoSlice::new(&encoded_headers[i]));
-
-        // Add payload slice only if non-empty
         if !payload.is_empty() {
             slices.push(IoSlice::new(payload));
         }

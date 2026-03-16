@@ -865,14 +865,11 @@ fn apply_permissions_from_entry(
             return Ok(());
         }
 
-        // Standard permission preservation
         if options.permissions() {
             let mode = entry.permissions();
-            // Optimization: check current permissions and skip syscall if already correct.
-            // This matches upstream rsync behavior which avoids redundant chmod calls.
             let needs_chmod = match cached_meta {
                 Some(meta) => (meta.permissions().mode() & 0o7777) != (mode & 0o7777),
-                None => true, // Can't stat, try chmod anyway
+                None => true,
             };
 
             if needs_chmod {
@@ -1004,7 +1001,6 @@ fn apply_atime_only_from_entry(
     };
 
     if needs_update {
-        // Preserve the existing mtime while updating only atime.
         let mtime = match cached_meta {
             Some(meta) => FileTime::from_last_modification_time(meta),
             None => {

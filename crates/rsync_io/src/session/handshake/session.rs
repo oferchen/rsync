@@ -398,14 +398,6 @@ impl<R> SessionHandshake<R> {
     /// negotiated metadata without matching on [`SessionHandshake`] immediately. This is useful
     /// when temporary ownership of the underlying transport is required (for example to wrap it
     /// with instrumentation) before resuming the rsync protocol exchange.
-    /// Decomposes the handshake into variant-specific metadata and replaying stream parts.
-    ///
-    /// The returned [`SessionHandshakeParts`] mirrors the helpers exposed by the
-    /// variant-specific handshakes while allowing higher layers to stage the
-    /// buffered negotiation bytes and negotiated metadata without matching on
-    /// [`SessionHandshake`] immediately. This is useful when temporary ownership
-    /// of the underlying transport is required (for example to wrap it with
-    /// instrumentation) before resuming the rsync protocol exchange.
     #[must_use]
     pub fn into_parts(self) -> SessionHandshakeParts<R> {
         match self {

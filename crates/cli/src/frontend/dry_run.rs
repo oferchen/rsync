@@ -288,7 +288,6 @@ impl DryRunSummary {
     /// ```
     #[must_use]
     pub fn format_summary(&self) -> String {
-        // In a real dry run, no bytes are actually sent or received
         format!(
             "sent 0 bytes  received 0 bytes  0.00 bytes/sec\n\
              total size is {}  speedup is 0.00 (DRY RUN)\n",

@@ -105,18 +105,14 @@ pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
         return Some(ownership::uid_from_raw(uid));
     }
 
-    // Check cache first (fast path for common case: all files have same owner)
-    // Uses read lock to allow concurrent cache hits from multiple threads
     if let Ok(cache) = UID_CACHE.read() {
         if let Some(&cached) = cache.get(&uid) {
             return Some(ownership::uid_from_raw(cached));
         }
     }
 
-    // Cache miss: perform expensive NSS lookup
     let mapped = map_uid_uncached(uid);
 
-    // Store in cache for future lookups (requires write lock)
     if let Ok(mut cache) = UID_CACHE.write() {
         cache.insert(uid, mapped);
     }
@@ -150,18 +146,14 @@ pub fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
         return Some(ownership::gid_from_raw(gid));
     }
 
-    // Check cache first (fast path for common case: all files have same group)
-    // Uses read lock to allow concurrent cache hits from multiple threads
     if let Ok(cache) = GID_CACHE.read() {
         if let Some(&cached) = cache.get(&gid) {
             return Some(ownership::gid_from_raw(cached));
         }
     }
 
-    // Cache miss: perform expensive NSS lookup
     let mapped = map_gid_uncached(gid);
 
-    // Store in cache for future lookups (requires write lock)
     if let Ok(mut cache) = GID_CACHE.write() {
         cache.insert(gid, mapped);
     }

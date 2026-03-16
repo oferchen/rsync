@@ -1,6 +1,6 @@
-// Module listing - formats and sends the list of available modules to clients.
-//
-// upstream: clientserver.c:1246-1254
+//! Module listing - formats and sends the list of available modules to clients.
+//!
+//! upstream: clientserver.c:1246-1254
 
 /// Formats a single module listing line using upstream's `%-15s\t%s\n` layout.
 ///

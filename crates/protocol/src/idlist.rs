@@ -167,7 +167,6 @@ impl IdList {
         id0_names: bool,
         protocol_version: u8,
     ) -> io::Result<()> {
-        // Send (id, name) pairs for non-zero IDs with names
         for &id in &self.order {
             if id == 0 {
                 continue; // id=0 is handled separately
@@ -231,7 +230,6 @@ impl IdList {
     where
         F: Fn(&[u8]) -> Option<u32>,
     {
-        // Read (id, name) pairs until id=0
         loop {
             // Use varint30 decoding (int for proto < 30, varint for proto >= 30)
             let id_signed = crate::read_varint30_int(reader, protocol_version)?;

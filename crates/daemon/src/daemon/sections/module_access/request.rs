@@ -1,6 +1,6 @@
-// Module request handling - context, error responses, and main entry point.
-//
-// upstream: clientserver.c
+//! Module request handling - context, error responses, and main entry point.
+//!
+//! upstream: clientserver.c
 
 /// Context for module request handling, passed to helper functions.
 struct ModuleRequestContext<'a> {

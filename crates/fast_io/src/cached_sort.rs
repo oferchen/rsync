@@ -25,7 +25,6 @@ pub use permutation::Permutation;
 /// Implement this trait for types that will be used as sort keys.
 pub trait CachedSortKey: Ord + Clone {}
 
-// Blanket implementation for common key types
 impl CachedSortKey for String {}
 impl CachedSortKey for Vec<u8> {}
 impl CachedSortKey for i64 {}
