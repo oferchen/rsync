@@ -942,52 +942,109 @@ impl ReceiverContext {
                     }
                 }
 
-                // Fill the pipeline with requests
-                while pipeline.can_send() {
-                    if let Some((file_idx, file_entry, file_path)) = file_iter.next() {
-                        let relative_path = file_entry.path();
+                // Fill the pipeline with requests.
+                // Collect a batch of files, compute signatures (potentially in
+                // parallel for incremental sync), then send requests sequentially.
+                // Signature computation involves opening basis files and computing
+                // rolling + strong checksums - CPU-intensive for large files with
+                // MD4/MD5. Parallel computation overlaps this across files.
+                {
+                    use rayon::prelude::*;
 
-                        if self.config.flags.verbose && self.config.connection.client_mode {
-                            info_log!(Name, 1, "{}", relative_path.display());
-                        }
+                    // Collect files up to available pipeline slots.
+                    let batch: Vec<_> = file_iter
+                        .by_ref()
+                        .take(pipeline.available_slots())
+                        .collect();
 
-                        let (sig, basis) = if is_redo_pass {
-                            (None, None)
+                    if !batch.is_empty() && !is_redo_pass {
+                        // Compute signatures - parallel when batch is large enough.
+                        // Threshold mirrors PARALLEL_STAT_THRESHOLD: below this,
+                        // rayon dispatch overhead exceeds the benefit.
+                        let sig_results: Vec<_> = if batch.len() >= PARALLEL_STAT_THRESHOLD {
+                            batch
+                                .par_iter()
+                                .map(|(_, file_entry, file_path)| {
+                                    let basis_config = self.build_basis_file_config(
+                                        file_path,
+                                        &setup.dest_dir,
+                                        file_entry.path(),
+                                        file_entry.size(),
+                                        setup.checksum_length,
+                                        setup.checksum_algorithm,
+                                    );
+                                    find_basis_file_with_config(&basis_config)
+                                })
+                                .collect()
                         } else {
-                            let basis_config = self.build_basis_file_config(
-                                &file_path,
-                                &setup.dest_dir,
-                                relative_path,
-                                file_entry.size(),
-                                setup.checksum_length,
-                                setup.checksum_algorithm,
-                            );
-                            let basis_result = find_basis_file_with_config(&basis_config);
-                            (basis_result.signature, basis_result.basis_path)
+                            batch
+                                .iter()
+                                .map(|(_, file_entry, file_path)| {
+                                    let basis_config = self.build_basis_file_config(
+                                        file_path,
+                                        &setup.dest_dir,
+                                        file_entry.path(),
+                                        file_entry.size(),
+                                        setup.checksum_length,
+                                        setup.checksum_algorithm,
+                                    );
+                                    find_basis_file_with_config(&basis_config)
+                                })
+                                .collect()
                         };
 
-                        let is_new_file = basis.is_none();
+                        // Send requests sequentially (wire order matters).
+                        for ((file_idx, file_entry, file_path), basis_result) in
+                            batch.into_iter().zip(sig_results)
+                        {
+                            if self.config.flags.verbose && self.config.connection.client_mode {
+                                info_log!(Name, 1, "{}", file_entry.path().display());
+                            }
 
-                        let pending = send_file_request(
-                            writer,
-                            &mut ndx_write_codec,
-                            self.flat_to_wire_ndx(file_idx),
-                            file_path.clone(),
-                            sig,
-                            basis,
-                            file_entry.size(),
-                            &request_config,
-                        )?;
+                            let is_new_file = basis_result.is_empty();
+                            let pending = send_file_request(
+                                writer,
+                                &mut ndx_write_codec,
+                                self.flat_to_wire_ndx(file_idx),
+                                file_path.clone(),
+                                basis_result.signature,
+                                basis_result.basis_path,
+                                file_entry.size(),
+                                &request_config,
+                            )?;
 
-                        pipeline.push(pending);
-                        pending_files_info.push_back((
-                            file_idx,
-                            file_path,
-                            file_entry,
-                            is_new_file,
-                        ));
+                            pipeline.push(pending);
+                            pending_files_info.push_back((
+                                file_idx,
+                                file_path,
+                                file_entry,
+                                is_new_file,
+                            ));
+                        }
                     } else {
-                        break;
+                        // Redo pass or empty batch: no basis files, skip signatures.
+                        for (file_idx, file_entry, file_path) in batch {
+                            if self.config.flags.verbose && self.config.connection.client_mode {
+                                info_log!(Name, 1, "{}", file_entry.path().display());
+                            }
+
+                            let pending = send_file_request(
+                                writer,
+                                &mut ndx_write_codec,
+                                self.flat_to_wire_ndx(file_idx),
+                                file_path.clone(),
+                                None,
+                                None,
+                                file_entry.size(),
+                                &request_config,
+                            )?;
+
+                            pipeline.push(pending);
+                            pending_files_info.push_back((
+                                file_idx, file_path, file_entry,
+                                true, // is_new_file: no basis in redo pass
+                            ));
+                        }
                     }
                 }
 
