@@ -67,8 +67,8 @@ default = ["zstd", "lz4", "xattr", "iconv"]
 # ============================================================================
 # Compression Features
 # ============================================================================
-zstd = ["engine/zstd", "compress/zstd", "transfer/zstd", "protocol/zstd"]
-lz4 = ["engine/lz4", "compress/lz4", "transfer/lz4", "protocol/lz4"]
+zstd = ["engine/zstd", "compress/zstd", "transfer/zstd"]
+lz4 = ["engine/lz4", "compress/lz4", "transfer/lz4"]
 zlib-ng = ["compress/zlib-ng", "engine/zlib-ng", "transfer/zlib-ng", "protocol/zlib-ng"]
 
 # ============================================================================
