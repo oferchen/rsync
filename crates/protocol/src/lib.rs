@@ -22,16 +22,16 @@
 //!   [`codec::NdxCodec`] for file-list index encoding.
 //! - [`wire`] - Wire protocol serialization for signatures, deltas, and file
 //!   entries.
-//! - [`multiplex`] / `envelope` - `MSG_*` control/data framing used once a
+//! - `multiplex` / `envelope` - `MSG_*` control/data framing used once a
 //!   session is negotiated. [`MplexReader`] and [`MplexWriter`] handle the
 //!   24-bit-payload multiplexed channel.
-//! - [`varint`] - Variable-length integer codec matching upstream rsync's
+//! - `varint` - Variable-length integer codec matching upstream rsync's
 //!   `varint`/`varlong` encoding.
-//! - [`negotiation`] - Incremental sniffers that classify handshake style
+//! - `negotiation` - Incremental sniffers that classify handshake style
 //!   (binary vs. legacy ASCII) without losing buffered bytes.
 //! - [`acl`] - ACL wire protocol encoding and decoding.
 //! - [`xattr`] - Extended attribute wire protocol encoding and decoding.
-//! - [`compatibility`] - Post-negotiation compatibility flags shared by peers.
+//! - `compatibility` - Post-negotiation compatibility flags shared by peers.
 //! - [`filters`] - Filter list wire protocol encoding and decoding.
 //! - [`stats`] - Transfer and delete statistics wire format.
 //! - [`state`] - Type-safe state machine for rsync protocol phases.
