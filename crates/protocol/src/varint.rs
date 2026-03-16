@@ -157,7 +157,6 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
 /// # Errors
 ///
 /// Propagates any error returned by `writer` while writing the encoded bytes.
-#[must_use]
 #[inline]
 pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()> {
     let (len, bytes) = encode_bytes(value);
@@ -181,6 +180,7 @@ pub fn write_varlong<W: Write + ?Sized>(
     value: i64,
     min_bytes: u8,
 ) -> io::Result<()> {
+    // Convert to little-endian bytes
     let bytes = value.to_le_bytes();
 
     let mut cnt = 8;
@@ -214,7 +214,6 @@ pub fn write_varlong<W: Write + ?Sized>(
 ///
 /// * `reader` - Source of the encoded bytes
 /// * `min_bytes` - Minimum number of bytes used in encoding (must match the write call)
-#[must_use]
 #[inline]
 pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
     // upstream: io.c:read_varlong() — read min_bytes first, then extra.
@@ -257,7 +256,6 @@ pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Resu
 /// The encoding:
 /// - For values 0 <= x <= 0x7FFFFFFF: writes 4 bytes (little-endian i32)
 /// - For larger values: writes 0xFFFFFFFF (4 bytes) followed by the full 8 bytes
-#[must_use]
 pub fn write_longint<W: Write + ?Sized>(writer: &mut W, value: i64) -> io::Result<()> {
     if (0..=0x7FFF_FFFF).contains(&value) {
         writer.write_all(&(value as i32).to_le_bytes())
@@ -273,7 +271,6 @@ pub fn write_longint<W: Write + ?Sized>(writer: &mut W, value: i64) -> io::Resul
 /// The encoding:
 /// - If first 4 bytes == 0xFFFFFFFF: next 8 bytes are the full i64 value
 /// - Otherwise: the 4 bytes are the value (sign-extended to i64)
-#[must_use]
 pub fn read_longint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i64> {
     let mut buf = [0u8; 4];
     reader.read_exact(&mut buf)?;
@@ -294,7 +291,6 @@ pub fn read_longint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i64> {
 ///
 /// This mirrors upstream's `write_varlong30(int f, int64 x, uchar min_bytes)` inline function.
 /// For protocol < 30, callers should use `write_longint` instead.
-#[must_use]
 pub fn write_varlong30<W: Write + ?Sized>(
     writer: &mut W,
     value: i64,
@@ -307,7 +303,6 @@ pub fn write_varlong30<W: Write + ?Sized>(
 ///
 /// This mirrors upstream's `read_varlong30(int f, uchar min_bytes)` inline function.
 /// For protocol < 30, callers should use `read_longint` instead.
-#[must_use]
 pub fn read_varlong30<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
     read_varlong(reader, min_bytes)
 }
@@ -315,7 +310,6 @@ pub fn read_varlong30<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Re
 /// Writes a 32-bit integer using rsync's fixed 4-byte little-endian format.
 ///
 /// This mirrors upstream's `write_int()` from io.c. Used for protocol versions < 30.
-#[must_use]
 #[inline]
 pub fn write_int<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
@@ -324,7 +318,6 @@ pub fn write_int<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()
 /// Reads a 32-bit integer using rsync's fixed 4-byte little-endian format.
 ///
 /// This mirrors upstream's `read_int()` from io.c. Used for protocol versions < 30.
-#[must_use]
 #[inline]
 pub fn read_int<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     let mut buf = [0u8; 4];
@@ -399,7 +392,6 @@ pub fn encode_varint_to_vec(value: i32, out: &mut Vec<u8>) {
 /// Returns [`io::ErrorKind::UnexpectedEof`] when the reader does not provide the
 /// required bytes and [`io::ErrorKind::InvalidData`] if the encoded value would
 /// overflow the 32-bit range supported by upstream rsync.
-#[must_use]
 #[inline]
 pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     let mut first = [0u8; 1];
@@ -428,7 +420,6 @@ pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
 ///
 /// This is the slice-based equivalent of [`read_varint`], useful when the caller
 /// already captured the serialized data in memory.
-#[must_use]
 #[inline]
 pub fn decode_varint(bytes: &[u8]) -> io::Result<(i32, &[u8])> {
     let (value, consumed) = decode_bytes(bytes)?;

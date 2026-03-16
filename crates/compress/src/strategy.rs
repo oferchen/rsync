@@ -310,7 +310,10 @@ impl CompressionStrategy for ZlibStrategy {
         let mut encoder = CountingZlibEncoder::with_sink(output, self.level);
         encoder.write_all(input)?;
         let (returned_output, _bytes_written) = encoder.finish_into_inner()?;
-        Ok(returned_output.len() - initial_len)
+
+        // Calculate actual bytes written
+        let final_len = returned_output.len();
+        Ok(final_len - initial_len)
     }
 
     fn decompress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
@@ -551,6 +554,7 @@ impl CompressionStrategySelector {
         remote_algorithms: &[CompressionAlgorithmKind],
         level: CompressionLevel,
     ) -> Box<dyn CompressionStrategy> {
+        // Find first local algorithm that remote also supports
         for &local_algo in local_algorithms {
             if remote_algorithms.contains(&local_algo) && local_algo.is_available() {
                 if let Ok(strategy) = Self::for_algorithm_kind(local_algo, level) {
@@ -559,6 +563,7 @@ impl CompressionStrategySelector {
             }
         }
 
+        // No match found - use no compression as fallback
         Box::new(NoCompressionStrategy::new())
     }
 

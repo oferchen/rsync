@@ -191,7 +191,6 @@ impl ProtocolState<Negotiation> {
     ///
     /// let file_list_state = state.begin_file_list().unwrap();
     /// ```
-    #[must_use]
     pub fn begin_file_list(self) -> Result<ProtocolState<FileList>, TransitionError> {
         let protocol_version = self
             .phase
@@ -259,7 +258,6 @@ impl ProtocolState<FileList> {
     ///
     /// let transfer_state = state.begin_transfer().unwrap();
     /// ```
-    #[must_use]
     pub fn begin_transfer(self) -> Result<ProtocolState<Transfer>, TransitionError> {
         let file_count = self
             .phase
@@ -514,7 +512,6 @@ impl DynamicProtocolState {
     /// # Errors
     ///
     /// Returns an error if the required fields for the transition are not set.
-    #[must_use]
     pub fn advance(&mut self) -> Result<Phase, TransitionError> {
         match self.phase {
             Phase::Negotiation => {

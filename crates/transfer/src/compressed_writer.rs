@@ -152,7 +152,6 @@ impl<W: Write> CompressedWriter<W> {
     /// # Errors
     ///
     /// Returns an error if finishing the compression stream or flushing fails.
-    #[must_use]
     pub fn finish(mut self) -> io::Result<W> {
         // Finish the encoder - this writes final trailer bytes to the sink
         match self.encoder {

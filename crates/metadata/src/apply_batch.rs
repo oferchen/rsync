@@ -140,6 +140,7 @@ impl BatchMetadataContext {
         _destination: &Path,
         _metadata: &fs::Metadata,
     ) -> Result<(), MetadataError> {
+        // Non-Unix platforms don't support ownership
         Ok(())
     }
 

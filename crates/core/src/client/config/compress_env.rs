@@ -16,7 +16,6 @@ const FALSE_VALUES: &[&str] = &["0", "false", "no", "off"];
 /// disables compression regardless of CLI flags, while `Ok(Some(false))`
 /// leaves CLI/rsync defaults in place. Any other value results in a branded
 /// diagnostic so callers can correct the configuration.
-#[must_use]
 pub fn force_no_compress_from_env(variable: &str) -> Result<Option<bool>, Message> {
     let Some(value) = env::var_os(variable) else {
         return Ok(None);

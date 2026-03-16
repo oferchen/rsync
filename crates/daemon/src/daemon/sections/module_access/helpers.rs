@@ -1,4 +1,4 @@
-//! Helpers for module access - logging, sanitization, bandwidth formatting, filter rules, and utilities.
+// Helpers for module access - logging, sanitization, bandwidth formatting, filter rules, and utilities.
 
 /// Applies the module-specific bandwidth directives to the active limiter.
 ///

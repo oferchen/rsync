@@ -94,6 +94,8 @@ fn resolve_group(group: &str) -> io::Result<u32> {
     resolve_group_by_name(group)
 }
 
+// ==================== Unix Implementation ====================
+
 #[cfg(unix)]
 fn resolve_user_by_name(name: &str) -> io::Result<u32> {
     match crate::id_lookup::lookup_user_by_name(name.as_bytes())? {
@@ -221,6 +223,8 @@ pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
         switched_egid,
     })
 }
+
+// ==================== Non-Unix Implementation ====================
 
 /// No-op guard for non-Unix platforms.
 ///

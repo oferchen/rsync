@@ -345,7 +345,6 @@ impl BatchedFileListWriter {
     /// # Returns
     ///
     /// Returns `Ok(true)` if the batch was flushed, `Ok(false)` otherwise.
-    #[must_use]
     pub fn add_entry<W: Write>(&mut self, writer: &mut W, entry: &FileEntry) -> io::Result<bool> {
         // Track batch start time
         if self.batch_start.is_none() {
@@ -375,7 +374,6 @@ impl BatchedFileListWriter {
     /// # Returns
     ///
     /// Returns the number of batches that were flushed during this operation.
-    #[must_use]
     pub fn add_entries<'a, W, I>(&mut self, writer: &mut W, entries: I) -> io::Result<u64>
     where
         W: Write,
@@ -418,7 +416,6 @@ impl BatchedFileListWriter {
     ///
     /// This writes all accumulated entries to the underlying writer and
     /// resets the batch state. If the batch is empty, this is a no-op.
-    #[must_use]
     pub fn flush<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         if self.entry_count > 0 {
             self.flush_with_reason(writer, FlushReason::Explicit)?;
@@ -434,7 +431,6 @@ impl BatchedFileListWriter {
     /// # Returns
     ///
     /// Returns `Ok(true)` if a flush was performed, `Ok(false)` otherwise.
-    #[must_use]
     pub fn check_timeout_flush<W: Write>(&mut self, writer: &mut W) -> io::Result<bool> {
         if let Some(start) = self.batch_start {
             if start.elapsed() >= self.config.flush_timeout && self.entry_count > 0 {
@@ -488,7 +484,6 @@ impl BatchedFileListWriter {
     ///
     /// * `writer` - The underlying writer to flush to.
     /// * `io_error` - Optional I/O error code to include in the end marker.
-    #[must_use]
     pub fn finish<W: Write>(&mut self, writer: &mut W, io_error: Option<i32>) -> io::Result<()> {
         // Flush any remaining entries
         if self.entry_count > 0 {

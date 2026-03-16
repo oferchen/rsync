@@ -121,6 +121,7 @@ pub(super) fn execute_transfer(
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
 
+    // Unpack flags for easier access in the function body
     let TransferFlags {
         append_allowed,
         append_verify,
@@ -163,6 +164,7 @@ pub(super) fn execute_transfer(
         });
 
         if skip {
+            // sometimes we still need to re-verify
             let requires_content_verification =
                 existing.is_file() && !checksum_enabled && context.options().backup_enabled();
 
@@ -237,10 +239,12 @@ pub(super) fn execute_transfer(
         }
     }
 
+    // we are going to overwrite / rewrite — back up if needed
     if let Some(existing) = existing_metadata {
         context.backup_existing_entry(destination, relative, existing.file_type())?;
     }
 
+    // non-regular files get the small-path
     if !file_type.is_file() {
         return copy_special_as_regular_file(
             context,
@@ -258,6 +262,7 @@ pub(super) fn execute_transfer(
         );
     }
 
+    // regular file copy
     let mut reader = open_source_file(source, context.open_noatime_enabled())
         .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     let append_mode = determine_append_mode(
@@ -320,10 +325,12 @@ pub(super) fn execute_transfer(
 
     // Use existing reader or re-open if copying from a reference path
     let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {
+        // Reference path differs from source - need to open the override path
         let file = open_source_file(override_path, context.open_noatime_enabled())
             .map_err(|error| LocalCopyError::io("copy file", override_path.clone(), error))?;
         (file, override_path.as_path())
     } else {
+        // Same source - reuse the existing reader (already at correct position)
         (reader, source)
     };
     // Seek to append offset if needed (for override path case, or to reset position)
@@ -333,6 +340,7 @@ pub(super) fn execute_transfer(
             .map_err(|error| LocalCopyError::io("copy file", copy_source, error))?;
     }
 
+    // choose write strategy
     let delay_updates_enabled = context.delay_updates_enabled();
     let mut guard = None;
     let mut staging_path: Option<PathBuf> = None;
@@ -523,6 +531,7 @@ pub(super) fn execute_transfer(
         }
     };
 
+    // record created path
     context.register_created_path(
         destination,
         CreatedEntryKind::File,

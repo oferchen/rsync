@@ -161,11 +161,7 @@ impl CompiledRule {
     }
 }
 
-/// Processes a `!` (clear) directive by stripping the specified sides from
-/// every rule in the list and removing any rule left with no active side.
-///
-/// When both `sender` and `receiver` are `false`, the list is unchanged
-/// (a no-op clear).
+/// Removes rules whose cleared side flags leave them inactive.
 pub(crate) fn apply_clear_rule(rules: &mut Vec<CompiledRule>, sender: bool, receiver: bool) {
     if !sender && !receiver {
         return;

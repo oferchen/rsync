@@ -16,7 +16,6 @@ use super::helpers::{
 /// The payload length is validated against [`crate::MAX_PAYLOAD_LENGTH`], mirroring the
 /// 24-bit limit imposed by the C implementation. Violations result in
 /// [`io::ErrorKind::InvalidInput`].
-#[must_use]
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
     debug_log!(Io, 3, "mux send: code={:?} len={}", code, payload.len());
     let payload_len = ensure_payload_length(payload.len())?;
@@ -33,7 +32,6 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
 /// [`::core::ops::DerefMut`], and the upstream-compatible encoding is reused through the same vectored write
 /// path. [`MessageFrame::encode_into_writer`] forwards to this helper for ergonomic access from an
 /// owned frame.
-#[must_use]
 pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<()> {
     let header = frame.header()?;
     write_validated_message(writer, header, frame.payload())
@@ -94,7 +92,10 @@ pub fn send_msgs_vectored<W: Write>(
     // Build IoSlice array: alternating headers and payloads
     let mut slices = Vec::with_capacity(messages.len() * 2);
     for (i, (_, payload)) in messages.iter().enumerate() {
+        // Add header slice
         slices.push(IoSlice::new(&encoded_headers[i]));
+
+        // Add payload slice only if non-empty
         if !payload.is_empty() {
             slices.push(IoSlice::new(payload));
         }
@@ -256,7 +257,6 @@ fn write_validated_message<W: Write + ?Sized>(
 /// send_keepalive(&mut buffer).expect("keepalive must succeed");
 /// assert_eq!(buffer.len(), 4); // header only, no payload
 /// ```
-#[must_use]
 pub fn send_keepalive<W: Write>(writer: &mut W) -> io::Result<()> {
     send_msg(writer, MessageCode::NoOp, &[])
 }
@@ -265,7 +265,6 @@ pub fn send_keepalive<W: Write>(writer: &mut W) -> io::Result<()> {
 ///
 /// The function blocks until the full header and payload are read or an I/O
 /// error occurs. Invalid headers surface as [`io::ErrorKind::InvalidData`].
-#[must_use]
 pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
     let header = read_header(reader)?;
     let len = header.payload_len_usize();
@@ -283,7 +282,6 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
 /// reusing any existing capacity to satisfy the workspace's buffer reuse
 /// guidance. The decoded message code is returned so the caller can dispatch on
 /// the frame type while reading the payload from `buffer`.
-#[must_use]
 pub fn recv_msg_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<MessageCode> {
     let header = read_header(reader)?;
     let len = header.payload_len_usize();

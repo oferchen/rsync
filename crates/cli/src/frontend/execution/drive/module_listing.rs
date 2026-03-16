@@ -13,7 +13,6 @@ use crate::frontend::{
     execution::render_module_list, password::load_optional_password, write_message,
 };
 
-/// Inputs for attempting a daemon module listing before a normal transfer.
 pub(super) struct ModuleListingInputs<'a> {
     pub file_list_operands: &'a [OsString],
     pub remainder: &'a [OsString],
@@ -30,8 +29,6 @@ pub(super) struct ModuleListingInputs<'a> {
     pub blocking_io: Option<bool>,
 }
 
-/// Handles `rsync host::` module listing requests, returning `None` if
-/// the operands indicate a normal transfer instead.
 pub(super) fn maybe_handle_module_listing<Out, Err>(
     stdout: &mut Out,
     stderr: &mut MessageSink<Err>,

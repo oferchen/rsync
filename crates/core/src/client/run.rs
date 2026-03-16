@@ -107,7 +107,6 @@ use super::summary::ClientSummary;
 /// println!("Copied {} files", summary.files_copied());
 /// # Ok::<(), core::client::ClientError>(())
 /// ```
-#[must_use]
 #[cfg_attr(feature = "tracing", instrument(skip(config)))]
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     run_client_internal(config, None)
@@ -751,16 +750,18 @@ fn replay_batch(
             ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
         })?;
 
-    if result.recurse {
-        logging::debug_log!(Proto, 1, "Batch mode enabled: recurse");
+    #[cfg(feature = "tracing")]
+    {
+        if result.recurse {
+            tracing::info!("Batch mode enabled: recurse");
+        }
+        tracing::info!(
+            file_count = result.file_count,
+            total_size = result.total_size,
+            "Batch replay complete"
+        );
     }
-    logging::debug_log!(
-        Proto,
-        1,
-        "Batch replay complete file_count={} total_size={}",
-        result.file_count,
-        result.total_size
-    );
+    let _ = &result;
 
     use engine::local_copy::LocalCopySummary;
     Ok(ClientSummary::from_summary(LocalCopySummary::default()))

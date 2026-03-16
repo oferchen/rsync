@@ -1,27 +1,27 @@
-//! Group expansion for `@group` syntax in auth_users.
-//!
-//! Expands `@group` references in auth_users lists to their member usernames,
-//! matching upstream rsync's daemon authentication behavior.
-//!
-//! # Syntax
-//!
-//! When an auth_users entry starts with `@`, it's treated as a group reference.
-//! The `@` prefix is stripped and the remainder is looked up as a system group
-//! name. All members of that group are added to the authorized users list.
-//!
-//! # Examples
-//!
-//! ```text
-//! auth users = alice, @staff, bob
-//! ```
-//!
-//! If the `staff` group has members `charlie` and `diana`, the effective
-//! auth_users list becomes: `alice, charlie, diana, bob`
-//!
-//! # Platform Support
-//!
-//! Group expansion uses POSIX `getgrnam_r` and is only available on Unix-like
-//! systems. On other platforms, `@group` references are silently ignored.
+// Group expansion for `@group` syntax in auth_users.
+//
+// Expands `@group` references in auth_users lists to their member usernames,
+// matching upstream rsync's daemon authentication behavior.
+//
+// # Syntax
+//
+// When an auth_users entry starts with `@`, it's treated as a group reference.
+// The `@` prefix is stripped and the remainder is looked up as a system group
+// name. All members of that group are added to the authorized users list.
+//
+// # Examples
+//
+// ```text
+// auth users = alice, @staff, bob
+// ```
+//
+// If the `staff` group has members `charlie` and `diana`, the effective
+// auth_users list becomes: `alice, charlie, diana, bob`
+//
+// # Platform Support
+//
+// Group expansion uses POSIX `getgrnam_r` and is only available on Unix-like
+// systems. On other platforms, `@group` references are silently ignored.
 
 #[cfg(unix)]
 use std::ffi::{CStr, CString};

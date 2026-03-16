@@ -118,7 +118,6 @@ impl ModuleListEntry {
 /// HTTP `CONNECT` tunnel through the specified proxy before negotiating with
 /// the daemon when the variable is set. This mirrors the behaviour of
 /// upstream rsync.
-#[must_use]
 pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientError> {
     run_module_list_with_options(request, ModuleListOptions::default())
 }

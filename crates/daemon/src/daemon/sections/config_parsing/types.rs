@@ -1,7 +1,7 @@
-//! Configuration parsing types.
-//!
-//! Core data structures used during rsyncd.conf parsing - the directive origin
-//! tracker and the parsed result container.
+// Configuration parsing types.
+//
+// Core data structures used during rsyncd.conf parsing - the directive origin
+// tracker and the parsed result container.
 
 /// Tracks the source location of a configuration directive for error reporting.
 #[derive(Clone, Debug, Eq, PartialEq)]

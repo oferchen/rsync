@@ -1,3 +1,4 @@
+//! crates/logging/src/levels.rs
 //! Flag enums and level structures for info and debug verbosity.
 
 /// Info flags for diagnostic categories.

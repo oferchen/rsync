@@ -21,7 +21,6 @@ pub enum IconvSetting {
 
 impl IconvSetting {
     /// Parses an iconv specification as accepted by `--iconv`.
-    #[must_use]
     pub fn parse(spec: &str) -> Result<Self, IconvParseError> {
         let trimmed = spec.trim();
         if trimmed.is_empty() {

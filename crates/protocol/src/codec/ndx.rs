@@ -456,7 +456,6 @@ impl NdxState {
     ///
     /// **Note**: This method always uses protocol 30+ encoding. For protocol < 30,
     /// use [`LegacyNdxCodec`] or `create_ndx_codec`.
-    #[must_use]
     pub fn write_ndx<W: Write>(&mut self, writer: &mut W, ndx: i32) -> io::Result<()> {
         let mut buf = [0u8; 6];
         let mut cnt = 0;
@@ -506,7 +505,6 @@ impl NdxState {
     ///
     /// **Note**: This method always uses protocol 30+ decoding. For protocol < 30,
     /// use [`LegacyNdxCodec`] or `create_ndx_codec`.
-    #[must_use]
     pub fn read_ndx<R: Read>(&mut self, reader: &mut R) -> io::Result<i32> {
         let mut b = [0u8; 4];
         reader.read_exact(&mut b[..1])?;
@@ -555,7 +553,6 @@ impl NdxState {
 /// Convenience function to write NDX_FLIST_EOF using protocol 30+ encoding.
 ///
 /// **Note**: For protocol < 30, use [`LegacyNdxCodec`] or `create_ndx_codec`.
-#[must_use]
 pub fn write_ndx_flist_eof<W: Write>(writer: &mut W, state: &mut NdxState) -> io::Result<()> {
     state.write_ndx(writer, NDX_FLIST_EOF)
 }
@@ -564,7 +561,6 @@ pub fn write_ndx_flist_eof<W: Write>(writer: &mut W, state: &mut NdxState) -> io
 ///
 /// **Note**: This writes `[0x00]` which is only correct for protocol 30+.
 /// For protocol < 30, use [`LegacyNdxCodec`] or `create_ndx_codec`.
-#[must_use]
 pub fn write_ndx_done<W: Write>(writer: &mut W) -> io::Result<()> {
     writer.write_all(&[0x00])
 }
@@ -605,7 +601,6 @@ pub const NDX_DONE_MODERN_BYTE: u8 = 0x00;
 /// - `main.c:875-906` - `read_final_goodbye()` reads the goodbye sentinel
 /// - `main.c:883` - protocol < 29 uses `read_int(f_in)` (4-byte LE)
 /// - `main.c:885-886` - protocol >= 29 uses `read_ndx_and_attrs()` (still 4-byte LE for 29)
-#[must_use]
 pub fn write_goodbye<W: Write>(writer: &mut W, protocol_version: u8) -> io::Result<()> {
     if protocol_version < 30 {
         writer.write_all(&NDX_DONE_LEGACY_BYTES)
@@ -630,7 +625,6 @@ pub fn write_goodbye<W: Write>(writer: &mut W, protocol_version: u8) -> io::Resu
 ///
 /// - `main.c:883` - protocol < 29: `i = read_int(f_in)` then checks `i != NDX_DONE`
 /// - `main.c:885-886` - protocol >= 29: `read_ndx_and_attrs()` which calls `read_ndx()`
-#[must_use]
 pub fn read_goodbye<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<()> {
     if protocol_version < 30 {
         let mut buf = [0u8; 4];

@@ -7,7 +7,6 @@ use core::{
     rsync_error,
 };
 
-/// Resolved owner/group IDs from a `--chown=USER:GROUP` argument.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ParsedChown {
     spec: OsString,
@@ -16,12 +15,10 @@ pub(crate) struct ParsedChown {
 }
 
 impl ParsedChown {
-    /// Returns the resolved numeric user ID, if a user was specified.
     pub(crate) const fn owner(&self) -> Option<uid_t> {
         self.owner
     }
 
-    /// Returns the resolved numeric group ID, if a group was specified.
     pub(crate) const fn group(&self) -> Option<gid_t> {
         self.group
     }
@@ -33,7 +30,6 @@ impl ParsedChown {
     }
 }
 
-/// Parses a `--chown=USER:GROUP` value, resolving names to numeric IDs.
 pub(crate) fn parse_chown_argument(value: &OsStr) -> Result<ParsedChown, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim();

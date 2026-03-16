@@ -137,7 +137,6 @@ impl CompressedTokenDecoder {
     /// The sync marker (`0x00 0x00 0xFF 0xFF`) stripped by the encoder is
     /// appended only when the next flag is not DEFLATED_DATA, matching
     /// upstream's state transition from `r_inflated` to `r_idle`.
-    #[must_use]
     pub fn recv_token<R: Read>(&mut self, reader: &mut R) -> io::Result<CompressedToken> {
         if !self.initialized {
             self.initialized = true;
@@ -298,7 +297,6 @@ impl CompressedTokenDecoder {
     /// Returns an error if the decompression operation fails.
     ///
     /// Reference: upstream token.c lines 631-670.
-    #[must_use]
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         // CPRES_ZLIBX: block-match tokens never update the inflate dictionary.
         if self.is_zlibx {

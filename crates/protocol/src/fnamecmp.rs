@@ -98,6 +98,8 @@ pub enum FnameCmpType {
 }
 
 impl FnameCmpType {
+    // Wire constants matching upstream rsync.h
+
     /// Lower bound of the basis directory index range (inclusive).
     ///
     /// Upstream: `FNAMECMP_BASIS_DIR_LOW` = 0x00. Must remain 0.

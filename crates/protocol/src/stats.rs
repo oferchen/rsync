@@ -211,7 +211,6 @@ impl TransferStats {
     /// # Errors
     ///
     /// Returns an error if writing to the stream fails.
-    #[must_use]
     pub fn write_to<W: Write>(&self, writer: &mut W, protocol: ProtocolVersion) -> io::Result<()> {
         write_varlong30(writer, self.total_read as i64, 3)?;
         write_varlong30(writer, self.total_written as i64, 3)?;
@@ -234,7 +233,6 @@ impl TransferStats {
     /// # Errors
     ///
     /// Returns an error if reading from the stream fails.
-    #[must_use]
     pub fn read_from<R: Read>(reader: &mut R, protocol: ProtocolVersion) -> io::Result<Self> {
         let total_read = read_varlong30(reader, 3)? as u64;
         let total_written = read_varlong30(reader, 3)? as u64;
@@ -572,7 +570,6 @@ impl DeleteStats {
     /// # Errors
     ///
     /// Returns an error if writing to the stream fails.
-    #[must_use]
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         use crate::varint::write_varint;
 
@@ -591,7 +588,6 @@ impl DeleteStats {
     /// # Errors
     ///
     /// Returns an error if reading from the stream fails.
-    #[must_use]
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         use crate::varint::read_varint;
 

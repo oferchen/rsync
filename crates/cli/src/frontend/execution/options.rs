@@ -318,16 +318,11 @@ pub(crate) fn parse_modify_window_argument(value: &OsStr) -> Result<u64, Message
     }
 }
 
-/// Errors that can occur when parsing a size specification (e.g. `1.5G`, `100K`).
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum SizeParseError {
-    /// Input string was empty or contained only a sign character.
     Empty,
-    /// A negative value was supplied.
     Negative,
-    /// The format could not be recognized (bad suffix, non-numeric, etc.).
     Invalid,
-    /// The resulting value exceeds `u64::MAX`.
     TooLarge,
 }
 

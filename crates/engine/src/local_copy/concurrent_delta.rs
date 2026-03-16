@@ -88,7 +88,7 @@ pub struct DeltaPipeline {
 }
 
 impl DeltaPipeline {
-    /// Creates a new pipeline with default settings.
+    /// Create a new pipeline with default settings.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -97,31 +97,29 @@ impl DeltaPipeline {
         }
     }
 
-    /// Sets the bounded channel capacity for work items.
+    /// Set channel capacity.
     #[must_use]
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.channel_capacity = capacity;
         self
     }
 
-    /// Forces sequential processing regardless of batch size.
+    /// Force sequential mode.
     #[must_use]
     pub fn sequential(mut self) -> Self {
         self.concurrent = Some(false);
         self
     }
 
-    /// Forces concurrent processing regardless of batch size.
+    /// Force concurrent mode.
     #[must_use]
     pub fn concurrent(mut self) -> Self {
         self.concurrent = Some(true);
         self
     }
 
-    /// Processes a batch of delta work items.
-    ///
-    /// Automatically selects concurrent vs sequential mode based on batch size,
-    /// unless overridden by [`Self::sequential`] or [`Self::concurrent`].
+    /// Process a batch of delta work items.
+    /// Automatically selects concurrent vs sequential based on batch size.
     pub fn process(&self, work: Vec<DeltaWork>) -> Vec<DeltaResult> {
         let use_concurrent = match self.concurrent {
             Some(mode) => mode,
@@ -135,12 +133,12 @@ impl DeltaPipeline {
         }
     }
 
-    /// Processes work items sequentially.
+    /// Process work items sequentially.
     pub fn process_sequential(&self, work: Vec<DeltaWork>) -> Vec<DeltaResult> {
         work.iter().map(process_work_item).collect()
     }
 
-    /// Processes work items concurrently using rayon, preserving input ordering.
+    /// Process work items concurrently using rayon.
     pub fn process_concurrent(&self, work: Vec<DeltaWork>) -> Vec<DeltaResult> {
         let mut results: Vec<DeltaResult> = work
             .into_par_iter()
@@ -214,6 +212,7 @@ pub fn compute_pipeline_stats(results: &[DeltaResult], concurrent_used: bool) ->
 
 /// Process a single work item, generating delta information.
 fn process_work_item(work: &DeltaWork) -> DeltaResult {
+    // Check if both files exist
     let basis_meta = match std::fs::metadata(&work.basis_path) {
         Ok(m) => m,
         Err(e) => {
@@ -261,6 +260,7 @@ fn process_work_item(work: &DeltaWork) -> DeltaResult {
         };
     }
 
+    // Compare file contents to determine delta
     let basis_data = match std::fs::read(&work.basis_path) {
         Ok(d) => d,
         Err(e) => {
@@ -303,11 +303,13 @@ fn process_work_item(work: &DeltaWork) -> DeltaResult {
         let end = std::cmp::min(start + block_size, basis_data.len());
         let basis_block = &basis_data[start..end];
 
+        // Check if this block exists at same position in target
         if target_data.len() >= end && &target_data[start..end] == basis_block {
             matching_blocks += 1;
         }
     }
 
+    // Literal bytes = target size - matched data
     let matched_bytes = matching_blocks as u64 * block_size as u64;
     let literal_bytes = file_size.saturating_sub(matched_bytes);
     let delta_needed = literal_bytes > 0 || file_size != basis_meta.len();

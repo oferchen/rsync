@@ -75,6 +75,7 @@ where
     Out: Write,
     Err: Write,
 {
+    // On Unix, delegate to the actual daemon front-end.
     daemon::run(args, stdout, stderr)
 }
 
@@ -141,16 +142,21 @@ where
         &args[1..]
     };
 
+    // Parse all long-form flags from the argument list.
     let long_flags = parse_server_long_flags(effective_slice);
+
+    // Extract the compact flag string and positional args.
     let (flag_string, positional_args) = parse_server_flag_string_and_args(effective_slice);
 
-    // upstream: main.c server_sender check - default is Receiver.
+    // Determine role from --sender flag. Default is Receiver when neither
+    // --sender nor --receiver is specified (upstream: main.c server_sender check).
     let role = if long_flags.is_sender {
         ServerRole::Generator
     } else {
         ServerRole::Receiver
     };
 
+    // Build server configuration
     let mut config =
         match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
             Ok(cfg) => cfg,
@@ -164,6 +170,7 @@ where
             }
         };
 
+    // Apply boolean flags.
     config.deletion.ignore_errors = long_flags.ignore_errors;
     config.write.fsync = long_flags.fsync;
     config.write.io_uring_policy = long_flags.io_uring_policy;
@@ -180,7 +187,8 @@ where
     config.flags.delete = long_flags.delete;
     config.reference_directories = long_flags.reference_directories;
 
-    // upstream: options.c - server_options() sends these as `--flag=value`.
+    // Apply value-bearing flags, returning parse errors to the client.
+    // upstream: options.c — server_options() sends these as `--flag=value`.
     if let Some(seed_str) = &long_flags.checksum_seed {
         match parse_server_checksum_seed(seed_str) {
             Ok(seed) => config.checksum_seed = Some(seed),
@@ -259,6 +267,7 @@ where
         }
     }
 
+    // Run native server with stdio
     match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
         Err(e) => {

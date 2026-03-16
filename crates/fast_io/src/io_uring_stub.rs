@@ -468,6 +468,10 @@ pub fn write_file<P: AsRef<Path>>(path: P, data: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Socket I/O stubs (Unix only — requires RawFd)
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[cfg(unix)]
 mod socket_stub {
     use std::io::{self, BufReader, Read, Write};

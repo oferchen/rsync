@@ -1,3 +1,5 @@
+//! crates/checksums/src/strong/xxhash.rs
+//!
 //! XXHash implementations with optional runtime SIMD detection.
 //!
 //! One-shot digest operations use the `xxh3` crate which provides runtime

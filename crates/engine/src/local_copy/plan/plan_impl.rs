@@ -47,7 +47,6 @@ impl LocalCopyPlan {
     /// let plan = LocalCopyPlan::from_operands(&operands).expect("plan succeeds");
     /// assert_eq!(plan.destination(), std::path::Path::new("dst"));
     /// ```
-    #[must_use]
     pub fn from_operands(operands: &[OsString]) -> Result<Self, LocalCopyError> {
         if operands.len() < 2 {
             return Err(LocalCopyError::missing_operands());
@@ -108,7 +107,6 @@ impl LocalCopyPlan {
     ///
     /// Reports [`LocalCopyError`] variants when operand validation fails or I/O
     /// operations encounter errors.
-    #[must_use]
     pub fn execute(&self) -> Result<LocalCopySummary, LocalCopyError> {
         self.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
     }

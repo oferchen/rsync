@@ -65,7 +65,6 @@ pub enum CloneResult {
 /// - Source file doesn't exist or isn't readable
 /// - Destination cannot be created (permission denied, invalid path, etc.)
 /// - Both clonefile and standard copy fail
-#[must_use]
 pub fn clone_or_copy(src: &Path, dst: &Path) -> io::Result<CloneResult> {
     // Try clonefile first (macOS only, returns Unsupported on other platforms)
     match try_clonefile(src, dst) {
@@ -100,7 +99,6 @@ pub fn clone_or_copy(src: &Path, dst: &Path) -> io::Result<CloneResult> {
 /// - Destination already exists (clonefile doesn't overwrite)
 /// - Cross-filesystem copy attempted
 /// - Filesystem doesn't support CoW (e.g., HFS+)
-#[must_use]
 pub fn try_clonefile(src: &Path, dst: &Path) -> io::Result<()> {
     try_clonefile_impl(src, dst)
 }
@@ -118,7 +116,6 @@ pub fn try_clonefile(src: &Path, dst: &Path) -> io::Result<()> {
 /// - Source file doesn't exist or isn't readable
 /// - Destination cannot be created
 /// - I/O error during copy
-#[must_use]
 pub fn copy_file_standard(src: &Path, dst: &Path) -> io::Result<u64> {
     std::fs::copy(src, dst)
 }

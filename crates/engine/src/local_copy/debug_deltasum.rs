@@ -25,9 +25,12 @@
 
 use std::time::{Duration, Instant};
 
+/// Target name for tracing events, matching rsync's debug category.
+const DELTASUM_TARGET: &str = "rsync::deltasum";
+
 /// Traces the start of checksum generation for a file.
 ///
-/// Emits a debug log event when beginning to compute checksums for basis file
+/// Emits a tracing event when beginning to compute checksums for basis file
 /// blocks. In upstream rsync, this corresponds to checksum generation in
 /// checksum.c.
 ///
@@ -36,17 +39,22 @@ use std::time::{Duration, Instant};
 /// * `file_name` - Relative path of the file
 /// * `block_count` - Number of blocks to checksum
 /// * `block_size` - Size of each block in bytes
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_checksum_start(file_name: &str, block_count: usize, block_size: u32) {
-    logging::debug_log!(
-        Deltasum,
-        2,
-        "checksum: starting file_name={} block_count={} block_size={}",
-        file_name,
-        block_count,
-        block_size
+    tracing::debug!(
+        target: DELTASUM_TARGET,
+        file_name = %file_name,
+        block_count = block_count,
+        block_size = block_size,
+        "checksum: starting"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_checksum_start(_file_name: &str, _block_count: usize, _block_size: u32) {}
 
 /// Traces a single checksum block computation.
 ///
@@ -58,21 +66,26 @@ pub fn trace_checksum_start(file_name: &str, block_count: usize, block_size: u32
 /// * `block_index` - Index of the block being checksummed
 /// * `weak` - 32-bit rolling checksum (Adler-32 or similar)
 /// * `strong` - Strong cryptographic checksum (typically MD5/MD4)
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_checksum_block(block_index: usize, weak: u32, strong: &[u8]) {
-    logging::debug_log!(
-        Deltasum,
-        3,
-        "checksum: block block_index={} weak={:08x} strong={}",
-        block_index,
-        weak,
-        strong.iter().fold(String::new(), |mut acc, b| {
+    tracing::trace!(
+        target: DELTASUM_TARGET,
+        block_index = block_index,
+        weak = format!("{:08x}", weak),
+        strong = strong.iter().fold(String::new(), |mut acc, b| {
             use std::fmt::Write;
             let _ = write!(acc, "{b:02x}");
             acc
-        })
+        }),
+        "checksum: block"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_checksum_block(_block_index: usize, _weak: u32, _strong: &[u8]) {}
 
 /// Traces the completion of checksum generation.
 ///
@@ -83,21 +96,26 @@ pub fn trace_checksum_block(block_index: usize, weak: u32, strong: &[u8]) {
 /// * `file_name` - Relative path of the file
 /// * `block_count` - Total number of blocks checksummed
 /// * `elapsed` - Time taken to generate checksums
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_checksum_end(file_name: &str, block_count: usize, elapsed: Duration) {
-    logging::debug_log!(
-        Deltasum,
-        2,
-        "checksum: complete file_name={} block_count={} elapsed_ms={}",
-        file_name,
-        block_count,
-        elapsed.as_millis()
+    tracing::debug!(
+        target: DELTASUM_TARGET,
+        file_name = %file_name,
+        block_count = block_count,
+        elapsed_ms = elapsed.as_millis(),
+        "checksum: complete"
     );
 }
 
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_checksum_end(_file_name: &str, _block_count: usize, _elapsed: Duration) {}
+
 /// Traces the start of delta matching for a file.
 ///
-/// Emits a debug log event when beginning to match target file data against
+/// Emits a tracing event when beginning to match target file data against
 /// basis file checksums. In upstream rsync, this corresponds to the matching
 /// logic in match.c.
 ///
@@ -106,17 +124,22 @@ pub fn trace_checksum_end(file_name: &str, block_count: usize, elapsed: Duration
 /// * `file_name` - Relative path of the file
 /// * `basis_size` - Size of the basis file in bytes
 /// * `target_size` - Size of the target file in bytes
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_match_start(file_name: &str, basis_size: u64, target_size: u64) {
-    logging::debug_log!(
-        Deltasum,
-        2,
-        "match: starting file_name={} basis_size={} target_size={}",
-        file_name,
-        basis_size,
-        target_size
+    tracing::debug!(
+        target: DELTASUM_TARGET,
+        file_name = %file_name,
+        basis_size = basis_size,
+        target_size = target_size,
+        "match: starting"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_match_start(_file_name: &str, _basis_size: u64, _target_size: u64) {}
 
 /// Traces a successful block match during delta generation.
 ///
@@ -129,18 +152,23 @@ pub fn trace_match_start(file_name: &str, basis_size: u64, target_size: u64) {
 /// * `offset` - Offset in the target file where the match occurs
 /// * `length` - Length of the matched block in bytes
 /// * `weak` - Weak checksum that triggered the match
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_match_hit(block_index: usize, offset: u64, length: u32, weak: u32) {
-    logging::debug_log!(
-        Deltasum,
-        3,
-        "match: hit block_index={} offset={} length={} weak={:08x}",
-        block_index,
-        offset,
-        length,
-        weak
+    tracing::trace!(
+        target: DELTASUM_TARGET,
+        block_index = block_index,
+        offset = offset,
+        length = length,
+        weak = format!("{:08x}", weak),
+        "match: hit"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_match_hit(_block_index: usize, _offset: u64, _length: u32, _weak: u32) {}
 
 /// Traces a miss during delta matching.
 ///
@@ -150,16 +178,21 @@ pub fn trace_match_hit(block_index: usize, offset: u64, length: u32, weak: u32) 
 ///
 /// * `offset` - Offset in the target file for the literal data
 /// * `length` - Length of the literal data in bytes
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_match_miss(offset: u64, length: u32) {
-    logging::debug_log!(
-        Deltasum,
-        3,
-        "match: miss offset={} length={}",
-        offset,
-        length
+    tracing::trace!(
+        target: DELTASUM_TARGET,
+        offset = offset,
+        length = length,
+        "match: miss"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_match_miss(_offset: u64, _length: u32) {}
 
 /// Traces a false alarm during delta matching.
 ///
@@ -170,16 +203,21 @@ pub fn trace_match_miss(offset: u64, length: u32) {
 ///
 /// * `weak` - Weak checksum that collided
 /// * `offset` - Offset in the target file where the false alarm occurred
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_match_false_alarm(weak: u32, offset: u64) {
-    logging::debug_log!(
-        Deltasum,
-        3,
-        "match: false_alarm weak={:08x} offset={}",
-        weak,
-        offset
+    tracing::trace!(
+        target: DELTASUM_TARGET,
+        weak = format!("{:08x}", weak),
+        offset = offset,
+        "match: false_alarm"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_match_false_alarm(_weak: u32, _offset: u64) {}
 
 /// Traces the completion of delta matching for a file.
 ///
@@ -195,6 +233,7 @@ pub fn trace_match_false_alarm(weak: u32, offset: u64) {
 /// * `data_bytes` - Total bytes processed from target file
 /// * `matched_bytes` - Total bytes matched from basis file
 /// * `elapsed` - Time taken to perform matching
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_match_end(
     file_name: &str,
@@ -205,18 +244,31 @@ pub fn trace_match_end(
     matched_bytes: u64,
     elapsed: Duration,
 ) {
-    logging::debug_log!(
-        Deltasum,
-        2,
-        "match: complete file_name={} hits={} misses={} false_alarms={} data_bytes={} matched_bytes={} elapsed_ms={}",
-        file_name,
-        hits,
-        misses,
-        false_alarms,
-        data_bytes,
-        matched_bytes,
-        elapsed.as_millis()
+    tracing::debug!(
+        target: DELTASUM_TARGET,
+        file_name = %file_name,
+        hits = hits,
+        misses = misses,
+        false_alarms = false_alarms,
+        data_bytes = data_bytes,
+        matched_bytes = matched_bytes,
+        elapsed_ms = elapsed.as_millis(),
+        "match: complete"
     );
+}
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_match_end(
+    _file_name: &str,
+    _hits: usize,
+    _misses: usize,
+    _false_alarms: usize,
+    _data_bytes: u64,
+    _matched_bytes: u64,
+    _elapsed: Duration,
+) {
 }
 
 /// Traces a summary of all delta/checksum operations.
@@ -232,6 +284,7 @@ pub fn trace_match_end(
 /// * `total_false_alarms` - Total number of weak checksum collisions
 /// * `total_matched` - Total bytes matched from basis files
 /// * `total_literal` - Total bytes sent as literal data
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_deltasum_summary(
     total_files: usize,
@@ -241,17 +294,29 @@ pub fn trace_deltasum_summary(
     total_matched: u64,
     total_literal: u64,
 ) {
-    logging::debug_log!(
-        Deltasum,
-        1,
-        "deltasum: summary total_files={} total_hits={} total_misses={} total_false_alarms={} total_matched={} total_literal={}",
-        total_files,
-        total_hits,
-        total_misses,
-        total_false_alarms,
-        total_matched,
-        total_literal
+    tracing::info!(
+        target: DELTASUM_TARGET,
+        total_files = total_files,
+        total_hits = total_hits,
+        total_misses = total_misses,
+        total_false_alarms = total_false_alarms,
+        total_matched = total_matched,
+        total_literal = total_literal,
+        "deltasum: summary"
     );
+}
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_deltasum_summary(
+    _total_files: usize,
+    _total_hits: usize,
+    _total_misses: usize,
+    _total_false_alarms: usize,
+    _total_matched: u64,
+    _total_literal: u64,
+) {
 }
 
 /// Aggregates statistics during delta matching and checksum operations.
@@ -844,10 +909,12 @@ mod tests {
         assert_eq!(tracer.files_processed(), usize::MAX);
     }
 
+    #[cfg(feature = "tracing")]
     #[test]
-    fn test_debug_log_functions() {
-        // Verify the functions compile and run without panicking
-        // using the debug_log! macro system.
+    fn test_tracing_feature_enabled() {
+        // When tracing feature is enabled, verify the functions compile and run
+        // without panicking. We can't easily verify event emission without
+        // tracing-subscriber, but this at least confirms the code compiles.
         let mut tracer = DeltasumTracer::new();
         tracer.start_file("traced.txt");
         tracer.record_hit(4096);

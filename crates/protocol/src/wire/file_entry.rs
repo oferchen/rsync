@@ -325,7 +325,6 @@ pub fn encode_name<W: Write>(
 /// # Upstream Reference
 ///
 /// See `flist.c:send_file_entry()` line 580: `write_varlong30(f, F_LENGTH(file), 3)`
-#[must_use]
 pub fn encode_size<W: Write>(writer: &mut W, size: u64, protocol_version: u8) -> io::Result<()> {
     if protocol_version >= 30 {
         write_varlong(writer, size as i64, 3)
@@ -361,7 +360,6 @@ pub fn encode_size<W: Write>(writer: &mut W, size: u64, protocol_version: u8) ->
 /// # Upstream Reference
 ///
 /// See `flist.c:send_file_entry()` lines 582-584
-#[must_use]
 pub fn encode_mtime<W: Write>(writer: &mut W, mtime: i64, protocol_version: u8) -> io::Result<()> {
     if protocol_version >= 30 {
         write_varlong(writer, mtime, 4)
@@ -384,7 +382,6 @@ pub fn encode_mtime<W: Write>(writer: &mut W, mtime: i64, protocol_version: u8) 
 /// # Note
 ///
 /// Only encode when `XMIT_MOD_NSEC` flag is set in xflags.
-#[must_use]
 pub fn encode_mtime_nsec<W: Write>(writer: &mut W, nsec: u32) -> io::Result<()> {
     write_varint(writer, nsec as i32)
 }
@@ -399,7 +396,6 @@ pub fn encode_mtime_nsec<W: Write>(writer: &mut W, nsec: u32) -> io::Result<()> 
 /// # Wire Format
 ///
 /// `varlong(atime, 4)`
-#[must_use]
 pub fn encode_atime<W: Write>(writer: &mut W, atime: i64) -> io::Result<()> {
     write_varlong(writer, atime, 4)
 }
@@ -418,7 +414,6 @@ pub fn encode_atime<W: Write>(writer: &mut W, atime: i64) -> io::Result<()> {
 /// # Note
 ///
 /// Only encode when `XMIT_CRTIME_EQ_MTIME` flag is NOT set.
-#[must_use]
 pub fn encode_crtime<W: Write>(writer: &mut W, crtime: i64) -> io::Result<()> {
     write_varlong(writer, crtime, 4)
 }
@@ -449,7 +444,6 @@ pub fn encode_crtime<W: Write>(writer: &mut W, crtime: i64) -> io::Result<()> {
 /// encode_mode(&mut buf, 0o100644).unwrap(); // Regular file, rw-r--r--
 /// assert_eq!(buf.len(), 4);
 /// ```
-#[must_use]
 pub fn encode_mode<W: Write>(writer: &mut W, mode: u32) -> io::Result<()> {
     writer.write_all(&(mode as i32).to_le_bytes())
 }
@@ -472,7 +466,6 @@ pub fn encode_mode<W: Write>(writer: &mut W, mode: u32) -> io::Result<()> {
 /// # Note
 ///
 /// Only encode when preserve_uid is enabled and `XMIT_SAME_UID` flag is NOT set.
-#[must_use]
 pub fn encode_uid<W: Write>(writer: &mut W, uid: u32, protocol_version: u8) -> io::Result<()> {
     if protocol_version >= 30 {
         write_varint(writer, uid as i32)
@@ -499,7 +492,6 @@ pub fn encode_uid<W: Write>(writer: &mut W, uid: u32, protocol_version: u8) -> i
 /// # Note
 ///
 /// Only encode when preserve_gid is enabled and `XMIT_SAME_GID` flag is NOT set.
-#[must_use]
 pub fn encode_gid<W: Write>(writer: &mut W, gid: u32, protocol_version: u8) -> io::Result<()> {
     if protocol_version >= 30 {
         write_varint(writer, gid as i32)
@@ -522,7 +514,6 @@ pub fn encode_gid<W: Write>(writer: &mut W, gid: u32, protocol_version: u8) -> i
 /// # Note
 ///
 /// Only encode when `XMIT_USER_NAME_FOLLOWS` or `XMIT_GROUP_NAME_FOLLOWS` flag is set.
-#[must_use]
 pub fn encode_owner_name<W: Write>(writer: &mut W, name: &str) -> io::Result<()> {
     let name_bytes = name.as_bytes();
     let len = name_bytes.len().min(255) as u8;
@@ -619,7 +610,6 @@ pub fn encode_symlink_target<W: Write>(
 ///
 /// Only encode when `XMIT_HLINKED` is set but `XMIT_HLINK_FIRST` is NOT set.
 /// The first occurrence of a hardlink group (leader) doesn't write an index.
-#[must_use]
 pub fn encode_hardlink_idx<W: Write>(writer: &mut W, idx: u32) -> io::Result<()> {
     // Upstream rsync writes the hlink group index as a plain signed int.
     // Indices are bounded by the flist size (< 2^31), so the as-i32 cast

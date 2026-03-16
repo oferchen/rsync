@@ -157,7 +157,6 @@ impl PartialFileManager {
     /// # Errors
     ///
     /// Returns an error if I/O operations fail while checking for basis files.
-    #[must_use]
     pub fn find_basis(&self, destination: &Path) -> Result<Option<PathBuf>, LocalCopyError> {
         match &self.mode {
             PartialMode::Delete => Ok(None),
@@ -195,7 +194,6 @@ impl PartialFileManager {
     ///
     /// Returns an error if the partial file exists but cannot be removed.
     /// If the partial file doesn't exist, this is not considered an error.
-    #[must_use]
     pub fn cleanup_partial(&self, destination: &Path) -> Result<(), LocalCopyError> {
         match &self.mode {
             PartialMode::Delete => Ok(()),

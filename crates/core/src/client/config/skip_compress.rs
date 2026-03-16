@@ -32,7 +32,6 @@ use engine::SkipCompressList;
 /// let list = parse_skip_compress_list(OsStr::new("*.jpg/*.zip"))
 ///     .expect("valid pattern");
 /// ```
-#[must_use]
 pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Message> {
     let text = value.to_str().ok_or_else(|| {
         rsync_error!(
@@ -56,7 +55,6 @@ pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Messa
 /// variable is present but empty the function returns an empty list, matching
 /// upstream rsync's semantics where an explicitly empty list disables the
 /// optimisation altogether.
-#[must_use]
 pub fn skip_compress_from_env(variable: &str) -> Result<Option<SkipCompressList>, Message> {
     let Some(value) = env::var_os(variable) else {
         return Ok(None);

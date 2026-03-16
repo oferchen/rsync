@@ -392,6 +392,7 @@ impl StrongDigest for Md5 {
             self.update(&seed.to_le_bytes());
         }
 
+        // Now finalize the hash
         match self.inner {
             #[cfg(feature = "openssl")]
             Md5Backend::OpenSsl(mut hasher) => {

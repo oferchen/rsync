@@ -1,3 +1,11 @@
+// Patch note (oc-rsync):
+// - Removed the #[cfg(not(unix))] variant of `base_mode_for_permissions`,
+//   which was never called on non-Unix targets and triggered a dead_code
+//   error when building for Windows with `-D warnings`.
+//   The function is only needed on Unix and is only referenced inside a
+//   #[cfg(unix)] block, so restricting it to Unix preserves behavior and
+//   keeps non-Unix builds clean.
+
 use crate::error::MetadataError;
 use crate::options::{AttrsFlags, MetadataOptions};
 use filetime::{FileTime, set_file_times, set_symlink_file_times};
@@ -603,11 +611,39 @@ fn set_timestamp_with_fd(
     Ok(())
 }
 
-/// Applies metadata from a protocol [`protocol::flist::FileEntry`] to the destination file.
+/// Applies metadata from a protocol FileEntry to the destination file.
 ///
-/// Receiver-side counterpart to [`apply_file_metadata`] that works directly
-/// with wire-protocol metadata, avoiding the need to construct an
-/// [`fs::Metadata`] instance.
+/// This is the receiver-side counterpart to [`apply_file_metadata`] that works
+/// directly with FileEntry metadata from the wire protocol, avoiding the need
+/// to construct an [`fs::Metadata`] instance.
+///
+/// # Arguments
+/// - `destination`: Path to the file to apply metadata to
+/// - `entry`: FileEntry containing metadata from sender
+/// - `options`: Controls which metadata fields are preserved
+///
+/// # Errors
+/// Returns [`MetadataError`] if any filesystem operation fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use metadata::{apply_metadata_from_file_entry, MetadataOptions};
+/// use protocol::flist::FileEntry;
+/// use std::path::Path;
+///
+/// # fn example(file_entry: &FileEntry) -> Result<(), metadata::MetadataError> {
+/// let dest_path = Path::new("/path/to/reconstructed/file.txt");
+///
+/// // Apply metadata with permissions and timestamps
+/// let options = MetadataOptions::new()
+///     .preserve_permissions(true)
+///     .preserve_times(true);
+///
+/// apply_metadata_from_file_entry(dest_path, file_entry, &options)?;
+/// # Ok(())
+/// # }
+/// ```
 pub fn apply_metadata_from_file_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -661,19 +697,29 @@ pub fn apply_metadata_with_attrs_flags(
     cached_meta: Option<fs::Metadata>,
     attrs_flags: AttrsFlags,
 ) -> Result<(), MetadataError> {
+    // Step 1: Apply ownership (if requested)
     apply_ownership_from_entry(destination, entry, options, cached_meta.as_ref())?;
+
+    // Step 2: Apply permissions (if requested)
     apply_permissions_from_entry(destination, entry, options, cached_meta.as_ref())?;
 
+    // Step 3: Apply mtime (if requested and not skipped by ATTRS_SKIP_MTIME)
     // upstream: rsync.c:597 — `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
     if options.times() && !attrs_flags.skip_mtime() {
         apply_timestamps_from_entry(destination, entry, options, cached_meta.as_ref())?;
     }
 
+    // Step 4: Apply atime separately if only SKIP_MTIME is active but not SKIP_ATIME.
+    // When both times() and atimes() are set and SKIP_MTIME is active but not SKIP_ATIME,
+    // we still need to apply atime. The `apply_timestamps_from_entry` handles both mtime
+    // and atime together, so when SKIP_MTIME is set but atimes should still be preserved,
+    // we apply atime-only here.
     // upstream: rsync.c:604 — `if (!(flags & ATTRS_SKIP_ATIME))`
     if options.atimes() && attrs_flags.skip_mtime() && !attrs_flags.skip_atime() {
         apply_atime_only_from_entry(destination, entry, cached_meta.as_ref())?;
     }
 
+    // Step 5: Apply creation time (if requested and not skipped by ATTRS_SKIP_CRTIME)
     // upstream: rsync.c:615 — `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
     if options.crtimes() && entry.crtime() != 0 && !attrs_flags.skip_crtime() {
         apply_crtime_from_entry(destination, entry)?;
@@ -692,6 +738,7 @@ fn apply_ownership_from_entry(
     use rustix::fs::{AtFlags, CWD, chownat};
     use rustix::process::{RawGid, RawUid};
 
+    // Early return if no ownership preservation requested
     if !options.owner()
         && !options.group()
         && options.owner_override().is_none()
@@ -700,6 +747,7 @@ fn apply_ownership_from_entry(
         return Ok(());
     }
 
+    // Get raw uid/gid from entry for potential fake-super storage
     let raw_uid = if let Some(uid_override) = options.owner_override() {
         Some(uid_override)
     } else if options.owner() {
@@ -716,15 +764,18 @@ fn apply_ownership_from_entry(
         None
     };
 
+    // If fake-super mode is enabled, store ownership in xattr instead of applying directly
     if options.fake_super_enabled() {
         return apply_ownership_via_fake_super(destination, entry, raw_uid, raw_gid);
     }
 
+    // Determine owner (with mappings applied)
     let owner = if let Some(uid_override) = options.owner_override() {
         Some(ownership::uid_from_raw(uid_override as RawUid))
     } else if options.owner() {
         entry.uid().and_then(|uid| {
             let mut mapped_uid = uid as RawUid;
+            // Apply user mapping if present
             if let Some(mapping) = options.user_mapping()
                 && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid)
             {
@@ -736,6 +787,7 @@ fn apply_ownership_from_entry(
         None
     };
 
+    // Determine group (similar structure)
     let group = if let Some(gid_override) = options.group_override() {
         Some(ownership::gid_from_raw(gid_override as RawGid))
     } else if options.group() {
@@ -752,7 +804,10 @@ fn apply_ownership_from_entry(
         None
     };
 
+    // Apply ownership if at least one is set
     if owner.is_some() || group.is_some() {
+        // Optimization: check current ownership and skip syscall if already correct.
+        // This matches upstream rsync behavior which avoids redundant chown calls.
         let needs_chown = match cached_meta {
             Some(meta) => {
                 let current_uid = meta.uid();
@@ -761,7 +816,7 @@ fn apply_ownership_from_entry(
                 let desired_gid = group.map(|g| g.as_raw()).unwrap_or(current_gid);
                 current_uid != desired_uid || current_gid != desired_gid
             }
-            None => true,
+            None => true, // Can't stat, try chown anyway
         };
 
         if needs_chown {
@@ -787,11 +842,14 @@ fn apply_ownership_via_fake_super(
 ) -> Result<(), MetadataError> {
     use crate::fake_super::{FakeSuperStat, store_fake_super};
 
+    // Build FakeSuperStat from entry metadata
     let mode = entry.permissions();
     let uid = uid.unwrap_or(0);
     let gid = gid.unwrap_or(0);
 
+    // Check if this is a device file (block or char) and get rdev if present
     let rdev = if entry.file_type().is_device() {
+        // Get major/minor directly from the entry - they're already decoded
         match (entry.rdev_major(), entry.rdev_minor()) {
             (Some(major), Some(minor)) => Some((major, minor)),
             _ => None,
@@ -818,6 +876,7 @@ fn apply_ownership_from_entry(
     _options: &MetadataOptions,
     _cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
+    // Non-Unix platforms: ownership is not supported
     Ok(())
 }
 
@@ -835,11 +894,14 @@ fn apply_permissions_from_entry(
             return Ok(());
         }
 
+        // Standard permission preservation
         if options.permissions() {
             let mode = entry.permissions();
+            // Optimization: check current permissions and skip syscall if already correct.
+            // This matches upstream rsync behavior which avoids redundant chmod calls.
             let needs_chmod = match cached_meta {
                 Some(meta) => (meta.permissions().mode() & 0o7777) != (mode & 0o7777),
-                None => true,
+                None => true, // Can't stat, try chmod anyway
             };
 
             if needs_chmod {
@@ -850,9 +912,13 @@ fn apply_permissions_from_entry(
             }
         }
 
+        // Apply chmod modifiers if present
         if let Some(chmod) = options.chmod() {
+            // Get current permissions — use cached metadata if available,
+            // otherwise fall back to a fresh stat (chmod may have changed them above).
             let fresh_meta;
             let current_meta = if options.permissions() {
+                // Permissions were just set above, need fresh stat
                 fresh_meta = fs::metadata(destination)
                     .map_err(|error| MetadataError::new("read permissions", destination, error))?;
                 &fresh_meta
@@ -864,7 +930,10 @@ fn apply_permissions_from_entry(
                 &fresh_meta
             };
             let current_mode = current_meta.permissions().mode();
+
+            // Apply chmod modifiers
             let new_mode = chmod.apply(current_mode, current_meta.file_type());
+            // Only apply if mode actually changed
             if new_mode != current_mode {
                 let new_permissions = PermissionsExt::from_mode(new_mode);
                 fs::set_permissions(destination, new_permissions)
@@ -876,6 +945,7 @@ fn apply_permissions_from_entry(
     #[cfg(not(unix))]
     {
         if options.permissions() {
+            // Non-Unix: only readonly flag
             let readonly = entry.permissions() & 0o200 == 0;
             let dest_perms_meta = if let Some(meta) = cached_meta {
                 meta.permissions()
@@ -907,13 +977,16 @@ fn apply_timestamps_from_entry(
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-    // upstream: rsync preserves the source atime when --atimes is set
+    // upstream: rsync preserves the source atime when --atimes is set;
+    // otherwise it uses mtime for both atime and mtime (the default).
     let atime = if options.atimes() && entry.atime() != 0 {
         FileTime::from_unix_time(entry.atime(), 0)
     } else {
         mtime
     };
 
+    // Optimization: check current mtime (and atime when preserving) and skip
+    // syscall if already correct. Mirrors upstream's redundant-utimensat avoidance.
     let needs_utime = match cached_meta {
         Some(meta) => {
             let current_mtime = FileTime::from_last_modification_time(meta);
@@ -967,6 +1040,7 @@ fn apply_atime_only_from_entry(
     };
 
     if needs_update {
+        // Preserve the existing mtime while updating only atime.
         let mtime = match cached_meta {
             Some(meta) => FileTime::from_last_modification_time(meta),
             None => {
@@ -989,8 +1063,7 @@ fn apply_atime_only_from_entry(
 /// `set_crtime`. Used by the local copy engine's metadata application
 /// functions where source metadata is available directly (not via `FileEntry`).
 /// On platforms where `created()` is unavailable, this is a no-op.
-///
-/// Mirrors `rsync.c:615` crtime application after file transfer.
+// upstream: rsync.c:615 - crtime application after file transfer
 fn apply_crtime_from_source_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -1021,14 +1094,12 @@ fn apply_crtime_from_entry(
 
 /// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
 ///
-/// Upstream rsync uses `utimensat` for mtime/atime; crtime requires
-/// `setattrlist` on macOS since there is no POSIX equivalent.
-///
 /// # Safety
 ///
 /// Calls into the libc `setattrlist` function through FFI. The `attrlist`
 /// struct and buffer are stack-allocated with correct layout and size,
 /// and the path is converted to a NUL-terminated C string before passing.
+// upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {

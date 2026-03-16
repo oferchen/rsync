@@ -340,10 +340,12 @@ pub fn classify_error(error: io::Error) -> ErrorSeverity {
 /// assert!(!should_retry(&err, 1, 3));
 /// ```
 pub fn should_retry(error: &TransferError, attempt: u32, max_retries: u32) -> bool {
+    // Don't retry if we've exceeded the limit
     if attempt >= max_retries {
         return false;
     }
 
+    // Determine if the error type is retryable
     match error {
         // Transient errors worth retrying
         TransferError::Timeout

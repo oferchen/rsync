@@ -23,7 +23,6 @@ const MAX_IOV: usize = 1024;
 ///
 /// # Returns
 /// Total bytes written across all buffers.
-#[must_use]
 pub fn write_vectored_all<W: Write>(writer: &mut W, buffers: &[&[u8]]) -> io::Result<u64> {
     if buffers.is_empty() {
         return Ok(0);

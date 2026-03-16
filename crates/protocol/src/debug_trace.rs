@@ -61,8 +61,10 @@ impl<R: Read> TracingReader<R> {
         let sequence = TRACE_COUNTER.fetch_add(1, Ordering::SeqCst);
 
         if config.enabled {
+            // Create trace directory if it doesn't exist
             let _ = std::fs::create_dir_all(&config.trace_dir);
 
+            // Write header file
             let header_path = format!(
                 "{}/{}_read_{:04}_header.txt",
                 config.trace_dir, config.prefix, sequence
@@ -140,8 +142,10 @@ impl<W: Write> TracingWriter<W> {
         let sequence = TRACE_COUNTER.fetch_add(1, Ordering::SeqCst);
 
         if config.enabled {
+            // Create trace directory if it doesn't exist
             let _ = std::fs::create_dir_all(&config.trace_dir);
 
+            // Write header file
             let header_path = format!(
                 "{}/{}_write_{:04}_header.txt",
                 config.trace_dir, config.prefix, sequence

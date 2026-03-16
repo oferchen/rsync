@@ -1,3 +1,4 @@
+//! crates/logging/src/macros.rs
 //! Convenience macros for info and debug logging.
 
 /// Emit an info log message if the flag level is enabled.

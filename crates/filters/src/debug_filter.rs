@@ -21,9 +21,13 @@
 //! tracer.summary();
 //! ```
 
+/// Target name for tracing events, matching rsync's debug category.
+#[cfg(feature = "tracing")]
+const FILTER_TARGET: &str = "rsync::filter";
+
 /// Traces a filter rule being added to the filter set.
 ///
-/// Emits a debug log event when a new include/exclude rule is registered.
+/// Emits a tracing event when a new include/exclude rule is registered.
 /// In upstream rsync, this corresponds to debug output when rules are parsed.
 ///
 /// # Arguments
@@ -31,17 +35,22 @@
 /// * `pattern` - The filter pattern (e.g., "*.tmp", "/var/log/")
 /// * `is_include` - Whether this is an include rule (true) or exclude rule (false)
 /// * `is_dir_only` - Whether this rule applies only to directories
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_filter_rule_added(pattern: &str, is_include: bool, is_dir_only: bool) {
-    logging::debug_log!(
-        Filter,
-        2,
-        "filter_rule_added pattern={} is_include={} is_dir_only={}",
-        pattern,
-        is_include,
-        is_dir_only
+    tracing::debug!(
+        target: FILTER_TARGET,
+        pattern = %pattern,
+        is_include = is_include,
+        is_dir_only = is_dir_only,
+        "filter_rule_added"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_filter_rule_added(_pattern: &str, _is_include: bool, _is_dir_only: bool) {}
 
 /// Traces evaluation of a path against a specific filter rule.
 ///
@@ -54,18 +63,23 @@ pub fn trace_filter_rule_added(pattern: &str, is_include: bool, is_dir_only: boo
 /// * `rule_pattern` - The pattern being tested against the path
 /// * `is_include` - Whether this is an include rule
 /// * `matched` - Whether the rule matched the path
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_filter_evaluate(path: &str, rule_pattern: &str, is_include: bool, matched: bool) {
-    logging::debug_log!(
-        Filter,
-        3,
-        "filter_evaluate path={} rule_pattern={} is_include={} matched={}",
-        path,
-        rule_pattern,
-        is_include,
-        matched
+    tracing::trace!(
+        target: FILTER_TARGET,
+        path = %path,
+        rule_pattern = %rule_pattern,
+        is_include = is_include,
+        matched = matched,
+        "filter_evaluate"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_filter_evaluate(_path: &str, _rule_pattern: &str, _is_include: bool, _matched: bool) {}
 
 /// Traces the final decision for a path after all rules have been evaluated.
 ///
@@ -77,17 +91,22 @@ pub fn trace_filter_evaluate(path: &str, rule_pattern: &str, is_include: bool, m
 /// * `path` - The path that was evaluated
 /// * `included` - Whether the path was included (true) or excluded (false)
 /// * `matching_rule` - The pattern of the rule that made the decision, if any
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_filter_decision(path: &str, included: bool, matching_rule: Option<&str>) {
-    logging::debug_log!(
-        Filter,
-        1,
-        "filter_decision path={} included={} matching_rule={:?}",
-        path,
-        included,
-        matching_rule
+    tracing::info!(
+        target: FILTER_TARGET,
+        path = %path,
+        included = included,
+        matching_rule = ?matching_rule,
+        "filter_decision"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_filter_decision(_path: &str, _included: bool, _matching_rule: Option<&str>) {}
 
 /// Traces loading of a per-directory merge file.
 ///
@@ -99,17 +118,22 @@ pub fn trace_filter_decision(path: &str, included: bool, matching_rule: Option<&
 /// * `dir` - The directory containing the merge file
 /// * `rules_file` - The name of the rules file being loaded
 /// * `rule_count` - Number of rules successfully loaded from the file
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_dir_merge_load(dir: &str, rules_file: &str, rule_count: usize) {
-    logging::debug_log!(
-        Filter,
-        2,
-        "dir_merge_load dir={} rules_file={} rule_count={}",
-        dir,
-        rules_file,
-        rule_count
+    tracing::debug!(
+        target: FILTER_TARGET,
+        dir = %dir,
+        rules_file = %rules_file,
+        rule_count = rule_count,
+        "dir_merge_load"
     );
 }
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_dir_merge_load(_dir: &str, _rules_file: &str, _rule_count: usize) {}
 
 /// Traces summary statistics for filter operations.
 ///
@@ -121,22 +145,31 @@ pub fn trace_dir_merge_load(dir: &str, rules_file: &str, rule_count: usize) {
 /// * `total_evaluated` - Total number of paths evaluated
 /// * `total_included` - Number of paths that were included
 /// * `total_excluded` - Number of paths that were excluded
+#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_filter_summary(total_evaluated: usize, total_included: usize, total_excluded: usize) {
-    let include_ratio = if total_evaluated > 0 {
-        (total_included as f64) / (total_evaluated as f64)
-    } else {
-        0.0
-    };
-    logging::debug_log!(
-        Filter,
-        1,
-        "filter_summary total_evaluated={} total_included={} total_excluded={} include_ratio={:.4}",
-        total_evaluated,
-        total_included,
-        total_excluded,
-        include_ratio
+    tracing::info!(
+        target: FILTER_TARGET,
+        total_evaluated = total_evaluated,
+        total_included = total_included,
+        total_excluded = total_excluded,
+        include_ratio = if total_evaluated > 0 {
+            (total_included as f64) / (total_evaluated as f64)
+        } else {
+            0.0
+        },
+        "filter_summary"
     );
+}
+
+/// No-op when tracing is disabled.
+#[cfg(not(feature = "tracing"))]
+#[inline]
+pub fn trace_filter_summary(
+    _total_evaluated: usize,
+    _total_included: usize,
+    _total_excluded: usize,
+) {
 }
 
 /// Aggregates statistics during filter operations.
@@ -501,10 +534,12 @@ mod tests {
         assert_eq!(tracer.total_excluded(), 0);
     }
 
+    #[cfg(feature = "tracing")]
     #[test]
-    fn test_debug_log_functions() {
-        // Verify the functions compile and run without panicking
-        // using the debug_log! macro system.
+    fn test_tracing_feature_enabled() {
+        // When tracing feature is enabled, verify the functions compile and run
+        // without panicking. We can't easily verify event emission without
+        // tracing-subscriber, but this at least confirms the code compiles.
         let mut tracer = FilterTracer::new();
 
         trace_filter_rule_added("*.log", false, false);

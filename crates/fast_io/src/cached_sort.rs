@@ -25,6 +25,7 @@ pub use permutation::Permutation;
 /// Implement this trait for types that will be used as sort keys.
 pub trait CachedSortKey: Ord + Clone {}
 
+// Blanket implementation for common key types
 impl CachedSortKey for String {}
 impl CachedSortKey for Vec<u8> {}
 impl CachedSortKey for i64 {}
@@ -60,8 +61,13 @@ where
         return;
     }
 
+    // Extract keys once
     let keys: Vec<K> = items.iter().map(&key_fn).collect();
+
+    // Sort indices by keys using permutation crate
     let mut perm = permutation::sort_by(&keys, |a, b| a.cmp(b));
+
+    // Apply permutation to items
     perm.apply_slice_in_place(items);
 }
 
@@ -108,8 +114,13 @@ where
         return;
     }
 
+    // Parallel key extraction
     let keys: Vec<K> = items.par_iter().map(&key_fn).collect();
+
+    // Sort indices by keys
     let mut perm = permutation::sort_by(&keys, |a, b| a.cmp(b));
+
+    // Apply permutation
     perm.apply_slice_in_place(items);
 }
 

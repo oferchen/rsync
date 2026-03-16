@@ -164,7 +164,6 @@ impl CompressedTokenEncoder {
     /// # Errors
     ///
     /// Returns an error if compression or writing fails.
-    #[must_use]
     pub fn send_literal<W: Write>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<()> {
         self.literal_buf.extend_from_slice(data);
 
@@ -227,7 +226,6 @@ impl CompressedTokenEncoder {
     /// # Errors
     ///
     /// Returns an error if flushing or writing the end marker fails.
-    #[must_use]
     pub fn finish<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         // upstream token.c lines 460-462: output token run BEFORE literal
         // data, matching the wire ordering where DEFLATED_DATA always
@@ -402,7 +400,6 @@ impl CompressedTokenEncoder {
     /// Returns an error if the compression operation fails.
     ///
     /// Reference: upstream token.c lines 463-484 (`send_deflated_token`).
-    #[must_use]
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         // CPRES_ZLIBX: block-match tokens never update the deflate dictionary.
         if self.is_zlibx {

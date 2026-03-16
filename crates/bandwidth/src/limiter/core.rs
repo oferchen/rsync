@@ -115,10 +115,7 @@ impl BandwidthLimiter {
         self.write_max
     }
 
-    /// Returns the number of bytes that should be read in the next call.
-    ///
-    /// Clamps `buffer_len` to the limiter's write-max so callers never
-    /// queue more data than the pacing window allows in one burst.
+    /// Returns the maximum chunk size that should be written before sleeping.
     #[inline]
     #[must_use]
     pub fn recommended_read_size(&self, buffer_len: usize) -> usize {

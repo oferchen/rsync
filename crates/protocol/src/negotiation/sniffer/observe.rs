@@ -61,7 +61,6 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Observes a single byte that has already been read from the transport.
-    #[must_use]
     #[inline]
     pub fn observe_byte(&mut self, byte: u8) -> Result<NegotiationPrologue, TryReserveError> {
         let (decision, consumed) = self.observe(slice::from_ref(&byte))?;
@@ -76,7 +75,6 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Reads from `reader` until the negotiation style can be determined.
-    #[must_use]
     pub fn read_from<R: Read>(&mut self, reader: &mut R) -> io::Result<NegotiationPrologue> {
         match self.detector.decision() {
             Some(decision) if !self.needs_more_legacy_prefix_bytes(decision) => {

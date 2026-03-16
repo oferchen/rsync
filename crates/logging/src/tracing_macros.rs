@@ -1,3 +1,4 @@
+//! crates/logging/src/tracing_macros.rs
 //! Convenience macros for rsync-specific tracing.
 //!
 //! These macros provide ergonomic wrappers around standard tracing macros

@@ -63,6 +63,7 @@ pub fn trace_stream_open(description: &str) {
     );
 }
 
+/// Trace opening a stream/connection (Level 1) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_stream_open(_description: &str) {}
@@ -84,6 +85,7 @@ pub fn trace_stream_close(description: &str) {
     );
 }
 
+/// Trace closing a stream/connection (Level 1) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_stream_close(_description: &str) {}
@@ -108,6 +110,7 @@ pub fn trace_ssh_spawn(command: &str, host: &str) {
     );
 }
 
+/// Trace SSH process spawn (Level 1) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_ssh_spawn(_command: &str, _host: &str) {}
@@ -129,6 +132,7 @@ pub fn trace_negotiation_style(style: &str) {
     );
 }
 
+/// Trace negotiation style determination (Level 1) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_negotiation_style(_style: &str) {}
@@ -154,6 +158,7 @@ pub fn trace_stream_read(bytes_read: usize) {
     );
 }
 
+/// Trace a stream read operation (Level 2) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_stream_read(_bytes_read: usize) {}
@@ -175,6 +180,7 @@ pub fn trace_stream_write(bytes_written: usize) {
     );
 }
 
+/// Trace a stream write operation (Level 2) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_stream_write(_bytes_written: usize) {}
@@ -200,6 +206,7 @@ pub fn trace_buffered_read(bytes_read: usize, from_inner: bool) {
     );
 }
 
+/// Trace reading from buffered replay (Level 2) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_buffered_read(_bytes_read: usize, _from_inner: bool) {}
@@ -224,6 +231,7 @@ pub fn trace_banner(direction: &str, banner: &str) {
     );
 }
 
+/// Trace banner exchange (Level 2) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_banner(_direction: &str, _banner: &str) {}
@@ -263,6 +271,7 @@ pub fn trace_negotiation_buffer_state(
     );
 }
 
+/// Trace negotiation buffer state (Level 3) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_negotiation_buffer_state(
@@ -293,6 +302,7 @@ pub fn trace_buffer_consume(consumed: usize, remaining: usize) {
     );
 }
 
+/// Trace buffer consumption (Level 3) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_buffer_consume(_consumed: usize, _remaining: usize) {}
@@ -317,6 +327,7 @@ pub fn trace_buffer_extend(added: usize, new_total: usize) {
     );
 }
 
+/// Trace buffer extension/growth (Level 3) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_buffer_extend(_added: usize, _new_total: usize) {}
@@ -341,6 +352,7 @@ pub fn trace_stream_map(operation: &str, success: bool) {
     );
 }
 
+/// Trace stream mapping/transformation (Level 3) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_stream_map(_operation: &str, _success: bool) {}
@@ -379,6 +391,7 @@ pub fn trace_protocol_bytes(description: &str, data: &[u8]) {
     );
 }
 
+/// Trace protocol bytes with hex dump (Level 4) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_protocol_bytes(_description: &str, _data: &[u8]) {}
@@ -406,6 +419,7 @@ pub fn trace_sniff_bytes(prefix: &[u8], decision: &str) {
     );
 }
 
+/// Trace sniffed prefix bytes (Level 4) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_sniff_bytes(_prefix: &[u8], _decision: &str) {}
@@ -440,6 +454,7 @@ pub fn trace_raw_read(data: &[u8], source: &str) {
     );
 }
 
+/// Trace raw bytes being read from stream (Level 4) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_raw_read(_data: &[u8], _source: &str) {}
@@ -474,6 +489,7 @@ pub fn trace_raw_write(data: &[u8], destination: &str) {
     );
 }
 
+/// Trace raw bytes being written to stream (Level 4) - no-op when tracing is disabled.
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_raw_write(_data: &[u8], _destination: &str) {}
@@ -543,6 +559,9 @@ mod tests {
 #[cfg(test)]
 mod no_tracing_tests {
     use super::*;
+
+    // These tests verify that the no-op functions compile and can be called
+    // without the tracing feature enabled
 
     #[test]
     fn test_trace_functions_compile() {

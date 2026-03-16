@@ -242,12 +242,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         .map(Some)
 }
 
-/// Parses a `--bwlimit` value that may include an optional burst component.
-///
-/// The input may be a bare rate string accepted by [`parse_bandwidth_argument`],
-/// or a `rate:burst` pair where each component follows the same syntax. Leading
-/// or trailing ASCII whitespace is rejected. When the rate component is `0` the
-/// result represents an unlimited transfer with no burst.
+/// Parses a bandwidth limit containing an optional burst component.
 #[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());

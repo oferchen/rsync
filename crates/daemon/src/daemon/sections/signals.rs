@@ -1,10 +1,10 @@
-//! Daemon signal handling.
-//!
-//! Registers handlers for SIGPIPE (ignore), SIGHUP (config reload flag),
-//! SIGTERM/SIGINT (graceful shutdown flag), SIGUSR1 (graceful exit after
-//! current transfers complete), and SIGUSR2 (progress summary dump).
-//! On non-Unix platforms all operations are no-ops. Mirrors upstream rsync
-//! daemon signal handling (upstream: main.c, clientserver.c).
+// Daemon signal handling.
+//
+// Registers handlers for SIGPIPE (ignore), SIGHUP (config reload flag),
+// SIGTERM/SIGINT (graceful shutdown flag), SIGUSR1 (graceful exit after
+// current transfers complete), and SIGUSR2 (progress summary dump).
+// On non-Unix platforms all operations are no-ops. Mirrors upstream rsync
+// daemon signal handling (upstream: main.c, clientserver.c).
 
 /// Shared atomic flags checked by the server accept loop.
 ///

@@ -1,3 +1,5 @@
+//! crates/checksums/src/parallel.rs
+//!
 //! Parallel checksum computation utilities using rayon.
 //!
 //! This module provides parallel versions of checksum operations,

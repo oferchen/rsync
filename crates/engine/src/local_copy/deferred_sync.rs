@@ -119,7 +119,6 @@ impl DeferredSync {
     /// # Errors
     ///
     /// Returns an error if immediate sync fails.
-    #[must_use]
     pub fn register(&mut self, path: PathBuf) -> io::Result<()> {
         match self.strategy {
             SyncStrategy::Immediate => {
@@ -148,7 +147,6 @@ impl DeferredSync {
     /// # Errors
     ///
     /// Returns an error if any sync operation fails.
-    #[must_use]
     pub fn flush_if_threshold(&mut self) -> io::Result<()> {
         if matches!(self.strategy, SyncStrategy::Batched(_))
             && self.pending_files.len() >= self.threshold
@@ -166,7 +164,6 @@ impl DeferredSync {
     ///
     /// Returns an error if any sync operation fails. Partial flush may occur
     /// on error.
-    #[must_use]
     pub fn flush(&mut self) -> io::Result<()> {
         match self.strategy {
             SyncStrategy::None => {

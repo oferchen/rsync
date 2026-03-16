@@ -1,6 +1,6 @@
-//! Client argument reading and server configuration building.
-//!
-//! upstream: io.c:1292, options.c:2737-2980, clientserver.c:1059-1073
+// Client argument reading and server configuration building.
+//
+// upstream: io.c:1292, options.c:2737-2980, clientserver.c:1059-1073
 
 /// Reads client arguments sent after module approval.
 ///

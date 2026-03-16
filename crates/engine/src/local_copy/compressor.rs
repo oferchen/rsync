@@ -24,7 +24,6 @@ pub enum ActiveCompressor {
 
 impl ActiveCompressor {
     /// Creates a compressor for `algorithm` using the provided compression `level`.
-    #[must_use]
     pub fn new(algorithm: CompressionAlgorithm, level: CompressionLevel) -> io::Result<Self> {
         match algorithm {
             CompressionAlgorithm::Zlib => Ok(Self::Zlib(CountingZlibEncoder::new(level))),
@@ -44,7 +43,6 @@ impl ActiveCompressor {
     }
 
     /// Appends `chunk` to the compressed stream.
-    #[must_use]
     pub fn write(&mut self, chunk: &[u8]) -> io::Result<()> {
         match self {
             Self::Zlib(encoder) => encoder.write(chunk),
@@ -68,7 +66,6 @@ impl ActiveCompressor {
     }
 
     /// Finalises the compression stream and returns the total number of compressed bytes.
-    #[must_use]
     pub fn finish(self) -> io::Result<u64> {
         match self {
             Self::Zlib(encoder) => encoder.finish(),

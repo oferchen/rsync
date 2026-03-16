@@ -97,7 +97,6 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Attempts to reserve additional capacity for the buffered transcript.
-    #[must_use]
     pub fn try_reserve_buffered(&mut self, additional: usize) -> Result<(), TryReserveError> {
         self.buffered.try_reserve(additional)
     }
