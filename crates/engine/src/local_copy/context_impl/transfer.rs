@@ -282,11 +282,14 @@ impl<'a> CopyContext<'a> {
 
         // Fast path: use copy_file_range for simple whole-file copies.
         // Requires no sparse detection, no compression, no bandwidth limiter.
+        // Uses the caller's buffer pool buffer for the read/write fallback
+        // path, avoiding a per-file 256KB Vec allocation for small files.
         if !sparse && !compress && self.limiter.is_none() {
-            let copied = fast_io::copy_file_range::copy_file_contents(
+            let copied = fast_io::copy_file_range::copy_file_contents_buffered(
                 reader,
                 writer,
                 expected_remaining,
+                buffer,
             )
             .map_err(|error| LocalCopyError::io("copy file", source, error))?;
             if self.observer.is_some() {
