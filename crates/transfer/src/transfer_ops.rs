@@ -45,7 +45,6 @@ use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
 use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
-use protocol::flist::FileEntry;
 
 use crate::pipeline::PendingTransfer;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
@@ -536,7 +535,7 @@ pub fn process_file_response_streaming<R: Read>(
     file_tx: &spsc::Sender<FileMessage>,
     buf_return_rx: &spsc::Receiver<Vec<u8>>,
     file_entry_index: usize,
-    file_entry: Option<FileEntry>,
+    is_device_target: bool,
     xattr_list: Option<protocol::xattr::XattrList>,
 ) -> io::Result<StreamingResult> {
     let expected_ndx = pending.ndx();
@@ -563,16 +562,13 @@ pub fn process_file_response_streaming<R: Read>(
     let algo = checksum_verifier.algorithm();
     let disk_verifier = std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
 
-    // Defer sending Begin — allows coalescing single-chunk files into a
-    // single WholeFile message (3 channel sends → 1, reducing futex overhead).
-    let is_device_target =
-        ctx.config.write_devices && file_entry.as_ref().is_some_and(|e| e.is_device());
+    // Defer sending Begin - allows coalescing single-chunk files into a
+    // single WholeFile message (3 channel sends -> 1, reducing futex overhead).
     let begin_msg = Box::new(BeginMessage {
         file_path,
         target_size,
         file_entry_index,
         checksum_verifier: Some(disk_verifier),
-        file_entry,
         is_device_target,
         // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
         is_inplace: ctx.config.inplace
