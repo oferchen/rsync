@@ -151,7 +151,6 @@ pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u
         }
         // Fall through to read/write fallback
     }
-    // Fallback: read from source, write to fd
     copy_via_fd_write(source, dest_fd, length)
 }
 
@@ -215,14 +214,12 @@ fn try_sendfile(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
         if result < 0 {
             let err = io::Error::last_os_error();
             if total == 0 {
-                // Failed on first chunk - return error to trigger fallback
                 return Err(err);
             }
-            // Partial transfer succeeded, but now we hit an error - return what we have
+            // Partial transfer succeeded; return what we have rather than an error.
             return Ok(total);
         }
         if result == 0 {
-            // EOF reached
             break;
         }
 
@@ -255,7 +252,7 @@ fn try_sendfile(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
 #[cfg(target_os = "linux")]
 fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);
-    let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
+    let mut buf = vec![0u8; 256 * 1024];
     let mut total: u64 = 0;
     let mut remaining = length;
 
@@ -263,14 +260,12 @@ fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64
         let to_read = (remaining as usize).min(buf.len());
         let n = reader.read(&mut buf[..to_read])?;
         if n == 0 {
-            // EOF reached
             break;
         }
 
-        // Write all bytes to the file descriptor, handling partial writes
         let mut written = 0;
         while written < n {
-            // SAFETY: buf[written..n] is a valid slice, and dest_fd is assumed valid
+            // SAFETY: buf[written..n] is a valid slice, and dest_fd is assumed valid.
             let result = unsafe {
                 libc::write(
                     dest_fd,
@@ -295,7 +290,7 @@ fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64
 #[cfg(all(unix, not(target_os = "linux")))]
 fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);
-    let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
+    let mut buf = vec![0u8; 256 * 1024];
     let mut total: u64 = 0;
     let mut remaining = length;
 
@@ -303,14 +298,12 @@ fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64
         let to_read = (remaining as usize).min(buf.len());
         let n = reader.read(&mut buf[..to_read])?;
         if n == 0 {
-            // EOF reached
             break;
         }
 
-        // Write all bytes to the file descriptor, handling partial writes
         let mut written = 0;
         while written < n {
-            // SAFETY: buf[written..n] is a valid slice, and dest_fd is assumed valid
+            // SAFETY: buf[written..n] is a valid slice, and dest_fd is assumed valid.
             let result = unsafe {
                 libc::write(
                     dest_fd,
@@ -355,7 +348,7 @@ fn copy_via_readwrite<W: Write>(
     length: u64,
 ) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);
-    let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
+    let mut buf = vec![0u8; 256 * 1024];
     let mut total: u64 = 0;
     let mut remaining = length;
 
@@ -363,7 +356,6 @@ fn copy_via_readwrite<W: Write>(
         let to_read = (remaining as usize).min(buf.len());
         let n = reader.read(&mut buf[..to_read])?;
         if n == 0 {
-            // EOF reached
             break;
         }
         destination.write_all(&buf[..n])?;

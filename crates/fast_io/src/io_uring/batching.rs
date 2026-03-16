@@ -68,8 +68,6 @@ pub(super) fn submit_write_batch(
 
     while global_done < total {
         let remaining = total - global_done;
-
-        // Build a batch of chunks from the remaining data.
         let n_chunks = remaining.div_ceil(chunk_size).min(max_sqes);
         // Per-chunk tracking: (chunk_start_in_data, chunk_len, bytes_written_so_far).
         let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(n_chunks);

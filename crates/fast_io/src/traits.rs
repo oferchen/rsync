@@ -44,7 +44,7 @@ pub trait FileWriter: Write {
 
     /// Pre-allocates space for the file (advisory).
     fn preallocate(&mut self, _size: u64) -> io::Result<()> {
-        Ok(()) // Default: no-op
+        Ok(())
     }
 }
 
@@ -68,10 +68,6 @@ pub trait FileWriterFactory: Send + Sync {
     /// Creates a file with pre-allocated space.
     fn create_with_size(&self, path: &Path, size: u64) -> io::Result<Self::Writer>;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Standard I/O implementations
-// ─────────────────────────────────────────────────────────────────────────────
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Seek, SeekFrom};

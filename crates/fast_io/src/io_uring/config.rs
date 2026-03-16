@@ -53,7 +53,6 @@ pub fn is_io_uring_available() -> bool {
 }
 
 fn check_io_uring_available() -> bool {
-    // Check kernel version
     let release = match get_kernel_release() {
         Some(r) => r,
         None => return false,

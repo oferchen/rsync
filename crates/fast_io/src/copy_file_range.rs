@@ -81,7 +81,6 @@ const COPY_FILE_RANGE_THRESHOLD: u64 = 64 * 1024; // 64KB
 /// ```
 pub fn copy_file_contents(source: &File, destination: &File, length: u64) -> io::Result<u64> {
     if length >= COPY_FILE_RANGE_THRESHOLD {
-        // Attempt zero-copy via copy_file_range, fall back to read/write on error
         if let Ok(copied) = try_copy_file_range(source, destination, length) {
             return Ok(copied);
         }
@@ -156,28 +155,14 @@ fn try_copy_file_range(source: &File, destination: &File, length: u64) -> io::Re
         // Null offset pointers instruct the syscall to use and update the current
         // file position, which is the behavior we want.
         let result = unsafe {
-            libc::copy_file_range(
-                src_fd,
-                std::ptr::null_mut(), // Use current position for source
-                dst_fd,
-                std::ptr::null_mut(), // Use current position for destination
-                chunk,
-                0, // flags (must be 0)
-            )
+            libc::copy_file_range(src_fd, std::ptr::null_mut(), dst_fd, std::ptr::null_mut(), chunk, 0)
         };
 
         if result < 0 {
-            let err = io::Error::last_os_error();
-            if total_copied == 0 {
-                // Failed on first chunk - return error to trigger fallback
-                return Err(err);
-            }
-            // Partial copy succeeded, but now we hit an error - still return error
-            return Err(err);
+            return Err(io::Error::last_os_error());
         }
 
         if result == 0 {
-            // EOF reached
             break;
         }
 
@@ -223,14 +208,13 @@ fn copy_file_contents_readwrite(source: &File, destination: &File, length: u64) 
     let mut reader = io::BufReader::new(source);
     let mut writer = io::BufWriter::new(destination);
     let mut total = 0u64;
-    let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
+    let mut buf = vec![0u8; 256 * 1024];
     let mut remaining = length;
 
     while remaining > 0 {
         let to_read = (remaining as usize).min(buf.len());
         let n = reader.read(&mut buf[..to_read])?;
         if n == 0 {
-            // EOF reached
             break;
         }
         writer.write_all(&buf[..n])?;

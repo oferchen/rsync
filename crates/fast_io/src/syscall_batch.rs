@@ -194,22 +194,17 @@ pub fn execute_metadata_ops_batched(ops: &[MetadataOp]) -> Vec<MetadataResult> {
         return Vec::new();
     }
 
-    // Create index mapping for reordering results back to original order
     let mut indexed_ops: Vec<(usize, &MetadataOp)> = ops.iter().enumerate().collect();
 
-    // Sort by operation type for cache locality
     indexed_ops.sort_by_key(|(_, op)| operation_type_key(op));
 
-    // Execute operations in sorted order
     let mut indexed_results: Vec<(usize, MetadataResult)> = indexed_ops
         .iter()
         .map(|(idx, op)| (*idx, execute_single_op(op)))
         .collect();
 
-    // Sort results back to original order
     indexed_results.sort_by_key(|(idx, _)| *idx);
 
-    // Extract results
     indexed_results
         .into_iter()
         .map(|(_, result)| result)
@@ -250,11 +245,9 @@ fn execute_single_op(op: &MetadataOp) -> MetadataResult {
 /// On other platforms, uses standard library calls.
 #[cfg(target_os = "linux")]
 fn stat_file(path: &Path, follow_symlinks: bool) -> io::Result<fs::Metadata> {
-    // Try statx first for better performance
     match try_statx(path, follow_symlinks) {
         Ok(metadata) => Ok(metadata),
         Err(_) => {
-            // Fallback to standard library
             if follow_symlinks {
                 fs::metadata(path)
             } else {
@@ -287,45 +280,38 @@ fn try_statx(path: &Path, follow_symlinks: bool) -> io::Result<fs::Metadata> {
         AtFlags::SYMLINK_NOFOLLOW
     };
 
-    // Request basic stat info
     let mask = StatxFlags::BASIC_STATS;
 
     match rustix::fs::statx(rustix::fs::CWD, path, flags, mask) {
         Ok(_statx_result) => {
-            // Convert statx result to std::fs::Metadata
-            // We need to go through the filesystem to get proper Metadata type
-            // since we can't construct it directly. The statx call validates
-            // the path exists and is accessible, so this should succeed.
+            // We cannot construct std::fs::Metadata directly from statx output.
+            // The statx call above validates existence and accessibility, so the
+            // follow-up fs::metadata call should succeed.
             if follow_symlinks {
                 fs::metadata(path)
             } else {
                 fs::symlink_metadata(path)
             }
         }
-        Err(_) => {
-            // Return error to trigger fallback
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "statx not available",
-            ))
-        }
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "statx not available",
+        )),
     }
 }
 
-/// Set file times.
+/// Set file access and modification times.
 ///
-/// Uses `filetime` crate equivalent functionality via std::fs.
+/// On Unix, uses `libc::utimensat`. On non-Unix, uses the `filetime` crate.
 fn set_file_times(
     path: &Path,
     atime: Option<SystemTime>,
     mtime: Option<SystemTime>,
 ) -> io::Result<()> {
-    // For setting times, we need to use platform-specific APIs
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
 
-        // We need to use libc for utimensat
         let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
 
