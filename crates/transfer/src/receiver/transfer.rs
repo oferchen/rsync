@@ -988,7 +988,7 @@ impl ReceiverContext {
                 pipelined_receiver.note_commit_sent(
                     result.expected_checksum,
                     result.checksum_len,
-                    file_path.clone(),
+                    file_path,
                     file_idx,
                 );
 

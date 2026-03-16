@@ -568,7 +568,7 @@ pub fn process_file_response_streaming<R: Read>(
     let is_device_target =
         ctx.config.write_devices && file_entry.as_ref().is_some_and(|e| e.is_device());
     let begin_msg = Box::new(BeginMessage {
-        file_path: file_path.clone(),
+        file_path,
         target_size,
         file_entry_index,
         use_sparse: ctx.config.use_sparse,
