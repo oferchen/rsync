@@ -19,8 +19,8 @@ use proptest::prelude::*;
 fn path_segment() -> impl Strategy<Value = String> {
     proptest::collection::vec(
         prop::sample::select(vec![
-            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
-            '0', '1', '2', '3',
+            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', '0',
+            '1', '2', '3',
         ]),
         1..8,
     )
