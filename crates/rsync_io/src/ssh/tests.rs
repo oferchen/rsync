@@ -589,9 +589,7 @@ fn skips_keepalive_when_user_specifies_server_alive_interval() {
     let rendered = args_to_strings(&args);
 
     assert!(
-        !rendered
-            .iter()
-            .any(|a| a == "-oServerAliveInterval=20"),
+        !rendered.iter().any(|a| a == "-oServerAliveInterval=20"),
         "should not inject default keepalive when user specified interval in {rendered:?}"
     );
     // The user's own option should still be present.
@@ -610,9 +608,7 @@ fn skips_keepalive_when_user_specifies_server_alive_count_max() {
     let rendered = args_to_strings(&args);
 
     assert!(
-        !rendered
-            .iter()
-            .any(|a| a == "-oServerAliveInterval=20"),
+        !rendered.iter().any(|a| a == "-oServerAliveInterval=20"),
         "should not inject defaults when user specified count max in {rendered:?}"
     );
 }
@@ -630,9 +626,7 @@ fn skips_keepalive_when_remote_shell_contains_keepalive() {
     let rendered = args_to_strings(&args);
 
     assert!(
-        !rendered
-            .iter()
-            .any(|a| a == "-oServerAliveInterval=20"),
+        !rendered.iter().any(|a| a == "-oServerAliveInterval=20"),
         "should not inject defaults when remote shell contains keepalive in {rendered:?}"
     );
 }
@@ -646,9 +640,7 @@ fn keepalive_detection_is_case_insensitive() {
     let rendered = args_to_strings(&args);
 
     assert!(
-        !rendered
-            .iter()
-            .any(|a| a == "-oServerAliveInterval=20"),
+        !rendered.iter().any(|a| a == "-oServerAliveInterval=20"),
         "case-insensitive detection should prevent injection in {rendered:?}"
     );
 }
