@@ -739,10 +739,11 @@ fn apply_global_directive(
         }
         _ => {
             eprintln!(
-                "warning: unknown global directive '{}' in '{}' line {}",
+                "warning: unknown global directive '{}' in '{}' line {} [daemon={}]",
                 key,
                 path.display(),
-                line_number
+                line_number,
+                env!("CARGO_PKG_VERSION"),
             );
         }
     }

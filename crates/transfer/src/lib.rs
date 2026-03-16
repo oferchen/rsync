@@ -134,6 +134,10 @@ mod reader;
 pub mod receiver;
 /// Enumerations describing the role executed by the server process.
 pub mod role;
+/// Role trailer formatting for error and warning messages.
+///
+/// Upstream rsync appends `[role=VERSION]` suffixes to diagnostic output.
+pub(crate) mod role_trailer;
 /// Path sanitization mirroring upstream `util1.c:sanitize_path()`.
 pub mod sanitize_path;
 /// Server-side protocol setup utilities.
@@ -381,7 +385,8 @@ pub fn run_server_with_handshake<W: Write>(
             && !flags.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
         {
             eprintln!(
-                "WARNING: remote daemon does not support extended attributes - disabling xattr preservation"
+                "WARNING: remote daemon does not support extended attributes - disabling xattr preservation{}",
+                role_trailer::receiver()
             );
             config.flags.xattrs = false;
         }

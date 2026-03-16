@@ -307,7 +307,8 @@ impl AsyncDaemonListener {
                         if let Err(e) = result {
                             eprintln!(
                                 "async session handler for {peer_addr} \
-                                 failed: {e}"
+                                 failed: {e} [daemon={}]",
+                                env!("CARGO_PKG_VERSION")
                             );
                         }
                     });

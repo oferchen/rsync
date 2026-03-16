@@ -435,7 +435,11 @@ impl GeneratorContext {
             Err(e) => {
                 // upstream: flist.c:1286-1294 — log vanished warning or general error
                 if e.kind() == io::ErrorKind::NotFound {
-                    eprintln!("file has vanished: {}", path.display());
+                    eprintln!(
+                        "file has vanished: {}{}",
+                        path.display(),
+                        crate::role_trailer::sender()
+                    );
                 }
                 self.record_io_error(&e);
                 return Ok(());
