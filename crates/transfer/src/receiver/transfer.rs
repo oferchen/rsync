@@ -534,9 +534,19 @@ impl ReceiverContext {
         if !redo_indices.is_empty() {
             setup.checksum_length = REDO_CHECKSUM_LENGTH;
 
-            let redo_files: Vec<(usize, &FileEntry)> = redo_indices
+            let redo_files: Vec<(usize, &FileEntry, PathBuf)> = redo_indices
                 .iter()
-                .filter_map(|&idx| self.file_list.get(idx).map(|entry| (idx, entry)))
+                .filter_map(|&idx| {
+                    self.file_list.get(idx).map(|entry| {
+                        let p = entry.path();
+                        let file_path = if p.as_os_str() == "." {
+                            setup.dest_dir.clone()
+                        } else {
+                            setup.dest_dir.join(p)
+                        };
+                        (idx, entry, file_path)
+                    })
+                })
                 .collect();
 
             let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
@@ -683,9 +693,19 @@ impl ReceiverContext {
         if !redo_indices.is_empty() {
             setup.checksum_length = REDO_CHECKSUM_LENGTH;
 
-            let redo_files: Vec<(usize, &FileEntry)> = redo_indices
+            let redo_files: Vec<(usize, &FileEntry, PathBuf)> = redo_indices
                 .iter()
-                .filter_map(|&idx| self.file_list.get(idx).map(|entry| (idx, entry)))
+                .filter_map(|&idx| {
+                    self.file_list.get(idx).map(|entry| {
+                        let p = entry.path();
+                        let file_path = if p.as_os_str() == "." {
+                            setup.dest_dir.clone()
+                        } else {
+                            setup.dest_dir.join(p)
+                        };
+                        (idx, entry, file_path)
+                    })
+                })
                 .collect();
 
             let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
@@ -816,7 +836,7 @@ impl ReceiverContext {
         writer: &mut W,
         pipeline_config: PipelineConfig,
         setup: &PipelineSetup,
-        files_to_transfer: Vec<(usize, &FileEntry)>,
+        files_to_transfer: Vec<(usize, &FileEntry, PathBuf)>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         is_redo_pass: bool,
         total_files: usize,
@@ -898,6 +918,20 @@ impl ReceiverContext {
         }
 
         let result = (|| -> io::Result<(usize, u64, Vec<usize>)> {
+            // Track how many requests the sender has received (flushed) but
+            // not yet responded to. We only need to flush the write buffer
+            // when this drops to zero - otherwise the sender already has
+            // queued requests to process and we can read responses without
+            // flushing first.
+            //
+            // upstream: io.c perform_io() uses select() for bidirectional I/O,
+            // naturally batching writes until the output buffer is full. Our
+            // explicit flush-per-response pattern previously caused one write()
+            // syscall per file (~18 bytes each), while upstream batches ~32KB
+            // per write. This counter reduces 10K flushes to ~10K/window_size
+            // flushes (~156 for window=64).
+            let mut flushed_pending: usize = 0;
+
             loop {
                 if let Some(ref dl) = deadline {
                     if dl.is_reached() {
@@ -907,13 +941,8 @@ impl ReceiverContext {
 
                 // Fill the pipeline with requests
                 while pipeline.can_send() {
-                    if let Some((file_idx, file_entry)) = file_iter.next() {
+                    if let Some((file_idx, file_entry, file_path)) = file_iter.next() {
                         let relative_path = file_entry.path();
-                        let file_path = if relative_path.as_os_str() == "." {
-                            setup.dest_dir.clone()
-                        } else {
-                            setup.dest_dir.join(relative_path)
-                        };
 
                         if self.config.flags.verbose && self.config.connection.client_mode {
                             info_log!(Name, 1, "{}", relative_path.display());
@@ -963,13 +992,17 @@ impl ReceiverContext {
                     break;
                 }
 
-                // upstream: io.c perform_io() flushes buffered output while
-                // waiting for input via select(). Flush pending file requests
-                // so the generator can see them before we block reading its response.
-                writer.flush()?;
+                // Flush only when the sender has no queued requests left.
+                // This batches write() syscalls: instead of flushing ~18 bytes
+                // per file, we flush once per pipeline window (~64 files).
+                if flushed_pending == 0 {
+                    writer.flush()?;
+                    flushed_pending = pipeline.outstanding();
+                }
 
-                // Process one response
+                // Process one response from a previously flushed request.
                 let pending = pipeline.pop().expect("pipeline not empty");
+                flushed_pending = flushed_pending.saturating_sub(1);
                 let (file_idx, file_path, file_entry, is_new_file) =
                     pending_files_info.pop_front().expect("pipeline not empty");
 
@@ -1061,7 +1094,7 @@ impl ReceiverContext {
         metadata_errors: &mut Vec<(PathBuf, String)>,
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
-    ) -> Vec<(usize, &'a FileEntry)> {
+    ) -> Vec<(usize, &'a FileEntry, PathBuf)> {
         // upstream: receiver.c:693 - dry_run (!do_xfers) skips all file transfers
         if self.config.flags.dry_run {
             return Vec::new();
@@ -1117,24 +1150,26 @@ impl ReceiverContext {
             None
         };
 
-        // Phase B: Parallel stat
+        // Phase B: Parallel stat - preserve PathBufs for reuse in Phase C and
+        // the pipeline loop, avoiding a second dest_dir.join() per file.
         let stat_paths: Vec<(usize, PathBuf)> = candidates
             .iter()
             .map(|&(idx, entry)| (idx, dest_dir.join(entry.path())))
             .collect();
 
-        let stat_results: Vec<(usize, Option<fs::Metadata>)> = crate::parallel_io::map_blocking(
-            stat_paths,
-            PARALLEL_STAT_THRESHOLD,
-            move |(idx, file_path)| {
-                let meta = fs::metadata(&file_path).ok();
-                (idx, meta)
-            },
-        );
+        let stat_results: Vec<(usize, PathBuf, Option<fs::Metadata>)> =
+            crate::parallel_io::map_blocking(
+                stat_paths,
+                PARALLEL_STAT_THRESHOLD,
+                move |(idx, file_path)| {
+                    let meta = fs::metadata(&file_path).ok();
+                    (idx, file_path, meta)
+                },
+            );
 
         // Phase C: Sequential post-processing with stat results.
         let mut files_to_transfer = Vec::with_capacity(stat_results.len());
-        for (idx, dest_meta) in stat_results {
+        for (idx, file_path, dest_meta) in stat_results {
             let entry = &self.file_list[idx];
             if let Some(ref meta) = dest_meta {
                 if ignore_existing {
@@ -1143,7 +1178,6 @@ impl ReceiverContext {
                 if update_only && dest_mtime_newer(meta, entry) {
                     continue;
                 }
-                let file_path = dest_dir.join(entry.path());
                 if quick_check_matches(
                     entry,
                     &file_path,
@@ -1196,7 +1230,7 @@ impl ReceiverContext {
                     continue;
                 }
             }
-            files_to_transfer.push((idx, entry));
+            files_to_transfer.push((idx, entry, file_path));
         }
         files_to_transfer
     }
