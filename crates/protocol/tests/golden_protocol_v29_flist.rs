@@ -144,11 +144,7 @@ fn golden_v29_directory_entry() {
     assert_eq!(&buf[8..12], &0_i32.to_le_bytes(), "dir size is 0");
 
     // Mtime: 1_700_000_000
-    assert_eq!(
-        &buf[12..16],
-        &1_700_000_000_u32.to_le_bytes(),
-        "dir mtime"
-    );
+    assert_eq!(&buf[12..16], &1_700_000_000_u32.to_le_bytes(), "dir mtime");
 
     // Mode: 0o040755 (S_IFDIR | 0755) as 4-byte LE
     assert_eq!(
@@ -389,11 +385,7 @@ fn golden_v29_mtime_same_time_flag() {
     // Second entry should have XMIT_SAME_TIME (0x80) set and be shorter
     // (no mtime bytes).
     let second_flags = buf[len_first];
-    assert_ne!(
-        second_flags & 0x80,
-        0,
-        "XMIT_SAME_TIME set for same mtime"
-    );
+    assert_ne!(second_flags & 0x80, 0, "XMIT_SAME_TIME set for same mtime");
 
     let second_len = buf.len() - len_first;
     // Second entry: flags + name_len + name(5) + size(4) + mode(4) = shorter
