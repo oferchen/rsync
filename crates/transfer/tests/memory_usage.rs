@@ -236,10 +236,7 @@ fn adaptive_buffer_threshold_boundaries() {
     );
 
     // Exactly at huge threshold
-    assert_eq!(
-        adaptive_buffer_size(HUGE_FILE_THRESHOLD),
-        HUGE_BUFFER_SIZE
-    );
+    assert_eq!(adaptive_buffer_size(HUGE_FILE_THRESHOLD), HUGE_BUFFER_SIZE);
 }
 
 #[test]

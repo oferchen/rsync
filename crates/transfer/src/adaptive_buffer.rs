@@ -299,10 +299,7 @@ mod tests {
         );
 
         // Huge files (> 10MB)
-        assert_eq!(
-            adaptive_buffer_size(HUGE_FILE_THRESHOLD),
-            HUGE_BUFFER_SIZE
-        );
+        assert_eq!(adaptive_buffer_size(HUGE_FILE_THRESHOLD), HUGE_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(100 * 1024 * 1024), HUGE_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(1024 * 1024 * 1024), HUGE_BUFFER_SIZE);
     }
