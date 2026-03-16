@@ -366,6 +366,23 @@ pub(super) fn execute_transfer(
             .truncate(should_truncate)
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?
+    } else if existing_metadata.is_none() && !partial_enabled && !delay_updates_enabled {
+        // Direct write: destination does not exist, so there is nothing to
+        // corrupt on interruption. Skip temp-file creation and rename to
+        // halve the filesystem metadata overhead. The error handler already
+        // calls remove_incomplete_destination() on failure.
+        // upstream: receiver.c - writes directly when dest absent and safe
+        debug_log!(
+            Io,
+            3,
+            "direct write to {} (no existing destination)",
+            record_path.display()
+        );
+        fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(destination)
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?
     } else {
         let (new_guard, file) = DestinationWriteGuard::new(
             destination,

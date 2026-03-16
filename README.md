@@ -12,63 +12,63 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.5.9 (alpha)
+**Release:** 0.5.9 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.1 (protocols 28-32).
 
-Local, SSH, and daemon transfers are fully functional with native delta algorithm, metadata preservation, and all core options. Daemon mode handles negotiation, authentication, module access control, and file transfers natively. Interoperability tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1 across protocols 28-32.
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
-| Area | Status |
-|------|--------|
-| Local copy | Complete |
-| SSH transfer | Complete |
-| Daemon negotiation & auth | Complete |
-| Daemon file transfer | Complete |
-| Delta algorithm | Complete |
-| Filter rules | Complete |
-| --delete (all timings) | Complete |
-| --delay-updates | Complete |
-| Sparse files, hardlinks, symlinks | Complete |
-| ACLs (-A), xattrs (-X) | Unix only |
-| --compress (zlib, zstd, lz4) | Complete |
-| Batch files (write + read) | Complete |
-| Incremental recursion (push + pull) | Complete |
-| Daemon daemonization (--detach) | Complete |
-| Daemon syslog | Complete |
-| Daemon chroot & privilege drop | Complete |
-| Daemon pre/post-xfer exec | Complete |
-| SIMD checksums (AVX2, SSE2, NEON) | Complete |
-| Hardlink preservation | Complete |
-| --files-from (local, stdin, remote) | Complete |
-| --compare-dest, --link-dest, --copy-dest | Complete |
-| --iconv charset conversion | Complete |
-| Fuzzy matching (level 1 & 2) | Complete |
-| Protocol 28-32 wire compatibility | Complete |
-| io_uring (Linux 5.6+, optional) | Complete |
-| Linux, macOS | Full support |
-| Windows | Partial (no ACLs/xattrs) |
+| Component | Status |
+|-----------|--------|
+| **Transfer** | Local, SSH, daemon push/pull |
+| **Delta** | Rolling + strong checksums, block matching |
+| **Metadata** | Permissions, timestamps, ownership, ACLs (`-A`), xattrs (`-X`) |
+| **File handling** | Sparse, hardlinks, symlinks, devices, FIFOs |
+| **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
+| **Compression** | zlib, zstd, lz4 with level control |
+| **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
+| **Incremental recursion** | Push and pull directions |
+| **Batch** | `--write-batch` / `--read-batch` roundtrip |
+| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
+| **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
+| **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
+| **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
+| **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
+| **Platforms** | Linux, macOS (full); Windows (partial - no ACLs/xattrs) |
+
+### What's New (v0.5.9)
+
+**Performance**
+- Direct-write for initial copies - bypasses temp-file creation and rename
+- Adaptive I/O buffers (8KB-1MB) scaled to file size
+- Buffer pool passed to `copy_file_range` fallback path
+- `FileEntry` memory reduced via `Box<FileEntryExtras>` for rarely-used fields
+- Shared file list via `Arc` eliminates per-file clone overhead
+- Precomputed sort keys remove per-comparison `memrchr` calls
+- Parallel basis file signature computation in pipeline fill
+- Batched receiver flush syscalls with path reuse
+- Rayon-based parallel stat replaces `tokio::spawn_blocking`
+- Upstream-matching compression negotiation precedence
+
+**Features**
+- io_uring wired into sender/generator for large file reads
+- Protocol version guards for legacy flist read path (proto < 30)
+- Batch file encoding replaced with protocol stream format
+- Transfer statistics written to batch files
+
+**Fixes**
+- SSH transfer deadlocks and protocol compatibility resolved
+- Client-mode multiplex activation matches upstream behavior
+- INC_RECURSE capability direction corrected for daemon push
+- 6 interop known failures resolved (dry-run, files-from, relative paths)
 
 ### Interop Testing
 
-Tested against upstream rsync **3.0.9**, **3.1.3**, and **3.4.1** in CI across protocols 28-32. Both push (oc-rsync client to upstream daemon) and pull (upstream client to oc-rsync daemon) directions are verified for over 30 scenarios:
-
-- Transfer modes: `--checksum`, `--whole-file`, `--ignore-times`, `--update`, `--append`
-- Deletion: `--delete`, `--delete-during`, `--delete-after`, `--delete-excluded`
-- Compression: `--compress`, `--compress-level`, zlib/zlibx negotiation
-- Metadata: `--hard-links`, `--numeric-ids`, `--acls`, `--xattrs`, `--sparse`
-- Reference dirs: `--compare-dest`, `--link-dest`, `--copy-dest`
-- File selection: `--files-from`, `--exclude`, `--include`, `--filter`
-- Special modes: `--inplace`, `--delay-updates`, `--partial`, `--partial-dir`
-- Path handling: `--relative`, `--one-file-system`, `--safe-links`, `--copy-links`
-- Batch: `--write-batch` / `--read-batch` roundtrip (oc-rsync and upstream)
-- Output: `--itemize-changes`, `--dry-run`, `--bwlimit`
-- Protocol: forced `--protocol=28` through `--protocol=32`
-- Devices: device nodes, special files (`-D`)
-- Auth: daemon module authentication
+Tested against upstream rsync **3.0.9**, **3.1.3**, and **3.4.1** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth.
 
 ### Performance
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Threaded architecture replaces upstream's fork-based pipeline for local transfers, reducing syscall overhead and context switches. Optional io_uring support on Linux 5.6+ for async file I/O (`--io-uring` / `--no-io-uring`).
+Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Direct-write optimization for initial copies bypasses temp-file creation. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ (`--io-uring` / `--no-io-uring`).
 
 ---
 
@@ -203,15 +203,7 @@ cli -> core -> engine, daemon, transport, logging
                 core -> protocol -> checksums, filters, compress, bandwidth -> metadata
 ```
 
-- **cli** - CLI parsing (Clap v4), help text, output formatting
-- **core** - Orchestration facade; all transfers go through `core::session()` and `CoreConfig`
-- **protocol** - Wire protocol (v28-32), multiplex MSG_* framing, version negotiation
-- **transfer** - Generator (sender) and receiver roles, delta transfer pipeline
-- **engine** - Local copy executor, sparse writes, temp-file commit, buffer pool
-- **checksums** - Rolling rsum + strong checksums (MD4/MD5/XXH3) with SIMD fast paths
-- **daemon** - TCP listener, @RSYNCD: negotiation, auth, module access control
-
-Design patterns used throughout: Strategy (checksum/compression selection), Builder (config objects), State Machine (connection lifecycle), Chain of Responsibility (filter rules), Dependency Inversion (trait-based abstractions).
+Key crates: **cli** (Clap v4), **core** (orchestration facade), **protocol** (wire v28-32, multiplex framing), **transfer** (generator/receiver, delta pipeline), **engine** (local copy, sparse writes, buffer pool), **checksums** (MD4/MD5/XXH3, SIMD), **daemon** (TCP, auth, modules).
 
 ---
 
@@ -248,3 +240,4 @@ GNU GPL v3.0 or later. See [`LICENSE`](./LICENSE).
 
 Inspired by [`rsync`](https://rsync.samba.org/) by Andrew Tridgell and the Samba team.
 Thanks to **Pieter** for his heroic patience in enduring months of my rsync commentary.
+Thanks to **Elad** for his endless patience hearing rsync protocol commentary as I'm introduced to it.
