@@ -157,14 +157,12 @@ pub fn compress_block(input: &[u8], output: &mut [u8]) -> Result<usize, RawLz4Er
         });
     }
 
-    // Compress into buffer after header space
     let compressed_size = compress_into(input, &mut output[HEADER_SIZE..])?;
 
     if compressed_size > MAX_BLOCK_SIZE {
         return Err(RawLz4Error::CompressedTooLarge(compressed_size));
     }
 
-    // Write header
     let header = encode_header(compressed_size);
     output[0] = header[0];
     output[1] = header[1];
@@ -295,17 +293,14 @@ pub fn read_compressed_block<R: Read>(
         return Err(RawLz4Error::DecompressedSizeTooLarge(max_decompressed_size));
     }
 
-    // Read header
     let mut header = [0u8; HEADER_SIZE];
     reader.read_exact(&mut header)?;
 
     let compressed_size = decode_header(header).ok_or(RawLz4Error::InvalidHeader(header[0]))?;
 
-    // Read compressed data
     let mut compressed = vec![0u8; compressed_size];
     reader.read_exact(&mut compressed)?;
 
-    // Decompress
     let mut output = vec![0u8; max_decompressed_size];
     let size = decompress_into(&compressed, &mut output)?;
     output.truncate(size);
@@ -322,7 +317,6 @@ pub const fn compressed_size_from_header(header: [u8; 2]) -> Option<usize> {
     decode_header(header)
 }
 
-// Implement From for io::Error conversion
 impl From<lz4_flex::block::CompressError> for RawLz4Error {
     fn from(e: lz4_flex::block::CompressError) -> Self {
         RawLz4Error::Io(io::Error::new(io::ErrorKind::InvalidData, e.to_string()))

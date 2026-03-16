@@ -388,14 +388,12 @@ impl CompressionDecider {
     /// - `CompressionDecision::AutoDetect` if the caller should sample the file content
     #[must_use]
     pub fn should_compress(&self, path: &Path, first_block: Option<&[u8]>) -> CompressionDecision {
-        // Check extension first (fastest path)
         if let Some(ext) = Self::extract_extension(path) {
             if self.skip_extensions.contains(&ext) {
                 return CompressionDecision::Skip;
             }
         }
 
-        // Check magic bytes if available and enabled
         if self.use_magic_detection {
             if let Some(data) = first_block {
                 if let Some(category) = self.detect_category_by_magic(data) {
@@ -406,12 +404,10 @@ impl CompressionDecider {
             }
         }
 
-        // If we have content but couldn't determine the type, suggest auto-detection
         if first_block.is_some() {
             return CompressionDecision::Compress;
         }
 
-        // Without content, we can't make a definitive decision
         CompressionDecision::AutoDetect
     }
 
@@ -443,12 +439,10 @@ impl CompressionDecider {
             return Ok(true); // Empty files are trivially compressible
         }
 
-        // Use fast compression level for auto-detection
         let mut encoder = CountingZlibEncoder::new(CompressionLevel::Fast);
         encoder.write_all(sample)?;
         let compressed_len = encoder.finish()? as usize;
 
-        // Calculate compression ratio
         let ratio = compressed_len as f64 / sample.len() as f64;
 
         Ok(ratio < self.compression_threshold)
@@ -456,18 +450,15 @@ impl CompressionDecider {
 
     /// Extracts and normalizes the file extension from a path.
     fn extract_extension(path: &Path) -> Option<String> {
-        // Handle compound extensions like .tar.gz
         let file_name = path.file_name()?.to_str()?;
         let lower = file_name.to_ascii_lowercase();
 
-        // Check for known compound extensions
         for compound in &[".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst"] {
             if lower.ends_with(compound) {
                 return Some(compound.trim_start_matches('.').to_owned());
             }
         }
 
-        // Fall back to simple extension
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(str::to_ascii_lowercase)
@@ -557,15 +548,12 @@ impl<W: Write> AdaptiveCompressor<W> {
         self.should_compress = self.decider.auto_detect_compressible(&self.buffer)?;
         self.decision_made = true;
 
-        // Flush buffered data according to decision
         if self.should_compress {
-            // Compress buffered data
             let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), self.level);
             encoder.write_all(&self.buffer)?;
             let (compressed, _) = encoder.finish_into_inner()?;
             self.compress_buffer = compressed;
         } else {
-            // Write buffered data directly
             self.inner.write_all(&self.buffer)?;
         }
 
@@ -575,12 +563,10 @@ impl<W: Write> AdaptiveCompressor<W> {
 
     /// Finishes the compression stream and returns the inner writer.
     pub fn finish(mut self) -> io::Result<W> {
-        // Make decision if we haven't yet (for small files)
         if !self.decision_made {
             self.make_decision()?;
         }
 
-        // Write any remaining compressed data
         if !self.compress_buffer.is_empty() {
             self.inner.write_all(&self.compress_buffer)?;
         }
@@ -593,23 +579,19 @@ impl<W: Write> AdaptiveCompressor<W> {
 impl<W: Write> Write for AdaptiveCompressor<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if !self.decision_made {
-            // Buffer data until we have enough for auto-detection
             let remaining = self.decider.sample_size().saturating_sub(self.buffer.len());
 
             if remaining > 0 {
                 let to_buffer = buf.len().min(remaining);
                 self.buffer.extend_from_slice(&buf[..to_buffer]);
 
-                // If we still don't have enough, report buffered amount
                 if self.buffer.len() < self.decider.sample_size() {
                     return Ok(to_buffer);
                 }
             }
 
-            // We have enough data, make the decision
             self.make_decision()?;
 
-            // Write any remaining data from this call
             if remaining < buf.len() {
                 let written = self.write(&buf[remaining..])?;
                 return Ok(written + remaining);
@@ -618,9 +600,7 @@ impl<W: Write> Write for AdaptiveCompressor<W> {
             return Ok(buf.len());
         }
 
-        // Decision already made, write data accordingly
         if self.should_compress {
-            // Compress this chunk and add to buffer
             let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), self.level);
             encoder.write_all(buf)?;
             let (compressed, _) = encoder.finish_into_inner()?;
@@ -632,7 +612,6 @@ impl<W: Write> Write for AdaptiveCompressor<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // Write any pending compressed data
         if !self.compress_buffer.is_empty() {
             self.inner.write_all(&self.compress_buffer)?;
             self.compress_buffer.clear();
