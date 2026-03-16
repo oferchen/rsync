@@ -2059,7 +2059,8 @@ mod protocol_flist_round_trip {
     fn write_and_read_single_file_entry() {
         let temp_dir = TempDir::new().unwrap();
 
-        let mut entry = protocol::flist::FileEntry::new_file(PathBuf::from("hello.txt"), 1024, 0o100644);
+        let mut entry =
+            protocol::flist::FileEntry::new_file(PathBuf::from("hello.txt"), 1024, 0o100644);
         entry.set_mtime(1_700_000_000, 0);
 
         let path = write_batch_with_protocol_flist(&temp_dir, "single.batch", &[entry]);
@@ -2085,12 +2086,20 @@ mod protocol_flist_round_trip {
                 e
             },
             {
-                let mut e = protocol::flist::FileEntry::new_file(PathBuf::from("file_a.txt"), 100, 0o100644);
+                let mut e = protocol::flist::FileEntry::new_file(
+                    PathBuf::from("file_a.txt"),
+                    100,
+                    0o100644,
+                );
                 e.set_mtime(1_700_000_001, 0);
                 e
             },
             {
-                let mut e = protocol::flist::FileEntry::new_file(PathBuf::from("file_b.txt"), 200, 0o100644);
+                let mut e = protocol::flist::FileEntry::new_file(
+                    PathBuf::from("file_b.txt"),
+                    200,
+                    0o100644,
+                );
                 e.set_mtime(1_700_000_002, 0);
                 e
             },
@@ -2132,9 +2141,8 @@ mod protocol_flist_round_trip {
         let path_str = batch_path.to_string_lossy().to_string();
         let protocol_version = 32;
 
-        let config =
-            BatchConfig::new(BatchMode::Write, path_str.clone(), protocol_version)
-                .with_checksum_seed(0);
+        let config = BatchConfig::new(BatchMode::Write, path_str.clone(), protocol_version)
+            .with_checksum_seed(0);
 
         let mut writer = BatchWriter::new(config).unwrap();
 
@@ -2147,7 +2155,8 @@ mod protocol_flist_round_trip {
         let proto = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let flist_writer = protocol::flist::FileListWriter::new(proto);
 
-        let mut entry = protocol::flist::FileEntry::new_file(PathBuf::from("test.txt"), 42, 0o100644);
+        let mut entry =
+            protocol::flist::FileEntry::new_file(PathBuf::from("test.txt"), 42, 0o100644);
         entry.set_mtime(1_700_000_000, 0);
 
         let mut buf = Vec::new();
@@ -2184,7 +2193,8 @@ mod protocol_flist_round_trip {
         let temp_dir = TempDir::new().unwrap();
 
         let entries = vec![{
-            let mut e = protocol::flist::FileEntry::new_file(PathBuf::from("flagtest.txt"), 10, 0o100644);
+            let mut e =
+                protocol::flist::FileEntry::new_file(PathBuf::from("flagtest.txt"), 10, 0o100644);
             e.set_mtime(1_700_000_000, 0);
             e
         }];
