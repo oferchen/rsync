@@ -46,6 +46,9 @@ pub enum FileMessage {
 }
 
 /// Metadata for starting a new file write on the disk thread.
+///
+/// Per-transfer invariants (`use_sparse`, `temp_dir`) live in
+/// `DiskCommitConfig` to avoid per-file cloning.
 pub struct BeginMessage {
     /// Destination path for the file.
     pub file_path: PathBuf,
@@ -53,8 +56,6 @@ pub struct BeginMessage {
     pub target_size: u64,
     /// Index into the file list (for metadata application).
     pub file_entry_index: usize,
-    /// Whether to use sparse file writing.
-    pub use_sparse: bool,
     /// Checksum verifier for computing per-file integrity digest on the disk
     /// thread. When `Some`, the disk thread hashes every chunk it writes and
     /// returns the final digest in [`CommitResult::computed_checksum`].
@@ -62,8 +63,8 @@ pub struct BeginMessage {
     pub checksum_verifier: Option<ChecksumVerifier>,
     /// File entry from the file list, used for metadata application after
     /// commit. When `Some`, the disk thread applies metadata (mtime, perms,
-    /// ownership) immediately after rename — mirroring upstream
-    /// `finish_transfer()` → `set_file_attrs()` in receiver.c.
+    /// ownership) immediately after rename - mirroring upstream
+    /// `finish_transfer()` -> `set_file_attrs()` in receiver.c.
     pub file_entry: Option<FileEntry>,
     /// When true, the target is a device file opened with `O_WRONLY`.
     ///
@@ -81,11 +82,6 @@ pub struct BeginMessage {
     /// (created if absent) and truncated to target size after delta
     /// application. Preserves the destination inode.
     pub is_inplace: bool,
-    /// Temporary directory for staging received files before final placement.
-    ///
-    /// When set, temp files are created here instead of alongside the destination.
-    /// Mirrors upstream `--temp-dir` / daemon `temp dir` module parameter.
-    pub temp_dir: Option<PathBuf>,
     /// Xattr list resolved from the wire protocol cache for this file.
     ///
     /// When `Some`, the disk thread applies these xattrs after metadata

@@ -80,7 +80,7 @@ pub struct RequestConfig<'a> {
     /// Whether to fsync after write.
     pub do_fsync: bool,
     /// Temporary directory for staging received files before final placement.
-    pub temp_dir: Option<&'a std::path::Path>,
+    pub temp_dir: Option<&'a Path>,
     /// Whether to write data directly to device files (`--write-devices`).
     ///
     /// When true, device file targets are opened with `O_WRONLY` and receive
@@ -571,7 +571,6 @@ pub fn process_file_response_streaming<R: Read>(
         file_path,
         target_size,
         file_entry_index,
-        use_sparse: ctx.config.use_sparse,
         checksum_verifier: Some(disk_verifier),
         file_entry,
         is_device_target,
@@ -579,7 +578,6 @@ pub fn process_file_response_streaming<R: Read>(
         is_inplace: ctx.config.inplace
             || (ctx.config.inplace_partial
                 && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir)),
-        temp_dir: ctx.config.temp_dir.map(Path::to_path_buf),
         xattr_list,
     });
 
