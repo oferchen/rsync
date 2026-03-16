@@ -566,16 +566,15 @@ impl ReceiverContext {
         }
 
         // Print verbose directories
-        for file_entry in &self.file_list {
-            if file_entry.is_dir()
-                && self.config.flags.verbose
-                && self.config.connection.client_mode
-            {
-                let relative_path = file_entry.path();
-                if relative_path.as_os_str() == "." {
-                    info_log!(Name, 1, "./");
-                } else {
-                    info_log!(Name, 1, "{}/", relative_path.display());
+        if self.config.flags.verbose && self.config.connection.client_mode {
+            for file_entry in &self.file_list {
+                if file_entry.is_dir() {
+                    let relative_path = file_entry.path();
+                    if relative_path.as_os_str() == "." {
+                        info_log!(Name, 1, "./");
+                    } else {
+                        info_log!(Name, 1, "{}/", relative_path.display());
+                    }
                 }
             }
         }
