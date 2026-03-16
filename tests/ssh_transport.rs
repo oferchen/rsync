@@ -74,9 +74,6 @@ fn ssh_localhost_available() -> bool {
 /// Maximum time to wait for an SSH transfer test before killing the process.
 const SSH_TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Maximum retry attempts for transient SSH failures.
-const SSH_MAX_RETRIES: usize = 2;
-
 /// Runs oc-rsync with the given args and a process-level timeout.
 /// Returns None if the process times out (killed).
 fn run_oc_rsync_with_timeout(args: &[&str]) -> Option<std::process::Output> {
@@ -132,78 +129,6 @@ fn run_oc_rsync_with_timeout(args: &[&str]) -> Option<std::process::Output> {
     }
 }
 
-/// Result of an SSH transfer attempt.
-enum SshTransferResult {
-    /// Transfer succeeded - output is available for verification.
-    Success(std::process::Output),
-    /// Transfer timed out after all retries.
-    Timeout,
-    /// Transfer failed on every attempt - includes last stderr for diagnostics.
-    Failure(String),
-}
-
-/// Runs an SSH transfer with retry on failure.
-///
-/// SSH integration tests in CI are inherently flaky - the SSH pipe can
-/// deliver garbled data, drop connections, or corrupt arguments in ways
-/// that manifest as different error codes and messages each run. Rather
-/// than classifying individual error strings, we retry on any failure
-/// and skip when all attempts fail.
-fn run_ssh_transfer(args: &[&str]) -> SshTransferResult {
-    let mut last_stderr = String::new();
-
-    for attempt in 0..SSH_MAX_RETRIES {
-        let output = match run_oc_rsync_with_timeout(args) {
-            Some(o) => o,
-            None => {
-                if attempt + 1 < SSH_MAX_RETRIES {
-                    eprintln!("SSH transfer timed out (attempt {}), retrying", attempt + 1);
-                    continue;
-                }
-                return SshTransferResult::Timeout;
-            }
-        };
-
-        if output.status.success() {
-            return SshTransferResult::Success(output);
-        }
-
-        last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if attempt + 1 < SSH_MAX_RETRIES {
-            eprintln!(
-                "SSH transfer failed (attempt {}), retrying: {}",
-                attempt + 1,
-                last_stderr.trim()
-            );
-            std::thread::sleep(Duration::from_secs(1));
-        }
-    }
-
-    SshTransferResult::Failure(last_stderr)
-}
-
-/// Requires a successful SSH transfer, or skips the test on failure.
-///
-/// Returns `Some(output)` on success. Returns `None` when all retry
-/// attempts failed - the caller should `return` to skip the test.
-fn require_ssh_success(result: SshTransferResult) -> Option<std::process::Output> {
-    match result {
-        SshTransferResult::Success(output) => Some(output),
-        SshTransferResult::Timeout => {
-            eprintln!("SSH transfer timed out after retries - skipping (CI environment issue)");
-            None
-        }
-        SshTransferResult::Failure(stderr) => {
-            eprintln!(
-                "SSH transfer failed after {SSH_MAX_RETRIES} attempts - skipping: {}",
-                stderr.trim()
-            );
-            None
-        }
-    }
-}
-
 #[test]
 #[ignore] // Requires SSH server setup
 fn test_ssh_push_single_file() {
@@ -219,21 +144,23 @@ fn test_ssh_push_single_file() {
     let remote_dest = format!("localhost:{}", dest_dir.path().join("file1.txt").display());
     let rsync_path = rsync_path_arg();
 
-    let result = run_ssh_transfer(&[
+    let output = run_oc_rsync_with_timeout(&[
         "--timeout=30",
         &rsync_path,
         &source_file.to_string_lossy(),
         &remote_dest,
     ]);
 
-    let Some(_output) = require_ssh_success(result) else {
-        return;
-    };
-
-    let dest_file = dest_dir.path().join("file1.txt");
-    assert!(dest_file.exists(), "Destination file should exist");
-    let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
-    assert_eq!(content, "Hello, World!");
+    let output = output.expect("SSH push timed out - possible deadlock");
+    if output.status.success() {
+        let dest_file = dest_dir.path().join("file1.txt");
+        assert!(dest_file.exists(), "Destination file should exist");
+        let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
+        assert_eq!(content, "Hello, World!");
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("SSH push failed: {stderr}");
+    }
 }
 
 #[test]
@@ -252,20 +179,22 @@ fn test_ssh_pull_single_file() {
     let dest_file = dest_dir.path().join("file2.txt");
     let rsync_path = rsync_path_arg();
 
-    let result = run_ssh_transfer(&[
+    let output = run_oc_rsync_with_timeout(&[
         "--timeout=30",
         &rsync_path,
         &remote_source,
         &dest_file.to_string_lossy(),
     ]);
 
-    let Some(_output) = require_ssh_success(result) else {
-        return;
-    };
-
-    assert!(dest_file.exists(), "Destination file should exist");
-    let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
-    assert_eq!(content, "Test content 2");
+    let output = output.expect("SSH pull timed out - possible deadlock");
+    if output.status.success() {
+        assert!(dest_file.exists(), "Destination file should exist");
+        let content = fs::read_to_string(&dest_file).expect("Failed to read dest file");
+        assert_eq!(content, "Test content 2");
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("SSH pull failed: {stderr}");
+    }
 }
 
 #[test]
@@ -283,7 +212,7 @@ fn test_ssh_push_recursive_directory() {
     let source_path = format!("{}/", source_dir.path().display());
     let rsync_path = rsync_path_arg();
 
-    let result = run_ssh_transfer(&[
+    let output = run_oc_rsync_with_timeout(&[
         "--timeout=30",
         &rsync_path,
         "-r",
@@ -291,13 +220,15 @@ fn test_ssh_push_recursive_directory() {
         &remote_dest,
     ]);
 
-    let Some(_output) = require_ssh_success(result) else {
-        return;
-    };
-
-    assert!(dest_dir.path().join("file1.txt").exists());
-    assert!(dest_dir.path().join("file2.txt").exists());
-    assert!(dest_dir.path().join("subdir").join("file3.txt").exists());
+    let output = output.expect("SSH recursive push timed out - possible deadlock");
+    if output.status.success() {
+        assert!(dest_dir.path().join("file1.txt").exists());
+        assert!(dest_dir.path().join("file2.txt").exists());
+        assert!(dest_dir.path().join("subdir").join("file3.txt").exists());
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("SSH recursive push failed: {stderr}");
+    }
 }
 
 #[test]
