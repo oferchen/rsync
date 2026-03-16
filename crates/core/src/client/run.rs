@@ -750,18 +750,16 @@ fn replay_batch(
             ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
         })?;
 
-    #[cfg(feature = "tracing")]
-    {
-        if result.recurse {
-            tracing::info!("Batch mode enabled: recurse");
-        }
-        tracing::info!(
-            file_count = result.file_count,
-            total_size = result.total_size,
-            "Batch replay complete"
-        );
+    if result.recurse {
+        logging::debug_log!(Proto, 1, "Batch mode enabled: recurse");
     }
-    let _ = &result;
+    logging::debug_log!(
+        Proto,
+        1,
+        "Batch replay complete file_count={} total_size={}",
+        result.file_count,
+        result.total_size
+    );
 
     use engine::local_copy::LocalCopySummary;
     Ok(ClientSummary::from_summary(LocalCopySummary::default()))
