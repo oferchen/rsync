@@ -88,12 +88,7 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 ///
 /// Separated from `compare_file_entries` so the sort loop can pass cached
 /// `SortKey` values without recomputing `memrchr` and `is_dir` per call.
-fn compare_with_keys(
-    bytes_a: &[u8],
-    key_a: &SortKey,
-    bytes_b: &[u8],
-    key_b: &SortKey,
-) -> Ordering {
+fn compare_with_keys(bytes_a: &[u8], key_a: &SortKey, bytes_b: &[u8], key_b: &SortKey) -> Ordering {
     // "." always comes first
     match (bytes_a == b".", bytes_b == b".") {
         (true, true) => return Ordering::Equal,
