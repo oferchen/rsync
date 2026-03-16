@@ -366,6 +366,38 @@ pub(super) fn execute_transfer(
             .truncate(should_truncate)
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?
+    } else if existing_metadata.is_none()
+        && !partial_enabled
+        && !delay_updates_enabled
+        && context.temp_directory_path().is_none()
+    {
+        // Robustness parity with upstream rsync:
+        //
+        // Upstream (receiver.c) always uses temp file + rename. The temp file
+        // protects an *existing* destination from corruption on interruption.
+        // When the destination does not exist, there is nothing to protect -
+        // upstream's cleanup simply unlinks the temp file, leaving no
+        // destination, which is identical to our cleanup via
+        // remove_incomplete_destination().
+        //
+        // Conditions ensuring safety:
+        // - existing_metadata is None: no pre-existing file to corrupt
+        // - !partial_enabled: --partial needs temp files for resume semantics
+        // - !delay_updates: needs staging for atomic batch rename
+        // - temp_directory_path is None: user did not request explicit staging
+        //
+        // create_new(true) prevents races with concurrent writers (EEXIST).
+        debug_log!(
+            Io,
+            3,
+            "direct write to {} (no existing destination)",
+            record_path.display()
+        );
+        fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(destination)
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?
     } else {
         let (new_guard, file) = DestinationWriteGuard::new(
             destination,
