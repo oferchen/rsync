@@ -23,58 +23,32 @@
 
 use std::time::Duration;
 
-/// Target name for tracing events, matching rsync's debug category.
-#[cfg(feature = "tracing")]
-const IO_TARGET: &str = "rsync::io";
-
 /// Traces a read operation.
 ///
-/// Emits a tracing event when data is read from the I/O stream.
+/// Emits a debug log event when data is read from the I/O stream.
 /// In upstream rsync, this corresponds to read operations in io.c.
 ///
 /// # Arguments
 ///
 /// * `bytes` - Number of bytes read
 /// * `tag` - Descriptive tag for the operation context (e.g., "file_data", "checksum")
-#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_io_read(bytes: usize, tag: &str) {
-    tracing::trace!(
-        target: IO_TARGET,
-        bytes = bytes,
-        tag = tag,
-        "io: read"
-    );
+    logging::debug_log!(Io, 3, "io: read bytes={} tag={}", bytes, tag);
 }
-
-/// No-op when tracing is disabled.
-#[cfg(not(feature = "tracing"))]
-#[inline]
-pub fn trace_io_read(_bytes: usize, _tag: &str) {}
 
 /// Traces a write operation.
 ///
-/// Emits a tracing event when data is written to the I/O stream.
+/// Emits a debug log event when data is written to the I/O stream.
 ///
 /// # Arguments
 ///
 /// * `bytes` - Number of bytes written
 /// * `tag` - Descriptive tag for the operation context (e.g., "delta", "file_list")
-#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_io_write(bytes: usize, tag: &str) {
-    tracing::trace!(
-        target: IO_TARGET,
-        bytes = bytes,
-        tag = tag,
-        "io: write"
-    );
+    logging::debug_log!(Io, 3, "io: write bytes={} tag={}", bytes, tag);
 }
-
-/// No-op when tracing is disabled.
-#[cfg(not(feature = "tracing"))]
-#[inline]
-pub fn trace_io_write(_bytes: usize, _tag: &str) {}
 
 /// Traces a multiplex message.
 ///
@@ -86,22 +60,17 @@ pub fn trace_io_write(_bytes: usize, _tag: &str) {}
 /// * `code` - Message code (e.g., 7 for MPLEX_BASE)
 /// * `tag` - Message tag/channel identifier
 /// * `length` - Length of the message payload
-#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_mplex_message(code: u8, tag: u16, length: u32) {
-    tracing::debug!(
-        target: IO_TARGET,
-        code = code,
-        tag = tag,
-        length = length,
-        "io: mplex_message"
+    logging::debug_log!(
+        Io,
+        2,
+        "io: mplex_message code={} tag={} length={}",
+        code,
+        tag,
+        length
     );
 }
-
-/// No-op when tracing is disabled.
-#[cfg(not(feature = "tracing"))]
-#[inline]
-pub fn trace_mplex_message(_code: u8, _tag: u16, _length: u32) {}
 
 /// Traces an I/O timeout event.
 ///
@@ -111,21 +80,16 @@ pub fn trace_mplex_message(_code: u8, _tag: u16, _length: u32) {}
 ///
 /// * `operation` - Description of the operation that timed out
 /// * `timeout_secs` - Timeout duration in seconds
-#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_io_timeout(operation: &str, timeout_secs: u32) {
-    tracing::warn!(
-        target: IO_TARGET,
-        operation = operation,
-        timeout_secs = timeout_secs,
-        "io: timeout"
+    logging::debug_log!(
+        Io,
+        1,
+        "io: timeout operation={} timeout_secs={}",
+        operation,
+        timeout_secs
     );
 }
-
-/// No-op when tracing is disabled.
-#[cfg(not(feature = "tracing"))]
-#[inline]
-pub fn trace_io_timeout(_operation: &str, _timeout_secs: u32) {}
 
 /// Traces an I/O error.
 ///
@@ -135,21 +99,10 @@ pub fn trace_io_timeout(_operation: &str, _timeout_secs: u32) {}
 ///
 /// * `operation` - Description of the operation that failed
 /// * `error` - Error message or description
-#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_io_error(operation: &str, error: &str) {
-    tracing::error!(
-        target: IO_TARGET,
-        operation = operation,
-        error = error,
-        "io: error"
-    );
+    logging::debug_log!(Io, 1, "io: error operation={} error={}", operation, error);
 }
-
-/// No-op when tracing is disabled.
-#[cfg(not(feature = "tracing"))]
-#[inline]
-pub fn trace_io_error(_operation: &str, _error: &str) {}
 
 /// Traces a buffer flush operation.
 ///
@@ -158,20 +111,10 @@ pub fn trace_io_error(_operation: &str, _error: &str) {}
 /// # Arguments
 ///
 /// * `buffered_bytes` - Number of bytes being flushed
-#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_io_flush(buffered_bytes: usize) {
-    tracing::debug!(
-        target: IO_TARGET,
-        buffered_bytes = buffered_bytes,
-        "io: flush"
-    );
+    logging::debug_log!(Io, 2, "io: flush buffered_bytes={}", buffered_bytes);
 }
-
-/// No-op when tracing is disabled.
-#[cfg(not(feature = "tracing"))]
-#[inline]
-pub fn trace_io_flush(_buffered_bytes: usize) {}
 
 /// Traces a summary of I/O operations.
 ///
@@ -183,22 +126,17 @@ pub fn trace_io_flush(_buffered_bytes: usize) {}
 /// * `total_read` - Total bytes read
 /// * `total_written` - Total bytes written
 /// * `elapsed` - Total elapsed time for the I/O operations
-#[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_io_summary(total_read: u64, total_written: u64, elapsed: Duration) {
-    tracing::info!(
-        target: IO_TARGET,
-        total_read = total_read,
-        total_written = total_written,
-        elapsed_ms = elapsed.as_millis(),
-        "io: summary"
+    logging::debug_log!(
+        Io,
+        1,
+        "io: summary total_read={} total_written={} elapsed_ms={}",
+        total_read,
+        total_written,
+        elapsed.as_millis()
     );
 }
-
-/// No-op when tracing is disabled.
-#[cfg(not(feature = "tracing"))]
-#[inline]
-pub fn trace_io_summary(_total_read: u64, _total_written: u64, _elapsed: Duration) {}
 
 /// Aggregates statistics during I/O operations.
 ///
@@ -698,12 +636,10 @@ mod tests {
         assert_eq!(tracer.write_ops(), 10000);
     }
 
-    #[cfg(feature = "tracing")]
     #[test]
-    fn test_tracing_feature_enabled() {
-        // When tracing feature is enabled, verify the functions compile and run
-        // without panicking. We can't easily verify event emission without
-        // tracing-subscriber, but this at least confirms the code compiles.
+    fn test_debug_log_functions() {
+        // Verify the functions compile and run without panicking
+        // using the debug_log! macro system.
         let mut tracer = IoTracer::new();
         tracer.record_read(1024);
         tracer.record_write(2048);
