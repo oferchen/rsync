@@ -371,11 +371,22 @@ pub(super) fn execute_transfer(
         && !delay_updates_enabled
         && context.temp_directory_path().is_none()
     {
-        // Direct write: destination does not exist, so there is nothing to
-        // corrupt on interruption. Skip temp-file creation and rename to
-        // halve the filesystem metadata overhead. The error handler already
-        // calls remove_incomplete_destination() on failure.
-        // upstream: receiver.c - writes directly when dest absent and safe
+        // Robustness parity with upstream rsync:
+        //
+        // Upstream (receiver.c) always uses temp file + rename. The temp file
+        // protects an *existing* destination from corruption on interruption.
+        // When the destination does not exist, there is nothing to protect -
+        // upstream's cleanup simply unlinks the temp file, leaving no
+        // destination, which is identical to our cleanup via
+        // remove_incomplete_destination().
+        //
+        // Conditions ensuring safety:
+        // - existing_metadata is None: no pre-existing file to corrupt
+        // - !partial_enabled: --partial needs temp files for resume semantics
+        // - !delay_updates: needs staging for atomic batch rename
+        // - temp_directory_path is None: user did not request explicit staging
+        //
+        // create_new(true) prevents races with concurrent writers (EEXIST).
         debug_log!(
             Io,
             3,

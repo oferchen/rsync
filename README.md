@@ -37,7 +37,6 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 ### What's New (v0.5.9)
 
 **Performance**
-- Direct-write for initial copies - bypasses temp-file creation and rename
 - Adaptive I/O buffers (8KB-1MB) scaled to file size
 - Buffer pool passed to `copy_file_range` fallback path
 - `FileEntry` memory reduced via `Box<FileEntryExtras>` for rarely-used fields
@@ -68,7 +67,7 @@ Tested against upstream rsync **3.0.9**, **3.1.3**, and **3.4.1** in CI across p
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Direct-write optimization for initial copies bypasses temp-file creation. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ (`--io-uring` / `--no-io-uring`).
+Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ (`--io-uring` / `--no-io-uring`).
 
 ---
 
