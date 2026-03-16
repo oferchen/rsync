@@ -8,7 +8,7 @@ FROM localhost/rust-dev:latest
 USER root
 
 # Install upstream rsync build deps (Arch packages)
-RUN pacman -Sy --noconfirm acl attr zlib curl python3 git && \
+RUN pacman -Sy --noconfirm acl attr zlib xxhash zstd lz4 curl python3 git && \
     pacman -Scc --noconfirm
 
 WORKDIR /build
@@ -16,7 +16,7 @@ WORKDIR /build
 # Build upstream rsync 3.4.1
 RUN curl -fsSL https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz | tar xz && \
     cd rsync-3.4.1 && \
-    ./configure --disable-xxhash --disable-zstd --disable-lz4 && \
+    ./configure && \
     make -j"$(nproc)" && \
     cp rsync /usr/local/bin/upstream-rsync
 
