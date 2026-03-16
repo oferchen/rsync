@@ -1,4 +1,3 @@
-//! crates/logging/src/thread_local.rs
 //! Thread-local storage for verbosity configuration and event collection.
 
 use super::config::VerbosityConfig;

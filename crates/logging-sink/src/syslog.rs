@@ -1,13 +1,13 @@
-// Syslog backend for daemon-mode logging.
-//
-// Uses libc `openlog`/`syslog`/`closelog` directly rather than pulling in a
-// dedicated syslog crate, keeping the dependency graph minimal. The
-// implementation mirrors upstream rsync's `log.c` behaviour: when daemon mode
-// is active, diagnostics are routed to syslog(3) with the configured facility
-// and tag.
-//
-// upstream: log.c — `logit()` calls `syslog(priority, "%s", buf)` when
-// `logfile_was_closed` is false and the daemon is running.
+//! Syslog backend for daemon-mode logging.
+//!
+//! Uses libc `openlog`/`syslog`/`closelog` directly rather than pulling in a
+//! dedicated syslog crate, keeping the dependency graph minimal. The
+//! implementation mirrors upstream rsync's `log.c` behaviour: when daemon mode
+//! is active, diagnostics are routed to syslog(3) with the configured facility
+//! and tag.
+//!
+//! upstream: log.c - `logit()` calls `syslog(priority, "%s", buf)` when
+//! `logfile_was_closed` is false and the daemon is running.
 
 use std::ffi::CString;
 use std::fmt;
