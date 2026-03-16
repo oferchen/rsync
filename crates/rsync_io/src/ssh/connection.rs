@@ -4,8 +4,9 @@
 //! with support for splitting into separate read/write halves for bidirectional
 //! protocol communication.
 
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, ExitStatus};
+use std::thread::{self, JoinHandle};
 
 /// Owns an active SSH subprocess and exposes its stdio handles.
 ///
@@ -107,14 +108,14 @@ impl SshConnection {
             io::Error::new(io::ErrorKind::InvalidInput, "child process already taken")
         })?;
 
-        let stderr = self.stderr.take();
+        let stderr_drain = self.stderr.take().map(StderrDrain::spawn);
 
         Ok((
             SshReader { stdout },
             SshWriter { stdin },
             SshChildHandle {
                 child,
-                _stderr: stderr,
+                stderr_drain,
             },
         ))
     }
@@ -155,17 +156,91 @@ impl SshWriter {
     }
 }
 
+/// Background thread that drains SSH subprocess stderr to prevent pipe deadlocks.
+///
+/// When an SSH child writes more than the OS pipe buffer capacity (typically
+/// 64 KB) to stderr, it blocks until the buffer is drained. If nothing reads
+/// stderr, the child stalls and the transfer deadlocks. This thread reads
+/// stderr line-by-line and forwards each line to the process stderr via
+/// `eprintln!`, matching upstream rsync's behavior of surfacing remote errors.
+struct StderrDrain {
+    handle: Option<JoinHandle<()>>,
+}
+
+impl StderrDrain {
+    /// Spawns a background thread that drains `stderr` until EOF.
+    fn spawn(stderr: ChildStderr) -> Self {
+        let handle = thread::Builder::new()
+            .name("ssh-stderr-drain".into())
+            .spawn(move || {
+                Self::drain_loop(stderr);
+            })
+            .expect("failed to spawn ssh stderr drain thread");
+
+        Self {
+            handle: Some(handle),
+        }
+    }
+
+    /// Reads stderr line-by-line and forwards to process stderr.
+    fn drain_loop(stderr: ChildStderr) {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            match line {
+                Ok(text) => eprintln!("{text}"),
+                // EOF or broken pipe - child exited, stop draining.
+                Err(_) => break,
+            }
+        }
+    }
+
+    /// Joins the drain thread, blocking until it finishes.
+    fn join(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for StderrDrain {
+    fn drop(&mut self) {
+        self.join();
+    }
+}
+
 /// Handle to wait for SSH subprocess completion.
-#[derive(Debug)]
+///
+/// When the connection is split, any available stderr handle is moved into a
+/// [`StderrDrain`] background thread that prevents pipe-buffer deadlocks by
+/// continuously reading stderr and forwarding lines to process stderr.
 pub struct SshChildHandle {
     child: Child,
-    _stderr: Option<ChildStderr>,
+    stderr_drain: Option<StderrDrain>,
+}
+
+impl std::fmt::Debug for SshChildHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshChildHandle")
+            .field("child", &self.child)
+            .field(
+                "stderr_drain",
+                &self.stderr_drain.as_ref().map(|_| "StderrDrain(active)"),
+            )
+            .finish()
+    }
 }
 
 impl SshChildHandle {
     /// Waits for the subprocess to exit.
+    ///
+    /// Joins the stderr drain thread after the child exits to ensure all
+    /// error output has been forwarded.
     pub fn wait(mut self) -> io::Result<ExitStatus> {
-        self.child.wait()
+        let status = self.child.wait();
+        if let Some(ref mut drain) = self.stderr_drain {
+            drain.join();
+        }
+        status
     }
 }
 
@@ -178,6 +253,7 @@ impl Drop for SshChildHandle {
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
+        // The StderrDrain's own Drop will join the thread.
     }
 }
 
