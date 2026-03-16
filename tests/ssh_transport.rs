@@ -144,6 +144,9 @@ fn is_transient_ssh_error(stderr: &str) -> bool {
         "connection closed",
         "unexpected eof",
         "unexpectedly closed",
+        // Remote side received garbled arguments over SSH pipe
+        "syntax or usage error",
+        "remote process exited with error",
     ];
     let lower = stderr.to_lowercase();
     transient_patterns.iter().any(|p| lower.contains(p))
