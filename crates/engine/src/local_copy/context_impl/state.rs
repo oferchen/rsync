@@ -185,17 +185,30 @@ impl<'a> CopyContext<'a> {
         );
 
         // Use fd-based metadata operations when an open fd is available (Unix).
-        // Falls back to path-based operations on non-Unix or when no fd is present.
+        // Stat the destination first to skip redundant chown/chmod/utimensat
+        // when values already match - upstream rsync.c:set_file_attrs() does the
+        // same comparison before calling chown/chmod.
         #[cfg(unix)]
         {
             if let Some(fd) = fd {
-                ::metadata::apply_file_metadata_with_fd(
-                    destination,
-                    metadata,
-                    &metadata_options,
-                    fd,
-                )
-                .map_err(map_metadata_error)?;
+                if let Ok(existing) = std::fs::metadata(destination) {
+                    ::metadata::apply_file_metadata_with_fd_if_changed(
+                        destination,
+                        metadata,
+                        &existing,
+                        &metadata_options,
+                        fd,
+                    )
+                    .map_err(map_metadata_error)?;
+                } else {
+                    ::metadata::apply_file_metadata_with_fd(
+                        destination,
+                        metadata,
+                        &metadata_options,
+                        fd,
+                    )
+                    .map_err(map_metadata_error)?;
+                }
             } else {
                 apply_file_metadata_with_options(destination, metadata, &metadata_options)
                     .map_err(map_metadata_error)?;

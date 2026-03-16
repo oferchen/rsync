@@ -21,3 +21,14 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 [[profile.ci.overrides]]
 filter = "package(daemon) | test(execute_sparse) | binary_id(~integration_daemon)"
 retries = 2
+
+# SSH integration tests must run serially - parallel SSH sessions on the CI
+# runner cause pipe corruption (garbled data, zero-length filenames, broken
+# connections). Retries handle transient SSH pipe failures.
+[[profile.default.overrides]]
+filter = "test(test_ssh)"
+test-group = "ssh-serial"
+retries = 2
+
+[test-groups.ssh-serial]
+max-threads = 1
