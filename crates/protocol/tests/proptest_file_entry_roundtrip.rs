@@ -355,7 +355,7 @@ proptest! {
         // Build entries sharing the same directory prefix
         let entries: Vec<FileEntry> = (0..count)
             .map(|i| {
-                let path = PathBuf::from(format!("{}/file{}.dat", dir, i));
+                let path = PathBuf::from(format!("{dir}/file{i}.dat"));
                 let size = (i as u64 + 1) * 100;
                 let mut e = FileEntry::new_file(path, size, base_perms);
                 e.set_mtime(base_mtime, 0);
