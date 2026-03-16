@@ -26,6 +26,7 @@ pub(crate) struct LogFileConfig {
     pub(crate) format: OutFormat,
 }
 
+/// All parameters needed to run a client transfer and render its output.
 pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) config: ClientConfig,
     pub(crate) msgs_to_stderr: bool,

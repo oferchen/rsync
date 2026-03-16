@@ -2,13 +2,17 @@ use std::ffi::OsStr;
 
 use core::branding::{self, Brand};
 
+/// Binary name detected from `argv[0]`, controlling branding behavior.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProgramName {
+    /// Invoked as upstream `rsync`.
     Rsync,
+    /// Invoked as `oc-rsync`.
     OcRsync,
 }
 
 impl ProgramName {
+    /// Returns the display name string for this program variant.
     #[inline]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -17,6 +21,7 @@ impl ProgramName {
         }
     }
 
+    /// Returns the [`Brand`] associated with this program name.
     #[inline]
     pub(crate) const fn brand(self) -> Brand {
         match self {
@@ -26,6 +31,7 @@ impl ProgramName {
     }
 }
 
+/// Detects the [`ProgramName`] from the executable path in `argv[0]`.
 pub(crate) fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
     match branding::detect_brand(program) {
         Brand::Oc => ProgramName::OcRsync,

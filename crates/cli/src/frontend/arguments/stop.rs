@@ -1,12 +1,16 @@
 use std::ffi::OsString;
 use std::time::SystemTime;
 
+/// Distinguishes `--stop-after` (duration) from `--stop-at` (wall-clock time).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StopRequestKind {
+    /// Transfer should stop after a relative duration.
     StopAfter,
+    /// Transfer should stop at an absolute wall-clock time.
     StopAt,
 }
 
+/// A parsed stop request with its computed deadline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StopRequest {
     kind: StopRequestKind,
@@ -15,6 +19,7 @@ pub(crate) struct StopRequest {
 }
 
 impl StopRequest {
+    /// Creates a `--stop-after` request with the given CLI value and deadline.
     pub(crate) const fn new_stop_after(value: OsString, deadline: SystemTime) -> Self {
         Self {
             kind: StopRequestKind::StopAfter,
@@ -23,6 +28,7 @@ impl StopRequest {
         }
     }
 
+    /// Creates a `--stop-at` request with the given CLI value and deadline.
     pub(crate) const fn new_stop_at(value: OsString, deadline: SystemTime) -> Self {
         Self {
             kind: StopRequestKind::StopAt,
@@ -31,18 +37,19 @@ impl StopRequest {
         }
     }
 
-    /// Returns the kind of stop request
+    /// Returns whether this is a `--stop-after` or `--stop-at` request.
     #[allow(dead_code)]
     pub(crate) const fn kind(&self) -> StopRequestKind {
         self.kind
     }
 
-    /// Returns the original CLI value
+    /// Returns the raw CLI value (e.g. `"60"` or `"12:00"`).
     #[allow(dead_code)]
     pub(crate) const fn cli_value(&self) -> &OsString {
         &self.value
     }
 
+    /// Returns the computed absolute deadline as a `SystemTime`.
     pub(crate) const fn deadline(&self) -> SystemTime {
         self.deadline
     }

@@ -13,6 +13,7 @@ use crate::frontend::{
     execution::render_module_list, password::load_optional_password, write_message,
 };
 
+/// Parameters for attempting an `rsync://` module listing request.
 pub(super) struct ModuleListingInputs<'a> {
     pub file_list_operands: &'a [OsString],
     pub remainder: &'a [OsString],

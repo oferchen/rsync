@@ -1,5 +1,7 @@
 use std::env;
 
+/// Reads `RSYNC_PROTECT_ARGS` and returns `Some(true)` / `Some(false)` based
+/// on its value, or `None` when the variable is unset.
 pub(crate) fn env_protect_args_default() -> Option<bool> {
     let value = env::var_os("RSYNC_PROTECT_ARGS")?;
     if value.is_empty() {
