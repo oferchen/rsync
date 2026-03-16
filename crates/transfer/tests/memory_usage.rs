@@ -9,8 +9,9 @@
 //! since they require the `core::client::ClientConfigBuilder` type.
 
 use transfer::{
-    AdaptiveTokenBuffer, LARGE_BUFFER_SIZE, MEDIUM_BUFFER_SIZE, MEDIUM_FILE_THRESHOLD,
-    SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD, adaptive_buffer_size, adaptive_token_capacity,
+    AdaptiveTokenBuffer, HUGE_BUFFER_SIZE, HUGE_FILE_THRESHOLD, LARGE_BUFFER_SIZE,
+    MEDIUM_BUFFER_SIZE, MEDIUM_FILE_THRESHOLD, SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD,
+    adaptive_buffer_size, adaptive_token_capacity,
 };
 
 /// Estimates the memory footprint of a file list entry.
@@ -141,14 +142,26 @@ fn adaptive_buffer_medium_file_balanced_allocation() {
 }
 
 #[test]
-fn adaptive_buffer_large_file_maximizes_throughput() {
-    let file_size = 10 * 1024 * 1024u64; // 10 MB file
+fn adaptive_buffer_large_file_uses_large_buffer() {
+    let file_size = 5 * 1024 * 1024u64; // 5 MB file (1-10 MB range)
 
     let buffer_size = adaptive_buffer_size(file_size);
 
     assert_eq!(
         buffer_size, LARGE_BUFFER_SIZE,
-        "Large file should use large buffer size"
+        "Large file (1-10MB) should use large buffer size"
+    );
+}
+
+#[test]
+fn adaptive_buffer_huge_file_maximizes_throughput() {
+    let file_size = 100 * 1024 * 1024u64; // 100 MB file
+
+    let buffer_size = adaptive_buffer_size(file_size);
+
+    assert_eq!(
+        buffer_size, HUGE_BUFFER_SIZE,
+        "Huge file (>10MB) should use 1MB buffer for maximum throughput"
     );
 }
 
@@ -214,6 +227,18 @@ fn adaptive_buffer_threshold_boundaries() {
     assert_eq!(
         adaptive_buffer_size(MEDIUM_FILE_THRESHOLD),
         LARGE_BUFFER_SIZE
+    );
+
+    // Just below huge threshold
+    assert_eq!(
+        adaptive_buffer_size(HUGE_FILE_THRESHOLD - 1),
+        LARGE_BUFFER_SIZE
+    );
+
+    // Exactly at huge threshold
+    assert_eq!(
+        adaptive_buffer_size(HUGE_FILE_THRESHOLD),
+        HUGE_BUFFER_SIZE
     );
 }
 

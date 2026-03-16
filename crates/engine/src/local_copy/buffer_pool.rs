@@ -52,8 +52,10 @@ pub const ADAPTIVE_BUFFER_TINY: usize = super::ADAPTIVE_BUFFER_TINY;
 pub const ADAPTIVE_BUFFER_SMALL: usize = super::ADAPTIVE_BUFFER_SMALL;
 /// Buffer size for files in the 1 MB .. 64 MB range (128 KB).
 pub const ADAPTIVE_BUFFER_MEDIUM: usize = super::ADAPTIVE_BUFFER_MEDIUM;
-/// Buffer size for files 64 MB and larger (512 KB).
+/// Buffer size for files in the 64 MB .. 256 MB range (512 KB).
 pub const ADAPTIVE_BUFFER_LARGE: usize = super::ADAPTIVE_BUFFER_LARGE;
+/// Buffer size for files 256 MB and larger (1 MB).
+pub const ADAPTIVE_BUFFER_HUGE: usize = super::ADAPTIVE_BUFFER_HUGE;
 
 /// Selects an I/O buffer size appropriate for the given file size.
 ///
@@ -64,7 +66,8 @@ pub const ADAPTIVE_BUFFER_LARGE: usize = super::ADAPTIVE_BUFFER_LARGE;
 /// | < 64 KB            | 8 KB        |
 /// | 64 KB .. < 1 MB    | 32 KB       |
 /// | 1 MB .. < 64 MB    | 128 KB      |
-/// | >= 64 MB           | 512 KB      |
+/// | 64 MB .. < 256 MB  | 512 KB      |
+/// | >= 256 MB          | 1 MB        |
 ///
 /// # Examples
 ///
@@ -75,6 +78,7 @@ pub const ADAPTIVE_BUFFER_LARGE: usize = super::ADAPTIVE_BUFFER_LARGE;
 /// assert_eq!(adaptive_buffer_size(500_000), 32 * 1024);
 /// assert_eq!(adaptive_buffer_size(10_000_000), 128 * 1024);
 /// assert_eq!(adaptive_buffer_size(100_000_000), 512 * 1024);
+/// assert_eq!(adaptive_buffer_size(1_000_000_000), 1024 * 1024);
 /// ```
 #[must_use]
 pub const fn adaptive_buffer_size(file_size: u64) -> usize {
@@ -611,27 +615,36 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_size_at_large_threshold() {
+        // Exactly 256 MB: enters the huge range.
+        assert_eq!(
+            adaptive_buffer_size(256 * 1024 * 1024),
+            ADAPTIVE_BUFFER_HUGE
+        );
+    }
+
+    #[test]
     fn adaptive_size_very_large_file() {
-        // 1 GB file should get a 512 KB buffer.
+        // 1 GB file should get a 1 MB buffer.
         assert_eq!(
             adaptive_buffer_size(1024 * 1024 * 1024),
-            ADAPTIVE_BUFFER_LARGE
+            ADAPTIVE_BUFFER_HUGE
         );
     }
 
     #[test]
     fn adaptive_size_huge_file() {
-        // 100 GB file should get a 512 KB buffer.
+        // 100 GB file should get a 1 MB buffer.
         assert_eq!(
             adaptive_buffer_size(100 * 1024 * 1024 * 1024),
-            ADAPTIVE_BUFFER_LARGE
+            ADAPTIVE_BUFFER_HUGE
         );
     }
 
     #[test]
     fn adaptive_size_max_u64() {
-        // Maximum possible file size should still return the large buffer.
-        assert_eq!(adaptive_buffer_size(u64::MAX), ADAPTIVE_BUFFER_LARGE);
+        // Maximum possible file size should still return the huge buffer.
+        assert_eq!(adaptive_buffer_size(u64::MAX), ADAPTIVE_BUFFER_HUGE);
     }
 
     #[test]
@@ -649,6 +662,8 @@ mod tests {
             32 * 1024 * 1024,
             64 * 1024 * 1024 - 1,
             64 * 1024 * 1024,
+            256 * 1024 * 1024 - 1,
+            256 * 1024 * 1024,
             1024 * 1024 * 1024,
         ];
         let mut prev_size = 0;
@@ -669,6 +684,7 @@ mod tests {
         assert!(ADAPTIVE_BUFFER_SMALL.is_power_of_two());
         assert!(ADAPTIVE_BUFFER_MEDIUM.is_power_of_two());
         assert!(ADAPTIVE_BUFFER_LARGE.is_power_of_two());
+        assert!(ADAPTIVE_BUFFER_HUGE.is_power_of_two());
     }
 
     #[test]
@@ -677,6 +693,7 @@ mod tests {
         assert!(ADAPTIVE_BUFFER_TINY < ADAPTIVE_BUFFER_SMALL);
         assert!(ADAPTIVE_BUFFER_SMALL < ADAPTIVE_BUFFER_MEDIUM);
         assert!(ADAPTIVE_BUFFER_MEDIUM < ADAPTIVE_BUFFER_LARGE);
+        assert!(ADAPTIVE_BUFFER_LARGE < ADAPTIVE_BUFFER_HUGE);
     }
 
     #[test]

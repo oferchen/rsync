@@ -18,7 +18,7 @@
 //!
 //! // Get buffer size for a specific file
 //! let size = adaptive_buffer_size(1024 * 1024); // 1MB file
-//! assert_eq!(size, 256 * 1024); // Large buffer
+//! assert_eq!(size, 256 * 1024); // Large buffer (1-10MB range)
 //!
 //! // Create an adaptive token buffer
 //! let mut buffer = AdaptiveTokenBuffer::for_file_size(500 * 1024);
@@ -35,6 +35,11 @@ pub const SMALL_FILE_THRESHOLD: u64 = 64 * 1024;
 /// Files smaller than this but >= SMALL_FILE_THRESHOLD use medium buffers.
 pub const MEDIUM_FILE_THRESHOLD: u64 = 1024 * 1024;
 
+/// Threshold for huge files (10 MB).
+/// Files larger than this use maximum buffers to reduce syscall overhead
+/// on the read/write fallback path (when `copy_file_range` is unavailable).
+pub const HUGE_FILE_THRESHOLD: u64 = 10 * 1024 * 1024;
+
 /// Buffer size for small files (4 KB).
 /// Minimizes memory usage for tiny files where throughput isn't critical.
 pub const SMALL_BUFFER_SIZE: usize = 4 * 1024;
@@ -44,8 +49,14 @@ pub const SMALL_BUFFER_SIZE: usize = 4 * 1024;
 pub const MEDIUM_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Buffer size for large files (256 KB).
-/// Maximizes throughput for large file transfers.
+/// Good throughput for files in the 1-10 MB range.
 pub const LARGE_BUFFER_SIZE: usize = 256 * 1024;
+
+/// Buffer size for huge files (1 MB).
+/// Maximizes throughput for multi-megabyte and gigabyte files by reducing
+/// syscall count on the read/write fallback path. For a 1 GB file this
+/// means 1024 read+write pairs instead of 4096 with a 256 KB buffer.
+pub const HUGE_BUFFER_SIZE: usize = 1024 * 1024;
 
 /// Returns the optimal buffer size for a file of the given size.
 ///
@@ -58,7 +69,8 @@ pub const LARGE_BUFFER_SIZE: usize = 256 * 1024;
 /// The recommended buffer size in bytes:
 /// - Small files (< 64KB): 4KB buffer
 /// - Medium files (64KB - 1MB): 64KB buffer
-/// - Large files (> 1MB): 256KB buffer
+/// - Large files (1MB - 10MB): 256KB buffer
+/// - Huge files (> 10MB): 1MB buffer
 ///
 /// # Example
 ///
@@ -67,7 +79,8 @@ pub const LARGE_BUFFER_SIZE: usize = 256 * 1024;
 ///
 /// assert_eq!(adaptive_buffer_size(1024), 4 * 1024);       // Small file
 /// assert_eq!(adaptive_buffer_size(100 * 1024), 64 * 1024); // Medium file
-/// assert_eq!(adaptive_buffer_size(10 * 1024 * 1024), 256 * 1024); // Large file
+/// assert_eq!(adaptive_buffer_size(5 * 1024 * 1024), 256 * 1024); // Large file
+/// assert_eq!(adaptive_buffer_size(100 * 1024 * 1024), 1024 * 1024); // Huge file
 /// ```
 #[inline]
 #[must_use]
@@ -76,8 +89,10 @@ pub const fn adaptive_buffer_size(file_size: u64) -> usize {
         SMALL_BUFFER_SIZE
     } else if file_size < MEDIUM_FILE_THRESHOLD {
         MEDIUM_BUFFER_SIZE
-    } else {
+    } else if file_size < HUGE_FILE_THRESHOLD {
         LARGE_BUFFER_SIZE
+    } else {
+        HUGE_BUFFER_SIZE
     }
 }
 
@@ -272,18 +287,29 @@ mod tests {
             MEDIUM_BUFFER_SIZE
         );
 
-        // Large files (> 1MB)
+        // Large files (1MB - 10MB)
         assert_eq!(
             adaptive_buffer_size(MEDIUM_FILE_THRESHOLD),
             LARGE_BUFFER_SIZE
         );
-        assert_eq!(adaptive_buffer_size(10 * 1024 * 1024), LARGE_BUFFER_SIZE);
-        assert_eq!(adaptive_buffer_size(1024 * 1024 * 1024), LARGE_BUFFER_SIZE);
+        assert_eq!(adaptive_buffer_size(5 * 1024 * 1024), LARGE_BUFFER_SIZE);
+        assert_eq!(
+            adaptive_buffer_size(HUGE_FILE_THRESHOLD - 1),
+            LARGE_BUFFER_SIZE
+        );
+
+        // Huge files (> 10MB)
+        assert_eq!(
+            adaptive_buffer_size(HUGE_FILE_THRESHOLD),
+            HUGE_BUFFER_SIZE
+        );
+        assert_eq!(adaptive_buffer_size(100 * 1024 * 1024), HUGE_BUFFER_SIZE);
+        assert_eq!(adaptive_buffer_size(1024 * 1024 * 1024), HUGE_BUFFER_SIZE);
     }
 
     #[test]
     fn writer_capacity_matches_buffer_size() {
-        for size in [0, 1024, 65536, 500_000, 2_000_000] {
+        for size in [0, 1024, 65536, 500_000, 2_000_000, 50_000_000] {
             assert_eq!(
                 adaptive_writer_capacity(size),
                 adaptive_buffer_size(size),
@@ -402,6 +428,18 @@ mod tests {
             MEDIUM_BUFFER_SIZE,
             "one byte below 1MB should use medium buffer"
         );
+
+        // Exact boundary at 10MB threshold
+        assert_eq!(
+            adaptive_buffer_size(HUGE_FILE_THRESHOLD),
+            HUGE_BUFFER_SIZE,
+            "exactly at 10MB should use huge buffer"
+        );
+        assert_eq!(
+            adaptive_buffer_size(HUGE_FILE_THRESHOLD - 1),
+            LARGE_BUFFER_SIZE,
+            "one byte below 10MB should use large buffer"
+        );
     }
 
     #[test]
@@ -488,16 +526,15 @@ mod tests {
         assert_eq!(SMALL_BUFFER_SIZE, 4 * 1024);
         assert_eq!(MEDIUM_BUFFER_SIZE, 64 * 1024);
         assert_eq!(LARGE_BUFFER_SIZE, 256 * 1024);
-        // Note: constant ordering is verified by the values above
-        // (4K < 64K < 256K and threshold ordering is implicit)
+        assert_eq!(HUGE_BUFFER_SIZE, 1024 * 1024);
     }
 
     #[test]
     fn very_large_file_sizes() {
         // Test with extremely large file sizes
         let huge_file = 10u64 * 1024 * 1024 * 1024; // 10 GB
-        assert_eq!(adaptive_buffer_size(huge_file), LARGE_BUFFER_SIZE);
-        assert_eq!(adaptive_writer_capacity(huge_file), LARGE_BUFFER_SIZE);
+        assert_eq!(adaptive_buffer_size(huge_file), HUGE_BUFFER_SIZE);
+        assert_eq!(adaptive_writer_capacity(huge_file), HUGE_BUFFER_SIZE);
         assert_eq!(adaptive_token_capacity(huge_file), MEDIUM_BUFFER_SIZE);
 
         // Even for huge files, token capacity is capped at medium
@@ -537,6 +574,7 @@ mod tests {
         assert_eq!(adaptive_writer_capacity(1024), 4 * 1024);
         assert_eq!(adaptive_writer_capacity(64 * 1024), 64 * 1024);
         assert_eq!(adaptive_writer_capacity(1024 * 1024), 256 * 1024);
+        assert_eq!(adaptive_writer_capacity(50 * 1024 * 1024), 1024 * 1024);
     }
 
     #[test]
