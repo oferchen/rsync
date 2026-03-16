@@ -1237,15 +1237,16 @@ fn includes_compress_level_default() {
 }
 
 #[test]
-fn includes_compress_choice_zstd() {
+fn includes_compress_choice_for_non_default_algorithm() {
+    // Use zlib which is non-default (default is zstd per upstream precedence)
     let config = ClientConfig::builder()
-        .compression_algorithm(CompressionAlgorithm::Zstd)
+        .compression_algorithm(CompressionAlgorithm::Zlib)
         .build();
     let args = build_sender_args(&config);
     assert!(
         args.iter()
-            .any(|a| a.starts_with("--compress-choice=") && a.contains("zstd")),
-        "expected --compress-choice=zstd in args: {args:?}"
+            .any(|a| a.starts_with("--compress-choice=") && a.contains("zlib")),
+        "expected --compress-choice=zlib in args: {args:?}"
     );
 }
 
@@ -1870,7 +1871,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         .min_file_size(Some(100))
         .modify_window(Some(1))
         .compression_level(Some(compress::zlib::CompressionLevel::Best))
-        .compression_algorithm(CompressionAlgorithm::Zstd)
+        .compression_algorithm(CompressionAlgorithm::Zlib)
         .checksum_choice(choice)
         .block_size_override(Some(NonZeroU32::new(4096).unwrap()))
         .timeout(TransferTimeout::Seconds(NonZeroU64::new(60).unwrap()))
