@@ -169,8 +169,14 @@ const ADAPTIVE_BUFFER_TINY: usize = 8 * 1024;
 const ADAPTIVE_BUFFER_SMALL: usize = 32 * 1024;
 /// Buffer size for files in the 1 MB .. 64 MB range (128 KB).
 const ADAPTIVE_BUFFER_MEDIUM: usize = 128 * 1024;
-/// Buffer size for files 64 MB and larger (512 KB).
+/// Buffer size for files in the 64 MB .. 256 MB range (512 KB).
 const ADAPTIVE_BUFFER_LARGE: usize = 512 * 1024;
+/// Buffer size for files 256 MB and larger (1 MB).
+///
+/// Reduces syscall count on the read/write fallback path when
+/// `copy_file_range` is unavailable. For a 1 GB file this means 1024
+/// read+write pairs instead of 2048 with a 512 KB buffer.
+const ADAPTIVE_BUFFER_HUGE: usize = 1024 * 1024;
 
 /// File-size threshold below which [`ADAPTIVE_BUFFER_TINY`] is used (64 KB).
 const ADAPTIVE_THRESHOLD_TINY: u64 = 64 * 1024;
@@ -178,6 +184,8 @@ const ADAPTIVE_THRESHOLD_TINY: u64 = 64 * 1024;
 const ADAPTIVE_THRESHOLD_SMALL: u64 = 1024 * 1024;
 /// File-size threshold below which [`ADAPTIVE_BUFFER_MEDIUM`] is used (64 MB).
 const ADAPTIVE_THRESHOLD_MEDIUM: u64 = 64 * 1024 * 1024;
+/// File-size threshold below which [`ADAPTIVE_BUFFER_LARGE`] is used (256 MB).
+const ADAPTIVE_THRESHOLD_LARGE: u64 = 256 * 1024 * 1024;
 
 /// Selects an I/O buffer size appropriate for the given file size.
 ///
@@ -188,7 +196,8 @@ const ADAPTIVE_THRESHOLD_MEDIUM: u64 = 64 * 1024 * 1024;
 /// | < 64 KB            | 8 KB        |
 /// | 64 KB .. < 1 MB    | 32 KB       |
 /// | 1 MB .. < 64 MB    | 128 KB      |
-/// | >= 64 MB           | 512 KB      |
+/// | 64 MB .. < 256 MB  | 512 KB      |
+/// | >= 256 MB          | 1 MB        |
 #[must_use]
 pub(crate) const fn adaptive_buffer_size(file_size: u64) -> usize {
     if file_size < ADAPTIVE_THRESHOLD_TINY {
@@ -197,8 +206,10 @@ pub(crate) const fn adaptive_buffer_size(file_size: u64) -> usize {
         ADAPTIVE_BUFFER_SMALL
     } else if file_size < ADAPTIVE_THRESHOLD_MEDIUM {
         ADAPTIVE_BUFFER_MEDIUM
-    } else {
+    } else if file_size < ADAPTIVE_THRESHOLD_LARGE {
         ADAPTIVE_BUFFER_LARGE
+    } else {
+        ADAPTIVE_BUFFER_HUGE
     }
 }
 
