@@ -483,6 +483,7 @@ impl AclCache {
     /// Stores an access ACL in the cache.
     ///
     /// Returns the assigned index.
+    #[must_use]
     pub fn store_access(&mut self, acl: RsyncAcl) -> u32 {
         let index = self.access_acls.len() as u32;
         self.access_acls.push(acl);
@@ -492,6 +493,7 @@ impl AclCache {
     /// Stores a default ACL in the cache.
     ///
     /// Returns the assigned index.
+    #[must_use]
     pub fn store_default(&mut self, acl: RsyncAcl) -> u32 {
         let index = self.default_acls.len() as u32;
         self.default_acls.push(acl);

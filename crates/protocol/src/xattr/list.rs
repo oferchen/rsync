@@ -15,6 +15,7 @@ pub struct XattrList {
 
 impl XattrList {
     /// Creates an empty xattr list.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -22,26 +23,31 @@ impl XattrList {
     }
 
     /// Creates an xattr list with the given entries.
+    #[must_use]
     pub fn with_entries(entries: Vec<XattrEntry>) -> Self {
         Self { entries }
     }
 
     /// Returns the number of entries.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns true if the list is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Returns a slice of all entries.
+    #[must_use]
     pub fn entries(&self) -> &[XattrEntry] {
         &self.entries
     }
 
     /// Returns a mutable slice of all entries.
+    #[must_use]
     pub fn entries_mut(&mut self) -> &mut [XattrEntry] {
         &mut self.entries
     }
@@ -62,11 +68,13 @@ impl XattrList {
     }
 
     /// Returns true if any entry is abbreviated and needs its full value.
+    #[must_use]
     pub fn has_abbreviated(&self) -> bool {
         self.entries.iter().any(|e| e.state() == XattrState::Abbrev)
     }
 
     /// Returns indices of entries that need their full values requested.
+    #[must_use]
     pub fn abbreviated_indices(&self) -> Vec<usize> {
         self.entries
             .iter()
@@ -77,6 +85,7 @@ impl XattrList {
     }
 
     /// Returns indices of entries marked for sending (XSTATE_TODO).
+    #[must_use]
     pub fn todo_indices(&self) -> Vec<usize> {
         self.entries
             .iter()

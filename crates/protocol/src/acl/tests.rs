@@ -240,7 +240,7 @@ mod acl_cache_tests {
             a.user_obj = 0x07;
             a
         };
-        cache.store_access(acl.clone());
+        let _ = cache.store_access(acl.clone());
 
         assert_eq!(cache.find_access(&acl), Some(0));
     }
@@ -251,7 +251,7 @@ mod acl_cache_tests {
         let mut acl = RsyncAcl::new();
         acl.user_obj = 0x07;
         acl.group_obj = 0x05;
-        cache.store_access(acl.clone());
+        let _ = cache.store_access(acl.clone());
 
         let retrieved = cache.get_access(0).expect("Should find ACL");
         assert_eq!(retrieved.user_obj, 0x07);
@@ -274,11 +274,11 @@ mod acl_cache_tests {
             a
         };
 
-        cache.store_access(acl.clone());
+        let _ = cache.store_access(acl.clone());
         assert_eq!(cache.find_access(&acl), Some(0));
         assert!(cache.find_default(&acl).is_none());
 
-        cache.store_default(acl.clone());
+        let _ = cache.store_default(acl.clone());
         assert_eq!(cache.find_default(&acl), Some(0));
     }
 }
@@ -585,7 +585,7 @@ mod edge_cases {
             a
         };
 
-        cache.store_access(acl1.clone());
+        let _ = cache.store_access(acl1.clone());
 
         // acl2 should not match acl1
         assert!(cache.find_access(&acl2).is_none());
