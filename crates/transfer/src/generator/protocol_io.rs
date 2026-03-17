@@ -124,14 +124,18 @@ impl GeneratorContext {
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= super::io_error_flags::IOERR_VANISHED;
             // upstream: sender.c:358 — rprintf(c, "file has vanished: %s\n", ...)
-            eprintln!("file has vanished: {path_display}");
+            eprintln!(
+                "file has vanished: {path_display}{}",
+                crate::role_trailer::sender()
+            );
         } else {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
             // upstream: sender.c:362 — rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
             eprintln!(
-                "rsync: send_files failed to open \"{path_display}\": {} ({})",
+                "rsync: send_files failed to open \"{path_display}\": {} ({}){}",
                 error,
                 error.raw_os_error().unwrap_or(0),
+                crate::role_trailer::sender(),
             );
         }
         if self.protocol.supports_generator_messages() {
