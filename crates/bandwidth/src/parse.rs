@@ -32,6 +32,7 @@ pub enum BandwidthParseError {
 /// whitespace. `Ok(None)` denotes an unlimited transfer rate (users may specify
 /// `0` for this effect). Successful parses return the rounded byte-per-second
 /// limit as [`NonZeroU64`].
+#[must_use]
 pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, BandwidthParseError> {
     if text.as_bytes().iter().all(u8::is_ascii_whitespace) {
         return Err(BandwidthParseError::Invalid);
@@ -244,6 +245,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 
 /// Parses a bandwidth limit containing an optional burst component.
 #[doc(alias = "--bwlimit")]
+#[must_use]
 pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
 

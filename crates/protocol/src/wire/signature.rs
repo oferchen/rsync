@@ -163,6 +163,7 @@ pub fn write_signature<W: Write>(
 /// # Ok::<(), std::io::Error>(())
 /// ```
 #[inline]
+#[must_use]
 pub fn read_signature<R: Read>(reader: &mut R) -> io::Result<(u32, u32, u8, Vec<SignatureBlock>)> {
     let block_count = read_varint(reader)? as u32;
     let block_length = read_varint(reader)? as u32;

@@ -95,6 +95,7 @@ impl LazyMetadata {
     /// # Errors
     ///
     /// Returns the cached error if metadata fetch previously failed.
+    #[must_use]
     pub fn get(&mut self) -> Result<&fs::Metadata, &io::Error> {
         // Resolve if pending
         if let Self::Pending {
@@ -150,6 +151,7 @@ impl LazyMetadata {
     /// # Errors
     ///
     /// Returns the error if metadata fetch failed.
+    #[must_use]
     pub fn into_metadata(mut self) -> Result<fs::Metadata, io::Error> {
         // Ensure resolved
         let _ = self.get();

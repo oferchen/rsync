@@ -108,6 +108,7 @@ impl CompressionLevel {
     ///
     /// Returns [`CompressionLevelError`] when `level` falls outside the inclusive
     /// range `0..=9` accepted by zlib.
+    #[must_use]
     pub fn from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
         if level > 9 {
             return Err(CompressionLevelError::new(level));
@@ -237,6 +238,7 @@ where
     ///
     /// Propagates any I/O errors reported by the underlying writer or zlib
     /// during stream finalisation.
+    #[must_use]
     pub fn finish_into_inner(self) -> io::Result<(W, u64)> {
         let writer = self.inner.finish()?;
         Ok(writer.into_parts())
@@ -334,6 +336,7 @@ where
 }
 
 /// Compresses `input` into a new [`Vec`].
+#[must_use]
 pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<u8>> {
     let mut encoder = FlateEncoder::new(Vec::new(), level.into());
     encoder.write_all(input)?;
@@ -341,6 +344,7 @@ pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<
 }
 
 /// Decompresses `input` into a new [`Vec`].
+#[must_use]
 pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
     let mut decoder = FlateDecoder::new(input);
     let mut output = Vec::new();

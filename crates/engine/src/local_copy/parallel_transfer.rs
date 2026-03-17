@@ -132,6 +132,7 @@ fn copy_single(job: &TransferJob, index: usize) -> TransferResult {
 /// or small batches.
 ///
 /// Maintains result ordering matching input order.
+#[must_use]
 pub fn execute_batch(jobs: &[TransferJob]) -> (Vec<TransferResult>, BatchStats) {
     if jobs.is_empty() {
         return (Vec::new(), BatchStats::default());
@@ -176,6 +177,7 @@ pub fn execute_batch(jobs: &[TransferJob]) -> (Vec<TransferResult>, BatchStats) 
 }
 
 /// Execute transfers sequentially (always available).
+#[must_use]
 pub fn execute_sequential(jobs: &[TransferJob]) -> (Vec<TransferResult>, BatchStats) {
     let mut results = Vec::with_capacity(jobs.len());
 
@@ -189,6 +191,7 @@ pub fn execute_sequential(jobs: &[TransferJob]) -> (Vec<TransferResult>, BatchSt
 }
 
 /// Execute transfers in parallel using rayon (always available).
+#[must_use]
 pub fn execute_parallel(jobs: &[TransferJob]) -> (Vec<TransferResult>, BatchStats) {
     let mut results: Vec<TransferResult> = jobs
         .par_iter()

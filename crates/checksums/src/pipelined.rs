@@ -272,6 +272,7 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
     /// # Errors
     ///
     /// Returns an error if the underlying reader encounters an I/O error.
+    #[must_use]
     pub fn next_block(&mut self) -> io::Result<Option<&[u8]>> {
         if self.eof_reached {
             return Ok(None);
@@ -527,6 +528,7 @@ where
     /// # Errors
     ///
     /// Returns an error if reading fails.
+    #[must_use]
     pub fn next_block_checksums(&mut self) -> io::Result<Option<BlockChecksums<D::Digest>>> {
         match self.reader.next_block()? {
             Some(block) => {

@@ -91,6 +91,7 @@ impl<R: Read> ServerReader<R> {
     /// data spans a frame boundary.
     ///
     /// Callers should fall back to `Read::read_exact()` when this returns `None`.
+    #[must_use]
     pub fn try_borrow_exact(&mut self, len: usize) -> io::Result<Option<&[u8]>> {
         match self {
             Self::Multiplex(mux) => mux.try_borrow_exact(len),

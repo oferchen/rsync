@@ -136,6 +136,7 @@ pub struct NameMapping {
 
 impl NameMapping {
     /// Parses a mapping specification into a [`NameMapping`].
+    #[must_use]
     pub fn parse(kind: MappingKind, spec: &str) -> Result<Self, MappingParseError> {
         let trimmed = spec.trim();
         if trimmed.is_empty() {
@@ -247,6 +248,7 @@ pub struct UserMapping(NameMapping);
 
 impl UserMapping {
     /// Parses a `--usermap` specification.
+    #[must_use]
     pub fn parse(spec: &str) -> Result<Self, MappingParseError> {
         NameMapping::parse(MappingKind::User, spec).map(Self)
     }
@@ -269,6 +271,7 @@ pub struct GroupMapping(NameMapping);
 
 impl GroupMapping {
     /// Parses a `--groupmap` specification.
+    #[must_use]
     pub fn parse(spec: &str) -> Result<Self, MappingParseError> {
         NameMapping::parse(MappingKind::Group, spec).map(Self)
     }

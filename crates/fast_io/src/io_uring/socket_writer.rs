@@ -28,6 +28,7 @@ impl IoUringSocketWriter {
     ///
     /// The caller must ensure `fd` remains valid for the lifetime of this writer.
     /// The writer does NOT take ownership of the fd — it will not close it on drop.
+    #[must_use]
     pub fn from_raw_fd(fd: RawFd, config: &IoUringConfig) -> io::Result<Self> {
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, fd, config.register_files);

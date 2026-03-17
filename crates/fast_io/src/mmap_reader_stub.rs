@@ -36,6 +36,7 @@ impl MmapReader {
     /// Opens a file for reading, loading contents into memory.
     ///
     /// On non-Unix platforms, the file is read entirely into a buffer.
+    #[must_use]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = File::open(path)?;
         let size = file.metadata()?.len();

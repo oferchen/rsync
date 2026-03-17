@@ -201,6 +201,7 @@ impl IntoIterator for XattrSet {
 ///
 /// See `xattrs.c:receive_xattr()` lines 790-860 - the entry-reading loop
 /// after `ndx == 0` and before `rsync_xal_store()`.
+#[must_use]
 pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
     let count = read_varint(reader)?;
     if count < 0 {
@@ -320,6 +321,7 @@ pub fn send_xattr<W: Write>(
 /// Returns `Ok(Some(list))` if literal data was received,
 /// `Ok(None)` if a cache index was received (caller should look up),
 /// or the received cache index.
+#[must_use]
 pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
     let ndx_plus_one = read_varint(reader)?;
     let ndx = ndx_plus_one - 1;
@@ -419,6 +421,7 @@ pub fn send_xattr_request<W: Write>(writer: &mut W, indices: &[usize]) -> io::Re
 ///
 /// See `xattrs.c:recv_xattr_request()` - reads 1-based `num` values with
 /// delta encoding: `ndx = read_varint(f) + prior_req`.
+#[must_use]
 pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::Result<Vec<usize>> {
     let mut indices = Vec::new();
     let mut prior_req = 0i32;

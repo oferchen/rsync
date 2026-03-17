@@ -254,6 +254,7 @@ impl AsyncSignatureGenerator {
     /// # Errors
     ///
     /// Returns an error if all worker threads have terminated.
+    #[must_use]
     pub fn request_signature(&mut self, request: SignatureRequest) -> io::Result<u64> {
         let request_id = request.request_id;
 
@@ -282,6 +283,7 @@ impl AsyncSignatureGenerator {
     /// # Errors
     ///
     /// Returns an error if all worker threads have terminated.
+    #[must_use]
     pub fn wait_for_result(&self) -> io::Result<SignatureResult> {
         self.result_receiver.recv().map_err(|_| {
             io::Error::new(

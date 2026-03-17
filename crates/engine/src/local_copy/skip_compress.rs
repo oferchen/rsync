@@ -40,6 +40,7 @@ impl SkipCompressList {
     /// Upstream rsync treats both `/` and `,` as separators between suffix
     /// patterns, so the implementation mirrors that behaviour to remain
     /// interoperable with existing configurations.
+    #[must_use]
     pub fn parse(spec: &str) -> Result<Self, SkipCompressParseError> {
         if spec.is_empty() {
             return Ok(Self {

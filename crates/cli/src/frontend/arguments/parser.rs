@@ -20,6 +20,7 @@ use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args
 ///
 /// **Warning**: This function is exposed via `cli::test_utils` for integration
 /// tests only. It is not part of the stable public API.
+#[must_use]
 pub fn parse_args<I, S>(arguments: I) -> Result<ParsedArgs, clap::Error>
 where
     I: IntoIterator<Item = S>,

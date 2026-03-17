@@ -35,6 +35,7 @@ impl CountingZstdEncoder<CountingSink> {
     /// encoder.write(b"data to compress").unwrap();
     /// let compressed_bytes = encoder.finish().unwrap();
     /// ```
+    #[must_use]
     pub fn new(level: CompressionLevel) -> io::Result<Self> {
         Self::with_sink(CountingSink, level)
     }
@@ -64,6 +65,7 @@ where
     /// let (_, bytes_written) = encoder.finish_into_inner().unwrap();
     /// assert!(bytes_written > 0);
     /// ```
+    #[must_use]
     pub fn with_sink(sink: W, level: CompressionLevel) -> io::Result<Self> {
         let writer = CountingWriter::new(sink);
         let encoder = ZstdEncoder::new(writer, zstd_level(level)).map_err(io::Error::other)?;
@@ -97,6 +99,7 @@ where
     }
 
     /// Completes the stream and returns the sink together with the number of compressed bytes.
+    #[must_use]
     pub fn finish_into_inner(self) -> io::Result<(W, u64)> {
         let writer = self.inner.finish().map_err(io::Error::other)?;
         Ok(writer.into_parts())
@@ -114,6 +117,7 @@ where
     R: Read,
 {
     /// Creates a new decoder that wraps the provided reader.
+    #[must_use]
     pub fn new(reader: R) -> io::Result<Self> {
         let decoder = ZstdDecoder::new(reader).map_err(io::Error::other)?;
         Ok(Self {
@@ -169,6 +173,7 @@ where
 }
 
 /// Compresses `input` into a new [`Vec`].
+#[must_use]
 pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<u8>> {
     let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level(level)).map_err(io::Error::other)?;
     encoder.write_all(input)?;
@@ -176,6 +181,7 @@ pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<
 }
 
 /// Decompresses `input` into a new [`Vec`].
+#[must_use]
 pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
     let mut decoder = ZstdDecoder::new(input).map_err(io::Error::other)?;
     let mut output = Vec::new();
@@ -184,6 +190,7 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
 }
 
 /// Decompresses `input` directly into `output`, avoiding intermediate allocation.
+#[must_use]
 pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
     let initial_len = output.len();
     let mut decoder = ZstdDecoder::new(input).map_err(io::Error::other)?;

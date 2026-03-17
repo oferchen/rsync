@@ -24,6 +24,7 @@ impl ModuleListRequest {
     pub const DEFAULT_PORT: u16 = 873;
 
     /// Attempts to derive a module listing request from CLI-style operands.
+    #[must_use]
     pub fn from_operands(operands: &[OsString]) -> Result<Option<Self>, ClientError> {
         Self::from_operands_with_port(operands, Self::DEFAULT_PORT)
     }

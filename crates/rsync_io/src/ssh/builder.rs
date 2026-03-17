@@ -208,6 +208,7 @@ impl SshCommand {
     }
 
     /// Spawns the configured command and returns a [`SshConnection`].
+    #[must_use]
     pub fn spawn(&self) -> io::Result<SshConnection> {
         let (program, args) = self.command_parts();
 

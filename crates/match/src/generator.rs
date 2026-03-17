@@ -346,6 +346,7 @@ impl Default for DeltaGenerator {
     feature = "tracing",
     instrument(skip(reader, index), name = "generate_delta")
 )]
+#[must_use]
 pub fn generate_delta<R: Read>(reader: R, index: &DeltaSignatureIndex) -> io::Result<DeltaScript> {
     DeltaGenerator::new().generate(reader, index)
 }

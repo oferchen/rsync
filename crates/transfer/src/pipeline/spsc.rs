@@ -107,6 +107,7 @@ impl<T> Receiver<T> {
     ///
     /// Returns `Err(RecvError)` if the sender has been dropped and the
     /// queue is fully drained.
+    #[must_use]
     pub fn recv(&self) -> Result<T, RecvError> {
         loop {
             if let Some(item) = self.0.queue.pop() {
@@ -124,6 +125,7 @@ impl<T> Receiver<T> {
     /// queue is empty but the sender is alive, or
     /// `Err(TryRecvError::Disconnected)` if the sender is gone and the
     /// queue is drained.
+    #[must_use]
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         if let Some(item) = self.0.queue.pop() {
             return Ok(item);

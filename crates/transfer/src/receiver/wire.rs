@@ -94,6 +94,7 @@ impl SumHead {
     }
 
     /// Reads a sum_head from the wire in rsync format.
+    #[must_use]
     pub fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
         let mut buf = [0u8; 16];
         reader.read_exact(&mut buf)?;
@@ -242,6 +243,7 @@ impl SenderAttrs {
     /// * `reader` - The input stream to read from
     /// * `protocol_version` - The negotiated protocol version
     #[cfg(test)]
+    #[must_use]
     pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
         // Legacy implementation: read single byte for NDX (only valid for tests
         // with protocol < 30 or first NDX where delta=1 fits in one byte)

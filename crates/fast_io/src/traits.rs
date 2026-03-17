@@ -85,6 +85,7 @@ pub struct StdFileReader {
 
 impl StdFileReader {
     /// Opens a file for reading.
+    #[must_use]
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = File::open(path)?;
         let size = file.metadata()?.len();
@@ -128,6 +129,7 @@ pub struct StdFileWriter {
 
 impl StdFileWriter {
     /// Creates a file for writing.
+    #[must_use]
     pub fn create(path: &Path) -> io::Result<Self> {
         let file = File::create(path)?;
         Ok(Self {
@@ -145,6 +147,7 @@ impl StdFileWriter {
     }
 
     /// Creates a file with pre-allocated space.
+    #[must_use]
     pub fn create_with_size(path: &Path, size: u64) -> io::Result<Self> {
         let file = File::create(path)?;
         file.set_len(size)?;

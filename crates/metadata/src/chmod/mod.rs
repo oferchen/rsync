@@ -44,6 +44,7 @@ pub struct ChmodModifiers {
 
 impl ChmodModifiers {
     /// Parses a comma-separated chmod specification.
+    #[must_use]
     pub fn parse(spec: &str) -> Result<Self, ChmodError> {
         let clauses = parse_spec(spec)?;
         if clauses.is_empty() {

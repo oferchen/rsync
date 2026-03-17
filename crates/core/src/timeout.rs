@@ -351,6 +351,7 @@ impl TimeoutTracker {
     /// // Should be OK immediately after creation
     /// assert!(tracker.check_io_timeout().is_ok());
     /// ```
+    #[must_use]
     pub fn check_io_timeout(&self) -> Result<(), TimeoutError> {
         if let Some(timeout) = self.config.io_timeout {
             let elapsed = self.last_io_activity.elapsed();
@@ -399,6 +400,7 @@ impl TimeoutTracker {
     /// tracker.start_connect();
     /// assert!(tracker.check_connect_timeout().is_ok());
     /// ```
+    #[must_use]
     pub fn check_connect_timeout(&self) -> Result<(), TimeoutError> {
         if let Some(timeout) = self.config.connect_timeout {
             if let Some(start) = self.connect_start {

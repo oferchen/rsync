@@ -77,6 +77,7 @@ where
     }
 
     /// Completes the stream and returns the sink together with the number of compressed bytes.
+    #[must_use]
     pub fn finish_into_inner(self) -> io::Result<(W, u64)> {
         let writer = self.inner.finish().map_err(io::Error::other)?;
         Ok(writer.into_parts())
@@ -152,6 +153,7 @@ where
 }
 
 /// Compresses `input` into a new [`Vec`] using LZ4 frame format.
+#[must_use]
 pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<u8>> {
     let frame_info = frame_info_for_level(level);
     let mut encoder = FrameEncoder::with_frame_info(frame_info, Vec::new());
@@ -160,6 +162,7 @@ pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<
 }
 
 /// Decompresses `input` from LZ4 frame format into a new [`Vec`].
+#[must_use]
 pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
     let mut decoder = FrameDecoder::new(input);
     let mut output = Vec::new();
@@ -168,6 +171,7 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
 }
 
 /// Decompresses `input` directly into `output`, avoiding intermediate allocation.
+#[must_use]
 pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
     let initial_len = output.len();
     let mut decoder = FrameDecoder::new(input);

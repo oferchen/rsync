@@ -346,6 +346,7 @@ impl Nfs4Acl {
     /// let acl = Nfs4Acl::from_bytes(&data).unwrap();
     /// assert!(acl.is_empty());
     /// ```
+    #[must_use]
     pub fn from_bytes(data: &[u8]) -> io::Result<Self> {
         let mut aces = Vec::new();
         let mut offset = 0;
@@ -488,6 +489,7 @@ impl Nfs4Acl {
 ///
 /// Primarily supported on Linux with NFSv4-mounted filesystems or filesystems
 /// that support the `system.nfs4_acl` extended attribute.
+#[must_use]
 pub fn get_nfsv4_acl(path: &Path, follow_symlinks: bool) -> Result<Option<Nfs4Acl>, MetadataError> {
     let name = OsStr::new(NFS4_ACL_XATTR);
 

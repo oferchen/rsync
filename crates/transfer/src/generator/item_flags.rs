@@ -133,6 +133,7 @@ impl ItemFlags {
     ///
     /// For protocol >= 29, reads 2 bytes little-endian (16-bit wire format).
     /// For older protocols, returns ITEM_TRANSFER as default.
+    #[must_use]
     pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
         if protocol_version >= 29 {
             let mut buf = [0u8; 2];

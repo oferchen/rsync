@@ -245,6 +245,7 @@ impl RollingChecksum {
     }
 
     /// Convenience wrapper that allocates a heap buffer.
+    #[must_use]
     pub fn update_reader<R: Read>(&mut self, reader: &mut R) -> io::Result<u64> {
         let mut buffer = vec![0u8; Self::DEFAULT_READER_BUFFER_LEN];
         self.update_reader_with_buffer(reader, &mut buffer)
@@ -306,6 +307,7 @@ impl RollingChecksum {
     ///
     /// Returns [`RollingError::EmptyWindow`] if no bytes have been processed.
     #[inline]
+    #[must_use]
     pub fn roll(&mut self, outgoing: u8, incoming: u8) -> Result<(), RollingError> {
         let window_len = self.window_len_u32()?;
 
@@ -358,6 +360,7 @@ impl RollingChecksum {
     /// - [`RollingError::MismatchedSliceLength`] if slices differ in length.
     /// - [`RollingError::EmptyWindow`] if no bytes have been processed.
     #[inline]
+    #[must_use]
     pub fn roll_many(&mut self, outgoing: &[u8], incoming: &[u8]) -> Result<(), RollingError> {
         if outgoing.len() != incoming.len() {
             return Err(RollingError::MismatchedSliceLength {

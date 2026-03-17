@@ -34,6 +34,7 @@ pub fn map_gid(gid: RawGid, _numeric_ids: bool) -> Option<RawGid> {
 /// Looks up the username for a given UID.
 ///
 /// On non-Unix platforms, always returns `Ok(None)`.
+#[must_use]
 pub fn lookup_user_name(_uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
     Ok(None)
 }
@@ -41,6 +42,7 @@ pub fn lookup_user_name(_uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
 /// Looks up the UID for a given username.
 ///
 /// On non-Unix platforms, always returns `Ok(None)`.
+#[must_use]
 pub fn lookup_user_by_name(_name: &[u8]) -> Result<Option<RawUid>, io::Error> {
     Ok(None)
 }
@@ -48,6 +50,7 @@ pub fn lookup_user_by_name(_name: &[u8]) -> Result<Option<RawUid>, io::Error> {
 /// Looks up the group name for a given GID.
 ///
 /// On non-Unix platforms, always returns `Ok(None)`.
+#[must_use]
 pub fn lookup_group_name(_gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
     Ok(None)
 }
@@ -55,6 +58,7 @@ pub fn lookup_group_name(_gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
 /// Looks up the GID for a given group name.
 ///
 /// On non-Unix platforms, always returns `Ok(None)`.
+#[must_use]
 pub fn lookup_group_by_name(_name: &[u8]) -> Result<Option<RawGid>, io::Error> {
     Ok(None)
 }

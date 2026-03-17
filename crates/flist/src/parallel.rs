@@ -40,6 +40,7 @@ use crate::file_list_walker::FileListWalker;
 /// let entries = collect_entries(walker)?;
 /// println!("Found {} entries", entries.len());
 /// ```
+#[must_use]
 pub fn collect_entries(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
     let entries: Result<Vec<_>, _> = walker.collect();
     if let Ok(ref list) = entries {
@@ -53,6 +54,7 @@ pub fn collect_entries(walker: FileListWalker) -> Result<Vec<FileListEntry>, Fil
     since = "0.6.0",
     note = "renamed to `collect_entries` — this function is sequential"
 )]
+#[must_use]
 pub fn collect_parallel(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
     collect_entries(walker)
 }

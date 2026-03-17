@@ -54,6 +54,7 @@ impl UserMapping {
     ///
     /// # Errors
     /// Always returns [`MappingParseError`].
+    #[must_use]
     pub fn parse(_spec: &str) -> Result<Self, MappingParseError> {
         Err(MappingParseError)
     }
@@ -68,6 +69,7 @@ impl GroupMapping {
     ///
     /// # Errors
     /// Always returns [`MappingParseError`].
+    #[must_use]
     pub fn parse(_spec: &str) -> Result<Self, MappingParseError> {
         Err(MappingParseError)
     }
@@ -82,6 +84,7 @@ impl NameMapping {
     ///
     /// # Errors
     /// Always returns [`MappingParseError`].
+    #[must_use]
     pub fn parse(_spec: &str) -> Result<Self, MappingParseError> {
         Err(MappingParseError)
     }

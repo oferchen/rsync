@@ -134,6 +134,7 @@ impl NegotiationPrologueSniffer {
 
     /// Drains the buffered bytes (including any remainder beyond the detection prefix) into an
     /// existing vector supplied by the caller.
+    #[must_use]
     pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         if self.requires_more_data() {
             if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
@@ -209,6 +210,7 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the buffered bytes into an arbitrary [`Write`] implementation without allocating.
+    #[must_use]
     pub fn take_buffered_into_writer<W: Write>(&mut self, target: &mut W) -> io::Result<usize> {
         if self.requires_more_data() {
             return Ok(0);

@@ -131,6 +131,7 @@ fn truncate_utf8_safe(s: &str, max_len: usize) -> String {
 ///
 /// A tuple of `(File, TempFileGuard)` — the open file handle and an RAII guard
 /// that cleans up the temp file on drop unless `keep()` is called.
+#[must_use]
 pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::File, TempFileGuard)> {
     let template = get_tmpname(dest, temp_dir)?;
     let template_str = template.to_string_lossy().into_owned();

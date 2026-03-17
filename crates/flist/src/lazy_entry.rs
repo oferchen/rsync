@@ -156,6 +156,7 @@ impl LazyFileListEntry {
     /// # Errors
     ///
     /// Returns an error if metadata cannot be fetched.
+    #[must_use]
     pub fn metadata(&mut self) -> Result<&fs::Metadata, &io::Error> {
         self.metadata.get()
     }
@@ -173,6 +174,7 @@ impl LazyFileListEntry {
     /// # Errors
     ///
     /// Returns an error if metadata cannot be fetched.
+    #[must_use]
     pub fn into_resolved(mut self) -> Result<FileListEntry, io::Error> {
         // Ensure metadata is resolved
         if let Err(e) = self.metadata.get() {

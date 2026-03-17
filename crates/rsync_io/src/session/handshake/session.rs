@@ -376,6 +376,7 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Consumes the wrapper, returning the binary handshake when applicable.
+    #[must_use]
     pub fn into_binary(self) -> Result<BinaryHandshake<R>, SessionHandshake<R>> {
         match self {
             Self::Binary(handshake) => Ok(handshake),
@@ -384,6 +385,7 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Consumes the wrapper, returning the legacy daemon handshake when applicable.
+    #[must_use]
     pub fn into_legacy(self) -> Result<LegacyDaemonHandshake<R>, SessionHandshake<R>> {
         match self {
             Self::Binary(_) => Err(self),

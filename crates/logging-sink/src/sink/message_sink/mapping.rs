@@ -30,6 +30,7 @@ impl<W> MessageSink<W> {
     /// must return the original writer alongside the error value so the method can reconstruct the
     /// [`MessageSink`]. This mirrors [`std::io::IntoInnerError`], allowing callers to recover
     /// without losing buffered diagnostics.
+    #[must_use]
     pub fn try_map_writer<F, W2, E>(self, f: F) -> Result<MessageSink<W2>, TryMapWriterError<W, E>>
     where
         F: FnOnce(W) -> Result<W2, (W, E)>,

@@ -187,6 +187,7 @@ fn map_gid_uncached(gid: RawGid) -> RawGid {
 /// Returns `Ok(Some(name))` if the user exists, `Ok(None)` if not found.
 /// Uses `getpwuid_r` for thread-safe lookup. When a name converter is
 /// installed via [`set_name_converter`], delegates to it instead.
+#[must_use]
 pub fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
     // upstream: uidlist.c:110-116 - name_converter replaces getpwuid
     let converted = NAME_CONVERTER_SLOT.with(|slot| {
@@ -242,6 +243,7 @@ pub fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
 /// Returns `Ok(Some(uid))` if the user exists, `Ok(None)` if not found.
 /// Uses `getpwnam_r` for thread-safe lookup. When a name converter is
 /// installed via [`set_name_converter`], delegates to it instead.
+#[must_use]
 pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
     // upstream: uidlist.c:138-144 - name_converter replaces getpwnam
     if let Ok(name_str) = std::str::from_utf8(name) {
@@ -302,6 +304,7 @@ pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
 /// Returns `Ok(Some(name))` if the group exists, `Ok(None)` if not found.
 /// Uses `getgrgid_r` for thread-safe lookup. When a name converter is
 /// installed via [`set_name_converter`], delegates to it instead.
+#[must_use]
 pub fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
     // upstream: uidlist.c:153-159 - name_converter replaces getgrgid
     let converted = NAME_CONVERTER_SLOT.with(|slot| {
@@ -383,6 +386,7 @@ pub fn gid_cache_size() -> usize {
 /// Returns `Ok(Some(gid))` if the group exists, `Ok(None)` if not found.
 /// Uses `getgrnam_r` for thread-safe lookup. When a name converter is
 /// installed via [`set_name_converter`], delegates to it instead.
+#[must_use]
 pub fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
     // upstream: uidlist.c:175-181 - name_converter replaces getgrnam
     if let Ok(name_str) = std::str::from_utf8(name) {

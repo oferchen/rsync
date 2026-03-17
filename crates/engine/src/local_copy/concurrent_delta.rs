@@ -120,6 +120,7 @@ impl DeltaPipeline {
 
     /// Process a batch of delta work items.
     /// Automatically selects concurrent vs sequential based on batch size.
+    #[must_use]
     pub fn process(&self, work: Vec<DeltaWork>) -> Vec<DeltaResult> {
         let use_concurrent = match self.concurrent {
             Some(mode) => mode,
@@ -134,11 +135,13 @@ impl DeltaPipeline {
     }
 
     /// Process work items sequentially.
+    #[must_use]
     pub fn process_sequential(&self, work: Vec<DeltaWork>) -> Vec<DeltaResult> {
         work.iter().map(process_work_item).collect()
     }
 
     /// Process work items concurrently using rayon.
+    #[must_use]
     pub fn process_concurrent(&self, work: Vec<DeltaWork>) -> Vec<DeltaResult> {
         let mut results: Vec<DeltaResult> = work
             .into_par_iter()

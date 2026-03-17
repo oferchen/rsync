@@ -62,6 +62,7 @@ impl SshConnection {
     }
 
     /// Waits for the subprocess to exit, consuming the connection.
+    #[must_use]
     pub fn wait(mut self) -> io::Result<ExitStatus> {
         let _ = self.close_stdin();
         match self.child.take() {
@@ -74,6 +75,7 @@ impl SshConnection {
     }
 
     /// Attempts to retrieve the subprocess exit status without blocking.
+    #[must_use]
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         match self.child.as_mut() {
             Some(child) => child.try_wait(),
@@ -95,6 +97,7 @@ impl SshConnection {
     ///
     /// Returns `(reader, writer, child_handle)` on success.
     /// Returns an error if stdin, stdout, or the child process has already been taken.
+    #[must_use]
     pub fn split(mut self) -> io::Result<(SshReader, SshWriter, SshChildHandle)> {
         let stdin = self.stdin.take().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "stdin has already been closed")
@@ -235,6 +238,7 @@ impl SshChildHandle {
     ///
     /// Joins the stderr drain thread after the child exits to ensure all
     /// error output has been forwarded.
+    #[must_use]
     pub fn wait(mut self) -> io::Result<ExitStatus> {
         let status = self.child.wait();
         if let Some(ref mut drain) = self.stderr_drain {

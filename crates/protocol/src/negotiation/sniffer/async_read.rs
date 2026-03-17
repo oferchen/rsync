@@ -50,6 +50,7 @@ impl NegotiationPrologueSniffer {
     ///     Ok(())
     /// }
     /// ```
+    #[must_use]
     pub async fn read_from_async<R>(&mut self, reader: &mut R) -> io::Result<NegotiationPrologue>
     where
         R: AsyncRead + Unpin,

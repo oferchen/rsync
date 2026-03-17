@@ -265,6 +265,7 @@ pub fn send_keepalive<W: Write>(writer: &mut W) -> io::Result<()> {
 ///
 /// The function blocks until the full header and payload are read or an I/O
 /// error occurs. Invalid headers surface as [`io::ErrorKind::InvalidData`].
+#[must_use]
 pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
     let header = read_header(reader)?;
     let len = header.payload_len_usize();
@@ -282,6 +283,7 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
 /// reusing any existing capacity to satisfy the workspace's buffer reuse
 /// guidance. The decoded message code is returned so the caller can dispatch on
 /// the frame type while reading the payload from `buffer`.
+#[must_use]
 pub fn recv_msg_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<MessageCode> {
     let header = read_header(reader)?;
     let len = header.payload_len_usize();

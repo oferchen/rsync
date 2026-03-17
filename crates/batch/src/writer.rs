@@ -24,6 +24,7 @@ pub struct BatchWriter {
 
 impl BatchWriter {
     /// Create a new batch writer.
+    #[must_use]
     pub fn new(config: BatchConfig) -> BatchResult<Self> {
         // Create the batch file
         let batch_path = config.batch_file_path();
