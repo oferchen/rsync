@@ -2036,7 +2036,7 @@ mod protocol_flist_round_trip {
 
         // Encode file list entries using the protocol wire format
         let proto = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
-        let flist_writer = protocol::flist::FileListWriter::new(proto)
+        let mut flist_writer = protocol::flist::FileListWriter::new(proto)
             .with_preserve_uid(true)
             .with_preserve_gid(true);
 
@@ -2153,7 +2153,7 @@ mod protocol_flist_round_trip {
         writer.write_header(flags).unwrap();
 
         let proto = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
-        let flist_writer = protocol::flist::FileListWriter::new(proto);
+        let mut flist_writer = protocol::flist::FileListWriter::new(proto);
 
         let mut entry =
             protocol::flist::FileEntry::new_file(PathBuf::from("test.txt"), 42, 0o100644);
