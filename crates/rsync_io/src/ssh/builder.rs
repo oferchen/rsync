@@ -10,6 +10,22 @@ use logging::debug_log;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 
+/// Default SSH keepalive interval in seconds.
+///
+/// When keepalive injection is enabled, this value is passed as
+/// `-o ServerAliveInterval=N`. The SSH client sends a keepalive message
+/// through the encrypted channel after this many seconds of inactivity,
+/// preventing idle connections from being dropped by firewalls or NAT
+/// devices during long transfers.
+const DEFAULT_SERVER_ALIVE_INTERVAL: u32 = 20;
+
+/// Default SSH keepalive retry count.
+///
+/// When keepalive injection is enabled, this value is passed as
+/// `-o ServerAliveCountMax=N`. If the server fails to respond to this
+/// many consecutive keepalive messages, SSH terminates the connection.
+const DEFAULT_SERVER_ALIVE_COUNT_MAX: u32 = 3;
+
 /// Builder used to configure and spawn an SSH subprocess.
 #[derive(Clone, Debug)]
 pub struct SshCommand {
@@ -19,6 +35,7 @@ pub struct SshCommand {
     port: Option<u16>,
     batch_mode: bool,
     bind_address: Option<IpAddr>,
+    keepalive: bool,
     options: Vec<OsString>,
     remote_command: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
@@ -37,6 +54,7 @@ impl SshCommand {
             port: None,
             batch_mode: true,
             bind_address: None,
+            keepalive: true,
             options: Vec::new(),
             remote_command: Vec::new(),
             envs: Vec::new(),
@@ -79,6 +97,23 @@ impl SshCommand {
     /// Enables or disables batch mode (default: enabled).
     pub const fn set_batch_mode(&mut self, enabled: bool) -> &mut Self {
         self.batch_mode = enabled;
+        self
+    }
+
+    /// Enables or disables SSH keepalive injection (default: enabled).
+    ///
+    /// When enabled, `-o ServerAliveInterval=20` and
+    /// `-o ServerAliveCountMax=3` are injected into the SSH command line,
+    /// preventing idle connections from being dropped by firewalls or NAT
+    /// devices during long transfers.
+    ///
+    /// Keepalive options are not injected when:
+    /// - The user has already specified `ServerAliveInterval` or
+    ///   `ServerAliveCountMax` via `-e` or `push_option`.
+    /// - The program is not `ssh` (e.g., `plink`, `rsh`).
+    /// - Keepalive is explicitly disabled via `set_keepalive(false)`.
+    pub const fn set_keepalive(&mut self, enabled: bool) -> &mut Self {
+        self.keepalive = enabled;
         self
     }
 
@@ -238,6 +273,18 @@ impl SshCommand {
             args.push(OsString::from(format!("-oBindAddress={addr}")));
         }
 
+        // Inject SSH keepalive options to prevent idle connections from being
+        // dropped by firewalls or NAT devices during long transfers. Skipped
+        // when the user already specifies these options or uses a non-SSH program.
+        if self.should_inject_keepalive() {
+            args.push(OsString::from(format!(
+                "-oServerAliveInterval={DEFAULT_SERVER_ALIVE_INTERVAL}"
+            )));
+            args.push(OsString::from(format!(
+                "-oServerAliveCountMax={DEFAULT_SERVER_ALIVE_COUNT_MAX}"
+            )));
+        }
+
         args.extend(self.options.iter().cloned());
 
         // Inject AES-GCM ciphers when requested and safe to do so.
@@ -311,6 +358,24 @@ impl SshCommand {
     /// Checks whether any existing option already specifies the `-c` cipher flag.
     fn options_contain_cipher_flag(&self) -> bool {
         self.options.iter().any(|opt| opt == "-c")
+    }
+
+    /// Determines whether SSH keepalive options should be injected.
+    ///
+    /// Returns `true` only when keepalive is enabled, the program looks like
+    /// an SSH client, and no existing option already specifies
+    /// `ServerAliveInterval` or `ServerAliveCountMax`.
+    fn should_inject_keepalive(&self) -> bool {
+        self.keepalive && self.is_ssh_program() && !self.options_contain_keepalive()
+    }
+
+    /// Checks whether any existing option already specifies SSH keepalive settings.
+    fn options_contain_keepalive(&self) -> bool {
+        self.options.iter().any(|opt| {
+            let s = opt.to_string_lossy();
+            let upper = s.to_ascii_uppercase();
+            upper.contains("SERVERALIVEINTERVAL") || upper.contains("SERVERALIVECOUNTMAX")
+        })
     }
 
     #[cfg(test)]
