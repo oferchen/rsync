@@ -563,10 +563,7 @@ impl GeneratorContext {
         } else {
             // upstream: flist.c:2240-2244 — use argv[0] as the base directory
             // for all --files-from entries so relative names are correct.
-            let base_dir = paths
-                .first()
-                .cloned()
-                .unwrap_or_else(|| PathBuf::from("."));
+            let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
             self.build_file_list_with_base(&base_dir, &files_from_paths)?;
         }
         self.partition_file_list_for_inc_recurse();
