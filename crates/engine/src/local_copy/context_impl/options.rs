@@ -522,4 +522,52 @@ impl<'a> CopyContext<'a> {
     ) -> Option<&mut protocol::flist::FileListWriter> {
         self.batch_flist_writer.as_mut()
     }
+
+    /// Writes the flist end-of-list marker to the batch file.
+    ///
+    /// Upstream rsync batch files are a raw tee of the protocol stream, which
+    /// includes the end-of-list marker (0x00 byte for non-varint, varint(0) +
+    /// varint(io_error) for varint mode) after all file entries. Without this
+    /// marker, [`BatchReader::read_protocol_flist`] cannot determine where
+    /// the file list ends and delta operations begin.
+    ///
+    /// Must be called after all file entries have been captured and before
+    /// any delta operations or trailing stats are written.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_file_list()` writes the end-of-list marker after all
+    ///   entries via `write_byte(f, 0)` (pre-varint) or the varint equivalent.
+    pub(crate) fn finalize_batch_flist(&mut self) -> Result<(), crate::local_copy::LocalCopyError> {
+        let flist_writer = match self.batch_flist_writer.as_ref() {
+            Some(w) => w,
+            None => return Ok(()),
+        };
+
+        // Encode the end-of-list marker into a buffer
+        let mut buf = Vec::with_capacity(4);
+        flist_writer.write_end(&mut buf, None).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch flist end marker",
+                std::path::PathBuf::new(),
+                e,
+            )
+        })?;
+
+        // Write to the batch file
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
+            None => return Ok(()),
+        };
+        let mut writer_guard = batch_writer_arc.lock().unwrap();
+        writer_guard.write_data(&buf).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch flist end marker",
+                std::path::PathBuf::new(),
+                std::io::Error::other(e),
+            )
+        })?;
+
+        Ok(())
+    }
 }
