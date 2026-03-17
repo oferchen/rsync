@@ -90,7 +90,7 @@ proptest! {
         };
         prop_assert!(
             !set.allows(Path::new(&matching_file), false),
-            "exclude *.{ext} should reject {matching_file}"
+            "exclude *.{} should reject {}", ext, matching_file
         );
     }
 
@@ -109,14 +109,14 @@ proptest! {
         let matching = format!("{name}.{ext}");
         prop_assert!(
             set.allows(Path::new(&matching), false),
-            "include *.{ext} before exclude * should allow {matching}"
+            "include *.{} before exclude * should allow {}", ext, matching
         );
 
         // A file with a guaranteed-different extension must be excluded.
         let other = format!("{name}.{ext}NOPE");
         prop_assert!(
             !set.allows(Path::new(&other), false),
-            "exclude * should block {other}"
+            "exclude * should block {}", other
         );
     }
 }
@@ -143,7 +143,7 @@ proptest! {
         let file = format!("{name}.{ext}");
         prop_assert!(
             !set.allows(Path::new(&file), false),
-            "exclude before include for *.{ext} should reject {file}"
+            "exclude before include for *.{} should reject {}", ext, file
         );
     }
 
@@ -162,7 +162,7 @@ proptest! {
         let file = format!("{name}.{ext}");
         prop_assert!(
             set.allows(Path::new(&file), false),
-            "include before exclude for *.{ext} should allow {file}"
+            "include before exclude for *.{} should allow {}", ext, file
         );
     }
 }
@@ -190,14 +190,14 @@ proptest! {
         // Root-level match should be excluded.
         prop_assert!(
             !set.allows(Path::new(&name), false),
-            "anchored /{name} should exclude root-level {name}"
+            "anchored /{} should exclude root-level {}", name, name
         );
 
         // Nested match should be allowed (not anchored to root).
         let nested = format!("{parent}/{name}");
         prop_assert!(
             set.allows(Path::new(&nested), false),
-            "anchored /{name} should NOT exclude nested {nested}"
+            "anchored /{} should NOT exclude nested {}", name, nested
         );
     }
 
@@ -214,14 +214,14 @@ proptest! {
         // Root-level match.
         prop_assert!(
             !set.allows(Path::new(&name), false),
-            "unanchored {name} should exclude root-level"
+            "unanchored {} should exclude root-level", name
         );
 
         // Nested match.
         let nested = format!("{parent}/{name}");
         prop_assert!(
             !set.allows(Path::new(&nested), false),
-            "unanchored {name} should also exclude nested {nested}"
+            "unanchored {} should also exclude nested {}", name, nested
         );
     }
 }
@@ -244,13 +244,13 @@ proptest! {
         // Directory with that name should be excluded.
         prop_assert!(
             !set.allows(Path::new(&name), true),
-            "{name}/ should exclude directory {name}"
+            "{}/ should exclude directory {}", name, name
         );
 
         // File with the same name should be allowed.
         prop_assert!(
             set.allows(Path::new(&name), false),
-            "{name}/ should NOT exclude file {name}"
+            "{}/ should NOT exclude file {}", name, name
         );
     }
 
@@ -267,7 +267,7 @@ proptest! {
         let descendant = format!("{dir_name}/{child}");
         prop_assert!(
             !set.allows(Path::new(&descendant), false),
-            "{dir_name}/ should also exclude descendant {descendant}"
+            "{}/ should also exclude descendant {}", dir_name, descendant
         );
     }
 }
@@ -296,14 +296,14 @@ proptest! {
         let flat = format!("{prefix}X{suffix}");
         prop_assert!(
             !set.allows(Path::new(&flat), false),
-            "/{prefix}*{suffix} should match flat {flat}"
+            "/{}*{} should match flat {}", prefix, suffix, flat
         );
 
         // A path with a separator between prefix and suffix should NOT match.
         let nested = format!("{prefix}/{middle}/{suffix}");
         prop_assert!(
             set.allows(Path::new(&nested), false),
-            "/{prefix}*{suffix} should NOT match across separators: {nested}"
+            "/{}*{} should NOT match across separators: {}", prefix, suffix, nested
         );
     }
 }
@@ -329,7 +329,7 @@ proptest! {
         if path.ends_with(&format!(".{ext}")) {
             prop_assert!(
                 !set.allows(Path::new(&path), false),
-                "**/*.{ext} should exclude {path}"
+                "**/*.{} should exclude {}", ext, path
             );
         }
     }
@@ -346,7 +346,7 @@ proptest! {
         let full = format!("{prefix}/{child_path}");
         prop_assert!(
             !set.allows(Path::new(&full), false),
-            "{pattern} should exclude descendant {full}"
+            "{} should exclude descendant {}", pattern, full
         );
     }
 }
@@ -368,7 +368,7 @@ proptest! {
         prop_assert!(set.is_empty());
         prop_assert!(
             set.allows(Path::new(&path), is_dir),
-            "empty filter set should allow {path} (is_dir={is_dir})"
+            "empty filter set should allow {} (is_dir={})", path, is_dir
         );
     }
 
@@ -381,7 +381,7 @@ proptest! {
         let set = FilterSet::default();
         prop_assert!(
             set.allows_deletion(Path::new(&path), is_dir),
-            "empty filter set should allow deletion of {path}"
+            "empty filter set should allow deletion of {}", path
         );
     }
 }
@@ -412,7 +412,7 @@ proptest! {
 
         prop_assert_ne!(
             result_inc_first, result_exc_first,
-            "swapping include/exclude order for *.{ext} should flip result for {file}"
+            "swapping include/exclude order for *.{} should flip result for {}", ext, file
         );
     }
 
@@ -437,7 +437,7 @@ proptest! {
         ]).unwrap();
         prop_assert!(
             overridden.allows(Path::new(&file), false),
-            "prepended include should override later exclude for {file}"
+            "prepended include should override later exclude for {}", file
         );
     }
 }
@@ -457,7 +457,7 @@ proptest! {
         let set = FilterSet::from_rules([FilterRule::exclude("*")]).unwrap();
         prop_assert!(
             !set.allows(Path::new(&path), false),
-            "exclude * should block {path}"
+            "exclude * should block {}", path
         );
     }
 
@@ -471,7 +471,7 @@ proptest! {
         let set = FilterSet::from_rules([FilterRule::include("*")]).unwrap();
         prop_assert!(
             set.allows(Path::new(&path), is_dir),
-            "include * alone should still allow {path}"
+            "include * alone should still allow {}", path
         );
     }
 }
@@ -499,20 +499,20 @@ proptest! {
         // Root dir with that name: excluded
         prop_assert!(
             !set.allows(Path::new(&name), true),
-            "/{name}/ should exclude root dir {name}"
+            "/{}/ should exclude root dir {}", name, name
         );
 
         // Root file with that name: allowed (directory-only)
         prop_assert!(
             set.allows(Path::new(&name), false),
-            "/{name}/ should NOT exclude root file {name}"
+            "/{}/ should NOT exclude root file {}", name, name
         );
 
         // Nested dir with that name: allowed (anchored)
         let nested = format!("{parent}/{name}");
         prop_assert!(
             set.allows(Path::new(&nested), true),
-            "/{name}/ should NOT exclude nested dir {nested}"
+            "/{}/ should NOT exclude nested dir {}", name, nested
         );
     }
 }
@@ -539,7 +539,7 @@ proptest! {
 
         prop_assert!(
             set.allows(Path::new(&file), false),
-            "after clear, {file} should be allowed"
+            "after clear, {} should be allowed", file
         );
     }
 
@@ -561,7 +561,7 @@ proptest! {
 
         prop_assert!(
             !set.allows(Path::new(&file), false),
-            "exclude after clear should block {file}"
+            "exclude after clear should block {}", file
         );
     }
 }
@@ -589,7 +589,7 @@ proptest! {
         // Deletion is blocked by protect.
         prop_assert!(
             !set.allows_deletion(Path::new(&name), false),
-            "protect /{name} should block deletion of {name}"
+            "protect /{} should block deletion of {}", name, name
         );
     }
 
@@ -607,7 +607,7 @@ proptest! {
         // Risk matches first, so deletion is allowed.
         prop_assert!(
             set.allows_deletion(Path::new(&name), false),
-            "risk before protect should allow deletion of {name}"
+            "risk before protect should allow deletion of {}", name
         );
     }
 }
@@ -635,14 +635,14 @@ proptest! {
         // Direct path should be excluded (matches from root).
         prop_assert!(
             !set.allows(Path::new(&pattern), false),
-            "{pattern} should exclude {pattern} at root"
+            "{} should exclude {} at root", pattern, pattern
         );
 
         // Nested under a different parent should be allowed (anchored).
         let nested = format!("{outer}/{dir}/{file}");
         prop_assert!(
             set.allows(Path::new(&nested), false),
-            "{pattern} (internal slash) should NOT exclude {nested}"
+            "{} (internal slash) should NOT exclude {}", pattern, nested
         );
     }
 }
