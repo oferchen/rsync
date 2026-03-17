@@ -182,7 +182,10 @@ mod tests {
 
     #[test]
     fn itemize_changes_false_clears_flag() {
-        let config = builder().itemize_changes(true).itemize_changes(false).build();
+        let config = builder()
+            .itemize_changes(true)
+            .itemize_changes(false)
+            .build();
         assert!(!config.itemize_changes());
     }
 }
