@@ -10,9 +10,11 @@ mod module_access_tests {
 
         // Challenge should be base64-encoded hash (22 characters without padding)
         assert_eq!(challenge.len(), 22);
-        assert!(challenge
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '+' || c == '/'));
+        assert!(
+            challenge
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '+' || c == '/')
+        );
     }
 
     #[test]
@@ -22,9 +24,11 @@ mod module_access_tests {
 
         // MD4 also produces 16-byte hash = 22 base64 characters
         assert_eq!(challenge.len(), 22);
-        assert!(challenge
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '+' || c == '/'));
+        assert!(
+            challenge
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '+' || c == '/')
+        );
     }
 
     #[test]
@@ -423,7 +427,11 @@ mod module_access_tests {
         // The separator between name field and comment must be exactly one tab
         let line = format_module_listing_line("test", "hello");
         let parts: Vec<&str> = line.trim_end_matches('\n').splitn(2, '\t').collect();
-        assert_eq!(parts.len(), 2, "line must contain exactly one tab separator");
+        assert_eq!(
+            parts.len(),
+            2,
+            "line must contain exactly one tab separator"
+        );
         assert_eq!(parts[0], "test           ");
         assert_eq!(parts[1], "hello");
     }
@@ -530,7 +538,10 @@ mod module_access_tests {
         // Authentication will fail (wrong response), but no permission error is returned.
         let result = verify_secret_response(&module, "alice", "challenge", "response", None)
             .expect("should not error on permissions");
-        assert!(!result, "auth should fail due to wrong response, not permissions");
+        assert!(
+            !result,
+            "auth should fail due to wrong response, not permissions"
+        );
     }
 
     #[cfg(unix)]
@@ -589,8 +600,7 @@ mod module_access_tests {
         assert_eq!(phase1, vec!["--server", "-s", "."]);
 
         // Detect secluded flag
-        let has_secluded = phase1.iter().any(|a| a == "-s");
-        assert!(has_secluded);
+        assert!(has_secluded_args_flag(&phase1));
 
         // Read phase 2
         let full_args = protocol::secluded_args::recv_secluded_args(&mut reader)
@@ -1121,5 +1131,66 @@ mod module_access_tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("failed to read filter file"));
+    }
+
+    #[test]
+    fn secluded_args_flag_standalone() {
+        let args: Vec<String> = vec!["--server", "-s", "."]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(has_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn secluded_args_flag_bundled_compact() {
+        let args: Vec<String> = vec!["--server", "-logDtprs", "."]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(has_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn secluded_args_flag_long_protect_args() {
+        let args: Vec<String> = vec!["--server", "--protect-args", "."]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(has_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn secluded_args_flag_long_secluded_args() {
+        let args: Vec<String> = vec!["--server", "--secluded-args", "."]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(has_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn secluded_args_flag_absent() {
+        let args: Vec<String> = vec!["--server", "-logDtpr", "."]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(!has_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn secluded_args_flag_not_in_long_option() {
+        // `--some-option` should not match even if it contains 's'
+        let args: Vec<String> = vec!["--server", "--sender", "."]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(!has_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn secluded_args_flag_empty_args() {
+        let args: Vec<String> = vec![];
+        assert!(!has_secluded_args_flag(&args));
     }
 }
