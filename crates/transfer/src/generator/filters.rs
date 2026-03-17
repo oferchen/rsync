@@ -87,7 +87,7 @@ impl GeneratorContext {
         };
 
         // Determine base directory: use the first positional arg (source dir).
-        // upstream: flist.c:2220 — dir = argv[0] when files_from is active.
+        // upstream: flist.c:2240-2244 — change_dir(argv[0]) before reading filenames.
         let base_dir = original_paths
             .first()
             .cloned()
@@ -105,6 +105,10 @@ impl GeneratorContext {
             read_files_from_local_path(&files_from_path, from0)?
         };
 
+        // upstream: flist.c:2240-2264 — chdir to argv[0] then read relative
+        // filenames. We keep the base_dir separate and return fully resolved
+        // paths so that build_file_list_with_base() can reconstruct correct
+        // relative names by stripping the base prefix.
         let mut resolved = Vec::with_capacity(filenames.len());
         for name in &filenames {
             if name.is_empty() {

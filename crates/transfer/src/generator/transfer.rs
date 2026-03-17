@@ -550,20 +550,22 @@ impl GeneratorContext {
         self.receive_filter_list_if_server(&mut reader)?;
 
         // Step 2b: Read files-from list if configured.
-        // upstream: flist.c:2262 — when filesfrom_fd != -1, sender reads filenames
-        // from the fd (stdin for --files-from=-) and walks each one individually
-        // instead of recursing from the positional args.
+        // upstream: flist.c:2240-2264 — when filesfrom_fd != -1, sender does
+        // chdir(argv[0]) then reads filenames from the fd, walking each one
+        // individually instead of recursing from the positional args.
         let files_from_paths = self.resolve_files_from_paths(paths, &mut reader)?;
-        let effective_paths: &[PathBuf] = if files_from_paths.is_empty() {
-            paths
-        } else {
-            &files_from_paths
-        };
 
         let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
 
         // Step 3: Build and send file list
-        self.build_file_list(effective_paths)?;
+        if files_from_paths.is_empty() {
+            self.build_file_list(paths)?;
+        } else {
+            // upstream: flist.c:2240-2244 — use argv[0] as the base directory
+            // for all --files-from entries so relative names are correct.
+            let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
+            self.build_file_list_with_base(&base_dir, &files_from_paths)?;
+        }
         self.partition_file_list_for_inc_recurse();
         let file_count = self.send_file_list(writer)?;
 

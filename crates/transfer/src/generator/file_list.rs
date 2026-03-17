@@ -188,6 +188,89 @@ impl GeneratorContext {
         Ok(count)
     }
 
+    /// Builds a file list from `--files-from` entries using a shared base directory.
+    ///
+    /// Unlike [`build_file_list`](Self::build_file_list), which treats each path as
+    /// its own base for `walk_path`, this method uses a single `base_dir` for all
+    /// file paths. Each entry's relative name is computed by stripping `base_dir`,
+    /// matching upstream rsync's behaviour of `chdir(argv[0])` before reading
+    /// filenames from the `--files-from` source.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2240-2264` - `change_dir(argv[0])` then read relative filenames
+    /// - `flist.c:2262` - `read_line(filesfrom_fd, ...)` reads one name at a time
+    pub fn build_file_list_with_base(
+        &mut self,
+        base_dir: &Path,
+        file_paths: &[PathBuf],
+    ) -> io::Result<usize> {
+        self.timing.flist_build_start = Some(Instant::now());
+
+        info_log!(Flist, 1, "building file list from --files-from...");
+        self.clear_file_list();
+
+        const FLIST_START: usize = 4096;
+        self.file_list.reserve(FLIST_START);
+        self.full_paths.reserve(FLIST_START);
+
+        // upstream: flist.c:2287 — emit "." with XMIT_TOP_DIR for the root
+        // transfer directory so --delete works correctly on the receiver side.
+        if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
+            if meta.is_dir() {
+                let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
+                dot_entry.set_flags(protocol::flist::FileFlags::new(
+                    protocol::flist::XMIT_TOP_DIR,
+                    0,
+                ));
+                self.push_file_item(dot_entry, base_dir.to_path_buf());
+            }
+        }
+
+        // Walk each listed file using the shared base directory so that
+        // relative paths are computed correctly (e.g., "hello.txt" instead
+        // of an empty string).
+        for path in file_paths {
+            self.walk_path(base_dir, path.clone())?;
+        }
+
+        // Sort file list using rsync's ordering (upstream flist.c:f_name_cmp).
+        let file_list_ref = &self.file_list;
+        let mut indices: Vec<usize> = {
+            let len = self.file_list.len();
+            let mut v = Vec::with_capacity(len);
+            v.extend(0..len);
+            v
+        };
+        let cmp =
+            |&a: &usize, &b: &usize| compare_file_entries(&file_list_ref[a], &file_list_ref[b]);
+        if self.config.qsort {
+            indices.sort_unstable_by(cmp);
+        } else {
+            indices.sort_by(cmp);
+        }
+
+        apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
+
+        #[cfg(unix)]
+        if self.config.flags.hard_links {
+            self.assign_hardlink_indices();
+        }
+
+        self.timing.flist_build_end = Some(Instant::now());
+        self.collect_id_mappings();
+
+        let count = self.file_list.len();
+        info_log!(Flist, 1, "built file list with {} entries", count);
+        debug_log!(Flist, 2, "file list entries: {:?}", {
+            let mut names = Vec::with_capacity(count);
+            names.extend(self.file_list.iter().map(FileEntry::name));
+            names
+        });
+
+        Ok(count)
+    }
+
     /// Partitions the sorted file list into segments for incremental recursion.
     ///
     /// Reorders `file_list` and `full_paths` so that initial (top-level) entries
