@@ -414,13 +414,15 @@ mod tests {
 
     #[test]
     fn format_symlink_no_size() {
-        // Symlinks never report size changes (position 3 stays '.')
+        // Symlinks never report size changes (position 3 stays '.').
+        // ITEM_REPORT_SIZE (bit 2) shares the same bit as ITEM_REPORT_TIMEFAIL,
+        // so for symlinks the time position shows 'T' (timefail) instead of 't'.
         let iflags = ItemFlags::from_raw(
             ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_SIZE | ItemFlags::ITEM_REPORT_TIME,
         );
         let entry = make_symlink_entry("link");
         let result = format_iflags(&iflags, &entry, false, &default_ctx());
-        assert_eq!(result, ">L..t......");
+        assert_eq!(result, ">L..T......");
     }
 
     #[test]
@@ -504,7 +506,7 @@ mod tests {
         let entry = make_file_entry("test.txt");
         let result = format_iflags(&iflags, &entry, false, &default_ctx());
         // For files, bit 2 = size ('s'), time stays lowercase 't'
-        assert_eq!(result, ">fst.......");
+        assert_eq!(result, ">f.st......");
     }
 
     /// upstream: log.c:716-717 - directory without preserve_mtimes shows uppercase 'T'
