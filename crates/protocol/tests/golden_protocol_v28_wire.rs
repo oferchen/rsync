@@ -231,16 +231,21 @@ fn golden_v28_directory_roundtrip() {
 
 #[test]
 fn golden_v28_symlink_entry() {
-    // Symlink: "link" -> "target", mode=0o120777
+    // Symlink: "link" -> "target", mode=0o120777, mtime=1700000000
     // When preserve_links is set, symlink target is written after mode.
     // Target length uses write_varint30_int(proto=28) = write_int (4-byte LE).
+    //
+    // Note: mtime must be set to a non-zero value to avoid XMIT_SAME_TIME
+    // being set (prev_mtime defaults to 0), which would omit the mtime field
+    // and change the flags byte from XMIT_TOP_DIR (0x01) to XMIT_SAME_TIME (0x80).
     //
     // Expected wire format:
     //   flags: 0x01 (XMIT_TOP_DIR, avoiding zero for non-dir)
     //   name_len: 1 byte = 4
     //   name: "link"
     //   size: write_longint(0) = 4-byte LE
-    //   mtime: 4-byte unsigned LE (default 0)
+    //   mtime: 4-byte unsigned LE = 1700000000 = 0x6553F100
+    //          LE: [0x00, 0xF1, 0x53, 0x65]
     //   mode: to_wire_mode(0o120777) = 0o120777 = 41471 = 0x0000A1FF
     //         LE: [0xFF, 0xA1, 0x00, 0x00]
     //   symlink_len: write_int(6) = [0x06, 0x00, 0x00, 0x00]
@@ -249,13 +254,14 @@ fn golden_v28_symlink_entry() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(proto28()).with_preserve_links(true);
 
-    let entry = FileEntry::new_symlink("link".into(), "target".into());
+    let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+    entry.set_mtime(1_700_000_000, 0);
 
     writer.write_entry(&mut buf, &entry).unwrap();
 
     #[rustfmt::skip]
     let expected: &[u8] = &[
-        // flags: XMIT_TOP_DIR (0x01)
+        // flags: XMIT_TOP_DIR (0x01) - set to avoid zero flags for non-dir
         0x01,
         // name suffix length
         0x04,
@@ -263,8 +269,8 @@ fn golden_v28_symlink_entry() {
         b'l', b'i', b'n', b'k',
         // size: write_longint(0)
         0x00, 0x00, 0x00, 0x00,
-        // mtime: 0 as u32 LE
-        0x00, 0x00, 0x00, 0x00,
+        // mtime: 1700000000 as u32 LE
+        0x00, 0xF1, 0x53, 0x65,
         // mode: 0o120777 = 41471 as i32 LE
         0xFF, 0xA1, 0x00, 0x00,
         // symlink target length: write_int(6) = 4-byte LE
