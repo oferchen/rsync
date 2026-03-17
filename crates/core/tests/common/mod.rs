@@ -71,8 +71,7 @@ impl DaemonBinary {
                     Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         format!(
-                            "oc-rsync binary not found at {} or {}",
-                            OC_RSYNC_RELEASE, OC_RSYNC_DEBUG
+                            "oc-rsync binary not found at {OC_RSYNC_RELEASE} or {OC_RSYNC_DEBUG}",
                         ),
                     ))
                 }
