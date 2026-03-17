@@ -19,8 +19,13 @@ use std::path::PathBuf;
 // ---------------------------------------------------------------------------
 
 /// Generates a valid ASCII filename component (1-64 bytes, no slashes or NUL).
+///
+/// Excludes `"."` and `".."` which are special path components that
+/// `clean_and_validate_name` normalizes (removes `.`) or rejects (`..`),
+/// causing roundtrip mismatches.
 fn filename_strategy() -> impl Strategy<Value = String> {
     "[a-zA-Z0-9_.][a-zA-Z0-9_.\\-]{0,63}"
+        .prop_filter("exclude . and .. path components", |s| s != "." && s != "..")
 }
 
 /// Generates a valid relative path with 1-3 components.
