@@ -79,4 +79,4 @@ jobs:
 
       - name: Test (${{ matrix.name }})
         if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
-        run: cargo nextest run ${{ matrix.args }}
+        run: cargo nextest run --profile ci ${{ matrix.args }}
