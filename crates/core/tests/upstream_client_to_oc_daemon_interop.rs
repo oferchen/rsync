@@ -17,201 +17,21 @@
 //! - `crates/core/src/server/` - server-side protocol handling
 //! - `crates/protocol/src/negotiation/` - handshake and version negotiation
 
+mod common;
+
+use common::{
+    DaemonBinary, TestDaemon, UPSTREAM_3_0_9, UPSTREAM_3_1_3, UPSTREAM_3_4_1, create_test_file,
+};
+
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::path::Path;
+use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use tempfile::{TempDir, tempdir};
-
-// Upstream rsync client binary paths
-const UPSTREAM_3_4_1: &str = "/home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync";
-const UPSTREAM_3_1_3: &str = "/home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync";
-const UPSTREAM_3_0_9: &str = "/home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync";
-
-// oc-rsync daemon binary path
-const OC_RSYNC_BINARY: &str = "/home/ofer/rsync/target/release/oc-rsync";
-const OC_RSYNC_DEBUG_BINARY: &str = "/home/ofer/rsync/target/debug/oc-rsync";
-
-/// Get the path to oc-rsync binary, preferring release over debug.
-fn oc_rsync_binary() -> &'static str {
-    if Path::new(OC_RSYNC_BINARY).exists() {
-        OC_RSYNC_BINARY
-    } else if Path::new(OC_RSYNC_DEBUG_BINARY).exists() {
-        OC_RSYNC_DEBUG_BINARY
-    } else {
-        OC_RSYNC_BINARY // Return release path and let caller fail with clear error
-    }
-}
-
-/// Test infrastructure for managing oc-rsync daemon instances.
-struct OcDaemon {
-    _workdir: TempDir,
-    #[allow(dead_code)]
-    config_path: PathBuf,
-    log_path: PathBuf,
-    #[allow(dead_code)]
-    pid_path: PathBuf,
-    module_path: PathBuf,
-    port: u16,
-    process: Option<Child>,
-}
-
-impl OcDaemon {
-    /// Start an oc-rsync daemon for testing.
-    ///
-    /// Creates a temporary directory structure with:
-    /// - Configuration file (oc-rsyncd.conf)
-    /// - Log file
-    /// - PID file
-    /// - Module directory for file storage
-    fn start(port: u16) -> std::io::Result<Self> {
-        let workdir = tempdir()?;
-        let config_path = workdir.path().join("oc-rsyncd.conf");
-        let log_path = workdir.path().join("daemon.log");
-        let pid_path = workdir.path().join("daemon.pid");
-        let module_path = workdir.path().join("testmodule");
-
-        fs::create_dir_all(&module_path)?;
-
-        // Write oc-rsyncd.conf matching daemon configuration format
-        // Uses oc-rsync branding conventions per CLAUDE.md
-        // Note: port and log-file are passed via CLI, not config
-        // use chroot and numeric ids go in module section
-        let config_content = format!(
-            "\
-# Test daemon configuration for interop tests
-pid file = {}
-
-[testmodule]
-    path = {}
-    comment = Test module for upstream client interop
-    read only = false
-    list = yes
-    use chroot = false
-    numeric ids = yes
-",
-            pid_path.display(),
-            module_path.display()
-        );
-        fs::write(&config_path, config_content)?;
-
-        let binary = oc_rsync_binary();
-        if !Path::new(binary).exists() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("oc-rsync binary not found at: {binary}"),
-            ));
-        }
-
-        // Start daemon with --no-detach so we can manage the process lifecycle
-        // Mirrors upstream rsync daemon invocation from daemon_client_interop.rs
-        // Pass port and log-file via CLI since they're not config directives
-        let mut child = Command::new(binary)
-            .arg("--daemon")
-            .arg("--config")
-            .arg(&config_path)
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--log-file")
-            .arg(&log_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        // Give daemon time to initialize and bind to port
-        // Matches startup delay from daemon_client_interop.rs
-        thread::sleep(Duration::from_millis(500));
-
-        // Verify daemon is still running (didn't crash on startup)
-        if let Some(status) = child.try_wait()? {
-            let stderr = child.stderr.take();
-            let mut error_msg = format!("oc-rsync daemon exited immediately with status: {status}");
-            if let Some(mut stderr) = stderr {
-                let mut buf = String::new();
-                if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                    error_msg.push_str(&format!("\nStderr: {buf}"));
-                }
-            }
-            return Err(std::io::Error::other(error_msg));
-        } else {
-            // Still running - daemon started successfully
-        }
-
-        Ok(Self {
-            _workdir: workdir,
-            config_path,
-            log_path,
-            pid_path,
-            module_path,
-            port,
-            process: Some(child),
-        })
-    }
-
-    /// Get the rsync:// URL for connecting to this daemon.
-    fn url(&self) -> String {
-        format!("rsync://127.0.0.1:{}/testmodule", self.port)
-    }
-
-    /// Get the module root directory path for file operations.
-    fn module_path(&self) -> &Path {
-        &self.module_path
-    }
-
-    /// Get the daemon log contents for debugging test failures.
-    #[allow(dead_code)]
-    fn log_contents(&self) -> std::io::Result<String> {
-        fs::read_to_string(&self.log_path)
-    }
-
-    /// Wait for daemon to be ready by attempting TCP connection to the port.
-    ///
-    /// This ensures the daemon is fully initialized before clients connect.
-    fn wait_ready(&self, timeout: Duration) -> std::io::Result<()> {
-        let start = std::time::Instant::now();
-        loop {
-            if start.elapsed() > timeout {
-                // Capture log contents for debugging timeout failures
-                let log = self
-                    .log_contents()
-                    .unwrap_or_else(|_| String::from("(log unavailable)"));
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    format!("daemon did not become ready within {timeout:?}\nLog: {log}"),
-                ));
-            }
-
-            match TcpStream::connect(format!("127.0.0.1:{}", self.port)) {
-                Ok(_) => return Ok(()),
-                Err(_) => thread::sleep(Duration::from_millis(100)),
-            }
-        }
-    }
-}
-
-impl Drop for OcDaemon {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.process.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-/// Helper to create test files with specific content.
-///
-/// Creates parent directories as needed.
-fn create_test_file(path: &Path, content: &[u8]) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create parent directories");
-    }
-    fs::write(path, content).expect("write test file");
-}
+use tempfile::tempdir;
 
 /// Test that oc-rsync daemon starts successfully and accepts connections.
 ///
@@ -220,13 +40,10 @@ fn create_test_file(path: &Path, content: &[u8]) {
 #[test]
 #[ignore = "requires oc-rsync binary"]
 fn test_oc_daemon_starts_and_accepts_connections() {
-    let daemon = OcDaemon::start(18873).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon should become ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     // Verify we can connect to the daemon port
-    let _stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port))
+    let _stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
         .expect("should connect to daemon port");
 }
 
@@ -237,13 +54,10 @@ fn test_oc_daemon_starts_and_accepts_connections() {
 #[test]
 #[ignore = "requires oc-rsync binary"]
 fn test_oc_daemon_sends_protocol_greeting() {
-    let daemon = OcDaemon::start(18874).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port())).expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -284,13 +98,11 @@ fn test_oc_daemon_sends_protocol_greeting() {
 #[test]
 #[ignore = "requires oc-rsync binary"]
 fn test_oc_daemon_shutdown_cleanup() {
-    let port = 18875;
+    let port;
 
     {
-        let daemon = OcDaemon::start(port).expect("start daemon");
-        daemon
-            .wait_ready(Duration::from_secs(5))
-            .expect("daemon ready");
+        let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start daemon");
+        port = daemon.port();
         // Daemon dropped here
     }
 
@@ -317,10 +129,7 @@ fn test_upstream_3_4_1_client_handshake() {
         return;
     }
 
-    let daemon = OcDaemon::start(18876).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     // Create test file for pull operation
     create_test_file(
@@ -362,10 +171,7 @@ fn test_upstream_3_1_3_client_handshake() {
         return;
     }
 
-    let daemon = OcDaemon::start(18877).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     create_test_file(
         &daemon.module_path().join("legacy.txt"),
@@ -404,10 +210,7 @@ fn test_upstream_3_0_9_client_handshake() {
         return;
     }
 
-    let daemon = OcDaemon::start(18878).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     create_test_file(
         &daemon.module_path().join("old.txt"),
@@ -445,10 +248,7 @@ fn test_pull_single_file_from_oc_daemon() {
         return;
     }
 
-    let daemon = OcDaemon::start(18879).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     create_test_file(
         &daemon.module_path().join("single.txt"),
@@ -484,10 +284,7 @@ fn test_pull_directory_tree_from_oc_daemon() {
         return;
     }
 
-    let daemon = OcDaemon::start(18880).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     // Create nested directory structure
     create_test_file(&daemon.module_path().join("root.txt"), b"root file");
@@ -555,10 +352,7 @@ fn test_pull_large_file_from_oc_daemon() {
         return;
     }
 
-    let daemon = OcDaemon::start(18881).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     // Create 1MB file with predictable pattern
     let large_content: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
@@ -592,10 +386,7 @@ fn test_pull_files_with_special_chars_from_oc_daemon() {
         return;
     }
 
-    let daemon = OcDaemon::start(18882).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     // Create files with spaces and other allowed special characters
     create_test_file(
@@ -651,10 +442,7 @@ fn test_push_single_file_to_oc_daemon() {
         return;
     }
 
-    let daemon = OcDaemon::start(18883).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     let source_dir = tempdir().expect("create source dir");
     create_test_file(&source_dir.path().join("upload.txt"), b"uploaded content");
@@ -687,10 +475,7 @@ fn test_push_directory_tree_to_oc_daemon() {
         return;
     }
 
-    let daemon = OcDaemon::start(18884).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     let source_dir = tempdir().expect("create source dir");
     create_test_file(&source_dir.path().join("file1.txt"), b"first");
@@ -739,10 +524,7 @@ fn test_pull_preserves_permissions() {
         return;
     }
 
-    let daemon = OcDaemon::start(18885).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     let test_file = daemon.module_path().join("perms.txt");
     create_test_file(&test_file, b"permission test");
@@ -793,10 +575,7 @@ fn test_pull_preserves_mtime() {
         return;
     }
 
-    let daemon = OcDaemon::start(18886).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     let test_file = daemon.module_path().join("mtime.txt");
     create_test_file(&test_file, b"mtime test");
@@ -853,15 +632,12 @@ fn test_module_listing_from_upstream_client() {
         return;
     }
 
-    let daemon = OcDaemon::start(18887).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     // Request module list (no module path specified)
     let output = Command::new(UPSTREAM_3_4_1)
         .arg("--timeout=10")
-        .arg(format!("rsync://127.0.0.1:{}/", daemon.port))
+        .arg(format!("rsync://127.0.0.1:{}/", daemon.port()))
         .output()
         .expect("run upstream client");
 
@@ -882,13 +658,10 @@ fn test_module_listing_from_upstream_client() {
 #[test]
 #[ignore = "requires oc-rsync binary"]
 fn test_manual_protocol_handshake_with_oc_daemon() {
-    let daemon = OcDaemon::start(18888).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port())).expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -953,15 +726,12 @@ fn test_error_nonexistent_module_from_upstream_client() {
         return;
     }
 
-    let daemon = OcDaemon::start(18889).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     let output = Command::new(UPSTREAM_3_4_1)
         .arg("-av")
         .arg("--timeout=10")
-        .arg(format!("rsync://127.0.0.1:{}/nonexistent/", daemon.port))
+        .arg(format!("rsync://127.0.0.1:{}/nonexistent/", daemon.port()))
         .arg("/tmp/")
         .output()
         .expect("run upstream client");
@@ -1013,10 +783,7 @@ fn test_pull_with_compression() {
         return;
     }
 
-    let daemon = OcDaemon::start(18890).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     // Create compressible file (repetitive content)
     let compressible: Vec<u8> = b"AAAA".iter().cycle().take(10000).copied().collect();
@@ -1059,10 +826,7 @@ fn test_pull_with_checksum_algorithm() {
         return;
     }
 
-    let daemon = OcDaemon::start(18891).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     create_test_file(
         &daemon.module_path().join("checksum.txt"),
@@ -1103,10 +867,7 @@ fn test_pull_many_small_files() {
         return;
     }
 
-    let daemon = OcDaemon::start(18892).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     // Create 100 small files
     for i in 0..100 {
@@ -1154,10 +915,7 @@ fn test_pull_empty_file() {
         return;
     }
 
-    let daemon = OcDaemon::start(18893).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     create_test_file(&daemon.module_path().join("empty.txt"), b"");
 
@@ -1188,10 +946,7 @@ fn test_pull_whitespace_only_file() {
         return;
     }
 
-    let daemon = OcDaemon::start(18894).expect("start oc-rsync daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
     let whitespace_content = b"   \n\t\t\n   \n";
     create_test_file(
