@@ -153,8 +153,9 @@ impl PipelinedReceiver {
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
                         eprintln!(
-                            "rsync: send_files failed to open {:?}: Permission denied (13)",
-                            path.display()
+                            "rsync: send_files failed to open {:?}: Permission denied (13){}",
+                            path.display(),
+                            crate::role_trailer::receiver(),
                         );
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
@@ -209,8 +210,9 @@ impl PipelinedReceiver {
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
                         eprintln!(
-                            "rsync: send_files failed to open {:?}: Permission denied (13)",
-                            path.display()
+                            "rsync: send_files failed to open {:?}: Permission denied (13){}",
+                            path.display(),
+                            crate::role_trailer::receiver(),
                         );
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
@@ -263,16 +265,18 @@ impl PipelinedReceiver {
                 if self.redo_enabled {
                     // upstream: receiver.c:960-968 — WARNING, will try again
                     eprintln!(
-                        "WARNING: {:?} failed verification -- update discarded (will try again).",
+                        "WARNING: {:?} failed verification -- update discarded (will try again).{}",
                         pending.file_path,
+                        crate::role_trailer::receiver(),
                     );
                     self.redo_indices.push(pending.file_index);
                     return Ok(());
                 }
                 // upstream: receiver.c:957-959 — ERROR in phase 2 (redoing)
                 eprintln!(
-                    "ERROR: {:?} failed verification -- update discarded.",
+                    "ERROR: {:?} failed verification -- update discarded.{}",
                     pending.file_path,
+                    crate::role_trailer::receiver(),
                 );
                 // In phase 2, upstream logs the error but continues the transfer.
                 return Ok(());
