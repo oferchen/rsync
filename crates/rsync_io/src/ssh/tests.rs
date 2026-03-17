@@ -20,7 +20,12 @@ fn assembles_minimal_command_with_batch_mode() {
     assert_eq!(program, OsString::from("ssh"));
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_owned(), "example.com".to_owned()]
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "example.com".to_owned(),
+        ]
     );
 }
 
@@ -43,6 +48,8 @@ fn assembles_command_with_user_port_and_remote_args() {
             "-oBatchMode=yes".to_owned(),
             "-p".to_owned(),
             "2222".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
             "-vvv".to_owned(),
             "backup@rsync.example.com".to_owned(),
             "rsync".to_owned(),
@@ -58,7 +65,14 @@ fn disables_batch_mode_when_requested() {
     command.set_batch_mode(false);
 
     let (_, args) = command.command_parts_for_testing();
-    assert_eq!(args_to_strings(&args), vec!["example.com".to_owned()]);
+    assert_eq!(
+        args_to_strings(&args),
+        vec![
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "example.com".to_owned(),
+        ]
+    );
 }
 
 #[test]
@@ -68,7 +82,12 @@ fn wraps_ipv6_hosts_in_brackets() {
 
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_owned(), "[2001:db8::1]".to_owned()]
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "[2001:db8::1]".to_owned(),
+        ]
     );
 }
 
@@ -83,7 +102,9 @@ fn wraps_ipv6_hosts_with_usernames() {
         args_to_strings(&args),
         vec![
             "-oBatchMode=yes".to_owned(),
-            "backup@[2001:db8::1]".to_owned()
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "backup@[2001:db8::1]".to_owned(),
         ]
     );
 }
@@ -99,7 +120,9 @@ fn preserves_explicit_bracketed_ipv6_literals() {
         args_to_strings(&args),
         vec![
             "-oBatchMode=yes".to_owned(),
-            "backup@[2001:db8::1]".to_owned()
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "backup@[2001:db8::1]".to_owned(),
         ]
     );
 }
@@ -113,7 +136,12 @@ fn command_parts_skip_target_when_host_and_user_missing() {
 
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_owned(), "rsync".to_owned()]
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "rsync".to_owned(),
+        ]
     );
 }
 
@@ -127,7 +155,12 @@ fn target_override_supersedes_computed_target() {
 
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_owned(), "custom-target".to_owned()]
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "custom-target".to_owned(),
+        ]
     );
 }
 
@@ -141,7 +174,12 @@ fn empty_target_override_suppresses_target_argument() {
 
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_owned(), "rsync".to_owned()]
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "rsync".to_owned(),
+        ]
     );
 }
 
@@ -472,6 +510,138 @@ fn omits_bind_address_when_none() {
     assert!(
         !rendered.iter().any(|a| a.starts_with("-oBindAddress=")),
         "bind address should not appear in {rendered:?}"
+    );
+}
+
+// --- SSH keepalive injection tests ---
+
+#[test]
+fn injects_keepalive_options_by_default() {
+    let command = SshCommand::new("example.com");
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        rendered.contains(&"-oServerAliveInterval=20".to_owned()),
+        "expected ServerAliveInterval in {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"-oServerAliveCountMax=3".to_owned()),
+        "expected ServerAliveCountMax in {rendered:?}"
+    );
+}
+
+#[test]
+fn keepalive_options_appear_before_user_options() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-v");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let keepalive_pos = rendered
+        .iter()
+        .position(|a| a.starts_with("-oServerAliveInterval="))
+        .expect("keepalive present");
+    let option_pos = rendered.iter().position(|a| a == "-v").expect("-v present");
+
+    assert!(
+        keepalive_pos < option_pos,
+        "keepalive at {keepalive_pos} should precede user option at {option_pos}"
+    );
+}
+
+#[test]
+fn omits_keepalive_when_explicitly_disabled() {
+    let mut command = SshCommand::new("example.com");
+    command.set_keepalive(false);
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a.contains("ServerAlive")),
+        "keepalive should not appear in {rendered:?}"
+    );
+}
+
+#[test]
+fn omits_keepalive_for_non_ssh_program() {
+    let mut command = SshCommand::new("example.com");
+    command.set_program("plink");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a.contains("ServerAlive")),
+        "keepalive should not appear for non-ssh program in {rendered:?}"
+    );
+}
+
+#[test]
+fn skips_keepalive_when_user_specifies_server_alive_interval() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-o");
+    command.push_option("ServerAliveInterval=60");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a == "-oServerAliveInterval=20"),
+        "should not inject default keepalive when user specified interval in {rendered:?}"
+    );
+    // The user's own option should still be present.
+    assert!(
+        rendered.contains(&"ServerAliveInterval=60".to_owned()),
+        "user option should be preserved in {rendered:?}"
+    );
+}
+
+#[test]
+fn skips_keepalive_when_user_specifies_server_alive_count_max() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-oServerAliveCountMax=5");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a == "-oServerAliveInterval=20"),
+        "should not inject defaults when user specified count max in {rendered:?}"
+    );
+}
+
+#[test]
+fn skips_keepalive_when_remote_shell_contains_keepalive() {
+    let mut command = SshCommand::new("example.com");
+    command
+        .configure_remote_shell(OsStr::new(
+            "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=5",
+        ))
+        .expect("valid remote shell");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a == "-oServerAliveInterval=20"),
+        "should not inject defaults when remote shell contains keepalive in {rendered:?}"
+    );
+}
+
+#[test]
+fn keepalive_detection_is_case_insensitive() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-oserveraliveinterval=45");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a == "-oServerAliveInterval=20"),
+        "case-insensitive detection should prevent injection in {rendered:?}"
     );
 }
 
