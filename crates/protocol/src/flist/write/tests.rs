@@ -852,47 +852,20 @@ fn write_hardlink_leader_has_full_metadata() {
 }
 
 #[test]
-fn is_abbreviated_hardlink_follower_same_segment() {
+fn is_hardlink_follower_helper() {
     let writer = FileListWriter::new(test_protocol()).with_preserve_hard_links(true);
 
-    // Create an entry with hardlink_idx in the same segment (idx=5, first_ndx=0)
-    let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
-    entry.set_hardlink_idx(5);
-
-    // No hardlink flags - not a follower
+    // No hardlink flags
     let xflags_none: u32 = 0;
-    assert!(!writer.is_abbreviated_hardlink_follower(xflags_none, &entry));
+    assert!(!writer.is_hardlink_follower(xflags_none));
 
-    // Leader (HLINKED + HLINK_FIRST) - not a follower
+    // Leader (HLINKED + HLINK_FIRST)
     let xflags_leader = ((XMIT_HLINKED as u32) << 8) | ((XMIT_HLINK_FIRST as u32) << 8);
-    assert!(!writer.is_abbreviated_hardlink_follower(xflags_leader, &entry));
+    assert!(!writer.is_hardlink_follower(xflags_leader));
 
-    // Follower (HLINKED only) with leader in same segment - abbreviated
+    // Follower (HLINKED only)
     let xflags_follower = (XMIT_HLINKED as u32) << 8;
-    assert!(writer.is_abbreviated_hardlink_follower(xflags_follower, &entry));
-}
-
-#[test]
-fn is_abbreviated_hardlink_follower_cross_segment() {
-    // first_ndx=10 means the current segment starts at index 10
-    let mut writer = FileListWriter::new(test_protocol()).with_preserve_hard_links(true);
-    writer.set_first_ndx(10);
-
-    // Follower pointing to leader at index 5 (in a prior segment) - unabbreviated
-    let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
-    entry.set_hardlink_idx(5);
-    let xflags_follower = (XMIT_HLINKED as u32) << 8;
-    assert!(!writer.is_abbreviated_hardlink_follower(xflags_follower, &entry));
-
-    // Follower pointing to leader at index 10 (in same segment) - abbreviated
-    let mut entry_same = FileEntry::new_file("test2.txt".into(), 200, 0o644);
-    entry_same.set_hardlink_idx(10);
-    assert!(writer.is_abbreviated_hardlink_follower(xflags_follower, &entry_same));
-
-    // Follower pointing to leader at index 15 (in same segment) - abbreviated
-    let mut entry_later = FileEntry::new_file("test3.txt".into(), 300, 0o644);
-    entry_later.set_hardlink_idx(15);
-    assert!(writer.is_abbreviated_hardlink_follower(xflags_follower, &entry_later));
+    assert!(writer.is_hardlink_follower(xflags_follower));
 }
 
 #[test]
