@@ -59,6 +59,31 @@ fn read_client_arguments<R: BufRead>(
     Ok(arguments)
 }
 
+/// Checks whether phase-1 args contain the secluded-args (`-s`) flag.
+///
+/// Upstream rsync uses `popt` which handles both standalone `-s` and bundled
+/// short options like `-logDtprs`. We must detect both forms since protocol
+/// 28/29 clients (rsync 3.0.x, 3.1.x) commonly bundle `-s` into compact
+/// flag strings.
+///
+/// upstream: options.c:792 - `{secluded-args, 's', POPT_ARG_VAL, &protect_args, 1}`
+fn has_secluded_args_flag(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        if a == "-s" || a == "--protect-args" || a == "--secluded-args" {
+            return true;
+        }
+        // Check for `-s` bundled in compact flag strings like `-logDtprs`.
+        // A compact flag string starts with `-` but not `--`, and contains
+        // single-character flags.
+        if let Some(rest) = a.strip_prefix('-') {
+            if !rest.starts_with('-') && rest.len() > 1 {
+                return rest.contains('s');
+            }
+        }
+        false
+    })
+}
+
 /// Reads and logs client arguments, handling the two-phase secluded-args
 /// protocol when the client sends `--protect-args` / `-s`.
 ///
@@ -87,7 +112,9 @@ fn read_and_log_client_args(
 
     // Detect secluded-args flag in phase-1 args.
     // upstream: clientserver.c:1066 - if (protect_args && ret)
-    let has_secluded = phase1_args.iter().any(|a| a == "-s");
+    // upstream: options.c:792 - `-s` is a short option for `--secluded-args`
+    // Protocol 28/29 clients may bundle `-s` into compact flag strings like `-logDtprs`.
+    let has_secluded = has_secluded_args_flag(&phase1_args);
 
     let client_args = if has_secluded {
         // Phase 2: read the real args via secluded-args wire format.
@@ -104,12 +131,7 @@ fn read_and_log_client_args(
             }
             Err(err) => {
                 let payload = format!("@ERROR: failed to read secluded args: {err}");
-                send_error_and_exit(
-                    ctx.reader.get_mut(),
-                    ctx.limiter,
-                    ctx.messages,
-                    &payload,
-                )?;
+                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
                 return Ok(None);
             }
         }
