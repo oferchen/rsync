@@ -398,13 +398,16 @@ where
     let implied_dirs_option = implied_dirs;
     let files_from_active = !files_from.is_empty();
 
-    // upstream: options.c:2169-2174 - --files-from disables default recursion
-    // and enables xfer_dirs. options.c:2187-2188 - implies --relative.
+    // upstream: options.c:2169-2177 - --files-from disables default recursion,
+    // enables xfer_dirs, and implies --relative.
     let recursive_effective = if files_from_active {
-        false // upstream: if (recurse == 1) recurse = 0
+        false // upstream: options.c:2174 - if (recurse == 1) recurse = 0
     } else {
         !matches!(recursive_override, Some(false))
     };
+
+    // upstream: options.c:2176-2177 - xfer_dirs = 1 when files_from is active
+    let dirs = if files_from_active { Some(true) } else { dirs };
 
     let implied_dirs = implied_dirs_option.unwrap_or(true);
 
