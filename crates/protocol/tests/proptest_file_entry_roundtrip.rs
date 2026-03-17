@@ -24,8 +24,9 @@ use std::path::PathBuf;
 /// `clean_and_validate_name` normalizes (removes `.`) or rejects (`..`),
 /// causing roundtrip mismatches.
 fn filename_strategy() -> impl Strategy<Value = String> {
-    "[a-zA-Z0-9_.][a-zA-Z0-9_.\\-]{0,63}"
-        .prop_filter("exclude . and .. path components", |s| s != "." && s != "..")
+    "[a-zA-Z0-9_.][a-zA-Z0-9_.\\-]{0,63}".prop_filter("exclude . and .. path components", |s| {
+        s != "." && s != ".."
+    })
 }
 
 /// Generates a single-component filename as a PathBuf.
