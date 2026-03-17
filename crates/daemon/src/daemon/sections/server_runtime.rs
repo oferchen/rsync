@@ -75,7 +75,7 @@ fn log_progress_summary(
         let message = rsync_info!(text).with_role(Role::Daemon);
         log_message(sink, &message);
     } else {
-        eprintln!("{text}");
+        eprintln!("{text} [daemon={}]", env!("CARGO_PKG_VERSION"));
     }
 }
 
@@ -1049,7 +1049,7 @@ fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonErr
             let error = io::Error::other(format!(
                 "worker thread panicked (unwind escaped catch_unwind): {description}"
             ));
-            eprintln!("{error}");
+            eprintln!("{error} [daemon={}]", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
     }
