@@ -738,11 +738,13 @@ fn replay_batch(
     use crate::message::Role;
     use crate::rsync_error;
 
-    let dest_root = if config.transfer_args().is_empty() {
-        PathBuf::from(".")
-    } else {
-        PathBuf::from(&config.transfer_args()[0])
-    };
+    // upstream: main.c - with --read-batch the destination is the last
+    // (and typically only) operand, e.g. `rsync --read-batch=FILE dest/`
+    let dest_root = config
+        .transfer_args()
+        .last()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
 
     let result = engine::batch::replay::replay(batch_cfg, &dest_root, config.verbosity().into())
         .map_err(|e| {
