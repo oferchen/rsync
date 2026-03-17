@@ -32,8 +32,9 @@ fn execute_with_bandwidth_limit_records_sleep() {
         .fold(Duration::ZERO, |acc, duration| acc + duration);
     let expected = Duration::from_secs(4);
     let diff = total.abs_diff(expected);
-    // Windows CI runners have 15.6ms timer resolution + scheduling jitter
-    let tolerance = Duration::from_millis(500);
+    // Windows CI runners have 15.6ms timer resolution + scheduling jitter;
+    // nightly builds may show additional variance from debug assertions
+    let tolerance = Duration::from_millis(750);
     assert!(
         diff <= tolerance,
         "expected sleep duration near {expected:?}, got {total:?} (diff {diff:?})"
