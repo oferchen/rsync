@@ -16,6 +16,7 @@ fn detect() -> Result<(), ()> {
 }
 
 /// Returns whether OpenSSL-backed hashing is available for MD4/MD5.
+#[must_use]
 pub fn openssl_acceleration_available() -> bool {
     DETECTED.get_or_init(detect).is_ok()
 }

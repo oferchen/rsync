@@ -76,6 +76,7 @@ pub use openssl_support::openssl_acceleration_available;
 
 #[cfg(not(feature = "openssl"))]
 #[inline]
+#[must_use]
 /// Returns `false` when the `openssl` feature is not enabled, indicating that
 /// OpenSSL-backed strong checksum acceleration is unavailable on this build.
 ///
