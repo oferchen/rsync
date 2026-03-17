@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use filters::{FilterAction, FilterRule, FilterSet};
+use filters::{FilterRule, FilterSet};
 use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
