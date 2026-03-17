@@ -172,8 +172,9 @@ impl GeneratorContext {
         }
 
         let entry = &self.file_list[ndx];
+        let ctx = self.itemize_context();
         // Generator role is always the sender side
-        let line = super::itemize::format_itemize_line(iflags, entry, true);
+        let line = super::itemize::format_itemize_line(iflags, entry, true, &ctx);
         writer.send_message(protocol::MessageCode::Info, line.as_bytes())
     }
 
