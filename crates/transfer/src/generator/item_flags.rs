@@ -25,8 +25,15 @@ impl ItemFlags {
     pub const ITEM_REPORT_ATIME: u32 = 1 << 0; // 0x0001
     /// Item reports generic change (itemized output).
     pub const ITEM_REPORT_CHANGE: u32 = 1 << 1; // 0x0002
-    /// Item reports size change.
+    /// Item reports size change (regular files only).
     pub const ITEM_REPORT_SIZE: u32 = 1 << 2; // 0x0004
+    /// Item reports symlink time-set failure (symlinks only, shares bit with `ITEM_REPORT_SIZE`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.h:217` - `ITEM_REPORT_TIMEFAIL (1<<2) /* symlinks only */`
+    /// - `log.c:709-710` - checked to emit `T` instead of `t` for symlink time position
+    pub const ITEM_REPORT_TIMEFAIL: u32 = 1 << 2; // 0x0004
     /// Item reports mtime change.
     pub const ITEM_REPORT_TIME: u32 = 1 << 3; // 0x0008
     /// Item reports permissions change.

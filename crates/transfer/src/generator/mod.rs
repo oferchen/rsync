@@ -335,6 +335,25 @@ impl GeneratorContext {
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
     }
 
+    /// Builds the display context for itemize time-position rendering.
+    ///
+    /// Captures `preserve_mtimes` (from `--times` flag) and `receiver_symlink_times`
+    /// (from `CF_SYMLINK_TIMES` compat flag) so `format_iflags` can correctly
+    /// distinguish `t` from `T` at position 4.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:708-710` - symlink time: `T` when `!preserve_mtimes || !receiver_symlink_times`
+    /// - `log.c:716-717` - non-symlink time: `T` when `!preserve_mtimes`
+    fn itemize_context(&self) -> itemize::ItemizeContext {
+        itemize::ItemizeContext {
+            preserve_mtimes: self.config.flags.times,
+            receiver_symlink_times: self
+                .compat_flags
+                .is_some_and(|f| f.contains(CompatibilityFlags::SYMLINK_TIMES)),
+        }
+    }
+
     /// Creates a configured `FileListWriter` matching the current protocol and flags.
     fn build_flist_writer(&self) -> protocol::flist::FileListWriter {
         use super::shared::ChecksumFactory;
