@@ -134,6 +134,8 @@ mod reader;
 pub mod receiver;
 /// Enumerations describing the role executed by the server process.
 pub mod role;
+/// Path sanitization mirroring upstream `util1.c:sanitize_path()`.
+pub mod sanitize_path;
 /// Server-side protocol setup utilities.
 pub mod setup;
 /// Shared abstractions used by generator and receiver roles.
