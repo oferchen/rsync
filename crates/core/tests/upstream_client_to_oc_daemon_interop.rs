@@ -19,7 +19,9 @@
 
 mod common;
 
-use common::{DaemonBinary, TestDaemon, UPSTREAM_3_0_9, UPSTREAM_3_1_3, UPSTREAM_3_4_1, create_test_file};
+use common::{
+    DaemonBinary, TestDaemon, UPSTREAM_3_0_9, UPSTREAM_3_1_3, UPSTREAM_3_4_1, create_test_file,
+};
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
