@@ -35,6 +35,18 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables itemize-changes output.
+    ///
+    /// When true, per-file change summaries are emitted. For remote transfers,
+    /// this flag is forwarded to the server via the `.i` info flag.
+    #[must_use]
+    #[doc(alias = "--itemize-changes")]
+    #[doc(alias = "-i")]
+    pub const fn itemize_changes(mut self, enabled: bool) -> Self {
+        self.itemize_changes = enabled;
+        self
+    }
+
     /// Suppresses daemon MOTD (message of the day) output.
     #[must_use]
     #[doc(alias = "--no-motd")]
@@ -154,5 +166,23 @@ mod tests {
     fn default_daemon_params_is_empty() {
         let config = builder().build();
         assert!(config.daemon_params().is_empty());
+    }
+
+    #[test]
+    fn itemize_changes_sets_flag() {
+        let config = builder().itemize_changes(true).build();
+        assert!(config.itemize_changes());
+    }
+
+    #[test]
+    fn itemize_changes_default_is_false() {
+        let config = builder().build();
+        assert!(!config.itemize_changes());
+    }
+
+    #[test]
+    fn itemize_changes_false_clears_flag() {
+        let config = builder().itemize_changes(true).itemize_changes(false).build();
+        assert!(!config.itemize_changes());
     }
 }
