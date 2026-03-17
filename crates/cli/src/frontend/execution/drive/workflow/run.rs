@@ -396,8 +396,17 @@ where
     }
 
     let implied_dirs_option = implied_dirs;
+    let files_from_active = !files_from.is_empty();
+
+    // upstream: options.c:2169-2174 - --files-from disables default recursion
+    // and enables xfer_dirs. options.c:2187-2188 - implies --relative.
+    let recursive_effective = if files_from_active {
+        false // upstream: if (recurse == 1) recurse = 0
+    } else {
+        !matches!(recursive_override, Some(false))
+    };
+
     let implied_dirs = implied_dirs_option.unwrap_or(true);
-    let recursive_effective = !matches!(recursive_override, Some(false));
 
     // Create batch configuration if batch mode was requested
     let batch_config = if let Some(ref path) = write_batch {
@@ -469,6 +478,13 @@ where
         return code;
     }
 
+    // upstream: options.c:2187-2188 - relative_paths defaults to 1 when files_from
+    let effective_relative = if files_from_active && relative.is_none() {
+        Some(true)
+    } else {
+        relative
+    };
+
     let metadata = match metadata::compute_metadata_settings(metadata::MetadataInputs {
         archive,
         parsed_chown: parsed_chown.as_ref(),
@@ -492,7 +508,7 @@ where
         copy_links,
         copy_unsafe_links,
         keep_dirlinks,
-        relative,
+        relative: effective_relative,
         one_file_system,
         chmod: &chmod,
     }) {
