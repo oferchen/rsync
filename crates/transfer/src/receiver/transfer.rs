@@ -746,7 +746,9 @@ impl ReceiverContext {
         &mut self,
         reader: crate::reader::ServerReader<R>,
     ) -> io::Result<(crate::reader::ServerReader<R>, usize, PipelineSetup)> {
-        let mut reader = if self.protocol.uses_binary_negotiation() {
+        // upstream: main.c:1342-1343 - client receiver activates at protocol >= 23
+        // upstream: main.c:1167-1168 - server receiver activates at protocol >= 30
+        let mut reader = if self.should_activate_input_multiplex() {
             reader.activate_multiplex().map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
             })?
