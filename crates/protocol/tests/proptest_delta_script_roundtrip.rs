@@ -346,7 +346,7 @@ mod token_format {
             let mut expected_blocks = Vec::new();
             for i in 0..count {
                 expected_literals
-                    .extend_from_slice(&vec![seed.wrapping_add(i as u8); 64]);
+                    .extend_from_slice(&[seed.wrapping_add(i as u8); 64]);
                 expected_blocks.push(i as u32);
             }
 
