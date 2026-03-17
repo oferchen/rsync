@@ -114,7 +114,12 @@ impl GeneratorContext {
             if name.is_empty() {
                 continue;
             }
-            let path = base_dir.join(name);
+            // upstream: flist.c:2264 - sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)
+            // Always sanitize files_from entries to prevent directory traversal.
+            // This collapses ".." components and strips leading "/" to confine
+            // paths within the transfer root.
+            let sanitized = crate::sanitize_path::sanitize_path_keep_dot_dirs(name);
+            let path = base_dir.join(&sanitized);
             resolved.push(path);
         }
 
