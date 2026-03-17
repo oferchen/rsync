@@ -2611,64 +2611,64 @@ mod receiver_itemize_tests {
         // Default impl should succeed silently
         w.send_msg_info(b"test data").unwrap();
     }
+}
 
-    // ==================== path_contains_dot_dot security tests ====================
+// ==================== path_contains_dot_dot security tests ====================
 
-    #[test]
-    fn path_contains_dot_dot_simple_traversal() {
-        use std::path::Path;
-        assert!(super::quick_check::path_contains_dot_dot(Path::new(
-            "../etc/passwd"
-        )));
-    }
+#[test]
+fn path_contains_dot_dot_simple_traversal() {
+    use std::path::Path;
+    assert!(super::quick_check::path_contains_dot_dot(Path::new(
+        "../etc/passwd"
+    )));
+}
 
-    #[test]
-    fn path_contains_dot_dot_mid_path() {
-        use std::path::Path;
-        assert!(super::quick_check::path_contains_dot_dot(Path::new(
-            "a/b/../../../etc/passwd"
-        )));
-    }
+#[test]
+fn path_contains_dot_dot_mid_path() {
+    use std::path::Path;
+    assert!(super::quick_check::path_contains_dot_dot(Path::new(
+        "a/b/../../../etc/passwd"
+    )));
+}
 
-    #[test]
-    fn path_contains_dot_dot_trailing() {
-        use std::path::Path;
-        assert!(super::quick_check::path_contains_dot_dot(Path::new(
-            "a/b/.."
-        )));
-    }
+#[test]
+fn path_contains_dot_dot_trailing() {
+    use std::path::Path;
+    assert!(super::quick_check::path_contains_dot_dot(Path::new(
+        "a/b/.."
+    )));
+}
 
-    #[test]
-    fn path_contains_dot_dot_clean_path() {
-        use std::path::Path;
-        assert!(!super::quick_check::path_contains_dot_dot(Path::new(
-            "a/b/c"
-        )));
-    }
+#[test]
+fn path_contains_dot_dot_clean_path() {
+    use std::path::Path;
+    assert!(!super::quick_check::path_contains_dot_dot(Path::new(
+        "a/b/c"
+    )));
+}
 
-    #[test]
-    fn path_contains_dot_dot_dot_only() {
-        use std::path::Path;
-        // Single "." is not ".."
-        assert!(!super::quick_check::path_contains_dot_dot(Path::new(".")));
-    }
+#[test]
+fn path_contains_dot_dot_dot_only() {
+    use std::path::Path;
+    // Single "." is not ".."
+    assert!(!super::quick_check::path_contains_dot_dot(Path::new(".")));
+}
 
-    #[test]
-    fn path_contains_dot_dot_embedded_dots_in_name() {
-        use std::path::Path;
-        // "..." is not ".." - it's a normal filename
-        assert!(!super::quick_check::path_contains_dot_dot(Path::new(
-            "a/.../b"
-        )));
-    }
+#[test]
+fn path_contains_dot_dot_embedded_dots_in_name() {
+    use std::path::Path;
+    // "..." is not ".." - it's a normal filename
+    assert!(!super::quick_check::path_contains_dot_dot(Path::new(
+        "a/.../b"
+    )));
+}
 
-    #[test]
-    fn path_contains_dot_dot_double_dotdot() {
-        use std::path::Path;
-        assert!(super::quick_check::path_contains_dot_dot(Path::new(
-            "a/../../b"
-        )));
-    }
+#[test]
+fn path_contains_dot_dot_double_dotdot() {
+    use std::path::Path;
+    assert!(super::quick_check::path_contains_dot_dot(Path::new(
+        "a/../../b"
+    )));
 }
 
 // --- sanitize_file_list / --trust-sender tests ---
