@@ -218,8 +218,7 @@ impl GeneratorContext {
         // transfer directory so --delete works correctly on the receiver side.
         if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
             if meta.is_dir() {
-                let mut dot_entry =
-                    self.create_entry(base_dir, PathBuf::from("."), &meta)?;
+                let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
                 dot_entry.set_flags(protocol::flist::FileFlags::new(
                     protocol::flist::XMIT_TOP_DIR,
                     0,

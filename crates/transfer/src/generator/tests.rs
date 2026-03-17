@@ -2126,10 +2126,7 @@ mod files_from {
         config.args = vec![OsString::from(&src)];
         let mut ctx = GeneratorContext::new(&handshake, config);
 
-        let file_paths = vec![
-            src.join("hello.txt"),
-            src.join("subdir/file.txt"),
-        ];
+        let file_paths = vec![src.join("hello.txt"), src.join("subdir/file.txt")];
         let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
 
         // Dot entry + 2 files + 1 parent dir "subdir"
@@ -2161,10 +2158,7 @@ mod files_from {
         config.args = vec![OsString::from(&src)];
         let mut ctx = GeneratorContext::new(&handshake, config);
 
-        let file_paths = vec![
-            src.join("exists.txt"),
-            src.join("missing.txt"),
-        ];
+        let file_paths = vec![src.join("exists.txt"), src.join("missing.txt")];
         let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
 
         // Dot entry + exists.txt; missing.txt is skipped with io_error.
