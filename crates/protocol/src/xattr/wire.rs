@@ -41,16 +41,19 @@ pub struct XattrDefinition {
 
 impl XattrDefinition {
     /// Returns the attribute name (wire format, NUL-stripped).
+    #[must_use]
     pub fn name(&self) -> &[u8] {
         &self.name
     }
 
     /// Returns the attribute name as a lossy UTF-8 string.
+    #[must_use]
     pub fn name_lossy(&self) -> std::borrow::Cow<'_, str> {
         String::from_utf8_lossy(&self.name)
     }
 
     /// Returns the datum bytes - full value if small, checksum if abbreviated.
+    #[must_use]
     pub fn datum(&self) -> &[u8] {
         &self.datum
     }
@@ -58,16 +61,19 @@ impl XattrDefinition {
     /// Returns the original value length on the sender.
     ///
     /// For abbreviated entries this differs from `datum().len()`.
+    #[must_use]
     pub const fn datum_len(&self) -> usize {
         self.datum_len
     }
 
     /// Returns true if this entry was abbreviated (checksum only, no full value).
+    #[must_use]
     pub const fn is_abbreviated(&self) -> bool {
         self.abbreviated
     }
 
     /// Converts this definition into an `XattrEntry` for use with `XattrList`.
+    #[must_use]
     pub fn into_entry(self) -> XattrEntry {
         if self.abbreviated {
             XattrEntry::abbreviated(self.name, self.datum, self.datum_len)
@@ -95,6 +101,7 @@ pub struct XattrSet {
 
 impl XattrSet {
     /// Creates an empty xattr set.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -102,27 +109,32 @@ impl XattrSet {
     }
 
     /// Returns the number of entries.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns true if the set is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Returns a slice of all entries.
+    #[must_use]
     pub fn entries(&self) -> &[XattrDefinition] {
         &self.entries
     }
 
     /// Consumes the set and returns the entries as a vector.
+    #[must_use]
     pub fn into_entries(self) -> Vec<XattrDefinition> {
         self.entries
     }
 
     /// Converts this set into an `XattrList` for use with the cache and
     /// abbreviation protocol.
+    #[must_use]
     pub fn into_xattr_list(self) -> XattrList {
         let entries: Vec<XattrEntry> = self
             .entries
@@ -491,6 +503,7 @@ fn compute_xattr_checksum(data: &[u8], checksum_seed: i32) -> [u8; MAX_XATTR_DIG
 /// The `checksum_seed` must match the seed used when the checksum was computed.
 ///
 /// Returns true if the checksums match (values are the same).
+#[must_use]
 pub fn checksum_matches(checksum: &[u8], local_value: &[u8], checksum_seed: i32) -> bool {
     if checksum.len() != MAX_XATTR_DIGEST_LEN {
         return false;

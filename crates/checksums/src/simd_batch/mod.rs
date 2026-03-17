@@ -31,11 +31,13 @@ pub type Digest = [u8; 16];
 ///
 /// Uses SIMD instructions when available to process multiple hashes
 /// simultaneously. Returns digests in the same order as inputs.
+#[must_use]
 pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
     md5_dispatcher::global().digest_batch(inputs)
 }
 
 /// Compute MD5 digest for a single input.
+#[must_use]
 #[allow(dead_code)]
 pub fn digest(input: &[u8]) -> Digest {
     md5_dispatcher::global().digest(input)
@@ -44,6 +46,7 @@ pub fn digest(input: &[u8]) -> Digest {
 /// Get the currently active SIMD backend.
 ///
 /// Useful for logging or diagnostics.
+#[must_use]
 #[allow(dead_code)]
 pub fn active_backend() -> Backend {
     md5_dispatcher::global().backend()
@@ -52,6 +55,7 @@ pub fn active_backend() -> Backend {
 /// Returns whether SIMD acceleration is available on this platform.
 ///
 /// Returns `true` for any backend other than `Scalar`.
+#[must_use]
 #[allow(dead_code)]
 pub fn simd_available() -> bool {
     active_backend() != Backend::Scalar
@@ -63,6 +67,7 @@ pub fn simd_available() -> bool {
 /// - AVX2: 8 lanes
 /// - SSE2/NEON/WASM: 4 lanes
 /// - Scalar: 1 lane
+#[must_use]
 #[allow(dead_code)]
 pub fn parallel_lanes() -> usize {
     active_backend().lanes()

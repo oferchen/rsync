@@ -22,11 +22,13 @@ pub enum XattrState {
 
 impl XattrState {
     /// Returns true if this entry needs its full value requested.
+    #[must_use]
     pub const fn needs_request(&self) -> bool {
         matches!(self, XattrState::Abbrev)
     }
 
     /// Returns true if this entry needs its full value sent.
+    #[must_use]
     pub const fn needs_send(&self) -> bool {
         matches!(self, XattrState::Todo)
     }
@@ -52,6 +54,7 @@ pub struct XattrEntry {
 
 impl XattrEntry {
     /// Creates a new xattr entry with full value.
+    #[must_use]
     pub fn new(name: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
         let datum = value.into();
         let datum_len = datum.len();
@@ -67,6 +70,7 @@ impl XattrEntry {
     /// Creates an abbreviated xattr entry (checksum only).
     ///
     /// Used when receiving abbreviated xattr data from the wire.
+    #[must_use]
     pub fn abbreviated(name: impl Into<Vec<u8>>, checksum: Vec<u8>, original_len: usize) -> Self {
         Self {
             name: name.into(),
@@ -78,11 +82,13 @@ impl XattrEntry {
     }
 
     /// Returns the attribute name.
+    #[must_use]
     pub fn name(&self) -> &[u8] {
         &self.name
     }
 
     /// Returns the attribute name as a string (lossy conversion).
+    #[must_use]
     pub fn name_str(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.name)
     }
@@ -90,6 +96,7 @@ impl XattrEntry {
     /// Returns the attribute value.
     ///
     /// If abbreviated, returns the checksum instead of the actual value.
+    #[must_use]
     pub fn datum(&self) -> &[u8] {
         &self.datum
     }
@@ -97,11 +104,13 @@ impl XattrEntry {
     /// Returns the original datum length.
     ///
     /// For abbreviated entries, this is the full value length, not the checksum length.
+    #[must_use]
     pub const fn datum_len(&self) -> usize {
         self.datum_len
     }
 
     /// Returns true if this entry is abbreviated (checksum only).
+    #[must_use]
     pub const fn is_abbreviated(&self) -> bool {
         self.datum.len() != self.datum_len
     }
@@ -109,11 +118,13 @@ impl XattrEntry {
     /// Returns true if this entry's value should be abbreviated on the wire.
     ///
     /// Values larger than [`MAX_FULL_DATUM`] (32 bytes) are abbreviated.
+    #[must_use]
     pub const fn should_abbreviate(&self) -> bool {
         self.datum_len > MAX_FULL_DATUM
     }
 
     /// Returns the transfer state.
+    #[must_use]
     pub const fn state(&self) -> XattrState {
         self.state
     }
@@ -126,6 +137,7 @@ impl XattrEntry {
     /// Returns the 1-based entry number within its xattr list.
     ///
     /// Used by the abbreviation request protocol. Mirrors upstream `rxa->num`.
+    #[must_use]
     pub const fn num(&self) -> u32 {
         self.num
     }
