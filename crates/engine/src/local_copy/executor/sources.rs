@@ -860,6 +860,13 @@ pub(crate) fn copy_sources(
                 }
             }
 
+            // Write the flist end-of-list marker to the batch file before
+            // any delta operations or deferred operations flush. This marker
+            // separates the file list from the delta stream in the batch file.
+            // upstream: flist.c:send_file_list() writes the end marker after
+            // all entries.
+            context.finalize_batch_flist()?;
+
             flush_deferred_operations(context)?;
 
             // If there were I/O errors during transfer, report the first one
