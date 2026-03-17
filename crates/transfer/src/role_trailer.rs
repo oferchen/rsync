@@ -25,6 +25,7 @@ pub(crate) fn receiver() -> String {
 }
 
 /// Returns the role trailer suffix for the daemon role.
+#[allow(dead_code)]
 pub(crate) fn daemon() -> String {
     format!(" [daemon={VERSION}]")
 }
