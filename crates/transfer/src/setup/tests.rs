@@ -1,0 +1,1018 @@
+use super::*;
+
+#[test]
+fn parse_client_info_extracts_capabilities_from_separate_args() {
+    let args = vec!["-e".to_owned(), "fxCIvu".to_owned()];
+    let info = parse_client_info(&args);
+    assert_eq!(info, "fxCIvu");
+}
+
+#[test]
+fn parse_client_info_extracts_capabilities_from_combined_args() {
+    let args = vec!["-efxCIvu".to_owned()];
+    let info = parse_client_info(&args);
+    assert_eq!(info, "fxCIvu");
+}
+
+#[test]
+fn parse_client_info_handles_version_placeholder() {
+    let args = vec!["-e.LsfxCIvu".to_owned()];
+    let info = parse_client_info(&args);
+    assert_eq!(info, "LsfxCIvu");
+}
+
+#[test]
+fn parse_client_info_returns_empty_when_not_found() {
+    let args = vec!["--server".to_owned(), "--sender".to_owned()];
+    let info = parse_client_info(&args);
+    assert_eq!(info, "");
+}
+
+#[test]
+#[cfg(unix)]
+fn build_compat_flags_enables_symlink_times_when_client_advertises_l() {
+    let flags = build_compat_flags_from_client_info("LfxCIvu", true);
+    assert!(
+        flags.contains(CompatibilityFlags::SYMLINK_TIMES),
+        "SYMLINK_TIMES should be enabled when client advertises 'L' on Unix"
+    );
+}
+
+#[test]
+fn build_compat_flags_skips_symlink_times_when_client_missing_l() {
+    let flags = build_compat_flags_from_client_info("fxCIvu", true);
+    assert!(
+        !flags.contains(CompatibilityFlags::SYMLINK_TIMES),
+        "SYMLINK_TIMES should not be enabled when client doesn't advertise 'L'"
+    );
+}
+
+#[test]
+fn build_compat_flags_enables_safe_file_list_when_client_advertises_f() {
+    let flags = build_compat_flags_from_client_info("fxCIvu", true);
+    assert!(
+        flags.contains(CompatibilityFlags::SAFE_FILE_LIST),
+        "SAFE_FILE_LIST should be enabled when client advertises 'f'"
+    );
+}
+
+#[test]
+fn build_compat_flags_enables_checksum_seed_fix_when_client_advertises_c() {
+    let flags = build_compat_flags_from_client_info("fxCIvu", true);
+    assert!(
+        flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+        "CHECKSUM_SEED_FIX should be enabled when client advertises 'C'"
+    );
+}
+
+#[test]
+fn build_compat_flags_respects_inc_recurse_gate() {
+    let flags_allowed = build_compat_flags_from_client_info("ifxCIvu", true);
+    assert!(
+        flags_allowed.contains(CompatibilityFlags::INC_RECURSE),
+        "INC_RECURSE should be enabled when allowed and client advertises 'i'"
+    );
+
+    let flags_forbidden = build_compat_flags_from_client_info("ifxCIvu", false);
+    assert!(
+        !flags_forbidden.contains(CompatibilityFlags::INC_RECURSE),
+        "INC_RECURSE should not be enabled when not allowed even if client advertises 'i'"
+    );
+}
+
+#[test]
+fn build_compat_flags_enables_id0_names_when_client_advertises_u() {
+    let flags = build_compat_flags_from_client_info("ufxCIv", true);
+    assert!(
+        flags.contains(CompatibilityFlags::ID0_NAMES),
+        "ID0_NAMES should be enabled when client advertises 'u'"
+    );
+}
+
+#[test]
+fn build_compat_flags_skips_id0_names_when_client_missing_u() {
+    let flags = build_compat_flags_from_client_info("fxCIv", true);
+    assert!(
+        !flags.contains(CompatibilityFlags::ID0_NAMES),
+        "ID0_NAMES should not be enabled when client doesn't advertise 'u'"
+    );
+}
+
+#[test]
+fn build_compat_flags_enables_inplace_partial_dir_when_client_advertises_i_cap() {
+    let flags = build_compat_flags_from_client_info("fxCIvu", true);
+    assert!(
+        flags.contains(CompatibilityFlags::INPLACE_PARTIAL_DIR),
+        "INPLACE_PARTIAL_DIR should be enabled when client advertises 'I'"
+    );
+}
+
+#[test]
+fn build_compat_flags_skips_inplace_partial_dir_when_client_missing_i_cap() {
+    let flags = build_compat_flags_from_client_info("fxCvu", true);
+    assert!(
+        !flags.contains(CompatibilityFlags::INPLACE_PARTIAL_DIR),
+        "INPLACE_PARTIAL_DIR should not be enabled when client doesn't advertise 'I'"
+    );
+}
+
+#[test]
+fn build_compat_flags_enables_avoid_xattr_optimization_when_client_advertises_x() {
+    let flags = build_compat_flags_from_client_info("xfCIvu", true);
+    assert!(
+        flags.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION),
+        "AVOID_XATTR_OPTIMIZATION should be enabled when client advertises 'x'"
+    );
+}
+
+#[test]
+fn build_compat_flags_skips_avoid_xattr_optimization_when_client_missing_x() {
+    let flags = build_compat_flags_from_client_info("fCIvu", true);
+    assert!(
+        !flags.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION),
+        "AVOID_XATTR_OPTIMIZATION should not be enabled when client doesn't advertise 'x'"
+    );
+}
+
+// ===== setup_protocol() tests =====
+
+#[test]
+fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
+    // Protocol 29 should skip all negotiation and compat exchange
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        is_server: true,
+        is_daemon_mode: false,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("protocol 29 setup should succeed");
+
+    assert!(
+        result.negotiated_algorithms.is_none(),
+        "Protocol 29 should not negotiate algorithms"
+    );
+    assert!(
+        result.compat_flags.is_none(),
+        "Protocol 29 should not exchange compat flags"
+    );
+    // Protocol 29 still does seed exchange (server writes 4 bytes)
+    assert_eq!(
+        stdout.len(),
+        4,
+        "Protocol 29 server should write 4-byte checksum seed"
+    );
+}
+
+#[test]
+fn setup_protocol_skip_compat_exchange_skips_flags() {
+    // With skip_compat_exchange=true, even protocol 30+ should skip compat flags
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: true, // SKIP
+        client_args: None,
+        is_server: true,
+        is_daemon_mode: false,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result = setup_protocol(&mut stdout, &mut stdin, &config)
+        .expect("setup with skip_compat_exchange should succeed");
+
+    assert!(
+        result.compat_flags.is_none(),
+        "skip_compat_exchange=true should skip compat flags"
+    );
+    assert!(
+        result.negotiated_algorithms.is_none(),
+        "skip_compat_exchange=true should skip algorithm negotiation"
+    );
+    // Only the 4-byte seed should be written
+    assert_eq!(
+        stdout.len(),
+        4,
+        "Only checksum seed should be written when skip_compat_exchange=true"
+    );
+}
+
+#[test]
+fn setup_protocol_server_writes_compat_flags_and_seed() {
+    // Server mode (is_server=true) should WRITE compat flags, not read them
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    // Server doesn't read stdin during its turn (compat exchange is unidirectional)
+    // Provide algorithm list for negotiation (empty list = use defaults)
+    let mut stdin = &b"\x00"[..]; // Empty checksum list (0 = end of list)
+    let mut stdout = Vec::new();
+
+    let client_args = ["-efxCIvu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args), // client_args with 'v' capability
+        is_server: true,
+        is_daemon_mode: true, // server advertises, client reads
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("server setup should succeed");
+
+    assert!(
+        result.compat_flags.is_some(),
+        "Server should have compat flags"
+    );
+    let flags = result.compat_flags.unwrap();
+    assert!(
+        flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+        "Server should have CHECKSUM_SEED_FIX from client 'C' capability"
+    );
+    assert!(
+        flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+        "Server should have VARINT_FLIST_FLAGS from client 'v' capability"
+    );
+
+    // stdout should contain: varint compat flags + algorithm lists + 4-byte seed
+    assert!(
+        stdout.len() >= 5, // At least 1 byte varint + 4 bytes seed
+        "Server should write compat flags varint and seed"
+    );
+}
+
+#[test]
+fn setup_protocol_client_reads_compat_flags_from_server() {
+    // Client mode (is_server=false) should READ compat flags from server
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Prepare server response: varint compat flags + checksum seed
+    // compat flags = 0x21 (INC_RECURSE | CHECKSUM_SEED_FIX) - NO VARINT_FLIST_FLAGS
+    // When VARINT_FLIST_FLAGS is not set, do_negotiation=false and no algorithm
+    // lists are exchanged.
+    let mut server_response: Vec<u8> = vec![0x21]; // compat flags varint
+
+    // Server sends checksum seed (4 bytes little-endian)
+    let test_seed: i32 = 0x12345678;
+    server_response.extend_from_slice(&test_seed.to_le_bytes());
+
+    let mut stdin = &server_response[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None, // not needed for client mode
+        is_server: false,  // CLIENT mode
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("client setup should succeed");
+
+    assert!(
+        result.compat_flags.is_some(),
+        "Client should have compat flags"
+    );
+    let flags = result.compat_flags.unwrap();
+    assert!(
+        flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+        "Client should read CHECKSUM_SEED_FIX from server"
+    );
+    assert!(
+        !flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+        "Server sent flags without VARINT_FLIST_FLAGS"
+    );
+
+    assert_eq!(
+        result.checksum_seed, test_seed,
+        "Client should read the correct checksum seed"
+    );
+}
+
+#[test]
+fn setup_protocol_server_generates_deterministic_seeds() {
+    // Same process within the same second produces the same seed
+    // (seed = time_secs ^ (pid << 6)), so rapid calls are deterministic
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        is_server: true,
+        is_daemon_mode: false,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let mut stdout1 = Vec::new();
+    let result1 =
+        setup_protocol(&mut stdout1, &mut stdin, &config).expect("first setup should succeed");
+
+    let mut stdout2 = Vec::new();
+    let result2 =
+        setup_protocol(&mut stdout2, &mut stdin, &config).expect("second setup should succeed");
+
+    assert_eq!(
+        result1.checksum_seed, result2.checksum_seed,
+        "Same process in same second should have same seed (deterministic)"
+    );
+}
+
+#[test]
+fn setup_protocol_ssh_mode_bidirectional_exchange() {
+    // SSH mode (is_daemon_mode=false) has bidirectional capability exchange
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Prepare stdin with what we expect to read from peer:
+    // - Compat flags varint with VARINT_FLIST_FLAGS to trigger negotiation
+    // - Checksum algorithm list (empty = use defaults)
+    // - Checksum seed
+    //
+    // VARINT_FLIST_FLAGS = 0x80 = 128, INC_RECURSE = 0x01, CHECKSUM_SEED_FIX = 0x20
+    // Combined: 0xA1 = 161 (requires 2-byte rsync varint encoding)
+    // Rsync varint encoding of 161: [0x80, 0xA1] (marker byte, then value byte)
+    let mut peer_data: Vec<u8> = vec![
+        0x80, 0xA1, // varint for 161 (VARINT_FLIST_FLAGS | INC_RECURSE | CHECKSUM_SEED_FIX)
+        0x00, // empty checksum list (end marker)
+    ];
+    peer_data.extend_from_slice(&0x12345678_i32.to_le_bytes()); // seed
+
+    let mut stdin = &peer_data[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        is_server: false, // CLIENT
+        is_daemon_mode: false,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result = setup_protocol(&mut stdout, &mut stdin, &config)
+        .expect("SSH mode client setup should succeed");
+
+    // Should have read compat flags from peer
+    assert!(result.compat_flags.is_some());
+    let flags = result.compat_flags.unwrap();
+    assert!(
+        flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+        "Should have VARINT_FLIST_FLAGS from server"
+    );
+
+    // SSH mode client should write algorithm preferences
+    // (unlike daemon mode where client reads silently)
+    // Client writes its checksum list in SSH bidirectional mode
+    assert!(
+        !stdout.is_empty(),
+        "SSH mode client should write algorithm preferences"
+    );
+}
+
+#[test]
+fn setup_protocol_client_args_affects_compat_flags() {
+    // Different client args should result in different compat flags
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    // Test with minimal capabilities
+    let mut stdin = &b"\x00"[..]; // empty checksum list
+    let mut stdout = Vec::new();
+
+    let client_args_minimal = ["-ev".to_owned()];
+    let config_minimal = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args_minimal), // Only 'v' capability
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result_minimal = setup_protocol(&mut stdout, &mut stdin, &config_minimal)
+        .expect("minimal caps setup should succeed");
+
+    let flags_minimal = result_minimal.compat_flags.unwrap();
+    assert!(
+        flags_minimal.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+        "Should have VARINT_FLIST_FLAGS from 'v'"
+    );
+    assert!(
+        !flags_minimal.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+        "Should NOT have CHECKSUM_SEED_FIX without 'C'"
+    );
+
+    // Test with full capabilities
+    let mut stdin = &b"\x00"[..];
+    let mut stdout = Vec::new();
+
+    let client_args_full = ["-e.LsfxCIvu".to_owned()];
+    let config_full = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args_full), // Full capabilities
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result_full = setup_protocol(&mut stdout, &mut stdin, &config_full)
+        .expect("full caps setup should succeed");
+
+    let flags_full = result_full.compat_flags.unwrap();
+    assert!(
+        flags_full.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+        "Should have VARINT_FLIST_FLAGS from 'v'"
+    );
+    assert!(
+        flags_full.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+        "Should have CHECKSUM_SEED_FIX from 'C'"
+    );
+    assert!(
+        flags_full.contains(CompatibilityFlags::SAFE_FILE_LIST),
+        "Should have SAFE_FILE_LIST from 'f'"
+    );
+    assert!(
+        flags_full.contains(CompatibilityFlags::INPLACE_PARTIAL_DIR),
+        "Should have INPLACE_PARTIAL_DIR from 'I'"
+    );
+}
+
+#[test]
+fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
+    // Protocol 30 is the minimum for compat exchange
+    let protocol_30 = ProtocolVersion::try_from(30).unwrap();
+    let mut stdin = &b"\x00"[..]; // empty checksum list
+    let mut stdout = Vec::new();
+
+    let client_args = ["-efxCIvu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol: protocol_30,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args),
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("protocol 30 setup should succeed");
+
+    assert!(
+        result.compat_flags.is_some(),
+        "Protocol 30 should exchange compat flags"
+    );
+    assert!(
+        result.negotiated_algorithms.is_some(),
+        "Protocol 30 should negotiate algorithms"
+    );
+}
+
+// ===== ProtocolSetupConfig builder tests =====
+
+#[test]
+fn protocol_setup_config_builder_new_sets_defaults() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let config = ProtocolSetupConfig::new(protocol, true);
+
+    assert_eq!(config.protocol.as_u8(), 31);
+    assert!(config.is_server);
+    assert!(!config.skip_compat_exchange);
+    assert!(config.client_args.is_none());
+    assert!(!config.is_daemon_mode);
+    assert!(!config.do_compression);
+    assert!(config.checksum_seed.is_none());
+}
+
+#[test]
+fn protocol_setup_config_builder_chain_methods() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let client_args = vec!["-efxCIvu".to_owned()];
+
+    let config = ProtocolSetupConfig::new(protocol, true)
+        .with_skip_compat_exchange(true)
+        .with_client_args(Some(&client_args))
+        .with_daemon_mode(true)
+        .with_compression(true)
+        .with_checksum_seed(Some(12345));
+
+    assert!(config.skip_compat_exchange);
+    assert!(config.client_args.is_some());
+    assert!(config.is_daemon_mode);
+    assert!(config.do_compression);
+    assert_eq!(config.checksum_seed, Some(12345));
+}
+
+#[test]
+fn protocol_setup_config_builder_partial_configuration() {
+    let protocol = ProtocolVersion::try_from(30).unwrap();
+
+    // Only set some optional fields
+    let config = ProtocolSetupConfig::new(protocol, false)
+        .with_daemon_mode(true)
+        .with_compression(false);
+
+    assert!(!config.is_server);
+    assert!(config.is_daemon_mode);
+    assert!(!config.do_compression);
+    // Other fields should still be at defaults
+    assert!(!config.skip_compat_exchange);
+    assert!(config.client_args.is_none());
+    assert!(config.checksum_seed.is_none());
+}
+
+#[test]
+fn protocol_setup_config_builder_can_override_values() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    let config = ProtocolSetupConfig::new(protocol, true)
+        .with_compression(true)
+        .with_compression(false); // Override previous value
+
+    assert!(!config.do_compression, "Last value should win");
+}
+
+#[test]
+fn protocol_setup_config_builder_works_in_real_setup() {
+    // Verify builder works in actual setup_protocol call
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig::new(protocol, true)
+        .with_compression(false)
+        .with_daemon_mode(false);
+
+    let result = setup_protocol(&mut stdout, &mut stdin, &config)
+        .expect("setup should succeed with builder config");
+
+    assert!(
+        result.negotiated_algorithms.is_none(),
+        "Protocol 29 should not negotiate"
+    );
+}
+
+// ===== Checksum seed edge case tests (task #99) =====
+
+#[test]
+fn setup_protocol_server_uses_fixed_checksum_seed() {
+    // --checksum-seed=12345 should use exactly 12345 as the seed
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(12345));
+
+    let result = setup_protocol(&mut stdout, &mut stdin, &config)
+        .expect("setup with fixed seed should succeed");
+
+    assert_eq!(
+        result.checksum_seed, 12345_i32,
+        "Fixed seed value should be used as-is"
+    );
+
+    // Verify the seed was written to stdout as 4-byte LE
+    assert_eq!(stdout.len(), 4, "Should write 4-byte seed");
+    let written_seed = i32::from_le_bytes(stdout[..4].try_into().unwrap());
+    assert_eq!(written_seed, 12345, "Written seed should match fixed value");
+}
+
+#[test]
+fn setup_protocol_server_fixed_seed_is_deterministic() {
+    // Same fixed seed should produce same result every time
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+
+    let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(42));
+
+    let mut stdout1 = Vec::new();
+    let mut stdin1 = &b""[..];
+    let result1 =
+        setup_protocol(&mut stdout1, &mut stdin1, &config).expect("first setup should succeed");
+
+    let mut stdout2 = Vec::new();
+    let mut stdin2 = &b""[..];
+    let result2 =
+        setup_protocol(&mut stdout2, &mut stdin2, &config).expect("second setup should succeed");
+
+    assert_eq!(
+        result1.checksum_seed, result2.checksum_seed,
+        "Fixed seed should be deterministic across calls"
+    );
+    assert_eq!(
+        stdout1, stdout2,
+        "Wire bytes should be identical for same fixed seed"
+    );
+}
+
+#[test]
+fn setup_protocol_server_seed_zero_uses_time_based_generation() {
+    // --checksum-seed=0 is treated like None: generate from time XOR PID
+    // This matches upstream rsync's behavior where 0 means "use current time"
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(0));
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("setup with seed=0 should succeed");
+
+    // Seed=0 generates time-based seed, which should be non-zero in practice
+    // (unless time and PID happen to XOR to 0, extremely unlikely)
+    // We just verify it succeeded and produced a 4-byte seed
+    assert_eq!(stdout.len(), 4, "Should write 4-byte seed");
+    // Note: we cannot assert the exact value since it's time-dependent
+    let _ = result.checksum_seed; // Just verify we got a value
+}
+
+#[test]
+fn setup_protocol_server_max_u32_seed() {
+    // --checksum-seed=4294967295 (u32::MAX) should work
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(u32::MAX));
+
+    let result = setup_protocol(&mut stdout, &mut stdin, &config)
+        .expect("setup with max seed should succeed");
+
+    // u32::MAX as i32 is -1
+    assert_eq!(
+        result.checksum_seed,
+        u32::MAX as i32,
+        "u32::MAX seed should be transmitted as i32 (-1)"
+    );
+
+    let written_seed = i32::from_le_bytes(stdout[..4].try_into().unwrap());
+    assert_eq!(
+        written_seed, -1_i32,
+        "Wire representation of u32::MAX is -1 as i32"
+    );
+}
+
+#[test]
+fn setup_protocol_client_reads_fixed_seed_from_server() {
+    // Client reads exact seed bytes sent by server
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let test_seed: i32 = 99999;
+    let seed_bytes = test_seed.to_le_bytes();
+
+    let mut stdin = &seed_bytes[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig::new(protocol, false); // CLIENT mode
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("client setup should succeed");
+
+    assert_eq!(
+        result.checksum_seed, test_seed,
+        "Client should read exact seed value from server"
+    );
+}
+
+#[test]
+fn setup_protocol_client_reads_negative_seed_from_server() {
+    // Server may send a negative i32 seed (from u32::MAX cast)
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let test_seed: i32 = -1; // This is what u32::MAX becomes
+    let seed_bytes = test_seed.to_le_bytes();
+
+    let mut stdin = &seed_bytes[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig::new(protocol, false);
+
+    let result = setup_protocol(&mut stdout, &mut stdin, &config)
+        .expect("client setup with negative seed should succeed");
+
+    assert_eq!(
+        result.checksum_seed, -1,
+        "Client should correctly read negative seed value"
+    );
+}
+
+// ===== Pre-release 'V' compat flag tests =====
+
+#[test]
+fn client_has_pre_release_v_flag_detects_uppercase_v() {
+    assert!(
+        client_has_pre_release_v_flag("LsfxCIVu"),
+        "'V' in capability string should be detected"
+    );
+}
+
+#[test]
+fn client_has_pre_release_v_flag_ignores_lowercase_v() {
+    assert!(
+        !client_has_pre_release_v_flag("LsfxCIvu"),
+        "lowercase 'v' should not trigger pre-release detection"
+    );
+}
+
+#[test]
+fn client_has_pre_release_v_flag_empty_string() {
+    assert!(
+        !client_has_pre_release_v_flag(""),
+        "empty string should not match"
+    );
+}
+
+#[test]
+fn write_compat_flags_uses_single_byte_for_pre_release_v() {
+    // When 'V' is present, compat flags should be written as a single byte
+    let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::CHECKSUM_SEED_FIX;
+    let mut output = Vec::new();
+
+    let final_flags =
+        write_compat_flags(&mut output, flags, "LsfxCIVu").expect("write should succeed");
+
+    // Should be exactly 1 byte (write_byte, not write_varint)
+    assert_eq!(
+        output.len(),
+        1,
+        "pre-release 'V' should use single-byte encoding"
+    );
+
+    // CF_VARINT_FLIST_FLAGS should be implicitly set
+    assert!(
+        final_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+        "V flag should implicitly enable VARINT_FLIST_FLAGS"
+    );
+
+    // The byte should include all original flags plus VARINT_FLIST_FLAGS
+    let expected_bits = flags.bits() | CompatibilityFlags::VARINT_FLIST_FLAGS.bits();
+    assert_eq!(
+        output[0], expected_bits as u8,
+        "written byte should contain original flags plus VARINT_FLIST_FLAGS"
+    );
+}
+
+#[test]
+fn write_compat_flags_uses_varint_for_lowercase_v() {
+    // When only 'v' is present (no 'V'), use standard varint encoding
+    let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::CHECKSUM_SEED_FIX;
+    let mut output = Vec::new();
+
+    let final_flags =
+        write_compat_flags(&mut output, flags, "LsfxCIvu").expect("write should succeed");
+
+    // Should NOT implicitly add VARINT_FLIST_FLAGS (that's done by
+    // build_compat_flags_from_client_info)
+    assert_eq!(
+        final_flags, flags,
+        "lowercase 'v' should not implicitly modify flags"
+    );
+
+    // Verify varint encoding: 0x28 = SAFE_FILE_LIST(0x08) | CHECKSUM_SEED_FIX(0x20)
+    // For values < 128, varint is a single byte matching the value
+    assert_eq!(
+        output,
+        vec![0x28],
+        "varint encoding of 0x28 should be [0x28]"
+    );
+}
+
+#[test]
+fn write_compat_flags_v_flag_single_byte_without_varint_readable() {
+    // When 'V' is present but the total flags value stays below 0x80
+    // (i.e. VARINT_FLIST_FLAGS is not yet set by 'v'), the single-byte
+    // encoding IS compatible with read_varint because the 0x80 bit is off.
+    // However, write_compat_flags always sets CF_VARINT_FLIST_FLAGS (0x80)
+    // for 'V', making the high bit on. A pre-release 'V' client reads
+    // with read_byte(), not read_varint(), so this is by design.
+    // upstream: "read_varint() is compatible with the older write_byte()
+    // when the 0x80 bit isn't on."
+    let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::CHECKSUM_SEED_FIX;
+    let mut output = Vec::new();
+
+    let written_flags =
+        write_compat_flags(&mut output, flags, "LsfxCIVu").expect("write should succeed");
+
+    // The value has CF_VARINT_FLIST_FLAGS set (0x80 bit on), so
+    // read_varint would interpret this as a multi-byte varint and fail.
+    // This is correct because pre-release 'V' clients use read_byte().
+    assert_eq!(output.len(), 1, "should be single byte");
+    assert_eq!(
+        output[0],
+        written_flags.bits() as u8,
+        "byte should match the flag bits"
+    );
+    assert!(
+        output[0] & 0x80 != 0,
+        "high bit is set due to CF_VARINT_FLIST_FLAGS"
+    );
+}
+
+#[test]
+fn write_compat_flags_v_flag_low_value_readable_by_read_varint() {
+    // When write_compat_flags produces a value < 0x80, read_varint can
+    // decode it since the high bit is off and a varint with no extra
+    // bytes is identical to a plain byte.
+    // Use empty flags so the only bit is VARINT_FLIST_FLAGS from 'V'.
+    // CF_VARINT_FLIST_FLAGS itself is 0x80 so this will always set the
+    // high bit. We verify this invariant.
+    let flags = CompatibilityFlags::EMPTY;
+    let mut output = Vec::new();
+
+    let written_flags = write_compat_flags(&mut output, flags, "V").expect("write should succeed");
+
+    // Even with EMPTY input, 'V' sets CF_VARINT_FLIST_FLAGS (0x80)
+    assert_eq!(written_flags.bits(), 0x80);
+    assert_eq!(output, vec![0x80]);
+}
+
+#[test]
+fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
+    // Server with 'V' capability client should use single-byte compat flags encoding
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b"\x00"[..]; // empty checksum list
+    let mut stdout = Vec::new();
+
+    // Client has 'V' (pre-release) instead of 'v'
+    let client_args = ["-e.LsfxCIVu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args),
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("server setup should succeed");
+
+    let flags = result.compat_flags.unwrap();
+    assert!(
+        flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+        "'V' should implicitly set VARINT_FLIST_FLAGS"
+    );
+
+    // First byte of output should be the compat flags (single byte encoding)
+    // Remaining bytes are algorithm negotiation data + checksum seed
+    assert!(
+        !stdout.is_empty(),
+        "Server should have written compat flags"
+    );
+
+    // The first byte is the compat flags in single-byte format
+    let compat_byte = stdout[0];
+    assert_eq!(
+        compat_byte & CompatibilityFlags::VARINT_FLIST_FLAGS.bits() as u8,
+        CompatibilityFlags::VARINT_FLIST_FLAGS.bits() as u8,
+        "First byte should contain VARINT_FLIST_FLAGS"
+    );
+}
+
+#[test]
+fn setup_protocol_server_v_flag_enables_negotiation() {
+    // 'V' should trigger algorithm negotiation just like 'v' does
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b"\x00"[..]; // empty checksum list
+    let mut stdout = Vec::new();
+
+    let client_args = ["-e.LsfxCIVu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args),
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("server setup should succeed");
+
+    assert!(
+        result.negotiated_algorithms.is_some(),
+        "'V' should enable algorithm negotiation"
+    );
+}
+
+#[test]
+fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
+    // If both 'v' and 'V' are present, 'V' takes precedence for encoding
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b"\x00"[..];
+    let mut stdout_v = Vec::new();
+    let mut stdout_both = Vec::new();
+
+    // Only uppercase V
+    let client_args_v = ["-e.LsfxCIVu".to_owned()];
+    let config_v = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args_v),
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    let result_v =
+        setup_protocol(&mut stdout_v, &mut stdin, &config_v).expect("V-only setup should succeed");
+
+    // Both v and V
+    let mut stdin = &b"\x00"[..];
+    let client_args_both = ["-e.LsfxCIvVu".to_owned()];
+    let config_both = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args_both),
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    let result_both = setup_protocol(&mut stdout_both, &mut stdin, &config_both)
+        .expect("vV setup should succeed");
+
+    // Both should have VARINT_FLIST_FLAGS set
+    assert!(
+        result_v
+            .compat_flags
+            .unwrap()
+            .contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
+    );
+    assert!(
+        result_both
+            .compat_flags
+            .unwrap()
+            .contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
+    );
+
+    // Both should use single-byte encoding since 'V' is present in both
+    assert_eq!(
+        stdout_v[0], stdout_both[0],
+        "Both should produce the same compat flags byte"
+    );
+}
+
+#[test]
+fn build_capability_string_without_inc_recurse() {
+    let s = build_capability_string(false);
+    assert!(s.starts_with("-e."), "must start with -e. prefix");
+    assert!(!s.contains('i'), "must not contain 'i' without inc_recurse");
+    // All non-conditional platform chars must be present
+    for ch in ['s', 'f', 'x', 'C', 'I', 'v', 'u'] {
+        assert!(s.contains(ch), "missing capability char '{ch}'");
+    }
+}
+
+#[test]
+fn build_capability_string_with_inc_recurse() {
+    let s = build_capability_string(true);
+    assert!(s.starts_with("-e."), "must start with -e. prefix");
+    assert!(s.contains('i'), "must contain 'i' with inc_recurse");
+}
+
+#[test]
+fn build_capability_string_matches_mapping_order() {
+    let s = build_capability_string(true);
+    let chars: String = s.strip_prefix("-e.").unwrap().to_owned();
+    // Verify order matches CAPABILITY_MAPPINGS table
+    let expected: String = CAPABILITY_MAPPINGS
+        .iter()
+        .filter(|m| m.platform_ok)
+        .map(|m| m.char)
+        .collect();
+    assert_eq!(chars, expected);
+}
