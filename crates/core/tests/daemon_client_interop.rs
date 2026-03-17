@@ -12,154 +12,18 @@
 //! - `target/interop/upstream-src/rsync-3.4.1/clientserver.c` - daemon protocol
 //! - `target/interop/upstream-src/rsync-3.4.1/main.c:1267-1384` - client_run()
 
+mod common;
+
+use common::{create_test_file, DaemonBinary, TestDaemon, UPSTREAM_3_1_3, UPSTREAM_3_4_1};
+
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::thread;
+use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
 
-use tempfile::{TempDir, tempdir};
-
-const UPSTREAM_3_4_1: &str = "/home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync";
-const UPSTREAM_3_1_3: &str = "/home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync";
-
-/// Test infrastructure for managing upstream rsync daemon instances.
-struct UpstreamDaemon {
-    _workdir: TempDir,
-    #[allow(dead_code)]
-    config_path: PathBuf,
-    log_path: PathBuf,
-    #[allow(dead_code)]
-    pid_path: PathBuf,
-    module_path: PathBuf,
-    port: u16,
-    process: Option<Child>,
-}
-
-impl UpstreamDaemon {
-    /// Start an upstream rsync daemon for testing.
-    fn start(upstream_binary: &str, port: u16) -> std::io::Result<Self> {
-        let workdir = tempdir()?;
-        let config_path = workdir.path().join("rsyncd.conf");
-        let log_path = workdir.path().join("rsyncd.log");
-        let pid_path = workdir.path().join("rsyncd.pid");
-        let module_path = workdir.path().join("module");
-
-        fs::create_dir_all(&module_path)?;
-
-        // Write rsyncd.conf matching upstream format from run_interop.sh
-        let config_content = format!(
-            "\
-pid file = {}
-port = {}
-use chroot = false
-numeric ids = yes
-
-[testmodule]
-    path = {}
-    comment = Test module for interop
-    read only = false
-",
-            pid_path.display(),
-            port,
-            module_path.display()
-        );
-        fs::write(&config_path, config_content)?;
-
-        // Start daemon with --no-detach so we can manage the process
-        let mut child = Command::new(upstream_binary)
-            .arg("--daemon")
-            .arg("--config")
-            .arg(&config_path)
-            .arg("--no-detach")
-            .arg("--log-file")
-            .arg(&log_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        // Give daemon time to start and bind port
-        thread::sleep(Duration::from_millis(500));
-
-        // Check if daemon is still running
-        if let Some(status) = child.try_wait()? {
-            let stderr = child.stderr.take();
-            let mut error_msg = format!("Daemon exited immediately with status: {status}");
-            if let Some(mut stderr) = stderr {
-                let mut buf = String::new();
-                if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                    error_msg.push_str(&format!("\nStderr: {buf}"));
-                }
-            }
-            return Err(std::io::Error::other(error_msg));
-        } else {
-            // Still running - good
-        }
-
-        Ok(Self {
-            _workdir: workdir,
-            config_path,
-            log_path,
-            pid_path,
-            module_path,
-            port,
-            process: Some(child),
-        })
-    }
-
-    /// Get the rsync:// URL for this daemon.
-    fn url(&self) -> String {
-        format!("rsync://127.0.0.1:{}/testmodule", self.port)
-    }
-
-    /// Get the module root directory path.
-    fn module_path(&self) -> &Path {
-        &self.module_path
-    }
-
-    /// Get the daemon log contents for debugging.
-    #[allow(dead_code)]
-    fn log_contents(&self) -> std::io::Result<String> {
-        fs::read_to_string(&self.log_path)
-    }
-
-    /// Wait for daemon to be ready by attempting to connect to the port.
-    fn wait_ready(&self, timeout: Duration) -> std::io::Result<()> {
-        let start = std::time::Instant::now();
-        loop {
-            if start.elapsed() > timeout {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "daemon did not become ready",
-                ));
-            }
-
-            match TcpStream::connect(format!("127.0.0.1:{}", self.port)) {
-                Ok(_) => return Ok(()),
-                Err(_) => thread::sleep(Duration::from_millis(100)),
-            }
-        }
-    }
-}
-
-impl Drop for UpstreamDaemon {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.process.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-/// Helper to create test files with specific content.
-fn create_test_file(path: &Path, content: &[u8]) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create parent directories");
-    }
-    fs::write(path, content).expect("write test file");
-}
+use tempfile::tempdir;
 
 /// Test that we can list modules from upstream daemon (handshake verification).
 #[test]
@@ -170,14 +34,12 @@ fn test_handshake_with_upstream_daemon() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12873).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
     // Connect and perform basic handshake
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -239,10 +101,8 @@ fn test_pull_from_upstream_daemon_baseline() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12874).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
     // Create test files in daemon module
     create_test_file(
@@ -294,10 +154,8 @@ fn test_push_to_upstream_daemon_baseline() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12875).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
     // Create source files
     let source_root = tempdir().expect("create source dir");
@@ -343,14 +201,12 @@ fn test_protocol_negotiation_3_1_3() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_1_3, 12876).expect("start upstream daemon 3.1.3");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_1_3))
+        .expect("start upstream daemon 3.1.3");
 
     // Connect and check that we can negotiate with older protocol
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -417,10 +273,8 @@ fn test_daemon_transfer_preserves_metadata_baseline() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12877).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
     // Create test file with specific metadata
     let test_file = daemon.module_path().join("metadata_test.txt");
@@ -481,14 +335,12 @@ fn test_daemon_nonexistent_module_error() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12878).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
     // Try to access non-existent module
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -550,13 +402,11 @@ fn test_full_handshake_sequence_modern_protocol() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12880).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -665,13 +515,11 @@ fn test_protocol_version_negotiation_downgrade() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_1_3, 12881).expect("start daemon 3.1.3");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_1_3))
+        .expect("start daemon 3.1.3");
 
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -738,13 +586,11 @@ fn test_protocol_version_negotiation_upgrade() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12882).expect("start daemon 3.4.1");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon = TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1))
+        .expect("start daemon 3.4.1");
 
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -796,13 +642,11 @@ fn test_module_listing_request_response() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12883).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -874,13 +718,11 @@ fn test_compat_flags_exchange_setup() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12884).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -1006,13 +848,11 @@ fn test_error_invalid_protocol_version() {
         return;
     }
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12885).expect("start upstream daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
-    let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", daemon.port()))
+        .expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");

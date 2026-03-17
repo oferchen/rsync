@@ -19,163 +19,20 @@
 //! - clientserver.c - daemon protocol implementation
 //! - main.c:1267-1384 - client_run() orchestration
 
+mod common;
+
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use common::{
+    DaemonBinary, TestDaemon, UPSTREAM_3_0_9, UPSTREAM_3_1_3, UPSTREAM_3_4_1, create_test_file,
+    require_upstream,
+};
 use core::client::{ClientConfig, FilesFromSource, run_client};
-use tempfile::{TempDir, tempdir};
-
-const UPSTREAM_3_0_9: &str = "target/interop/upstream-install/3.0.9/bin/rsync";
-const UPSTREAM_3_1_3: &str = "target/interop/upstream-install/3.1.3/bin/rsync";
-const UPSTREAM_3_4_1: &str = "target/interop/upstream-install/3.4.1/bin/rsync";
-
-/// Helper to manage upstream rsync daemon instances for testing.
-#[allow(dead_code)]
-struct UpstreamDaemon {
-    _workdir: TempDir,
-    config_path: PathBuf,
-    log_path: PathBuf,
-    pid_path: PathBuf,
-    module_path: PathBuf,
-    port: u16,
-    process: Option<Child>,
-}
-
-impl UpstreamDaemon {
-    /// Start an upstream rsync daemon with a test module.
-    fn start(upstream_binary: &str, port: u16) -> std::io::Result<Self> {
-        let workdir = tempdir()?;
-        let config_path = workdir.path().join("rsyncd.conf");
-        let log_path = workdir.path().join("rsyncd.log");
-        let pid_path = workdir.path().join("rsyncd.pid");
-        let module_path = workdir.path().join("module");
-
-        fs::create_dir_all(&module_path)?;
-
-        // Write daemon configuration
-        let config_content = format!(
-            "\
-pid file = {}
-port = {}
-use chroot = false
-numeric ids = yes
-
-[testmodule]
-    path = {}
-    comment = Test module for client interop
-    read only = false
-",
-            pid_path.display(),
-            port,
-            module_path.display()
-        );
-        fs::write(&config_path, config_content)?;
-
-        // Start daemon with --no-detach for process management
-        let mut child = Command::new(upstream_binary)
-            .arg("--daemon")
-            .arg("--config")
-            .arg(&config_path)
-            .arg("--no-detach")
-            .arg("--log-file")
-            .arg(&log_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        // Allow daemon to start
-        thread::sleep(Duration::from_millis(500));
-
-        // Verify daemon is running
-        if let Some(status) = child.try_wait()? {
-            let stderr = child.stderr.take();
-            let mut error_msg = format!("Daemon exited immediately with status: {status}");
-            if let Some(mut stderr) = stderr {
-                let mut buf = String::new();
-                if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                    error_msg.push_str(&format!("\nStderr: {buf}"));
-                }
-            }
-            return Err(std::io::Error::other(error_msg));
-        } else {
-            // Daemon is running
-        }
-
-        Ok(Self {
-            _workdir: workdir,
-            config_path,
-            log_path,
-            pid_path,
-            module_path,
-            port,
-            process: Some(child),
-        })
-    }
-
-    /// Get the rsync:// URL for this daemon.
-    fn url(&self) -> String {
-        format!("rsync://127.0.0.1:{}/testmodule", self.port)
-    }
-
-    /// Get the module root directory.
-    fn module_path(&self) -> &Path {
-        &self.module_path
-    }
-
-    /// Get daemon log contents for debugging.
-    #[allow(dead_code)]
-    fn log_contents(&self) -> std::io::Result<String> {
-        fs::read_to_string(&self.log_path)
-    }
-
-    /// Wait for daemon to be ready by attempting TCP connection.
-    fn wait_ready(&self, timeout: Duration) -> std::io::Result<()> {
-        let start = std::time::Instant::now();
-        loop {
-            if start.elapsed() > timeout {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "daemon did not become ready",
-                ));
-            }
-
-            match TcpStream::connect(format!("127.0.0.1:{}", self.port)) {
-                Ok(_) => return Ok(()),
-                Err(_) => thread::sleep(Duration::from_millis(100)),
-            }
-        }
-    }
-}
-
-impl Drop for UpstreamDaemon {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.process.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-/// Helper to create test files with specific content.
-fn create_test_file(path: &Path, content: &[u8]) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create parent directories");
-    }
-    fs::write(path, content).expect("write test file");
-}
-
-/// Check if an upstream binary exists and skip test if not.
-fn require_upstream(binary_path: &str) {
-    if !Path::new(binary_path).exists() {
-        eprintln!("Skipping: upstream rsync binary not found at {binary_path}");
-        panic!("upstream binary required for this test");
-    }
-}
+use tempfile::tempdir;
 
 /// Test pulling a single file from upstream daemon.
 #[test]
@@ -183,10 +40,8 @@ fn require_upstream(binary_path: &str) {
 fn test_client_pull_single_file_from_daemon() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13001).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create test file in daemon module
     create_test_file(
@@ -223,10 +78,8 @@ fn test_client_pull_single_file_from_daemon() {
 fn test_client_pull_directory_recursive() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13002).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create directory structure in daemon module
     create_test_file(&daemon.module_path().join("file1.txt"), b"content1");
@@ -271,10 +124,8 @@ fn test_client_pull_directory_recursive() {
 fn test_client_pull_with_archive_mode() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13003).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create test files with metadata
     let test_file = daemon.module_path().join("archive_test.txt");
@@ -330,10 +181,8 @@ fn test_client_pull_with_archive_mode() {
 fn test_client_pull_with_compression() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13004).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create compressible file
     let large_content = b"repetitive data ".repeat(1000);
@@ -366,10 +215,8 @@ fn test_client_pull_with_compression() {
 fn test_client_pull_with_checksum() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13005).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     create_test_file(
         &daemon.module_path().join("checksum_test.txt"),
@@ -402,10 +249,8 @@ fn test_client_pull_with_checksum() {
 fn test_client_push_to_daemon() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13006).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create source files locally
     let source_root = tempdir().expect("create source dir");
@@ -439,10 +284,8 @@ fn test_client_push_to_daemon() {
 fn test_client_push_directory_to_daemon() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13007).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create source directory structure
     let source_root = tempdir().expect("create source dir");
@@ -481,10 +324,8 @@ fn test_client_push_directory_to_daemon() {
 fn test_client_protocol_compatibility_3_0_9() {
     require_upstream(UPSTREAM_3_0_9);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_0_9, 13010).expect("start daemon 3.0.9");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_0_9)).expect("start daemon 3.0.9");
 
     create_test_file(
         &daemon.module_path().join("v309_test.txt"),
@@ -515,10 +356,8 @@ fn test_client_protocol_compatibility_3_0_9() {
 fn test_client_protocol_compatibility_3_1_3() {
     require_upstream(UPSTREAM_3_1_3);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_1_3, 13011).expect("start daemon 3.1.3");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_1_3)).expect("start daemon 3.1.3");
 
     create_test_file(
         &daemon.module_path().join("v313_test.txt"),
@@ -549,10 +388,8 @@ fn test_client_protocol_compatibility_3_1_3() {
 fn test_client_protocol_compatibility_3_4_1() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13012).expect("start daemon 3.4.1");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon 3.4.1");
 
     create_test_file(
         &daemon.module_path().join("v341_test.txt"),
@@ -587,14 +424,12 @@ fn test_client_protocol_compatibility_3_4_1() {
 fn test_protocol_version_negotiation() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13013).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Connect and perform handshake
     let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port())).expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
@@ -642,10 +477,8 @@ fn test_protocol_version_negotiation() {
 fn test_client_pull_with_exclude_filter() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13020).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create files, some to be excluded
     create_test_file(&daemon.module_path().join("include.txt"), b"include me");
@@ -685,10 +518,8 @@ fn test_client_pull_with_exclude_filter() {
 fn test_client_pull_with_include_exclude() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13021).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     create_test_file(&daemon.module_path().join("important.log"), b"important");
     create_test_file(&daemon.module_path().join("debug.log"), b"debug");
@@ -726,10 +557,8 @@ fn test_client_pull_with_include_exclude() {
 fn test_client_incremental_transfer() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13030).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     create_test_file(&daemon.module_path().join("unchanged.txt"), b"no changes");
     create_test_file(&daemon.module_path().join("modified.txt"), b"old content");
@@ -780,10 +609,8 @@ fn test_client_incremental_transfer() {
 fn test_client_incremental_size_only() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13031).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     create_test_file(&daemon.module_path().join("sizetest.txt"), b"original");
 
@@ -837,14 +664,12 @@ fn test_error_connection_refused() {
 fn test_error_invalid_module() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13040).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Connect and verify handshake
     let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port())).expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set timeout");
@@ -885,13 +710,11 @@ fn test_error_invalid_module() {
 fn test_error_unexpected_disconnect() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13041).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     let stream =
-        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port())).expect("connect to daemon");
     stream
         .set_read_timeout(Some(Duration::from_secs(1)))
         .expect("set timeout");
@@ -916,10 +739,8 @@ fn test_error_unexpected_disconnect() {
 fn test_metadata_preservation_permissions() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13050).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     use std::os::unix::fs::PermissionsExt;
 
@@ -956,10 +777,8 @@ fn test_metadata_preservation_permissions() {
 fn test_metadata_preservation_times() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13051).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     let test_file = daemon.module_path().join("time_test.txt");
     create_test_file(&test_file, b"time test");
@@ -1007,10 +826,8 @@ fn test_metadata_preservation_times() {
 fn test_many_small_files() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13060).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create 100 small files
     for i in 0..100 {
@@ -1051,10 +868,8 @@ fn test_many_small_files() {
 fn test_large_file_transfer() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13061).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create 10 MB file
     let large_content = vec![0xAB; 10 * 1024 * 1024];
@@ -1087,10 +902,8 @@ fn test_large_file_transfer() {
 fn test_empty_directory_transfer() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13062).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create empty directory
     fs::create_dir_all(daemon.module_path().join("emptydir")).expect("create empty dir");
@@ -1117,10 +930,8 @@ fn test_empty_directory_transfer() {
 fn test_special_characters_in_filename() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13063).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create files with special characters (safe for filesystem)
     create_test_file(
@@ -1165,10 +976,8 @@ fn test_special_characters_in_filename() {
 fn test_client_push_to_daemon_with_files_from() {
     require_upstream(UPSTREAM_3_4_1);
 
-    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 13070).expect("start daemon");
-    daemon
-        .wait_ready(Duration::from_secs(5))
-        .expect("daemon ready");
+    let daemon =
+        TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create source files - some will be selected, some not
     let source_root = tempdir().expect("create source dir");
