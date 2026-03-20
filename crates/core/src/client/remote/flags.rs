@@ -100,12 +100,8 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('L');
     }
 
-    // Info flags after the '.' separator.
-    // upstream: options.c:2707-2713 — info/debug flags appended after '.'
-    if config.itemize_changes() {
-        flags.push('.');
-        flags.push('i');
-    }
+    // Note: itemize-changes is forwarded via --log-format=%i in the
+    // long-form args, not as a compact flag - upstream: options.c:2750-2762
 
     flags
 }
@@ -228,17 +224,15 @@ mod tests {
     }
 
     #[test]
-    fn server_flag_string_includes_itemize_info_flag() {
+    fn server_flag_string_omits_itemize_compact_flag() {
+        // upstream: options.c:2750-2762 - itemize is sent via --log-format=%i,
+        // not as a compact flag character in the flag string.
         let config = ClientConfig::builder().itemize_changes(true).build();
         let flags = build_server_flag_string(&config);
-        assert!(flags.contains(".i"), "expected '.i' in flags: {flags}");
-    }
-
-    #[test]
-    fn server_flag_string_omits_itemize_when_disabled() {
-        let config = ClientConfig::builder().itemize_changes(false).build();
-        let flags = build_server_flag_string(&config);
-        assert!(!flags.contains('i'), "unexpected 'i' in flags: {flags}");
+        assert!(
+            !flags.contains(".i"),
+            "itemize should not appear as compact flag: {flags}"
+        );
     }
 
     #[test]
