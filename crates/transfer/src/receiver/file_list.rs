@@ -33,7 +33,6 @@ impl ReceiverContext {
     ///
     /// After the file list entries, this also consumes the UID/GID lists that follow
     /// (unless using incremental recursion). See upstream `recv_id_list()` in uidlist.c.
-    #[must_use]
     pub fn receive_file_list<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
         let mut flist_reader = self.build_flist_reader();
         let mut count = 0;
@@ -437,7 +436,6 @@ impl<R: Read> IncrementalFileListReceiver<R> {
     /// - `Ok(Some(entry))` - An entry ready for processing
     /// - `Ok(None)` - No more entries (end of list reached and all processed)
     /// - `Err(e)` - An I/O or protocol error occurred
-    #[must_use]
     pub fn next_ready(&mut self) -> io::Result<Option<FileEntry>> {
         // First check if we have any ready entries
         if let Some(entry) = self.incremental.pop() {
@@ -527,7 +525,6 @@ impl<R: Read> IncrementalFileListReceiver<R> {
     ///
     /// Unlike [`Self::next_ready`], this method does not wait for an entry to become
     /// ready. It simply reads from the wire and adds to the dependency tracker.
-    #[must_use]
     pub fn try_read_one(&mut self) -> io::Result<bool> {
         if self.finished_reading {
             return Ok(false);
@@ -561,7 +558,6 @@ impl<R: Read> IncrementalFileListReceiver<R> {
     ///
     /// This method provides a fallback to traditional batch processing.
     /// For truly incremental processing, use [`Self::next_ready`] instead.
-    #[must_use]
     pub fn collect_sorted(mut self) -> io::Result<Vec<FileEntry>> {
         let mut entries = Vec::new();
 

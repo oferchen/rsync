@@ -142,7 +142,6 @@ pub const fn is_deflated_data(flag: u8) -> bool {
 /// - The input exceeds `MAX_BLOCK_SIZE`
 /// - The compressed output exceeds `MAX_BLOCK_SIZE`
 /// - The output buffer is too small
-#[must_use]
 pub fn compress_block(input: &[u8], output: &mut [u8]) -> Result<usize, RawLz4Error> {
     if input.len() > MAX_BLOCK_SIZE {
         return Err(RawLz4Error::InputTooLarge(input.len()));
@@ -182,7 +181,6 @@ pub fn compress_block(input: &[u8], output: &mut [u8]) -> Result<usize, RawLz4Er
 /// Returns an error if:
 /// - The input exceeds `MAX_BLOCK_SIZE`
 /// - The compressed output exceeds `MAX_BLOCK_SIZE`
-#[must_use]
 pub fn compress_block_to_vec(input: &[u8]) -> Result<Vec<u8>, RawLz4Error> {
     if input.len() > MAX_BLOCK_SIZE {
         return Err(RawLz4Error::InputTooLarge(input.len()));
@@ -215,7 +213,6 @@ pub fn compress_block_to_vec(input: &[u8]) -> Result<Vec<u8>, RawLz4Error> {
 /// - The header doesn't have the DEFLATED_DATA flag
 /// - The output buffer is too small
 /// - Decompression fails
-#[must_use]
 pub fn decompress_block(input: &[u8], output: &mut [u8]) -> Result<usize, RawLz4Error> {
     if input.len() < HEADER_SIZE {
         return Err(RawLz4Error::BufferTooSmall {

@@ -505,7 +505,6 @@ impl NdxState {
     ///
     /// **Note**: This method always uses protocol 30+ decoding. For protocol < 30,
     /// use [`LegacyNdxCodec`] or `create_ndx_codec`.
-    #[must_use]
     pub fn read_ndx<R: Read>(&mut self, reader: &mut R) -> io::Result<i32> {
         let mut b = [0u8; 4];
         reader.read_exact(&mut b[..1])?;
@@ -626,7 +625,6 @@ pub fn write_goodbye<W: Write>(writer: &mut W, protocol_version: u8) -> io::Resu
 ///
 /// - `main.c:883` - protocol < 29: `i = read_int(f_in)` then checks `i != NDX_DONE`
 /// - `main.c:885-886` - protocol >= 29: `read_ndx_and_attrs()` which calls `read_ndx()`
-#[must_use]
 pub fn read_goodbye<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<()> {
     if protocol_version < 30 {
         let mut buf = [0u8; 4];

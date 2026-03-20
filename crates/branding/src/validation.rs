@@ -35,7 +35,6 @@ impl std::fmt::Display for ValidationError {
 impl std::error::Error for ValidationError {}
 
 /// Validates that a string is non-empty after trimming.
-#[must_use]
 pub fn validate_non_empty(value: &str) -> Result<(), ValidationError> {
     if value.trim().is_empty() {
         Err(ValidationError::Empty)
@@ -45,7 +44,6 @@ pub fn validate_non_empty(value: &str) -> Result<(), ValidationError> {
 }
 
 /// Validates a binary name (no whitespace, no path separators).
-#[must_use]
 pub fn validate_binary_name(value: &str) -> Result<(), ValidationError> {
     validate_non_empty(value)?;
 
@@ -63,7 +61,6 @@ pub fn validate_binary_name(value: &str) -> Result<(), ValidationError> {
 }
 
 /// Validates that a path is absolute (Unix or native).
-#[must_use]
 pub fn validate_absolute_path(value: &str) -> Result<(), ValidationError> {
     let path = Path::new(value);
     let is_native_abs = path.is_absolute();
@@ -77,7 +74,6 @@ pub fn validate_absolute_path(value: &str) -> Result<(), ValidationError> {
 }
 
 /// Validates that a path has a file name component.
-#[must_use]
 pub fn validate_has_file_name(value: &str) -> Result<(), ValidationError> {
     let path = Path::new(value);
     if path.file_name().is_some() {
@@ -88,7 +84,6 @@ pub fn validate_has_file_name(value: &str) -> Result<(), ValidationError> {
 }
 
 /// Validates that child path is under parent directory.
-#[must_use]
 pub fn validate_path_under_dir(child: &str, parent: &str) -> Result<(), ValidationError> {
     let child_path = Path::new(child);
     let parent_path = Path::new(parent);
@@ -118,7 +113,6 @@ pub struct ParsedVersion {
 }
 
 /// Validates and parses a semantic version string (x.y.z or x.y.z-rust).
-#[must_use]
 pub fn validate_version(value: &str) -> Result<ParsedVersion, ValidationError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -153,7 +147,6 @@ pub fn validate_version(value: &str) -> Result<ParsedVersion, ValidationError> {
 }
 
 /// Validates protocol version is in supported range.
-#[must_use]
 pub fn validate_protocol_version(version: u32) -> Result<(), ValidationError> {
     if (28..=40).contains(&version) {
         Ok(())
@@ -163,7 +156,6 @@ pub fn validate_protocol_version(version: u32) -> Result<(), ValidationError> {
 }
 
 /// Validates brand name is recognized.
-#[must_use]
 pub fn validate_brand_name(value: &str) -> Result<(), ValidationError> {
     match value {
         "oc" | "upstream" => Ok(()),

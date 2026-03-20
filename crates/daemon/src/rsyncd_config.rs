@@ -507,7 +507,6 @@ impl RsyncdConfig {
     /// # Errors
     ///
     /// Returns an error if the file cannot be read or contains invalid syntax.
-    #[must_use]
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
         let contents = fs::read_to_string(path).map_err(|e| ConfigError::io_error(path, e))?;
         Self::parse(&contents, path)
@@ -518,7 +517,6 @@ impl RsyncdConfig {
     /// # Errors
     ///
     /// Returns an error if the input contains invalid syntax.
-    #[must_use]
     pub fn parse(input: &str, path: &Path) -> Result<Self, ConfigError> {
         let mut parser = Parser::new(input, path);
         parser.parse()

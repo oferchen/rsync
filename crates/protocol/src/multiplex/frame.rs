@@ -14,7 +14,6 @@ pub struct MessageFrame {
 
 impl MessageFrame {
     /// Constructs a frame from a message code and owned payload bytes.
-    #[must_use]
     pub fn new(code: MessageCode, payload: Vec<u8>) -> Result<Self, io::Error> {
         let payload_len = ensure_payload_length(payload.len())?;
         MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
@@ -51,7 +50,6 @@ impl MessageFrame {
     /// # }
     /// # example().unwrap();
     /// ```
-    #[must_use]
     pub fn header(&self) -> io::Result<MessageHeader> {
         let payload_len = ensure_payload_length(self.payload.len())?;
         MessageHeader::new(self.code, payload_len).map_err(map_envelope_error_for_input)
@@ -190,7 +188,6 @@ impl MessageFrame {
     /// to parse exactly one frame can invoke [`TryFrom<&[u8]>`] to receive an error when extra
     /// trailing data is present. Use [`crate::BorrowedMessageFrame::decode_from_slice`] to parse without
     /// allocating a new buffer when a borrowed view suffices.
-    #[must_use]
     pub fn decode_from_slice(bytes: &[u8]) -> io::Result<(Self, &[u8])> {
         let (header, payload, remainder) = super::helpers::decode_frame_parts(bytes)?;
         let frame = MessageFrame::new(header.code(), payload.to_vec())?;

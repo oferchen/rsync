@@ -90,7 +90,6 @@ impl BufferedMap {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or its size determined.
-    #[must_use]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::open_with_window(path, MAX_MAP_SIZE)
     }
@@ -100,7 +99,6 @@ impl BufferedMap {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or its size determined.
-    #[must_use]
     pub fn open_with_window<P: AsRef<Path>>(path: P, window_size: usize) -> io::Result<Self> {
         let file = File::open(path)?;
         let size = file.metadata()?.len();
@@ -120,7 +118,6 @@ impl BufferedMap {
     /// # Errors
     ///
     /// Returns an error if the file size cannot be determined.
-    #[must_use]
     pub fn from_file(file: File) -> io::Result<Self> {
         Self::from_file_with_window(file, MAX_MAP_SIZE)
     }
@@ -130,7 +127,6 @@ impl BufferedMap {
     /// # Errors
     ///
     /// Returns an error if the file size cannot be determined.
-    #[must_use]
     pub fn from_file_with_window(file: File, window_size: usize) -> io::Result<Self> {
         let size = file.metadata()?.len();
 
@@ -275,7 +271,6 @@ impl MmapStrategy {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or mapped.
-    #[must_use]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Ok(Self {
             mmap: MmapReader::open(path)?,
@@ -347,7 +342,6 @@ impl AdaptiveMapStrategy {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened.
-    #[must_use]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::open_with_threshold(path, MMAP_THRESHOLD)
     }
@@ -357,7 +351,6 @@ impl AdaptiveMapStrategy {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened.
-    #[must_use]
     pub fn open_with_threshold<P: AsRef<Path>>(path: P, threshold: u64) -> io::Result<Self> {
         let metadata = std::fs::metadata(path.as_ref())?;
         let size = metadata.len();
@@ -422,7 +415,6 @@ impl MapFile<BufferedMap> {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened.
-    #[must_use]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Ok(Self {
             strategy: BufferedMap::open(path)?,
@@ -434,7 +426,6 @@ impl MapFile<BufferedMap> {
     /// # Errors
     ///
     /// Returns an error if the file size cannot be determined.
-    #[must_use]
     pub fn from_file(file: File) -> io::Result<Self> {
         Ok(Self {
             strategy: BufferedMap::from_file(file)?,
@@ -449,7 +440,6 @@ impl MapFile<MmapStrategy> {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or mapped.
-    #[must_use]
     pub fn open_mmap<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Ok(Self {
             strategy: MmapStrategy::open(path)?,
@@ -466,7 +456,6 @@ impl MapFile<AdaptiveMapStrategy> {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened.
-    #[must_use]
     pub fn open_adaptive<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Ok(Self {
             strategy: AdaptiveMapStrategy::open(path)?,
@@ -512,7 +501,6 @@ impl<S: MapStrategy> MapFile<S> {
     ///
     /// Returns an error if the read fails.
     #[inline]
-    #[must_use]
     pub fn map_ptr(&mut self, offset: u64, len: usize) -> io::Result<&[u8]> {
         self.strategy.map_ptr(offset, len)
     }

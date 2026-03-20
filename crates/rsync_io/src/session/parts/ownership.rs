@@ -127,7 +127,6 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Consumes the parts structure, returning the binary handshake components when available.
-    #[must_use]
     pub fn into_binary(self) -> HandshakePartsResult<BinaryHandshakeComponents<R>, R> {
         match self {
             SessionHandshakeParts::Binary(parts) => {
@@ -159,7 +158,6 @@ impl<R> SessionHandshakeParts<R> {
     /// accessors without recreating the full [`BinaryHandshake`]. Returning the
     /// original value on mismatch matches the ergonomics of [`TryFrom`]
     /// conversions provided elsewhere in the crate.
-    #[must_use]
     pub fn into_binary_parts(self) -> Result<BinaryHandshakeParts<R>, SessionHandshakeParts<R>> {
         match self {
             SessionHandshakeParts::Binary(parts) => Ok(parts),
@@ -168,7 +166,6 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Consumes the parts structure, returning the legacy handshake components when available.
-    #[must_use]
     pub fn into_legacy(self) -> HandshakePartsResult<LegacyHandshakeComponents<R>, R> {
         match self {
             SessionHandshakeParts::Binary(parts) => Err(SessionHandshakeParts::Binary(parts)),

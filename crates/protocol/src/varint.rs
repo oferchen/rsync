@@ -215,7 +215,6 @@ pub fn write_varlong<W: Write + ?Sized>(
 /// * `reader` - Source of the encoded bytes
 /// * `min_bytes` - Minimum number of bytes used in encoding (must match the write call)
 #[inline]
-#[must_use]
 pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
     // upstream: io.c:read_varlong() — read min_bytes first, then extra.
     let min = min_bytes as usize;
@@ -272,7 +271,6 @@ pub fn write_longint<W: Write + ?Sized>(writer: &mut W, value: i64) -> io::Resul
 /// The encoding:
 /// - If first 4 bytes == 0xFFFFFFFF: next 8 bytes are the full i64 value
 /// - Otherwise: the 4 bytes are the value (sign-extended to i64)
-#[must_use]
 pub fn read_longint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i64> {
     let mut buf = [0u8; 4];
     reader.read_exact(&mut buf)?;
@@ -305,7 +303,6 @@ pub fn write_varlong30<W: Write + ?Sized>(
 ///
 /// This mirrors upstream's `read_varlong30(int f, uchar min_bytes)` inline function.
 /// For protocol < 30, callers should use `read_longint` instead.
-#[must_use]
 pub fn read_varlong30<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
     read_varlong(reader, min_bytes)
 }
@@ -322,7 +319,6 @@ pub fn write_int<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()
 ///
 /// This mirrors upstream's `read_int()` from io.c. Used for protocol versions < 30.
 #[inline]
-#[must_use]
 pub fn read_int<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     let mut buf = [0u8; 4];
     reader.read_exact(&mut buf)?;
@@ -397,7 +393,6 @@ pub fn encode_varint_to_vec(value: i32, out: &mut Vec<u8>) {
 /// required bytes and [`io::ErrorKind::InvalidData`] if the encoded value would
 /// overflow the 32-bit range supported by upstream rsync.
 #[inline]
-#[must_use]
 pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     let mut first = [0u8; 1];
     reader.read_exact(&mut first)?;
@@ -426,7 +421,6 @@ pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
 /// This is the slice-based equivalent of [`read_varint`], useful when the caller
 /// already captured the serialized data in memory.
 #[inline]
-#[must_use]
 pub fn decode_varint(bytes: &[u8]) -> io::Result<(i32, &[u8])> {
     let (value, consumed) = decode_bytes(bytes)?;
     Ok((value, &bytes[consumed..]))

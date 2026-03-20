@@ -849,7 +849,6 @@ where
     /// Processes the next batch of files.
     ///
     /// Returns `None` when all files have been processed.
-    #[must_use]
     pub fn next_batch(&mut self) -> Option<Vec<FileHashResult<D::Digest>>> {
         if self.current_index >= self.paths.len() {
             return None;

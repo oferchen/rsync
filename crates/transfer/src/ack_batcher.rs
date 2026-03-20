@@ -188,7 +188,6 @@ impl AckEntry {
     }
 
     /// Reads an ACK entry from the wire.
-    #[must_use]
     pub fn read<R: io::Read + ?Sized>(reader: &mut R) -> io::Result<Self> {
         let mut ndx_buf = [0u8; 4];
         reader.read_exact(&mut ndx_buf)?;
@@ -462,7 +461,6 @@ impl AckBatcher {
     }
 
     /// Reads a batch of ACKs from the wire.
-    #[must_use]
     pub fn read_batch<R: io::Read + ?Sized>(reader: &mut R) -> io::Result<Vec<AckEntry>> {
         let mut count_buf = [0u8; 2];
         reader.read_exact(&mut count_buf)?;

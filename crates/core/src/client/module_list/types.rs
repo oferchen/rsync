@@ -11,7 +11,6 @@ pub struct DaemonAddress {
 
 impl DaemonAddress {
     /// Creates a new daemon address from the supplied host and port.
-    #[must_use]
     pub fn new(host: String, port: u16) -> Result<Self, ClientError> {
         let trimmed = host.trim();
         if trimmed.is_empty() {

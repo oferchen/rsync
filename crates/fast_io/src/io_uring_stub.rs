@@ -85,7 +85,6 @@ pub struct IoUringReader {
 
 impl IoUringReader {
     /// Always returns an `Unsupported` error on this platform.
-    #[must_use]
     pub fn open<P: AsRef<Path>>(_path: P, _config: &IoUringConfig) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -152,7 +151,6 @@ pub struct IoUringWriter {
 
 impl IoUringWriter {
     /// Always returns an `Unsupported` error on this platform.
-    #[must_use]
     pub fn create<P: AsRef<Path>>(_path: P, _config: &IoUringConfig) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -486,7 +484,6 @@ mod socket_stub {
 
     impl IoUringSocketReader {
         /// Always returns an `Unsupported` error on this platform.
-        #[must_use]
         pub fn from_raw_fd(_fd: RawFd, _config: &super::IoUringConfig) -> io::Result<Self> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -511,7 +508,6 @@ mod socket_stub {
 
     impl IoUringSocketWriter {
         /// Always returns an `Unsupported` error on this platform.
-        #[must_use]
         pub fn from_raw_fd(_fd: RawFd, _config: &super::IoUringConfig) -> io::Result<Self> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,

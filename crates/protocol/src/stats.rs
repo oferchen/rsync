@@ -233,7 +233,6 @@ impl TransferStats {
     /// # Errors
     ///
     /// Returns an error if reading from the stream fails.
-    #[must_use]
     pub fn read_from<R: Read>(reader: &mut R, protocol: ProtocolVersion) -> io::Result<Self> {
         let total_read = read_varlong30(reader, 3)? as u64;
         let total_written = read_varlong30(reader, 3)? as u64;
@@ -589,7 +588,6 @@ impl DeleteStats {
     /// # Errors
     ///
     /// Returns an error if reading from the stream fails.
-    #[must_use]
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         use crate::varint::read_varint;
 

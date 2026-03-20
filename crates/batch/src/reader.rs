@@ -27,7 +27,6 @@ pub struct BatchReader {
 
 impl BatchReader {
     /// Create a new batch reader.
-    #[must_use]
     pub fn new(config: BatchConfig) -> BatchResult<Self> {
         // Open the batch file
         let batch_path = config.batch_file_path();
@@ -52,7 +51,6 @@ impl BatchReader {
     /// Read and validate the batch header.
     ///
     /// Returns the stream flags that were recorded in the batch.
-    #[must_use]
     pub fn read_header(&mut self) -> BatchResult<BatchFlags> {
         if self.header.is_some() {
             return Err(BatchError::Io(io::Error::new(
@@ -92,7 +90,6 @@ impl BatchReader {
     ///
     /// This reads the next chunk of data from the batch file, which
     /// could be file list entries or delta operations.
-    #[must_use]
     pub fn read_data(&mut self, buf: &mut [u8]) -> BatchResult<usize> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(
@@ -150,7 +147,6 @@ impl BatchReader {
     /// # Upstream Reference
     ///
     /// - `main.c:370-383`: stats read with `read_varlong30(f, 3)`
-    #[must_use]
     pub fn read_stats(&mut self) -> BatchResult<BatchStats> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(
@@ -174,7 +170,6 @@ impl BatchReader {
     ///
     /// This reads delta operations until EOF is reached.
     /// Suitable for single-file batches or when processing one file at a time.
-    #[must_use]
     pub fn read_all_delta_ops(&mut self) -> BatchResult<Vec<protocol::wire::DeltaOp>> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(
@@ -201,7 +196,6 @@ impl BatchReader {
     /// **Note:** This uses a local serialization format that is not compatible
     /// with upstream rsync's batch files. For protocol-compatible batch files,
     /// use [`read_protocol_flist`](Self::read_protocol_flist) instead.
-    #[must_use]
     pub fn read_file_entry(&mut self) -> BatchResult<Option<FileEntry>> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(
@@ -247,7 +241,6 @@ impl BatchReader {
     ///
     /// - `batch.c` — batch file body is a raw protocol stream tee
     /// - `flist.c:recv_file_entry()` — wire format decoded by `FileListReader`
-    #[must_use]
     pub fn read_protocol_flist(&mut self) -> BatchResult<Vec<protocol::flist::FileEntry>> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(

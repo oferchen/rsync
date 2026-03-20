@@ -340,7 +340,6 @@ pub fn decode_name<R: Read>(
 /// # Upstream Reference
 ///
 /// See `flist.c:recv_file_entry()` line 856: `file_length = read_varlong30(f, 3)`
-#[must_use]
 pub fn decode_size<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<i64> {
     if protocol_version >= 30 {
         read_varlong(reader, 3)
@@ -421,7 +420,6 @@ pub fn decode_mtime<R: Read>(
 /// # Note
 ///
 /// Only decode when `XMIT_MOD_NSEC` flag is set in xflags.
-#[must_use]
 pub fn decode_mtime_nsec<R: Read>(reader: &mut R, flags: u32) -> io::Result<Option<u32>> {
     if flags & ((XMIT_MOD_NSEC as u32) << 8) != 0 {
         Ok(Some(read_varint(reader)? as u32))
@@ -488,7 +486,6 @@ pub fn decode_atime<R: Read>(
 /// # Note
 ///
 /// Only decode when `XMIT_CRTIME_EQ_MTIME` flag is NOT set.
-#[must_use]
 pub fn decode_crtime<R: Read>(reader: &mut R, flags: u32, mtime: i64) -> io::Result<Option<i64>> {
     if flags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16) != 0 {
         Ok(Some(mtime))
@@ -530,7 +527,6 @@ pub fn decode_crtime<R: Read>(reader: &mut R, flags: u32, mtime: i64) -> io::Res
 /// let mode = decode_mode(&mut cursor, 0, 0).unwrap();
 /// assert_eq!(mode.unwrap(), 0o100644);
 /// ```
-#[must_use]
 pub fn decode_mode<R: Read>(reader: &mut R, flags: u32, prev_mode: u32) -> io::Result<Option<u32>> {
     if flags & (XMIT_SAME_MODE as u32) != 0 {
         Ok(Some(prev_mode))
@@ -771,7 +767,6 @@ pub const MAX_SYMLINK_TARGET_LEN: usize = 4096;
 /// # Note
 ///
 /// Only decode when preserve_links is enabled and entry is a symlink.
-#[must_use]
 pub fn decode_symlink_target<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Vec<u8>> {
     let len = read_varint30_int(reader, protocol_version)? as usize;
     if len > MAX_SYMLINK_TARGET_LEN {
@@ -804,7 +799,6 @@ pub fn decode_symlink_target<R: Read>(reader: &mut R, protocol_version: u8) -> i
 ///
 /// Only decode when `XMIT_HLINKED` is set but `XMIT_HLINK_FIRST` is NOT set.
 /// The first occurrence of a hardlink group (leader) doesn't have an index.
-#[must_use]
 pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Option<u32>> {
     if flags & ((XMIT_HLINKED as u32) << 8) != 0 {
         if flags & ((XMIT_HLINK_FIRST as u32) << 8) != 0 {
@@ -875,7 +869,6 @@ pub fn decode_hardlink_dev_ino<R: Read>(
 ///
 /// For regular files: actual checksum (or zeros if not computed)
 /// For non-regular files (proto < 28 only): empty_sum (all zeros)
-#[must_use]
 pub fn decode_checksum<R: Read>(reader: &mut R, checksum_len: usize) -> io::Result<Vec<u8>> {
     let mut checksum = vec![0u8; checksum_len];
     reader.read_exact(&mut checksum)?;

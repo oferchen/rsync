@@ -59,7 +59,6 @@ impl<R: Read> CompressedReader<R> {
     ///
     /// Returns an error if the compression algorithm is not supported in this build
     /// (e.g., LZ4 or Zstd without the corresponding feature flag).
-    #[must_use]
     pub fn new(inner: R, algorithm: CompressionAlgorithm) -> io::Result<Self> {
         let decoder = match algorithm {
             CompressionAlgorithm::Zlib => DecoderVariant::Zlib(CountingZlibDecoder::new(inner)),

@@ -45,7 +45,6 @@ pub struct CopyAsIds {
 /// # Errors
 ///
 /// Returns an error if the user or group cannot be resolved to a numeric ID.
-#[must_use]
 pub fn parse_copy_as_spec(spec: &OsStr) -> io::Result<CopyAsIds> {
     let spec_str = spec.to_string_lossy();
     let (user_part, group_part) = match spec_str.find(':') {

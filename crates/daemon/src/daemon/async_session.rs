@@ -211,7 +211,6 @@ impl AsyncDaemonListener {
     /// # Errors
     ///
     /// Returns an error if the local address cannot be determined.
-    #[must_use]
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
     }

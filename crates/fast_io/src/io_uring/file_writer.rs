@@ -36,7 +36,6 @@ impl IoUringWriter {
     /// Returns an error if:
     /// - The file cannot be created
     /// - io_uring initialization fails
-    #[must_use]
     pub fn create<P: AsRef<Path>>(path: P, config: &IoUringConfig) -> io::Result<Self> {
         let file = File::create(path)?;
         let ring = config.build_ring()?;
@@ -55,7 +54,6 @@ impl IoUringWriter {
     }
 
     /// Wraps an existing file handle for writing with io_uring.
-    #[must_use]
     pub fn from_file(file: File, config: &IoUringConfig) -> io::Result<Self> {
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);

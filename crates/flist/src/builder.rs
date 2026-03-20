@@ -91,7 +91,6 @@ impl FileListBuilder {
     }
 
     /// Builds a [`FileListWalker`] using the configured options.
-    #[must_use]
     pub fn build(self) -> Result<FileListWalker, FileListError> {
         FileListWalker::new(
             self.root,

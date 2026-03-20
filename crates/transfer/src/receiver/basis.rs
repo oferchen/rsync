@@ -223,7 +223,6 @@ fn generate_basis_signature(
 /// - `generator.c:1450` - Basis file selection in `recv_generator()`
 /// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
 /// - `generator.c:1400` - Reference directory checking
-#[must_use]
 pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileResult {
     // Upstream `generator.c:1949`: when `whole_file` is set, no basis file
     // is used - the entire file is sent as literals.

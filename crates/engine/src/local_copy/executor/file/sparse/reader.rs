@@ -60,14 +60,12 @@ impl SparseReader {
     /// - **Linux**: Uses `SEEK_HOLE`/`SEEK_DATA` syscalls for efficient detection
     /// - **Other platforms**: Reads file in chunks and scans for zero runs
     #[cfg(target_os = "linux")]
-    #[must_use]
     pub fn detect_holes(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
         Self::detect_holes_linux(file)
     }
 
     /// Fallback hole detection for non-Linux platforms.
     #[cfg(not(target_os = "linux"))]
-    #[must_use]
     pub fn detect_holes(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
         Self::detect_holes_fallback(file)
     }

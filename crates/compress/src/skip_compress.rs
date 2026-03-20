@@ -438,7 +438,6 @@ impl CompressionDecider {
     /// let repetitive_data = vec![b'a'; 4096];
     /// assert!(decider.auto_detect_compressible(&repetitive_data).unwrap());
     /// ```
-    #[must_use]
     pub fn auto_detect_compressible(&self, sample: &[u8]) -> io::Result<bool> {
         if sample.is_empty() {
             return Ok(true); // Empty files are trivially compressible

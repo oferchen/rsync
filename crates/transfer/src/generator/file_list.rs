@@ -122,7 +122,6 @@ impl GeneratorContext {
     /// - `flist.c:1456` - `send_file_entry()` - Per-file encoding
     ///
     /// Mirrors upstream recursive directory scanning and file list construction behavior.
-    #[must_use]
     pub fn build_file_list(&mut self, base_paths: &[PathBuf]) -> io::Result<usize> {
         // Track timing for flist_buildtime statistic (upstream stats.flist_buildtime)
         self.timing.flist_build_start = Some(Instant::now());

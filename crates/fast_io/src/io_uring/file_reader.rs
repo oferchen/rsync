@@ -39,7 +39,6 @@ impl IoUringReader {
     /// Returns an error if:
     /// - The file cannot be opened
     /// - io_uring initialization fails
-    #[must_use]
     pub fn open<P: AsRef<Path>>(path: P, config: &IoUringConfig) -> io::Result<Self> {
         let file = File::open(path)?;
         let size = file.metadata()?.len();

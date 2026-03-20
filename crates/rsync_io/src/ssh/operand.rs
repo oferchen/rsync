@@ -106,7 +106,6 @@ pub enum RemoteOperandParseError {
 /// assert_eq!(parsed.host(), "example.com");
 /// assert_eq!(parsed.path(), "/remote/path");
 /// ```
-#[must_use]
 pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperandParseError> {
     if operand.is_empty() {
         return Err(RemoteOperandParseError::Empty);

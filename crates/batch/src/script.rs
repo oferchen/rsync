@@ -24,7 +24,6 @@ use std::os::unix::fs::PermissionsExt;
 /// - `batch.c:255-312`: `write_batch_shell_file()` writes the raw command
 ///   without a shebang line. The `.sh` file is opened with mode `S_IRUSR |
 ///   S_IWUSR | S_IXUSR` (0o700).
-#[must_use]
 pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
     let script_path = config.script_file_path();
     let batch_name = config.batch_file_path().to_string_lossy();

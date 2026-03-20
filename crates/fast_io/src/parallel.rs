@@ -123,7 +123,6 @@ impl ParallelExecutor {
     /// When `thread_count` is non-zero, a dedicated rayon thread pool of that
     /// size is used. This is important for I/O-bound workloads (HDD, NFS) where
     /// the default (all logical CPUs) causes contention.
-    #[must_use]
     pub fn process<T, U, F>(&self, items: &[T], process_fn: F) -> ParallelResult<U>
     where
         T: Sync,
@@ -167,7 +166,6 @@ impl ParallelExecutor {
     ///
     /// Specialized version for file operations that tracks bytes processed.
     /// Respects `thread_count` for I/O-bound stat workloads.
-    #[must_use]
     pub fn process_files<P, U, F>(&self, paths: &[P], process_fn: F) -> ParallelResult<U>
     where
         P: AsRef<Path> + Sync,

@@ -42,7 +42,6 @@ impl<'a> BorrowedMessageFrame<'a> {
     }
 
     /// Converts the borrowed frame into an owned [`MessageFrame`].
-    #[must_use]
     pub fn into_owned(self) -> io::Result<MessageFrame> {
         MessageFrame::new(self.code, self.payload.to_vec())
     }
@@ -70,7 +69,6 @@ impl<'a> BorrowedMessageFrame<'a> {
     /// assert_eq!(frame.payload(), b"abc");
     /// assert!(remainder.is_empty());
     /// ```
-    #[must_use]
     pub fn decode_from_slice(bytes: &'a [u8]) -> io::Result<(Self, &'a [u8])> {
         let (header, payload, remainder) = decode_frame_parts(bytes)?;
         Ok((

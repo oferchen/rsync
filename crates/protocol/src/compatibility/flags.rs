@@ -170,7 +170,6 @@ impl CompatibilityFlags {
     /// Propagates I/O errors reported by [`read_varint`]. The helper mirrors upstream rsync by
     /// reinterpreting negative `i32` values using two's-complement semantics so future
     /// compatibility bits that extend into the sign position are preserved.
-    #[must_use]
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         let value = read_varint(reader)?;
         Ok(Self::new(value as u32))
@@ -180,7 +179,6 @@ impl CompatibilityFlags {
     ///
     /// Negative integers are interpreted using two's-complement semantics so that encoded bitfields
     /// with sign-bit extensions round-trip exactly like the upstream C implementation.
-    #[must_use]
     pub fn decode_from_slice(bytes: &[u8]) -> io::Result<(Self, &[u8])> {
         let (value, remainder) = decode_varint(bytes)?;
         Ok((Self::new(value as u32), remainder))
@@ -209,7 +207,6 @@ impl CompatibilityFlags {
     /// assert_eq!(decoded, flags);
     /// assert_eq!(slice, &[0x7F]);
     /// ```
-    #[must_use]
     pub fn decode_from_slice_mut(bytes: &mut &[u8]) -> io::Result<Self> {
         match Self::decode_from_slice(bytes) {
             Ok((flags, remainder)) => {

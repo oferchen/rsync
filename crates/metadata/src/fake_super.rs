@@ -105,7 +105,6 @@ impl FakeSuperStat {
     /// # Errors
     ///
     /// Returns an error if the format is invalid.
-    #[must_use]
     pub fn decode(s: &str) -> io::Result<Self> {
         let parts: Vec<&str> = s.split_whitespace().collect();
 
@@ -203,7 +202,6 @@ pub fn store_fake_super(path: &Path, stat: &FakeSuperStat) -> io::Result<()> {
 ///
 /// Returns `None` if the xattr doesn't exist.
 #[cfg(all(unix, feature = "xattr"))]
-#[must_use]
 pub fn load_fake_super(path: &Path) -> io::Result<Option<FakeSuperStat>> {
     match xattr::get(path, FAKE_SUPER_XATTR) {
         Ok(Some(value)) => {
@@ -326,7 +324,6 @@ pub fn store_fake_super(_path: &Path, _stat: &FakeSuperStat) -> io::Result<()> {
 /// Always returns `None` on platforms without xattr support since there is no
 /// way to store fake-super metadata without extended attributes.
 #[cfg(not(all(unix, feature = "xattr")))]
-#[must_use]
 pub fn load_fake_super(_path: &Path) -> io::Result<Option<FakeSuperStat>> {
     Ok(None)
 }

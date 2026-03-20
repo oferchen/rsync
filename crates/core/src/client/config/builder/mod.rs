@@ -257,7 +257,6 @@ impl ClientConfigBuilder {
     /// - `--inplace` conflicts with `--partial-dir` and `--delay-updates`
     /// - `--append` conflicts with `--partial-dir` and `--delay-updates`
     ///   (upstream: `--append` sets `inplace = 1`, then the `inplace && partial_dir` check fires)
-    #[must_use]
     pub fn validate(&self) -> Result<(), ConfigConflict> {
         let is_inplace = self.inplace || self.append;
         if is_inplace {

@@ -24,7 +24,6 @@ pub enum ActiveCompressor {
 
 impl ActiveCompressor {
     /// Creates a compressor for `algorithm` using the provided compression `level`.
-    #[must_use]
     pub fn new(algorithm: CompressionAlgorithm, level: CompressionLevel) -> io::Result<Self> {
         match algorithm {
             CompressionAlgorithm::Zlib => Ok(Self::Zlib(CountingZlibEncoder::new(level))),

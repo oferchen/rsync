@@ -78,7 +78,6 @@ impl MetadataCache {
     /// Gets cached metadata for a path, or fetches it if not cached.
     ///
     /// Uses optimized statx on Linux when available, falling back to regular stat.
-    #[must_use]
     pub fn get_or_fetch(&mut self, path: &Path) -> io::Result<CachedMetadata> {
         if let Some(cached) = self.cache.get(path) {
             self.hits += 1;
@@ -116,7 +115,6 @@ impl MetadataCache {
 
     /// Compares current file mode with cached value without fetching metadata.
     #[cfg(unix)]
-    #[must_use]
     pub fn mode_matches(&mut self, path: &Path, expected_mode: u32) -> io::Result<bool> {
         let cached = self.get_or_fetch(path)?;
         Ok((cached.mode & 0o7777) == (expected_mode & 0o7777))

@@ -234,7 +234,6 @@ impl InfoFlags {
 /// assert!(!flags.should_show_name());
 /// assert!(!flags.should_show_stats());
 /// ```
-#[must_use]
 pub fn parse_info_flags(flags_str: &str) -> Result<InfoFlags, InfoFlagError> {
     if flags_str.is_empty() {
         return Ok(InfoFlags::default());

@@ -31,7 +31,6 @@ impl<R: Read> NegotiatedStream<R> {
     ///   observed.
     /// - [`io::ErrorKind::OutOfMemory`] when reserving space for the output buffer fails.
     #[doc(alias = "@RSYNCD")]
-    #[must_use]
     pub fn read_legacy_daemon_line(&mut self, line: &mut Vec<u8>) -> io::Result<()> {
         self.read_legacy_line(line, true)
     }

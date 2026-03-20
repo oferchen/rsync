@@ -27,7 +27,6 @@ impl MessageHeader {
     }
 
     /// Parses a header from the beginning of `bytes`.
-    #[must_use]
     pub fn decode(bytes: &[u8]) -> Result<Self, EnvelopeError> {
         if bytes.len() < HEADER_LEN {
             return Err(EnvelopeError::TruncatedHeader {

@@ -80,7 +80,6 @@ impl BatchHeader {
     /// 2. Protocol version (i32)
     /// 3. Compat flags (varint, if protocol >= 30)
     /// 4. Checksum seed (i32)
-    #[must_use]
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         // Read raw stream flags bitmap (protocol version not yet known)
         let raw_bitmap = BatchFlags::read_raw(reader)?;
@@ -255,7 +254,6 @@ impl BatchFlags {
     /// Returns the raw `i32` bitmap without interpreting protocol-gated bits.
     /// The caller must pass this to [`BatchFlags::from_bitmap`] with the
     /// correct protocol version (read from the header after the bitmap).
-    #[must_use]
     pub fn read_raw<R: Read>(reader: &mut R) -> io::Result<i32> {
         read_i32(reader)
     }
@@ -378,7 +376,6 @@ impl BatchStats {
     ///
     /// Uses `read_varlong30` with `min_bytes=3` to match upstream rsync's
     /// stats deserialization.
-    #[must_use]
     pub fn read_from<R: Read>(reader: &mut R, protocol_version: i32) -> io::Result<Self> {
         let total_read = protocol::read_varlong30(reader, 3)?;
         let total_written = protocol::read_varlong30(reader, 3)?;
@@ -471,7 +468,6 @@ impl FileEntry {
     }
 
     /// Read a file entry from a reader.
-    #[must_use]
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         // Read path
         let path = read_string(reader)?;

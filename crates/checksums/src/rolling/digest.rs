@@ -76,7 +76,6 @@ impl RollingDigest {
     ///
     /// assert_eq!(digest.len(), b"streamed input".len());
     /// ```
-    #[must_use]
     pub fn from_reader_with_buffer<R: Read>(reader: &mut R, buffer: &mut [u8]) -> io::Result<Self> {
         let mut checksum = RollingChecksum::new();
         let read = checksum.update_reader_with_buffer(reader, buffer)?;
@@ -99,7 +98,6 @@ impl RollingDigest {
     /// # Errors
     ///
     /// Propagates any [`io::Error`] emitted by the reader.
-    #[must_use]
     pub fn from_reader<R: Read>(reader: &mut R) -> io::Result<Self> {
         let mut checksum = RollingChecksum::new();
         checksum.update_reader(reader)?;
@@ -142,7 +140,6 @@ impl RollingDigest {
     /// # Errors
     ///
     /// Returns [`RollingSliceError`] when the slice does not contain exactly four bytes.
-    #[must_use]
     pub fn from_le_slice(bytes: &[u8], len: usize) -> Result<Self, RollingSliceError> {
         if bytes.len() != RollingSliceError::EXPECTED_LEN {
             return Err(RollingSliceError::new(bytes.len()));
@@ -232,7 +229,6 @@ impl RollingDigest {
     ///
     /// Propagates any [`io::Error`] raised by the reader. Short reads surface as
     /// [`io::ErrorKind::UnexpectedEof`], matching upstream diagnostics for truncated payloads.
-    #[must_use]
     pub fn read_le_from<R: Read>(reader: &mut R, len: usize) -> io::Result<Self> {
         let mut bytes = [0u8; RollingSliceError::EXPECTED_LEN];
         reader.read_exact(&mut bytes)?;

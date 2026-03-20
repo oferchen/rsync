@@ -237,7 +237,6 @@ impl DirectoryStatBatch {
     /// # Errors
     ///
     /// Returns an error if the directory cannot be opened.
-    #[must_use]
     pub fn open<P: AsRef<Path>>(dir_path: P) -> io::Result<Self> {
         use std::os::unix::io::AsRawFd;
 
@@ -258,7 +257,6 @@ impl DirectoryStatBatch {
     /// # Errors
     ///
     /// Returns an error if the file cannot be stat'd.
-    #[must_use]
     pub fn stat_relative(&self, name: &OsString, follow_symlinks: bool) -> io::Result<FstatResult> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
@@ -625,7 +623,6 @@ pub fn has_statx_support() -> bool {
 ///
 /// Returns an error if the statx syscall fails (e.g., ENOENT, ENOSYS).
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-#[must_use]
 pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<StatxResult> {
     statx_with_mask(
         libc::AT_FDCWD,
@@ -645,7 +642,6 @@ pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<Statx
 ///
 /// Returns an error if the statx syscall fails or is not supported.
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-#[must_use]
 pub fn statx_mtime<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<(i64, u32)> {
     let result = statx_with_mask(
         libc::AT_FDCWD,

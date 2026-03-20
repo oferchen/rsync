@@ -266,7 +266,6 @@ impl SecretsFile {
     /// assert_eq!(secrets.lookup("bob"), Some("password"));
     /// assert_eq!(secrets.lookup("charlie"), None);
     /// ```
-    #[must_use]
     pub fn parse(content: &str) -> io::Result<Self> {
         let mut entries = HashMap::new();
 
@@ -322,7 +321,6 @@ impl SecretsFile {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub fn from_file(path: &Path) -> io::Result<Self> {
         Self::check_permissions(path)?;
         let content = fs::read_to_string(path)?;

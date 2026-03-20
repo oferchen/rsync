@@ -103,7 +103,6 @@ pub fn forward_files_from<R: Read, W: Write>(
 ///
 /// - `flist.c:2262` — `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
 ///   with `RL_EOL_NULLS` set when `reading_remotely`
-#[must_use]
 pub fn read_files_from_stream<R: Read>(reader: &mut R) -> io::Result<Vec<String>> {
     let mut filenames = Vec::new();
     let mut current = Vec::new();
