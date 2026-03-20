@@ -1802,4 +1802,385 @@ mod tests {
         entry.set_flags(flags);
         assert_eq!(entry.flags(), flags);
     }
+
+    // ---- FileEntryExtras accessor comprehensive tests (task #1036) ----
+
+    /// Getter roundtrip: set each extras field individually from a fresh entry,
+    /// verify the value, and confirm extras was allocated.
+    #[test]
+    fn extras_roundtrip_link_target() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_link_target("/absolute/target".into());
+        assert!(entry.extras.is_some());
+        assert_eq!(
+            entry.link_target().map(|p| p.as_path()),
+            Some(Path::new("/absolute/target"))
+        );
+    }
+
+    #[test]
+    fn extras_roundtrip_rdev() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_rdev(259, 17);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.rdev_major(), Some(259));
+        assert_eq!(entry.rdev_minor(), Some(17));
+    }
+
+    #[test]
+    fn extras_roundtrip_user_name() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_user_name("nobody".to_string());
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.user_name(), Some("nobody"));
+    }
+
+    #[test]
+    fn extras_roundtrip_group_name() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_group_name("nogroup".to_string());
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.group_name(), Some("nogroup"));
+    }
+
+    #[test]
+    fn extras_roundtrip_crtime() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_crtime(1_500_000_000);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.crtime(), 1_500_000_000);
+    }
+
+    #[test]
+    fn extras_roundtrip_atime_nsec() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_atime_nsec(123_456);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.atime_nsec(), 123_456);
+    }
+
+    #[test]
+    fn extras_roundtrip_hardlink_dev() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_hardlink_dev(0x1234_5678);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.hardlink_dev(), Some(0x1234_5678));
+    }
+
+    #[test]
+    fn extras_roundtrip_hardlink_ino() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_hardlink_ino(98765);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.hardlink_ino(), Some(98765));
+    }
+
+    #[test]
+    fn extras_roundtrip_checksum() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        let sum = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        entry.set_checksum(sum.clone());
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.checksum(), Some(sum.as_slice()));
+    }
+
+    #[test]
+    fn extras_roundtrip_acl_ndx() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_acl_ndx(42);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.acl_ndx(), Some(42));
+    }
+
+    #[test]
+    fn extras_roundtrip_def_acl_ndx() {
+        let mut entry = FileEntry::new_directory("d".into(), 0o755);
+        assert!(entry.extras.is_none());
+        entry.set_def_acl_ndx(77);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.def_acl_ndx(), Some(77));
+    }
+
+    #[test]
+    fn extras_roundtrip_xattr_ndx() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_xattr_ndx(255);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.xattr_ndx(), Some(255));
+    }
+
+    #[test]
+    fn extras_roundtrip_hardlink_idx() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_hardlink_idx(1000);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.hardlink_idx(), Some(1000));
+    }
+
+    #[test]
+    fn extras_roundtrip_atime() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        assert!(entry.extras.is_none());
+        entry.set_atime(1_700_000_000);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.atime(), 1_700_000_000);
+    }
+
+    /// Clone of entry with extras produces independent copy - mutating clone
+    /// does not affect the original.
+    #[test]
+    fn clone_extras_independence() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 100, 0o644);
+        entry.set_atime(500);
+        entry.set_user_name("alice".to_string());
+
+        let mut cloned = entry.clone();
+        cloned.set_atime(999);
+        cloned.set_user_name("bob".to_string());
+
+        // Original unchanged.
+        assert_eq!(entry.atime(), 500);
+        assert_eq!(entry.user_name(), Some("alice"));
+        // Clone has new values.
+        assert_eq!(cloned.atime(), 999);
+        assert_eq!(cloned.user_name(), Some("bob"));
+    }
+
+    /// PartialEq: entries differ only by an extras field deep inside.
+    #[test]
+    fn equality_differs_by_single_extras_field() {
+        let mut a = FileEntry::new_file("f.txt".into(), 100, 0o644);
+        let mut b = FileEntry::new_file("f.txt".into(), 100, 0o644);
+        a.set_xattr_ndx(1);
+        b.set_xattr_ndx(2);
+        assert_ne!(a, b);
+    }
+
+    /// PartialEq: entries with different extras fields set are not equal.
+    #[test]
+    fn equality_different_extras_fields_set() {
+        let mut a = FileEntry::new_file("f.txt".into(), 100, 0o644);
+        let mut b = FileEntry::new_file("f.txt".into(), 100, 0o644);
+        a.set_acl_ndx(1);
+        b.set_xattr_ndx(1);
+        assert_ne!(a, b);
+    }
+
+    /// PartialEq: entries with identical multiple extras fields are equal.
+    #[test]
+    fn equality_multiple_extras_fields_match() {
+        let mut a = FileEntry::new_file("f.txt".into(), 100, 0o644);
+        let mut b = FileEntry::new_file("f.txt".into(), 100, 0o644);
+        for entry in [&mut a, &mut b] {
+            entry.set_atime(100);
+            entry.set_crtime(200);
+            entry.set_user_name("root".to_string());
+            entry.set_checksum(vec![0xAB, 0xCD]);
+            entry.set_hardlink_idx(42);
+        }
+        assert_eq!(a, b);
+    }
+
+    /// Setters on different entry types (directory, symlink) allocate extras.
+    #[test]
+    fn extras_on_directory_entry() {
+        let mut entry = FileEntry::new_directory("mydir".into(), 0o755);
+        assert!(entry.extras.is_none());
+        entry.set_acl_ndx(5);
+        entry.set_def_acl_ndx(6);
+        entry.set_xattr_ndx(7);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.acl_ndx(), Some(5));
+        assert_eq!(entry.def_acl_ndx(), Some(6));
+        assert_eq!(entry.xattr_ndx(), Some(7));
+    }
+
+    #[test]
+    fn extras_on_symlink_entry() {
+        let mut entry = FileEntry::new_symlink("lnk".into(), "/target".into());
+        assert!(entry.extras.is_some()); // Already allocated for link_target.
+        entry.set_user_name("owner".to_string());
+        assert_eq!(entry.user_name(), Some("owner"));
+        // link_target preserved after setting another field.
+        assert_eq!(
+            entry.link_target().map(|p| p.as_path()),
+            Some(Path::new("/target"))
+        );
+    }
+
+    /// from_raw constructor starts with no extras.
+    #[test]
+    fn from_raw_no_extras() {
+        let flags = super::super::flags::FileFlags::default();
+        let entry = FileEntry::from_raw("file.rs".into(), 512, 0o100644, 1000, 0, flags);
+        assert!(entry.extras.is_none());
+        assert_eq!(entry.atime(), 0);
+        assert_eq!(entry.link_target(), None);
+        assert_eq!(entry.checksum(), None);
+    }
+
+    /// from_raw_bytes constructor starts with no extras.
+    #[test]
+    fn from_raw_bytes_no_extras() {
+        let flags = super::super::flags::FileFlags::default();
+        let entry =
+            FileEntry::from_raw_bytes(b"data.bin".to_vec(), 2048, 0o100755, 5000, 100, flags);
+        assert!(entry.extras.is_none());
+        assert_eq!(entry.atime(), 0);
+        assert_eq!(entry.crtime(), 0);
+        assert_eq!(entry.user_name(), None);
+    }
+
+    /// from_raw_bytes entry can have extras set after construction.
+    #[test]
+    fn from_raw_bytes_then_set_extras() {
+        let flags = super::super::flags::FileFlags::default();
+        let mut entry = FileEntry::from_raw_bytes(b"file.dat".to_vec(), 100, 0o100644, 0, 0, flags);
+        entry.set_checksum(vec![0xFF; 16]);
+        entry.set_hardlink_idx(7);
+        assert!(entry.extras.is_some());
+        assert_eq!(entry.checksum(), Some(&[0xFF; 16][..]));
+        assert_eq!(entry.hardlink_idx(), Some(7));
+    }
+
+    /// prepend_dir preserves extras on the entry.
+    #[test]
+    fn prepend_dir_preserves_extras() {
+        let mut entry = FileEntry::new_file("file.txt".into(), 100, 0o644);
+        entry.set_atime(42);
+        entry.set_checksum(vec![0xBE, 0xEF]);
+
+        entry.prepend_dir(Path::new("parent/dir"));
+
+        assert_eq!(entry.name(), "parent/dir/file.txt");
+        assert_eq!(entry.atime(), 42);
+        assert_eq!(entry.checksum(), Some(&[0xBE, 0xEF][..]));
+    }
+
+    /// strip_leading_slashes preserves extras on the entry.
+    #[cfg(unix)]
+    #[test]
+    fn strip_leading_slashes_preserves_extras() {
+        let flags = super::super::flags::FileFlags::default();
+        let mut entry = FileEntry::from_raw("/leading/file.txt".into(), 100, 0o100644, 0, 0, flags);
+        entry.set_user_name("root".to_string());
+        entry.set_xattr_ndx(3);
+
+        entry.strip_leading_slashes();
+
+        assert_eq!(entry.name(), "leading/file.txt");
+        assert_eq!(entry.user_name(), Some("root"));
+        assert_eq!(entry.xattr_ndx(), Some(3));
+    }
+
+    /// name_bytes returns correct byte representation.
+    #[test]
+    fn name_bytes_accessor() {
+        let entry = FileEntry::new_file("hello.txt".into(), 100, 0o644);
+        assert_eq!(entry.name_bytes(), b"hello.txt");
+    }
+
+    /// Extras with unicode user/group names.
+    #[test]
+    fn extras_unicode_names() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        entry.set_user_name("\u{00E9}mile".to_string()); // emile with accent
+        entry.set_group_name("\u{00FC}sers".to_string()); // users with umlaut
+        assert_eq!(entry.user_name(), Some("\u{00E9}mile"));
+        assert_eq!(entry.group_name(), Some("\u{00FC}sers"));
+    }
+
+    /// Extras checksum with 16-byte MD5-sized value.
+    #[test]
+    fn extras_checksum_md5_sized() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        let md5 = vec![
+            0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8,
+            0x42, 0x7e,
+        ];
+        entry.set_checksum(md5.clone());
+        assert_eq!(entry.checksum(), Some(md5.as_slice()));
+        assert_eq!(entry.checksum().unwrap().len(), 16);
+    }
+
+    /// Multiple setters called, then clone, then verify independence.
+    #[test]
+    fn clone_all_extras_then_mutate() {
+        let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+        entry.set_link_target("/a".into());
+        entry.set_user_name("u1".to_string());
+        entry.set_group_name("g1".to_string());
+        entry.set_atime(1);
+        entry.set_crtime(2);
+        entry.set_atime_nsec(3);
+        entry.set_rdev(4, 5);
+        entry.set_hardlink_idx(6);
+        entry.set_hardlink_dev(7);
+        entry.set_hardlink_ino(8);
+        entry.set_checksum(vec![9]);
+        entry.set_acl_ndx(10);
+        entry.set_def_acl_ndx(11);
+        entry.set_xattr_ndx(12);
+
+        let mut cloned = entry.clone();
+
+        // Mutate every field on the clone.
+        cloned.set_link_target("/b".into());
+        cloned.set_user_name("u2".to_string());
+        cloned.set_group_name("g2".to_string());
+        cloned.set_atime(100);
+        cloned.set_crtime(200);
+        cloned.set_atime_nsec(300);
+        cloned.set_rdev(400, 500);
+        cloned.set_hardlink_idx(600);
+        cloned.set_hardlink_dev(700);
+        cloned.set_hardlink_ino(800);
+        cloned.set_checksum(vec![90]);
+        cloned.set_acl_ndx(1000);
+        cloned.set_def_acl_ndx(1100);
+        cloned.set_xattr_ndx(1200);
+
+        // Original untouched.
+        assert_eq!(
+            entry.link_target().map(|p| p.as_path()),
+            Some(Path::new("/a"))
+        );
+        assert_eq!(entry.user_name(), Some("u1"));
+        assert_eq!(entry.group_name(), Some("g1"));
+        assert_eq!(entry.atime(), 1);
+        assert_eq!(entry.crtime(), 2);
+        assert_eq!(entry.atime_nsec(), 3);
+        assert_eq!(entry.rdev_major(), Some(4));
+        assert_eq!(entry.rdev_minor(), Some(5));
+        assert_eq!(entry.hardlink_idx(), Some(6));
+        assert_eq!(entry.hardlink_dev(), Some(7));
+        assert_eq!(entry.hardlink_ino(), Some(8));
+        assert_eq!(entry.checksum(), Some(&[9][..]));
+        assert_eq!(entry.acl_ndx(), Some(10));
+        assert_eq!(entry.def_acl_ndx(), Some(11));
+        assert_eq!(entry.xattr_ndx(), Some(12));
+
+        // Clone has new values.
+        assert_eq!(
+            cloned.link_target().map(|p| p.as_path()),
+            Some(Path::new("/b"))
+        );
+        assert_eq!(cloned.user_name(), Some("u2"));
+        assert_eq!(cloned.atime(), 100);
+        assert_eq!(cloned.xattr_ndx(), Some(1200));
+
+        assert_ne!(entry, cloned);
+    }
 }
