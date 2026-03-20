@@ -131,7 +131,13 @@ include!("daemon/module_state.rs");
 
 type SharedLogSink = Arc<Mutex<MessageSink<std::fs::File>>>;
 
-include!("daemon/runtime_options.rs");
+include!("daemon/runtime_options/types.rs");
+include!("daemon/runtime_options/parsing.rs");
+include!("daemon/runtime_options/setters.rs");
+include!("daemon/runtime_options/config.rs");
+include!("daemon/runtime_options/accessors.rs");
+include!("daemon/runtime_options/resolve.rs");
+include!("daemon/runtime_options/tests.rs");
 
 include!("daemon/sections/config_paths.rs");
 
