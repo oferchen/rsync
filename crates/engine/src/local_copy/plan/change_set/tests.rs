@@ -493,8 +493,7 @@ fn change_set_detects_permission_changes_for_existing_destination() {
     existing_perms.set_mode(0o644);
     fs::set_permissions(&existing_path, existing_perms).expect("set existing perms");
     let existing = fs::metadata(&existing_path).expect("metadata");
-    let existing_mtime =
-        FileTime::from_system_time(existing.modified().expect("existing mtime"));
+    let existing_mtime = FileTime::from_system_time(existing.modified().expect("existing mtime"));
 
     let new_path = temp.path().join("updated.txt");
     fs::write(&new_path, b"content").expect("write new");
