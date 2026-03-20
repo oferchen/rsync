@@ -523,6 +523,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
             flags.push('v');
         }
 
+        // Info flags after the '.' separator.
+        // upstream: options.c:2707-2713 — info/debug flags appended after '.'
+        if self.config.itemize_changes() {
+            flags.push('.');
+            flags.push('i');
+        }
+
         flags
     }
 }
