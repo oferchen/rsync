@@ -412,6 +412,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
     fn build_flag_string(&self) -> String {
         let mut flags = String::from("-");
 
+        // upstream: options.c:2169-2188 — when --files-from is active, upstream
+        // sets recurse=0, xfer_dirs=1, relative_paths=1. Suppress 'r' and imply
+        // 'R' to match this behaviour.
+        let files_from_active = self.config.files_from().is_active();
+        let effective_recursive = self.config.recursive() && !files_from_active;
+        let effective_relative = self.config.relative_paths() || files_from_active;
+
         // Transfer flags (order matches upstream server_options())
         if self.config.links() {
             flags.push('l');
@@ -448,7 +455,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             // executability is implicitly included.
             flags.push('E');
         }
-        if self.config.recursive() {
+        if effective_recursive {
             flags.push('r');
         }
         if self.config.compress() {
@@ -475,7 +482,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
         // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
         // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
-        if self.config.dirs() && !self.config.recursive() {
+        // When --files-from is active, upstream sets xfer_dirs=1 and recurse=0,
+        // so 'd' is emitted (options.c:2620).
+        let effective_dirs = self.config.dirs() || files_from_active;
+        if effective_dirs && !effective_recursive {
             flags.push('d');
         }
         // upstream: options.c:2644-2648 - only send 'W' when explicitly set
@@ -494,7 +504,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         for _ in 0..self.config.one_file_system_level() {
             flags.push('x');
         }
-        if self.config.relative_paths() {
+        if effective_relative {
             flags.push('R');
         }
         if self.config.partial() {
