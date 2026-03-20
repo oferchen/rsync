@@ -749,9 +749,11 @@ fn files_from_integration_handles_nested_directories() {
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(stdout.is_empty());
 
-    // Both files should be copied (nested.txt goes to dest/nested.txt per rsync behavior)
+    // Both files should be copied. --files-from implies --relative (upstream
+    // options.c:2187-2188), so paths are preserved: subdir/nested.txt stays
+    // at dest/subdir/nested.txt.
     assert!(dest_dir.join("top.txt").exists());
-    assert!(dest_dir.join("nested.txt").exists());
+    assert!(dest_dir.join("subdir").join("nested.txt").exists());
 }
 
 #[test]
