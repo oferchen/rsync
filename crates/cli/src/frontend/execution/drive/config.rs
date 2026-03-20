@@ -322,6 +322,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         DeleteMode::During | DeleteMode::Disabled => builder,
     };
 
+    builder = builder.itemize_changes(inputs.itemize_changes);
+
     let force_event_collection = inputs.itemize_changes
         || inputs.out_format_template.is_some()
         || inputs.log_file_template.is_some()

@@ -89,6 +89,34 @@ fn includes_compress_flag() {
 }
 
 #[test]
+fn includes_itemize_info_flag() {
+    let config = ClientConfig::builder().itemize_changes(true).build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/path");
+
+    // Sender (push): rsync --server -flags . /path - flags at index 2
+    let flags = args[2].to_string_lossy();
+    assert!(
+        flags.contains(".i"),
+        "expected '.i' info flag in flags: {flags}"
+    );
+}
+
+#[test]
+fn omits_itemize_info_flag_when_disabled() {
+    let config = ClientConfig::builder().itemize_changes(false).build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/path");
+
+    // Sender (push): rsync --server -flags . /path - flags at index 2
+    let flags = args[2].to_string_lossy();
+    assert!(
+        !flags.contains(".i"),
+        "unexpected '.i' info flag in flags: {flags}"
+    );
+}
+
+#[test]
 fn detects_push_when_destination_remote() {
     let sources = vec![OsString::from("local.txt")];
     let destination = OsString::from("user@host:/remote.txt");

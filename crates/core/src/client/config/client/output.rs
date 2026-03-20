@@ -30,6 +30,20 @@ impl ClientConfig {
         self.human_readable
     }
 
+    /// Reports whether itemize-changes output was requested.
+    ///
+    /// When true, the transfer emits per-file change summaries in the
+    /// 11-character `YXcstpoguax` format. For remote transfers, this flag
+    /// is forwarded to the server so it emits itemize output as MSG_INFO.
+    ///
+    /// upstream: options.c - `itemize_changes` / `-i`
+    #[must_use]
+    #[doc(alias = "--itemize-changes")]
+    #[doc(alias = "-i")]
+    pub const fn itemize_changes(&self) -> bool {
+        self.itemize_changes
+    }
+
     /// Reports whether event collection has been explicitly requested by the caller.
     #[must_use]
     pub const fn force_event_collection(&self) -> bool {
@@ -95,6 +109,13 @@ mod tests {
     fn human_readable_default_is_false() {
         let config = default_config();
         assert!(!config.human_readable());
+    }
+
+    // Tests for itemize_changes
+    #[test]
+    fn itemize_changes_default_is_false() {
+        let config = default_config();
+        assert!(!config.itemize_changes());
     }
 
     // Tests for force event collection
