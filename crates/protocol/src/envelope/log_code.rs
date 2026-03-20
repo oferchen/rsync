@@ -72,7 +72,6 @@ impl LogCode {
     }
 
     /// Attempts to construct a [`LogCode`] from its numeric representation.
-    #[must_use]
     pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::None),
@@ -169,7 +168,6 @@ impl ParseLogCodeError {
     }
 
     /// Returns the numeric value that failed to parse, when available.
-    #[must_use]
     pub const fn invalid_value(&self) -> Option<u8> {
         match self {
             Self::InvalidValue(value) => Some(*value),
@@ -178,7 +176,6 @@ impl ParseLogCodeError {
     }
 
     /// Returns the mnemonic name that failed to parse, when available.
-    #[must_use]
     pub const fn invalid_name(&self) -> Option<&str> {
         match self {
             Self::InvalidValue(_) => None,

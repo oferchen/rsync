@@ -9,7 +9,6 @@ impl ClientConfig {
     }
 
     /// Returns the configured ownership override, if any.
-    #[must_use]
     pub const fn owner_override(&self) -> Option<u32> {
         self.owner_override
     }
@@ -22,7 +21,6 @@ impl ClientConfig {
     }
 
     /// Returns the configured group override, if any.
-    #[must_use]
     pub const fn group_override(&self) -> Option<u32> {
         self.group_override
     }
@@ -32,7 +30,6 @@ impl ClientConfig {
     /// When set, rsync will attempt to set file ownership as if running as
     /// the specified user (and optionally group). This is useful when running
     /// rsync as root but wanting files owned by a different user.
-    #[must_use]
     #[doc(alias = "--copy-as")]
     pub fn copy_as(&self) -> Option<&OsStr> {
         self.copy_as.as_deref()
@@ -47,21 +44,18 @@ impl ClientConfig {
     }
 
     /// Returns the configured chmod modifiers, if any.
-    #[must_use]
     #[doc(alias = "--chmod")]
     pub const fn chmod(&self) -> Option<&ChmodModifiers> {
         self.chmod.as_ref()
     }
 
     /// Returns the configured user mapping, if any.
-    #[must_use]
     #[doc(alias = "--usermap")]
     pub const fn user_mapping(&self) -> Option<&UserMapping> {
         self.user_mapping.as_ref()
     }
 
     /// Returns the configured group mapping, if any.
-    #[must_use]
     #[doc(alias = "--groupmap")]
     pub const fn group_mapping(&self) -> Option<&GroupMapping> {
         self.group_mapping.as_ref()

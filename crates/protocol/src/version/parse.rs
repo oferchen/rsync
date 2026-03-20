@@ -38,7 +38,6 @@ impl ParseProtocolVersionError {
 
     /// Returns the unsupported protocol byte that triggered
     /// [`ParseProtocolVersionErrorKind::UnsupportedRange`], if any.
-    #[must_use]
     pub const fn unsupported_value(self) -> Option<u8> {
         match self.kind {
             ParseProtocolVersionErrorKind::UnsupportedRange(value) => Some(value),

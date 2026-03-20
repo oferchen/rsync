@@ -272,7 +272,6 @@ impl AsyncSignatureGenerator {
     /// Tries to get a completed signature result without blocking.
     ///
     /// Returns `None` if no results are available.
-    #[must_use]
     pub fn try_get_result(&self) -> Option<SignatureResult> {
         self.result_receiver.try_recv().ok()
     }

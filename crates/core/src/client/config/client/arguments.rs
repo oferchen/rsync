@@ -31,7 +31,6 @@ impl ClientConfig {
     }
 
     /// Returns the configured batch mode settings, if any.
-    #[must_use]
     #[doc(alias = "--write-batch")]
     #[doc(alias = "--only-write-batch")]
     #[doc(alias = "--read-batch")]

@@ -196,7 +196,6 @@ impl SessionRegistry {
     }
 
     /// Returns information about a specific session.
-    #[must_use]
     pub fn get(&self, id: &SessionId) -> Option<SessionInfo> {
         self.sessions.get(id).map(|entry| entry.value().clone())
     }

@@ -11,7 +11,6 @@ impl ClientConfig {
     }
 
     /// Returns the configured compression level override, if any.
-    #[must_use]
     #[doc(alias = "--compress-level")]
     pub const fn compression_level(&self) -> Option<CompressionLevel> {
         self.compression_level
@@ -52,7 +51,6 @@ impl ClientConfig {
     }
 
     /// Returns the raw tri-state whole-file setting.
-    #[must_use]
     pub const fn whole_file_raw(&self) -> Option<bool> {
         self.whole_file
     }
@@ -95,7 +93,6 @@ impl ClientConfig {
     }
 
     /// Returns the configured delta-transfer block size override, if any.
-    #[must_use]
     #[doc(alias = "--block-size")]
     pub const fn block_size_override(&self) -> Option<NonZeroU32> {
         self.block_size_override
@@ -105,7 +102,6 @@ impl ClientConfig {
     ///
     /// When set, this limits how much memory can be allocated in a single
     /// request, providing protection against memory exhaustion attacks.
-    #[must_use]
     #[doc(alias = "--max-alloc")]
     pub const fn max_alloc(&self) -> Option<u64> {
         self.max_alloc

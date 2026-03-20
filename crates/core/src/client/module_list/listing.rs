@@ -106,7 +106,6 @@ impl ModuleListEntry {
     }
 
     /// Returns the optional comment associated with the module.
-    #[must_use]
     pub fn comment(&self) -> Option<&str> {
         self.comment.as_deref()
     }

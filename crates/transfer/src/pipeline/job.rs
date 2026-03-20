@@ -52,7 +52,6 @@ impl FileList {
     }
 
     /// Returns the entry at the given NDX (0-based protocol index).
-    #[must_use]
     pub fn get(&self, ndx: u32) -> Option<&FileEntry> {
         self.entries.get(ndx as usize)
     }
@@ -127,7 +126,6 @@ impl FileJob {
     /// Creates a retry job from this job, incrementing the retry count.
     ///
     /// Returns `None` if the maximum retry count has been reached.
-    #[must_use]
     pub fn retry(mut self) -> Option<Self> {
         if self.flags.retry_count >= MAX_RETRY_COUNT {
             return None;

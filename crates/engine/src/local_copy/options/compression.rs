@@ -66,7 +66,6 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured compression level override, if any.
-    #[must_use]
     pub const fn compression_level_override(&self) -> Option<CompressionLevel> {
         self.compression_level_override
     }
@@ -87,7 +86,6 @@ impl LocalCopyOptions {
     }
 
     /// Returns the effective compression level when compression is enabled.
-    #[must_use]
     pub const fn effective_compression_level(&self) -> Option<CompressionLevel> {
         if self.compress {
             Some(self.compression_level())
@@ -97,7 +95,6 @@ impl LocalCopyOptions {
     }
 
     /// Returns the effective compression algorithm when compression is enabled.
-    #[must_use]
     #[doc(alias = "--compress-choice")]
     pub const fn effective_compression_algorithm(&self) -> Option<CompressionAlgorithm> {
         if self.compress {

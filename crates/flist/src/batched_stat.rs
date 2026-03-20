@@ -108,7 +108,6 @@ impl BatchedStatCache {
     }
 
     /// Gets cached metadata for a path, if present.
-    #[must_use]
     pub fn get(&self, path: &Path) -> Option<Arc<fs::Metadata>> {
         let idx = Self::shard_index(path);
         self.shards[idx].lock().unwrap().get(path).cloned()

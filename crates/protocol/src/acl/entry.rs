@@ -461,7 +461,6 @@ impl AclCache {
     /// Finds a matching access ACL in the cache.
     ///
     /// Returns the index if found, or `None` if no match.
-    #[must_use]
     pub fn find_access(&self, acl: &RsyncAcl) -> Option<u32> {
         self.access_acls
             .iter()
@@ -472,7 +471,6 @@ impl AclCache {
     /// Finds a matching default ACL in the cache.
     ///
     /// Returns the index if found, or `None` if no match.
-    #[must_use]
     pub fn find_default(&self, acl: &RsyncAcl) -> Option<u32> {
         self.default_acls
             .iter()
@@ -501,13 +499,11 @@ impl AclCache {
     }
 
     /// Retrieves an access ACL by index.
-    #[must_use]
     pub fn get_access(&self, index: u32) -> Option<&RsyncAcl> {
         self.access_acls.get(index as usize)
     }
 
     /// Retrieves a default ACL by index.
-    #[must_use]
     pub fn get_default(&self, index: u32) -> Option<&RsyncAcl> {
         self.default_acls.get(index as usize)
     }

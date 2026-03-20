@@ -42,7 +42,6 @@ impl RemoteOperand {
     }
 
     /// Returns the username component, if present.
-    #[must_use]
     pub fn user(&self) -> Option<&str> {
         self.user.as_deref()
     }
@@ -54,7 +53,6 @@ impl RemoteOperand {
     }
 
     /// Returns the port number, if specified.
-    #[must_use]
     pub const fn port(&self) -> Option<u16> {
         self.port
     }

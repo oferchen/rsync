@@ -16,14 +16,12 @@ impl ClientConfig {
     }
 
     /// Returns the configured backup directory when `--backup-dir` is supplied.
-    #[must_use]
     #[doc(alias = "--backup-dir")]
     pub fn backup_directory(&self) -> Option<&Path> {
         self.backup_dir.as_deref()
     }
 
     /// Returns the suffix appended to backup entries when specified.
-    #[must_use]
     #[doc(alias = "--suffix")]
     pub fn backup_suffix(&self) -> Option<&OsStr> {
         self.backup_suffix.as_deref()

@@ -45,7 +45,6 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(&buffer[prefix_len..], rendered.as_slice());
     /// assert_eq!(appended, rendered.len());
     /// ```
-    #[must_use = "buffer extension reserves memory and may fail; handle allocation errors and inspect the appended length"]
     pub fn try_extend_vec(&self, buffer: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         if self.is_empty() {
             return Ok(0);
@@ -82,7 +81,6 @@ impl<'a> MessageSegments<'a> {
     /// [`Self::try_extend_vec`] into an [`io::Error`] so callers that already
     /// operate in I/O contexts do not need to handle allocation failures
     /// explicitly.
-    #[must_use = "buffer extension reserves memory and may fail; handle allocation errors and inspect the appended length"]
     pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
         self.try_extend_vec(buffer)
             .map_err(map_message_reserve_error)
@@ -118,7 +116,6 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(copied, segments.len());
     /// assert_eq!(buffer, message.to_bytes().unwrap());
     /// ```
-    #[must_use = "callers should handle the number of copied bytes or the returned error"]
     pub fn copy_to_slice(&self, dest: &mut [u8]) -> Result<usize, CopyToSliceError> {
         let required = self.len();
         if dest.len() < required {
@@ -161,7 +158,6 @@ impl<'a> MessageSegments<'a> {
     ///
     /// assert_eq!(collected, message.to_bytes().unwrap());
     /// ```
-    #[must_use = "collecting message segments allocates and can fail if memory reservations are unsuccessful"]
     pub fn to_vec(&self) -> io::Result<Vec<u8>> {
         let mut buffer = Vec::new();
         let _ = self.extend_vec(&mut buffer)?;

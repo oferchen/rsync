@@ -17,7 +17,6 @@ pub enum LogCodeConversionError {
 
 impl LogCodeConversionError {
     /// Returns the [`LogCode`] that could not be converted, when available.
-    #[must_use]
     pub const fn log_code(self) -> Option<LogCode> {
         match self {
             Self::NoMessageEquivalent(log) => Some(log),
@@ -26,7 +25,6 @@ impl LogCodeConversionError {
     }
 
     /// Returns the [`MessageCode`] that could not be converted, when available.
-    #[must_use]
     pub const fn message_code(self) -> Option<MessageCode> {
         match self {
             Self::NoMessageEquivalent(_) => None,

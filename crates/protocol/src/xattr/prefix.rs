@@ -46,7 +46,6 @@ use super::{RSYNC_PREFIX, SYSTEM_PREFIX};
 /// # Returns
 ///
 /// The wire-format name, or `None` if this xattr should be skipped.
-#[must_use]
 pub fn local_to_wire(name: &[u8], am_root: bool) -> Option<Vec<u8>> {
     let name_str = match std::str::from_utf8(name) {
         Ok(s) => s,
@@ -116,7 +115,6 @@ pub fn local_to_wire(name: &[u8], am_root: bool) -> Option<Vec<u8>> {
 /// # Returns
 ///
 /// The local-format name, or `None` if this xattr cannot be stored locally.
-#[must_use]
 pub fn wire_to_local(wire_name: &[u8], am_root: bool) -> Option<Vec<u8>> {
     let wire_str = match std::str::from_utf8(wire_name) {
         Ok(s) => s,
