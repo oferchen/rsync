@@ -384,6 +384,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--preallocate"));
         }
 
+        // upstream: options.c:2750-2762 - itemize-changes is forwarded as
+        // --log-format=%i, not as a compact flag character. Upstream also
+        // supports --log-format=%i%I when stdout_format_has_i > 1, but we
+        // use the simpler single-%i form that covers the common case.
+        if self.config.itemize_changes() {
+            args.push(OsString::from("--log-format=%i"));
+        }
+
         // --files-from forwarding.
         // upstream: options.c:2944-2956 - when the file is local (or stdin),
         // the client reads it and forwards content over the socket, so we tell
@@ -523,12 +531,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
             flags.push('v');
         }
 
-        // Info flags after the '.' separator.
-        // upstream: options.c:2707-2713 — info/debug flags appended after '.'
-        if self.config.itemize_changes() {
-            flags.push('.');
-            flags.push('i');
-        }
+        // Note: itemize-changes is forwarded via --log-format=%i in
+        // append_long_form_args(), not as a compact flag - upstream: options.c:2750-2762
 
         flags
     }
