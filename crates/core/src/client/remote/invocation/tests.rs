@@ -89,30 +89,41 @@ fn includes_compress_flag() {
 }
 
 #[test]
-fn includes_itemize_info_flag() {
+fn includes_log_format_for_itemize() {
+    // upstream: options.c:2750-2762 - itemize is sent as --log-format=%i
     let config = ClientConfig::builder().itemize_changes(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
-    // Sender (push): rsync --server -flags . /path - flags at index 2
+    let args_str: Vec<_> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        args_str.contains(&"--log-format=%i".to_string()),
+        "expected --log-format=%i in args: {args_str:?}"
+    );
+    // Must NOT appear as a compact flag
     let flags = args[2].to_string_lossy();
     assert!(
-        flags.contains(".i"),
-        "expected '.i' info flag in flags: {flags}"
+        !flags.contains(".i"),
+        "itemize should not be a compact flag: {flags}"
     );
 }
 
 #[test]
-fn omits_itemize_info_flag_when_disabled() {
+fn omits_log_format_when_itemize_disabled() {
     let config = ClientConfig::builder().itemize_changes(false).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
-    // Sender (push): rsync --server -flags . /path - flags at index 2
-    let flags = args[2].to_string_lossy();
+    let args_str: Vec<_> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     assert!(
-        !flags.contains(".i"),
-        "unexpected '.i' info flag in flags: {flags}"
+        !args_str.contains(&"--log-format=%i".to_string()),
+        "unexpected --log-format=%i in args: {args_str:?}"
     );
 }
 
