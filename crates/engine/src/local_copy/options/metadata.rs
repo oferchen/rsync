@@ -162,7 +162,6 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured ownership override, if any.
-    #[must_use]
     pub const fn owner_override(&self) -> Option<u32> {
         self.owner_override
     }
@@ -174,7 +173,6 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured group override, if any.
-    #[must_use]
     pub const fn group_override(&self) -> Option<u32> {
         self.group_override
     }
@@ -183,25 +181,21 @@ impl LocalCopyOptions {
     ///
     /// When present, the receiver should switch effective UID/GID before
     /// file I/O operations.
-    #[must_use]
     pub const fn copy_as_ids(&self) -> Option<&CopyAsIds> {
         self.copy_as.as_ref()
     }
 
     /// Returns the configured chmod modifiers, if any.
-    #[must_use]
     pub const fn chmod(&self) -> Option<&ChmodModifiers> {
         self.chmod.as_ref()
     }
 
     /// Returns the configured user mapping, if any.
-    #[must_use]
     pub const fn user_mapping(&self) -> Option<&UserMapping> {
         self.user_mapping.as_ref()
     }
 
     /// Returns the configured group mapping, if any.
-    #[must_use]
     pub const fn group_mapping(&self) -> Option<&GroupMapping> {
         self.group_mapping.as_ref()
     }
@@ -283,7 +277,6 @@ impl LocalCopyOptions {
     }
 
     /// Reports the configured `--super` mode.
-    #[must_use]
     pub const fn super_mode_setting(&self) -> Option<bool> {
         self.super_mode
     }

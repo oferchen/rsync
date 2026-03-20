@@ -11,7 +11,6 @@ use super::types::{LegacyDaemonGreeting, LegacyDaemonGreetingOwned};
 /// protocol number, subprotocol suffix, or digest list should use
 /// [`parse_legacy_daemon_greeting_details`].
 #[doc(alias = "@RSYNCD")]
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
     parse_legacy_daemon_greeting_details(line).map(LegacyDaemonGreeting::protocol)
 }
@@ -37,7 +36,6 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
 /// # Ok::<_, protocol::NegotiationError>(())
 /// ```
 #[doc(alias = "@RSYNCD")]
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting_owned(
     line: &str,
 ) -> Result<LegacyDaemonGreetingOwned, NegotiationError> {
@@ -46,7 +44,6 @@ pub fn parse_legacy_daemon_greeting_owned(
 
 /// Parses a legacy daemon greeting and returns a structured representation.
 #[doc(alias = "@RSYNCD")]
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting_details(
     line: &str,
 ) -> Result<LegacyDaemonGreeting<'_>, NegotiationError> {

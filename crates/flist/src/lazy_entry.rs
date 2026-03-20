@@ -124,7 +124,6 @@ impl LazyFileListEntry {
     }
 
     /// Returns the file name, if not the root entry.
-    #[must_use]
     pub fn file_name(&self) -> Option<&OsStr> {
         if self.is_root {
             None

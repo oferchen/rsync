@@ -65,19 +65,16 @@ impl Message {
     }
 
     /// Collects the rendered message into a [`Vec<u8>`] while reusing caller-provided scratch buffers.
-    #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_bytes_with_scratch(&self, scratch: &mut MessageScratch) -> io::Result<Vec<u8>> {
         self.to_bytes_with_scratch_inner(scratch, false)
     }
 
     /// Collects the rendered message and a trailing newline into a [`Vec<u8>`] while reusing scratch buffers.
-    #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_line_bytes_with_scratch(&self, scratch: &mut MessageScratch) -> io::Result<Vec<u8>> {
         self.to_bytes_with_scratch_inner(scratch, true)
     }
 
     /// Streams the rendered message into an [`io::Write`] implementor using caller-provided scratch buffers.
-    #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_to_writer_with_scratch<W: IoWrite>(
         &self,
         scratch: &mut MessageScratch,
@@ -87,7 +84,6 @@ impl Message {
     }
 
     /// Writes the rendered message followed by a newline while reusing caller-provided scratch buffers.
-    #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_line_to_writer_with_scratch<W: IoWrite>(
         &self,
         scratch: &mut MessageScratch,
@@ -97,7 +93,6 @@ impl Message {
     }
 
     /// Appends the rendered message into the provided buffer while reusing caller-supplied scratch space.
-    #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_to_vec_with_scratch(
         &self,
         scratch: &mut MessageScratch,
@@ -107,7 +102,6 @@ impl Message {
     }
 
     /// Appends the rendered message followed by a newline into the provided buffer while reusing scratch space.
-    #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_line_to_vec_with_scratch(
         &self,
         scratch: &mut MessageScratch,

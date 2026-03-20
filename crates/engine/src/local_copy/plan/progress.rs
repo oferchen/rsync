@@ -40,7 +40,6 @@ impl<'a> LocalCopyProgress<'a> {
     }
 
     /// Returns the total number of bytes expected for this action, when known.
-    #[must_use]
     pub const fn total_bytes(&self) -> Option<u64> {
         self.total_bytes
     }

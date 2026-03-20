@@ -23,13 +23,11 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured log file path, if any.
-    #[must_use]
     pub fn log_file_path(&self) -> Option<&Path> {
         self.log_file.as_deref()
     }
 
     /// Returns the configured log file format string, if any.
-    #[must_use]
     pub fn log_file_format(&self) -> Option<&str> {
         self.log_file_format.as_deref()
     }

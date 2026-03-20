@@ -134,7 +134,6 @@ impl LazyMetadata {
     }
 
     /// Returns the path if still pending, or None if already resolved.
-    #[must_use]
     pub fn pending_path(&self) -> Option<&PathBuf> {
         match self {
             Self::Pending { path, .. } => Some(path),

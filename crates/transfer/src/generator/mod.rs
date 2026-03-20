@@ -324,7 +324,6 @@ impl GeneratorContext {
     /// Returns `None` for protocols < 30 or when compat exchange was skipped.
     /// The flags control protocol-specific behaviors like incremental recursion,
     /// checksum seed ordering, and file list encoding.
-    #[must_use]
     pub const fn compat_flags(&self) -> Option<protocol::CompatibilityFlags> {
         self.compat_flags
     }

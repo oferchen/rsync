@@ -101,7 +101,6 @@ impl PlaceholderFormat {
     }
 
     /// Returns the configured width, when provided.
-    #[must_use]
     pub(super) const fn width(&self) -> Option<usize> {
         self.width
     }

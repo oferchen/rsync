@@ -205,7 +205,6 @@ fn message_from_template(template: ExitCodeMessage) -> Message {
 /// assert!(message.text().starts_with("syntax or usage error: "));
 /// assert!(message.text().contains("unrecognised flag --bad"));
 /// ```
-#[must_use]
 pub fn exit_code_message_with_detail(code: i32, detail: impl Into<String>) -> Option<Message> {
     exit_code_message(code).map(|template| {
         Message::new(
@@ -232,7 +231,6 @@ pub fn exit_code_message_with_detail(code: i32, detail: impl Into<String>) -> Op
 /// assert!(REMOTE_SHELL_FAILURE.is_some());
 /// ```
 #[doc(alias = "rerr_names")]
-#[must_use]
 pub const fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
     let mut low = 0;
     let mut high = EXIT_CODE_TABLE.len();
@@ -271,7 +269,6 @@ pub const fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
 /// assert_eq!(exit_code_severity(23), Some(Severity::Error));
 /// assert_eq!(exit_code_severity(0), None);
 /// ```
-#[must_use]
 pub const fn exit_code_severity(code: i32) -> Option<Severity> {
     match exit_code_message(code) {
         Some(template) => Some(template.severity()),
