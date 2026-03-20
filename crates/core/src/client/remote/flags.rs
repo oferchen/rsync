@@ -100,6 +100,13 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('L');
     }
 
+    // Info flags after the '.' separator.
+    // upstream: options.c:2707-2713 — info/debug flags appended after '.'
+    if config.itemize_changes() {
+        flags.push('.');
+        flags.push('i');
+    }
+
     flags
 }
 
@@ -218,6 +225,20 @@ mod tests {
         assert!(flags.contains('p'), "expected 'p' in flags: {flags}");
         assert!(flags.contains('o'), "expected 'o' in flags: {flags}");
         assert!(flags.contains('g'), "expected 'g' in flags: {flags}");
+    }
+
+    #[test]
+    fn server_flag_string_includes_itemize_info_flag() {
+        let config = ClientConfig::builder().itemize_changes(true).build();
+        let flags = build_server_flag_string(&config);
+        assert!(flags.contains(".i"), "expected '.i' in flags: {flags}");
+    }
+
+    #[test]
+    fn server_flag_string_omits_itemize_when_disabled() {
+        let config = ClientConfig::builder().itemize_changes(false).build();
+        let flags = build_server_flag_string(&config);
+        assert!(!flags.contains('i'), "unexpected 'i' in flags: {flags}");
     }
 
     #[test]
