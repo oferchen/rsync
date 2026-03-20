@@ -471,9 +471,7 @@ fn legacy_large_file_uses_12_byte_longint() {
     let codec = create_protocol_codec(29);
     let mut buf = Vec::new();
 
-    codec
-        .write_file_size(&mut buf, 0x1_0000_0000i64)
-        .unwrap();
+    codec.write_file_size(&mut buf, 0x1_0000_0000i64).unwrap();
     assert_eq!(buf.len(), 12);
     assert_eq!(&buf[0..4], [0xff, 0xff, 0xff, 0xff]);
 }

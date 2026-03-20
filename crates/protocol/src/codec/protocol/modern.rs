@@ -58,11 +58,7 @@ impl ProtocolCodec for ModernProtocolCodec {
         read_varlong(reader, 4)
     }
 
-    fn write_long_name_len<W: Write + ?Sized>(
-        &self,
-        writer: &mut W,
-        len: usize,
-    ) -> io::Result<()> {
+    fn write_long_name_len<W: Write + ?Sized>(&self, writer: &mut W, len: usize) -> io::Result<()> {
         write_varint(writer, len as i32)
     }
 

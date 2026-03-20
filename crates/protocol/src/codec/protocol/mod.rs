@@ -107,11 +107,7 @@ pub trait ProtocolCodec: Send + Sync {
     ///
     /// - Protocol < 30: Uses 4-byte fixed integer
     /// - Protocol >= 30: Uses varint
-    fn write_long_name_len<W: Write + ?Sized>(
-        &self,
-        writer: &mut W,
-        len: usize,
-    ) -> io::Result<()>;
+    fn write_long_name_len<W: Write + ?Sized>(&self, writer: &mut W, len: usize) -> io::Result<()>;
 
     /// Reads a long name suffix length.
     fn read_long_name_len<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<usize>;

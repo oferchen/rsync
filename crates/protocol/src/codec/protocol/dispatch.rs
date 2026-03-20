@@ -6,9 +6,9 @@
 
 use std::io::{self, Read, Write};
 
+use super::ProtocolCodec;
 use super::legacy::LegacyProtocolCodec;
 use super::modern::ModernProtocolCodec;
-use super::ProtocolCodec;
 
 /// Enum wrapper for dynamic codec dispatch.
 ///

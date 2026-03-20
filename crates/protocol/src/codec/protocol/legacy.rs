@@ -73,11 +73,7 @@ impl ProtocolCodec for LegacyProtocolCodec {
         Ok(i64::from(u32::from_le_bytes(buf)))
     }
 
-    fn write_long_name_len<W: Write + ?Sized>(
-        &self,
-        writer: &mut W,
-        len: usize,
-    ) -> io::Result<()> {
+    fn write_long_name_len<W: Write + ?Sized>(&self, writer: &mut W, len: usize) -> io::Result<()> {
         writer.write_all(&(len as i32).to_le_bytes())
     }
 
