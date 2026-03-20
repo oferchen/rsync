@@ -267,12 +267,19 @@ impl BatchReader {
         } else {
             FileListReader::new(protocol_version)
         };
+        // upstream: batch.c flag_ptr[] - preserve_devices (bit 4) covers both
+        // --devices and --specials (upstream `-D` = `--devices --specials`).
+        // The flist reader needs both flags set to correctly decode device and
+        // special file entries.
         flist_reader = flist_reader
             .with_preserve_uid(flags.preserve_uid)
             .with_preserve_gid(flags.preserve_gid)
             .with_preserve_links(flags.preserve_links)
             .with_preserve_devices(flags.preserve_devices)
-            .with_preserve_hard_links(flags.preserve_hard_links);
+            .with_preserve_specials(flags.preserve_devices)
+            .with_preserve_hard_links(flags.preserve_hard_links)
+            .with_preserve_acls(flags.preserve_acls)
+            .with_preserve_xattrs(flags.preserve_xattrs);
 
         let reader = self
             .batch_file
