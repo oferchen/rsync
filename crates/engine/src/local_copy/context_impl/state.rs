@@ -41,11 +41,22 @@ impl<'a> CopyContext<'a> {
         let batch_flist_writer = options.get_batch_writer().map(|batch_writer_arc| {
             let guard = batch_writer_arc.lock().unwrap();
             let proto_version = guard.config().protocol_version;
+            let compat_flags_val = guard.config().compat_flags;
             drop(guard);
             // Protocol version from batch config is i32; convert to u8 for ProtocolVersion
             let protocol = protocol::ProtocolVersion::try_from(proto_version as u8)
                 .unwrap_or(protocol::ProtocolVersion::NEWEST);
-            protocol::flist::FileListWriter::new(protocol)
+            // upstream: io.c:start_write_batch() - compat_flags are written to the batch
+            // header. The flist writer must use the same compat_flags to ensure the wire
+            // encoding (varint flags, safe file list) matches what the reader will expect
+            // when decoding the batch body.
+            let writer = if let Some(cf) = compat_flags_val {
+                let compat = protocol::CompatibilityFlags::from_bits(cf as u32);
+                protocol::flist::FileListWriter::with_compat_flags(protocol, compat)
+            } else {
+                protocol::flist::FileListWriter::new(protocol)
+            };
+            writer
                 .with_preserve_uid(options.preserve_owner())
                 .with_preserve_gid(options.preserve_group())
                 .with_preserve_links(options.links_enabled())
@@ -106,9 +117,7 @@ impl<'a> CopyContext<'a> {
         if let Some(deadline) = self.stop_deadline
             && Instant::now() >= deadline
         {
-            let target = self
-                .stop_at
-                .unwrap_or_else(std::time::SystemTime::now);
+            let target = self.stop_at.unwrap_or_else(std::time::SystemTime::now);
             return Err(LocalCopyError::stop_at_reached(target));
         }
         Ok(())
@@ -246,10 +255,7 @@ impl<'a> CopyContext<'a> {
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
         }
 
-        #[cfg(not(any(
-            all(unix, feature = "xattr"),
-            all(unix, feature = "acl")
-        )))]
+        #[cfg(not(any(all(unix, feature = "xattr"), all(unix, feature = "acl"))))]
         let _ = mode;
 
         self.record_hard_link(metadata, destination);
@@ -258,9 +264,7 @@ impl<'a> CopyContext<'a> {
         // Register file for deferred sync (runtime-selected via fsync_enabled)
         self.deferred_sync
             .register(destination.to_path_buf())
-            .map_err(|error| {
-                LocalCopyError::io("register deferred sync", destination, error)
-            })?;
+            .map_err(|error| LocalCopyError::io("register deferred sync", destination, error))?;
         self.deferred_sync.flush_if_threshold().map_err(|error| {
             LocalCopyError::io("flush deferred sync threshold", PathBuf::new(), error)
         })?;
@@ -326,10 +330,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// The cache should be populated via parallel checksum prefetching
     /// before processing files in the directory.
-    pub(super) fn set_checksum_cache(
-        &mut self,
-        cache: super::executor::ChecksumCache,
-    ) {
+    pub(super) fn set_checksum_cache(&mut self, cache: super::executor::ChecksumCache) {
         self.checksum_cache = Some(cache);
     }
 
@@ -338,7 +339,9 @@ impl<'a> CopyContext<'a> {
     /// Returns `Some(true)` if checksums match (skip copy), `Some(false)` if
     /// checksums differ (need copy), or `None` if not in cache.
     pub(super) fn lookup_checksum(&self, source: &Path) -> Option<bool> {
-        self.checksum_cache.as_ref().and_then(|cache| cache.lookup(source))
+        self.checksum_cache
+            .as_ref()
+            .and_then(|cache| cache.lookup(source))
     }
 
     /// Clears the checksum cache to free memory after directory processing.
@@ -352,9 +355,10 @@ impl<'a> CopyContext<'a> {
         // Track the `.~tmp~` staging directory for cleanup after all updates
         // are committed.
         if let Some(parent) = update.guard.staging_path().parent() {
-            if parent.file_name().is_some_and(|name| {
-                name == super::options::staging::DELAY_UPDATES_PARTIAL_DIR
-            }) {
+            if parent
+                .file_name()
+                .is_some_and(|name| name == super::options::staging::DELAY_UPDATES_PARTIAL_DIR)
+            {
                 self.delay_staging_dirs.insert(parent.to_path_buf());
             }
         }
@@ -423,9 +427,8 @@ impl<'a> CopyContext<'a> {
         if let Some(parent) = backup_path.parent()
             && !parent.as_os_str().is_empty()
         {
-            fs::create_dir_all(parent).map_err(|error| {
-                LocalCopyError::io("create backup directory", parent, error)
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|error| LocalCopyError::io("create backup directory", parent, error))?;
         }
 
         match fs::rename(destination, &backup_path) {
@@ -449,11 +452,7 @@ impl<'a> CopyContext<'a> {
                 copy_entry_to_backup(destination, &backup_path, file_type)?;
             }
             Err(error) => {
-                return Err(LocalCopyError::io(
-                    "create backup",
-                    backup_path,
-                    error,
-                ));
+                return Err(LocalCopyError::io("create backup", backup_path, error));
             }
         }
 
@@ -546,10 +545,7 @@ impl<'a> CopyContext<'a> {
             preserve_acls,
         } = update;
 
-        #[cfg(not(any(
-            all(unix, feature = "xattr"),
-            all(unix, feature = "acl")
-        )))]
+        #[cfg(not(any(all(unix, feature = "xattr"), all(unix, feature = "acl"))))]
         let _ = &source;
 
         guard.commit()?;
