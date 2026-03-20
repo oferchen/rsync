@@ -5,6 +5,8 @@ use crate::id_lookup::{map_gid, map_uid};
 use crate::ownership;
 use filetime::{FileTime, set_file_times};
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use tempfile::tempdir;
 
