@@ -7,7 +7,9 @@
 use std::io::{self, Read, Write};
 
 use protocol::CompatibilityFlags;
-use protocol::codec::{NdxCodecEnum, ProtocolCodec, create_ndx_codec, create_protocol_codec};
+use protocol::codec::{
+    NdxCodec, NdxCodecEnum, ProtocolCodec, create_ndx_codec, create_protocol_codec,
+};
 
 use crate::receiver::ReceiverContext;
 use crate::receiver::stats::SenderStats;
