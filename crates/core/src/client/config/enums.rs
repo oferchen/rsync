@@ -31,7 +31,6 @@ pub enum TransferTimeout {
 impl TransferTimeout {
     /// Returns the timeout expressed as a [`Duration`] using the provided
     /// default when the setting is [`TransferTimeout::Default`].
-    #[must_use]
     pub const fn effective(self, default: Duration) -> Option<Duration> {
         match self {
             TransferTimeout::Default => Some(default),
@@ -41,7 +40,6 @@ impl TransferTimeout {
     }
 
     /// Convenience helper returning the raw seconds value when specified.
-    #[must_use]
     pub const fn as_seconds(self) -> Option<NonZeroU64> {
         match self {
             TransferTimeout::Seconds(value) => Some(value),
@@ -129,7 +127,6 @@ pub enum HumanReadableModeParseError {
 
 impl HumanReadableModeParseError {
     /// Returns the invalid value supplied by the caller when available.
-    #[must_use]
     pub const fn invalid_value(&self) -> Option<&str> {
         match self {
             Self::Invalid { value } => Some(value.as_str()),
@@ -195,7 +192,6 @@ impl StrongChecksumAlgorithm {
     ///
     /// Returns `None` for [`Auto`](Self::Auto) since automatic negotiation should not
     /// be overridden.
-    #[must_use]
     pub const fn to_protocol_algorithm(self) -> Option<protocol::ChecksumAlgorithm> {
         match self {
             StrongChecksumAlgorithm::Auto => None,
@@ -297,7 +293,6 @@ impl StrongChecksumChoice {
     /// When the transfer algorithm is [`Auto`](StrongChecksumAlgorithm::Auto), returns
     /// `None` to allow automatic negotiation. Otherwise returns the corresponding
     /// [`ChecksumAlgorithm`](protocol::ChecksumAlgorithm) to force during negotiation.
-    #[must_use]
     pub const fn transfer_protocol_override(self) -> Option<protocol::ChecksumAlgorithm> {
         self.transfer.to_protocol_algorithm()
     }

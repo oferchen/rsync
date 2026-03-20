@@ -116,7 +116,6 @@ impl PipelineState {
     }
 
     /// Peeks at the oldest pending transfer without removing it.
-    #[must_use]
     pub fn peek(&self) -> Option<&PendingTransfer> {
         self.pending.front()
     }
@@ -124,7 +123,6 @@ impl PipelineState {
     /// Returns the expected NDX for the next response.
     ///
     /// Used to verify responses arrive in order.
-    #[must_use]
     pub fn expected_ndx(&self) -> Option<i32> {
         self.pending.front().map(PendingTransfer::ndx)
     }

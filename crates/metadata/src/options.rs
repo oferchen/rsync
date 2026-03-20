@@ -389,31 +389,26 @@ impl MetadataOptions {
     }
 
     /// Reports the configured ownership override if any.
-    #[must_use]
     pub const fn owner_override(&self) -> Option<u32> {
         self.owner_override
     }
 
     /// Reports the configured group override if any.
-    #[must_use]
     pub const fn group_override(&self) -> Option<u32> {
         self.group_override
     }
 
     /// Returns the chmod modifiers, if any.
-    #[must_use]
     pub const fn chmod(&self) -> Option<&ChmodModifiers> {
         self.chmod.as_ref()
     }
 
     /// Returns the configured user mapping, if any.
-    #[must_use]
     pub const fn user_mapping(&self) -> Option<&UserMapping> {
         self.user_mapping.as_ref()
     }
 
     /// Returns the configured group mapping, if any.
-    #[must_use]
     pub const fn group_mapping(&self) -> Option<&GroupMapping> {
         self.group_mapping.as_ref()
     }

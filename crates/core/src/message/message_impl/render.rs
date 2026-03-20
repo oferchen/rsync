@@ -22,21 +22,18 @@ impl Message {
 
     /// Returns the rendered message as a [`Vec<u8>`].
     #[inline]
-    #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         MessageScratch::with_thread_local(|scratch| self.to_bytes_with_scratch(scratch))
     }
 
     /// Returns the rendered message followed by a newline as a [`Vec<u8>`].
     #[inline]
-    #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_line_bytes(&self) -> io::Result<Vec<u8>> {
         MessageScratch::with_thread_local(|scratch| self.to_line_bytes_with_scratch(scratch))
     }
 
     /// Writes the rendered message into an [`io::Write`] implementor.
     #[inline]
-    #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         MessageScratch::with_thread_local(|scratch| {
             self.render_to_writer_with_scratch(scratch, writer)
@@ -45,7 +42,6 @@ impl Message {
 
     /// Writes the rendered message followed by a newline into an [`io::Write`] implementor.
     #[inline]
-    #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         MessageScratch::with_thread_local(|scratch| {
             self.render_line_to_writer_with_scratch(scratch, writer)
@@ -53,7 +49,6 @@ impl Message {
     }
 
     /// Appends the rendered message into the provided byte buffer.
-    #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
         MessageScratch::with_thread_local(|scratch| {
             self.append_to_vec_with_scratch(scratch, buffer)
@@ -61,7 +56,6 @@ impl Message {
     }
 
     /// Appends the rendered message followed by a newline into the provided buffer.
-    #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_line_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
         MessageScratch::with_thread_local(|scratch| {
             self.append_line_to_vec_with_scratch(scratch, buffer)

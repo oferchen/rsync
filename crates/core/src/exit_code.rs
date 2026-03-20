@@ -264,7 +264,6 @@ impl ExitCode {
     /// assert_eq!(ExitCode::from_i32(23), Some(ExitCode::PartialTransfer));
     /// assert_eq!(ExitCode::from_i32(999), None);
     /// ```
-    #[must_use]
     pub const fn from_i32(value: i32) -> Option<Self> {
         match value {
             0 => Some(Self::Ok),

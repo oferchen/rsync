@@ -244,13 +244,11 @@ impl ConnectionPool {
     }
 
     /// Returns information about a specific connection.
-    #[must_use]
     pub fn get(&self, id: &ConnectionId) -> Option<ConnectionInfo> {
         self.connections.get(id).map(|entry| entry.value().clone())
     }
 
     /// Returns statistics for a specific IP address.
-    #[must_use]
     pub fn get_ip_stats(&self, ip: &IpAddr) -> Option<IpStats> {
         self.ip_stats.get(ip).map(|entry| entry.value().clone())
     }

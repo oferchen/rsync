@@ -2,21 +2,18 @@ use super::*;
 
 impl ClientConfig {
     /// Returns the minimum file size filter, if configured.
-    #[must_use]
     #[doc(alias = "--min-size")]
     pub const fn min_file_size(&self) -> Option<u64> {
         self.min_file_size
     }
 
     /// Returns the maximum file size filter, if configured.
-    #[must_use]
     #[doc(alias = "--max-size")]
     pub const fn max_file_size(&self) -> Option<u64> {
         self.max_file_size
     }
 
     /// Returns the modification time tolerance, if configured.
-    #[must_use]
     #[doc(alias = "--modify-window")]
     pub const fn modify_window(&self) -> Option<u64> {
         self.modify_window

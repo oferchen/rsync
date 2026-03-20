@@ -55,7 +55,6 @@ impl BandwidthLimit {
     /// unlimited rate. Callers that parse `--bwlimit` arguments can therefore
     /// reuse the shared decoding logic and only materialise a [`BandwidthLimit`]
     /// when throttling is active.
-    #[must_use]
     pub const fn from_components(components: bandwidth::BandwidthLimitComponents) -> Option<Self> {
         match components.rate() {
             Some(rate) => Some(Self::new_internal(
@@ -80,7 +79,6 @@ impl BandwidthLimit {
     }
 
     /// Returns the configured burst size in bytes, if any.
-    #[must_use]
     pub const fn burst_bytes(self) -> Option<NonZeroU64> {
         self.burst_bytes
     }

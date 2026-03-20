@@ -78,7 +78,6 @@ impl ClientProgressUpdate {
     }
 
     /// Returns the total number of bytes expected for this transfer step, when known.
-    #[must_use]
     pub const fn total_bytes(&self) -> Option<u64> {
         self.total_bytes
     }
@@ -96,7 +95,6 @@ impl ClientProgressUpdate {
     }
 
     /// Returns the total number of bytes expected for the entire transfer, when known.
-    #[must_use]
     pub const fn overall_total_bytes(&self) -> Option<u64> {
         self.overall_total_bytes
     }

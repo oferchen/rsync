@@ -371,7 +371,6 @@ impl DeleteTracer {
     }
 
     /// Returns the current deletion phase, if any.
-    #[must_use]
     pub const fn current_phase(&self) -> Option<DeletePhase> {
         self.current_phase
     }

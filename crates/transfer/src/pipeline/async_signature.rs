@@ -118,7 +118,6 @@ impl SignatureCache {
     /// Tries to get a pre-computed signature for a file.
     ///
     /// Returns `Some(signature)` if available, `None` otherwise.
-    #[must_use]
     pub fn get_signature(&mut self, file_path: &PathBuf) -> Option<FileSignature> {
         self.completed.remove(file_path)
     }
@@ -126,7 +125,6 @@ impl SignatureCache {
     /// Checks if a signature generation failed.
     ///
     /// Returns the error message if the generation failed.
-    #[must_use]
     pub fn get_error(&mut self, file_path: &PathBuf) -> Option<String> {
         self.failed.remove(file_path)
     }

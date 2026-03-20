@@ -121,13 +121,11 @@ impl BandwidthLimitComponents {
     }
 
     /// Returns the configured byte-per-second rate, if any.
-    #[must_use]
     pub const fn rate(&self) -> Option<NonZeroU64> {
         self.rate
     }
 
     /// Returns the configured burst size in bytes, if any.
-    #[must_use]
     pub const fn burst(&self) -> Option<NonZeroU64> {
         self.burst
     }
@@ -155,7 +153,6 @@ impl BandwidthLimitComponents {
     /// When the rate component is absent (representing an unlimited
     /// configuration), the method returns `None`. Otherwise the limiter mirrors
     /// upstream rsync's token bucket by honouring the optional burst size.
-    #[must_use]
     pub fn to_limiter(&self) -> Option<BandwidthLimiter> {
         self.rate()
             .map(|rate| BandwidthLimiter::with_burst(rate, self.burst()))
@@ -166,7 +163,6 @@ impl BandwidthLimitComponents {
     /// The behaviour matches [`Self::to_limiter`]; the by-value variant avoids
     /// cloning when the caller wishes to move ownership of the parsed
     /// components.
-    #[must_use]
     pub fn into_limiter(self) -> Option<BandwidthLimiter> {
         self.rate
             .map(|rate| BandwidthLimiter::with_burst(rate, self.burst))

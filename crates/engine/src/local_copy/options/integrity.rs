@@ -122,7 +122,6 @@ impl LocalCopyOptions {
     ///
     /// When `Some(seed)`, the given seed is used for all checksum computations.
     /// When `None`, the seed is determined automatically.
-    #[must_use]
     pub const fn checksum_seed(&self) -> Option<u32> {
         self.checksum_seed
     }
@@ -170,7 +169,6 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured delta-transfer block size override, if any.
-    #[must_use]
     pub const fn block_size_override(&self) -> Option<NonZeroU32> {
         self.block_size_override
     }

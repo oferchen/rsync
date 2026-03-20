@@ -54,7 +54,6 @@ impl FileListEntry {
     /// # }
     /// # demo().unwrap();
     /// ```
-    #[must_use]
     pub fn file_name(&self) -> Option<&OsStr> {
         if self.is_root {
             None

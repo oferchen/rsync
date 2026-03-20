@@ -90,7 +90,6 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured maximum number of deletions, if any.
-    #[must_use]
     pub const fn max_deletion_limit(&self) -> Option<u64> {
         self.max_deletions
     }
@@ -106,7 +105,6 @@ impl LocalCopyOptions {
     ///
     /// upstream: generator.c — delete_in_dir() is only invoked after the
     /// receiver rename sweep completes when delay_updates is active.
-    #[must_use]
     pub const fn delete_timing(&self) -> Option<DeleteTiming> {
         if self.delete {
             // Promote During → After when --delay-updates is active so that

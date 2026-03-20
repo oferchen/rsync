@@ -49,7 +49,6 @@ impl Message {
 
     /// Constructs the canonical message for a known rsync exit code.
     #[doc(alias = "rerr_names")]
-    #[must_use]
     pub fn from_exit_code(code: i32) -> Option<Self> {
         strings::exit_code_message(code).map(|template| {
             Self::new(template.severity(), template.text()).with_code(template.code())

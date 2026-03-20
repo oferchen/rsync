@@ -99,7 +99,6 @@ impl DryRunAction {
     }
 
     /// Returns the size associated with this action, if any.
-    #[must_use]
     pub fn size(&self) -> Option<u64> {
         match self {
             Self::SendFile { size, .. } | Self::ReceiveFile { size, .. } => Some(*size),

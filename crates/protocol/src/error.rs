@@ -50,7 +50,6 @@ impl NegotiationError {
     /// Upstream rsync surfaces the rejected versions when no mutual protocol exists so users can
     /// reason about the mismatch. Exposing the slice keeps higher layers from cloning the vector
     /// simply to inspect the diagnostic context while retaining ownership of the error value.
-    #[must_use]
     pub const fn peer_versions(&self) -> Option<&[u8]> {
         match self {
             Self::NoMutualProtocol { peer_versions } => Some(peer_versions.as_slice()),
@@ -63,7 +62,6 @@ impl NegotiationError {
     /// When upstream rsync aborts the negotiation due to an out-of-range version it surfaces the
     /// offending byte directly in the diagnostic. The accessor allows callers to recover that
     /// value without pattern matching on [`NegotiationError::UnsupportedVersion`].
-    #[must_use]
     pub const fn unsupported_version(&self) -> Option<u32> {
         match self {
             Self::UnsupportedVersion(version) => Some(*version),
@@ -76,7 +74,6 @@ impl NegotiationError {
     /// Daemon negotiations frequently log the offending banner to aid debugging. Providing a
     /// borrowed view keeps the same capability in higher layers without forcing them to clone the
     /// string owned by the error value.
-    #[must_use]
     pub const fn malformed_legacy_greeting(&self) -> Option<&str> {
         match self {
             Self::MalformedLegacyGreeting { input } => Some(input.as_str()),

@@ -144,13 +144,11 @@ impl LocalCopyChangeSet {
     }
 
     /// Returns the recorded time change, if any.
-    #[must_use]
     pub const fn time_change(&self) -> Option<TimeChange> {
         self.time_change
     }
 
     /// Returns the canonical itemize marker for the recorded time change, when any.
-    #[must_use]
     pub const fn time_change_marker(&self) -> Option<char> {
         match self.time_change {
             Some(TimeChange::Modified) => Some('t'),

@@ -68,7 +68,6 @@ pub enum LegacyDaemonMessage<'a> {
 /// allowing callers to gracefully handle extensions without guessing upstream's
 /// future strings.
 #[doc(alias = "@RSYNCD")]
-#[must_use = "the parsed legacy daemon message must be handled"]
 pub fn parse_legacy_daemon_message(
     line: &str,
 ) -> Result<LegacyDaemonMessage<'_>, NegotiationError> {
@@ -171,7 +170,6 @@ pub fn parse_legacy_daemon_message(
 /// removed, allowing callers to surface the daemon's diagnostic verbatim while
 /// still matching upstream trimming behavior.
 #[doc(alias = "@ERROR")]
-#[must_use]
 pub fn parse_legacy_error_message(line: &str) -> Option<&str> {
     parse_prefixed_payload(line, "@ERROR:")
 }
@@ -182,12 +180,10 @@ pub fn parse_legacy_error_message(line: &str) -> Option<&str> {
 /// layers to surface warning text emitted by older daemons without guessing the
 /// exact formatting nuances.
 #[doc(alias = "@WARNING")]
-#[must_use]
 pub fn parse_legacy_warning_message(line: &str) -> Option<&str> {
     parse_prefixed_payload(line, "@WARNING:")
 }
 
-#[must_use]
 fn parse_prefixed_payload<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     let trimmed = line.trim_end_matches(['\r', '\n']);
     trimmed.strip_prefix(prefix).map(|rest| rest.trim())

@@ -74,7 +74,6 @@ impl IconvSetting {
     }
 
     /// Returns the CLI value that should be forwarded to downstream invocations.
-    #[must_use]
     pub fn cli_value(&self) -> Option<String> {
         match self {
             Self::Unspecified | Self::Disabled => None,

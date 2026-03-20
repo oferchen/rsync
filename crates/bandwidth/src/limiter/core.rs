@@ -103,7 +103,6 @@ impl BandwidthLimiter {
 
     /// Returns the configured burst size in bytes, if any.
     #[inline]
-    #[must_use]
     pub const fn burst_bytes(&self) -> Option<NonZeroU64> {
         self.burst_bytes
     }

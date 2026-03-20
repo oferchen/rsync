@@ -139,7 +139,6 @@ impl SegmentedFileList {
     /// Looks up a file entry by global NDX.
     ///
     /// Returns `None` if the NDX doesn't fall within any segment.
-    #[must_use]
     pub fn get_by_ndx(&self, ndx: i32) -> Option<&FileEntry> {
         for segment in &self.segments {
             let offset = ndx - segment.ndx_start;

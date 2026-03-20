@@ -346,7 +346,6 @@ impl SecretsFile {
     /// assert_eq!(secrets.lookup("bob"), Some("password"));
     /// assert_eq!(secrets.lookup("charlie"), None);
     /// ```
-    #[must_use]
     pub fn lookup(&self, username: &str) -> Option<&str> {
         self.entries.get(username).map(|s| s.as_str())
     }

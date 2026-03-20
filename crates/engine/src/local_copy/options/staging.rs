@@ -125,13 +125,11 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured partial directory when present.
-    #[must_use]
     pub fn partial_directory_path(&self) -> Option<&Path> {
         self.partial_dir.as_deref()
     }
 
     /// Returns the configured temporary directory for staged updates when present.
-    #[must_use]
     pub fn temp_directory_path(&self) -> Option<&Path> {
         self.temp_dir.as_deref()
     }

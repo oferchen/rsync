@@ -64,7 +64,6 @@ impl LocalCopyRecord {
     }
 
     /// Returns the total number of bytes expected for this record, when known.
-    #[must_use]
     pub const fn total_bytes(&self) -> Option<u64> {
         self.total_bytes
     }
@@ -76,7 +75,6 @@ impl LocalCopyRecord {
     }
 
     /// Returns the metadata snapshot associated with this record, when available.
-    #[must_use]
     pub const fn metadata(&self) -> Option<&LocalCopyMetadata> {
         self.metadata.as_ref()
     }

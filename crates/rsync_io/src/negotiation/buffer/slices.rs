@@ -122,7 +122,6 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// # }
     /// # demo().unwrap();
     /// ```
-    #[must_use = "the returned length reports how many bytes were appended"]
     pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         if self.is_empty() {
             return Ok(0);
@@ -165,7 +164,6 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// assert_eq!(replay, stream.buffered());
     /// # Ok::<(), std::collections::TryReserveError>(())
     /// ```
-    #[must_use = "the returned vector owns the buffered negotiation transcript"]
     pub fn to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
         let mut buffer = Vec::new();
 
@@ -203,7 +201,6 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// assert_eq!(&buffer[..copied], &stream.buffered()[..]);
     /// # Ok::<(), rsync_io::CopyToSliceError>(())
     /// ```
-    #[must_use = "inspect the result to discover how many bytes were copied"]
     pub fn copy_to_slice(&self, dest: &mut [u8]) -> Result<usize, CopyToSliceError> {
         if self.is_empty() {
             return Ok(0);
@@ -251,7 +248,6 @@ impl<'a> NegotiationBufferedSlices<'a> {
     ///
     /// assert_eq!(replay, stream.buffered());
     /// ```
-    #[must_use = "ignoring the result would drop I/O errors emitted while replaying the transcript"]
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let slices = self.as_slices();
 

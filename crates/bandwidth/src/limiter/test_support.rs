@@ -136,7 +136,6 @@ impl<'a> RecordedSleepSession<'a> {
     /// # }
     /// ```
     #[inline]
-    #[must_use]
     pub fn last_duration(&self) -> Option<Duration> {
         self.with_recorded_sleeps(|durations| durations.last().copied())
     }

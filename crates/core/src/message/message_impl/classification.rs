@@ -33,7 +33,6 @@ impl Message {
 
     /// Returns the exit code associated with the message if present.
     #[inline]
-    #[must_use]
     pub const fn code(&self) -> Option<i32> {
         self.code
     }
@@ -83,14 +82,12 @@ impl Message {
 
     /// Returns the role used in the trailer, if any.
     #[inline]
-    #[must_use]
     pub const fn role(&self) -> Option<Role> {
         self.role
     }
 
     /// Returns the recorded source location, if any.
     #[inline]
-    #[must_use]
     pub const fn source(&self) -> Option<&SourceLocation> {
         self.source.as_ref()
     }

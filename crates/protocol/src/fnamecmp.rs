@@ -140,7 +140,6 @@ impl FnameCmpType {
     ///
     /// Returns `None` for wire values 0x84-0xFF, which are undefined in
     /// upstream rsync.
-    #[must_use]
     pub const fn from_wire(byte: u8) -> Option<Self> {
         match byte {
             Self::BASIS_DIR_LOW..=Self::BASIS_DIR_HIGH => Some(Self::BasisDir(byte)),
@@ -171,7 +170,6 @@ impl FnameCmpType {
     }
 
     /// Returns the basis directory index, if this is a `BasisDir` variant.
-    #[must_use]
     pub const fn basis_dir_index(&self) -> Option<u8> {
         match self {
             Self::BasisDir(idx) => Some(*idx),
