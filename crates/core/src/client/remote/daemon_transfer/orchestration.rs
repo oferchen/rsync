@@ -14,7 +14,6 @@ use protocol::filters::FilterRuleWireFormat;
 
 use super::super::super::config::{ClientConfig, DeleteMode, ReferenceDirectoryKind};
 use super::super::super::error::{ClientError, invalid_argument_error, socket_error};
-use super::super::super::progress::ClientProgressObserver;
 use super::super::super::summary::ClientSummary;
 use super::super::flags;
 use super::connection::DaemonTransferRequest;

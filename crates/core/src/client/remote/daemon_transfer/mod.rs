@@ -14,8 +14,6 @@ mod orchestration;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use protocol::ProtocolVersion;
-
 use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error};
@@ -23,8 +21,6 @@ use super::super::module_list::{apply_socket_options, connect_direct, resolve_co
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
-
-pub use connection::{EARLY_INPUT_MAX_SIZE, read_early_input_file};
 
 use connection::{DaemonTransferRequest, perform_daemon_handshake};
 use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments};
