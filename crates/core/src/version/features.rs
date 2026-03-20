@@ -116,7 +116,6 @@ impl CompiledFeature {
     }
 
     /// Parses a feature label back into its [`CompiledFeature`] variant.
-    #[must_use]
     pub const fn from_label(label: &str) -> Option<Self> {
         if Self::label_eq(label, "ACLs") {
             Some(Self::Acl)

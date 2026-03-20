@@ -79,13 +79,11 @@ impl LocalCopyOptions {
     }
 
     /// Returns the minimum file size filter configured for the run.
-    #[must_use]
     pub const fn min_file_size_limit(&self) -> Option<u64> {
         self.min_file_size
     }
 
     /// Returns the maximum file size filter configured for the run.
-    #[must_use]
     pub const fn max_file_size_limit(&self) -> Option<u64> {
         self.max_file_size
     }
@@ -97,13 +95,11 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured bandwidth limit, if any, in bytes per second.
-    #[must_use]
     pub const fn bandwidth_limit_bytes(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
     }
 
     /// Returns the configured burst size in bytes, if any.
-    #[must_use]
     pub const fn bandwidth_burst_bytes(&self) -> Option<NonZeroU64> {
         self.bandwidth_burst
     }
@@ -115,19 +111,16 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured inactivity timeout, if any.
-    #[must_use]
     pub const fn timeout(&self) -> Option<Duration> {
         self.timeout
     }
 
     /// Returns the configured connection timeout, if any.
-    #[must_use]
     pub const fn contimeout(&self) -> Option<Duration> {
         self.contimeout
     }
 
     /// Returns the configured stop-at deadline, if any.
-    #[must_use]
     pub const fn stop_at(&self) -> Option<SystemTime> {
         self.stop_at
     }

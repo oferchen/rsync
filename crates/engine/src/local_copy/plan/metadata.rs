@@ -137,37 +137,31 @@ impl LocalCopyMetadata {
     }
 
     /// Returns the recorded modification time, when available.
-    #[must_use]
     pub const fn modified(&self) -> Option<SystemTime> {
         self.modified
     }
 
     /// Returns the Unix permission bits when available.
-    #[must_use]
     pub const fn mode(&self) -> Option<u32> {
         self.mode
     }
 
     /// Returns the numeric owner identifier when available.
-    #[must_use]
     pub const fn uid(&self) -> Option<u32> {
         self.uid
     }
 
     /// Returns the numeric group identifier when available.
-    #[must_use]
     pub const fn gid(&self) -> Option<u32> {
         self.gid
     }
 
     /// Returns the hard link count when available.
-    #[must_use]
     pub const fn nlink(&self) -> Option<u64> {
         self.nlink
     }
 
     /// Returns the recorded symbolic link target when the metadata describes a symlink.
-    #[must_use]
     pub fn symlink_target(&self) -> Option<&Path> {
         self.symlink_target.as_deref()
     }

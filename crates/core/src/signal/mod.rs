@@ -203,7 +203,6 @@ pub fn is_abort_requested() -> bool {
 ///     }
 /// }
 /// ```
-#[must_use]
 pub fn shutdown_reason() -> Option<ShutdownReason> {
     let code = SHUTDOWN_REASON_CODE.load(Ordering::Relaxed);
     ShutdownReason::from_u8(code)

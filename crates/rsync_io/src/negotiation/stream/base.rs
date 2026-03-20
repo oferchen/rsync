@@ -153,7 +153,6 @@ impl<R> NegotiatedStream<R> {
     }
 
     /// Attempts to transform the inner reader while keeping the buffered negotiation state intact.
-    #[must_use = "the result contains either the mapped stream or the preserved error and original stream"]
     pub fn try_map_inner<F, T, E>(
         self,
         map: F,
@@ -169,7 +168,6 @@ impl<R> NegotiatedStream<R> {
 
     /// Clones the replaying stream by duplicating the inner reader through the provided closure.
     #[doc(alias = "try_clone")]
-    #[must_use = "the result reports whether cloning the inner reader succeeded"]
     pub fn try_clone_with<F, T, E>(&self, clone_inner: F) -> Result<NegotiatedStream<T>, E>
     where
         F: FnOnce(&R) -> Result<T, E>,

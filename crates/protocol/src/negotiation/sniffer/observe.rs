@@ -140,7 +140,6 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Reports how many additional bytes are still required to finish buffering the canonical prefix.
-    #[must_use]
     #[inline]
     pub const fn legacy_prefix_remaining(&self) -> Option<usize> {
         self.detector.legacy_prefix_remaining()

@@ -42,7 +42,6 @@ impl MessageHeader {
     }
 
     /// Constructs a multiplexed header from the raw 32-bit representation used on the wire.
-    #[must_use = "Discard the decoded header only after handling potential validation errors"]
     #[inline]
     pub const fn from_raw(raw: u32) -> Result<Self, EnvelopeError> {
         let tag = (raw >> 24) as u8;

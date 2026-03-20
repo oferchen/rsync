@@ -34,7 +34,6 @@ use crate::error::NegotiationError;
 /// let err = select_highest_mutual([27_u8]);
 /// assert!(err.is_err());
 /// ```
-#[must_use = "the negotiation outcome must be checked"]
 pub fn select_highest_mutual<I, T>(peer_versions: I) -> Result<ProtocolVersion, NegotiationError>
 where
     I: IntoIterator<Item = T>,

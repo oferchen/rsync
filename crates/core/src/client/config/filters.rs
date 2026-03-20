@@ -187,7 +187,6 @@ impl FilterRuleSpec {
     }
 
     /// Returns the per-directory merge options when present.
-    #[must_use]
     pub const fn dir_merge_options(&self) -> Option<&DirMergeOptions> {
         self.dir_merge_options.as_ref()
     }

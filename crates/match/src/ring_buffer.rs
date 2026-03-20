@@ -169,7 +169,6 @@ impl RingBuffer {
     ///
     /// This is useful in hot paths where avoiding mutation is critical.
     #[inline]
-    #[must_use]
     pub fn try_as_slice(&self) -> Option<&[u8]> {
         if self.len == 0 {
             return Some(&[]);

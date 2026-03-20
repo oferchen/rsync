@@ -115,7 +115,6 @@ impl MessageCode {
     }
 
     /// Attempts to construct a [`MessageCode`] from its on-the-wire numeric representation.
-    #[must_use]
     pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Data),
@@ -225,7 +224,6 @@ impl MessageCode {
     /// Returns the log code associated with this message code when the payload
     /// represents logging output.
     #[inline]
-    #[must_use]
     pub const fn log_code(self) -> Option<LogCode> {
         match self {
             MessageCode::ErrorXfer => Some(LogCode::ErrorXfer),
@@ -243,7 +241,6 @@ impl MessageCode {
     /// Returns the multiplexed message code associated with a log code when a
     /// one-to-one mapping exists.
     #[inline]
-    #[must_use]
     pub const fn from_log_code(log: LogCode) -> Option<Self> {
         match log {
             LogCode::ErrorXfer => Some(Self::ErrorXfer),

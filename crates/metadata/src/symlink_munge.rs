@@ -25,7 +25,6 @@ pub fn munge_symlink(target: &str) -> String {
 /// if the target was not munged.
 ///
 /// # upstream: `clientserver.c:unmunge_symlink()`
-#[must_use]
 pub fn unmunge_symlink(target: &str) -> Option<String> {
     target
         .strip_prefix(SYMLINK_MUNGE_PREFIX)

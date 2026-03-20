@@ -101,7 +101,6 @@ impl ModuleListRequest {
     }
 
     /// Returns the optional username supplied in the daemon URL or legacy syntax.
-    #[must_use]
     pub fn username(&self) -> Option<&str> {
         self.username.as_deref()
     }
@@ -182,7 +181,6 @@ impl ModuleListOptions {
     }
 
     /// Returns the configured connect program command, if any.
-    #[must_use]
     pub fn connect_program(&self) -> Option<&std::ffi::OsStr> {
         self.connect_program.as_deref()
     }
@@ -196,7 +194,6 @@ impl ModuleListOptions {
     }
 
     /// Returns the configured socket options, if any.
-    #[must_use]
     pub fn sockopts(&self) -> Option<&OsStr> {
         self.sockopts.as_deref()
     }
@@ -211,7 +208,6 @@ impl ModuleListOptions {
     }
 
     /// Returns the configured blocking I/O preference, if any.
-    #[must_use]
     pub const fn blocking_io(&self) -> Option<bool> {
         self.blocking_io
     }
@@ -224,7 +220,6 @@ impl ModuleListOptions {
     }
 
     /// Returns the configured bind address, if any.
-    #[must_use]
     pub const fn bind_address(&self) -> Option<SocketAddr> {
         self.bind_address
     }

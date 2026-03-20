@@ -46,7 +46,6 @@ impl RemoteProtocolAdvertisement {
     }
 
     /// Returns the negotiated [`ProtocolVersion`] when the advertisement was supported.
-    #[must_use]
     pub const fn supported(self) -> Option<ProtocolVersion> {
         match self {
             Self::Supported(version) => Some(version),
@@ -55,7 +54,6 @@ impl RemoteProtocolAdvertisement {
     }
 
     /// Returns the raw protocol number announced by the peer when it exceeded the supported range.
-    #[must_use]
     pub const fn future(self) -> Option<u32> {
         match self {
             Self::Supported(_) => None,
@@ -87,7 +85,6 @@ impl RemoteProtocolAdvertisement {
     /// };
     /// assert_eq!(future.clamped(), Some(ProtocolVersion::NEWEST));
     /// ```
-    #[must_use]
     pub const fn clamped(self) -> Option<ProtocolVersion> {
         match self {
             Self::Supported(_) => None,

@@ -526,7 +526,6 @@ impl AckBatcher {
     /// Calculates the time remaining until the timeout flush.
     ///
     /// Returns `None` if no batch is pending or timeout is disabled.
-    #[must_use]
     pub fn time_until_timeout(&self) -> Option<Duration> {
         let start = self.batch_start?;
         let timeout = Duration::from_millis(self.config.batch_timeout_ms);

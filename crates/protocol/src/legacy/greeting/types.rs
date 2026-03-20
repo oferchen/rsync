@@ -73,7 +73,6 @@ impl<'a> LegacyDaemonGreeting<'a> {
     /// [`Self::subprotocol`] to retain that distinction. Exposing the raw optional value keeps the
     /// API expressive while preserving the zero-default helper used by code paths that only need the
     /// numeric suffix.
-    #[must_use]
     pub const fn subprotocol_raw(self) -> Option<u32> {
         self.subprotocol
     }
@@ -85,7 +84,6 @@ impl<'a> LegacyDaemonGreeting<'a> {
     }
 
     /// Returns the digest list announced by the daemon, if any.
-    #[must_use]
     pub const fn digest_list(self) -> Option<&'a str> {
         self.digest_list
     }
@@ -214,7 +212,6 @@ impl LegacyDaemonGreetingOwned {
     }
 
     /// Returns the optional subprotocol suffix without normalizing missing values to zero.
-    #[must_use]
     pub const fn subprotocol_raw(&self) -> Option<u32> {
         self.subprotocol
     }
@@ -296,7 +293,6 @@ impl LegacyDaemonGreetingOwned {
     }
 
     /// Returns the digest list announced by the daemon, if any.
-    #[must_use]
     pub fn digest_list(&self) -> Option<&str> {
         self.digest_list.as_deref()
     }
@@ -394,7 +390,6 @@ impl LegacyDaemonGreetingOwned {
     ///
     /// When the caller only needs the digest list, this convenience helper
     /// avoids unpacking the rest of the fields via [`Self::into_parts`].
-    #[must_use]
     pub fn into_digest_list(self) -> Option<String> {
         let Self { digest_list, .. } = self;
         digest_list

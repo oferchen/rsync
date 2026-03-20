@@ -210,7 +210,6 @@ pub enum LocalCopyErrorKind {
 
 impl LocalCopyErrorKind {
     /// Returns the action, path, and source error for [`LocalCopyErrorKind::Io`] values.
-    #[must_use]
     pub fn as_io(&self) -> Option<(&'static str, &Path, &io::Error)> {
         match self {
             Self::Io {

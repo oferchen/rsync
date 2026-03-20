@@ -34,7 +34,6 @@ impl<'a> MessageSegments<'a> {
     ///
     /// assert_eq!(buffer, message.to_bytes().unwrap());
     /// ```
-    #[must_use = "rsync message streaming can fail when the underlying writer reports an I/O error"]
     pub fn write_to<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         if self.is_empty() {
             return Ok(());

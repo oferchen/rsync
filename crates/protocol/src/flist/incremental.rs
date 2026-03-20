@@ -200,7 +200,6 @@ impl IncrementalFileList {
     }
 
     /// Returns a reference to the next ready entry without removing it.
-    #[must_use]
     pub fn peek(&self) -> Option<&FileEntry> {
         self.ready.front()
     }

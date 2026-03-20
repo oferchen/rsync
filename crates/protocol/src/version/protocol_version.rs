@@ -454,7 +454,6 @@ impl ProtocolVersion {
     }
 
     /// Returns the protocol version at the given index within the canonical newest-to-oldest list.
-    #[must_use]
     pub const fn from_supported_index(index: usize) -> Option<Self> {
         if index < SUPPORTED_PROTOCOL_COUNT {
             Some(Self::SUPPORTED_VERSIONS[index])
@@ -464,7 +463,6 @@ impl ProtocolVersion {
     }
 
     /// Attempts to construct a [`ProtocolVersion`] from a byte known to fall inside the supported range.
-    #[must_use]
     pub const fn from_supported(value: u8) -> Option<Self> {
         if Self::is_supported_protocol_number(value) {
             Some(Self::new_const(value))
@@ -488,7 +486,6 @@ impl ProtocolVersion {
     }
 
     /// Constructs a [`ProtocolVersion`] from its zero-based offset relative to [`ProtocolVersion::OLDEST`].
-    #[must_use]
     pub const fn from_oldest_offset(offset: usize) -> Option<Self> {
         let oldest = Self::OLDEST.as_u8() as usize;
         let newest = Self::NEWEST.as_u8() as usize;
@@ -507,7 +504,6 @@ impl ProtocolVersion {
     }
 
     /// Constructs a [`ProtocolVersion`] from its zero-based offset relative to [`ProtocolVersion::NEWEST`].
-    #[must_use]
     pub const fn from_newest_offset(offset: usize) -> Option<Self> {
         let newest = Self::NEWEST.as_u8() as usize;
         let oldest = Self::OLDEST.as_u8() as usize;
@@ -521,7 +517,6 @@ impl ProtocolVersion {
     }
 
     /// Returns the next newer protocol version within the supported range, if any.
-    #[must_use]
     pub const fn next_newer(self) -> Option<Self> {
         if self.as_u8() >= Self::NEWEST.as_u8() {
             None
@@ -531,7 +526,6 @@ impl ProtocolVersion {
     }
 
     /// Returns the next older protocol version within the supported range, if any.
-    #[must_use]
     pub const fn next_older(self) -> Option<Self> {
         if self.as_u8() <= Self::OLDEST.as_u8() {
             None
@@ -562,7 +556,6 @@ impl ProtocolVersion {
     }
 
     /// Converts a peer-advertised version into the negotiated protocol version.
-    #[must_use = "the negotiated protocol version must be handled"]
     #[inline]
     pub fn from_peer_advertisement(value: u32) -> Result<Self, NegotiationError> {
         if value == 0 {

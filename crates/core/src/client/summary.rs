@@ -219,7 +219,6 @@ impl ClientSummary {
     }
 
     /// Returns the number of bytes that would be sent after applying compression.
-    #[must_use]
     pub const fn compressed_bytes(&self) -> Option<u64> {
         if self.stats.compression_used() {
             Some(self.stats.compressed_bytes())
@@ -282,7 +281,6 @@ impl ClientSummary {
     /// Maps to upstream rsync exit codes such as `RERR_PARTIAL` (23),
     /// `RERR_VANISHED` (24), or `RERR_DEL_LIMIT` (25). Returns `None`
     /// when the transfer completed without I/O errors.
-    #[must_use]
     pub const fn io_error_exit_code(&self) -> Option<i32> {
         self.io_error_exit_code
     }
@@ -462,7 +460,6 @@ impl ClientEvent {
     }
 
     /// Returns the total number of bytes expected for this event, when known.
-    #[must_use]
     pub const fn total_bytes(&self) -> Option<u64> {
         self.total_bytes
     }
@@ -474,7 +471,6 @@ impl ClientEvent {
     }
 
     /// Returns the metadata associated with the event, when available.
-    #[must_use]
     pub const fn metadata(&self) -> Option<&ClientEntryMetadata> {
         self.metadata.as_ref()
     }
@@ -652,37 +648,31 @@ impl ClientEntryMetadata {
     }
 
     /// Returns the recorded modification timestamp, when available.
-    #[must_use]
     pub const fn modified(&self) -> Option<SystemTime> {
         self.modified
     }
 
     /// Returns the Unix permission bits when available.
-    #[must_use]
     pub const fn mode(&self) -> Option<u32> {
         self.mode
     }
 
     /// Returns the numeric owner identifier when available.
-    #[must_use]
     pub const fn uid(&self) -> Option<u32> {
         self.uid
     }
 
     /// Returns the numeric group identifier when available.
-    #[must_use]
     pub const fn gid(&self) -> Option<u32> {
         self.gid
     }
 
     /// Returns the recorded link count when available.
-    #[must_use]
     pub const fn nlink(&self) -> Option<u64> {
         self.nlink
     }
 
     /// Returns the recorded symbolic link target when the entry represents a symlink.
-    #[must_use]
     pub fn symlink_target(&self) -> Option<&Path> {
         self.symlink_target.as_deref()
     }

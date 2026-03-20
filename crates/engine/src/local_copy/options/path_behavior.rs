@@ -259,7 +259,6 @@ impl LocalCopyOptions {
     /// - `Some(true)`: explicitly forced whole-file mode.
     /// - `Some(false)`: explicitly forced delta-transfer mode.
     /// - `None`: automatic detection (whole-file for local unless batch-writing).
-    #[must_use]
     pub const fn whole_file_raw(&self) -> Option<bool> {
         self.whole_file
     }

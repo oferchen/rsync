@@ -80,7 +80,6 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Returns the legacy daemon greeting advertised by the server when available.
-    #[must_use]
     pub const fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
         match self {
             SessionHandshakeParts::Binary(_) => None,

@@ -173,7 +173,6 @@ impl PipelineController {
     /// 2. Fill pipeline
     /// 3. Read more entries
     /// 4. Process responses
-    #[must_use]
     pub fn next_priority(&self) -> Option<PipelinePriority> {
         // Error state is terminal
         if matches!(self.state, PipelineState::Error(_)) {
@@ -264,7 +263,6 @@ impl PipelineController {
     /// Dequeues the next ready entry for processing.
     ///
     /// Returns `None` if no entries are ready.
-    #[must_use]
     pub fn dequeue_ready(&mut self) -> Option<usize> {
         let entry_id = self.ready_entries.pop_front();
         if entry_id.is_some() {
@@ -287,7 +285,6 @@ impl PipelineController {
     /// Dequeues the next response for processing.
     ///
     /// Returns `None` if no responses are pending.
-    #[must_use]
     pub fn dequeue_response(&mut self) -> Option<usize> {
         let response = self.pending_responses.pop_front();
         if response.is_some() {

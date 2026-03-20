@@ -87,7 +87,6 @@ impl PartialMode {
     }
 
     /// Returns the partial directory path if this mode uses one.
-    #[must_use]
     pub fn partial_dir_path(&self) -> Option<&Path> {
         match self {
             Self::PartialDir(path) => Some(path),
@@ -209,7 +208,6 @@ impl PartialFileManager {
     }
 
     /// Returns the partial directory path if using `PartialMode::PartialDir`.
-    #[must_use]
     pub fn partial_dir(&self) -> Option<&Path> {
         self.mode.partial_dir_path()
     }

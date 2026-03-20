@@ -125,7 +125,6 @@ impl LazyMetadata {
     /// Gets the metadata if already resolved, without triggering a fetch.
     ///
     /// Returns `None` if metadata has not been fetched yet.
-    #[must_use]
     pub fn get_if_resolved(&self) -> Option<Result<&fs::Metadata, &io::Error>> {
         match self {
             Self::Pending { .. } => None,
@@ -135,7 +134,6 @@ impl LazyMetadata {
     }
 
     /// Returns the path if still pending, or None if already resolved.
-    #[must_use]
     pub fn pending_path(&self) -> Option<&PathBuf> {
         match self {
             Self::Pending { path, .. } => Some(path),

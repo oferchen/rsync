@@ -187,7 +187,6 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Returns the cached negotiation decision, if any.
-    #[must_use]
     #[inline]
     pub const fn decision(&self) -> Option<NegotiationPrologue> {
         self.detector.decision()

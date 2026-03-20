@@ -42,7 +42,6 @@ impl SecludedArgsMode {
     }
 
     /// Parses a label produced by [`Self::label`] back into its variant.
-    #[must_use]
     pub const fn from_label(label: &str) -> Option<Self> {
         if Self::label_eq(label, "optional secluded-args") {
             Some(Self::Optional)

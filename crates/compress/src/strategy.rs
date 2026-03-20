@@ -150,7 +150,6 @@ impl CompressionAlgorithmKind {
     /// Parses an algorithm from a string name.
     ///
     /// Accepts canonical names and common aliases (case-insensitive).
-    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "none" => Some(Self::None),
