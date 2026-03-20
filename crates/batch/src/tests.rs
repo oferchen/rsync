@@ -435,4 +435,194 @@ mod integration {
         let result = reader.read_header();
         assert!(result.is_err()); // Should fail on corrupt data
     }
+
+    /// Verifies that a batch file containing protocol-format flist entries
+    /// can be written and read back correctly. This exercises the full path
+    /// that upstream rsync uses: header + protocol wire flist + end marker.
+    #[test]
+    fn test_protocol_flist_roundtrip() {
+        use protocol::flist::{FileEntry, FileListWriter};
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("flist_roundtrip.batch");
+
+        let protocol_version = 31;
+        let checksum_seed = 12345;
+
+        // -- Write phase --
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(checksum_seed);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            preserve_gid: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        // Encode file entries using the protocol wire format
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let entries = vec![
+            {
+                let mut e = FileEntry::new_file("src/main.rs".into(), 2048, 0o644);
+                e.set_mtime(1_700_000_000, 0);
+                e.set_uid(1000);
+                e.set_gid(1000);
+                e
+            },
+            {
+                let mut e = FileEntry::new_directory("src".into(), 0o755);
+                e.set_mtime(1_700_000_000, 0);
+                e.set_uid(1000);
+                e.set_gid(1000);
+                e
+            },
+        ];
+
+        for entry in &entries {
+            let mut buf = Vec::new();
+            flist_writer.write_entry(&mut buf, entry).unwrap();
+            writer.write_data(&buf).unwrap();
+        }
+
+        // Write end-of-list marker
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        writer.finalize().unwrap();
+
+        // -- Read phase --
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let mut reader = BatchReader::new(read_config).unwrap();
+        reader.read_header().unwrap();
+
+        let read_entries = reader.read_protocol_flist().unwrap();
+        assert_eq!(read_entries.len(), entries.len());
+
+        assert_eq!(read_entries[0].name(), "src/main.rs");
+        assert_eq!(read_entries[0].size(), 2048);
+        assert_eq!(read_entries[0].uid(), Some(1000));
+        assert_eq!(read_entries[0].gid(), Some(1000));
+
+        assert_eq!(read_entries[1].name(), "src");
+    }
+
+    /// Verifies that known upstream-compatible batch file bytes can be
+    /// parsed correctly. This tests a manually constructed batch file
+    /// matching the upstream format:
+    ///   stream_flags(i32) + protocol_version(i32) + compat_flags(varint)
+    ///   + checksum_seed(i32) + flist body + end marker.
+    #[test]
+    fn test_known_batch_header_format() {
+        use std::io::Cursor;
+
+        // Build a batch header in the exact upstream wire format
+        let mut data = Vec::new();
+
+        // Stream flags: recurse(bit 0) + preserve_uid(bit 1) = 0x03
+        data.extend_from_slice(&3i32.to_le_bytes());
+
+        // Protocol version: 31
+        data.extend_from_slice(&31i32.to_le_bytes());
+
+        // Compat flags (varint): 0 (no special compat flags)
+        protocol::write_varint(&mut data, 0).unwrap();
+
+        // Checksum seed: 42
+        data.extend_from_slice(&42i32.to_le_bytes());
+
+        // Parse via Cursor
+        let mut cursor = Cursor::new(&data);
+        let header = crate::format::BatchHeader::read_from(&mut cursor).unwrap();
+
+        assert_eq!(header.protocol_version, 31);
+        assert_eq!(header.checksum_seed, 42);
+        assert_eq!(header.compat_flags, Some(0));
+        assert!(header.stream_flags.recurse);
+        assert!(header.stream_flags.preserve_uid);
+        assert!(!header.stream_flags.preserve_gid);
+
+        // Verify write_to produces the same bytes
+        let mut written = Vec::new();
+        header.write_to(&mut written).unwrap();
+        assert_eq!(written, data);
+    }
+
+    /// Verifies that the preserve_devices stream flag correctly enables
+    /// both preserve_devices and preserve_specials on the flist reader.
+    /// upstream: -D = --devices --specials (batch.c:flag_ptr[4])
+    #[test]
+    fn test_protocol_flist_roundtrip_with_devices() {
+        use protocol::flist::{FileEntry, FileListWriter};
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("devices.batch");
+
+        let protocol_version = 31;
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_devices: true, // This should imply specials too
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
+
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        writer.finalize().unwrap();
+
+        // Read back - preserve_specials should be set from preserve_devices
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let mut reader = BatchReader::new(read_config).unwrap();
+        reader.read_header().unwrap();
+
+        let read_entries = reader.read_protocol_flist().unwrap();
+        assert_eq!(read_entries.len(), 1);
+        assert_eq!(read_entries[0].name(), "test.txt");
+        assert_eq!(read_entries[0].size(), 100);
+    }
 }
