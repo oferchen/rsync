@@ -53,7 +53,6 @@ impl SignatureLayoutParams {
 
     /// Returns the optional caller-specified block length.
     #[inline]
-    #[must_use]
     pub const fn forced_block_length(self) -> Option<NonZeroU32> {
         self.forced_block_length
     }

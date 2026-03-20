@@ -35,7 +35,6 @@ impl ClientConfig {
     }
 
     /// Returns the checksum seed configured via `--checksum-seed`, if any.
-    #[must_use]
     #[doc(alias = "--checksum-seed")]
     pub const fn checksum_seed(&self) -> Option<u32> {
         self.checksum_seed
@@ -47,7 +46,6 @@ impl ClientConfig {
     /// corresponding [`ChecksumAlgorithm`](protocol::ChecksumAlgorithm) to force
     /// during protocol 30+ capability negotiation. Returns `None` when the default
     /// automatic negotiation should be used.
-    #[must_use]
     #[doc(alias = "--checksum-choice")]
     pub const fn checksum_protocol_override(&self) -> Option<protocol::ChecksumAlgorithm> {
         self.checksum_choice.transfer_protocol_override()

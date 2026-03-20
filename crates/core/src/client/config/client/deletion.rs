@@ -51,7 +51,6 @@ impl ClientConfig {
     }
 
     /// Returns the configured maximum number of deletions, if any.
-    #[must_use]
     #[doc(alias = "--max-delete")]
     pub const fn max_delete(&self) -> Option<u64> {
         self.max_delete

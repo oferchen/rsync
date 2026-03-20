@@ -17,7 +17,6 @@ impl ClientConfig {
     }
 
     /// Returns the optional directory used to store partial files.
-    #[must_use]
     #[doc(alias = "--partial-dir")]
     pub fn partial_directory(&self) -> Option<&Path> {
         self.partial_dir.as_deref()

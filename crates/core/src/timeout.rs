@@ -187,7 +187,6 @@ impl TimeoutConfig {
     /// let config = TimeoutConfig::new().with_io_timeout(30);
     /// assert_eq!(config.io_timeout(), Some(Duration::from_secs(30)));
     /// ```
-    #[must_use]
     pub const fn io_timeout(&self) -> Option<Duration> {
         self.io_timeout
     }
@@ -203,7 +202,6 @@ impl TimeoutConfig {
     /// let config = TimeoutConfig::new().with_connect_timeout(10);
     /// assert_eq!(config.connect_timeout(), Some(Duration::from_secs(10)));
     /// ```
-    #[must_use]
     pub const fn connect_timeout(&self) -> Option<Duration> {
         self.connect_timeout
     }

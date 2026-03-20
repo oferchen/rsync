@@ -82,13 +82,11 @@ impl PendingTransfer {
     }
 
     /// Returns the basis file path, if this is a delta transfer.
-    #[must_use]
     pub fn basis_path(&self) -> Option<&PathBuf> {
         self.basis_path.as_ref()
     }
 
     /// Returns the signature, if this is a delta transfer.
-    #[must_use]
     pub fn signature(&self) -> Option<&FileSignature> {
         self.signature.as_ref()
     }

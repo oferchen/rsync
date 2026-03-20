@@ -10,28 +10,24 @@ impl ClientConfig {
     }
 
     /// Returns the configured connect program, if any.
-    #[must_use]
     #[doc(alias = "--connect-program")]
     pub fn connect_program(&self) -> Option<&OsStr> {
         self.connect_program.as_deref()
     }
 
     /// Returns the configured bind address, if any.
-    #[must_use]
     #[doc(alias = "--address")]
     pub const fn bind_address(&self) -> Option<&BindAddress> {
         self.bind_address.as_ref()
     }
 
     /// Returns the configured socket options, if any.
-    #[must_use]
     #[doc(alias = "--sockopts")]
     pub fn sockopts(&self) -> Option<&OsStr> {
         self.sockopts.as_deref()
     }
 
     /// Returns the requested blocking I/O preference for remote shells.
-    #[must_use]
     #[doc(alias = "--blocking-io")]
     #[doc(alias = "--no-blocking-io")]
     pub const fn blocking_io(&self) -> Option<bool> {
@@ -39,7 +35,6 @@ impl ClientConfig {
     }
 
     /// Returns the requested bandwidth limit, if any.
-    #[must_use]
     pub const fn bandwidth_limit(&self) -> Option<BandwidthLimit> {
         self.bandwidth_limit
     }
@@ -59,7 +54,6 @@ impl ClientConfig {
     }
 
     /// Returns the configured stop-at deadline, if any.
-    #[must_use]
     #[doc(alias = "--stop-after")]
     #[doc(alias = "--stop-at")]
     pub const fn stop_at(&self) -> Option<SystemTime> {
@@ -67,7 +61,6 @@ impl ClientConfig {
     }
 
     /// Returns the custom remote shell command arguments, if specified.
-    #[must_use]
     #[doc(alias = "--rsh")]
     #[doc(alias = "-e")]
     pub fn remote_shell(&self) -> Option<&[OsString]> {
@@ -75,7 +68,6 @@ impl ClientConfig {
     }
 
     /// Returns the custom remote rsync binary path, if specified.
-    #[must_use]
     #[doc(alias = "--rsync-path")]
     pub fn rsync_path(&self) -> Option<&OsStr> {
         self.rsync_path.as_deref()
@@ -86,7 +78,6 @@ impl ClientConfig {
     /// When set, rsync reads from this file immediately before the transfer
     /// starts and makes the content available to the remote rsync process via
     /// the `RSYNC_EARLY_INPUT` environment variable.
-    #[must_use]
     #[doc(alias = "--early-input")]
     pub fn early_input(&self) -> Option<&Path> {
         self.early_input.as_deref()
@@ -97,7 +88,6 @@ impl ClientConfig {
     /// `Some(true)` forces AES-GCM ciphers regardless of hardware detection,
     /// `Some(false)` disables automatic cipher selection entirely,
     /// `None` (default) uses runtime hardware detection.
-    #[must_use]
     #[doc(alias = "--aes")]
     pub const fn prefer_aes_gcm(&self) -> Option<bool> {
         self.prefer_aes_gcm
@@ -113,7 +103,6 @@ impl ClientConfig {
     /// variable `RSYNC_PROTECT_ARGS` would otherwise enable it.
     ///
     /// `None` uses the default behavior (disabled unless the environment enables it).
-    #[must_use]
     #[doc(alias = "--protect-args")]
     #[doc(alias = "--secluded-args")]
     #[doc(alias = "-s")]
@@ -126,7 +115,6 @@ impl ClientConfig {
     /// When set, the client advertises this version during the daemon handshake
     /// instead of `ProtocolVersion::NEWEST`. This mirrors the upstream
     /// `--protocol` flag which clamps the negotiation ceiling.
-    #[must_use]
     #[doc(alias = "--protocol")]
     pub const fn protocol_version(&self) -> Option<protocol::ProtocolVersion> {
         self.protocol_version

@@ -182,7 +182,6 @@ impl<R> SessionHandshake<R> {
     /// Returns the parsed legacy daemon greeting when the negotiation used the legacy ASCII handshake.
     ///
     /// Binary negotiations do not exchange a greeting, so the method returns [`None`] in that case.
-    #[must_use]
     pub const fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
         match self {
             Self::Binary(_) => None,
@@ -340,7 +339,6 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Returns the underlying binary handshake if the negotiation used that style.
-    #[must_use]
     pub const fn as_binary(&self) -> Option<&BinaryHandshake<R>> {
         match self {
             Self::Binary(handshake) => Some(handshake),
@@ -349,7 +347,6 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Returns a mutable reference to the binary handshake when the negotiation used that style.
-    #[must_use]
     pub const fn as_binary_mut(&mut self) -> Option<&mut BinaryHandshake<R>> {
         match self {
             Self::Binary(handshake) => Some(handshake),
@@ -358,7 +355,6 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Returns the underlying legacy daemon handshake if the negotiation used that style.
-    #[must_use]
     pub const fn as_legacy(&self) -> Option<&LegacyDaemonHandshake<R>> {
         match self {
             Self::Binary(_) => None,
@@ -367,7 +363,6 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Returns a mutable reference to the legacy daemon handshake when the negotiation used that style.
-    #[must_use]
     pub const fn as_legacy_mut(&mut self) -> Option<&mut LegacyDaemonHandshake<R>> {
         match self {
             Self::Binary(_) => None,

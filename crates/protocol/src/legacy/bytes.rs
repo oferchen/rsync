@@ -34,7 +34,6 @@ where
 /// sequences are rejected with [`NegotiationError::MalformedLegacyGreeting`]
 /// containing a lossy rendering of the offending bytes, matching the
 /// diagnostics emitted by upstream rsync when echoing unexpected banners.
-#[must_use = "the parsed legacy daemon message must be handled"]
 pub fn parse_legacy_daemon_message_bytes(
     line: &[u8],
 ) -> Result<LegacyDaemonMessage<'_>, NegotiationError> {
@@ -46,7 +45,6 @@ pub fn parse_legacy_daemon_message_bytes(
 /// Invalid UTF-8 input is rejected with
 /// [`NegotiationError::MalformedLegacyGreeting`], mirroring
 /// [`parse_legacy_daemon_message_bytes`].
-#[must_use = "legacy daemon error diagnostics must be handled"]
 pub fn parse_legacy_error_message_bytes(line: &[u8]) -> Result<Option<&str>, NegotiationError> {
     parse_lossy_ascii_bytes(line, |text| Ok(parse_legacy_error_message(text)))
 }
@@ -55,7 +53,6 @@ pub fn parse_legacy_error_message_bytes(line: &[u8]) -> Result<Option<&str>, Neg
 ///
 /// Invalid UTF-8 input is rejected with the same diagnostics as
 /// [`parse_legacy_error_message_bytes`].
-#[must_use = "legacy daemon warning diagnostics must be handled"]
 pub fn parse_legacy_warning_message_bytes(line: &[u8]) -> Result<Option<&str>, NegotiationError> {
     parse_lossy_ascii_bytes(line, |text| Ok(parse_legacy_warning_message(text)))
 }
@@ -70,7 +67,6 @@ pub fn parse_legacy_warning_message_bytes(line: &[u8]) -> Result<Option<&str>, N
 /// [`NegotiationError::MalformedLegacyGreeting`] that captures the lossy string
 /// representation for diagnostics, mirroring upstream behavior where the raw
 /// greeting is echoed back to the user.
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting_bytes(
     line: &[u8],
 ) -> Result<ProtocolVersion, NegotiationError> {
@@ -78,7 +74,6 @@ pub fn parse_legacy_daemon_greeting_bytes(
 }
 
 /// Parses a legacy daemon greeting and returns the detailed representation.
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting_bytes_details(
     line: &[u8],
 ) -> Result<LegacyDaemonGreeting<'_>, NegotiationError> {
@@ -92,7 +87,6 @@ pub fn parse_legacy_daemon_greeting_bytes_details(
 /// scratch buffers can therefore reuse the allocation immediately after parsing while retaining the
 /// negotiated metadata for later diagnostics.
 #[doc(alias = "@RSYNCD")]
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting_bytes_owned(
     line: &[u8],
 ) -> Result<LegacyDaemonGreetingOwned, NegotiationError> {

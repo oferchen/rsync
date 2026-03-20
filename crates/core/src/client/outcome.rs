@@ -15,7 +15,6 @@ pub enum ClientOutcome {
 
 impl ClientOutcome {
     /// Returns the contained [`ClientSummary`].
-    #[must_use]
     pub fn into_local(self) -> Option<ClientSummary> {
         match self {
             Self::Local(summary) => Some(*summary),

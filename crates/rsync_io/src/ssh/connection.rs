@@ -48,7 +48,6 @@ impl SshConnection {
     /// keeping the connection borrowed mutably for the lifetime of the stream.
     /// Subsequent calls return `None`, matching the semantics of
     /// [`Option::take`].
-    #[must_use]
     pub const fn take_stderr(&mut self) -> Option<ChildStderr> {
         self.stderr.take()
     }

@@ -540,7 +540,6 @@ impl<W: Write> AdaptiveCompressor<W> {
     /// Returns whether compression was decided to be used.
     ///
     /// Returns `None` if the decision hasn't been made yet.
-    #[must_use]
     pub fn compression_enabled(&self) -> Option<bool> {
         if self.decision_made {
             Some(self.should_compress)

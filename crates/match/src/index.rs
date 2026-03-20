@@ -49,7 +49,6 @@ impl DeltaSignatureIndex {
     /// reported by the layout. Files that produce fewer than one full block
     /// therefore return `None`, mirroring upstream rsync's behaviour of
     /// disabling the rolling checksum pipeline for very small payloads.
-    #[must_use]
     pub fn from_signature(
         signature: &FileSignature,
         algorithm: SignatureAlgorithm,

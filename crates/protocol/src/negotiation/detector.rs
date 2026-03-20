@@ -133,7 +133,6 @@ impl NegotiationPrologueDetector {
     /// issuing another `observe` call. This mirrors upstream rsync's approach
     /// where the decision is sticky after the first non-`NeedMoreData`
     /// determination.
-    #[must_use]
     pub const fn decision(&self) -> Option<NegotiationPrologue> {
         self.decided
     }
@@ -222,7 +221,6 @@ impl NegotiationPrologueDetector {
     /// required to finish buffering the canonical prefix. Once the prefix has
     /// been completed—or when the detector decides the exchange is binary—the
     /// method returns `None`.
-    #[must_use]
     pub const fn legacy_prefix_remaining(&self) -> Option<usize> {
         match (self.decided, self.prefix_complete) {
             (Some(NegotiationPrologue::LegacyAscii), false) => {
@@ -264,7 +262,6 @@ impl NegotiationPrologueDetector {
     /// borrowing it directly. When the destination slice is too small to hold
     /// the buffered prefix, a [`BufferedPrefixTooSmall`] error is returned and no
     /// data is written to the provided slice.
-    #[must_use = "process the copy result so the buffered prefix can be replayed or the size error handled"]
     pub fn copy_buffered_prefix_into(
         &self,
         target: &mut [u8],
@@ -290,7 +287,6 @@ impl NegotiationPrologueDetector {
     /// [`BufferedPrefixTooSmall`] error is returned and no bytes are written,
     /// matching upstream rsync's behavior where short buffers are reported to
     /// the caller without mutating the destination.
-    #[must_use = "process the copy result or handle the insufficient capacity error"]
     pub fn copy_buffered_prefix_into_array<const N: usize>(
         &self,
         target: &mut [u8; N],

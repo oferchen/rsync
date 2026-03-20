@@ -25,13 +25,11 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured filter set, if any.
-    #[must_use]
     pub const fn filter_set(&self) -> Option<&FilterSet> {
         self.filters.as_ref()
     }
 
     /// Returns the configured filter program, if any.
-    #[must_use]
     pub const fn filter_program(&self) -> Option<&FilterProgram> {
         self.filter_program.as_ref()
     }

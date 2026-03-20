@@ -17,7 +17,6 @@ use super::NegotiatedStream;
 /// Returns [`io::ErrorKind::UnexpectedEof`] if the stream ends before a
 /// negotiation style can be determined or propagates any underlying I/O error
 /// reported by the reader.
-#[must_use = "the returned stream holds the buffered negotiation state and must be consumed"]
 pub fn sniff_negotiation_stream<R: Read>(reader: R) -> io::Result<NegotiatedStream<R>> {
     let mut sniffer = NegotiationPrologueSniffer::new();
     sniff_negotiation_stream_with_sniffer(reader, &mut sniffer)
@@ -30,7 +29,6 @@ pub fn sniff_negotiation_stream<R: Read>(reader: R) -> io::Result<NegotiatedStre
 /// higher layer already maintains a pool of reusable sniffers. The sniffer is
 /// reset to guarantee stale state from previous sessions is discarded before
 /// the new transport is observed.
-#[must_use = "the returned stream holds the buffered negotiation state and must be consumed"]
 pub fn sniff_negotiation_stream_with_sniffer<R: Read>(
     mut reader: R,
     sniffer: &mut NegotiationPrologueSniffer,

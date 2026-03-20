@@ -29,7 +29,6 @@ impl ShutdownReason {
     /// Converts a u8 code back to a ShutdownReason.
     ///
     /// Returns `None` if the code is 0 (no shutdown) or invalid.
-    #[must_use]
     pub(crate) const fn from_u8(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Interrupted),
@@ -106,7 +105,6 @@ impl SignalHandler {
 
     /// Returns the reason for shutdown, if any.
     #[inline]
-    #[must_use]
     pub fn shutdown_reason(&self) -> Option<ShutdownReason> {
         super::shutdown_reason()
     }

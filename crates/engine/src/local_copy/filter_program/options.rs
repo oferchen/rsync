@@ -222,7 +222,6 @@ impl DirMergeOptions {
     }
 
     /// Returns the enforced rule kind, if any.
-    #[must_use]
     pub const fn enforced_kind(&self) -> Option<DirMergeEnforcedKind> {
         self.parser.enforce_kind()
     }
@@ -234,7 +233,6 @@ impl DirMergeOptions {
     }
 
     /// Optional override for the sender side when explicitly requested by modifiers.
-    #[must_use]
     pub const fn sender_side_override(&self) -> Option<bool> {
         match self.sender_side {
             SideState::Unspecified => None,
@@ -250,7 +248,6 @@ impl DirMergeOptions {
     }
 
     /// Optional override for the receiver side when explicitly requested by modifiers.
-    #[must_use]
     pub const fn receiver_side_override(&self) -> Option<bool> {
         match self.receiver_side {
             SideState::Unspecified => None,

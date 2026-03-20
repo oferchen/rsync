@@ -47,7 +47,6 @@ impl LocalCopyOptions {
     }
 
     /// Returns the configured backup directory, if any.
-    #[must_use]
     pub fn backup_directory(&self) -> Option<&Path> {
         self.backup_dir.as_deref()
     }
