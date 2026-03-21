@@ -12,6 +12,8 @@
 use std::fs;
 use std::io::{self, Read, Write};
 
+use fast_io::FileWriter;
+
 use protocol::codec::NdxCodec;
 
 use crate::adaptive_buffer::adaptive_writer_capacity;
