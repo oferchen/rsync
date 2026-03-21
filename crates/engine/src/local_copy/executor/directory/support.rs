@@ -7,6 +7,7 @@ use rayon::prelude::*;
 
 use crate::local_copy::LocalCopyError;
 
+/// A directory entry with its pre-fetched metadata, used for sorted traversal.
 #[derive(Debug)]
 pub(crate) struct DirectoryEntry {
     pub(crate) file_name: OsString,
@@ -173,6 +174,7 @@ pub(crate) fn is_fifo(file_type: fs::FileType) -> bool {
     }
 }
 
+/// Returns `true` when the file type is a block or character device.
 pub(crate) fn is_device(file_type: fs::FileType) -> bool {
     #[cfg(unix)]
     {
@@ -191,8 +193,6 @@ pub(crate) fn is_device(file_type: fs::FileType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ==================== compare_file_names tests ====================
 
     #[test]
     fn compare_file_names_equal() {
@@ -252,8 +252,6 @@ mod tests {
         assert_eq!(compare_file_names(a, b), Ordering::Less);
     }
 
-    // ==================== is_fifo tests ====================
-
     #[test]
     fn is_fifo_returns_false_for_regular_file() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -312,8 +310,6 @@ mod tests {
         assert!(is_fifo(metadata.file_type()));
     }
 
-    // ==================== is_device tests ====================
-
     #[test]
     fn is_device_returns_false_for_regular_file() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -330,8 +326,6 @@ mod tests {
         let metadata = std::fs::metadata(temp.path()).expect("metadata");
         assert!(!is_device(metadata.file_type()));
     }
-
-    // ==================== DirectoryEntry tests ====================
 
     #[test]
     fn directory_entry_debug_contains_file_name() {
@@ -350,8 +344,6 @@ mod tests {
         assert!(debug.contains("DirectoryEntry"));
         assert!(debug.contains("test.txt"));
     }
-
-    // ==================== read_directory_entries_sorted tests ====================
 
     #[test]
     fn read_directory_entries_sorted_empty_dir() {
@@ -428,8 +420,6 @@ mod tests {
         assert!(entry.metadata.is_file());
         assert_eq!(entry.metadata.len(), 12); // "test content" is 12 bytes
     }
-
-    // ==================== Parallel implementation tests ====================
 
     #[test]
     fn parallel_and_sequential_produce_identical_results() {

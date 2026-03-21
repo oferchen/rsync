@@ -1,3 +1,5 @@
+//! Directory traversal, planning, and recursive copy execution.
+
 mod planner;
 mod recursive;
 mod support;

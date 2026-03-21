@@ -17,6 +17,12 @@ use crate::local_copy::{
 use ::metadata::create_fifo;
 use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 
+/// Copies a FIFO (named pipe) from source to destination.
+///
+/// Handles hard-link deduplication, `--existing`, directory replacement via
+/// `--force`, backup, and dry-run mode.
+///
+/// // upstream: receiver.c - FIFO handling
 pub(crate) fn copy_fifo(
     context: &mut CopyContext,
     source: &Path,
