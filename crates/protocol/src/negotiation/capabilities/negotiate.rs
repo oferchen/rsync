@@ -271,12 +271,11 @@ pub fn negotiate_capabilities_with_override(
     })
 }
 
-/// Chooses a checksum algorithm from the client's list.
+/// Chooses a checksum algorithm from the remote peer's list.
 ///
-/// Selects the first algorithm in the client's list that we also support.
-/// This matches upstream's algorithm selection logic where "the client picks
-/// the first name in the server's list that is also in the client's list"
-/// (from server perspective: pick first in client's list we support).
+/// Selects the first algorithm in the remote's list that we also support.
+/// Returns an error if no common algorithm is found - upstream rsync treats
+/// this as a hard failure (compat.c:383-406 `recv_negotiate_str`).
 pub(super) fn choose_checksum_algorithm(client_list: &str) -> io::Result<ChecksumAlgorithm> {
     for algo in client_list.split_whitespace() {
         // Try to parse each algorithm the client supports
@@ -288,8 +287,11 @@ pub(super) fn choose_checksum_algorithm(client_list: &str) -> io::Result<Checksu
         }
     }
 
-    // No common algorithm found - use protocol 30+ default
-    Ok(ChecksumAlgorithm::MD5)
+    // upstream: compat.c:383-406 — failure to negotiate is a hard error
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("failed to negotiate a common checksum algorithm (remote offers: {client_list})"),
+    ))
 }
 
 /// Chooses a compression algorithm from the client's list.
