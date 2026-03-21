@@ -8,10 +8,8 @@ fn transfer_request_with_files_from_copies_listed_sources() {
     let tmp = tempdir().expect("tempdir");
     let source_dir = tmp.path().join("src");
     std::fs::create_dir(&source_dir).expect("create source dir");
-    std::fs::write(source_dir.join("files-from-a.txt"), b"files-from-a")
-        .expect("write source a");
-    std::fs::write(source_dir.join("files-from-b.txt"), b"files-from-b")
-        .expect("write source b");
+    std::fs::write(source_dir.join("files-from-a.txt"), b"files-from-a").expect("write source a");
+    std::fs::write(source_dir.join("files-from-b.txt"), b"files-from-b").expect("write source b");
 
     let list_path = tmp.path().join("files-from.list");
     std::fs::write(&list_path, "files-from-a.txt\nfiles-from-b.txt\n").expect("write list");
