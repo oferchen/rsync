@@ -210,7 +210,7 @@ impl Drop for StderrDrain {
 /// Handle to wait for SSH subprocess completion.
 ///
 /// When the connection is split, any available stderr handle is moved into a
-/// [`StderrDrain`] background thread that prevents pipe-buffer deadlocks by
+/// `StderrDrain` background thread that prevents pipe-buffer deadlocks by
 /// continuously reading stderr and forwarding lines to process stderr.
 pub struct SshChildHandle {
     child: Child,

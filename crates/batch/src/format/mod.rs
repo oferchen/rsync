@@ -5,10 +5,10 @@
 //!
 //! # Submodules
 //!
-//! - [`flags`] - Stream flags bitmap (`BatchFlags`)
-//! - [`header`] - Protocol negotiation header (`BatchHeader`)
-//! - [`stats`] - Transfer statistics (`BatchStats`)
-//! - [`file_entry`] - Internal file metadata tracking (`FileEntry`)
+//! - `flags` - Stream flags bitmap ([`BatchFlags`])
+//! - `header` - Protocol negotiation header ([`BatchHeader`])
+//! - `stats` - Transfer statistics ([`BatchStats`])
+//! - `file_entry` - Internal file metadata tracking ([`FileEntry`])
 //! - `wire` - Low-level read/write primitives (crate-internal)
 
 mod file_entry;
