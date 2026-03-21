@@ -80,7 +80,7 @@ impl Suffix {
     /// lowercased. Returns `None` if the normalized result is empty.
     #[must_use]
     pub fn new(raw: &str) -> Self {
-        let normalized = raw.trim_start_matches('.').trim().to_ascii_lowercase();
+        let normalized = raw.trim().trim_start_matches('.').to_ascii_lowercase();
         Self(normalized)
     }
 
