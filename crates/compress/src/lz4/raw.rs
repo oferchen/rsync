@@ -322,7 +322,6 @@ pub const fn compressed_size_from_header(header: [u8; 2]) -> Option<usize> {
     decode_header(header)
 }
 
-// Implement From for io::Error conversion
 impl From<lz4_flex::block::CompressError> for RawLz4Error {
     fn from(e: lz4_flex::block::CompressError) -> Self {
         RawLz4Error::Io(io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
