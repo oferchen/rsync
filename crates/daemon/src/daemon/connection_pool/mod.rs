@@ -13,6 +13,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+#[allow(unused_imports)]
 pub use pool::ConnectionPool;
 #[allow(unused_imports)]
 pub use types::{AggregateStats, ConnectionId, ConnectionInfo, IpStats};
