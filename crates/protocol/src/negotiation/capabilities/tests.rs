@@ -2352,25 +2352,43 @@ fn capability_fallback_very_long_list() {
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
 
-/// Tests behavior with list containing only whitespace variations.
+/// Tests that whitespace-only lists produce an error (no algorithms to match).
+///
+/// Upstream `recv_negotiate_str` (compat.c:383-406) treats empty/no-match as
+/// a hard error. Whitespace-only strings contain zero algorithm names after
+/// `split_whitespace()`, so they must fail.
 #[test]
-fn capability_fallback_whitespace_variations() {
-    // Various whitespace-only or whitespace-heavy lists
-    let lists = [
-        "   ",                // only spaces
-        "\t\t\t",             // only tabs
-        "  \t  \n  ",         // mixed whitespace
-        "   md5   ",          // md5 with lots of space
-        "  \t md5 \n sha1  ", // mixed with valid algorithms
+fn capability_fallback_whitespace_only_lists_error() {
+    let whitespace_only = ["   ", "\t\t\t", "  \t  \n  "];
+
+    for list in whitespace_only {
+        let result = choose_checksum_algorithm(list);
+        assert!(
+            result.is_err(),
+            "whitespace-only list '{}' should produce an error",
+            list.escape_debug()
+        );
+    }
+}
+
+/// Tests that valid algorithms surrounded by whitespace are found correctly.
+///
+/// `split_whitespace()` handles leading/trailing/mixed whitespace, so
+/// algorithm names embedded in whitespace must still match.
+#[test]
+fn capability_fallback_whitespace_padded_valid_lists() {
+    let valid_lists = [
+        ("   md5   ", ChecksumAlgorithm::MD5),
+        ("  \t md5 \n sha1  ", ChecksumAlgorithm::MD5), // first match wins
     ];
 
-    for list in lists {
+    for (list, expected) in valid_lists {
         let result = choose_checksum_algorithm(list).unwrap();
-        // Should either find md5/sha1 or fall back to MD5
-        assert!(
-            result == ChecksumAlgorithm::MD5 || result == ChecksumAlgorithm::SHA1,
-            "list '{}' should result in MD5 or SHA1",
-            list.escape_debug()
+        assert_eq!(
+            result, expected,
+            "list '{}' should produce {:?}",
+            list.escape_debug(),
+            expected
         );
     }
 }
