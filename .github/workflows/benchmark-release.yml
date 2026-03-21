@@ -1,0 +1,122 @@
+name: Criterion Benchmarks
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+
+concurrency:
+  group: criterion-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  criterion:
+    name: Criterion Benchmark Suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: criterion-benchmark
+
+      - name: Run criterion benchmarks
+        run: |
+          set -euo pipefail
+          cargo bench --workspace 2>&1 | tee criterion_output.txt
+
+      - name: Generate step summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Criterion Benchmark Results"
+            echo ""
+            echo "**Tag:** \`${GITHUB_REF##*/}\`"
+            echo "**Commit:** \`${GITHUB_SHA::8}\`"
+            echo "**Runner:** \`$(uname -m)\` on \`$(lsb_release -ds 2>/dev/null || echo 'Ubuntu')\`"
+            echo ""
+            echo "### Benchmark Groups"
+            echo ""
+            echo "| Crate | Benchmark | Target |"
+            echo "|-------|-----------|--------|"
+            echo "| checksums | checksums_benchmark, parallel_benchmark, pipelined_benchmark | Checksum algorithms (Adler32, MD4, MD5, XXH3), SIMD vs scalar |"
+            echo "| core | transfer_benchmark | End-to-end transfer pipeline |"
+            echo "| engine | optimizations_benchmark, parallel_checksum, delta_transfer_benchmark | Delta engine, parallel checksumming |"
+            echo "| fast_io | io_optimizations | I/O strategies (mmap, buffered, sparse) |"
+            echo "| match | delta_matching_benchmark, profiling_analysis | Block matching, rolling hash |"
+            echo "| protocol | delta_wire_benchmark, flist_benchmark, file_entry_memory | Wire encoding, file list serialization |"
+            echo "| transfer | map_file_benchmark, token_buffer_benchmark | Memory-mapped file access, token buffering |"
+            echo ""
+            echo "### Raw Output (excerpt)"
+            echo ""
+            echo '```'
+            # Extract lines with benchmark timing results
+            grep -E '(^Benchmarking|^[a-zA-Z_/]+\s+time:)' criterion_output.txt | tail -100 || true
+            echo '```'
+            echo ""
+            echo "Full results available in the uploaded artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload criterion output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: criterion-results
+          retention-days: 90
+          path: |
+            criterion_output.txt
+            target/criterion/
+
+      - name: Append criterion summary to release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF##*/}"
+
+          # Wait briefly for the release to exist (created by release workflow)
+          for i in 1 2 3 4 5; do
+            CURRENT_BODY=$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo "")
+            if [ -n "$CURRENT_BODY" ] || [ "$i" -eq 5 ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          # Build criterion summary section
+          CRITERION_SECTION="## Criterion Microbenchmarks
+
+          Benchmark suite ran on \`ubuntu-24.04\` (\`x86_64\`), commit \`${GITHUB_SHA::8}\`.
+
+          $(grep -E '(time:|thrpt:)' criterion_output.txt | head -50 || echo 'See CI artifacts for full results.')"
+
+          # Dedent the heredoc content
+          CRITERION_SECTION=$(echo "$CRITERION_SECTION" | sed 's/^          //')
+
+          # Avoid duplicate sections on re-runs
+          if echo "$CURRENT_BODY" | grep -q "Criterion Microbenchmarks"; then
+            echo "Criterion section already present in release notes, skipping."
+            exit 0
+          fi
+
+          NEW_BODY="${CURRENT_BODY}
+
+          ---
+
+          ${CRITERION_SECTION}"
+
+          gh release edit "$TAG" --notes "$NEW_BODY" || echo "Could not update release notes"
