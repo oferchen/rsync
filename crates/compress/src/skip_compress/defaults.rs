@@ -40,8 +40,7 @@ const ARCHIVE_EXTENSIONS: &[&str] = &[
 
 /// Package format extensions (pre-compressed).
 const PACKAGE_EXTENSIONS: &[&str] = &[
-    "deb", "rpm", "apk", "jar", "war", "ear", "egg", "whl", "gem", "nupkg", "snap", "appx",
-    "msix",
+    "deb", "rpm", "apk", "jar", "war", "ear", "egg", "whl", "gem", "nupkg", "snap", "appx", "msix",
 ];
 
 /// Document format extensions (often pre-compressed internally).
@@ -50,9 +49,8 @@ const DOCUMENT_EXTENSIONS: &[&str] = &[
 ];
 
 /// Disk image extensions (often compressed or encrypted).
-const DISK_IMAGE_EXTENSIONS: &[&str] = &[
-    "iso", "img", "dmg", "vhd", "vhdx", "vmdk", "qcow", "qcow2",
-];
+const DISK_IMAGE_EXTENSIONS: &[&str] =
+    &["iso", "img", "dmg", "vhd", "vhdx", "vmdk", "qcow", "qcow2"];
 
 /// All default extension groups in declaration order.
 const ALL_GROUPS: &[&[&str]] = &[
