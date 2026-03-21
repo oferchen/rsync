@@ -367,10 +367,13 @@ where
         Err(message) => return fail_with_message(message, stderr),
     };
 
+    let files_from_active = !files_from.is_empty();
+
     resolve_file_list_entries(
         &mut file_list_operands,
         &remainder,
         relative.unwrap_or(false),
+        files_from_active,
     );
 
     if let Some(exit_code) = maybe_handle_module_listing(
@@ -396,7 +399,6 @@ where
     }
 
     let implied_dirs_option = implied_dirs;
-    let files_from_active = !files_from.is_empty();
 
     // upstream: options.c:2169-2177 - --files-from disables default recursion,
     // enables xfer_dirs, and implies --relative.
@@ -454,10 +456,29 @@ where
         }
     }
 
-    // Build transfer operands early so we can check if this is a daemon transfer
+    // Build transfer operands early so we can check if this is a daemon transfer.
+    // When --files-from is active, the source dir from `remainder` serves only as
+    // a base directory for resolving file list entries (already done above). It must
+    // not appear as a separate source operand - only the resolved file entries and
+    // the destination are transfer operands.
+    // upstream: main.c:780-790 - source dir is chdir target, not a transfer source
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
-    transfer_operands.append(&mut file_list_operands);
-    transfer_operands.extend(remainder);
+    if files_from_active && !file_list_operands.is_empty() {
+        // File entries (resolved with ./ marker) are the sources.
+        // Only the destination from remainder is appended - the source
+        // dir served only as the base for resolving entries.
+        transfer_operands.append(&mut file_list_operands);
+        if let Some(dest) = remainder.last() {
+            transfer_operands.push(dest.clone());
+        }
+    } else {
+        // No --files-from, or --files-from with empty list: use the
+        // original positional args (source + dest). An empty file list
+        // with --files-from still needs source+dest operands so the
+        // transfer engine can validate them and succeed with zero work.
+        transfer_operands.append(&mut file_list_operands);
+        transfer_operands.extend(remainder);
+    }
 
     // Only validate local-only options if we're NOT accessing a daemon (rsync:// or ::)
     // Options like --protocol, --password-file are valid for daemon access
