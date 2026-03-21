@@ -85,6 +85,17 @@ fn id_strategy() -> impl Strategy<Value = u32> {
     prop_oneof![Just(0u32), 1u32..=1000, 1001u32..=65535,]
 }
 
+/// Generates a non-zero UID/GID value.
+///
+/// Used in name roundtrip tests because XMIT_USER_NAME_FOLLOWS and
+/// XMIT_GROUP_NAME_FOLLOWS are only set when the UID/GID differs from
+/// the previous entry. The initial prev_uid/prev_gid is 0, so a
+/// zero-valued ID triggers XMIT_SAME_UID/XMIT_SAME_GID and suppresses
+/// the name - which is correct wire behavior but not what these tests verify.
+fn nonzero_id_strategy() -> impl Strategy<Value = u32> {
+    prop_oneof![1u32..=1000, 1001u32..=65535,]
+}
+
 /// Generates a device major/minor number.
 fn rdev_strategy() -> impl Strategy<Value = (u32, u32)> {
     (0u32..=255, 0u32..=255)
@@ -835,8 +846,8 @@ proptest! {
         size in file_size_strategy(),
         perms in permissions_strategy(),
         mtime in mtime_strategy(),
-        uid in id_strategy(),
-        gid in id_strategy(),
+        uid in nonzero_id_strategy(),
+        gid in nonzero_id_strategy(),
         user_name in owner_name_strategy(),
         group_name in owner_name_strategy(),
     ) {
@@ -1202,8 +1213,8 @@ proptest! {
         size in file_size_strategy(),
         perms in permissions_strategy(),
         mtime in mtime_strategy(),
-        uid in id_strategy(),
-        gid in id_strategy(),
+        uid in nonzero_id_strategy(),
+        gid in nonzero_id_strategy(),
         user_name in owner_name_strategy(),
         group_name in owner_name_strategy(),
         atime in mtime_strategy(),
