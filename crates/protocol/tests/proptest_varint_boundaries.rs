@@ -7,8 +7,9 @@
 
 use proptest::prelude::*;
 use protocol::{
-    decode_varint, encode_varint_to_vec, read_longint, read_varint, read_varlong, write_longint,
-    write_varlong,
+    decode_varint, encode_varint_to_vec, read_longint, read_varint, read_varint30_int,
+    read_varlong, read_varlong30, write_longint, write_varint30_int, write_varlong,
+    write_varlong30,
 };
 use std::io::Cursor;
 
@@ -281,14 +282,17 @@ proptest! {
     /// All specified boundary values roundtrip through longint.
     #[test]
     fn longint_explicit_boundaries_roundtrip(
-        idx in 0usize..10
+        idx in 0usize..14
     ) {
         let boundaries: &[i64] = &[
             0, 1, 127, 128, 255, 256,
+            65535, 65536,
             u32::MAX as i64,
             i32::MIN as i64,
             i32::MAX as i64,
             i64::MAX,
+            i64::MIN,
+            -1,
         ];
         let value = boundaries[idx];
 
@@ -338,5 +342,118 @@ proptest! {
             prop_assert_eq!(decoded, expected);
         }
         prop_assert_eq!(cursor.position() as usize, encoded.len());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Monotonicity: larger non-negative values never encode to fewer bytes
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// For non-negative i32 values, a larger value never encodes to fewer bytes
+    /// than a smaller value. This ensures the encoding preserves magnitude ordering
+    /// in terms of wire size.
+    #[test]
+    fn varint_encoding_length_monotonic(a in 0u32..=u32::MAX, b in 0u32..=u32::MAX) {
+        let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+        let mut enc_lo = Vec::new();
+        let mut enc_hi = Vec::new();
+        encode_varint_to_vec(lo as i32, &mut enc_lo);
+        encode_varint_to_vec(hi as i32, &mut enc_hi);
+        prop_assert!(
+            enc_lo.len() <= enc_hi.len(),
+            "value {} ({} bytes) > value {} ({} bytes)",
+            lo, enc_lo.len(), hi, enc_hi.len()
+        );
+    }
+
+    /// For non-negative i64 values in longint range, larger values never use
+    /// fewer bytes than smaller values.
+    #[test]
+    fn longint_encoding_length_monotonic(a in 0i64..=i64::MAX, b in 0i64..=i64::MAX) {
+        let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+        let mut enc_lo = Vec::new();
+        let mut enc_hi = Vec::new();
+        write_longint(&mut enc_lo, lo)?;
+        write_longint(&mut enc_hi, hi)?;
+        prop_assert!(
+            enc_lo.len() <= enc_hi.len(),
+            "value {} ({} bytes) > value {} ({} bytes)",
+            lo, enc_lo.len(), hi, enc_hi.len()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Varlong30 (protocol 30+ alias) property tests
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// write_varlong30/read_varlong30 roundtrips for arbitrary non-negative values.
+    ///
+    /// varlong30 is the protocol >= 30 entry point that delegates to varlong.
+    /// This verifies the public API surface independently.
+    #[test]
+    fn varlong30_roundtrip(value in 0i64..=0x03FF_FFFF_FFFF_FFFFi64, min_bytes in 3u8..=8u8) {
+        let mut encoded = Vec::new();
+        write_varlong30(&mut encoded, value, min_bytes)?;
+
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_varlong30(&mut cursor, min_bytes)?;
+        prop_assert_eq!(decoded, value);
+        prop_assert_eq!(cursor.position() as usize, encoded.len());
+    }
+
+    /// varlong30 produces identical bytes to varlong for all inputs.
+    #[test]
+    fn varlong30_matches_varlong(value in 0i64..=0x03FF_FFFF_FFFF_FFFFi64, min_bytes in 3u8..=8u8) {
+        let mut enc30 = Vec::new();
+        let mut enc_plain = Vec::new();
+        write_varlong30(&mut enc30, value, min_bytes)?;
+        write_varlong(&mut enc_plain, value, min_bytes)?;
+        prop_assert_eq!(enc30, enc_plain);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Varint30 (protocol-versioned i32) property tests
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// write_varint30_int/read_varint30_int roundtrips for protocol >= 30 (varint mode).
+    #[test]
+    fn varint30_int_proto30_roundtrip(value in any::<i32>()) {
+        let mut encoded = Vec::new();
+        write_varint30_int(&mut encoded, value, 30)?;
+
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_varint30_int(&mut cursor, 30)?;
+        prop_assert_eq!(decoded, value);
+        prop_assert_eq!(cursor.position() as usize, encoded.len());
+    }
+
+    /// write_varint30_int/read_varint30_int roundtrips for protocol < 30 (fixed 4-byte mode).
+    #[test]
+    fn varint30_int_proto29_roundtrip(value in any::<i32>()) {
+        let mut encoded = Vec::new();
+        write_varint30_int(&mut encoded, value, 29)?;
+
+        // Fixed 4-byte encoding
+        prop_assert_eq!(encoded.len(), 4);
+
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_varint30_int(&mut cursor, 29)?;
+        prop_assert_eq!(decoded, value);
+    }
+
+    /// Protocol < 30 always produces exactly 4 bytes regardless of value magnitude.
+    #[test]
+    fn varint30_int_proto_below_30_always_4_bytes(
+        value in any::<i32>(),
+        proto in 0u8..30u8
+    ) {
+        let mut encoded = Vec::new();
+        write_varint30_int(&mut encoded, value, proto)?;
+        prop_assert_eq!(encoded.len(), 4);
     }
 }
