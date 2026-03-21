@@ -523,9 +523,9 @@ fn test_choose_checksum_fallback_to_later_match() {
 
 #[test]
 fn test_choose_checksum_empty_list() {
-    // Empty list should fall back to MD5
-    let result = choose_checksum_algorithm("").unwrap();
-    assert_eq!(result, ChecksumAlgorithm::MD5);
+    // upstream: compat.c:383-406 - empty list is a negotiation failure (hard error)
+    let result = choose_checksum_algorithm("");
+    assert!(result.is_err(), "empty list should be a negotiation error");
 }
 
 #[test]
@@ -1680,10 +1680,10 @@ fn phase4_compression_zstd_not_available() {
 
 #[test]
 fn phase5_negotiate_only_unsupported_checksums() {
-    // If client sends only unsupported checksums, fallback to MD5
+    // upstream: compat.c:383-406 - no common algorithm is a hard error
     let list = "blake3 sha256 sha512 xxh256";
-    let result = choose_checksum_algorithm(list).unwrap();
-    assert_eq!(result, ChecksumAlgorithm::MD5);
+    let result = choose_checksum_algorithm(list);
+    assert!(result.is_err(), "no common algorithm should be a negotiation error");
 }
 
 #[test]
@@ -1696,9 +1696,10 @@ fn phase5_negotiate_only_unsupported_compressions() {
 
 #[test]
 fn phase5_negotiate_whitespace_only_list() {
+    // upstream: compat.c:383-406 - whitespace-only list has no valid algorithms
     let list = "   \t   \n   ";
-    let checksum = choose_checksum_algorithm(list).unwrap();
-    assert_eq!(checksum, ChecksumAlgorithm::MD5);
+    let checksum = choose_checksum_algorithm(list);
+    assert!(checksum.is_err(), "whitespace-only list should be a negotiation error");
 
     let compression = choose_compression_algorithm(list).unwrap();
     assert_eq!(compression, CompressionAlgorithm::None);
@@ -1944,11 +1945,10 @@ fn capability_fallback_server_only_none_compression() {
 /// Tests handling of completely unknown checksum algorithm names.
 #[test]
 fn capability_fallback_unknown_checksum_strings() {
-    // All algorithm names are unknown
+    // upstream: compat.c:383-406 - all unknown algorithm names is a hard error
     let remote_list = "blake2b blake3 argon2 scrypt";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
-    // Should fall back to default (MD5)
-    assert_eq!(result, ChecksumAlgorithm::MD5);
+    let result = choose_checksum_algorithm(remote_list);
+    assert!(result.is_err(), "all unknown algorithms should be a negotiation error");
 }
 
 /// Tests handling of completely unknown compression algorithm names.
@@ -1981,11 +1981,10 @@ fn capability_fallback_mixed_unknown_known_compression() {
 /// Tests handling of malformed algorithm names (typos, case errors).
 #[test]
 fn capability_fallback_malformed_algorithm_names() {
-    // Various malformed names that might occur due to typos or bugs
+    // upstream: compat.c:383-406 - malformed names with no valid match is a hard error
     let remote_list = "MD5 Md5 mD5 md-5 md_5 md55 mdv md5!";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
-    // None match (case-sensitive, exact match required), falls back to MD5
-    assert_eq!(result, ChecksumAlgorithm::MD5);
+    let result = choose_checksum_algorithm(remote_list);
+    assert!(result.is_err(), "all malformed algorithms should be a negotiation error");
 }
 
 /// Tests handling of empty algorithm string between spaces.
@@ -2000,19 +1999,19 @@ fn capability_fallback_empty_between_spaces() {
 /// Tests handling of numeric-only strings.
 #[test]
 fn capability_fallback_numeric_strings() {
+    // upstream: compat.c:383-406 - no valid algorithms is a hard error
     let remote_list = "123 456 789";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
-    // None are valid, falls back to MD5
-    assert_eq!(result, ChecksumAlgorithm::MD5);
+    let result = choose_checksum_algorithm(remote_list);
+    assert!(result.is_err(), "numeric-only list should be a negotiation error");
 }
 
 /// Tests handling of special characters in algorithm names.
 #[test]
 fn capability_fallback_special_chars() {
+    // upstream: compat.c:383-406 - no valid algorithms is a hard error
     let remote_list = "md5@ sha1# xxh* md5-v2";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
-    // None match exactly, falls back to MD5
-    assert_eq!(result, ChecksumAlgorithm::MD5);
+    let result = choose_checksum_algorithm(remote_list);
+    assert!(result.is_err(), "special-char names should be a negotiation error");
 }
 
 /// Tests handling of very long unknown algorithm names.
