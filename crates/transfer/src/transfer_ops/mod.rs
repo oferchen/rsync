@@ -1,0 +1,232 @@
+//! Transfer operation helpers for separating request and response phases.
+//!
+//! This module provides helpers to break down the synchronous file transfer loop
+//! into distinct request and response phases, enabling pipelined transfers.
+//!
+//! # Architecture
+//!
+//! A file transfer consists of two phases:
+//!
+//! 1. **Request phase**: Send NDX + iflags + sum_head + signature to sender
+//! 2. **Response phase**: Read echoed attributes + apply delta + verify checksum
+//!
+//! By separating these phases, we enable pipelining: sending multiple requests
+//! before waiting for responses.
+//!
+//! # Submodules
+//!
+//! - [`request`] - Sends file transfer requests (NDX + iflags + signature) to the sender.
+//! - [`response`] - Synchronous response processing with direct disk I/O.
+//! - [`streaming`] - Streaming response processing via SPSC channel to a disk commit thread.
+//!
+//! # Protocol Flow
+//!
+//! ```text
+//! Receiver (us)                         Sender
+//! ─────────────                         ──────
+//! NDX + iflags + sum_head ───────────▶
+//!                                       Echo NDX + iflags + sum_head
+//!                          ◀─────────── Delta tokens
+//!                          ◀─────────── File checksum
+//! ```
+//!
+//! # Upstream Reference
+//!
+//! - `generator.c:recv_generator()` - Sends file indices and signatures
+//! - `sender.c:send_files()` - Receives requests, sends deltas
+//! - `receiver.c:recv_files()` - Receives deltas, applies them
+
+mod request;
+mod response;
+mod streaming;
+mod token_loop;
+
+use std::io::{self, Read};
+use std::num::NonZeroU8;
+use std::path::Path;
+
+use protocol::ProtocolVersion;
+
+use crate::reader::ServerReader;
+use crate::receiver::{SenderAttrs, SumHead};
+use crate::token_reader::TokenReader;
+
+pub use self::request::send_file_request;
+pub use self::response::process_file_response;
+pub use self::streaming::{StreamingResult, process_file_response_streaming};
+
+/// Configuration for sending file transfer requests and processing responses.
+///
+/// Groups protocol version, checksum parameters, and write options into a
+/// single struct shared between [`send_file_request`] and [`process_file_response`].
+#[derive(Debug)]
+pub struct RequestConfig<'a> {
+    /// Protocol version for encoding.
+    pub protocol: ProtocolVersion,
+    /// Whether to write iflags (protocol >= 29).
+    pub write_iflags: bool,
+    /// Checksum truncation length.
+    pub checksum_length: NonZeroU8,
+    /// Checksum algorithm for verification.
+    pub checksum_algorithm: engine::signature::SignatureAlgorithm,
+    /// Reference to negotiated algorithms for checksum verification.
+    pub negotiated_algorithms: Option<&'a protocol::NegotiationResult>,
+    /// Compatibility flags.
+    pub compat_flags: Option<&'a protocol::CompatibilityFlags>,
+    /// Checksum seed from protocol setup.
+    pub checksum_seed: i32,
+    /// Whether to use sparse file writing.
+    pub use_sparse: bool,
+    /// Whether to fsync after write.
+    pub do_fsync: bool,
+    /// Temporary directory for staging received files before final placement.
+    pub temp_dir: Option<&'a Path>,
+    /// Whether to write data directly to device files (`--write-devices`).
+    ///
+    /// When true, device file targets are opened with `O_WRONLY` and receive
+    /// delta data like regular files. Implies inplace for device targets
+    /// (no temp file + rename).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` - open device for writing
+    pub write_devices: bool,
+    /// Update destination files in place without temp-file + rename (`--inplace`).
+    ///
+    /// When true, delta data is written directly to the destination file.
+    /// The destination file is opened for writing (create if needed) and
+    /// truncated to the target size after delta application completes.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:855-860`: opens destination directly when inplace
+    pub inplace: bool,
+    /// Per-file inplace for partial-dir basis files (CF_INPLACE_PARTIAL_DIR).
+    ///
+    /// When true, files whose basis type is `PartialDir` are written in-place.
+    /// Combined with `fnamecmp_type` from sender attrs to make per-file decisions.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`
+    pub inplace_partial: bool,
+    /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
+    pub io_uring_policy: fast_io::IoUringPolicy,
+}
+
+impl RequestConfig<'_> {
+    /// Creates a [`TokenReader`] matching the negotiated compression algorithm.
+    ///
+    /// Returns a compressed token reader when the negotiated algorithms include
+    /// Zlib or ZlibX compression, otherwise a plain 4-byte LE token reader.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `token.c:271` - `recv_token()` selects plain or compressed based on `-z`
+    fn token_reader(&self) -> TokenReader {
+        let compression = self.negotiated_algorithms.map(|n| n.compression);
+        TokenReader::new(compression)
+    }
+}
+
+/// Context for processing a file transfer response from the sender.
+///
+/// Wraps a [`RequestConfig`] reference so that [`process_file_response`] can
+/// access protocol parameters, checksum settings, and sparse-write options
+/// without requiring them as individual function arguments.
+pub struct ResponseContext<'a> {
+    /// Protocol and checksum configuration shared with the request phase.
+    pub config: &'a RequestConfig<'a>,
+}
+
+/// Reads and validates the echoed NDX and sum_head from the sender response.
+///
+/// Returns the file path, basis path, signature, target size, sender attributes,
+/// and whether inplace mode applies for this file.
+///
+/// # Errors
+///
+/// Returns an error if the echoed NDX does not match the expected value.
+fn read_response_header<R: Read>(
+    reader: &mut ServerReader<R>,
+    ndx_codec: &mut impl protocol::codec::NdxCodec,
+    pending: crate::pipeline::PendingTransfer,
+    ctx: &ResponseContext<'_>,
+) -> io::Result<ResponseHeader> {
+    let expected_ndx = pending.ndx();
+
+    // Read sender attributes (echoed NDX + iflags)
+    let (echoed_ndx, sender_attrs) = SenderAttrs::read_with_codec(reader, ndx_codec)?;
+
+    // Verify NDX matches - protocol requires in-order responses
+    if echoed_ndx != expected_ndx {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "sender echoed NDX {echoed_ndx} but expected {expected_ndx} - protocol violation"
+            ),
+        ));
+    }
+
+    // Read echoed sum_head (we don't use it, but must consume it)
+    let _echoed_sum_head = SumHead::read(reader)?;
+
+    // Decompose pending transfer
+    let (file_path, basis_path, signature, target_size) = pending.into_parts();
+
+    // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+    let use_inplace = ctx.config.inplace
+        || (ctx.config.inplace_partial
+            && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir));
+
+    Ok(ResponseHeader {
+        file_path,
+        basis_path,
+        signature,
+        target_size,
+        use_inplace,
+    })
+}
+
+/// Parsed response header from the sender after NDX and sum_head validation.
+struct ResponseHeader {
+    /// Destination file path.
+    file_path: std::path::PathBuf,
+    /// Optional basis file path for delta transfers.
+    basis_path: Option<std::path::PathBuf>,
+    /// Optional file signature for delta matching.
+    signature: Option<engine::signature::FileSignature>,
+    /// Expected final file size.
+    target_size: u64,
+    /// Whether to write directly to the destination (inplace mode).
+    use_inplace: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_config_debug() {
+        // Verify RequestConfig is debuggable
+        let protocol = ProtocolVersion::from_supported(31).expect("31 is supported");
+        let config = RequestConfig {
+            protocol,
+            write_iflags: true,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: engine::signature::SignatureAlgorithm::Md4,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+            use_sparse: false,
+            do_fsync: false,
+            temp_dir: None,
+            write_devices: false,
+            inplace: false,
+            inplace_partial: false,
+            io_uring_policy: fast_io::IoUringPolicy::Auto,
+        };
+        let debug_str = format!("{config:?}");
+        assert!(debug_str.contains("RequestConfig"));
+    }
+}
