@@ -698,6 +698,9 @@ setup_comprehensive_src() {
   chmod 755 "$dir/script.sh"
   echo "should be excluded" > "$dir/excluded.log"
   echo "also excluded" > "$dir/subdir/debug.log"
+  echo "temp data" > "$dir/temp_one.tmp"
+  echo "temp nested" > "$dir/subdir/temp_two.tmp"
+  echo "notes content" > "$dir/notes.dat"
 }
 
 # Verify core files transferred with correct content
@@ -865,6 +868,20 @@ comp_run_scenario() {
       echo "old content" > "$ddir/hello.txt"
       echo "old nested" > "$ddir/subdir/file.txt"
       ;;
+    include-exclude)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+    filter-rule)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+    merge-filter)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+    exclude-from)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      # Create exclude-from file listing patterns to exclude
+      printf '*.log\n*.tmp\n' > "$ddir/exclude_patterns.txt"
+      ;;
     *)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       ;;
@@ -879,6 +896,10 @@ comp_run_scenario() {
     sparse)
       dd if=/dev/zero bs=4096 count=16 2>/dev/null > "$sdir/sparse_test.bin"
       ;;
+    merge-filter)
+      # Place a .rsync-filter merge file in source that excludes *.dat files
+      printf 'exclude *.dat\n' > "$sdir/.rsync-filter"
+      ;;
   esac
 
   # shellcheck disable=SC2086
@@ -887,6 +908,9 @@ comp_run_scenario() {
   local resolved_flags="$flags"
   if [[ "$resolved_flags" == *"--files-from=filelist.txt"* ]]; then
     resolved_flags="${resolved_flags/--files-from=filelist.txt/--files-from=${ddir}/filelist.txt}"
+  fi
+  if [[ "$resolved_flags" == *"--exclude-from=exclude_patterns.txt"* ]]; then
+    resolved_flags="${resolved_flags/--exclude-from=exclude_patterns.txt/--exclude-from=${ddir}/exclude_patterns.txt}"
   fi
   # When -R (--relative) is active, use relative source paths so the
   # destination receives files as hello.txt instead of /full/path/hello.txt.
@@ -909,6 +933,7 @@ comp_run_scenario() {
   case "$vtype" in
     safe-links) rm -f "$sdir/unsafe_link.txt" ;;
     sparse) rm -f "$sdir/sparse_test.bin" ;;
+    merge-filter) rm -f "$sdir/.rsync-filter" ;;
   esac
 
   # --max-delete exits 25 when limit reached; treat as success for verification
@@ -1164,6 +1189,90 @@ comp_run_scenario() {
       fi
       if ! grep -qE '^\>f' "$item_out"; then
         echo "    --itemize-changes: no file transfer itemize lines"
+        return 1
+      fi
+      return 0
+      ;;
+    include-exclude)
+      # Only .txt files should be transferred (include *.txt, exclude *)
+      for f in hello.txt multiline.txt empty.txt subdir/file.txt subdir/nested/deep.txt; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    --include/--exclude: expected .txt file $f missing"
+          return 1
+        fi
+        if ! cmp -s "$sdir/$f" "$ddir/$f"; then
+          echo "    --include/--exclude: content mismatch for $f"
+          return 1
+        fi
+      done
+      # Non-.txt files should NOT be present
+      for f in binary.dat large.dat notes.dat excluded.log temp_one.tmp script.sh; do
+        if [[ -f "$ddir/$f" ]]; then
+          echo "    --include/--exclude: non-.txt file $f was transferred"
+          return 1
+        fi
+      done
+      return 0
+      ;;
+    filter-rule)
+      # --filter 'exclude *.tmp' should exclude .tmp files, transfer everything else
+      for f in hello.txt multiline.txt binary.dat large.dat \
+               subdir/file.txt subdir/nested/deep.txt empty.txt; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    --filter exclude: expected file $f missing"
+          return 1
+        fi
+        if ! cmp -s "$sdir/$f" "$ddir/$f"; then
+          echo "    --filter exclude: content mismatch for $f"
+          return 1
+        fi
+      done
+      if [[ -f "$ddir/temp_one.tmp" || -f "$ddir/subdir/temp_two.tmp" ]]; then
+        echo "    --filter exclude: .tmp files were transferred"
+        return 1
+      fi
+      return 0
+      ;;
+    merge-filter)
+      # .rsync-filter excludes *.dat, so .dat files should not transfer
+      for f in hello.txt multiline.txt empty.txt \
+               subdir/file.txt subdir/nested/deep.txt; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    --filter merge: expected file $f missing"
+          return 1
+        fi
+        if ! cmp -s "$sdir/$f" "$ddir/$f"; then
+          echo "    --filter merge: content mismatch for $f"
+          return 1
+        fi
+      done
+      for f in binary.dat large.dat notes.dat; do
+        if [[ -f "$ddir/$f" ]]; then
+          echo "    --filter merge: .dat file $f was transferred despite .rsync-filter"
+          return 1
+        fi
+      done
+      return 0
+      ;;
+    exclude-from)
+      # --exclude-from file lists *.log and *.tmp patterns
+      for f in hello.txt multiline.txt binary.dat large.dat \
+               subdir/file.txt subdir/nested/deep.txt empty.txt; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    --exclude-from: expected file $f missing"
+          return 1
+        fi
+        if ! cmp -s "$sdir/$f" "$ddir/$f"; then
+          echo "    --exclude-from: content mismatch for $f"
+          return 1
+        fi
+      done
+      if [[ -f "$ddir/excluded.log" || -f "$ddir/subdir/debug.log" ]]; then
+        echo "    --exclude-from: .log files were transferred"
+        return 1
+      fi
+      if [[ -f "$ddir/temp_one.tmp" || -f "$ddir/subdir/temp_two.tmp" ]]; then
+        echo "    --exclude-from: .tmp files were transferred"
         return 1
       fi
       return 0
@@ -2155,6 +2264,10 @@ run_comprehensive_interop_case() {
     "delete-after|-av --delete-after|delete"
     "delete-during|-av --delete-during|delete"
     "exclude|-av --exclude=*.log|exclude"
+    "include-exclude|-rv --include=*.txt --include=*/ --exclude=*|include-exclude"
+    "filter-rule|-av --filter=-*.tmp|filter-rule"
+    "merge-filter|-av -FF|merge-filter"
+    "exclude-from|-av --exclude-from=exclude_patterns.txt|exclude-from"
     "permissions|-rlpv|perms"
     "size-only|-av --size-only|size-only"
     "ignore-times|-av --ignore-times|basic"
