@@ -67,12 +67,34 @@ pub(crate) fn load_file_list_operands(
     Ok(entries)
 }
 
+/// Resolves file list entries against the source base directory.
+///
+/// When `files_from_active` is true, entries are joined with a `./` marker
+/// between the base directory and the relative entry path. This enables
+/// the `--relative` flag (implied by `--files-from`) to preserve only the
+/// listed path structure at the destination, not the full base directory
+/// hierarchy.
+///
+/// For example, with base `/src` and entry `file.txt`, the result is
+/// `/src/./file.txt`. The engine's `relative_root()` strips everything
+/// up to and including the `.` marker, yielding `file.txt` at the
+/// destination.
+///
+/// When `files_from_active` is false, the legacy behaviour applies: entries
+/// are simply joined to the base path without a marker (only when
+/// `--relative` is not explicitly enabled).
+///
+/// # Upstream Reference
+///
+/// - `options.c:2187-2188` - `--files-from` implies `--relative`
+/// - `main.c:780-790` - source dir used as chdir base for file list entries
 pub(crate) fn resolve_file_list_entries(
     entries: &mut [OsString],
     explicit_operands: &[OsString],
     relative_enabled: bool,
+    files_from_active: bool,
 ) {
-    if entries.is_empty() || explicit_operands.len() <= 1 || relative_enabled {
+    if entries.is_empty() || explicit_operands.len() <= 1 {
         return;
     }
 
@@ -83,6 +105,14 @@ pub(crate) fn resolve_file_list_entries(
 
     let base = &base_sources[0];
     if operand_is_remote(base.as_os_str()) {
+        return;
+    }
+
+    // When --files-from is active, always resolve entries with a ./
+    // marker so --relative preserves only the listed structure.
+    // Without --files-from, skip resolution when --relative is on
+    // (legacy behaviour).
+    if !files_from_active && relative_enabled {
         return;
     }
 
@@ -101,9 +131,19 @@ pub(crate) fn resolve_file_list_entries(
             continue;
         }
 
-        let mut combined = base_path.to_path_buf();
-        combined.push(entry_path);
-        *entry = combined.into_os_string();
+        if files_from_active {
+            // Insert ./ marker: base/./entry - upstream rsync uses the
+            // source dir as a chdir target and entries are relative to it.
+            // The marker tells the engine where the relative portion begins.
+            let mut combined = base_path.to_path_buf();
+            combined.push(".");
+            combined.push(entry_path);
+            *entry = combined.into_os_string();
+        } else {
+            let mut combined = base_path.to_path_buf();
+            combined.push(entry_path);
+            *entry = combined.into_os_string();
+        }
     }
 }
 
@@ -548,7 +588,7 @@ mod tests {
         let mut entries: Vec<OsString> = Vec::new();
         let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
-        resolve_file_list_entries(&mut entries, &operands, false);
+        resolve_file_list_entries(&mut entries, &operands, false, false);
 
         assert!(entries.is_empty());
     }
@@ -558,7 +598,7 @@ mod tests {
         let mut entries = vec![OsString::from("file.txt")];
         let operands = vec![OsString::from("/dest")];
 
-        resolve_file_list_entries(&mut entries, &operands, false);
+        resolve_file_list_entries(&mut entries, &operands, false, false);
 
         // Single operand means no base path to prepend
         assert_eq!(entries[0], "file.txt");
@@ -569,7 +609,7 @@ mod tests {
         let mut entries = vec![OsString::from("file.txt")];
         let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
-        resolve_file_list_entries(&mut entries, &operands, true);
+        resolve_file_list_entries(&mut entries, &operands, true, false);
 
         // With relative paths enabled, no resolution happens
         assert_eq!(entries[0], "file.txt");
@@ -580,7 +620,7 @@ mod tests {
         let mut entries = vec![OsString::from("subdir/file.txt")];
         let operands = vec![OsString::from("/base/path"), OsString::from("/dest")];
 
-        resolve_file_list_entries(&mut entries, &operands, false);
+        resolve_file_list_entries(&mut entries, &operands, false, false);
 
         // Path::push uses platform-specific separators
         let expected = Path::new("/base/path").join("subdir/file.txt");
@@ -592,7 +632,7 @@ mod tests {
         let mut entries = vec![OsString::from("/absolute/path.txt")];
         let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
-        resolve_file_list_entries(&mut entries, &operands, false);
+        resolve_file_list_entries(&mut entries, &operands, false, false);
 
         // Absolute paths are not modified
         assert_eq!(entries[0], "/absolute/path.txt");
@@ -603,7 +643,7 @@ mod tests {
         let mut entries = vec![OsString::from("file.txt")];
         let operands = vec![OsString::from("host:path"), OsString::from("/dest")];
 
-        resolve_file_list_entries(&mut entries, &operands, false);
+        resolve_file_list_entries(&mut entries, &operands, false, false);
 
         // Remote base path means no resolution
         assert_eq!(entries[0], "file.txt");
@@ -614,7 +654,7 @@ mod tests {
         let mut entries = vec![OsString::from("host:remote/file.txt")];
         let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
-        resolve_file_list_entries(&mut entries, &operands, false);
+        resolve_file_list_entries(&mut entries, &operands, false, false);
 
         // Remote entries are not modified
         assert_eq!(entries[0], "host:remote/file.txt");
@@ -629,7 +669,7 @@ mod tests {
             OsString::from("/dest"),
         ];
 
-        resolve_file_list_entries(&mut entries, &operands, false);
+        resolve_file_list_entries(&mut entries, &operands, false, false);
 
         // Multiple source operands means no single base, so no resolution
         assert_eq!(entries[0], "file.txt");
@@ -640,12 +680,80 @@ mod tests {
         let mut entries = vec![OsString::from(""), OsString::from("file.txt")];
         let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
-        resolve_file_list_entries(&mut entries, &operands, false);
+        resolve_file_list_entries(&mut entries, &operands, false, false);
 
         assert_eq!(entries[0], "");
         // Path::push uses platform-specific separators
         let expected = Path::new("/base").join("file.txt");
         assert_eq!(entries[1], expected.as_os_str());
+    }
+
+    // ==================== resolve_file_list_entries (files_from_active) tests ====================
+
+    #[test]
+    fn resolve_file_list_entries_files_from_inserts_dot_marker() {
+        let mut entries = vec![OsString::from("file.txt")];
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false, true);
+
+        let expected = Path::new("/base").join(".").join("file.txt");
+        assert_eq!(entries[0], expected.as_os_str());
+    }
+
+    #[test]
+    fn resolve_file_list_entries_files_from_nested_path_with_marker() {
+        let mut entries = vec![OsString::from("subdir/file.txt")];
+        let operands = vec![OsString::from("/base/path"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false, true);
+
+        let expected = Path::new("/base/path").join(".").join("subdir/file.txt");
+        assert_eq!(entries[0], expected.as_os_str());
+    }
+
+    #[test]
+    fn resolve_file_list_entries_files_from_with_relative_still_inserts_marker() {
+        // --files-from always resolves with marker, even when --relative is on
+        let mut entries = vec![OsString::from("file.txt")];
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, true, true);
+
+        let expected = Path::new("/base").join(".").join("file.txt");
+        assert_eq!(entries[0], expected.as_os_str());
+    }
+
+    #[test]
+    fn resolve_file_list_entries_files_from_absolute_entry_unchanged() {
+        let mut entries = vec![OsString::from("/absolute/path.txt")];
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false, true);
+
+        assert_eq!(entries[0], "/absolute/path.txt");
+    }
+
+    #[test]
+    fn resolve_file_list_entries_files_from_empty_entry_unchanged() {
+        let mut entries = vec![OsString::from(""), OsString::from("file.txt")];
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false, true);
+
+        assert_eq!(entries[0], "");
+        let expected = Path::new("/base").join(".").join("file.txt");
+        assert_eq!(entries[1], expected.as_os_str());
+    }
+
+    #[test]
+    fn resolve_file_list_entries_files_from_remote_base_no_change() {
+        let mut entries = vec![OsString::from("file.txt")];
+        let operands = vec![OsString::from("host:path"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false, true);
+
+        assert_eq!(entries[0], "file.txt");
     }
 
     // ==================== transfer_requires_remote tests ====================
