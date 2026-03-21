@@ -5,27 +5,23 @@
 //! loaded from `oc-rsyncd.conf` and parsed into [`RuntimeOptions`] before the
 //! accept loop starts.
 
-use dns_lookup::{lookup_addr, lookup_host};
+use dns_lookup::lookup_host;
 
 use std::borrow::Cow;
-#[cfg(test)]
-use std::cell::RefCell;
-#[cfg(test)]
-use std::collections::HashMap;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::fs::OpenOptions;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -36,7 +32,6 @@ use std::process::{Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use fs2::FileExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -127,7 +122,19 @@ const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
 /// Error payload returned when updating the connection lock file fails.
 const MODULE_LOCK_ERROR_PAYLOAD: &str =
     "@ERROR: failed to update module connection lock; please try again later";
-include!("daemon/module_state.rs");
+mod module_state;
+#[cfg(test)]
+use self::module_state::TEST_CONFIG_CANDIDATES;
+use self::module_state::resolve_peer_hostname;
+pub(crate) use self::module_state::{
+    AuthUser, ConnectionLimiter, ModuleConnectionError, ModuleDefinition, ModuleRuntime,
+    UserAccessLevel, module_peer_hostname,
+};
+#[cfg(test)]
+pub(crate) use self::module_state::{
+    TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV, TestSecretsEnvOverride,
+    clear_test_hostname_overrides, set_test_hostname_override,
+};
 
 type SharedLogSink = Arc<Mutex<MessageSink<std::fs::File>>>;
 
