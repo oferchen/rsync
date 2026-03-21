@@ -82,8 +82,7 @@ fn partial_write_failure_transfers_writable_files() {
     let blocked_dst = dest_root.join("blocked");
     std::fs::create_dir_all(&ok_dst).expect("create ok dest");
     std::fs::create_dir_all(&blocked_dst).expect("create blocked dest");
-    std::fs::set_permissions(&blocked_dst, PermissionsExt::from_mode(0o555))
-        .expect("set readonly");
+    std::fs::set_permissions(&blocked_dst, PermissionsExt::from_mode(0o555)).expect("set readonly");
 
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -154,8 +153,7 @@ fn write_failure_does_not_crash() {
     // Pre-create destination and make it entirely read-only.
     let dest_subdir = dest_dir.join("src");
     std::fs::create_dir_all(&dest_subdir).expect("create dest subdir");
-    std::fs::set_permissions(&dest_subdir, PermissionsExt::from_mode(0o555))
-        .expect("set readonly");
+    std::fs::set_permissions(&dest_subdir, PermissionsExt::from_mode(0o555)).expect("set readonly");
 
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
