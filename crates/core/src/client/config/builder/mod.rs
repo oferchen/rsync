@@ -418,3 +418,6 @@ mod performance;
 mod preservation;
 mod selection;
 mod validation;
+
+#[cfg(test)]
+mod tests;
