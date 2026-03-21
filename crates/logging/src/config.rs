@@ -15,16 +15,23 @@ pub struct VerbosityConfig {
 
 impl VerbosityConfig {
     /// Create a new configuration from a verbose level (0-5).
-    /// Applies upstream rsync verbosity mapping.
+    ///
+    /// Applies cumulative upstream rsync verbosity mapping. Each level adds flags
+    /// from all lower levels, matching `set_output_verbosity()` which iterates
+    /// `j = 0..=level` over the `info_verbosity[]` and `debug_verbosity[]` tables.
+    // upstream: options.c:513 set_output_verbosity()
+    // upstream: options.c:228-243 debug_verbosity[] / info_verbosity[]
     #[must_use]
     pub fn from_verbose_level(level: u8) -> Self {
         let mut config = Self::default();
 
         match level {
             0 => {
+                // upstream info_verbosity[0] = "NONREG"
                 config.info.nonreg = 1;
             }
             1 => {
+                // upstream info_verbosity[1] = "COPY,DEL,FLIST,MISC,NAME,STATS,SYMSAFE"
                 config.info.nonreg = 1;
                 config.info.copy = 1;
                 config.info.del = 1;
@@ -35,6 +42,8 @@ impl VerbosityConfig {
                 config.info.symsafe = 1;
             }
             2 => {
+                // upstream info_verbosity[2] = "BACKUP,MISC2,MOUNT,NAME2,REMOVE,SKIP"
+                // upstream debug_verbosity[2] = "BIND,CMD,CONNECT,DEL,DELTASUM,DUP,FILTER,FLIST,ICONV"
                 config.info.nonreg = 1;
                 config.info.copy = 1;
                 config.info.del = 1;
@@ -58,6 +67,7 @@ impl VerbosityConfig {
                 config.debug.iconv = 1;
             }
             3 => {
+                // upstream debug_verbosity[3] = "ACL,BACKUP,CONNECT2,DELTASUM2,DEL2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME"
                 config.info.nonreg = 1;
                 config.info.copy = 1;
                 config.info.del = 1;
@@ -90,6 +100,7 @@ impl VerbosityConfig {
                 config.debug.exit = 1;
             }
             4 => {
+                // upstream debug_verbosity[4] = "CMD2,DELTASUM3,DEL3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2"
                 config.info.nonreg = 1;
                 config.info.copy = 1;
                 config.info.del = 1;
@@ -124,6 +135,7 @@ impl VerbosityConfig {
             }
             _ => {
                 // Level 5+
+                // upstream debug_verbosity[5] = "CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK"
                 config.info.nonreg = 1;
                 config.info.copy = 1;
                 config.info.del = 1;
