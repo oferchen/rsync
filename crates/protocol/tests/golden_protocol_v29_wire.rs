@@ -44,8 +44,7 @@ fn v29() -> ProtocolVersion {
 ///   flist_xfertime  : varlong30 (microseconds, protocol >= 29 only)
 #[test]
 fn golden_v29_stats_with_flist_times() {
-    let stats = TransferStats::with_bytes(4096, 8192, 100_000)
-        .with_flist_times(500_000, 100_000);
+    let stats = TransferStats::with_bytes(4096, 8192, 100_000).with_flist_times(500_000, 100_000);
 
     let protocol = v29();
     let mut buf = Vec::new();
@@ -131,8 +130,7 @@ fn golden_v29_stats_longer_than_v28() {
     let v28 = ProtocolVersion::from_supported(28).expect("v28 must be supported");
     let protocol = v29();
 
-    let stats = TransferStats::with_bytes(4096, 8192, 100_000)
-        .with_flist_times(500_000, 100_000);
+    let stats = TransferStats::with_bytes(4096, 8192, 100_000).with_flist_times(500_000, 100_000);
 
     let mut buf_28 = Vec::new();
     stats.write_to(&mut buf_28, v28).unwrap();
@@ -181,8 +179,7 @@ fn golden_v29_stats_large_flist_times() {
 /// Verifies swap_perspective preserves flist times.
 #[test]
 fn golden_v29_stats_swap_preserves_flist_times() {
-    let stats = TransferStats::with_bytes(1024, 2048, 10_000)
-        .with_flist_times(500_000, 100_000);
+    let stats = TransferStats::with_bytes(1024, 2048, 10_000).with_flist_times(500_000, 100_000);
 
     let swapped = stats.swap_perspective();
 
@@ -262,10 +259,7 @@ fn golden_v29_flist_times_boundary() {
         protocol.supports_flist_times(),
         "v29 must support flist times"
     );
-    assert!(
-        v30.supports_flist_times(),
-        "v30 must support flist times"
-    );
+    assert!(v30.supports_flist_times(), "v30 must support flist times");
 }
 
 // ---------------------------------------------------------------------------
@@ -454,7 +448,10 @@ fn golden_v29_block_device_roundtrip() {
 
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
     assert_eq!(read_entry.name(), "sda");
-    assert!(read_entry.is_block_device(), "entry should be a block device");
+    assert!(
+        read_entry.is_block_device(),
+        "entry should be a block device"
+    );
     assert_eq!(read_entry.mtime(), 1_700_000_000);
 }
 
@@ -476,10 +473,7 @@ fn golden_v29_char_device_roundtrip() {
 
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
     assert_eq!(read_entry.name(), "null");
-    assert!(
-        read_entry.is_char_device(),
-        "entry should be a char device"
-    );
+    assert!(read_entry.is_char_device(), "entry should be a char device");
 }
 
 // ---------------------------------------------------------------------------
@@ -539,7 +533,10 @@ fn golden_v29_flist_wire_identical_to_v28() {
         writer_28.write_entry(&mut buf_28, &entry).unwrap();
         writer_29.write_entry(&mut buf_29, &entry).unwrap();
 
-        assert_eq!(buf_28, buf_29, "v28 and v29 must produce identical bytes for regular file");
+        assert_eq!(
+            buf_28, buf_29,
+            "v28 and v29 must produce identical bytes for regular file"
+        );
     }
 
     // Directory
@@ -555,7 +552,10 @@ fn golden_v29_flist_wire_identical_to_v28() {
         writer_28.write_entry(&mut buf_28, &entry).unwrap();
         writer_29.write_entry(&mut buf_29, &entry).unwrap();
 
-        assert_eq!(buf_28, buf_29, "v28 and v29 must produce identical bytes for directory");
+        assert_eq!(
+            buf_28, buf_29,
+            "v28 and v29 must produce identical bytes for directory"
+        );
     }
 
     // Symlink
@@ -571,7 +571,10 @@ fn golden_v29_flist_wire_identical_to_v28() {
         writer_28.write_entry(&mut buf_28, &entry).unwrap();
         writer_29.write_entry(&mut buf_29, &entry).unwrap();
 
-        assert_eq!(buf_28, buf_29, "v28 and v29 must produce identical bytes for symlink");
+        assert_eq!(
+            buf_28, buf_29,
+            "v28 and v29 must produce identical bytes for symlink"
+        );
     }
 }
 
