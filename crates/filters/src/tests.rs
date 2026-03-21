@@ -485,3 +485,245 @@ mod properties {
         }
     }
 }
+
+/// Property tests for `FilterSet` evaluation correctness.
+///
+/// These tests verify the core invariants of filter rule evaluation:
+/// first-match-wins semantics, include/exclude toggling, empty chain
+/// behavior, and rule independence for disjoint patterns.
+mod evaluation_properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Strategy for generating simple filenames (no path separators, no glob chars).
+    fn filename() -> impl Strategy<Value = String> {
+        proptest::string::string_regex("[a-z][a-z0-9]{0,7}")
+            .unwrap()
+            .prop_filter("non-empty", |s| !s.is_empty())
+    }
+
+    /// Strategy for generating a file extension.
+    fn extension() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("txt".to_owned()),
+            Just("rs".to_owned()),
+            Just("log".to_owned()),
+            Just("bak".to_owned()),
+            Just("tmp".to_owned()),
+            Just("dat".to_owned()),
+            Just("cfg".to_owned()),
+            Just("csv".to_owned()),
+        ]
+    }
+
+    /// Strategy for a path like "name.ext".
+    fn file_with_ext() -> impl Strategy<Value = (String, String)> {
+        (filename(), extension()).prop_map(|(name, ext)| {
+            let full = format!("{name}.{ext}");
+            (full, ext)
+        })
+    }
+
+    /// Strategy for two distinct extensions.
+    fn two_distinct_extensions() -> impl Strategy<Value = (String, String)> {
+        (extension(), extension()).prop_filter("distinct extensions", |(a, b)| a != b)
+    }
+
+    proptest! {
+        /// Empty filter chain always returns None (allows all paths by default).
+        #[test]
+        fn empty_chain_allows_everything(
+            name in filename(),
+            is_dir in any::<bool>()
+        ) {
+            let set = FilterSet::from_rules(Vec::new()).unwrap();
+            let path = Path::new(&name);
+            prop_assert!(set.allows(path, is_dir));
+            prop_assert!(set.allows_deletion(path, is_dir));
+        }
+
+        /// A single include rule for a specific anchored pattern matches that
+        /// exact path. Non-matching paths fall through to the default (allow).
+        #[test]
+        fn single_include_matches_exact_pattern(
+            (file, _ext) in file_with_ext()
+        ) {
+            let anchored = format!("/{file}");
+            let rules = vec![
+                FilterRule::include(&anchored),
+                FilterRule::exclude("*"),
+            ];
+            let set = FilterSet::from_rules(rules).unwrap();
+            // The included file should be allowed
+            prop_assert!(set.allows(Path::new(&file), false));
+        }
+
+        /// A single exclude rule blocks matching paths.
+        #[test]
+        fn single_exclude_blocks_matching(
+            (file, ext) in file_with_ext()
+        ) {
+            let pattern = format!("*.{ext}");
+            let set = FilterSet::from_rules(vec![FilterRule::exclude(&pattern)]).unwrap();
+            prop_assert!(!set.allows(Path::new(&file), false));
+        }
+
+        /// First-match-wins: include before exclude on the same pattern means
+        /// the include wins.
+        #[test]
+        fn include_before_exclude_include_wins(
+            (file, ext) in file_with_ext()
+        ) {
+            let pattern = format!("*.{ext}");
+            let rules = vec![
+                FilterRule::include(&pattern),
+                FilterRule::exclude(&pattern),
+            ];
+            let set = FilterSet::from_rules(rules).unwrap();
+            prop_assert!(set.allows(Path::new(&file), false));
+        }
+
+        /// First-match-wins: exclude before include on the same pattern means
+        /// the exclude wins.
+        #[test]
+        fn exclude_before_include_exclude_wins(
+            (file, ext) in file_with_ext()
+        ) {
+            let pattern = format!("*.{ext}");
+            let rules = vec![
+                FilterRule::exclude(&pattern),
+                FilterRule::include(&pattern),
+            ];
+            let set = FilterSet::from_rules(rules).unwrap();
+            prop_assert!(!set.allows(Path::new(&file), false));
+        }
+
+        /// First-match-wins: if rule N matches, rules N+1..end are irrelevant.
+        /// We verify by placing an include rule first, followed by an arbitrary
+        /// number of exclude rules for the same pattern - the include always wins.
+        #[test]
+        fn first_match_wins_ignores_later_rules(
+            (file, ext) in file_with_ext(),
+            extra_excludes in 1..10usize
+        ) {
+            let pattern = format!("*.{ext}");
+            let mut rules = vec![FilterRule::include(&pattern)];
+            for _ in 0..extra_excludes {
+                rules.push(FilterRule::exclude(&pattern));
+            }
+            let set = FilterSet::from_rules(rules).unwrap();
+            // First rule is include, so it wins regardless of how many excludes follow
+            prop_assert!(set.allows(Path::new(&file), false));
+        }
+
+        /// Rules with disjoint patterns do not interfere with each other.
+        /// Excluding "*.ext_a" should not affect files matching "*.ext_b".
+        #[test]
+        fn disjoint_patterns_no_interference(
+            name in filename(),
+            (ext_a, ext_b) in two_distinct_extensions()
+        ) {
+            let file_a = format!("{name}.{ext_a}");
+            let file_b = format!("{name}.{ext_b}");
+            let pattern_a = format!("*.{ext_a}");
+
+            let set = FilterSet::from_rules(vec![FilterRule::exclude(&pattern_a)]).unwrap();
+            // file_a matches the exclude pattern
+            prop_assert!(!set.allows(Path::new(&file_a), false));
+            // file_b does not match, so it is allowed by default
+            prop_assert!(set.allows(Path::new(&file_b), false));
+        }
+
+        /// Default FilterSet (no rules) is equivalent to an empty rule list.
+        #[test]
+        fn default_filter_set_allows_all(
+            name in filename(),
+            is_dir in any::<bool>()
+        ) {
+            let default_set = FilterSet::default();
+            let empty_set = FilterSet::from_rules(Vec::new()).unwrap();
+            let path = Path::new(&name);
+            prop_assert_eq!(
+                default_set.allows(path, is_dir),
+                empty_set.allows(path, is_dir)
+            );
+            prop_assert_eq!(
+                default_set.allows_deletion(path, is_dir),
+                empty_set.allows_deletion(path, is_dir)
+            );
+        }
+
+        /// An exclude rule followed by a clear rule effectively removes the
+        /// exclude, allowing the path again.
+        #[test]
+        fn clear_resets_chain(
+            (file, ext) in file_with_ext()
+        ) {
+            let pattern = format!("*.{ext}");
+            let rules = vec![
+                FilterRule::exclude(&pattern),
+                FilterRule::clear(),
+            ];
+            let set = FilterSet::from_rules(rules).unwrap();
+            // After clear, no rules remain - path is allowed by default
+            prop_assert!(set.allows(Path::new(&file), false));
+        }
+
+        /// Multiple include rules for the same pattern are idempotent - the
+        /// path is still allowed regardless of how many duplicate includes exist.
+        #[test]
+        fn duplicate_includes_idempotent(
+            (file, ext) in file_with_ext(),
+            count in 1..10usize
+        ) {
+            let pattern = format!("*.{ext}");
+            let rules: Vec<_> = (0..count)
+                .map(|_| FilterRule::include(&pattern))
+                .collect();
+            let set = FilterSet::from_rules(rules).unwrap();
+            prop_assert!(set.allows(Path::new(&file), false));
+        }
+
+        /// Multiple exclude rules for the same pattern are idempotent - the
+        /// path is still blocked regardless of how many duplicate excludes exist.
+        #[test]
+        fn duplicate_excludes_idempotent(
+            (file, ext) in file_with_ext(),
+            count in 1..10usize
+        ) {
+            let pattern = format!("*.{ext}");
+            let rules: Vec<_> = (0..count)
+                .map(|_| FilterRule::exclude(&pattern))
+                .collect();
+            let set = FilterSet::from_rules(rules).unwrap();
+            prop_assert!(!set.allows(Path::new(&file), false));
+        }
+
+        /// Exclude on transfer side also blocks deletion (both sides apply).
+        #[test]
+        fn exclude_blocks_both_transfer_and_deletion(
+            (file, ext) in file_with_ext()
+        ) {
+            let pattern = format!("*.{ext}");
+            let set = FilterSet::from_rules(vec![FilterRule::exclude(&pattern)]).unwrap();
+            let path = Path::new(&file);
+            prop_assert!(!set.allows(path, false));
+            prop_assert!(!set.allows_deletion(path, false));
+        }
+
+        /// Sender-only exclude blocks transfer but not deletion.
+        #[test]
+        fn sender_only_exclude_does_not_block_deletion(
+            (file, ext) in file_with_ext()
+        ) {
+            let pattern = format!("*.{ext}");
+            let rules = vec![FilterRule::exclude(&pattern).with_sides(true, false)];
+            let set = FilterSet::from_rules(rules).unwrap();
+            let path = Path::new(&file);
+            // Sender-side: blocked for transfer
+            prop_assert!(!set.allows(path, false));
+            // Receiver-side: not blocked for deletion (rule doesn't apply)
+            prop_assert!(set.allows_deletion(path, false));
+        }
+    }
+}
