@@ -5,7 +5,7 @@ fn execute_copies_fifo() {
     use filetime::{FileTime, set_file_times};
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("source.pipe");
     mkfifo_for_tests(&source_fifo, 0o640).expect("mkfifo");
 
@@ -55,7 +55,7 @@ fn execute_copies_fifo() {
 fn execute_fifo_replaces_directory_when_force_enabled() {
     use std::os::unix::fs::FileTypeExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("source.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -84,7 +84,7 @@ fn execute_copies_fifo_within_directory() {
     use filetime::{FileTime, set_file_times};
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("dir");
     fs::create_dir_all(&nested).expect("create nested");
@@ -138,7 +138,7 @@ fn execute_copies_fifo_within_directory() {
 fn execute_preserves_fifo_hard_links() {
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     let fifo_a = source_root.join("pipe-a");
@@ -182,7 +182,7 @@ fn execute_preserves_fifo_hard_links() {
 #[cfg(unix)]
 #[test]
 fn execute_without_specials_skips_fifo() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("source.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -204,7 +204,7 @@ fn execute_without_specials_skips_fifo() {
 #[cfg(unix)]
 #[test]
 fn execute_without_specials_records_skip_event() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("skip.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -234,7 +234,7 @@ fn execute_without_specials_records_skip_event() {
 fn execute_copies_devices_as_regular_files_when_requested() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
@@ -264,7 +264,7 @@ fn execute_copies_devices_as_regular_files_when_requested() {
 
 #[test]
 fn execute_with_one_file_system_skips_mount_points() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let mount_dir = source_root.join("mount");
     let mount_file = mount_dir.join("inside.txt");
@@ -314,7 +314,7 @@ fn execute_with_one_file_system_skips_mount_points() {
 
 #[test]
 fn execute_without_one_file_system_crosses_mount_points() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let mount_dir = source_root.join("mount");
     let mount_file = mount_dir.join("inside.txt");
@@ -364,7 +364,7 @@ fn execute_without_one_file_system_crosses_mount_points() {
 fn execute_copies_symlink() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let target_file = temp.path().join("target.txt");
     fs::write(&target_file, b"target content").expect("write target");
 
@@ -395,7 +395,7 @@ fn execute_copies_symlink() {
 fn execute_copies_symlink_within_directory() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -430,7 +430,7 @@ fn execute_copies_symlink_within_directory() {
 fn execute_copies_symlink_with_safe_links_keeps_safe() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -467,7 +467,7 @@ fn execute_copies_symlink_with_safe_links_keeps_safe() {
 fn execute_with_safe_links_skips_unsafe() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -511,7 +511,7 @@ fn execute_with_safe_links_skips_unsafe() {
 fn execute_preserves_hard_links_within_directory() {
     use std::os::unix::fs::MetadataExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -549,7 +549,7 @@ fn execute_preserves_hard_links_within_directory() {
 fn execute_without_hard_links_copies_separately() {
     use std::os::unix::fs::MetadataExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -588,7 +588,7 @@ fn execute_without_hard_links_copies_separately() {
 fn execute_dry_run_does_not_create_symlink() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let target_file = temp.path().join("target.txt");
     fs::write(&target_file, b"target").expect("write target");
 
@@ -616,7 +616,7 @@ fn execute_dry_run_does_not_create_symlink() {
 #[cfg(unix)]
 #[test]
 fn execute_dry_run_does_not_create_fifo() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("source.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -645,7 +645,7 @@ fn execute_dry_run_does_not_create_fifo() {
 fn execute_copies_broken_symlink() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_link = temp.path().join("broken_link");
     symlink(Path::new("nonexistent_target"), &source_link).expect("create broken symlink");
 
@@ -675,7 +675,7 @@ fn execute_copies_broken_symlink() {
 fn execute_copies_mixed_special_files() {
     use std::os::unix::fs::{FileTypeExt, symlink};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -730,7 +730,7 @@ fn execute_copies_mixed_special_files() {
 fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
     use std::os::unix::fs::{symlink, FileTypeExt};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -788,7 +788,7 @@ fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
 fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
     use std::os::unix::fs::{symlink, FileTypeExt};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -840,7 +840,7 @@ fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
 fn execute_fifo_replaces_existing_symlink() {
     use std::os::unix::fs::{symlink, FileTypeExt};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("source.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -878,7 +878,7 @@ fn execute_fifo_replaces_existing_symlink() {
 fn execute_fifo_replaces_existing_regular_file() {
     use std::os::unix::fs::FileTypeExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("source.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -910,7 +910,7 @@ fn execute_fifo_replaces_existing_regular_file() {
 fn execute_symlink_replaces_existing_fifo() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let target = temp.path().join("target.txt");
     fs::write(&target, b"target content").expect("write target");
 
@@ -954,7 +954,7 @@ fn execute_symlink_replaces_existing_fifo() {
 fn execute_symlink_replaces_existing_socket() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let target = temp.path().join("target.txt");
     fs::write(&target, b"target content").expect("write target");
 
@@ -992,7 +992,7 @@ fn execute_symlink_replaces_existing_socket() {
 fn execute_recopy_fifo_replaces_existing_fifo() {
     use std::os::unix::fs::FileTypeExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("source.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo source");
 
@@ -1027,7 +1027,7 @@ fn execute_recopy_fifo_replaces_existing_fifo() {
 fn execute_copies_multiple_fifos_with_different_permissions() {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1092,7 +1092,7 @@ fn execute_copies_multiple_fifos_with_different_permissions() {
 #[cfg(unix)]
 #[test]
 fn execute_delete_removes_extraneous_fifo() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
@@ -1132,7 +1132,7 @@ fn execute_delete_removes_extraneous_fifo() {
 #[cfg(unix)]
 #[test]
 fn execute_device_file_skipped_without_devices_or_copy_devices() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
@@ -1166,7 +1166,7 @@ fn execute_device_file_skipped_without_devices_or_copy_devices() {
 fn execute_copy_links_follows_symlink_to_fifo_specials_disabled_skips() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -1221,7 +1221,7 @@ fn execute_copy_links_follows_symlink_to_fifo_specials_disabled_skips() {
 fn execute_copy_unsafe_links_broken_target_errors() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_dir = temp.path().join("src");
     fs::create_dir_all(&source_dir).expect("create src");
 
@@ -1259,7 +1259,7 @@ fn execute_copy_unsafe_links_broken_target_errors() {
 fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1329,7 +1329,7 @@ fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree(
 fn execute_safe_links_with_copy_dirlinks_follows_unsafe_dir_symlink() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1392,7 +1392,7 @@ fn execute_safe_links_with_copy_dirlinks_follows_unsafe_dir_symlink() {
 #[cfg(unix)]
 #[test]
 fn execute_fifo_produces_fifo_copied_event() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_fifo = temp.path().join("events.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -1428,7 +1428,7 @@ fn execute_fifo_produces_fifo_copied_event() {
 fn execute_copy_links_follows_nested_symlink_chain_to_regular_file() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -1487,7 +1487,7 @@ fn execute_copy_links_follows_nested_symlink_chain_to_regular_file() {
 fn execute_copy_links_overrides_links_option() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1535,7 +1535,7 @@ fn execute_copy_links_overrides_links_option() {
 fn execute_without_links_skips_symlink_records_event() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1586,7 +1586,7 @@ fn execute_fifo_with_archive_options_preserves_all_metadata() {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     use filetime::{FileTime, set_file_times};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1654,7 +1654,7 @@ fn execute_fifo_with_archive_options_preserves_all_metadata() {
 fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let subdir = source_root.join("sub");
     fs::create_dir_all(&subdir).expect("create subdir");
@@ -1721,7 +1721,7 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
 fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("alpha")).expect("create alpha");
     fs::create_dir_all(source_root.join("beta")).expect("create beta");
@@ -1785,7 +1785,7 @@ fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
 fn execute_dry_run_mixed_specials_and_symlinks_no_side_effects() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 

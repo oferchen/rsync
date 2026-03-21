@@ -17,7 +17,7 @@ use std::num::{NonZeroU8, NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
-use tempfile::tempdir;
+use test_support::create_tempdir;
 
 mod deletion_strategies;
 
@@ -326,7 +326,7 @@ mod test_helpers {
     /// assert!(ctx.dest.join("source/file.txt").exists());
     /// ```
     pub fn setup_copy_test() -> CopyTestContext {
-        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let temp_dir = test_support::create_tempdir();
         let source = temp_dir.path().join("source");
         let dest = temp_dir.path().join("dest");
         std::fs::create_dir_all(&source).expect("create source");

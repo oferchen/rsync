@@ -1,7 +1,7 @@
 
 #[test]
 fn execute_with_remove_source_files_deletes_source() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"move me").expect("write source");
@@ -28,7 +28,7 @@ fn execute_with_remove_source_files_deletes_source() {
 fn execute_with_remove_source_files_preserves_unchanged_source() {
     use filetime::{FileTime, set_file_times};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     let payload = b"stable";
@@ -62,7 +62,7 @@ fn execute_with_remove_source_files_preserves_unchanged_source() {
 
 #[test]
 fn execute_file_replaces_directory_when_force_enabled() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("target");
 
@@ -89,7 +89,7 @@ fn execute_file_replaces_directory_when_force_enabled() {
 
 #[test]
 fn execute_with_relative_preserves_parent_directories() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let destination_root = temp.path().join("dest");
     fs::create_dir_all(source_root.join("foo/bar")).expect("create source tree");
@@ -123,7 +123,7 @@ fn execute_with_relative_preserves_parent_directories() {
 
 #[test]
 fn execute_with_relative_requires_directory_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("src");
     fs::create_dir_all(source_root.join("dir")).expect("create source tree");
     let source_file = source_root.join("dir").join("file.txt");
@@ -156,7 +156,7 @@ fn execute_with_relative_requires_directory_destination() {
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn execute_copies_file_with_xattrs() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"attr").expect("write source");
@@ -185,7 +185,7 @@ fn execute_copies_file_with_xattrs() {
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn execute_respects_xattr_filter_rules() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"attr").expect("write source");
@@ -226,7 +226,7 @@ fn execute_respects_xattr_filter_rules() {
 #[cfg(all(unix, feature = "acl", not(target_vendor = "apple")))]
 #[test]
 fn execute_copies_file_with_acls() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"acl").expect("write source");
@@ -257,7 +257,7 @@ fn execute_copies_file_with_acls() {
 #[cfg(all(unix, feature = "acl", target_vendor = "apple"))]
 #[test]
 fn execute_copies_file_with_acls_is_noop_on_apple() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"acl").expect("write source");
@@ -292,7 +292,7 @@ fn execute_copies_file_with_acls_is_noop_on_apple() {
 
 #[test]
 fn execute_copies_directory_tree() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     fs::create_dir_all(&nested).expect("create nested");
@@ -321,7 +321,7 @@ fn execute_copies_directory_tree() {
 
 #[test]
 fn execute_copies_empty_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("empty.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"").expect("write empty source");
@@ -344,7 +344,7 @@ fn execute_copies_empty_file() {
 
 #[test]
 fn execute_copies_empty_file_over_existing() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("empty.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"").expect("write empty source");
@@ -369,7 +369,7 @@ fn execute_copies_empty_file_over_existing() {
 
 #[test]
 fn execute_copies_large_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("large.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -396,7 +396,7 @@ fn execute_copies_large_file() {
 
 #[test]
 fn execute_copies_multiple_files_to_directory() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source dir");
     fs::write(source_root.join("file1.txt"), b"content1").expect("write file1");
@@ -424,7 +424,7 @@ fn execute_copies_multiple_files_to_directory() {
 
 #[test]
 fn execute_dry_run_does_not_create_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"dry run content").expect("write source");
@@ -445,7 +445,7 @@ fn execute_dry_run_does_not_create_destination() {
 
 #[test]
 fn execute_dry_run_does_not_modify_existing_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"new content").expect("write source");
@@ -469,7 +469,7 @@ fn execute_dry_run_does_not_modify_existing_destination() {
 
 #[test]
 fn execute_with_inplace_updates_existing_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"updated content").expect("write source");
@@ -496,7 +496,7 @@ fn execute_with_inplace_updates_existing_file() {
 
 #[test]
 fn execute_with_partial_enabled_creates_partial_file_on_success() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"partial test").expect("write source");
@@ -525,7 +525,7 @@ fn execute_with_partial_enabled_creates_partial_file_on_success() {
 fn execute_preserves_permissions_when_enabled() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"perms").expect("write source");
@@ -556,7 +556,7 @@ fn execute_preserves_permissions_when_enabled() {
 
 #[test]
 fn execute_preserves_modification_time_when_enabled() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"times").expect("write source");
@@ -588,7 +588,7 @@ fn execute_preserves_modification_time_when_enabled() {
 
 #[test]
 fn execute_with_whole_file_always_copies() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -621,7 +621,7 @@ fn execute_with_whole_file_always_copies() {
 
 #[test]
 fn execute_copies_deeply_nested_directory() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let deep_path = source_root.join("a").join("b").join("c").join("d");
     fs::create_dir_all(&deep_path).expect("create deep path");
@@ -647,7 +647,7 @@ fn execute_copies_deeply_nested_directory() {
 
 #[test]
 fn execute_file_copy_to_directory_places_file_inside() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("target");
 
@@ -675,7 +675,7 @@ fn execute_file_copy_to_directory_places_file_inside() {
 
 #[test]
 fn execute_summary_tracks_total_source_bytes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -698,7 +698,7 @@ fn execute_summary_tracks_total_source_bytes() {
 
 #[test]
 fn execute_summary_tracks_directories_created() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("dir1").join("subdir")).expect("create dirs");
     fs::create_dir_all(source_root.join("dir2")).expect("create dir2");
@@ -724,7 +724,7 @@ fn execute_summary_tracks_directories_created() {
 
 #[test]
 fn execute_basic_single_file_copy() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("file.txt");
     let destination = temp.path().join("copied.txt");
 
@@ -746,7 +746,7 @@ fn execute_basic_single_file_copy() {
 
 #[test]
 fn execute_overwrites_existing_file_with_different_content() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -775,7 +775,7 @@ fn execute_overwrites_existing_file_with_different_content() {
 
 #[test]
 fn execute_copies_file_to_nonexistent_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -798,7 +798,7 @@ fn execute_copies_file_to_nonexistent_destination() {
 
 #[test]
 fn execute_creates_intermediate_directories_when_needed() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("nested").join("path").join("dest.txt");
 
@@ -823,7 +823,7 @@ fn execute_creates_intermediate_directories_when_needed() {
 
 #[test]
 fn execute_copies_empty_directory() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -846,7 +846,7 @@ fn execute_copies_empty_directory() {
 
 #[test]
 fn execute_copies_directory_with_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file1.txt"), b"content1").expect("write file1");
@@ -870,7 +870,7 @@ fn execute_copies_directory_with_files() {
 
 #[test]
 fn execute_copies_nested_directories() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let subdir = source_root.join("subdir");
     fs::create_dir_all(&subdir).expect("create subdir");
@@ -897,7 +897,7 @@ fn execute_copies_nested_directories() {
 
 #[test]
 fn execute_does_not_preserve_timestamps_by_default() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -928,7 +928,7 @@ fn execute_does_not_preserve_timestamps_by_default() {
 
 #[test]
 fn execute_preserves_timestamps_across_multiple_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -975,7 +975,7 @@ fn execute_preserves_timestamps_across_multiple_files() {
 
 #[test]
 fn execute_preserves_very_old_timestamps() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1013,7 +1013,7 @@ fn execute_preserves_very_old_timestamps() {
 fn execute_does_not_preserve_permissions_by_default() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1045,7 +1045,7 @@ fn execute_does_not_preserve_permissions_by_default() {
 fn execute_preserves_executable_bit() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("script.sh");
     let destination = temp.path().join("dest.sh");
 
@@ -1079,7 +1079,7 @@ fn execute_preserves_executable_bit() {
 fn execute_preserves_read_only_permissions() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("readonly.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1113,7 +1113,7 @@ fn execute_preserves_read_only_permissions() {
 fn execute_preserves_permissions_across_directory_tree() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1162,7 +1162,7 @@ fn execute_preserves_both_times_and_permissions() {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1207,7 +1207,7 @@ fn execute_preserves_both_times_and_permissions() {
 
 #[test]
 fn execute_handles_various_file_sizes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1249,7 +1249,7 @@ fn execute_handles_various_file_sizes() {
 
 #[test]
 fn execute_copies_file_exactly_one_block_size() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("block.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -1276,7 +1276,7 @@ fn execute_copies_file_exactly_one_block_size() {
 
 #[test]
 fn execute_copies_binary_data_correctly() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("binary.dat");
     let destination = temp.path().join("dest.dat");
 
@@ -1304,7 +1304,7 @@ fn execute_copies_binary_data_correctly() {
 
 #[test]
 fn execute_copies_file_with_null_bytes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("nulls.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -1329,7 +1329,7 @@ fn execute_copies_file_with_null_bytes() {
 
 #[test]
 fn execute_summary_counts_bytes_correctly() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1354,7 +1354,7 @@ fn execute_summary_counts_bytes_correctly() {
 
 #[test]
 fn execute_summary_reports_zero_for_no_changes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1388,7 +1388,7 @@ fn execute_summary_reports_zero_for_no_changes() {
 
 #[test]
 fn execute_handles_filename_with_spaces() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("file with spaces.txt");
     let destination = temp.path().join("dest with spaces.txt");
 
@@ -1410,7 +1410,7 @@ fn execute_handles_filename_with_spaces() {
 
 #[test]
 fn execute_handles_filename_with_special_characters() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("file-with_special.chars!.txt");
     let destination = temp.path().join("dest-special!.txt");
 
@@ -1432,7 +1432,7 @@ fn execute_handles_filename_with_special_characters() {
 
 #[test]
 fn execute_handles_deep_directory_nesting() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
 
     // Create a deeply nested directory (10 levels)
@@ -1468,7 +1468,7 @@ fn execute_handles_deep_directory_nesting() {
 
 #[test]
 fn execute_copies_multiple_empty_directories() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("empty1")).expect("create empty1");
     fs::create_dir_all(source_root.join("empty2")).expect("create empty2");
@@ -1495,7 +1495,7 @@ fn execute_copies_multiple_empty_directories() {
 
 #[test]
 fn execute_dry_run_reports_correct_statistics() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file1.txt"), b"content1").expect("write file1");
@@ -1518,7 +1518,7 @@ fn execute_dry_run_reports_correct_statistics() {
 
 #[test]
 fn execute_dry_run_with_times_enabled() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
