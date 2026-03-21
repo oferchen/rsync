@@ -91,8 +91,7 @@ pub fn process_file_response<R: Read>(
     // - Medium files (64KB - 1MB): 64KB buffer for balanced performance
     // - Large files (> 1MB): 256KB buffer to maximize throughput
     let writer_capacity = adaptive_writer_capacity(target_size);
-    let mut output =
-        fast_io::writer_from_file(file, writer_capacity, ctx.config.io_uring_policy)?;
+    let mut output = fast_io::writer_from_file(file, writer_capacity, ctx.config.io_uring_policy)?;
     let mut total_bytes: u64 = 0;
 
     // Sparse file support

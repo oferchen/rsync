@@ -21,8 +21,8 @@ use crate::pipeline::spsc;
 use crate::reader::ServerReader;
 use crate::token_reader::DeltaToken;
 
-use super::{ResponseContext, read_response_header};
 use super::token_loop::{literal_to_buf, process_remaining_tokens};
+use super::{ResponseContext, read_response_header};
 
 /// Result of streaming a file response to the disk thread.
 pub struct StreamingResult {
