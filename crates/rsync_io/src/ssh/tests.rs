@@ -905,6 +905,68 @@ fn stderr_drain_joins_on_drop() {
 
 #[cfg(unix)]
 #[test]
+fn stderr_deadlock_regression_large_stderr_does_not_block_stdout() {
+    // Regression test: when a child writes large amounts to stderr while also
+    // writing to stdout, the parent must be able to read stdout without
+    // deadlocking. Without the StderrDrain background thread, the child would
+    // fill the OS pipe buffer (~64 KB) on stderr, block, and never write to
+    // stdout - causing the parent to block on stdout read indefinitely.
+    //
+    // This test uses a 5-second timeout to detect deadlock rather than
+    // hanging the test suite.
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    // Write ~640 KB to stderr (10000 lines of ~64 bytes) interleaved with
+    // a known sentinel on stdout. The stderr volume far exceeds the OS pipe
+    // buffer. Without draining, the child blocks on stderr before reaching
+    // the stdout write.
+    command.push_option(concat!(
+        "i=0; while [ $i -lt 10000 ]; do ",
+        "printf 'error: this is a long stderr line that helps fill the pipe buffer quickly\\n' >&2; ",
+        "i=$((i+1)); done; ",
+        "printf 'STDOUT_SENTINEL'"
+    ));
+    command.set_target_override(Some(std::ffi::OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (mut reader, _writer, child_handle) = connection.split().expect("split");
+
+    // Read stdout on a separate thread so we can enforce a timeout.
+    let (tx, rx) = mpsc::channel();
+    let read_thread = std::thread::Builder::new()
+        .name("test-stdout-reader".into())
+        .spawn(move || {
+            let mut buf = Vec::new();
+            let result = reader.read_to_end(&mut buf);
+            let _ = tx.send((result, buf));
+        })
+        .expect("spawn reader thread");
+
+    // 5-second timeout: if the drain is broken, the child blocks on stderr
+    // and never writes the sentinel to stdout, so this recv times out.
+    let (result, buf) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("stdout read should complete within 5 seconds (deadlock detected)");
+
+    result.expect("stdout read should succeed");
+    let output = String::from_utf8_lossy(&buf);
+    assert!(
+        output.contains("STDOUT_SENTINEL"),
+        "expected sentinel in stdout, got: {output:?}"
+    );
+
+    let status = child_handle.wait().expect("wait");
+    assert!(status.success());
+    read_thread.join().expect("reader thread panicked");
+}
+
+#[cfg(unix)]
+#[test]
 fn stderr_drain_with_no_stderr_output() {
     // Child produces no stderr output - drain thread should exit cleanly at EOF.
     let mut command = SshCommand::new("ignored");
