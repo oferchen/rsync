@@ -15,7 +15,6 @@
 /// - `clientserver.c` - daemon protocol negotiation
 /// - `main.c:client_run()` - orchestrates sender/receiver roles
 /// - `sender.c` / `receiver.c` - data transfer in each direction
-
 #[cfg(unix)]
 #[test]
 fn daemon_push_then_pull_roundtrip_preserves_content() {
