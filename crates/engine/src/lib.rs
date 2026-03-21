@@ -42,9 +42,7 @@
 //!
 //! `local_copy::buffer_pool` provides a `BufferPool` with RAII `PooledBuffer`
 //! handles that return allocations to a shared pool on drop, eliminating
-//! per-file heap churn on the hot transfer path. The concurrent delta pipeline
-//! (`local_copy::concurrent_delta`) uses vectored writes to batch small I/O
-//! operations, reducing syscall overhead on high-file-count transfers.
+//! per-file heap churn on the hot transfer path.
 //!
 //! ## Fuzzy matching
 //!
