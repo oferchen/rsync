@@ -18,7 +18,7 @@
 use std::io::Cursor;
 
 use protocol::flist::{FileEntry, FileListReader, FileListWriter};
-use protocol::{ProtocolVersion, write_int, write_longint};
+use protocol::{ProtocolVersion, TransferStats, write_int, write_longint};
 
 fn proto28() -> ProtocolVersion {
     ProtocolVersion::try_from(28u8).unwrap()
@@ -746,8 +746,6 @@ fn golden_v28_sum_head_md4() {
 
 #[test]
 fn golden_v28_stats_no_flist_times() {
-    use protocol::TransferStats;
-
     let stats = TransferStats::with_bytes(4096, 8192, 100_000);
     let mut buf = Vec::new();
     stats.write_to(&mut buf, proto28()).unwrap();
@@ -801,4 +799,494 @@ fn golden_v28_longint_large_value() {
     let mut cursor = Cursor::new(&buf);
     use protocol::read_longint;
     assert_eq!(read_longint(&mut cursor).unwrap(), value);
+}
+
+// ---------------------------------------------------------------------------
+// Block device encoding (protocol 28 rdev with XMIT_RDEV_MINOR_8_PRE30)
+// upstream: flist.c:send_file_entry() - protocol 28 device encoding
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_block_device_small_minor() {
+    // Block device: "sda", major=8, minor=0, mode=0o60660
+    // Protocol 28: minor fits in 8 bits, so XMIT_RDEV_MINOR_8_PRE30 flag is set.
+    //
+    // Expected wire format:
+    //   flags: 2 bytes LE (XMIT_EXTENDED_FLAGS in low byte because high byte
+    //          contains XMIT_RDEV_MINOR_8_PRE30)
+    //   name_len: 1 byte = 3
+    //   name: "sda"
+    //   size: write_longint(0) = 4-byte LE
+    //   mtime: 4-byte u32 LE
+    //   mode: 0o60660 = 0x000061B0 as i32 LE
+    //   rdev_major: write_int(8) = 4-byte LE
+    //   rdev_minor: 1 byte (because XMIT_RDEV_MINOR_8_PRE30 is set)
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+    let mut entry = FileEntry::new_block_device("sda".into(), 0o660, 8, 0);
+    entry.set_mtime(1_700_000_000, 0);
+
+    writer.write_entry(&mut buf, &entry).unwrap();
+
+    // Flags: high byte has XMIT_RDEV_MINOR_8_PRE30 (bit 11 = 0x0800),
+    // so XMIT_EXTENDED_FLAGS (0x04) is set in low byte.
+    // Two-byte LE flags encoding.
+    assert_eq!(
+        buf[0] & 0x04,
+        0x04,
+        "XMIT_EXTENDED_FLAGS must be set for device with extended flags"
+    );
+
+    // Verify the rdev_minor is 1 byte (small minor path).
+    // After: flags(2) + name_len(1) + name(3) + size(4) + mtime(4) + mode(4) = 18
+    // rdev_major: write_int(8) = 4-byte LE at offset 18
+    assert_eq!(
+        &buf[18..22],
+        &8_i32.to_le_bytes(),
+        "rdev major must be 4-byte LE int"
+    );
+    // rdev_minor: 1 byte (XMIT_RDEV_MINOR_8_PRE30 set)
+    assert_eq!(buf[22], 0, "rdev minor=0 as single byte");
+    assert_eq!(
+        buf.len(),
+        23,
+        "total length for block device with 8-bit minor"
+    );
+}
+
+#[test]
+fn golden_v28_block_device_large_minor() {
+    // Block device with minor > 255: requires 4-byte LE encoding.
+    // XMIT_RDEV_MINOR_8_PRE30 is NOT set when minor does not fit in 8 bits.
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+    let mut entry = FileEntry::new_block_device("sdb".into(), 0o660, 8, 300);
+    entry.set_mtime(1_700_000_000, 0);
+
+    writer.write_entry(&mut buf, &entry).unwrap();
+
+    // After: flags + name_len(1) + name(3) + size(4) + mtime(4) + mode(4)
+    // rdev_major: write_int(8) = 4-byte LE
+    // rdev_minor: write_int(300) = 4-byte LE (large minor path)
+    // Find minor offset: after major
+    let major_offset = buf.len() - 4 - 4; // 4 for major, 4 for minor (from end)
+    let minor_offset = major_offset + 4;
+    assert_eq!(
+        &buf[minor_offset..minor_offset + 4],
+        &300_i32.to_le_bytes(),
+        "rdev minor=300 must be 4-byte LE int when > 255"
+    );
+}
+
+#[test]
+fn golden_v28_block_device_roundtrip() {
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+    let mut entry = FileEntry::new_block_device("loop0".into(), 0o660, 7, 128);
+    entry.set_mtime(1_700_000_000, 0);
+
+    writer.write_entry(&mut buf, &entry).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+    let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(read_entry.name(), "loop0");
+    assert!(read_entry.is_device());
+    assert_eq!(read_entry.rdev_major(), Some(7));
+    assert_eq!(read_entry.rdev_minor(), Some(128));
+    assert_eq!(read_entry.mode(), 0o60660);
+}
+
+// ---------------------------------------------------------------------------
+// Character device encoding (protocol 28)
+// upstream: flist.c - char devices use S_IFCHR mode
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_char_device_roundtrip() {
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+    let mut entry = FileEntry::new_char_device("tty0".into(), 0o666, 4, 0);
+    entry.set_mtime(1_700_000_000, 0);
+
+    writer.write_entry(&mut buf, &entry).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+    let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(read_entry.name(), "tty0");
+    assert!(read_entry.is_device());
+    assert_eq!(read_entry.rdev_major(), Some(4));
+    assert_eq!(read_entry.rdev_minor(), Some(0));
+    assert_eq!(read_entry.mode(), 0o20666);
+}
+
+// ---------------------------------------------------------------------------
+// FIFO (special file) encoding with dummy rdev (protocol 28)
+// upstream: flist.c - specials get dummy rdev(0,0) for protocol < 31
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_fifo_with_dummy_rdev() {
+    // Protocol 28-30: FIFOs write dummy rdev(0, 0) when preserve_specials is set.
+    // This is omitted in protocol 31+.
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_specials(true);
+
+    let mut entry = FileEntry::new_fifo("pipe0".into(), 0o644);
+    entry.set_mtime(1_700_000_000, 0);
+
+    writer.write_entry(&mut buf, &entry).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_specials(true);
+
+    let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(read_entry.name(), "pipe0");
+    assert!(read_entry.is_special());
+    assert_eq!(read_entry.mode(), 0o10644);
+}
+
+// ---------------------------------------------------------------------------
+// Hardlink dev/ino encoding (protocol 28-29 uses longint pairs)
+// upstream: flist.c - protocol < 30 writes dev+1 and ino as longints
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_hardlink_dev_ino_encoding() {
+    // Protocol 28 encodes hardlinks using (dev, ino) pairs via write_longint,
+    // not the varint index used in protocol 30+.
+    // Wire format: longint(dev + 1), longint(ino)
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+    let mut entry = FileEntry::new_file("linked.txt".into(), 100, 0o644);
+    entry.set_mtime(1_700_000_000, 0);
+    entry.set_hardlink_dev(42);
+    entry.set_hardlink_ino(12345);
+
+    writer.write_entry(&mut buf, &entry).unwrap();
+
+    // After: flags(2 - extended for XMIT_HLINKED) + name_len(1) + name(10)
+    //        + size(4) + mtime(4) + mode(4)
+    // Then: longint(dev+1=43) + longint(ino=12345)
+    //
+    // dev+1 = 43 fits in i32: 4-byte LE [0x2B, 0x00, 0x00, 0x00]
+    // ino = 12345 fits in i32: 4-byte LE [0x39, 0x30, 0x00, 0x00]
+    //
+    // Find the hardlink data at the end of the buffer.
+    let expected_tail: &[u8] = &[
+        // dev+1=43 as 4-byte LE longint
+        0x2B, 0x00, 0x00, 0x00, // ino=12345 as 4-byte LE longint
+        0x39, 0x30, 0x00, 0x00,
+    ];
+    assert_eq!(
+        &buf[buf.len() - 8..],
+        expected_tail,
+        "hardlink dev/ino must be longint pairs at end of entry"
+    );
+}
+
+#[test]
+fn golden_v28_hardlink_dev_ino_roundtrip() {
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+    let mut e1 = FileEntry::new_file("original.txt".into(), 200, 0o644);
+    e1.set_mtime(1_700_000_000, 0);
+    e1.set_hardlink_dev(100);
+    e1.set_hardlink_ino(99999);
+
+    let mut e2 = FileEntry::new_file("hardlink.txt".into(), 200, 0o644);
+    e2.set_mtime(1_700_000_000, 0);
+    e2.set_hardlink_dev(100);
+    e2.set_hardlink_ino(99999);
+
+    writer.write_entry(&mut buf, &e1).unwrap();
+    writer.write_entry(&mut buf, &e2).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+    let r1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r1.hardlink_dev(), Some(100));
+    assert_eq!(r1.hardlink_ino(), Some(99999));
+
+    let r2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r2.hardlink_dev(), Some(100));
+    assert_eq!(r2.hardlink_ino(), Some(99999));
+}
+
+// ---------------------------------------------------------------------------
+// Transfer stats exact wire bytes (protocol 28 - varlong30 only, no flist times)
+// upstream: main.c:handle_stats() - protocol < 29 omits flist times
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_stats_wire_bytes_small_values() {
+    // Protocol 28 stats: 3 varlong30 fields with min_bytes=3.
+    // For small values that fit in 3 bytes, each is encoded as:
+    //   leading_byte + 3 value bytes (total 4 bytes per field).
+    //
+    // varlong30 with min_bytes=3 for value=4096 (0x1000):
+    //   bytes = [0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    //   cnt starts at 8, strips trailing zeros to min_bytes=3
+    //   bytes[2] = 0x00, bit = 1<<(7+3-3) = 0x80
+    //   0x00 < 0x80 and cnt == min_bytes, so leading = bytes[2] = 0x00
+    //   output: [0x00] + bytes[0..2] = [0x00, 0x00, 0x10]
+    let stats = TransferStats::with_bytes(4096, 8192, 65536);
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, proto28()).unwrap();
+
+    // 3 fields, each varlong30 with min_bytes=3 for values fitting in 3 bytes
+    // No flist times for protocol 28.
+    let mut cursor = Cursor::new(&buf[..]);
+    let decoded = TransferStats::read_from(&mut cursor, proto28()).unwrap();
+
+    assert_eq!(decoded.total_read, 4096);
+    assert_eq!(decoded.total_written, 8192);
+    assert_eq!(decoded.total_size, 65536);
+    assert_eq!(decoded.flist_buildtime, 0);
+    assert_eq!(decoded.flist_xfertime, 0);
+
+    // Ensure all bytes consumed - no trailing flist time fields
+    assert_eq!(
+        cursor.position() as usize,
+        buf.len(),
+        "all bytes must be consumed for protocol 28 stats"
+    );
+}
+
+#[test]
+fn golden_v28_stats_wire_bytes_zero() {
+    // Zero-value stats: varlong30(0, min_bytes=3)
+    // bytes = [0,0,0,0,0,0,0,0], cnt=3 (min), leading = bytes[2]=0, output = [0x00, 0x00, 0x00]
+    let stats = TransferStats::with_bytes(0, 0, 0);
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, proto28()).unwrap();
+
+    // 3 fields of varlong30(0, 3): each is [0x00, 0x00, 0x00] = 3 bytes
+    assert_eq!(
+        buf.len(),
+        9,
+        "3 zero-value varlong30(min=3) = 9 bytes total"
+    );
+
+    #[rustfmt::skip]
+    let expected: &[u8] = &[
+        // total_read = 0: varlong30(0, 3)
+        0x00, 0x00, 0x00,
+        // total_written = 0: varlong30(0, 3)
+        0x00, 0x00, 0x00,
+        // total_size = 0: varlong30(0, 3)
+        0x00, 0x00, 0x00,
+    ];
+    assert_eq!(buf, expected, "zero stats must be 9 bytes of zeros");
+}
+
+#[test]
+fn golden_v28_stats_wire_bytes_large() {
+    // Large transfer stats that require more than 3 bytes.
+    // total_read = 10_000_000_000 (~9.3 GB) requires 5 bytes in varlong30.
+    let stats = TransferStats::with_bytes(10_000_000_000, 500, 10_000_000_000);
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, proto28()).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let decoded = TransferStats::read_from(&mut cursor, proto28()).unwrap();
+
+    assert_eq!(decoded.total_read, 10_000_000_000);
+    assert_eq!(decoded.total_written, 500);
+    assert_eq!(decoded.total_size, 10_000_000_000);
+}
+
+// ---------------------------------------------------------------------------
+// Protocol 28 does not support checksum negotiation (always MD4)
+// upstream: compat.c - checksum negotiation requires protocol >= 30
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_no_checksum_negotiation() {
+    let v28 = proto28();
+    assert!(
+        !v28.uses_varint_encoding(),
+        "protocol 28 cannot negotiate checksums (no varint)"
+    );
+    assert!(
+        v28.uses_fixed_encoding(),
+        "protocol 28 uses fixed encoding - always MD4"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Multiple devices with XMIT_SAME_RDEV_MAJOR optimization
+// upstream: flist.c - consecutive devices with same major skip rdev_major
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_consecutive_devices_same_major() {
+    // Two block devices with same major (8): second entry sets XMIT_SAME_RDEV_MAJOR
+    // and omits the major number from the wire.
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+    let mut dev1 = FileEntry::new_block_device("sda".into(), 0o660, 8, 0);
+    dev1.set_mtime(1_700_000_000, 0);
+
+    let mut dev2 = FileEntry::new_block_device("sdb".into(), 0o660, 8, 16);
+    dev2.set_mtime(1_700_000_000, 0);
+
+    writer.write_entry(&mut buf, &dev1).unwrap();
+    let first_len = buf.len();
+    writer.write_entry(&mut buf, &dev2).unwrap();
+    let second_len = buf.len() - first_len;
+
+    // Second entry should be shorter: XMIT_SAME_RDEV_MAJOR omits the 4-byte major.
+    // First entry has major(4) + minor(1) = 5 bytes of rdev.
+    // Second entry with same major: minor(1) = 1 byte of rdev (major omitted).
+    assert!(
+        second_len < first_len,
+        "second device with same major must be shorter"
+    );
+
+    // Verify round-trip
+    writer = FileListWriter::new(protocol).with_preserve_devices(true);
+    let mut rt_buf = Vec::new();
+    let mut rt_dev1 = FileEntry::new_block_device("sda".into(), 0o660, 8, 0);
+    rt_dev1.set_mtime(1_700_000_000, 0);
+    let mut rt_dev2 = FileEntry::new_block_device("sdb".into(), 0o660, 8, 16);
+    rt_dev2.set_mtime(1_700_000_000, 0);
+
+    writer.write_entry(&mut rt_buf, &rt_dev1).unwrap();
+    writer.write_entry(&mut rt_buf, &rt_dev2).unwrap();
+    writer.write_end(&mut rt_buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&rt_buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+    let r1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r1.rdev_major(), Some(8));
+    assert_eq!(r1.rdev_minor(), Some(0));
+
+    let r2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r2.rdev_major(), Some(8));
+    assert_eq!(r2.rdev_minor(), Some(16));
+}
+
+// ---------------------------------------------------------------------------
+// Mixed entry types with all preserves enabled (protocol 28)
+// upstream: flist.c - comprehensive file list with devices, specials, links
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_mixed_all_preserves_roundtrip() {
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true)
+        .with_preserve_links(true)
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
+
+    let mut f1 = FileEntry::new_file("config.yml".into(), 256, 0o644);
+    f1.set_mtime(1_700_000_000, 0);
+    f1.set_uid(1000);
+    f1.set_gid(1000);
+
+    let mut d1 = FileEntry::new_directory("dev".into(), 0o755);
+    d1.set_mtime(1_700_000_000, 0);
+    d1.set_uid(0);
+    d1.set_gid(0);
+
+    let mut blk = FileEntry::new_block_device("dev/sda".into(), 0o660, 8, 0);
+    blk.set_mtime(1_700_000_000, 0);
+    blk.set_uid(0);
+    blk.set_gid(6);
+
+    let mut chr = FileEntry::new_char_device("dev/null".into(), 0o666, 1, 3);
+    chr.set_mtime(1_700_000_000, 0);
+    chr.set_uid(0);
+    chr.set_gid(0);
+
+    let mut fifo = FileEntry::new_fifo("dev/pipe".into(), 0o644);
+    fifo.set_mtime(1_700_000_000, 0);
+    fifo.set_uid(1000);
+    fifo.set_gid(1000);
+
+    let s1 = FileEntry::new_symlink("link".into(), "config.yml".into());
+
+    writer.write_entry(&mut buf, &f1).unwrap();
+    writer.write_entry(&mut buf, &d1).unwrap();
+    writer.write_entry(&mut buf, &blk).unwrap();
+    writer.write_entry(&mut buf, &chr).unwrap();
+    writer.write_entry(&mut buf, &fifo).unwrap();
+    writer.write_entry(&mut buf, &s1).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true)
+        .with_preserve_links(true)
+        .with_preserve_devices(true)
+        .with_preserve_specials(true);
+
+    let r1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r1.name(), "config.yml");
+    assert!(r1.is_file());
+    assert_eq!(r1.uid(), Some(1000));
+    assert_eq!(r1.gid(), Some(1000));
+
+    let r2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r2.name(), "dev");
+    assert!(r2.is_dir());
+    assert_eq!(r2.uid(), Some(0));
+
+    let r3 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r3.name(), "dev/sda");
+    assert!(r3.is_device());
+    assert_eq!(r3.rdev_major(), Some(8));
+    assert_eq!(r3.rdev_minor(), Some(0));
+    assert_eq!(r3.gid(), Some(6));
+
+    let r4 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r4.name(), "dev/null");
+    assert!(r4.is_device());
+    assert_eq!(r4.rdev_major(), Some(1));
+    assert_eq!(r4.rdev_minor(), Some(3));
+
+    let r5 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r5.name(), "dev/pipe");
+    assert!(r5.is_special());
+    assert_eq!(r5.uid(), Some(1000));
+
+    let r6 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r6.name(), "link");
+    assert!(r6.is_symlink());
+    assert_eq!(
+        r6.link_target().map(|p| p.to_path_buf()),
+        Some("config.yml".into())
+    );
+
+    let end = reader.read_entry(&mut cursor).unwrap();
+    assert!(end.is_none());
 }
