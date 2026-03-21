@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+#[cfg(feature = "tracing")]
 use super::RECV_TARGET;
 
 /// Traces the start of a file receive operation.

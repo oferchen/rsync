@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+#[cfg(feature = "tracing")]
 use super::DELTASUM_TARGET;
 
 /// Traces the start of checksum generation for a file.
