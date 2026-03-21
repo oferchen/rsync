@@ -191,9 +191,7 @@ fn test_transfer_stats_display_with_all_file_types() {
 
     let output = format!("{stats}");
 
-    assert!(
-        output.contains("Number of files: 25 (reg: 10, dir: 5, link: 7, dev: 2, special: 1)")
-    );
+    assert!(output.contains("Number of files: 25 (reg: 10, dir: 5, link: 7, dev: 2, special: 1)"));
 }
 
 #[test]
