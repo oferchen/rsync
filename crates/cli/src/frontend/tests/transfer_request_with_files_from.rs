@@ -34,7 +34,9 @@ fn transfer_request_with_files_from_uses_source_directory_for_relative_entries()
     assert!(stderr.is_empty());
 
     let copied_alpha = dest_dir.join("alpha.txt");
-    let copied_beta = dest_dir.join("beta.txt");
+    // --files-from implies --relative, so nested/beta.txt preserves its
+    // directory structure at the destination.
+    let copied_beta = dest_dir.join("nested").join("beta.txt");
 
     assert_eq!(std::fs::read(&copied_alpha).expect("read alpha"), b"alpha");
     assert_eq!(std::fs::read(&copied_beta).expect("read beta"), b"beta");
