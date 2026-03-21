@@ -262,24 +262,23 @@ impl<'a> CopyContext<'a> {
         }
         self.enforce_timeout()?;
 
-        // Capture LITERAL operation to batch file if batch mode is active
+        // Capture LITERAL operation to batch file if batch mode is active.
+        // upstream: token.c:simple_send_token() - literals are written as
+        // write_int(length) + raw bytes, chunked to CHUNK_SIZE (32KB).
         if let Some(batch_writer_arc) = self.batch_writer() {
-            // Encode the literal operation in wire format
-            let delta_op = protocol::wire::delta::DeltaOp::Literal(chunk.to_vec());
             let mut encoded = Vec::new();
-            protocol::wire::delta::write_delta_op(&mut encoded, &delta_op).map_err(|e| {
+            protocol::wire::delta::write_token_literal(&mut encoded, chunk).map_err(|e| {
                 LocalCopyError::io(
-                    "encode batch literal",
+                    "encode batch literal token",
                     destination.to_path_buf(),
                     e,
                 )
             })?;
 
-            // Write encoded operation to batch file
             let mut writer_guard = batch_writer_arc.lock().unwrap();
             writer_guard.write_data(&encoded).map_err(|e| {
                 LocalCopyError::io(
-                    "write batch literal",
+                    "write batch literal token",
                     destination.to_path_buf(),
                     std::io::Error::other(e),
                 )
@@ -322,32 +321,25 @@ impl<'a> CopyContext<'a> {
         let offset = matched.offset();
         let block_length = matched.descriptor().len();
 
-        // Capture COPY operation to batch file if batch mode is active
+        // Capture COPY (block match) operation to batch file if batch mode is active.
+        // upstream: token.c:simple_send_token() - block match is write_int(-(token+1)).
         if let Some(batch_writer_arc) = self.batch_writer() {
-            // Get the block index from the matched block
             let block_index = matched.descriptor().index();
 
-            // Encode the copy operation in wire format
-            // Note: block_index is u64 but DeltaOp::Copy takes u32
-            let delta_op = protocol::wire::delta::DeltaOp::Copy {
-                block_index: block_index as u32,
-                length: block_length as u32,
-            };
-
             let mut encoded = Vec::new();
-            protocol::wire::delta::write_delta_op(&mut encoded, &delta_op).map_err(|e| {
-                LocalCopyError::io(
-                    "encode batch copy",
-                    destination.to_path_buf(),
-                    e,
-                )
-            })?;
+            protocol::wire::delta::write_token_block_match(&mut encoded, block_index as u32)
+                .map_err(|e| {
+                    LocalCopyError::io(
+                        "encode batch block match token",
+                        destination.to_path_buf(),
+                        e,
+                    )
+                })?;
 
-            // Write encoded operation to batch file
             let mut writer_guard = batch_writer_arc.lock().unwrap();
             writer_guard.write_data(&encoded).map_err(|e| {
                 LocalCopyError::io(
-                    "write batch copy",
+                    "write batch block match token",
                     destination.to_path_buf(),
                     std::io::Error::other(e),
                 )

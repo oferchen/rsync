@@ -305,6 +305,19 @@ pub(in crate::local_copy) fn execute_transfer(
                 }
                 return Err(timeout_error);
             }
+
+            // Batch capture: for whole-file transfers (no delta), capture the
+            // entire file content as token literals. Delta transfers already
+            // capture ops inline in flush_literal_chunk/copy_matched_block.
+            // upstream: match.c:match_sums() - whole-file path writes literals.
+            if delta_signature.is_none() {
+                context.capture_batch_whole_file(source, file_size)?;
+            }
+
+            // Write the token end marker to the batch file for this file.
+            // upstream: token.c:simple_send_token() with token=-1 writes 0.
+            context.finalize_batch_file_delta()?;
+
             outcome
         }
         Err(error) => {
