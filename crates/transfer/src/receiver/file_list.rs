@@ -312,8 +312,9 @@ impl ReceiverContext {
                     info_log!(
                         Misc,
                         1,
-                        "ERROR: rejecting file-list entry with absolute path from sender: {}",
-                        path.display()
+                        "ERROR: rejecting file-list entry with absolute path from sender: {}{}",
+                        path.display(),
+                        crate::role_trailer::receiver()
                     );
                     return false;
                 }
@@ -324,8 +325,9 @@ impl ReceiverContext {
                     info_log!(
                         Misc,
                         1,
-                        "ERROR: rejecting file-list entry with \"..\" component from sender: {}",
-                        path.display()
+                        "ERROR: rejecting file-list entry with \"..\" component from sender: {}{}",
+                        path.display(),
+                        crate::role_trailer::receiver()
                     );
                     return false;
                 }
