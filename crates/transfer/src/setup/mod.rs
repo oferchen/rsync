@@ -33,9 +33,11 @@ pub use types::{ProtocolSetupConfig, SetupResult};
 
 #[cfg(test)]
 pub(crate) use capability::CAPABILITY_MAPPINGS;
+#[cfg(test)]
 pub(crate) use capability::{
     build_compat_flags_from_client_info, client_has_pre_release_v_flag, parse_client_info,
 };
+#[cfg(test)]
 pub(crate) use compat::write_compat_flags;
 pub(crate) use protocol::CompatibilityFlags;
 #[cfg(test)]
