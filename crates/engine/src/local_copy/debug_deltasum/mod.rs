@@ -19,4 +19,5 @@ pub use matching::{
     trace_deltasum_summary, trace_match_end, trace_match_false_alarm, trace_match_hit,
     trace_match_miss, trace_match_start,
 };
+#[cfg(test)]
 pub use tracer::DeltasumTracer;
