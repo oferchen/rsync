@@ -410,3 +410,77 @@ fn test_batch_stats_zero_values() {
 
     assert_eq!(stats, restored);
 }
+
+/// Verify the exact byte layout of a batch header matches upstream rsync.
+///
+/// upstream: batch.c:write_stream_flags() writes the flags bitmap (i32 LE),
+/// then io.c:start_write_batch() writes protocol_version (i32 LE),
+/// compat_flags (varint), and checksum_seed (i32 LE).
+#[test]
+fn test_batch_header_upstream_byte_layout_protocol_31() {
+    let mut header = BatchHeader::new(31, 0x1234_5678);
+    header.compat_flags = Some(0x3F); // fits in single varint byte
+    header.stream_flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // stream_flags bitmap = 0b0000_0011 = 3 as i32 LE
+    assert_eq!(&buf[0..4], &3_i32.to_le_bytes());
+    // protocol_version = 31 as i32 LE
+    assert_eq!(&buf[4..8], &31_i32.to_le_bytes());
+    // compat_flags = 0x3F as varint (single byte for values < 0x80)
+    assert_eq!(buf[8], 0x3F);
+    // checksum_seed = 0x12345678 as i32 LE
+    assert_eq!(&buf[9..13], &0x1234_5678_i32.to_le_bytes());
+    assert_eq!(buf.len(), 13);
+}
+
+/// Verify protocol 28 header omits compat_flags.
+#[test]
+fn test_batch_header_upstream_byte_layout_protocol_28() {
+    let header = BatchHeader::new(28, 42);
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // stream_flags bitmap = 0 as i32 LE
+    assert_eq!(&buf[0..4], &0_i32.to_le_bytes());
+    // protocol_version = 28 as i32 LE
+    assert_eq!(&buf[4..8], &28_i32.to_le_bytes());
+    // No compat_flags for protocol < 30
+    // checksum_seed = 42 as i32 LE
+    assert_eq!(&buf[8..12], &42_i32.to_le_bytes());
+    assert_eq!(buf.len(), 12);
+}
+
+/// Verify read_from correctly parses a hand-crafted upstream-format header.
+#[test]
+fn test_batch_header_read_upstream_bytes() {
+    // Build raw bytes matching upstream rsync format:
+    // stream_flags = 0x45 (bits 0,2,6 = recurse + preserve_gid + always_checksum)
+    // protocol_version = 32
+    // compat_flags = 0x0A (varint, single byte)
+    // checksum_seed = 0xAABBCCDD
+    let mut raw = Vec::new();
+    raw.extend_from_slice(&0x45_i32.to_le_bytes()); // stream_flags
+    raw.extend_from_slice(&32_i32.to_le_bytes()); // protocol_version
+    raw.push(0x0A); // compat_flags varint
+    raw.extend_from_slice(&0xAABB_CCDD_u32.to_le_bytes()); // checksum_seed
+
+    let mut cursor = Cursor::new(raw);
+    let header = BatchHeader::read_from(&mut cursor).unwrap();
+
+    assert_eq!(header.protocol_version, 32);
+    assert_eq!(header.compat_flags, Some(0x0A));
+    assert_eq!(header.checksum_seed, 0xAABB_CCDDu32 as i32);
+    assert!(header.stream_flags.recurse);
+    assert!(!header.stream_flags.preserve_uid);
+    assert!(header.stream_flags.preserve_gid);
+    assert!(!header.stream_flags.preserve_links);
+    assert!(header.stream_flags.always_checksum);
+}
