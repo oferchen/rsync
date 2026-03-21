@@ -111,6 +111,11 @@ fn algorithm_kind_from_name() {
         ChecksumAlgorithmKind::from_name("xxhash3"),
         Some(ChecksumAlgorithmKind::Xxh3)
     );
+    // upstream: checksum.c valid_checksums_items maps "xxhash" to CSUM_XXH64
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("xxhash"),
+        Some(ChecksumAlgorithmKind::Xxh64)
+    );
     assert_eq!(ChecksumAlgorithmKind::from_name("invalid"), None);
 }
 

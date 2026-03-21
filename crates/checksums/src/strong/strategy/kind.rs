@@ -78,7 +78,7 @@ impl ChecksumAlgorithmKind {
             "sha1" | "sha-1" => Some(Self::Sha1),
             "sha256" | "sha-256" => Some(Self::Sha256),
             "sha512" | "sha-512" => Some(Self::Sha512),
-            "xxh64" | "xxhash64" => Some(Self::Xxh64),
+            "xxh64" | "xxhash" | "xxhash64" => Some(Self::Xxh64),
             "xxh3" | "xxhash3" => Some(Self::Xxh3),
             "xxh128" | "xxh3-128" | "xxhash128" => Some(Self::Xxh3_128),
             _ => None,
