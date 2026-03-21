@@ -25,8 +25,8 @@ pub(super) fn create_binary_handshake() -> BinaryHandshake<Cursor<Vec<u8>>> {
 
 /// Creates a legacy daemon handshake fixture at protocol 31.
 pub(super) fn create_legacy_handshake() -> LegacyDaemonHandshake<Cursor<Vec<u8>>> {
-    let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
-        .expect("sniff succeeds");
+    let stream =
+        sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec())).expect("sniff succeeds");
     let greeting = parse_legacy_daemon_greeting_owned("@RSYNCD: 31.0").expect("valid greeting");
     let proto31 = ProtocolVersion::from_supported(31).unwrap();
     LegacyDaemonHandshake::from_components(greeting, proto31, stream)
