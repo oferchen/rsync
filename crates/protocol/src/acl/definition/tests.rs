@@ -288,8 +288,7 @@ fn read_acl_with_named_entries() {
 fn read_acl_with_named_entries_and_explicit_mask() {
     let mut data = Vec::new();
 
-    let flags =
-        XMIT_USER_OBJ | XMIT_GROUP_OBJ | XMIT_MASK_OBJ | XMIT_OTHER_OBJ | XMIT_NAME_LIST;
+    let flags = XMIT_USER_OBJ | XMIT_GROUP_OBJ | XMIT_MASK_OBJ | XMIT_OTHER_OBJ | XMIT_NAME_LIST;
     data.push(flags);
 
     data.push(7); // user_obj
