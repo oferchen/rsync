@@ -8,7 +8,8 @@
 use proptest::prelude::*;
 use protocol::{
     decode_varint, encode_varint_to_vec, read_longint, read_varint, read_varint30_int,
-    read_varlong, read_varlong30, write_longint, write_varint30_int, write_varlong, write_varlong30,
+    read_varlong, read_varlong30, write_longint, write_varint30_int, write_varlong,
+    write_varlong30,
 };
 use std::io::Cursor;
 
