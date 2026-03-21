@@ -1,7 +1,33 @@
-//! io_uring-based async file I/O for Linux 5.6+.
+//! io_uring-based async file and socket I/O for Linux 5.6+.
 //!
-//! This module provides high-performance file I/O using Linux's io_uring interface,
+//! This module provides high-performance I/O using Linux's io_uring interface,
 //! which batches syscalls and enables true async I/O without thread pools.
+//!
+//! # Kernel requirements
+//!
+//! - **Linux 5.6 or later** - Minimum for `io_uring_setup(2)` and all opcodes
+//!   used by this module (`IORING_OP_READ`, `IORING_OP_WRITE`, `IORING_OP_SEND`).
+//! - **`io_uring` cargo feature** must be enabled at compile time.
+//! - **No seccomp blocking** - Some container runtimes (Docker with default
+//!   seccomp profile before v20.10.2, gVisor) block io_uring syscalls.
+//!   The runtime probe in [`is_io_uring_available`] detects this.
+//!
+//! # Runtime detection and fallback
+//!
+//! Availability is checked once per process via [`is_io_uring_available`] and
+//! cached in a process-wide atomic. The check:
+//!
+//! 1. Parses `uname().release` for major.minor >= 5.6
+//! 2. Attempts `IoUring::new(4)` to verify the syscall is not blocked
+//!
+//! Factory types ([`IoUringReaderFactory`], [`IoUringWriterFactory`]) and the
+//! top-level helpers ([`reader_from_path`], [`writer_from_file`]) automatically
+//! fall back to standard buffered I/O (`BufReader`/`BufWriter`) when io_uring
+//! is unavailable or ring creation fails.
+//!
+//! On non-Linux platforms or when the `io_uring` feature is disabled, the stub
+//! module (`io_uring_stub.rs`) provides the same public API with
+//! `is_io_uring_available()` always returning `false`.
 //!
 //! # Batching strategy
 //!
@@ -22,10 +48,15 @@
 //! Single-operation methods (`read_at`, `write_at`) are retained as convenience
 //! wrappers for callers that need one-off positioned I/O.
 //!
-//! # Requirements
+//! # Optional features
 //!
-//! - Linux kernel 5.6 or later
-//! - The `io_uring` feature must be enabled
+//! - **`IORING_REGISTER_FILES`** (fd registration) - Enabled by default via
+//!   [`IoUringConfig::register_files`]. Eliminates per-SQE kernel file table
+//!   lookups, saving ~50ns per operation on high-fd-count processes.
+//! - **`IORING_SETUP_SQPOLL`** - Opt-in via [`IoUringConfig::sqpoll`]. A kernel
+//!   thread polls the submission queue, eliminating `io_uring_enter` syscalls.
+//!   Requires `CAP_SYS_NICE` or root; falls back to normal submission on
+//!   `EPERM`.
 
 mod batching;
 mod config;
