@@ -667,4 +667,305 @@ mod tests {
         let buffer = BufferPool::acquire_from(Arc::clone(&pool));
         assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
     }
+
+    // ---------------------------------------------------------------
+    // Memory pressure and concurrency tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn pool_reuses_buffers_under_sequential_pressure() {
+        // Allocate and return many buffers sequentially.
+        // The pool should reuse buffers so that at most max_buffers
+        // are retained, regardless of how many iterations run.
+        let pool = Arc::new(BufferPool::new(4));
+
+        for _ in 0..1_000 {
+            let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
+            buf[0] = 0xAB;
+        }
+
+        // After all guards are dropped the pool holds at most max_buffers.
+        assert!(pool.available() <= 4);
+        // At least one buffer was returned (proves reuse path was exercised).
+        assert!(pool.available() >= 1);
+    }
+
+    #[test]
+    fn pool_size_stays_bounded_under_burst_allocation() {
+        // Acquire many buffers simultaneously (simulating a burst), then
+        // release them all. The pool must not grow beyond max_buffers.
+        let max = 4;
+        let pool = Arc::new(BufferPool::new(max));
+
+        let guards: Vec<_> = (0..64)
+            .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+            .collect();
+
+        // While all 64 buffers are checked out the pool is empty.
+        assert_eq!(pool.available(), 0);
+
+        // Drop all guards - only max_buffers should be retained.
+        drop(guards);
+        assert_eq!(pool.available(), max);
+    }
+
+    #[test]
+    fn empty_pool_allocates_fresh_buffer() {
+        // When no buffers are available the pool creates a new one
+        // rather than blocking.
+        let pool = Arc::new(BufferPool::new(2));
+        assert_eq!(pool.available(), 0);
+
+        let buf = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(buf.len(), COPY_BUFFER_SIZE);
+        // Pool is still empty because the buffer is checked out.
+        assert_eq!(pool.available(), 0);
+    }
+
+    #[test]
+    fn drop_returns_buffer_to_pool() {
+        // Explicitly verify the BufferGuard Drop impl returns the buffer.
+        let pool = Arc::new(BufferPool::new(4));
+        assert_eq!(pool.available(), 0);
+
+        let guard = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(pool.available(), 0);
+
+        drop(guard);
+        assert_eq!(pool.available(), 1);
+    }
+
+    #[test]
+    fn borrowed_guard_drop_returns_buffer_to_pool() {
+        // Same verification for BorrowedBufferGuard.
+        let pool = BufferPool::new(4);
+        assert_eq!(pool.available(), 0);
+
+        let guard = pool.acquire();
+        assert_eq!(pool.available(), 0);
+
+        drop(guard);
+        assert_eq!(pool.available(), 1);
+    }
+
+    #[test]
+    fn concurrent_checkout_return_from_multiple_threads() {
+        // Hammer the pool from many threads with rapid acquire/release
+        // cycles. Validates absence of deadlocks, data races, and that
+        // the pool invariant (available <= max_buffers) always holds.
+        let pool = Arc::new(BufferPool::new(8));
+        let iterations = 500;
+        let thread_count = 16;
+
+        let handles: Vec<_> = (0..thread_count)
+            .map(|id| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    for i in 0..iterations {
+                        let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
+                        // Write a recognizable pattern to detect cross-thread corruption.
+                        buf[0] = (id & 0xFF) as u8;
+                        buf[1] = (i & 0xFF) as u8;
+                        assert_eq!(buf[0], (id & 0xFF) as u8);
+                        // Guard dropped here - buffer returns to pool.
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("worker thread panicked");
+        }
+
+        assert!(pool.available() <= 8);
+    }
+
+    #[test]
+    fn concurrent_mixed_guard_types() {
+        // Exercise both Arc-based and borrow-based guards from threads.
+        // The borrowed guard can only be used within a single thread
+        // (lifetime tied to pool), but we test that concurrent Arc-based
+        // and sequential borrow-based access both work correctly.
+        let pool = Arc::new(BufferPool::new(4));
+
+        // Spawn threads using Arc-based acquire_from.
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    for _ in 0..200 {
+                        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        assert!(pool.available() <= 4);
+
+        // Now use borrowed guard on the main thread.
+        let available_before = pool.available();
+        {
+            let _buf = pool.acquire();
+        }
+        // Buffer was returned; available count should be at least what it was.
+        assert!(pool.available() >= available_before);
+    }
+
+    #[test]
+    fn concurrent_held_buffers_force_new_allocations() {
+        // Hold some buffers while other threads acquire and release.
+        // Verifies the pool allocates fresh buffers when empty and that
+        // held guards do not interfere with new acquisitions.
+        let pool = Arc::new(BufferPool::new(2));
+
+        // Hold 2 buffers on the main thread, exhausting the pool.
+        let _held1 = BufferPool::acquire_from(Arc::clone(&pool));
+        let _held2 = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(pool.available(), 0);
+
+        // Spawn threads that acquire and release buffers - they all get
+        // fresh allocations since the pool is empty and 2 buffers are held.
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
+                        buf[0] = 0xFF;
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        // Pool accepted returns up to max_buffers while threads ran.
+        assert!(pool.available() <= 2);
+
+        // Release held buffers. Pool is already at capacity so excess
+        // buffers are dropped.
+        drop(_held1);
+        drop(_held2);
+        assert!(pool.available() <= 2);
+    }
+
+    #[test]
+    fn adaptive_buffers_returned_under_concurrent_pressure() {
+        // Mix adaptive and default-sized buffer acquisitions concurrently.
+        // All returned buffers should be resized to pool default.
+        let pool = Arc::new(BufferPool::new(8));
+
+        let file_sizes: Vec<u64> = vec![
+            512,                  // tiny
+            100 * 1024,           // small
+            10 * 1024 * 1024,     // medium (matches pool default)
+            100 * 1024 * 1024,    // large
+            500 * 1024 * 1024,    // huge
+        ];
+
+        let handles: Vec<_> = file_sizes
+            .into_iter()
+            .map(|size| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        let buf =
+                            BufferPool::acquire_adaptive_from(Arc::clone(&pool), size);
+                        assert!(!buf.is_empty());
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        assert!(pool.available() <= 8);
+
+        // Every buffer in the pool should now be at the default size.
+        for _ in 0..pool.available() {
+            let buf = BufferPool::acquire_from(Arc::clone(&pool));
+            assert_eq!(buf.len(), COPY_BUFFER_SIZE);
+        }
+    }
+
+    #[test]
+    fn repeated_acquire_release_cycle_reuses_same_buffers() {
+        // Verify the pool actually recycles buffers by checking that
+        // the pool count stabilizes rather than growing.
+        let pool = Arc::new(BufferPool::new(2));
+
+        // First cycle - buffers are freshly allocated.
+        {
+            let _a = BufferPool::acquire_from(Arc::clone(&pool));
+            let _b = BufferPool::acquire_from(Arc::clone(&pool));
+        }
+        assert_eq!(pool.available(), 2);
+
+        // Second cycle - buffers should come from the pool.
+        {
+            let _a = BufferPool::acquire_from(Arc::clone(&pool));
+            assert_eq!(pool.available(), 1);
+            let _b = BufferPool::acquire_from(Arc::clone(&pool));
+            assert_eq!(pool.available(), 0);
+        }
+        // All returned.
+        assert_eq!(pool.available(), 2);
+
+        // After 100 more cycles the pool still holds exactly max_buffers.
+        for _ in 0..100 {
+            let _a = BufferPool::acquire_from(Arc::clone(&pool));
+            let _b = BufferPool::acquire_from(Arc::clone(&pool));
+        }
+        assert_eq!(pool.available(), 2);
+    }
+
+    #[test]
+    fn zero_capacity_pool_never_retains_buffers() {
+        // Edge case: a pool with max_buffers=0 always allocates fresh
+        // buffers and never retains returned ones.
+        let pool = Arc::new(BufferPool::new(0));
+
+        {
+            let buf = BufferPool::acquire_from(Arc::clone(&pool));
+            assert_eq!(buf.len(), COPY_BUFFER_SIZE);
+        }
+        assert_eq!(pool.available(), 0);
+
+        // Even after many cycles, nothing is retained.
+        for _ in 0..50 {
+            let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+        }
+        assert_eq!(pool.available(), 0);
+    }
+
+    #[test]
+    fn single_capacity_pool_reuses_one_buffer() {
+        // A pool with capacity 1 should cycle a single buffer.
+        let pool = Arc::new(BufferPool::new(1));
+
+        {
+            let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+        }
+        assert_eq!(pool.available(), 1);
+
+        // Acquire two simultaneously - second must be a fresh allocation.
+        let a = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(pool.available(), 0);
+        let b = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(pool.available(), 0);
+
+        drop(a);
+        assert_eq!(pool.available(), 1);
+        // Dropping b exceeds capacity - it should be discarded.
+        drop(b);
+        assert_eq!(pool.available(), 1);
+    }
 }
