@@ -52,7 +52,7 @@ mod types;
 
 pub use adaptive::AdaptiveCompressor;
 pub use decider::CompressionDecider;
-pub use magic::{MagicSignature, KNOWN_SIGNATURES};
+pub use magic::{KNOWN_SIGNATURES, MagicSignature};
 pub use types::{CompressionDecision, FileCategory};
 
 /// Default size of the sample block for auto-detection (4 KB).
