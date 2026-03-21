@@ -46,12 +46,6 @@
 //! (`local_copy::concurrent_delta`) uses vectored writes to batch small I/O
 //! operations, reducing syscall overhead on high-file-count transfers.
 //!
-//! ## Parallel transfers
-//!
-//! `local_copy::parallel_transfer` uses rayon to apply delta operations across
-//! multiple files concurrently. The `parallel` feature enables this path; it
-//! falls back to sequential execution when disabled.
-//!
 //! ## Fuzzy matching
 //!
 //! [`FuzzyMatcher`] / [`compute_similarity_score`] locate similar basis files

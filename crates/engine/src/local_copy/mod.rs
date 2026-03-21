@@ -84,7 +84,6 @@ mod metadata_sync;
 mod operands;
 mod options;
 mod overrides;
-pub(crate) mod parallel_transfer;
 /// State machine for 4-priority streaming file list processing pipeline.
 ///
 /// Provides the [`PipelineController`](pipelined_state::PipelineController) for
