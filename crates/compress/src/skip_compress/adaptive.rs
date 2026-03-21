@@ -1,3 +1,10 @@
+//! Adaptive compression filter that decides at runtime whether to compress.
+//!
+//! The [`AdaptiveCompressor`] buffers an initial sample of data and uses the
+//! [`CompressionDecider`] auto-detection to determine whether the stream
+//! benefits from compression. Once the decision is made, subsequent writes
+//! either pass through directly or are compressed with zlib.
+
 use std::io::{self, Write};
 
 use crate::zlib::{CompressionLevel, CountingZlibEncoder};

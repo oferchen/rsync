@@ -1,11 +1,3 @@
-// Patch note (oc-rsync):
-// - Removed the #[cfg(not(unix))] variant of `base_mode_for_permissions`,
-//   which was never called on non-Unix targets and triggered a dead_code
-//   error when building for Windows with `-D warnings`.
-//   The function is only needed on Unix and is only referenced inside a
-//   #[cfg(unix)] block, so restricting it to Unix preserves behavior and
-//   keeps non-Unix builds clean.
-
 //! Metadata application orchestration.
 //!
 //! Re-exports the public API for applying ownership, permissions, and
