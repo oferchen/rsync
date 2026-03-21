@@ -18,6 +18,7 @@ use libc::{self, EACCES, EINVAL, ENOTSUP, EPERM, EROFS};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(test)]
 use crate::local_copy::LocalCopyError;
 
 #[cfg(test)]

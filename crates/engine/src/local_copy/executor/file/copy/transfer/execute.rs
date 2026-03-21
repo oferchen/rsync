@@ -69,9 +69,9 @@ pub(in crate::local_copy) fn execute_transfer(
         partial_enabled,
         use_sparse_writes,
         compress_enabled,
-        size_only_enabled,
-        ignore_times_enabled,
-        checksum_enabled,
+        size_only_enabled: _,
+        ignore_times_enabled: _,
+        checksum_enabled: _,
         #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
         #[cfg(all(unix, feature = "acl"))]
