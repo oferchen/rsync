@@ -103,6 +103,9 @@ pub use parallel::{ParallelExecutor, ParallelResult};
 pub use traits::{FileReader, FileWriter};
 
 pub use mmap_reader::MmapReader;
+pub use o_tmpfile::{
+    AnonymousTempFile, OTmpfileSupport, TempFileResult, o_tmpfile_probe, open_temp_file,
+};
 
 pub use o_tmpfile::o_tmpfile_available;
 
