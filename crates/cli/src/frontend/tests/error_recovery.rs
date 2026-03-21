@@ -9,7 +9,6 @@
 /// - upstream: errcode.h - RERR_VANISHED = 24
 /// - upstream: flist.c:1286-1294 - vanished file handling during file list build
 /// - upstream: main.c:1338-1345 - io_error to exit code mapping
-
 use super::common::*;
 use super::*;
 
@@ -48,13 +47,23 @@ fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
     ]);
 
     assert_eq!(
-        code, 0,
+        code,
+        0,
         "initial sync should succeed: {}",
         String::from_utf8_lossy(&stderr)
     );
-    assert!(dst_dir.join("alpha.txt").exists(), "alpha should exist after initial sync");
-    assert!(dst_dir.join("bravo.txt").exists(), "bravo should exist after initial sync");
-    assert!(dst_dir.join("charlie.txt").exists(), "charlie should exist after initial sync");
+    assert!(
+        dst_dir.join("alpha.txt").exists(),
+        "alpha should exist after initial sync"
+    );
+    assert!(
+        dst_dir.join("bravo.txt").exists(),
+        "bravo should exist after initial sync"
+    );
+    assert!(
+        dst_dir.join("charlie.txt").exists(),
+        "charlie should exist after initial sync"
+    );
 
     // Delete one source file to simulate a vanished file
     std::fs::remove_file(&file_b).expect("remove bravo.txt");
@@ -126,12 +135,19 @@ fn recursive_transfer_without_vanished_files_exits_zero() {
     ]);
 
     assert_eq!(
-        code, 0,
+        code,
+        0,
         "transfer with no vanished files should exit 0: {}",
         String::from_utf8_lossy(&stderr)
     );
-    assert_eq!(std::fs::read(dst_dir.join("one.txt")).expect("read"), b"one");
-    assert_eq!(std::fs::read(dst_dir.join("two.txt")).expect("read"), b"two");
+    assert_eq!(
+        std::fs::read(dst_dir.join("one.txt")).expect("read"),
+        b"one"
+    );
+    assert_eq!(
+        std::fs::read(dst_dir.join("two.txt")).expect("read"),
+        b"two"
+    );
 }
 
 /// When a single explicit source path does not exist, the transfer should
