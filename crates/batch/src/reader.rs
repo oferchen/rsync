@@ -67,16 +67,13 @@ impl BatchReader {
                 ))
             })?;
 
-            // Adopt the protocol version from the batch header.
-            // upstream: batch.c - the reader uses whatever version the batch
-            // was written with, so batch files from older rsync versions
-            // (e.g., proto 30 from 3.0.9, proto 31 from 3.1.3) work.
+            // Adopt protocol version, compat flags, and checksum seed from
+            // the batch header. upstream: compat.c:setup_protocol() reads
+            // these values from the batch fd and uses them directly, so the
+            // reader must use whatever the batch was written with.
             self.config.protocol_version = header.protocol_version;
-            self.config.compat_flags = if header.protocol_version >= 30 {
-                Some(self.config.compat_flags.unwrap_or(0))
-            } else {
-                None
-            };
+            self.config.compat_flags = header.compat_flags;
+            self.config.checksum_seed = header.checksum_seed;
 
             let flags = header.stream_flags;
             self.header = Some(header);
@@ -441,6 +438,97 @@ mod tests {
             // Config should adopt the protocol version from the batch header
             assert_eq!(reader.config().protocol_version, 30);
             assert_eq!(reader.header().unwrap().protocol_version, 30);
+        }
+
+        #[test]
+        fn adopts_compat_flags_from_header() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("compat.batch");
+
+            // Write a batch with non-zero compat flags
+            let config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                31,
+            )
+            .with_compat_flags(0x3F)
+            .with_checksum_seed(99);
+            let mut writer = BatchWriter::new(config).unwrap();
+            writer.write_header(BatchFlags::default()).unwrap();
+            writer.finalize().unwrap();
+
+            // Read back with different config values
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                31,
+            );
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            // Config must adopt the compat flags from the batch header
+            assert_eq!(reader.config().compat_flags, Some(0x3F));
+            assert_eq!(reader.header().unwrap().compat_flags, Some(0x3F));
+        }
+
+        #[test]
+        fn adopts_checksum_seed_from_header() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("seed.batch");
+
+            // Write a batch with a specific checksum seed
+            let config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            )
+            .with_checksum_seed(0xDEAD);
+            let mut writer = BatchWriter::new(config).unwrap();
+            writer.write_header(BatchFlags::default()).unwrap();
+            writer.finalize().unwrap();
+
+            // Read back with default seed (0)
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            // Config must adopt the checksum seed from the batch header
+            assert_eq!(reader.config().checksum_seed, 0xDEAD);
+            assert_eq!(reader.header().unwrap().checksum_seed, 0xDEAD);
+        }
+
+        #[test]
+        fn adopts_none_compat_flags_for_old_protocol() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("old_proto.batch");
+
+            // Write with protocol 28 (no compat flags)
+            let config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                28,
+            )
+            .with_checksum_seed(42);
+            let mut writer = BatchWriter::new(config).unwrap();
+            writer.write_header(BatchFlags::default()).unwrap();
+            writer.finalize().unwrap();
+
+            // Read back - compat_flags should be None for protocol < 30
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                31, // config says 31 but batch says 28
+            );
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            assert_eq!(reader.config().protocol_version, 28);
+            assert_eq!(reader.config().compat_flags, None);
+            assert_eq!(reader.config().checksum_seed, 42);
         }
     }
 
