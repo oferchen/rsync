@@ -45,6 +45,7 @@ pub mod parallel;
 pub mod traits;
 
 pub mod copy_file_range;
+pub mod o_tmpfile;
 pub mod sendfile;
 pub mod syscall_batch;
 
@@ -74,6 +75,8 @@ pub use parallel::{ParallelExecutor, ParallelResult};
 pub use traits::{FileReader, FileWriter};
 
 pub use mmap_reader::MmapReader;
+
+pub use o_tmpfile::o_tmpfile_available;
 
 pub use io_uring::{
     IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
