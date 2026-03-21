@@ -11,10 +11,8 @@
 /// Package version used in role trailers, matching `RUST_VERSION` from branding.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Returns the role trailer suffix for the sender/generator role.
-///
-/// The generator uses the "sender" label because upstream `sender.c` is the
-/// code path that produces these messages.
+/// Returns the role trailer suffix for the sender role.
+#[allow(dead_code)]
 pub(crate) fn sender() -> String {
     format!(" [sender={VERSION}]")
 }
@@ -22,6 +20,14 @@ pub(crate) fn sender() -> String {
 /// Returns the role trailer suffix for the receiver role.
 pub(crate) fn receiver() -> String {
     format!(" [receiver={VERSION}]")
+}
+
+/// Returns the role trailer suffix for the generator role.
+///
+/// Upstream rsync uses `[generator=VERSION]` for messages emitted by the
+/// generator process - see `log.c:who_am_i()`.
+pub(crate) fn generator() -> String {
+    format!(" [generator={VERSION}]")
 }
 
 /// Returns the role trailer suffix for the daemon role.
@@ -49,6 +55,13 @@ mod tests {
     }
 
     #[test]
+    fn generator_trailer_contains_role_and_version() {
+        let trailer = generator();
+        assert!(trailer.contains("generator="));
+        assert!(trailer.contains(VERSION));
+    }
+
+    #[test]
     fn daemon_trailer_contains_role_and_version() {
         let trailer = daemon();
         assert!(trailer.contains("daemon="));
@@ -66,6 +79,13 @@ mod tests {
     fn receiver_trailer_format_matches_upstream() {
         let trailer = receiver();
         assert!(trailer.starts_with(" [receiver="));
+        assert!(trailer.ends_with(']'));
+    }
+
+    #[test]
+    fn generator_trailer_format_matches_upstream() {
+        let trailer = generator();
+        assert!(trailer.starts_with(" [generator="));
         assert!(trailer.ends_with(']'));
     }
 
