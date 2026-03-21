@@ -15,9 +15,8 @@
 
 use proptest::prelude::*;
 use protocol::wire::{
-    DeltaOp, SignatureBlock, read_delta, read_delta_op, read_signature, read_token,
-    write_delta, write_delta_op, write_signature, write_token_block_match, write_token_end,
-    write_token_literal,
+    DeltaOp, SignatureBlock, read_delta, read_delta_op, read_signature, read_token, write_delta,
+    write_delta_op, write_signature, write_token_block_match, write_token_end, write_token_literal,
 };
 use protocol::{
     DeleteStats, MessageCode, MessageHeader, ProtocolVersion, TransferStats, read_varlong30,
@@ -31,23 +30,7 @@ use std::io::Cursor;
 
 /// Generates a valid strong checksum length (1-16 bytes).
 fn strong_sum_length_strategy() -> impl Strategy<Value = u8> {
-    prop_oneof![
-        Just(2u8),
-        Just(4u8),
-        Just(8u8),
-        Just(16u8),
-    ]
-}
-
-/// Generates a signature block with a given strong sum length.
-fn signature_block_strategy(strong_len: u8) -> impl Strategy<Value = SignatureBlock> {
-    (any::<u32>(), prop::collection::vec(any::<u8>(), strong_len as usize)).prop_map(
-        move |(rolling_sum, strong_sum)| SignatureBlock {
-            index: 0, // index is reassigned by read_signature
-            rolling_sum,
-            strong_sum,
-        },
-    )
+    prop_oneof![Just(2u8), Just(4u8), Just(8u8), Just(16u8),]
 }
 
 /// Generates a block length value (typical rsync block sizes).
