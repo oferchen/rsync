@@ -3,6 +3,34 @@
 //! This crate provides optimized I/O primitives that leverage modern OS features
 //! and parallelism to maximize throughput.
 //!
+//! # Unsafe Boundary Isolation
+//!
+//! `fast_io` is the designated encapsulation layer for unsafe I/O optimizations.
+//! Consumer crates - `engine` (`#[deny(unsafe_code)]`), `transfer`
+//! (`#[deny(unsafe_code)]` per-module), `core`, and others - depend on `fast_io`
+//! through safe public APIs only. This separation ensures that unsafe code is
+//! confined to a single, auditable crate rather than scattered across the tree.
+//!
+//! ## Invariants that unsafe code in this crate must uphold
+//!
+//! - **Valid file descriptors** - every raw fd passed to FFI (`sendfile`,
+//!   `copy_file_range`, `utimensat`, io_uring submission) must be open and owned
+//!   or borrowed for the duration of the call.
+//! - **Proper lifetimes** - buffers handed to the kernel (io_uring SQEs, mmap
+//!   regions) must outlive the I/O operation. No use-after-free on async completion.
+//! - **No data races** - `unsafe impl Send` is only applied to fd-wrapper types
+//!   whose descriptors are not aliased across threads.
+//! - **Graceful fallback** - every unsafe optimization must have a safe fallback
+//!   path so callers work on all platforms and filesystem types (NFS, FUSE, etc.).
+//!
+//! ## Adding new unsafe optimizations
+//!
+//! 1. Implement the optimization inside `fast_io` behind a safe public API.
+//! 2. Gate platform-specific code with `#[cfg(...)]` and provide a stub module.
+//! 3. Document the safety argument on every `unsafe` block - why each invariant holds.
+//! 4. Add tests that exercise both the optimized and fallback paths.
+//! 5. Never expose raw pointers, fds, or `unsafe fn` in the public API.
+//!
 //! # Features
 //!
 //! - **Parallel file operations** using rayon for multi-core utilization
