@@ -394,9 +394,10 @@ impl GeneratorContext {
         if ndx != NDX_DONE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "expected goodbye NDX_DONE (-1) from receiver, got {ndx}{}",
-                    crate::role_trailer::sender()
+                logging::rsync_error_fmt!(
+                    12,
+                    "sender",
+                    "expected goodbye NDX_DONE (-1) from receiver, got {ndx}"
                 ),
             ));
         }
@@ -440,9 +441,10 @@ impl GeneratorContext {
                     if final_ndx != NDX_DONE {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!(
-                                "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx}{}",
-                                crate::role_trailer::sender()
+                            logging::rsync_error_fmt!(
+                                12,
+                                "sender",
+                                "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx}"
                             ),
                         ));
                     }
@@ -544,9 +546,10 @@ impl GeneratorContext {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(
                     e.kind(),
-                    format!(
-                        "failed to activate INPUT multiplex: {e}{}",
-                        crate::role_trailer::sender()
+                    logging::rsync_error_fmt!(
+                        12,
+                        "sender",
+                        "failed to activate INPUT multiplex: {e}"
                     ),
                 )
             })?;

@@ -560,11 +560,12 @@ impl GeneratorContext {
         if ndx >= self.file_list.len() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "invalid file index {}, file list has {} entries{}",
+                logging::rsync_error_fmt!(
+                    12,
+                    "sender",
+                    "invalid file index {}, file list has {} entries",
                     ndx,
-                    self.file_list.len(),
-                    crate::role_trailer::sender()
+                    self.file_list.len()
                 ),
             ));
         }
