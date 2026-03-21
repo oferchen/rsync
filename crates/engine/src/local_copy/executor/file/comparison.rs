@@ -232,13 +232,82 @@ pub(crate) fn files_checksum_match(
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::tempdir;
+    use std::path::PathBuf;
 
     use filetime::{FileTime, set_file_mtime};
+    use tempfile::TempDir;
+
+    /// Creates a temporary directory with retry logic for transient OS errors.
+    ///
+    /// Windows CI runners occasionally return `PermissionDenied` from
+    /// `tempdir()` due to antivirus or filesystem lock contention. This
+    /// helper retries up to 3 times with a short backoff before panicking.
+    fn create_tempdir() -> TempDir {
+        const MAX_RETRIES: u32 = 3;
+        for attempt in 1..=MAX_RETRIES {
+            match tempfile::tempdir() {
+                Ok(dir) => return dir,
+                Err(e) if attempt < MAX_RETRIES => {
+                    std::thread::sleep(Duration::from_millis(50 * u64::from(attempt)));
+                    eprintln!("tempdir attempt {attempt}/{MAX_RETRIES} failed: {e}");
+                }
+                Err(e) => panic!("tempdir failed after {MAX_RETRIES} attempts: {e}"),
+            }
+        }
+        unreachable!()
+    }
+
+    /// Writes source and destination files with the given content, aligns
+    /// their mtimes, and returns paths and metadata for building a
+    /// [`CopyComparison`].
+    fn setup_matched_mtime_files(
+        source_content: &[u8],
+        dest_content: &[u8],
+    ) -> (TempDir, PathBuf, PathBuf, fs::Metadata, fs::Metadata) {
+        let temp = create_tempdir();
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, source_content).expect("write source");
+        fs::write(&destination, dest_content).expect("write destination");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let mtime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
+        set_file_mtime(&destination, mtime).expect("set destination mtime");
+
+        let dest_meta = fs::metadata(&destination).expect("dest metadata");
+        (temp, source, destination, source_meta, dest_meta)
+    }
+
+    /// Creates two files with explicit timestamps for `destination_is_newer` tests.
+    fn setup_timed_files(
+        source_time: FileTime,
+        dest_time: FileTime,
+    ) -> (TempDir, fs::Metadata, fs::Metadata) {
+        let temp = create_tempdir();
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        fs::write(&source, b"s").expect("write");
+        fs::write(&dest, b"d").expect("write");
+
+        set_file_mtime(&source, source_time).expect("set");
+        set_file_mtime(&dest, dest_time).expect("set");
+
+        let src_meta = fs::metadata(&source).expect("meta");
+        let dst_meta = fs::metadata(&dest).expect("meta");
+        (temp, src_meta, dst_meta)
+    }
+
+    /// Returns the default checksum algorithm used across comparison tests.
+    fn default_checksum_algorithm() -> SignatureAlgorithm {
+        SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none(),
+        }
+    }
 
     #[test]
     fn build_delta_signature_honours_block_size_override() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let path = temp.path().join("data.bin");
         let mut file = fs::File::create(&path).expect("create file");
         file.write_all(&vec![0u8; 16384]).expect("write data");
@@ -255,18 +324,9 @@ mod tests {
 
     #[test]
     fn should_skip_copy_rewrites_with_checksum_when_metadata_matches_but_content_differs() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let destination = temp.path().join("dest.txt");
+        let (_temp, source, destination, source_meta, dest_meta) =
+            setup_matched_mtime_files(b"fresh", b"stale");
 
-        fs::write(&source, b"fresh").expect("write source");
-        fs::write(&destination, b"stale").expect("write destination");
-
-        let source_meta = fs::metadata(&source).expect("source metadata");
-        let mtime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
-        set_file_mtime(&destination, mtime).expect("set destination mtime");
-
-        let dest_meta = fs::metadata(&destination).expect("dest metadata");
         let comparison = CopyComparison {
             source_path: &source,
             source: &source_meta,
@@ -275,9 +335,7 @@ mod tests {
             size_only: false,
             ignore_times: false,
             checksum: true,
-            checksum_algorithm: SignatureAlgorithm::Md5 {
-                seed_config: checksums::strong::Md5Seed::none(),
-            },
+            checksum_algorithm: default_checksum_algorithm(),
             modify_window: Duration::ZERO,
             prefetched_match: None,
         };
@@ -287,18 +345,9 @@ mod tests {
 
     #[test]
     fn should_skip_copy_accepts_identical_content_with_identical_timestamps() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let destination = temp.path().join("dest.txt");
+        let (_temp, source, destination, source_meta, dest_meta) =
+            setup_matched_mtime_files(b"fresh", b"fresh");
 
-        fs::write(&source, b"fresh").expect("write source");
-        fs::write(&destination, b"fresh").expect("write destination");
-
-        let source_meta = fs::metadata(&source).expect("source metadata");
-        let mtime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
-        set_file_mtime(&destination, mtime).expect("set destination mtime");
-
-        let dest_meta = fs::metadata(&destination).expect("dest metadata");
         let comparison = CopyComparison {
             source_path: &source,
             source: &source_meta,
@@ -307,9 +356,7 @@ mod tests {
             size_only: false,
             ignore_times: false,
             checksum: false,
-            checksum_algorithm: SignatureAlgorithm::Md5 {
-                seed_config: checksums::strong::Md5Seed::none(),
-            },
+            checksum_algorithm: default_checksum_algorithm(),
             modify_window: Duration::ZERO,
             prefetched_match: None,
         };
@@ -321,18 +368,9 @@ mod tests {
     fn should_skip_copy_size_only_wins_over_ignore_times() {
         // Upstream: generator.c:unchanged_file() checks size_only before
         // ignore_times. When both are set and sizes match, size_only wins.
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let destination = temp.path().join("dest.txt");
+        let (_temp, source, destination, source_meta, dest_meta) =
+            setup_matched_mtime_files(b"fresh", b"stale");
 
-        fs::write(&source, b"fresh").expect("write source");
-        fs::write(&destination, b"stale").expect("write destination");
-
-        let source_meta = fs::metadata(&source).expect("source metadata");
-        let mtime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
-        set_file_mtime(&destination, mtime).expect("set destination mtime");
-
-        let dest_meta = fs::metadata(&destination).expect("dest metadata");
         let comparison = CopyComparison {
             source_path: &source,
             source: &source_meta,
@@ -341,9 +379,7 @@ mod tests {
             size_only: true,
             ignore_times: true,
             checksum: false,
-            checksum_algorithm: SignatureAlgorithm::Md5 {
-                seed_config: checksums::strong::Md5Seed::none(),
-            },
+            checksum_algorithm: default_checksum_algorithm(),
             modify_window: Duration::ZERO,
             prefetched_match: None,
         };
@@ -351,77 +387,38 @@ mod tests {
         assert!(should_skip_copy(comparison));
     }
 
-    // ==================== destination_is_newer tests ====================
-
     #[test]
     fn destination_is_newer_when_dest_is_strictly_newer_no_window() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let newer = FileTime::from_unix_time(1_700_000_005, 0);
-        set_file_mtime(&source, older).expect("set");
-        set_file_mtime(&dest, newer).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(older, newer);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         assert!(destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
     }
 
     #[test]
     fn destination_is_not_newer_when_source_is_newer() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let newer = FileTime::from_unix_time(1_700_000_005, 0);
-        set_file_mtime(&source, newer).expect("set");
-        set_file_mtime(&dest, older).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(newer, older);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         assert!(!destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
     }
 
     #[test]
     fn destination_is_not_newer_when_timestamps_equal() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
         let same = FileTime::from_unix_time(1_700_000_000, 0);
-        set_file_mtime(&source, same).expect("set");
-        set_file_mtime(&dest, same).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(same, same);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         assert!(!destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
     }
 
     #[test]
     fn destination_is_newer_when_dest_slightly_newer_within_window() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
-        // Dest is 0.5 seconds newer than source
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let slightly_newer = FileTime::from_unix_time(1_700_000_000, 500_000_000);
-        set_file_mtime(&source, older).expect("set");
-        set_file_mtime(&dest, slightly_newer).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(older, slightly_newer);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         // upstream: source - dest < 0 < window -> skip (dest is genuinely newer)
         assert!(destination_is_newer(
             &src_meta,
@@ -432,20 +429,10 @@ mod tests {
 
     #[test]
     fn destination_is_newer_when_dest_far_newer_with_window() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
-        // Dest is 5 seconds newer than source
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let much_newer = FileTime::from_unix_time(1_700_000_005, 0);
-        set_file_mtime(&source, older).expect("set");
-        set_file_mtime(&dest, much_newer).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(older, much_newer);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         // upstream: source - dest = -5 < 1 -> skip (dest is newer)
         assert!(destination_is_newer(
             &src_meta,
@@ -456,20 +443,10 @@ mod tests {
 
     #[test]
     fn destination_is_newer_at_exact_window_boundary_dest_ahead() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
-        // Dest is exactly 2 seconds newer than source
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let exactly_at_boundary = FileTime::from_unix_time(1_700_000_002, 0);
-        set_file_mtime(&source, older).expect("set");
-        set_file_mtime(&dest, exactly_at_boundary).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(older, exactly_at_boundary);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         // upstream: source - dest = -2 < 2 -> skip (dest is newer)
         assert!(destination_is_newer(
             &src_meta,
@@ -480,19 +457,9 @@ mod tests {
 
     #[test]
     fn destination_is_newer_when_equal_with_nonzero_window() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
-        // Timestamps are exactly equal
         let same = FileTime::from_unix_time(1_700_000_000, 0);
-        set_file_mtime(&source, same).expect("set");
-        set_file_mtime(&dest, same).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(same, same);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         // upstream: source - dest = 0 < 2 -> skip (within window, equal)
         assert!(destination_is_newer(
             &src_meta,
@@ -503,20 +470,10 @@ mod tests {
 
     #[test]
     fn destination_is_newer_when_source_slightly_newer_within_window() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
-        // Source is 1 second newer than dest, window is 2
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let slightly_newer = FileTime::from_unix_time(1_700_000_001, 0);
-        set_file_mtime(&source, slightly_newer).expect("set");
-        set_file_mtime(&dest, older).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(slightly_newer, older);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         // upstream: source - dest = 1 < 2 -> skip (within window)
         assert!(destination_is_newer(
             &src_meta,
@@ -527,20 +484,10 @@ mod tests {
 
     #[test]
     fn destination_is_not_newer_when_source_at_exact_window_boundary() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
-        // Source is exactly 2 seconds newer than dest, window is 2
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let exactly_at_boundary = FileTime::from_unix_time(1_700_000_002, 0);
-        set_file_mtime(&source, exactly_at_boundary).expect("set");
-        set_file_mtime(&dest, older).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(exactly_at_boundary, older);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         // upstream: source - dest = 2, NOT < 2 -> don't skip (source definitively newer)
         assert!(!destination_is_newer(
             &src_meta,
@@ -551,20 +498,10 @@ mod tests {
 
     #[test]
     fn destination_is_not_newer_when_source_beyond_window() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("source.txt");
-        let dest = temp.path().join("dest.txt");
-        fs::write(&source, b"s").expect("write");
-        fs::write(&dest, b"d").expect("write");
-
-        // Source is 5 seconds newer than dest, window is 2
         let older = FileTime::from_unix_time(1_700_000_000, 0);
         let much_newer = FileTime::from_unix_time(1_700_000_005, 0);
-        set_file_mtime(&source, much_newer).expect("set");
-        set_file_mtime(&dest, older).expect("set");
+        let (_temp, src_meta, dst_meta) = setup_timed_files(much_newer, older);
 
-        let src_meta = fs::metadata(&source).expect("meta");
-        let dst_meta = fs::metadata(&dest).expect("meta");
         // upstream: source - dest = 5, NOT < 2 -> don't skip (source definitively newer)
         assert!(!destination_is_newer(
             &src_meta,
