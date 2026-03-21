@@ -12,7 +12,6 @@
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns the role trailer suffix for the sender role.
-#[allow(dead_code)]
 pub(crate) fn sender() -> String {
     format!(" [sender={VERSION}]")
 }
