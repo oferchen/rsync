@@ -100,11 +100,7 @@ pub trait ChecksumSeedExchanger {
     ///
     /// - `None` or `Some(0)`: generate from `time() ^ (pid << 6)`
     /// - `Some(n)`: use `n` as the fixed seed
-    fn write_seed(
-        &self,
-        writer: &mut dyn Write,
-        fixed_seed: Option<u32>,
-    ) -> io::Result<i32>;
+    fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<u32>) -> io::Result<i32>;
 
     /// Reads the 4-byte LE checksum seed sent by the server.
     fn read_seed(&self, reader: &mut dyn Read) -> io::Result<i32>;
@@ -120,7 +116,10 @@ pub trait ChecksumSeedExchanger {
 ///
 /// The default implementation is [`RsyncNegotiator`], which delegates to the
 /// concrete `protocol` crate functions and matches upstream rsync behaviour.
-pub trait ProtocolNegotiator: CompatFlagsExchanger + CapabilityNegotiator + ChecksumSeedExchanger {}
+pub trait ProtocolNegotiator:
+    CompatFlagsExchanger + CapabilityNegotiator + ChecksumSeedExchanger
+{
+}
 
 /// Blanket implementation - any type implementing all three component traits
 /// automatically satisfies `ProtocolNegotiator`.
@@ -194,11 +193,7 @@ impl CapabilityNegotiator for RsyncNegotiator {
 }
 
 impl ChecksumSeedExchanger for RsyncNegotiator {
-    fn write_seed(
-        &self,
-        writer: &mut dyn Write,
-        fixed_seed: Option<u32>,
-    ) -> io::Result<i32> {
+    fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<u32>) -> io::Result<i32> {
         // upstream: options.c:835 - seed generation
         let seed = match fixed_seed {
             Some(0) | None => {

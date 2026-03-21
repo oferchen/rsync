@@ -93,52 +93,51 @@ pub fn setup_protocol_with<'a>(
     // upstream compat.c:599-607 - when remote_protocol != 0 (daemon mode),
     // binary 4-byte protocol exchange was already done via @RSYNCD text protocol.
 
-    let (compat_flags, negotiated_algorithms) = if config.protocol.uses_binary_negotiation()
-        && !config.skip_compat_exchange
-    {
-        let (our_flags, client_info) = build_our_flags(config, negotiator);
-        let send_compression = config.do_compression;
+    let (compat_flags, negotiated_algorithms) =
+        if config.protocol.uses_binary_negotiation() && !config.skip_compat_exchange {
+            let (our_flags, client_info) = build_our_flags(config, negotiator);
+            let send_compression = config.do_compression;
 
-        // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
-        // Server writes, client reads.
-        let compat_flags = if config.is_server {
-            let info_ref = client_info.as_deref().unwrap_or("");
-            let final_flags = negotiator.write_compat_flags(stdout, our_flags, info_ref)?;
-            stdout.flush()?;
-            final_flags
+            // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
+            // Server writes, client reads.
+            let compat_flags = if config.is_server {
+                let info_ref = client_info.as_deref().unwrap_or("");
+                let final_flags = negotiator.write_compat_flags(stdout, our_flags, info_ref)?;
+                stdout.flush()?;
+                final_flags
+            } else {
+                let mut flags = negotiator.read_compat_flags(stdin)?;
+                // upstream: compat.c:720 - client clears INC_RECURSE when not allowed.
+                if !config.allow_inc_recurse {
+                    flags &= !CompatibilityFlags::INC_RECURSE;
+                }
+                flags
+            };
+
+            // Determine whether capability negotiation should happen.
+            // upstream compat.c:740-742 - do_negotiated_strings requires CF_VARINT_FLIST_FLAGS.
+            let do_negotiation = should_negotiate(
+                config.is_server,
+                &client_info,
+                our_flags,
+                compat_flags,
+                negotiator,
+            );
+
+            let algorithms = negotiator.negotiate(
+                config.protocol,
+                stdin,
+                stdout,
+                do_negotiation,
+                send_compression,
+                config.is_daemon_mode,
+                config.is_server,
+            )?;
+
+            (Some(compat_flags), Some(algorithms))
         } else {
-            let mut flags = negotiator.read_compat_flags(stdin)?;
-            // upstream: compat.c:720 - client clears INC_RECURSE when not allowed.
-            if !config.allow_inc_recurse {
-                flags &= !CompatibilityFlags::INC_RECURSE;
-            }
-            flags
+            (None, None)
         };
-
-        // Determine whether capability negotiation should happen.
-        // upstream compat.c:740-742 - do_negotiated_strings requires CF_VARINT_FLIST_FLAGS.
-        let do_negotiation = should_negotiate(
-            config.is_server,
-            &client_info,
-            our_flags,
-            compat_flags,
-            negotiator,
-        );
-
-        let algorithms = negotiator.negotiate(
-            config.protocol,
-            stdin,
-            stdout,
-            do_negotiation,
-            send_compression,
-            config.is_daemon_mode,
-            config.is_server,
-        )?;
-
-        (Some(compat_flags), Some(algorithms))
-    } else {
-        (None, None)
-    };
 
     // Checksum seed exchange (ALL protocols, upstream compat.c:750)
     let checksum_seed = if config.is_server {
@@ -169,8 +168,7 @@ fn build_our_flags<'a>(
         // Daemon server mode: parse client capabilities from -e option
         // upstream: compat.c:712-732
         let client_info = negotiator.parse_client_info(args);
-        let flags =
-            negotiator.build_flags_from_client_info(&client_info, config.allow_inc_recurse);
+        let flags = negotiator.build_flags_from_client_info(&client_info, config.allow_inc_recurse);
         (flags, Some(client_info))
     } else {
         // SSH/client mode: platform-based defaults

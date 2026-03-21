@@ -1070,10 +1070,7 @@ impl CompatFlagsExchanger for MockNegotiator {
         self.flags_to_write
     }
 
-    fn parse_client_info<'a>(
-        &self,
-        _client_args: &'a [String],
-    ) -> std::borrow::Cow<'a, str> {
+    fn parse_client_info<'a>(&self, _client_args: &'a [String]) -> std::borrow::Cow<'a, str> {
         std::borrow::Cow::Borrowed("fxCIvu")
     }
 
@@ -1136,10 +1133,7 @@ fn setup_protocol_with_mock_negotiator_server_mode() {
     let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
         .expect("mock setup should succeed");
 
-    assert_eq!(
-        result.checksum_seed, 777,
-        "should use mock's fixed seed"
-    );
+    assert_eq!(result.checksum_seed, 777, "should use mock's fixed seed");
     assert!(
         result.compat_flags.is_some(),
         "protocol 31 should exchange compat flags"
@@ -1222,13 +1216,12 @@ fn setup_protocol_delegates_to_default_negotiator() {
     // Verify setup_protocol (no _with) produces the same result as
     // setup_protocol_with using RsyncNegotiator.
     let protocol = ProtocolVersion::try_from(29).unwrap();
-    let config = ProtocolSetupConfig::new(protocol, true)
-        .with_checksum_seed(Some(42));
+    let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(42));
 
     let mut stdout1 = Vec::new();
     let mut stdin1 = &b""[..];
-    let result1 = setup_protocol(&mut stdout1, &mut stdin1, &config)
-        .expect("setup_protocol should succeed");
+    let result1 =
+        setup_protocol(&mut stdout1, &mut stdin1, &config).expect("setup_protocol should succeed");
 
     let mut stdout2 = Vec::new();
     let mut stdin2 = &b""[..];
