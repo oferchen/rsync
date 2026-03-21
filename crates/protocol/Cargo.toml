@@ -62,3 +62,7 @@ harness = false
 [[bench]]
 name = "flist_benchmark"
 harness = false
+
+[[bench]]
+name = "file_entry_memory"
+harness = false
