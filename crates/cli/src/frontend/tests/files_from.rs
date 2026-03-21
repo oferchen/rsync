@@ -1750,12 +1750,13 @@ fn files_from_integration_with_recursive_copies_nested_files() {
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(stdout.is_empty());
 
-    // Files are copied with their basename only (flattened)
+    // --files-from implies --relative (upstream options.c:2187-2188), so
+    // listed paths preserve their directory structure at the destination.
     assert!(dest_dir.join("top.txt").exists());
-    assert!(dest_dir.join("mid.txt").exists());
-    assert!(dest_dir.join("deepest.txt").exists());
+    assert!(dest_dir.join("a/mid.txt").exists());
+    assert!(dest_dir.join("a/b/c/deepest.txt").exists());
     // This file was not in the list
-    assert!(!dest_dir.join("deep.txt").exists());
+    assert!(!dest_dir.join("a/b/deep.txt").exists());
 }
 
 #[test]
@@ -1847,7 +1848,7 @@ fn resolve_file_list_entries_handles_mixed_absolute_and_relative() {
     ];
     let operands = vec![OsString::from("/base/dir"), OsString::from("/dest")];
 
-    resolve_file_list_entries(&mut entries, &operands, false);
+    resolve_file_list_entries(&mut entries, &operands, false, false);
 
     // Relative paths are resolved against base
     let expected_0 = Path::new("/base/dir").join("relative.txt");
@@ -1869,7 +1870,7 @@ fn resolve_file_list_entries_with_dot_relative_paths() {
     ];
     let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
-    resolve_file_list_entries(&mut entries, &operands, false);
+    resolve_file_list_entries(&mut entries, &operands, false, false);
 
     // These are still relative, so they get the base prepended
     let expected_0 = Path::new("/base").join("./file.txt");
