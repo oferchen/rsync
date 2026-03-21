@@ -52,7 +52,7 @@ fn probe_o_tmpfile(path: &Path) -> bool {
         libc::open(
             c_path.as_ptr(),
             libc::O_TMPFILE | libc::O_WRONLY,
-            libc::mode_t::from(0o600),
+            0o600 as libc::mode_t,
         )
     };
 
