@@ -1,7 +1,7 @@
-//! Core deletion strategy implementation.
+//! Core deletion decision logic.
 //!
-//! This module encapsulates the logic for determining which files should be
-//! deleted and when, mirroring upstream rsync's deletion behavior.
+//! Encapsulates the logic for determining which destination files are
+//! extraneous and should be deleted, mirroring upstream rsync's behavior.
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -122,92 +122,6 @@ impl<'a> DeletionContext<'a> {
     }
 }
 
-/// Strategy for handling file deletions.
-///
-/// This trait defines the interface for different deletion timing strategies.
-/// Each strategy determines when deletions should be applied during the
-/// transfer process.
-#[cfg(test)]
-pub(crate) trait DeletionStrategy {
-    /// Returns the timing for this strategy.
-    fn timing(&self) -> DeleteTiming;
-
-    /// Determines if deletions should be applied immediately.
-    ///
-    /// - `Before`: deletions happen before transfers start
-    /// - `During`: deletions happen as directories are processed
-    /// - `After`/`Delay`: deletions are deferred until after transfers
-    fn should_apply_immediately(&self) -> bool {
-        matches!(self.timing(), DeleteTiming::Before | DeleteTiming::During)
-    }
-
-    /// Determines if deletions should be deferred.
-    fn should_defer(&self) -> bool {
-        matches!(self.timing(), DeleteTiming::After | DeleteTiming::Delay)
-    }
-}
-
-/// Strategy for --delete-before.
-///
-/// Removes extraneous files from the destination before any transfers begin.
-/// This ensures maximum free space is available during the transfer.
-#[cfg(test)]
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct DeleteBeforeStrategy;
-
-#[cfg(test)]
-impl DeletionStrategy for DeleteBeforeStrategy {
-    fn timing(&self) -> DeleteTiming {
-        DeleteTiming::Before
-    }
-}
-
-/// Strategy for --delete-during.
-///
-/// Removes extraneous files as each directory is processed. This is the
-/// default and most memory-efficient approach.
-#[cfg(test)]
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct DeleteDuringStrategy;
-
-#[cfg(test)]
-impl DeletionStrategy for DeleteDuringStrategy {
-    fn timing(&self) -> DeleteTiming {
-        DeleteTiming::During
-    }
-}
-
-/// Strategy for --delete-after.
-///
-/// Defers all deletions until after the transfer completes. This ensures
-/// that files remain available during the transfer in case the transfer
-/// is interrupted.
-#[cfg(test)]
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct DeleteAfterStrategy;
-
-#[cfg(test)]
-impl DeletionStrategy for DeleteAfterStrategy {
-    fn timing(&self) -> DeleteTiming {
-        DeleteTiming::After
-    }
-}
-
-/// Strategy for --delete-delay.
-///
-/// Like --delete-after but with a separate deletion queue accumulated
-/// during the walk. Useful with --delay-updates to ensure consistency.
-#[cfg(test)]
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct DeleteDelayStrategy;
-
-#[cfg(test)]
-impl DeletionStrategy for DeleteDelayStrategy {
-    fn timing(&self) -> DeleteTiming {
-        DeleteTiming::Delay
-    }
-}
-
 /// Determines if a destination entry is extraneous (not in source).
 ///
 /// An entry is extraneous if its name does not appear in the source
@@ -276,37 +190,6 @@ where
     } else {
         // No filter context, allow deletion
         true
-    }
-}
-
-/// Applies the appropriate deletion strategy based on timing.
-///
-/// This is the main entry point for strategy-based deletion. It returns
-/// the correct strategy implementation for the given timing.
-///
-/// # Arguments
-///
-/// * `timing` - The deletion timing mode
-///
-/// # Returns
-///
-/// A boxed deletion strategy implementation.
-///
-/// # Examples
-///
-/// ```ignore
-/// let strategy = apply_deletion_strategy(DeleteTiming::Before);
-/// if strategy.should_apply_immediately() {
-///     // Perform deletions now
-/// }
-/// ```
-#[cfg(test)]
-pub(crate) fn apply_deletion_strategy(timing: DeleteTiming) -> Box<dyn DeletionStrategy> {
-    match timing {
-        DeleteTiming::Before => Box::new(DeleteBeforeStrategy),
-        DeleteTiming::During => Box::new(DeleteDuringStrategy),
-        DeleteTiming::After => Box::new(DeleteAfterStrategy),
-        DeleteTiming::Delay => Box::new(DeleteDelayStrategy),
     }
 }
 
@@ -426,53 +309,6 @@ mod tests {
         );
         ctx.record_deletion();
         assert_eq!(ctx.deletions_performed, u64::MAX);
-    }
-
-    #[test]
-    fn delete_before_strategy_timing() {
-        let strategy = DeleteBeforeStrategy;
-        assert_eq!(strategy.timing(), DeleteTiming::Before);
-        assert!(strategy.should_apply_immediately());
-        assert!(!strategy.should_defer());
-    }
-
-    #[test]
-    fn delete_during_strategy_timing() {
-        let strategy = DeleteDuringStrategy;
-        assert_eq!(strategy.timing(), DeleteTiming::During);
-        assert!(strategy.should_apply_immediately());
-        assert!(!strategy.should_defer());
-    }
-
-    #[test]
-    fn delete_after_strategy_timing() {
-        let strategy = DeleteAfterStrategy;
-        assert_eq!(strategy.timing(), DeleteTiming::After);
-        assert!(!strategy.should_apply_immediately());
-        assert!(strategy.should_defer());
-    }
-
-    #[test]
-    fn delete_delay_strategy_timing() {
-        let strategy = DeleteDelayStrategy;
-        assert_eq!(strategy.timing(), DeleteTiming::Delay);
-        assert!(!strategy.should_apply_immediately());
-        assert!(strategy.should_defer());
-    }
-
-    #[test]
-    fn apply_deletion_strategy_creates_correct_strategy() {
-        let before = apply_deletion_strategy(DeleteTiming::Before);
-        assert_eq!(before.timing(), DeleteTiming::Before);
-
-        let during = apply_deletion_strategy(DeleteTiming::During);
-        assert_eq!(during.timing(), DeleteTiming::During);
-
-        let after = apply_deletion_strategy(DeleteTiming::After);
-        assert_eq!(after.timing(), DeleteTiming::After);
-
-        let delay = apply_deletion_strategy(DeleteTiming::Delay);
-        assert_eq!(delay.timing(), DeleteTiming::Delay);
     }
 
     #[test]
