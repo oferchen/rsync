@@ -7,7 +7,9 @@
 use std::fs;
 use std::path::Path;
 
-use logging::{debug_log, info_log};
+use logging::debug_log;
+#[cfg(unix)]
+use logging::info_log;
 
 use crate::generator::ItemFlags;
 use crate::receiver::ReceiverContext;
