@@ -2385,7 +2385,8 @@ fn capability_fallback_whitespace_padded_valid_lists() {
     for (list, expected) in valid_lists {
         let result = choose_checksum_algorithm(list).unwrap();
         assert_eq!(
-            result, expected,
+            result,
+            expected,
             "list '{}' should produce {:?}",
             list.escape_debug(),
             expected
