@@ -158,8 +158,6 @@ mod tests {
         parse_legacy_daemon_greeting_owned(line).expect("valid greeting")
     }
 
-    // ==== build_client_greeting basic tests ====
-
     #[test]
     fn build_greeting_includes_prefix() {
         let server = parse_greeting("@RSYNCD: 31.0");
@@ -184,8 +182,6 @@ mod tests {
         let greeting_str = String::from_utf8_lossy(&greeting);
         assert!(greeting_str.contains("31."));
     }
-
-    // ==== Protocol version matching ====
 
     #[test]
     fn build_greeting_preserves_subprotocol_when_matching() {
@@ -216,8 +212,6 @@ mod tests {
         assert!(greeting_str.contains("29.0"), "got: {greeting_str}");
     }
 
-    // ==== Digest list handling ====
-
     #[test]
     fn build_greeting_includes_digest_list_when_present() {
         let server = parse_greeting("@RSYNCD: 31.0 md4 md5 xxh3");
@@ -246,8 +240,6 @@ mod tests {
         assert!(greeting_str.contains(" xxh3"), "got: {greeting_str}");
     }
 
-    // ==== Protocol version edge cases ====
-
     #[test]
     fn build_greeting_with_protocol_28() {
         let server = parse_greeting("@RSYNCD: 28.0");
@@ -265,8 +257,6 @@ mod tests {
         let greeting_str = String::from_utf8_lossy(&greeting);
         assert!(greeting_str.contains("31.99"), "got: {greeting_str}");
     }
-
-    // ==== Format validation ====
 
     #[test]
     fn build_greeting_format_is_valid_ascii() {
@@ -295,8 +285,6 @@ mod tests {
         // Should contain "31.5" (dot separating major.minor)
         assert!(greeting_str.contains('.'));
     }
-
-    // ==== Complete greeting tests ====
 
     #[test]
     fn build_greeting_complete_without_digests() {

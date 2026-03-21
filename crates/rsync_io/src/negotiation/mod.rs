@@ -1,3 +1,10 @@
+//! Negotiation stream infrastructure.
+//!
+//! Provides [`NegotiatedStream`] which wraps a transport after sniffing the
+//! negotiation prologue. The sniffed bytes are buffered and replayed exactly
+//! once so higher layers can parse daemon greetings or binary protocol
+//! advertisements without re-reading the underlying transport.
+
 mod buffer;
 mod errors;
 mod parts;

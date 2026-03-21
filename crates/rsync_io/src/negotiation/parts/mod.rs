@@ -1,3 +1,5 @@
+//! Decomposed negotiated stream components and fallible mapping error types.
+
 mod stream_parts;
 mod try_map_error;
 

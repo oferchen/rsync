@@ -42,10 +42,6 @@ use tracing::{debug, trace};
 /// Maximum bytes to include in level 4 hex dumps.
 pub const MAX_HEX_DUMP_BYTES: usize = 64;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Level 1: Basic I/O operations
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Trace opening a stream/connection (Level 1).
 ///
 /// # Arguments
@@ -136,10 +132,6 @@ pub fn trace_negotiation_style(style: &str) {
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_negotiation_style(_style: &str) {}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Level 2: Read/write operations with sizes
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Trace a stream read operation (Level 2).
 ///
@@ -235,10 +227,6 @@ pub fn trace_banner(direction: &str, banner: &str) {
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_banner(_direction: &str, _banner: &str) {}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Level 3: Buffer management
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Trace negotiation buffer state (Level 3).
 ///
@@ -356,10 +344,6 @@ pub fn trace_stream_map(operation: &str, success: bool) {
 #[cfg(not(feature = "tracing"))]
 #[inline]
 pub fn trace_stream_map(_operation: &str, _success: bool) {}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Level 4: Detailed byte-level tracing
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Trace protocol bytes with hex dump (Level 4).
 ///

@@ -338,8 +338,6 @@ mod tests {
         LegacyDaemonHandshake::from_components(greeting, proto, stream)
     }
 
-    // ==== Protocol version accessors ====
-
     #[test]
     fn negotiated_protocol_returns_version() {
         let hs = create_test_handshake();
@@ -377,16 +375,12 @@ mod tests {
         assert!(!adv.was_clamped());
     }
 
-    // ==== Server greeting ====
-
     #[test]
     fn server_greeting_returns_reference() {
         let hs = create_test_handshake();
         let greeting = hs.server_greeting();
         assert_eq!(greeting.protocol().as_u8(), 31);
     }
-
-    // ==== Stream accessors ====
 
     #[test]
     fn stream_returns_shared_reference() {
@@ -408,8 +402,6 @@ mod tests {
         let stream = hs.into_stream();
         assert!(stream.buffered_len() > 0);
     }
-
-    // ==== Decomposition ====
 
     #[test]
     fn into_components_returns_all_parts() {
@@ -435,8 +427,6 @@ mod tests {
         assert_eq!(proto.as_u8(), 31);
         assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
     }
-
-    // ==== Reconstruction ====
 
     #[test]
     fn from_components_reconstructs_handshake() {
@@ -464,8 +454,6 @@ mod tests {
         let reconstructed = LegacyDaemonHandshake::from_stream_parts(greeting, proto, parts);
         assert_eq!(reconstructed.negotiated_protocol().as_u8(), 31);
     }
-
-    // ==== Mapping ====
 
     #[test]
     fn map_stream_inner_transforms_transport() {
@@ -501,8 +489,6 @@ mod tests {
         assert_eq!(recovered.negotiated_protocol().as_u8(), 31);
     }
 
-    // ==== Rehydrate sniffer ====
-
     #[test]
     fn rehydrate_sniffer_succeeds() {
         let hs = create_test_handshake();
@@ -510,8 +496,6 @@ mod tests {
         let result = hs.rehydrate_sniffer(&mut sniffer);
         assert!(result.is_ok());
     }
-
-    // ==== Clone and Debug ====
 
     #[test]
     fn clone_produces_independent_copy() {
@@ -526,8 +510,6 @@ mod tests {
         let debug = format!("{hs:?}");
         assert!(debug.contains("LegacyDaemonHandshake"));
     }
-
-    // ==== Local protocol capping ====
 
     #[test]
     fn local_protocol_was_capped_true_when_reduced() {
