@@ -21,10 +21,10 @@
 //!
 //! ## Submodules
 //!
-//! - [`int_encoding`] - Fundamental 4-byte LE integer read/write primitives
-//! - [`token`] - Upstream token-based wire format (literals, block matches, end markers)
-//! - [`internal`] - Internal opcode-based delta format for backward compatibility
-//! - [`types`] - Core types and constants (`DeltaOp`, `CHUNK_SIZE`)
+//! - `int_encoding` - Fundamental 4-byte LE integer read/write primitives
+//! - `token` - Upstream token-based wire format (literals, block matches, end markers)
+//! - `internal` - Internal opcode-based delta format for backward compatibility
+//! - `types` - Core types and constants (`DeltaOp`, `CHUNK_SIZE`)
 
 mod int_encoding;
 mod internal;
