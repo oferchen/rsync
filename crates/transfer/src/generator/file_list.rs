@@ -440,6 +440,15 @@ impl GeneratorContext {
                         path.display(),
                         crate::role_trailer::sender()
                     );
+                } else {
+                    // upstream: flist.c:1290 — rsyserr(FERROR_XFER, ...) for non-ENOENT
+                    eprintln!(
+                        "rsync: link_stat \"{}\" failed: {} ({}){}",
+                        path.display(),
+                        e,
+                        e.raw_os_error().unwrap_or(0),
+                        crate::role_trailer::sender()
+                    );
                 }
                 self.record_io_error(&e);
                 return Ok(());
@@ -467,13 +476,28 @@ impl GeneratorContext {
                                 self.walk_path(base, entry.path())?;
                             }
                             Err(e) => {
-                                // Entry vanished or unreadable during iteration
+                                // upstream: flist.c — rsyserr for readdir() failures
+                                eprintln!(
+                                    "rsync: readdir \"{}\" failed: {} ({}){}",
+                                    path.display(),
+                                    e,
+                                    e.raw_os_error().unwrap_or(0),
+                                    crate::role_trailer::sender()
+                                );
                                 self.record_io_error(&e);
                             }
                         }
                     }
                 }
                 Err(e) => {
+                    // upstream: flist.c — rsyserr for opendir() failures
+                    eprintln!(
+                        "rsync: opendir \"{}\" failed: {} ({}){}",
+                        path.display(),
+                        e,
+                        e.raw_os_error().unwrap_or(0),
+                        crate::role_trailer::sender()
+                    );
                     self.record_io_error(&e);
                 }
             }
@@ -517,8 +541,15 @@ impl GeneratorContext {
         // Create file entry based on type (moves relative — no clone)
         let entry = match self.create_entry(&path, relative, &metadata) {
             Ok(e) => e,
-            Err(_) => {
-                // Failed to create entry (e.g., symlink target unreadable)
+            Err(e) => {
+                // upstream: flist.c — rsyserr for make_file() failures
+                eprintln!(
+                    "rsync: make_file failed for \"{}\": {} ({}){}",
+                    path.display(),
+                    e,
+                    e.raw_os_error().unwrap_or(0),
+                    crate::role_trailer::sender()
+                );
                 self.add_io_error(io_error_flags::IOERR_GENERAL);
                 return Ok(());
             }
@@ -531,6 +562,14 @@ impl GeneratorContext {
             match std::fs::read_dir(&path) {
                 Ok(entries) => Some(entries),
                 Err(e) => {
+                    // upstream: flist.c — rsyserr for opendir() failures
+                    eprintln!(
+                        "rsync: opendir \"{}\" failed: {} ({}){}",
+                        path.display(),
+                        e,
+                        e.raw_os_error().unwrap_or(0),
+                        crate::role_trailer::sender()
+                    );
                     self.record_io_error(&e);
                     None
                 }
@@ -549,6 +588,13 @@ impl GeneratorContext {
                         self.walk_path(base, de.path())?;
                     }
                     Err(e) => {
+                        // upstream: flist.c — rsyserr for readdir() failures
+                        eprintln!(
+                            "rsync: readdir failed: {} ({}){}",
+                            e,
+                            e.raw_os_error().unwrap_or(0),
+                            crate::role_trailer::sender()
+                        );
                         self.record_io_error(&e);
                     }
                 }
