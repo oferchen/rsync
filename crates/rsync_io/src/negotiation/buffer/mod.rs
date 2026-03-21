@@ -1,3 +1,8 @@
+//! Replay buffer used during negotiation prologue detection.
+//!
+//! Bytes read while sniffing the connection are stored here and replayed
+//! to higher layers through [`NegotiationBufferAccess`].
+
 mod access;
 mod errors;
 mod slices;
