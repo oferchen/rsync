@@ -315,6 +315,103 @@ fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
     }
 }
 
+/// Sanitizes a client-supplied path to prevent directory traversal in daemon mode.
+///
+/// All paths received from clients in daemon mode must be confined within the
+/// module root. This function mirrors upstream `util1.c:sanitize_path()` with
+/// `depth=0` and `SP_DEFAULT` flags:
+///
+/// 1. Strips leading `/` (absolute paths become relative)
+/// 2. Collapses `..` components - leading ones are dropped, deeper ones back up
+/// 3. Removes `.` components and duplicate slashes
+/// 4. Returns `"."` if the result would otherwise be empty
+///
+/// # Security
+///
+/// Without this sanitization, a malicious client can send paths like
+/// `--backup-dir=/etc` or `--temp-dir=../../tmp` to write files outside the
+/// module root. This is the fix for CVE-2022-29154 (arbitrary file write via
+/// `--backup-dir`) and related path injection attacks.
+///
+/// # Upstream Reference
+///
+/// - `util1.c:1035-1108` - `sanitize_path()`
+/// - `clientserver.c:1085-1095` - daemon sanitizes backup_dir, temp_dir, etc.
+fn sanitize_daemon_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut p = 0usize;
+
+    // Strip leading slash (absolute -> relative)
+    if p < bytes.len() && bytes[p] == b'/' {
+        p += 1;
+    }
+
+    // Drop leading "./"
+    while p + 1 < bytes.len() && bytes[p] == b'.' && bytes[p + 1] == b'/' {
+        p += 2;
+        while p < bytes.len() && bytes[p] == b'/' {
+            p += 1;
+        }
+    }
+
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut start = 0usize;
+
+    while p < bytes.len() {
+        if bytes[p] == b'/' {
+            p += 1;
+            continue;
+        }
+
+        // "." component
+        if bytes[p] == b'.' && (p + 1 >= bytes.len() || bytes[p + 1] == b'/') {
+            p += 1;
+            continue;
+        }
+
+        // ".." component
+        if bytes[p] == b'.'
+            && p + 1 < bytes.len()
+            && bytes[p + 1] == b'.'
+            && (p + 2 >= bytes.len() || bytes[p + 2] == b'/')
+        {
+            p += 2;
+            if result.len() > start {
+                // Back up one level
+                if result.last() == Some(&b'/') {
+                    result.pop();
+                }
+                while result.len() > start && result.last() != Some(&b'/') {
+                    result.pop();
+                }
+            }
+            // Leading ".." with depth 0: silently dropped
+            continue;
+        }
+
+        // Copy one component
+        while p < bytes.len() && bytes[p] != b'/' {
+            result.push(bytes[p]);
+            p += 1;
+        }
+        if p < bytes.len() {
+            result.push(b'/');
+            p += 1;
+        }
+    }
+
+    // Remove trailing slash
+    if result.len() > 1 && result.last() == Some(&b'/') {
+        result.pop();
+    }
+
+    if result.is_empty() {
+        ".".to_string()
+    } else {
+        String::from_utf8(result).unwrap_or_else(|_| ".".to_string())
+    }
+}
+
 /// Constructs a `FilterRuleWireFormat` from a pattern string.
 ///
 /// Handles anchored patterns (leading `/`) and directory-only patterns

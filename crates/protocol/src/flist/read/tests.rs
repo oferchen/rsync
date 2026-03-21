@@ -2285,4 +2285,108 @@ mod xattr_integration {
 
         assert_eq!(cursor.position() as usize, data.len());
     }
+
+    // --- clean_and_validate_name security tests (CVE path traversal) ---
+
+    /// Helper to test clean_and_validate_name directly.
+    fn clean_name(name: &[u8], relative_paths: bool) -> io::Result<Vec<u8>> {
+        let reader = FileListReader::new(test_protocol())
+            .with_relative_paths(relative_paths);
+        reader.clean_and_validate_name(name.to_vec())
+    }
+
+    #[test]
+    fn clean_name_simple_passthrough() {
+        let result = clean_name(b"foo/bar.txt", false).unwrap();
+        assert_eq!(result, b"foo/bar.txt");
+    }
+
+    #[test]
+    fn clean_name_rejects_dotdot_component() {
+        let result = clean_name(b"foo/../etc/passwd", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn clean_name_rejects_leading_dotdot() {
+        let result = clean_name(b"../etc/passwd", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn clean_name_rejects_trailing_dotdot() {
+        let result = clean_name(b"foo/bar/..", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn clean_name_rejects_bare_dotdot() {
+        let result = clean_name(b"..", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn clean_name_rejects_absolute_path_non_relative() {
+        let result = clean_name(b"/etc/passwd", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn clean_name_strips_absolute_path_relative_mode() {
+        let result = clean_name(b"/foo/bar", true).unwrap();
+        assert_eq!(result, b"foo/bar");
+    }
+
+    #[test]
+    fn clean_name_collapses_duplicate_slashes() {
+        let result = clean_name(b"foo//bar", false).unwrap();
+        assert_eq!(result, b"foo/bar");
+    }
+
+    #[test]
+    fn clean_name_removes_dot_components() {
+        let result = clean_name(b"foo/./bar", false).unwrap();
+        assert_eq!(result, b"foo/bar");
+    }
+
+    #[test]
+    fn clean_name_strips_trailing_slash() {
+        let result = clean_name(b"foo/bar/", false).unwrap();
+        assert_eq!(result, b"foo/bar");
+    }
+
+    #[test]
+    fn clean_name_empty_result_becomes_dot() {
+        let result = clean_name(b".", false).unwrap();
+        assert_eq!(result, b".");
+    }
+
+    #[test]
+    fn clean_name_rejects_encoded_dotdot_traversal() {
+        // Encoded "../" is not treated as a path separator - this tests that
+        // we only match literal ".." path components, not encoded variants.
+        // The string "..%2f" should NOT be rejected (it's a valid filename).
+        let result = clean_name(b"..%2fetc/passwd", false).unwrap();
+        assert_eq!(result, b"..%2fetc/passwd");
+    }
+
+    #[test]
+    fn clean_name_rejects_dotdot_with_multiple_slashes() {
+        // "foo//../bar" -> after collapse -> "foo/../bar" -> rejected
+        let result = clean_name(b"foo//../bar", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn clean_name_deep_traversal_rejected() {
+        let result = clean_name(b"a/b/c/../../../../etc/shadow", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn clean_name_dotdot_like_filenames_allowed() {
+        // Filenames that start with ".." but have more characters are fine
+        let result = clean_name(b"..hidden", false).unwrap();
+        assert_eq!(result, b"..hidden");
+    }
 }

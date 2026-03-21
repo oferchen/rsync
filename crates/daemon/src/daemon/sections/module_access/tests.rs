@@ -1193,4 +1193,147 @@ mod module_access_tests {
         let args: Vec<String> = vec![];
         assert!(!has_secluded_args_flag(&args));
     }
+
+    // --- sanitize_daemon_path tests (CVE-2022-29154 mitigation) ---
+
+    #[test]
+    fn sanitize_daemon_path_simple_relative() {
+        assert_eq!(sanitize_daemon_path("foo/bar"), "foo/bar");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_strips_absolute() {
+        assert_eq!(sanitize_daemon_path("/etc/passwd"), "etc/passwd");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_drops_leading_dotdot() {
+        assert_eq!(sanitize_daemon_path("../foo"), "foo");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_drops_multiple_leading_dotdots() {
+        assert_eq!(sanitize_daemon_path("../../etc/shadow"), "etc/shadow");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_collapses_interior_dotdot() {
+        assert_eq!(sanitize_daemon_path("a/b/../c"), "a/c");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_blocks_absolute_traversal() {
+        // CVE-2022-29154: --backup-dir=/etc
+        assert_eq!(sanitize_daemon_path("/../../etc/passwd"), "etc/passwd");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_blocks_deep_traversal() {
+        assert_eq!(
+            sanitize_daemon_path("a/b/c/../../../../../../../../etc/shadow"),
+            "etc/shadow"
+        );
+    }
+
+    #[test]
+    fn sanitize_daemon_path_empty_becomes_dot() {
+        assert_eq!(sanitize_daemon_path(""), ".");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_only_dotdot_becomes_dot() {
+        assert_eq!(sanitize_daemon_path(".."), ".");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_removes_dot_components() {
+        assert_eq!(sanitize_daemon_path("foo/./bar"), "foo/bar");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_collapses_duplicate_slashes() {
+        assert_eq!(sanitize_daemon_path("foo//bar"), "foo/bar");
+    }
+
+    #[test]
+    fn sanitize_daemon_path_strips_trailing_slash() {
+        assert_eq!(sanitize_daemon_path("foo/bar/"), "foo/bar");
+    }
+
+    // --- apply_long_form_args sanitization tests ---
+
+    #[test]
+    fn apply_long_form_args_sanitizes_backup_dir_equals() {
+        let args: Vec<String> = vec!["--backup-dir=/etc".into()];
+        let mut config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            String::new(),
+            vec![OsString::from("/module")],
+        )
+        .unwrap();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.backup_dir.as_deref(), Some("etc"));
+    }
+
+    #[test]
+    fn apply_long_form_args_sanitizes_backup_dir_two_arg() {
+        let args: Vec<String> = vec!["--backup-dir".into(), "../../tmp/evil".into()];
+        let mut config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            String::new(),
+            vec![OsString::from("/module")],
+        )
+        .unwrap();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.backup_dir.as_deref(), Some("tmp/evil"));
+    }
+
+    #[test]
+    fn apply_long_form_args_sanitizes_temp_dir_equals() {
+        let args: Vec<String> = vec!["--temp-dir=/tmp/evil".into()];
+        let mut config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            String::new(),
+            vec![OsString::from("/module")],
+        )
+        .unwrap();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(
+            config.temp_dir.as_deref(),
+            Some(std::path::Path::new("tmp/evil"))
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_sanitizes_link_dest_equals() {
+        let args: Vec<String> = vec!["--link-dest=/../../outside".into()];
+        let mut config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            String::new(),
+            vec![OsString::from("/module")],
+        )
+        .unwrap();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.reference_directories.len(), 1);
+        assert_eq!(
+            config.reference_directories[0].path,
+            std::path::PathBuf::from("outside")
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_sanitizes_files_from_equals() {
+        let args: Vec<String> = vec!["--files-from=../../etc/passwd".into()];
+        let mut config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            String::new(),
+            vec![OsString::from("/module")],
+        )
+        .unwrap();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(
+            config.file_selection.files_from_path.as_deref(),
+            Some("etc/passwd")
+        );
+    }
 }

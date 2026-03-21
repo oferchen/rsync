@@ -347,11 +347,15 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                 config.flags.backup = true;
             }
             // Two-arg options: upstream sends option and value as separate args.
+            // All client-supplied paths are sanitized to prevent directory traversal
+            // outside the module root (CVE-2022-29154 mitigation).
+            // upstream: clientserver.c:1085-1095 - sanitize_path() on all client paths
             // upstream: options.c:2915-2923 - reference directories
             "--compare-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
+                    let sanitized = sanitize_daemon_path(dir);
                     config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
+                        path: std::path::PathBuf::from(sanitized),
                         kind: ReferenceDirectoryKind::Compare,
                     });
                     i += 1;
@@ -359,8 +363,9 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             }
             "--copy-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
+                    let sanitized = sanitize_daemon_path(dir);
                     config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
+                        path: std::path::PathBuf::from(sanitized),
                         kind: ReferenceDirectoryKind::Copy,
                     });
                     i += 1;
@@ -368,25 +373,29 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             }
             "--link-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
+                    let sanitized = sanitize_daemon_path(dir);
                     config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
+                        path: std::path::PathBuf::from(sanitized),
                         kind: ReferenceDirectoryKind::Link,
                     });
                     i += 1;
                 }
             }
             // upstream: options.c:2787-2790 - backup-dir as separate args
+            // upstream: clientserver.c:1085 - sanitize backup_dir
             "--backup-dir" => {
                 config.flags.backup = true;
                 if let Some(dir) = client_args.get(i + 1) {
-                    config.backup_dir = Some(dir.to_owned());
+                    config.backup_dir = Some(sanitize_daemon_path(dir));
                     i += 1;
                 }
             }
             // upstream: options.c:2907-2909 - temp-dir as separate args
+            // upstream: clientserver.c:1091 - sanitize tmpdir
             "--temp-dir" => {
                 if let Some(dir) = client_args.get(i + 1) {
-                    config.temp_dir = Some(std::path::PathBuf::from(dir));
+                    let sanitized = sanitize_daemon_path(dir);
+                    config.temp_dir = Some(std::path::PathBuf::from(sanitized));
                     i += 1;
                 }
             }
@@ -407,32 +416,41 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                     }
                 // Fallback: =value format for reference directories and backup options.
                 // Handles both upstream (two-arg) and legacy (=value) formats.
+                // All client-supplied paths are sanitized to prevent directory
+                // traversal outside the module root (CVE-2022-29154 mitigation).
+                // upstream: clientserver.c:1085-1095 - sanitize_path() on all paths
                 } else if let Some(dir) = arg.strip_prefix("--backup-dir=") {
                     config.flags.backup = true;
-                    config.backup_dir = Some(dir.to_owned());
+                    config.backup_dir = Some(sanitize_daemon_path(dir));
                 } else if let Some(suffix) = arg.strip_prefix("--suffix=") {
                     config.backup_suffix = Some(suffix.to_owned());
                 } else if let Some(suffix) = arg.strip_prefix("--backup-suffix=") {
                     config.backup_suffix = Some(suffix.to_owned());
                 } else if let Some(dir) = arg.strip_prefix("--link-dest=") {
+                    let sanitized = sanitize_daemon_path(dir);
                     config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
+                        path: std::path::PathBuf::from(sanitized),
                         kind: ReferenceDirectoryKind::Link,
                     });
                 } else if let Some(dir) = arg.strip_prefix("--compare-dest=") {
+                    let sanitized = sanitize_daemon_path(dir);
                     config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
+                        path: std::path::PathBuf::from(sanitized),
                         kind: ReferenceDirectoryKind::Compare,
                     });
                 } else if let Some(dir) = arg.strip_prefix("--copy-dest=") {
+                    let sanitized = sanitize_daemon_path(dir);
                     config.reference_directories.push(ReferenceDirectory {
-                        path: std::path::PathBuf::from(dir),
+                        path: std::path::PathBuf::from(sanitized),
                         kind: ReferenceDirectoryKind::Copy,
                     });
                 } else if let Some(dir) = arg.strip_prefix("--temp-dir=") {
-                    config.temp_dir = Some(std::path::PathBuf::from(dir));
+                    let sanitized = sanitize_daemon_path(dir);
+                    config.temp_dir = Some(std::path::PathBuf::from(sanitized));
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
-                    config.file_selection.files_from_path = Some(path.to_owned());
+                    // upstream: clientserver.c:1093 - sanitize files_from path
+                    config.file_selection.files_from_path =
+                        Some(sanitize_daemon_path(path));
                 }
             }
         }
