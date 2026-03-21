@@ -85,7 +85,7 @@ pub mod zstd;
 pub use common::CountingSink;
 pub use skip_compress::{
     AdaptiveCompressor, CompressionDecider, CompressionDecision, DEFAULT_COMPRESSION_THRESHOLD,
-    DEFAULT_SAMPLE_SIZE, FileCategory,
+    DEFAULT_SAMPLE_SIZE, FileCategory, Suffix,
 };
 #[cfg(feature = "lz4")]
 pub use strategy::Lz4Strategy;
