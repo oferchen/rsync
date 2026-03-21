@@ -978,9 +978,8 @@ mod tests {
     fn socket_reader_disabled_policy_uses_std() {
         let (fd_a, fd_b) = {
             let mut fds = [0i32; 2];
-            let ret = unsafe {
-                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
-            };
+            let ret =
+                unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
             assert_eq!(ret, 0);
             (fds[0], fds[1])
         };
@@ -999,9 +998,8 @@ mod tests {
     fn socket_writer_disabled_policy_uses_std() {
         let (fd_a, fd_b) = {
             let mut fds = [0i32; 2];
-            let ret = unsafe {
-                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
-            };
+            let ret =
+                unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
             assert_eq!(ret, 0);
             (fds[0], fds[1])
         };
@@ -1020,9 +1018,8 @@ mod tests {
     fn socket_enabled_policy_returns_error() {
         let (fd_a, fd_b) = {
             let mut fds = [0i32; 2];
-            let ret = unsafe {
-                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
-            };
+            let ret =
+                unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
             assert_eq!(ret, 0);
             (fds[0], fds[1])
         };
