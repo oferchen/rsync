@@ -849,7 +849,11 @@ fn golden_v28_block_device_small_minor() {
     );
     // rdev_minor: 1 byte (XMIT_RDEV_MINOR_8_PRE30 set)
     assert_eq!(buf[22], 0, "rdev minor=0 as single byte");
-    assert_eq!(buf.len(), 23, "total length for block device with 8-bit minor");
+    assert_eq!(
+        buf.len(),
+        23,
+        "total length for block device with 8-bit minor"
+    );
 }
 
 #[test]
@@ -988,8 +992,7 @@ fn golden_v28_hardlink_dev_ino_encoding() {
     // Find the hardlink data at the end of the buffer.
     let expected_tail: &[u8] = &[
         // dev+1=43 as 4-byte LE longint
-        0x2B, 0x00, 0x00, 0x00,
-        // ino=12345 as 4-byte LE longint
+        0x2B, 0x00, 0x00, 0x00, // ino=12345 as 4-byte LE longint
         0x39, 0x30, 0x00, 0x00,
     ];
     assert_eq!(
@@ -1080,7 +1083,11 @@ fn golden_v28_stats_wire_bytes_zero() {
     stats.write_to(&mut buf, proto28()).unwrap();
 
     // 3 fields of varlong30(0, 3): each is [0x00, 0x00, 0x00] = 3 bytes
-    assert_eq!(buf.len(), 9, "3 zero-value varlong30(min=3) = 9 bytes total");
+    assert_eq!(
+        buf.len(),
+        9,
+        "3 zero-value varlong30(min=3) = 9 bytes total"
+    );
 
     #[rustfmt::skip]
     let expected: &[u8] = &[
