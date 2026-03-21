@@ -7,7 +7,10 @@
 
 use std::io::{self, Read, Write};
 
-use super::wire::{read_i32, read_u32, read_u64, read_varint, write_i32, write_string, write_u32, write_u64, write_varint};
+use super::wire::{
+    read_i32, read_u32, read_u64, read_varint, write_i32, write_string, write_u32, write_u64,
+    write_varint,
+};
 
 /// File metadata for batch mode tracking.
 ///
