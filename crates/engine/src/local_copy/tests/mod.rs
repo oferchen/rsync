@@ -1,6 +1,7 @@
 use super::*;
 use crate::signature::SignatureAlgorithm;
 use ::metadata::ChmodModifiers;
+use ::test_support::create_tempdir;
 use bandwidth::BandwidthLimiter;
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
@@ -17,7 +18,7 @@ use std::num::{NonZeroU8, NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
-use test_support::create_tempdir;
+use tempfile::tempdir;
 
 mod deletion_strategies;
 
