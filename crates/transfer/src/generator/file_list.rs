@@ -438,7 +438,7 @@ impl GeneratorContext {
                     eprintln!(
                         "file has vanished: {}{}",
                         path.display(),
-                        crate::role_trailer::sender()
+                        crate::role_trailer::generator()
                     );
                 }
                 self.record_io_error(&e);
