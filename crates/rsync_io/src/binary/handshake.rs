@@ -438,8 +438,6 @@ mod tests {
         )
     }
 
-    // ==== Protocol accessors ====
-
     #[test]
     fn negotiated_protocol_returns_version() {
         let hs = create_test_handshake();
@@ -469,8 +467,6 @@ mod tests {
         let hs = create_test_handshake();
         assert_eq!(hs.remote_compatibility_flags(), CompatibilityFlags::EMPTY);
     }
-
-    // ==== Protocol clamping ====
 
     #[test]
     fn remote_protocol_was_clamped_false_when_supported() {
@@ -509,8 +505,6 @@ mod tests {
         assert!(!hs.local_protocol_was_capped());
     }
 
-    // ==== Stream accessors ====
-
     #[test]
     fn stream_returns_shared_reference() {
         let hs = create_test_handshake();
@@ -531,8 +525,6 @@ mod tests {
         let stream = hs.into_stream();
         assert_eq!(stream.decision(), NegotiationPrologue::Binary);
     }
-
-    // ==== Decomposition ====
 
     #[test]
     fn into_components_returns_all_parts() {
@@ -565,8 +557,6 @@ mod tests {
         assert_eq!(flags, CompatibilityFlags::EMPTY);
         assert_eq!(parts.decision(), NegotiationPrologue::Binary);
     }
-
-    // ==== Reconstruction ====
 
     #[test]
     fn from_components_reconstructs_handshake() {
@@ -608,8 +598,6 @@ mod tests {
         assert_eq!(reconstructed.negotiated_protocol().as_u8(), 31);
     }
 
-    // ==== Mapping ====
-
     #[test]
     fn map_stream_inner_transforms_transport() {
         let hs = create_test_handshake();
@@ -644,8 +632,6 @@ mod tests {
         assert_eq!(recovered.negotiated_protocol().as_u8(), 31);
     }
 
-    // ==== Rehydrate sniffer ====
-
     #[test]
     fn rehydrate_sniffer_succeeds() {
         let hs = create_test_handshake();
@@ -653,8 +639,6 @@ mod tests {
         let result = hs.rehydrate_sniffer(&mut sniffer);
         assert!(result.is_ok());
     }
-
-    // ==== Clone and Debug ====
 
     #[test]
     fn clone_produces_independent_copy() {
