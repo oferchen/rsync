@@ -1,23 +1,19 @@
-//! Deletion strategy implementations for rsync --delete variants.
+//! Deletion decision logic for rsync --delete variants.
 //!
-//! This module provides a unified interface for handling extraneous file
-//! deletion at different stages of the transfer process:
+//! Determines which destination entries are extraneous (not present in the
+//! source) and whether they should be deleted, respecting:
 //!
-//! - `--delete-before`: Remove extraneous files before transfer starts
-//! - `--delete-during`: Remove files as each directory is processed (default)
-//! - `--delete-after`: Remove files after all transfers complete
-//! - `--delete-delay`: Like delete-after but accumulate list during transfer
-//!
-//! The deletion logic respects:
 //! - `--delete-excluded`: Also delete files matching exclude patterns
 //! - `--max-delete=NUM`: Don't delete more than NUM files
 //! - `--force`: Force deletion of non-empty directories
 //! - Filter rules and exclusion patterns
+//!
+//! Deletion timing (`--delete-before`, `--delete-during`, `--delete-after`,
+//! `--delete-delay`) is represented by the `DeleteTiming` enum and handled
+//! by the caller.
 
 mod strategy;
 
-#[cfg(test)]
-pub(crate) use strategy::apply_deletion_strategy;
 pub use strategy::{
     DeletionContext, DeletionError, DeletionResult, build_keep_set, is_extraneous_entry,
     should_delete_entry,

@@ -1,4 +1,4 @@
-//! Comprehensive tests for deletion strategy implementations.
+//! Comprehensive tests for deletion decision logic.
 
 use super::*;
 use crate::local_copy::DeleteTiming;
@@ -92,94 +92,6 @@ mod deletion_context_tests {
         ctx.deletions_performed = u64::MAX;
         ctx.record_deletion();
         assert_eq!(ctx.deletions_performed, u64::MAX);
-    }
-}
-
-mod strategy_tests {
-    use super::*;
-    use crate::local_copy::deletion::strategy::{
-        DeleteAfterStrategy, DeleteBeforeStrategy, DeleteDelayStrategy, DeleteDuringStrategy,
-        DeletionStrategy, apply_deletion_strategy,
-    };
-
-    #[test]
-    fn delete_before_strategy_has_correct_timing() {
-        let strategy = DeleteBeforeStrategy;
-        assert_eq!(strategy.timing(), DeleteTiming::Before);
-    }
-
-    #[test]
-    fn delete_before_strategy_applies_immediately() {
-        let strategy = DeleteBeforeStrategy;
-        assert!(strategy.should_apply_immediately());
-        assert!(!strategy.should_defer());
-    }
-
-    #[test]
-    fn delete_during_strategy_has_correct_timing() {
-        let strategy = DeleteDuringStrategy;
-        assert_eq!(strategy.timing(), DeleteTiming::During);
-    }
-
-    #[test]
-    fn delete_during_strategy_applies_immediately() {
-        let strategy = DeleteDuringStrategy;
-        assert!(strategy.should_apply_immediately());
-        assert!(!strategy.should_defer());
-    }
-
-    #[test]
-    fn delete_after_strategy_has_correct_timing() {
-        let strategy = DeleteAfterStrategy;
-        assert_eq!(strategy.timing(), DeleteTiming::After);
-    }
-
-    #[test]
-    fn delete_after_strategy_defers_deletion() {
-        let strategy = DeleteAfterStrategy;
-        assert!(!strategy.should_apply_immediately());
-        assert!(strategy.should_defer());
-    }
-
-    #[test]
-    fn delete_delay_strategy_has_correct_timing() {
-        let strategy = DeleteDelayStrategy;
-        assert_eq!(strategy.timing(), DeleteTiming::Delay);
-    }
-
-    #[test]
-    fn delete_delay_strategy_defers_deletion() {
-        let strategy = DeleteDelayStrategy;
-        assert!(!strategy.should_apply_immediately());
-        assert!(strategy.should_defer());
-    }
-
-    #[test]
-    fn apply_deletion_strategy_returns_correct_strategy_for_before() {
-        let strategy = apply_deletion_strategy(DeleteTiming::Before);
-        assert_eq!(strategy.timing(), DeleteTiming::Before);
-        assert!(strategy.should_apply_immediately());
-    }
-
-    #[test]
-    fn apply_deletion_strategy_returns_correct_strategy_for_during() {
-        let strategy = apply_deletion_strategy(DeleteTiming::During);
-        assert_eq!(strategy.timing(), DeleteTiming::During);
-        assert!(strategy.should_apply_immediately());
-    }
-
-    #[test]
-    fn apply_deletion_strategy_returns_correct_strategy_for_after() {
-        let strategy = apply_deletion_strategy(DeleteTiming::After);
-        assert_eq!(strategy.timing(), DeleteTiming::After);
-        assert!(strategy.should_defer());
-    }
-
-    #[test]
-    fn apply_deletion_strategy_returns_correct_strategy_for_delay() {
-        let strategy = apply_deletion_strategy(DeleteTiming::Delay);
-        assert_eq!(strategy.timing(), DeleteTiming::Delay);
-        assert!(strategy.should_defer());
     }
 }
 
@@ -444,7 +356,7 @@ mod deletion_error_tests {
 
 mod integration_tests {
     use super::*;
-    use crate::local_copy::deletion::{apply_deletion_strategy, should_delete_entry};
+    use crate::local_copy::deletion::should_delete_entry;
 
     /// Simulates a complete deletion workflow for delete-before timing.
     #[test]
@@ -456,9 +368,6 @@ mod integration_tests {
             OsString::from("delete1.txt"),
             OsString::from("delete2.txt"),
         ];
-
-        let strategy = apply_deletion_strategy(DeleteTiming::Before);
-        assert!(strategy.should_apply_immediately());
 
         let ctx = make_context(true, DeleteTiming::Before, None);
 
@@ -480,12 +389,8 @@ mod integration_tests {
         let source_entries = vec![OsString::from("keep.txt")];
         let dest_entries = vec![OsString::from("keep.txt"), OsString::from("delete.txt")];
 
-        let strategy = apply_deletion_strategy(DeleteTiming::After);
-        assert!(strategy.should_defer());
-
         let ctx = make_context(true, DeleteTiming::After, None);
 
-        // During transfer, we build up the deletion list but don't apply
         let mut deferred = Vec::new();
         for entry in &dest_entries {
             if should_delete_entry(entry, &source_entries, &ctx, |_, _| true) {
@@ -493,7 +398,6 @@ mod integration_tests {
             }
         }
 
-        // After transfer, we apply deletions
         assert_eq!(deferred.len(), 1);
         assert_eq!(deferred[0], OsString::from("delete.txt"));
     }
@@ -518,7 +422,6 @@ mod integration_tests {
             }
         }
 
-        // Only 2 should be deleted due to limit
         assert_eq!(deleted_count, 2);
         assert_eq!(ctx.deletions_performed, 2);
     }
