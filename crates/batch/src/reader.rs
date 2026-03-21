@@ -23,6 +23,12 @@ pub struct BatchReader {
     batch_file: Option<BufReader<File>>,
     /// The header read from the file.
     header: Option<BatchHeader>,
+    /// Accumulated I/O error code from the file list sender.
+    ///
+    /// Populated after [`read_protocol_flist`](Self::read_protocol_flist) returns.
+    /// Upstream `flist.c:recv_file_list()` accumulates `io_error |= err` when
+    /// the sender reports errors during file list generation.
+    io_error: i32,
 }
 
 impl BatchReader {
@@ -45,6 +51,7 @@ impl BatchReader {
             config,
             batch_file: Some(BufReader::new(file)),
             header: None,
+            io_error: 0,
         })
     }
 
@@ -134,6 +141,20 @@ impl BatchReader {
     /// Get a reference to the batch configuration.
     pub const fn config(&self) -> &BatchConfig {
         &self.config
+    }
+
+    /// Returns the accumulated I/O error code from the file list sender.
+    ///
+    /// This is populated after [`read_protocol_flist`](Self::read_protocol_flist)
+    /// returns. A non-zero value indicates the sender encountered errors during
+    /// file list generation, but the transfer can proceed with the files that
+    /// were successfully listed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:recv_file_list()` accumulates `io_error |= err`
+    pub const fn io_error(&self) -> i32 {
+        self.io_error
     }
 
     /// Read transfer statistics from the batch file.
@@ -278,6 +299,17 @@ impl BatchReader {
             .with_preserve_acls(flags.preserve_acls)
             .with_preserve_xattrs(flags.preserve_xattrs);
 
+        // upstream: flist.c:150 - when always_checksum is set, each regular file
+        // entry in the flist carries a trailing checksum of flist_csum_len bytes.
+        // Without this, the reader would skip those bytes and go out of sync.
+        // The checksum length depends on the negotiated algorithm. For batch files
+        // without explicit negotiation, the default is MD5 (protocol >= 30) or
+        // MD4 (protocol < 30) - both produce 16-byte digests.
+        if flags.always_checksum {
+            let csum_len = default_flist_csum_len(header.protocol_version);
+            flist_reader = flist_reader.with_always_checksum(csum_len);
+        }
+
         let reader = self
             .batch_file
             .as_mut()
@@ -298,6 +330,11 @@ impl BatchReader {
             }
         }
 
+        // Capture any I/O error accumulated during flist reading.
+        // upstream: flist.c:recv_file_list() does `io_error |= err` when the
+        // sender reports errors, then breaks the loop without aborting.
+        self.io_error = flist_reader.io_error();
+
         Ok(entries)
     }
 
@@ -310,6 +347,26 @@ impl BatchReader {
     pub fn inner_reader(&mut self) -> Option<&mut BufReader<File>> {
         self.batch_file.as_mut()
     }
+}
+
+/// Returns the default flist checksum length for a batch file.
+///
+/// Upstream `flist.c:150` computes `flist_csum_len = csum_len_for_type(file_sum_nni->num, 1)`.
+/// Without explicit checksum negotiation (which batch files bypass), the default
+/// file checksum algorithm is MD5 (protocol >= 30) or MD4 (protocol < 30). Both
+/// produce 16-byte digests. Protocol < 27 with `CSUM_MD4_ARCHAIC` uses 2 bytes
+/// for flist checksums, but we only support protocol >= 27.
+///
+/// # Upstream Reference
+///
+/// - `checksum.c:csum_len_for_type()` - MD4=16, MD5=16, XXH3_128=16, XXH64=8
+fn default_flist_csum_len(protocol_version: i32) -> usize {
+    // All supported protocols (27-32) default to MD4 or MD5, both 16 bytes.
+    // If XXH3-128 is negotiated via checksum seeds, it is also 16 bytes.
+    // XXH64 and XXH3-64 are 8 bytes but require explicit negotiation which
+    // is not recorded in the batch stream flags. Conservative default: 16.
+    let _ = protocol_version;
+    16
 }
 
 #[cfg(test)]
@@ -733,6 +790,252 @@ mod tests {
             reader.read_header().unwrap();
             let header = reader.header().unwrap();
             assert_eq!(header.protocol_version, 30);
+        }
+
+        #[test]
+        fn io_error_starts_at_zero() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let reader = BatchReader::new(config).unwrap();
+            assert_eq!(reader.io_error(), 0);
+        }
+    }
+
+    mod flist_deserialization_tests {
+        use super::*;
+        use protocol::flist::{FileEntry as ProtocolFileEntry, FileListWriter};
+
+        /// Write a batch with protocol flist entries and read them back using
+        /// `read_protocol_flist`. This validates the core deserialization path
+        /// that batch replay depends on.
+        #[test]
+        fn protocol_flist_roundtrip_basic() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("flist_basic.batch");
+            let protocol_version = 31;
+
+            // Write phase
+            let write_config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                protocol_version,
+            )
+            .with_checksum_seed(42);
+
+            let mut writer = BatchWriter::new(write_config).unwrap();
+            let flags = BatchFlags {
+                recurse: true,
+                preserve_uid: true,
+                preserve_gid: true,
+                ..Default::default()
+            };
+            writer.write_header(flags).unwrap();
+
+            let protocol =
+                protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+            let mut flist_writer = FileListWriter::new(protocol)
+                .with_preserve_uid(true)
+                .with_preserve_gid(true);
+
+            let entries = vec![
+                {
+                    let mut e = ProtocolFileEntry::new_file("alpha.txt".into(), 1024, 0o644);
+                    e.set_mtime(1_700_000_000, 0);
+                    e.set_uid(1000);
+                    e.set_gid(1000);
+                    e
+                },
+                {
+                    let mut e = ProtocolFileEntry::new_file("beta.txt".into(), 2048, 0o644);
+                    e.set_mtime(1_700_000_001, 0);
+                    e.set_uid(1001);
+                    e.set_gid(1001);
+                    e
+                },
+                {
+                    let mut e = ProtocolFileEntry::new_directory("subdir".into(), 0o755);
+                    e.set_mtime(1_700_000_002, 0);
+                    e.set_uid(1000);
+                    e.set_gid(1000);
+                    e
+                },
+            ];
+
+            for entry in &entries {
+                let mut buf = Vec::new();
+                flist_writer.write_entry(&mut buf, entry).unwrap();
+                writer.write_data(&buf).unwrap();
+            }
+
+            let mut end_buf = Vec::new();
+            flist_writer.write_end(&mut end_buf, None).unwrap();
+            writer.write_data(&end_buf).unwrap();
+            writer.finalize().unwrap();
+
+            // Read phase
+            let read_config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                protocol_version,
+            );
+            let mut reader = BatchReader::new(read_config).unwrap();
+            reader.read_header().unwrap();
+
+            let read_entries = reader.read_protocol_flist().unwrap();
+            assert_eq!(read_entries.len(), 3);
+            assert_eq!(read_entries[0].name(), "alpha.txt");
+            assert_eq!(read_entries[0].size(), 1024);
+            assert_eq!(read_entries[0].uid(), Some(1000));
+            assert_eq!(read_entries[1].name(), "beta.txt");
+            assert_eq!(read_entries[1].size(), 2048);
+            assert_eq!(read_entries[2].name(), "subdir");
+            assert!(read_entries[2].is_dir());
+
+            // io_error should be zero for a clean flist
+            assert_eq!(reader.io_error(), 0);
+        }
+
+        /// Validates that `always_checksum` (--checksum / -c) is correctly wired
+        /// to the flist reader. When this flag is set, each regular file entry
+        /// in the flist carries a trailing checksum. If the reader doesn't consume
+        /// these bytes, subsequent entries will be deserialized incorrectly.
+        ///
+        /// upstream: flist.c:670 writes checksum bytes, flist.c:1202 reads them
+        #[test]
+        fn protocol_flist_roundtrip_with_always_checksum() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("flist_checksum.batch");
+            let protocol_version = 31;
+            let csum_len = 16; // MD5 digest length
+
+            // Write phase
+            let write_config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                protocol_version,
+            )
+            .with_checksum_seed(99);
+
+            let mut writer = BatchWriter::new(write_config).unwrap();
+            let flags = BatchFlags {
+                recurse: true,
+                always_checksum: true,
+                ..Default::default()
+            };
+            writer.write_header(flags).unwrap();
+
+            let protocol =
+                protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+            let mut flist_writer = FileListWriter::new(protocol)
+                .with_always_checksum(csum_len);
+
+            // Two regular files - each will have a checksum after it on the wire
+            let entries = vec![
+                {
+                    let mut e = ProtocolFileEntry::new_file("file1.dat".into(), 500, 0o644);
+                    e.set_mtime(1_700_000_000, 0);
+                    e.set_checksum(vec![0xAA; csum_len]);
+                    e
+                },
+                {
+                    let mut e = ProtocolFileEntry::new_file("file2.dat".into(), 1500, 0o644);
+                    e.set_mtime(1_700_000_001, 0);
+                    e.set_checksum(vec![0xBB; csum_len]);
+                    e
+                },
+            ];
+
+            for entry in &entries {
+                let mut buf = Vec::new();
+                flist_writer.write_entry(&mut buf, entry).unwrap();
+                writer.write_data(&buf).unwrap();
+            }
+
+            let mut end_buf = Vec::new();
+            flist_writer.write_end(&mut end_buf, None).unwrap();
+            writer.write_data(&end_buf).unwrap();
+            writer.finalize().unwrap();
+
+            // Read phase - the reader must correctly consume checksum bytes
+            let read_config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                protocol_version,
+            );
+            let mut reader = BatchReader::new(read_config).unwrap();
+            reader.read_header().unwrap();
+
+            let read_entries = reader.read_protocol_flist().unwrap();
+            assert_eq!(
+                read_entries.len(),
+                2,
+                "should read both entries when always_checksum is wired correctly"
+            );
+            assert_eq!(read_entries[0].name(), "file1.dat");
+            assert_eq!(read_entries[0].size(), 500);
+            assert_eq!(read_entries[1].name(), "file2.dat");
+            assert_eq!(read_entries[1].size(), 1500);
+        }
+
+        /// Verifies that `default_flist_csum_len` returns 16 for all supported
+        /// protocol versions, matching upstream MD4/MD5 digest length.
+        #[test]
+        fn default_flist_csum_len_values() {
+            for proto in [27, 28, 29, 30, 31, 32] {
+                assert_eq!(
+                    default_flist_csum_len(proto),
+                    16,
+                    "flist_csum_len should be 16 for protocol {proto}"
+                );
+            }
+        }
+
+        /// Verifies that an empty flist (just the end marker) reads back as
+        /// an empty vec with zero io_error.
+        #[test]
+        fn protocol_flist_empty() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("flist_empty.batch");
+            let protocol_version = 31;
+
+            let write_config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                protocol_version,
+            );
+
+            let mut writer = BatchWriter::new(write_config).unwrap();
+            writer.write_header(BatchFlags::default()).unwrap();
+
+            let protocol =
+                protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+            let mut flist_writer = FileListWriter::new(protocol);
+
+            // Write only the end marker, no entries
+            let mut end_buf = Vec::new();
+            flist_writer.write_end(&mut end_buf, None).unwrap();
+            writer.write_data(&end_buf).unwrap();
+            writer.finalize().unwrap();
+
+            let read_config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                protocol_version,
+            );
+            let mut reader = BatchReader::new(read_config).unwrap();
+            reader.read_header().unwrap();
+
+            let read_entries = reader.read_protocol_flist().unwrap();
+            assert!(read_entries.is_empty());
+            assert_eq!(reader.io_error(), 0);
         }
     }
 }
