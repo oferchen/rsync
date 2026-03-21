@@ -243,7 +243,11 @@ impl FileListWriter {
         }
 
         // Creation time equals mtime flag (bit 17, varint mode only)
-        if self.preserve.crtimes && entry.crtime() == entry.mtime() {
+        // This flag occupies bit 17 which is only transmitted in varint flag encoding.
+        // In non-varint mode (protocol 28-29 two-byte flags), bits 16+ are not on the wire,
+        // so setting this flag would cause the writer to skip crtime while the reader
+        // still expects it - leading to deserialization misalignment.
+        if self.use_varint_flags() && self.preserve.crtimes && entry.crtime() == entry.mtime() {
             xflags |= (XMIT_CRTIME_EQ_MTIME as u32) << 16;
         }
 
