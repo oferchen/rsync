@@ -5,7 +5,7 @@ use std::fs;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc::TryRecvError;
 
-use super::config::{DiskCommitConfig, DEFAULT_CHANNEL_CAPACITY};
+use super::config::{DEFAULT_CHANNEL_CAPACITY, DiskCommitConfig};
 use super::thread::spawn_disk_thread;
 
 #[test]

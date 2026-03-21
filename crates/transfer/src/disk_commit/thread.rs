@@ -7,8 +7,8 @@
 use std::io;
 use std::thread::{self, JoinHandle};
 
-use crate::pipeline::spsc;
 use crate::pipeline::messages::{CommitResult, FileMessage};
+use crate::pipeline::spsc;
 
 use super::config::DiskCommitConfig;
 use super::process::{process_file, process_whole_file};
