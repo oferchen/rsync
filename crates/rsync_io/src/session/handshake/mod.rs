@@ -1,3 +1,5 @@
+//! Session-level negotiation that unifies binary and legacy handshake flows.
+
 mod negotiate;
 mod session;
 

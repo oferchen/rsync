@@ -1,5 +1,11 @@
 #![allow(clippy::module_name_repetitions)]
 
+//! Binary rsync protocol negotiation.
+//!
+//! This module implements the binary handshake used by remote-shell (SSH)
+//! transports. It detects a binary prologue, exchanges 4-byte little-endian
+//! protocol versions, and reads compatibility flags for protocol 30+.
+
 mod handshake;
 mod negotiate;
 mod parts;
