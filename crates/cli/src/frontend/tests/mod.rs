@@ -57,6 +57,9 @@ mod connect_tests;
 mod daemon_tests;
 #[path = "delete.rs"]
 mod delete_tests;
+#[cfg(unix)]
+#[path = "error_recovery.rs"]
+mod error_recovery_tests;
 #[path = "dry_run.rs"]
 mod dry_run_tests;
 #[cfg(unix)]
