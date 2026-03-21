@@ -9,7 +9,9 @@ use std::net::TcpStream;
 
 use super::errors::{socket_option_error, unknown_option};
 use super::lookup::{intern_name, lookup_socket_option, parse_socket_option_value};
-use super::types::{ParsedSocketOption, SocketOptionKind};
+use super::types::ParsedSocketOption;
+#[cfg(not(target_family = "windows"))]
+use super::types::SocketOptionKind;
 use crate::client::ClientError;
 
 #[cfg(not(target_family = "windows"))]
