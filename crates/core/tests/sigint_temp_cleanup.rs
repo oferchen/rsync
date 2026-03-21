@@ -14,8 +14,8 @@ use core::exit_code::ExitCode;
 use core::signal::{CleanupManager, ShutdownReason};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::tempdir;
 
 /// Simulates the SIGINT handler setting atomic flags, then the application
@@ -54,7 +54,10 @@ fn sigint_cleans_up_registered_temp_files() {
 
     // Verify all temp files exist before signal
     for path in &temp_paths {
-        assert!(path.exists(), "temp file should exist before signal: {path:?}");
+        assert!(
+            path.exists(),
+            "temp file should exist before signal: {path:?}"
+        );
     }
     assert!(final_file.exists());
 
