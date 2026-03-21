@@ -646,6 +646,168 @@ fn keepalive_detection_is_case_insensitive() {
 }
 
 #[test]
+fn keepalive_detection_is_case_insensitive_for_count_max() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-oSERVERALIVECOUNTMAX=10");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a.contains("ServerAliveInterval")),
+        "case-insensitive CountMax detection should prevent all keepalive injection in {rendered:?}"
+    );
+}
+
+#[test]
+fn omits_keepalive_for_rsh_program() {
+    let mut command = SshCommand::new("example.com");
+    command.set_program("rsh");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a.contains("ServerAlive")),
+        "keepalive should not appear for rsh program in {rendered:?}"
+    );
+}
+
+#[test]
+fn omits_keepalive_for_absolute_path_non_ssh_program() {
+    let mut command = SshCommand::new("example.com");
+    command.set_program("/usr/local/bin/plink");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|a| a.contains("ServerAlive")),
+        "keepalive should not appear for non-ssh absolute path in {rendered:?}"
+    );
+}
+
+#[test]
+fn keepalive_injected_between_port_and_user_options() {
+    let mut command = SshCommand::new("example.com");
+    command.set_port(2222);
+    command.push_option("-v");
+    command.push_remote_arg("rsync");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let port_pos = rendered.iter().position(|a| a == "-p").expect("-p present");
+    let keepalive_pos = rendered
+        .iter()
+        .position(|a| a.starts_with("-oServerAliveInterval="))
+        .expect("keepalive present");
+    let user_opt_pos = rendered.iter().position(|a| a == "-v").expect("-v present");
+    let target_pos = rendered
+        .iter()
+        .position(|a| a == "example.com")
+        .expect("target present");
+    let remote_pos = rendered
+        .iter()
+        .position(|a| a == "rsync")
+        .expect("remote arg present");
+
+    assert!(
+        port_pos < keepalive_pos,
+        "port at {port_pos} should precede keepalive at {keepalive_pos}"
+    );
+    assert!(
+        keepalive_pos < user_opt_pos,
+        "keepalive at {keepalive_pos} should precede user option at {user_opt_pos}"
+    );
+    assert!(
+        user_opt_pos < target_pos,
+        "user option at {user_opt_pos} should precede target at {target_pos}"
+    );
+    assert!(
+        target_pos < remote_pos,
+        "target at {target_pos} should precede remote arg at {remote_pos}"
+    );
+}
+
+#[test]
+fn keepalive_with_bind_address_and_batch_mode() {
+    let mut command = SshCommand::new("example.com");
+    command.set_bind_address(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let batch_pos = rendered
+        .iter()
+        .position(|a| a == "-oBatchMode=yes")
+        .expect("batch mode present");
+    let bind_pos = rendered
+        .iter()
+        .position(|a| a.starts_with("-oBindAddress="))
+        .expect("bind address present");
+    let keepalive_pos = rendered
+        .iter()
+        .position(|a| a.starts_with("-oServerAliveInterval="))
+        .expect("keepalive present");
+    let target_pos = rendered
+        .iter()
+        .position(|a| a == "example.com")
+        .expect("target present");
+
+    assert!(
+        batch_pos < bind_pos,
+        "batch mode at {batch_pos} should precede bind address at {bind_pos}"
+    );
+    assert!(
+        bind_pos < keepalive_pos,
+        "bind address at {bind_pos} should precede keepalive at {keepalive_pos}"
+    );
+    assert!(
+        keepalive_pos < target_pos,
+        "keepalive at {keepalive_pos} should precede target at {target_pos}"
+    );
+}
+
+#[test]
+fn skips_keepalive_when_interval_embedded_in_compound_option() {
+    // User passes keepalive as part of a compound `-o` value.
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-oServerAliveInterval=120");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.contains(&"-oServerAliveInterval=20".to_owned()),
+        "should not inject default when user specified compound interval in {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"-oServerAliveInterval=120".to_owned()),
+        "user compound option should be preserved in {rendered:?}"
+    );
+}
+
+#[test]
+fn keepalive_re_enabled_after_disable() {
+    let mut command = SshCommand::new("example.com");
+    command.set_keepalive(false);
+    command.set_keepalive(true);
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        rendered.contains(&"-oServerAliveInterval=20".to_owned()),
+        "re-enabling keepalive should inject options in {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"-oServerAliveCountMax=3".to_owned()),
+        "re-enabling keepalive should inject both options in {rendered:?}"
+    );
+}
+
+#[test]
 fn bind_address_appears_before_custom_options() {
     let mut command = SshCommand::new("example.com");
     command.set_bind_address(Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
