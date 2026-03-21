@@ -4,8 +4,9 @@ use std::path::Path;
 
 use crate::zlib::{CompressionLevel, CountingZlibEncoder};
 
+use super::defaults::{self, COMPOUND_EXTENSIONS};
 use super::magic::KNOWN_SIGNATURES;
-use super::types::{CompressionDecision, FileCategory};
+use super::types::{CompressionDecision, FileCategory, Suffix};
 use super::{DEFAULT_COMPRESSION_THRESHOLD, DEFAULT_SAMPLE_SIZE};
 
 /// Compression decision engine based on file type and content analysis.
@@ -20,7 +21,7 @@ use super::{DEFAULT_COMPRESSION_THRESHOLD, DEFAULT_SAMPLE_SIZE};
 #[derive(Clone, Debug)]
 pub struct CompressionDecider {
     /// Extensions to skip (lowercase, without leading dot).
-    skip_extensions: HashSet<String>,
+    skip_extensions: HashSet<Suffix>,
     /// Compression ratio threshold for auto-detection.
     compression_threshold: f64,
     /// Sample size for auto-detection.
@@ -53,9 +54,12 @@ impl CompressionDecider {
     /// that typically don't benefit from compression.
     #[must_use]
     pub fn with_default_skip_list() -> Self {
-        let mut decider = Self::new();
-        decider.add_default_skip_extensions();
-        decider
+        Self {
+            skip_extensions: defaults::default_skip_extensions(),
+            compression_threshold: DEFAULT_COMPRESSION_THRESHOLD,
+            sample_size: DEFAULT_SAMPLE_SIZE,
+            use_magic_detection: true,
+        }
     }
 
     /// Creates a compression decider from a user-provided skip list.
@@ -84,83 +88,25 @@ impl CompressionDecider {
         }
     }
 
-    /// Adds the default set of incompressible file extensions.
-    ///
-    /// This list is based on upstream rsync's default skip-compress list.
-    pub fn add_default_skip_extensions(&mut self) {
-        // Images
-        for ext in &[
-            "jpg", "jpeg", "jpe", "png", "gif", "webp", "heic", "heif", "avif", "tif", "tiff",
-            "bmp", "ico", "svg", "svgz", "psd", "raw", "arw", "cr2", "nef", "orf", "sr2",
-        ] {
-            self.skip_extensions.insert((*ext).to_owned());
-        }
-
-        // Video
-        for ext in &[
-            "mp4", "m4v", "mkv", "avi", "mov", "wmv", "flv", "webm", "mpeg", "mpg", "vob", "ogv",
-            "3gp", "3g2", "ts", "mts", "m2ts",
-        ] {
-            self.skip_extensions.insert((*ext).to_owned());
-        }
-
-        // Audio
-        for ext in &[
-            "mp3", "m4a", "aac", "ogg", "oga", "opus", "flac", "wma", "wav", "aiff", "ape", "mka",
-            "ac3", "dts",
-        ] {
-            self.skip_extensions.insert((*ext).to_owned());
-        }
-
-        // Archives and compressed files
-        for ext in &[
-            "zip", "gz", "gzip", "bz2", "bzip2", "xz", "lzma", "7z", "rar", "zst", "zstd", "lz4",
-            "lzo", "z", "cab", "arj", "lzh", "tar.gz", "tar.bz2", "tar.xz", "tar.zst", "tgz",
-            "tbz", "tbz2", "txz",
-        ] {
-            self.skip_extensions.insert((*ext).to_owned());
-        }
-
-        // Package formats (pre-compressed)
-        for ext in &[
-            "deb", "rpm", "apk", "jar", "war", "ear", "egg", "whl", "gem", "nupkg", "snap", "appx",
-            "msix",
-        ] {
-            self.skip_extensions.insert((*ext).to_owned());
-        }
-
-        // Documents (often pre-compressed)
-        for ext in &[
-            "pdf", "epub", "mobi", "azw", "azw3", "docx", "xlsx", "pptx", "odt", "ods", "odp",
-        ] {
-            self.skip_extensions.insert((*ext).to_owned());
-        }
-
-        // Disk images (often compressed or encrypted)
-        for ext in &["iso", "img", "dmg", "vhd", "vhdx", "vmdk", "qcow", "qcow2"] {
-            self.skip_extensions.insert((*ext).to_owned());
-        }
-    }
-
     /// Adds a single extension to the skip list.
     ///
     /// The extension is normalized: leading dots are stripped and it's converted to lowercase.
     pub fn add_skip_extension(&mut self, ext: &str) {
-        let normalized = ext.trim_start_matches('.').trim().to_ascii_lowercase();
-        if !normalized.is_empty() {
-            self.skip_extensions.insert(normalized);
+        let suffix = Suffix::new(ext);
+        if !suffix.is_empty() {
+            self.skip_extensions.insert(suffix);
         }
     }
 
     /// Removes an extension from the skip list.
     pub fn remove_skip_extension(&mut self, ext: &str) -> bool {
-        let normalized = ext.trim_start_matches('.').to_ascii_lowercase();
-        self.skip_extensions.remove(&normalized)
+        let suffix = Suffix::new(ext);
+        self.skip_extensions.remove(&suffix)
     }
 
     /// Returns the current set of skip extensions.
     #[must_use]
-    pub fn skip_extensions(&self) -> &HashSet<String> {
+    pub fn skip_extensions(&self) -> &HashSet<Suffix> {
         &self.skip_extensions
     }
 
@@ -213,7 +159,7 @@ impl CompressionDecider {
     pub fn should_compress(&self, path: &Path, first_block: Option<&[u8]>) -> CompressionDecision {
         // Check extension first (fastest path)
         if let Some(ext) = Self::extract_extension(path) {
-            if self.skip_extensions.contains(&ext) {
+            if self.skip_extensions.contains(ext.as_str()) {
                 return CompressionDecision::Skip;
             }
         }
@@ -271,22 +217,22 @@ impl CompressionDecider {
     }
 
     /// Extracts and normalizes the file extension from a path.
-    pub(crate) fn extract_extension(path: &Path) -> Option<String> {
+    pub(crate) fn extract_extension(path: &Path) -> Option<Suffix> {
         // Handle compound extensions like .tar.gz
         let file_name = path.file_name()?.to_str()?;
         let lower = file_name.to_ascii_lowercase();
 
         // Check for known compound extensions
-        for compound in &[".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst"] {
+        for compound in COMPOUND_EXTENSIONS {
             if lower.ends_with(compound) {
-                return Some(compound.trim_start_matches('.').to_owned());
+                return Some(Suffix::new(compound.trim_start_matches('.')));
             }
         }
 
         // Fall back to simple extension
         path.extension()
             .and_then(|ext| ext.to_str())
-            .map(str::to_ascii_lowercase)
+            .map(Suffix::new)
     }
 
     /// Detects file category by examining magic bytes.
