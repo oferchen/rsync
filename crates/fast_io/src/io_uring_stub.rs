@@ -658,3 +658,384 @@ mod socket_stub {
 
 #[cfg(unix)]
 pub use socket_stub::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::IoUringPolicy;
+    use crate::traits::{FileReader, FileWriter};
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use tempfile::{NamedTempFile, tempdir};
+
+    // ─────────────────────────────────────────────────────────────────────
+    // IoUringPolicy fallback tests (non-Linux / feature-disabled platform)
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn io_uring_unavailable_on_stub_platform() {
+        assert!(!is_io_uring_available());
+    }
+
+    #[test]
+    fn policy_disabled_writer_uses_std() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"").unwrap();
+        let file = tmp.reopen().unwrap();
+
+        let writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
+        assert!(matches!(writer, IoUringOrStdWriter::Std(_)));
+    }
+
+    #[test]
+    fn policy_disabled_reader_uses_std() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("disabled_reader.txt");
+        std::fs::write(&path, b"hello").unwrap();
+
+        let reader = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
+        assert!(matches!(reader, IoUringOrStdReader::Std(_)));
+    }
+
+    #[test]
+    fn policy_auto_falls_back_to_std_writer() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"").unwrap();
+        let file = tmp.reopen().unwrap();
+
+        let writer = writer_from_file(file, 8192, IoUringPolicy::Auto).unwrap();
+        // On non-Linux, Auto always falls back to Std
+        assert!(matches!(writer, IoUringOrStdWriter::Std(_)));
+    }
+
+    #[test]
+    fn policy_auto_falls_back_to_std_reader() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("auto_reader.txt");
+        std::fs::write(&path, b"world").unwrap();
+
+        let reader = reader_from_path(&path, IoUringPolicy::Auto).unwrap();
+        assert!(matches!(reader, IoUringOrStdReader::Std(_)));
+    }
+
+    #[test]
+    fn policy_enabled_writer_returns_error() {
+        let tmp = NamedTempFile::new().unwrap();
+        let file = tmp.reopen().unwrap();
+
+        let result = writer_from_file(file, 8192, IoUringPolicy::Enabled);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert!(err.to_string().contains("io_uring"));
+    }
+
+    #[test]
+    fn policy_enabled_reader_returns_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("enabled_reader.txt");
+        std::fs::write(&path, b"data").unwrap();
+
+        let result = reader_from_path(&path, IoUringPolicy::Enabled);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert!(err.to_string().contains("io_uring"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Parity tests - output must be identical regardless of policy
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn writer_parity_disabled_vs_auto() {
+        let test_data: Vec<u8> = (0..4096).map(|i| ((i * 7 + 13) % 256) as u8).collect();
+
+        // Write via Disabled policy
+        let dir = tempdir().unwrap();
+        let path_disabled = dir.path().join("parity_disabled.bin");
+        {
+            let file = std::fs::File::create(&path_disabled).unwrap();
+            let mut writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
+            writer.write_all(&test_data).unwrap();
+            writer.flush().unwrap();
+        }
+
+        // Write via Auto policy (also falls back to Std on non-Linux)
+        let path_auto = dir.path().join("parity_auto.bin");
+        {
+            let file = std::fs::File::create(&path_auto).unwrap();
+            let mut writer = writer_from_file(file, 8192, IoUringPolicy::Auto).unwrap();
+            writer.write_all(&test_data).unwrap();
+            writer.flush().unwrap();
+        }
+
+        let content_disabled = std::fs::read(&path_disabled).unwrap();
+        let content_auto = std::fs::read(&path_auto).unwrap();
+
+        assert_eq!(content_disabled.len(), test_data.len());
+        assert_eq!(content_disabled, content_auto);
+        assert_eq!(content_disabled, test_data);
+    }
+
+    #[test]
+    fn reader_parity_disabled_vs_auto() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("parity_read.bin");
+        let test_data: Vec<u8> = (0..8192).map(|i| ((i * 11 + 3) % 256) as u8).collect();
+        std::fs::write(&path, &test_data).unwrap();
+
+        // Read via Disabled policy
+        let mut reader_disabled = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
+        let data_disabled = reader_disabled.read_all().unwrap();
+
+        // Read via Auto policy
+        let mut reader_auto = reader_from_path(&path, IoUringPolicy::Auto).unwrap();
+        let data_auto = reader_auto.read_all().unwrap();
+
+        assert_eq!(data_disabled.len(), test_data.len());
+        assert_eq!(data_disabled, data_auto);
+        assert_eq!(data_disabled, test_data);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Partial write and multi-chunk tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn writer_handles_partial_writes_correctly() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("partial_write.bin");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
+
+        // Write in small chunks to exercise buffering
+        for i in 0u8..100 {
+            writer.write_all(&[i]).unwrap();
+        }
+        writer.flush().unwrap();
+
+        let content = std::fs::read(&path).unwrap();
+        let expected: Vec<u8> = (0u8..100).collect();
+        assert_eq!(content, expected);
+    }
+
+    #[test]
+    fn writer_large_payload_multi_flush() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("multi_flush.bin");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = writer_from_file(file, 4096, IoUringPolicy::Disabled).unwrap();
+
+        // Write in chunks larger than buffer capacity to trigger multiple flushes
+        let chunk: Vec<u8> = (0..8192).map(|i| (i % 256) as u8).collect();
+        for _ in 0..4 {
+            writer.write_all(&chunk).unwrap();
+        }
+        writer.flush().unwrap();
+
+        let content = std::fs::read(&path).unwrap();
+        assert_eq!(content.len(), 8192 * 4);
+        // Verify each chunk is correct
+        for (i, actual_chunk) in content.chunks(8192).enumerate() {
+            assert_eq!(actual_chunk, &chunk[..], "chunk {i} mismatch");
+        }
+    }
+
+    #[test]
+    fn reader_partial_reads_via_policy() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("partial_read.bin");
+        std::fs::write(&path, b"0123456789ABCDEF").unwrap();
+
+        let mut reader = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
+
+        let mut buf = [0u8; 4];
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"0123");
+
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"4567");
+
+        // Read remaining
+        let mut rest = Vec::new();
+        reader.read_to_end(&mut rest).unwrap();
+        assert_eq!(&rest, b"89ABCDEF");
+    }
+
+    #[test]
+    fn writer_bytes_written_tracking() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bytes_tracking.bin");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
+
+        assert_eq!(writer.bytes_written(), 0);
+        writer.write_all(b"hello").unwrap();
+        assert_eq!(writer.bytes_written(), 5);
+        writer.write_all(b" world").unwrap();
+        assert_eq!(writer.bytes_written(), 11);
+        writer.flush().unwrap();
+        assert_eq!(writer.bytes_written(), 11);
+    }
+
+    #[test]
+    fn reader_size_and_position_tracking() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("position_tracking.bin");
+        let data = b"abcdefghijklmnop";
+        std::fs::write(&path, data).unwrap();
+
+        let mut reader = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
+        assert_eq!(reader.size(), 16);
+        assert_eq!(reader.position(), 0);
+
+        let mut buf = [0u8; 4];
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(reader.position(), 4);
+        assert_eq!(reader.remaining(), 12);
+    }
+
+    #[test]
+    fn write_then_read_roundtrip_via_policy() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("roundtrip.bin");
+        let test_data: Vec<u8> = (0..65536).map(|i| ((i * 17 + 5) % 256) as u8).collect();
+
+        // Write
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut writer = writer_from_file(file, 16384, IoUringPolicy::Disabled).unwrap();
+            writer.write_all(&test_data).unwrap();
+            writer.flush().unwrap();
+        }
+
+        // Read back
+        let mut reader = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
+        let read_back = reader.read_all().unwrap();
+
+        assert_eq!(read_back.len(), test_data.len());
+        assert_eq!(read_back, test_data);
+    }
+
+    #[test]
+    fn factory_reader_forced_fallback_produces_std() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("factory_fallback.txt");
+        std::fs::write(&path, b"factory test").unwrap();
+
+        let factory = IoUringReaderFactory::default().force_fallback(true);
+        assert!(!factory.will_use_io_uring());
+
+        let reader = factory.open(&path).unwrap();
+        assert!(matches!(reader, IoUringOrStdReader::Std(_)));
+    }
+
+    #[test]
+    fn factory_writer_forced_fallback_produces_std() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("factory_fallback_write.txt");
+
+        let factory = IoUringWriterFactory::default().force_fallback(true);
+        assert!(!factory.will_use_io_uring());
+
+        let writer = factory.create(&path).unwrap();
+        assert!(matches!(writer, IoUringOrStdWriter::Std(_)));
+    }
+
+    #[test]
+    fn empty_file_roundtrip_via_policy() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("empty_roundtrip.bin");
+
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
+            writer.flush().unwrap();
+            assert_eq!(writer.bytes_written(), 0);
+        }
+
+        let mut reader = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
+        assert_eq!(reader.size(), 0);
+        let data = reader.read_all().unwrap();
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn policy_default_is_auto() {
+        assert_eq!(IoUringPolicy::default(), IoUringPolicy::Auto);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn socket_reader_disabled_policy_uses_std() {
+        let (fd_a, fd_b) = {
+            let mut fds = [0i32; 2];
+            let ret = unsafe {
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
+            };
+            assert_eq!(ret, 0);
+            (fds[0], fds[1])
+        };
+
+        let reader = socket_reader_from_fd(fd_b, 8192, IoUringPolicy::Disabled).unwrap();
+        assert!(matches!(reader, IoUringOrStdSocketReader::Std(_)));
+
+        unsafe {
+            libc::close(fd_a);
+            libc::close(fd_b);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn socket_writer_disabled_policy_uses_std() {
+        let (fd_a, fd_b) = {
+            let mut fds = [0i32; 2];
+            let ret = unsafe {
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
+            };
+            assert_eq!(ret, 0);
+            (fds[0], fds[1])
+        };
+
+        let writer = socket_writer_from_fd(fd_a, 8192, IoUringPolicy::Disabled).unwrap();
+        assert!(matches!(writer, IoUringOrStdSocketWriter::Std(_)));
+
+        unsafe {
+            libc::close(fd_a);
+            libc::close(fd_b);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn socket_enabled_policy_returns_error() {
+        let (fd_a, fd_b) = {
+            let mut fds = [0i32; 2];
+            let ret = unsafe {
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
+            };
+            assert_eq!(ret, 0);
+            (fds[0], fds[1])
+        };
+
+        let reader_result = socket_reader_from_fd(fd_b, 8192, IoUringPolicy::Enabled);
+        assert!(reader_result.is_err());
+        assert_eq!(
+            reader_result.unwrap_err().kind(),
+            io::ErrorKind::Unsupported
+        );
+
+        let writer_result = socket_writer_from_fd(fd_a, 8192, IoUringPolicy::Enabled);
+        assert!(writer_result.is_err());
+        assert_eq!(
+            writer_result.unwrap_err().kind(),
+            io::ErrorKind::Unsupported
+        );
+
+        unsafe {
+            libc::close(fd_a);
+            libc::close(fd_b);
+        }
+    }
+}
