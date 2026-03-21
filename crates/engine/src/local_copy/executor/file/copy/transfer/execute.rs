@@ -514,6 +514,62 @@ fn try_skip_up_to_date(
     Ok(true)
 }
 
+/// The write strategy for transferring a file to disk.
+///
+/// Mirrors upstream `receiver.c` logic which selects among four paths based on
+/// transfer mode flags and destination state. The strategy is determined purely
+/// from flags - no I/O - then executed by `open_destination_writer`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriteStrategy {
+    /// Open existing file and seek to append offset.
+    Append,
+    /// Write directly to destination without temp file.
+    /// Truncates when no delta signature exists.
+    Inplace,
+    /// Create new file directly - no existing destination to protect.
+    /// Uses `create_new(true)` to prevent races with concurrent writers.
+    Direct,
+    /// Create a staging temp file then rename atomically.
+    /// Used when an existing destination must be protected, or when
+    /// `--partial`, `--delay-updates`, or `--temp-dir` is active.
+    TempFileRename,
+}
+
+/// Determines the write strategy from transfer flags and destination state.
+///
+/// This is a pure function with no I/O - it only inspects flags to decide
+/// which strategy `open_destination_writer` should execute.
+///
+/// # Strategy selection (upstream: receiver.c)
+///
+/// 1. **Append** - `append_offset > 0`: resume writing at end of existing file.
+/// 2. **Inplace** - `--inplace`: write directly, truncating only when no delta.
+/// 3. **Direct** - no existing destination AND none of `--partial`,
+///    `--delay-updates`, `--temp-dir`: create file directly.
+/// 4. **TempFileRename** - all other cases: temp file + atomic rename.
+fn select_write_strategy(
+    append_offset: u64,
+    inplace_enabled: bool,
+    partial_enabled: bool,
+    delay_updates_enabled: bool,
+    has_existing_destination: bool,
+    has_temp_directory: bool,
+) -> WriteStrategy {
+    if append_offset > 0 {
+        WriteStrategy::Append
+    } else if inplace_enabled {
+        WriteStrategy::Inplace
+    } else if !has_existing_destination
+        && !partial_enabled
+        && !delay_updates_enabled
+        && !has_temp_directory
+    {
+        WriteStrategy::Direct
+    } else {
+        WriteStrategy::TempFileRename
+    }
+}
+
 /// Opens the destination file using the appropriate write strategy.
 ///
 /// Selects among four strategies based on transfer mode:
@@ -535,59 +591,232 @@ fn open_destination_writer(
     guard: &mut Option<DestinationWriteGuard>,
     staging_path: &mut Option<PathBuf>,
 ) -> Result<fs::File, LocalCopyError> {
-    if append_offset > 0 {
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
-        file.seek(SeekFrom::Start(append_offset))
-            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
-        Ok(file)
-    } else if inplace_enabled {
-        // For inplace with delta, do NOT truncate - we read existing blocks
-        let should_truncate = delta_signature.is_none();
-        fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(should_truncate)
-            .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination, error))
-    } else if existing_metadata.is_none()
-        && !partial_enabled
-        && !delay_updates_enabled
-        && context.temp_directory_path().is_none()
-    {
-        // upstream: receiver.c - direct write when no existing file to protect.
-        // create_new(true) prevents races with concurrent writers (EEXIST).
-        debug_log!(
-            Io,
-            3,
-            "direct write to {} (no existing destination)",
-            record_path.display()
+    let strategy = select_write_strategy(
+        append_offset,
+        inplace_enabled,
+        partial_enabled,
+        delay_updates_enabled,
+        existing_metadata.is_some(),
+        context.temp_directory_path().is_some(),
+    );
+
+    match strategy {
+        WriteStrategy::Append => {
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(destination)
+                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+            file.seek(SeekFrom::Start(append_offset))
+                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+            Ok(file)
+        }
+        WriteStrategy::Inplace => {
+            // For inplace with delta, do NOT truncate - we read existing blocks
+            let should_truncate = delta_signature.is_none();
+            fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(should_truncate)
+                .open(destination)
+                .map_err(|error| LocalCopyError::io("copy file", destination, error))
+        }
+        WriteStrategy::Direct => {
+            // upstream: receiver.c - direct write when no existing file to protect.
+            // create_new(true) prevents races with concurrent writers (EEXIST).
+            debug_log!(
+                Io,
+                3,
+                "direct write to {} (no existing destination)",
+                record_path.display()
+            );
+            fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(destination)
+                .map_err(|error| LocalCopyError::io("copy file", destination, error))
+        }
+        WriteStrategy::TempFileRename => {
+            let (new_guard, file) = DestinationWriteGuard::new(
+                destination,
+                partial_enabled,
+                context.partial_directory_path(),
+                context.temp_directory_path(),
+            )?;
+            *staging_path = Some(new_guard.staging_path().to_path_buf());
+            debug_log!(
+                Io,
+                3,
+                "created temp file {} for {}",
+                new_guard.staging_path().display(),
+                record_path.display()
+            );
+            *guard = Some(new_guard);
+            Ok(file)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Append strategy ---
+
+    #[test]
+    fn append_offset_selects_append_strategy() {
+        assert_eq!(
+            select_write_strategy(1024, false, false, false, false, false),
+            WriteStrategy::Append,
         );
-        fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination, error))
-    } else {
-        let (new_guard, file) = DestinationWriteGuard::new(
-            destination,
-            partial_enabled,
-            context.partial_directory_path(),
-            context.temp_directory_path(),
-        )?;
-        *staging_path = Some(new_guard.staging_path().to_path_buf());
-        debug_log!(
-            Io,
-            3,
-            "created temp file {} for {}",
-            new_guard.staging_path().display(),
-            record_path.display()
+    }
+
+    #[test]
+    fn append_offset_overrides_inplace() {
+        assert_eq!(
+            select_write_strategy(512, true, false, false, true, false),
+            WriteStrategy::Append,
         );
-        *guard = Some(new_guard);
-        Ok(file)
+    }
+
+    #[test]
+    fn append_offset_overrides_partial() {
+        assert_eq!(
+            select_write_strategy(256, false, true, false, false, false),
+            WriteStrategy::Append,
+        );
+    }
+
+    // --- Inplace strategy ---
+
+    #[test]
+    fn inplace_enabled_selects_inplace_strategy() {
+        assert_eq!(
+            select_write_strategy(0, true, false, false, true, false),
+            WriteStrategy::Inplace,
+        );
+    }
+
+    #[test]
+    fn inplace_without_existing_dest_still_selects_inplace() {
+        assert_eq!(
+            select_write_strategy(0, true, false, false, false, false),
+            WriteStrategy::Inplace,
+        );
+    }
+
+    #[test]
+    fn inplace_overrides_partial_and_delay_updates() {
+        assert_eq!(
+            select_write_strategy(0, true, true, true, true, true),
+            WriteStrategy::Inplace,
+        );
+    }
+
+    // --- Direct strategy ---
+
+    #[test]
+    fn no_existing_dest_selects_direct_strategy() {
+        assert_eq!(
+            select_write_strategy(0, false, false, false, false, false),
+            WriteStrategy::Direct,
+        );
+    }
+
+    // --- TempFileRename strategy ---
+
+    #[test]
+    fn partial_forces_temp_file_rename() {
+        assert_eq!(
+            select_write_strategy(0, false, true, false, false, false),
+            WriteStrategy::TempFileRename,
+        );
+    }
+
+    #[test]
+    fn delay_updates_forces_temp_file_rename() {
+        assert_eq!(
+            select_write_strategy(0, false, false, true, false, false),
+            WriteStrategy::TempFileRename,
+        );
+    }
+
+    #[test]
+    fn temp_dir_forces_temp_file_rename() {
+        assert_eq!(
+            select_write_strategy(0, false, false, false, false, true),
+            WriteStrategy::TempFileRename,
+        );
+    }
+
+    #[test]
+    fn existing_dest_forces_temp_file_rename() {
+        assert_eq!(
+            select_write_strategy(0, false, false, false, true, false),
+            WriteStrategy::TempFileRename,
+        );
+    }
+
+    #[test]
+    fn existing_dest_with_partial_forces_temp_file_rename() {
+        assert_eq!(
+            select_write_strategy(0, false, true, false, true, false),
+            WriteStrategy::TempFileRename,
+        );
+    }
+
+    #[test]
+    fn all_temp_file_flags_active_selects_temp_file_rename() {
+        assert_eq!(
+            select_write_strategy(0, false, true, true, true, true),
+            WriteStrategy::TempFileRename,
+        );
+    }
+
+    // --- Priority ordering ---
+
+    #[test]
+    fn append_has_highest_priority() {
+        // Even with inplace, partial, delay-updates, existing dest, and temp dir
+        assert_eq!(
+            select_write_strategy(100, true, true, true, true, true),
+            WriteStrategy::Append,
+        );
+    }
+
+    #[test]
+    fn inplace_has_second_highest_priority() {
+        // Even with partial, delay-updates, existing dest, and temp dir
+        assert_eq!(
+            select_write_strategy(0, true, true, true, true, true),
+            WriteStrategy::Inplace,
+        );
+    }
+
+    #[test]
+    fn direct_requires_all_conditions_false() {
+        // Any single flag prevents direct write
+        assert_eq!(
+            select_write_strategy(0, false, true, false, false, false),
+            WriteStrategy::TempFileRename,
+        );
+        assert_eq!(
+            select_write_strategy(0, false, false, true, false, false),
+            WriteStrategy::TempFileRename,
+        );
+        assert_eq!(
+            select_write_strategy(0, false, false, false, true, false),
+            WriteStrategy::TempFileRename,
+        );
+        assert_eq!(
+            select_write_strategy(0, false, false, false, false, true),
+            WriteStrategy::TempFileRename,
+        );
+        // Only when all are false do we get Direct
+        assert_eq!(
+            select_write_strategy(0, false, false, false, false, false),
+            WriteStrategy::Direct,
+        );
     }
 }
