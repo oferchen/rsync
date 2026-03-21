@@ -1,7 +1,15 @@
 //! Portable io_uring fallback for non-Linux platforms or when the feature is disabled.
 //!
-//! Provides the same public API as `io_uring` but always falls back to standard
-//! buffered I/O. The `is_io_uring_available()` function always returns `false`.
+//! Provides the same public API as the real `io_uring` module but always falls
+//! back to standard buffered I/O. The `is_io_uring_available()` function always
+//! returns `false`. This module is compiled when either:
+//!
+//! - The target OS is not Linux, or
+//! - The `io_uring` cargo feature is not enabled
+//!
+//! All factory types ([`IoUringReaderFactory`], [`IoUringWriterFactory`]) produce
+//! `Std` variants directly. The stub types ([`IoUringReader`], [`IoUringWriter`])
+//! cannot be constructed and exist only for enum variant completeness.
 
 #![allow(dead_code)]
 

@@ -1,4 +1,8 @@
 //! io_uring configuration, kernel detection, and availability caching.
+//!
+//! Kernel version detection uses `uname(2)` to parse the release string and
+//! requires >= 5.6. The result is cached in process-wide atomics so that
+//! subsequent calls to [`is_io_uring_available`] are a single relaxed load.
 
 use std::ffi::CStr;
 use std::io;
@@ -6,7 +10,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use io_uring::IoUring as RawIoUring;
 
-/// Minimum kernel version required for io_uring (5.6.0).
+/// Minimum kernel version required for io_uring.
+///
+/// Linux 5.6 introduced `io_uring_setup(2)` with support for all opcodes this
+/// crate uses: `IORING_OP_READ`, `IORING_OP_WRITE`, `IORING_OP_SEND`,
+/// `IORING_REGISTER_FILES`, and `IORING_SETUP_SQPOLL`. Earlier kernels (5.1-5.5)
+/// had partial io_uring support but lacked critical features.
 const MIN_KERNEL_VERSION: (u32, u32) = (5, 6);
 
 /// Cached result of io_uring availability check.
@@ -35,10 +44,14 @@ fn get_kernel_release() -> Option<String> {
 
 /// Checks if the current kernel supports io_uring.
 ///
-/// Returns `true` if:
+/// Returns `true` if all of the following hold:
+///
 /// 1. Running on Linux
-/// 2. Kernel version is 5.6 or later
-/// 3. io_uring syscalls are available (not blocked by seccomp)
+/// 2. Kernel version is 5.6 or later (parsed from `uname().release`)
+/// 3. `io_uring_setup(2)` succeeds - not blocked by seccomp or container runtime
+///
+/// The result is cached after the first call. Subsequent calls are a single
+/// atomic load with `Relaxed` ordering (sub-nanosecond).
 #[must_use]
 pub fn is_io_uring_available() -> bool {
     // Fast path: use cached result
@@ -73,6 +86,12 @@ fn check_io_uring_available() -> bool {
 }
 
 /// Configuration for io_uring instances.
+///
+/// Controls ring size, buffer dimensions, and optional kernel features.
+/// All features require Linux 5.6+. The defaults (64 SQ entries, 64 KB buffers,
+/// fd registration enabled, SQPOLL disabled) are tuned for general rsync
+/// workloads. Use [`for_large_files`](Self::for_large_files) or
+/// [`for_small_files`](Self::for_small_files) for specialized workloads.
 #[derive(Debug, Clone)]
 pub struct IoUringConfig {
     /// Number of submission queue entries (must be power of 2).
@@ -142,7 +161,9 @@ impl IoUringConfig {
     /// Builds an `IoUring` instance from this config.
     ///
     /// Tries SQPOLL first if requested; falls back to a plain ring on
-    /// `EPERM` / `ENOMEM`.
+    /// `EPERM` / `ENOMEM`. This two-step approach means callers can
+    /// optimistically request SQPOLL without needing privilege checks
+    /// upfront - the fallback is transparent.
     pub(super) fn build_ring(&self) -> io::Result<RawIoUring> {
         if self.sqpoll {
             let mut builder = io_uring::IoUring::builder();

@@ -1,4 +1,9 @@
 //! Factory types and fallback enums for io_uring file I/O.
+//!
+//! The factories check [`is_io_uring_available`] before each open/create call.
+//! When io_uring is unavailable or ring construction fails, they silently return
+//! a `Std` variant wrapping standard buffered I/O. Callers interact only with
+//! the [`FileReader`] / [`FileWriter`] traits, unaware of the backend.
 
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -9,6 +14,10 @@ use super::file_writer::IoUringWriter;
 use crate::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory};
 
 /// Factory that creates io_uring readers when available, with fallback to standard I/O.
+///
+/// On each `open()` call, checks [`is_io_uring_available`] (cached atomic) and
+/// `force_fallback`. If io_uring is eligible, attempts to open an
+/// [`IoUringReader`]; on any failure, returns a [`StdFileReader`] instead.
 #[derive(Debug, Clone, Default)]
 pub struct IoUringReaderFactory {
     config: IoUringConfig,
@@ -40,11 +49,15 @@ impl IoUringReaderFactory {
 }
 
 /// Reader that can be either io_uring-based or standard I/O.
+///
+/// Created by [`IoUringReaderFactory`] or [`reader_from_path`](super::reader_from_path).
+/// The variant is chosen at construction time based on io_uring availability;
+/// callers use the [`FileReader`] trait and never branch on the variant.
 #[allow(clippy::large_enum_variant)]
 pub enum IoUringOrStdReader {
-    /// io_uring-based reader.
+    /// io_uring-based reader (Linux 5.6+ with `io_uring` feature).
     IoUring(IoUringReader),
-    /// Standard buffered reader (fallback).
+    /// Standard buffered reader (fallback on all platforms).
     Std(crate::traits::StdFileReader),
 }
 
@@ -107,6 +120,10 @@ impl FileReaderFactory for IoUringReaderFactory {
 }
 
 /// Factory that creates io_uring writers when available, with fallback to standard I/O.
+///
+/// On each `create()` call, checks [`is_io_uring_available`] (cached atomic) and
+/// `force_fallback`. If io_uring is eligible, attempts to create an
+/// [`IoUringWriter`]; on any failure, returns a [`StdFileWriter`] instead.
 #[derive(Debug, Clone, Default)]
 pub struct IoUringWriterFactory {
     config: IoUringConfig,
@@ -138,11 +155,15 @@ impl IoUringWriterFactory {
 }
 
 /// Writer that can be either io_uring-based or standard I/O.
+///
+/// Created by [`IoUringWriterFactory`] or [`writer_from_file`](super::writer_from_file).
+/// The variant is chosen at construction time based on io_uring availability;
+/// callers use the [`FileWriter`] trait and never branch on the variant.
 #[allow(clippy::large_enum_variant)]
 pub enum IoUringOrStdWriter {
-    /// io_uring-based writer.
+    /// io_uring-based writer (Linux 5.6+ with `io_uring` feature).
     IoUring(IoUringWriter),
-    /// Standard buffered writer (fallback).
+    /// Standard buffered writer (fallback on all platforms).
     Std(crate::traits::StdFileWriter),
 }
 
