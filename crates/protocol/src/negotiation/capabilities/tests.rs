@@ -2319,19 +2319,21 @@ fn capability_fallback_xxh_alias_in_list() {
 /// Tests that algorithm names must be exact matches.
 #[test]
 fn capability_fallback_exact_match_required() {
-    // These should NOT match any algorithm
-    let test_cases = [
-        ("md5-hmac", ChecksumAlgorithm::MD5),   // suffix
-        ("prefix-md5", ChecksumAlgorithm::MD5), // prefix
-        ("MD5", ChecksumAlgorithm::MD5),        // uppercase
-        ("Md5", ChecksumAlgorithm::MD5),        // mixed case
+    // These should NOT match any algorithm - upstream compat.c:383-406
+    // rejects lists with no common algorithm as a hard error.
+    let invalid_names = [
+        "md5-hmac",   // suffix
+        "prefix-md5", // prefix
+        "MD5",        // uppercase
+        "Md5",        // mixed case
     ];
 
-    for (name, _) in test_cases {
-        let list = name;
-        let result = choose_checksum_algorithm(list).unwrap();
-        // Should fall back to MD5 (default), not match the variant
-        assert_eq!(result, ChecksumAlgorithm::MD5);
+    for name in invalid_names {
+        let result = choose_checksum_algorithm(name);
+        assert!(
+            result.is_err(),
+            "'{name}' should not match any supported algorithm"
+        );
     }
 }
 
@@ -2411,9 +2413,8 @@ fn capability_fallback_empty_vstring() {
         true,
     );
 
-    // Should succeed with MD5 fallback (empty list → default)
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
+    // upstream: compat.c:383-406 - empty remote checksum list is a hard error
+    assert!(result.is_err());
 }
 
 /// Tests that all protocol versions handle fallback consistently.
