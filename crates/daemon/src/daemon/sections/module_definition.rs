@@ -16,4 +16,7 @@ include!("module_definition/setters.rs");
 
 include!("module_definition/finish.rs");
 
-include!("module_definition/tests.rs");
+// These tests use Unix-style paths like /data and /etc/secrets
+#[cfg(all(test, unix))]
+#[path = "module_definition/tests.rs"]
+mod module_definition_builder_tests;
