@@ -1,8 +1,6 @@
 use super::*;
 use crate::chmod::ChmodModifiers;
 
-// ==================== AttrsFlags tests ====================
-
 #[test]
 fn attrs_flags_constants_match_upstream() {
     // upstream rsync.h:192-196
@@ -148,8 +146,6 @@ fn attrs_flags_upstream_receiver_skip_all_when_not_ok_to_set_time() {
     assert!(flags.skip_crtime());
     assert!(!flags.accurate_time());
 }
-
-// ==================== MetadataOptions tests ====================
 
 #[test]
 fn defaults_match_expected_configuration() {
