@@ -561,9 +561,10 @@ impl GeneratorContext {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "invalid file index {}, file list has {} entries",
+                    "invalid file index {}, file list has {} entries{}",
                     ndx,
-                    self.file_list.len()
+                    self.file_list.len(),
+                    crate::role_trailer::sender()
                 ),
             ));
         }
