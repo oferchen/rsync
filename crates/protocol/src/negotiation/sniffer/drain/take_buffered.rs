@@ -116,7 +116,6 @@ impl NegotiationPrologueSniffer {
 
         Ok(written)
     }
-
 }
 
 #[cfg(test)]
