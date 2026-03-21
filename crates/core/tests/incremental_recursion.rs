@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::Path;
 
-use core::client::{run_client, ClientConfig};
+use core::client::{ClientConfig, run_client};
 use tempfile::tempdir;
 
 /// Creates a file with the given content, building parent directories as needed.
@@ -300,8 +300,7 @@ fn mixed_content_deep_tree() {
 
     // Level 1: files and a symlink.
     touch(&source.join("level1/data.txt"), b"l1-data");
-    std::os::unix::fs::symlink("data.txt", source.join("level1/link.txt"))
-        .expect("l1 symlink");
+    std::os::unix::fs::symlink("data.txt", source.join("level1/link.txt")).expect("l1 symlink");
 
     // Level 2: empty directory alongside a populated one.
     fs::create_dir_all(source.join("level1/level2/empty")).expect("l2 empty");
@@ -370,7 +369,8 @@ fn mixed_content_deep_tree() {
         "l2 empty dir preserved"
     );
     assert!(
-        dest.join("level1/level2/populated/level3/level4/vacant").is_dir(),
+        dest.join("level1/level2/populated/level3/level4/vacant")
+            .is_dir(),
         "l4 vacant dir preserved"
     );
 
