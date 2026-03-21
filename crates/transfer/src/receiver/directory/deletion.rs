@@ -35,9 +35,7 @@ impl ReceiverContext {
     /// - `generator.c:delete_in_dir()` - scans one directory, removes unlisted entries
     /// - `generator.c:do_delete_pass()` - full tree walk deletion sweep
     /// - `main.c:1367` - `deletion_count >= max_delete` check
-    pub(in crate::receiver) fn delete_extraneous_files<
-        W: crate::writer::MsgInfoSender + ?Sized,
-    >(
+    pub(in crate::receiver) fn delete_extraneous_files<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
         writer: &mut W,
