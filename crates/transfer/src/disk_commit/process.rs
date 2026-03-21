@@ -12,8 +12,8 @@ use engine::compute_backup_path;
 use protocol::acl::AclCache;
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
-use crate::pipeline::spsc;
 use crate::pipeline::messages::{BeginMessage, CommitResult, ComputedChecksum, FileMessage};
+use crate::pipeline::spsc;
 use crate::temp_guard::{TempFileGuard, open_tmpfile};
 
 use super::config::{BackupConfig, DiskCommitConfig};
@@ -224,16 +224,13 @@ fn flush_and_sync(
     file_path: &Path,
 ) -> io::Result<()> {
     if do_fsync {
-        output.sync().map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("fsync failed for {file_path:?}: {e}"),
-            )
-        })
+        output
+            .sync()
+            .map_err(|e| io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}")))
     } else {
-        output.flush().map_err(|e| {
-            io::Error::other(format!("flush failed for {file_path:?}: {e}"))
-        })
+        output
+            .flush()
+            .map_err(|e| io::Error::other(format!("flush failed for {file_path:?}: {e}")))
     }
 }
 

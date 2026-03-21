@@ -32,5 +32,5 @@ mod writer;
 #[cfg(test)]
 mod tests;
 
-pub use self::config::{BackupConfig, DiskCommitConfig, DEFAULT_CHANNEL_CAPACITY};
+pub use self::config::{BackupConfig, DEFAULT_CHANNEL_CAPACITY, DiskCommitConfig};
 pub use self::thread::{DiskThreadHandle, spawn_disk_thread};
