@@ -462,8 +462,7 @@ where
     // not appear as a separate source operand - only the resolved file entries and
     // the destination are transfer operands.
     // upstream: main.c:780-790 - source dir is chdir target, not a transfer source
-    let mut transfer_operands =
-        Vec::with_capacity(file_list_operands.len() + remainder.len());
+    let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
     if files_from_active && !file_list_operands.is_empty() {
         // File entries (resolved with ./ marker) are the sources.
         // Only the destination from remainder is appended - the source
