@@ -181,7 +181,7 @@ fn read_token_stream_to_ops(data: &[u8]) -> std::io::Result<Vec<DeltaOp>> {
                 std::io::Read::read_exact(&mut cursor, &mut chunk)?;
                 // Accumulate consecutive literal chunks into one Literal op
                 match ops.last_mut() {
-                    Some(DeltaOp::Literal(ref mut existing)) => {
+                    Some(DeltaOp::Literal(existing)) => {
                         existing.extend_from_slice(&chunk);
                     }
                     _ => {
@@ -214,7 +214,7 @@ fn normalize_for_token_comparison(ops: &[DeltaOp]) -> Vec<DeltaOp> {
                 continue;
             }
             DeltaOp::Literal(data) => match result.last_mut() {
-                Some(DeltaOp::Literal(ref mut existing)) => {
+                Some(DeltaOp::Literal(existing)) => {
                     existing.extend_from_slice(data);
                 }
                 _ => {
