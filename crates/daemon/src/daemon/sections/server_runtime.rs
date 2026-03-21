@@ -13,4 +13,6 @@ include!("server_runtime/workers.rs");
 
 include!("server_runtime/accept_loop.rs");
 
-include!("server_runtime/tests.rs");
+#[cfg(test)]
+#[path = "server_runtime/tests.rs"]
+mod server_runtime_tests;
