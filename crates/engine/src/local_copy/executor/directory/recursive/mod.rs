@@ -13,15 +13,13 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-#[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
-use crate::local_copy::LocalCopyExecution;
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyError, LocalCopyMetadata,
     LocalCopyRecord,
 };
 
-pub(crate) use checksum::{collect_file_pairs_for_checksum, prefetch_directory_checksums};
+pub(crate) use checksum::prefetch_directory_checksums;
 use deletion::{handle_empty_directory_pruning, handle_post_transfer_deletions};
 use destination::{DestinationState, check_destination_state, record_skipped_missing_destination};
 use dir_metadata::{apply_final_directory_metadata, record_directory_completion};
