@@ -82,6 +82,7 @@ fn pid_file_error(path: &Path, error: io::Error) -> DaemonError {
 }
 
 /// Creates a [`DaemonError`] for lock file open failures.
+#[cfg(test)]
 fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
     DaemonError::new(
         FEATURE_UNAVAILABLE_EXIT_CODE,
