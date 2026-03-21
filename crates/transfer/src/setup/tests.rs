@@ -1016,3 +1016,218 @@ fn build_capability_string_matches_mapping_order() {
         .collect();
     assert_eq!(chars, expected);
 }
+
+// ===== ProtocolNegotiator trait tests =====
+
+/// Mock negotiator that returns fixed values without wire I/O.
+///
+/// Used to verify that `setup_protocol_with` delegates correctly to the
+/// trait methods rather than calling concrete protocol functions.
+struct MockNegotiator {
+    fixed_seed: i32,
+    fixed_checksum: protocol::ChecksumAlgorithm,
+    fixed_compression: protocol::CompressionAlgorithm,
+    flags_to_write: CompatibilityFlags,
+    flags_to_read: CompatibilityFlags,
+}
+
+impl MockNegotiator {
+    fn new() -> Self {
+        Self {
+            fixed_seed: 777,
+            fixed_checksum: protocol::ChecksumAlgorithm::MD5,
+            fixed_compression: protocol::CompressionAlgorithm::None,
+            flags_to_write: CompatibilityFlags::CHECKSUM_SEED_FIX
+                | CompatibilityFlags::VARINT_FLIST_FLAGS,
+            flags_to_read: CompatibilityFlags::CHECKSUM_SEED_FIX
+                | CompatibilityFlags::VARINT_FLIST_FLAGS,
+        }
+    }
+}
+
+impl CompatFlagsExchanger for MockNegotiator {
+    fn write_compat_flags(
+        &self,
+        _writer: &mut dyn std::io::Write,
+        _flags: CompatibilityFlags,
+        _client_info: &str,
+    ) -> std::io::Result<CompatibilityFlags> {
+        Ok(self.flags_to_write)
+    }
+
+    fn read_compat_flags(
+        &self,
+        _reader: &mut dyn std::io::Read,
+    ) -> std::io::Result<CompatibilityFlags> {
+        Ok(self.flags_to_read)
+    }
+
+    fn build_flags_from_client_info(
+        &self,
+        _client_info: &str,
+        _allow_inc_recurse: bool,
+    ) -> CompatibilityFlags {
+        self.flags_to_write
+    }
+
+    fn parse_client_info<'a>(&self, _client_args: &'a [String]) -> std::borrow::Cow<'a, str> {
+        std::borrow::Cow::Borrowed("fxCIvu")
+    }
+
+    fn has_pre_release_v_flag(&self, _client_info: &str) -> bool {
+        false
+    }
+}
+
+impl CapabilityNegotiator for MockNegotiator {
+    fn negotiate(
+        &self,
+        _protocol: protocol::ProtocolVersion,
+        _stdin: &mut dyn std::io::Read,
+        _stdout: &mut dyn std::io::Write,
+        _do_negotiation: bool,
+        _send_compression: bool,
+        _is_daemon_mode: bool,
+        _is_server: bool,
+    ) -> std::io::Result<protocol::NegotiationResult> {
+        Ok(protocol::NegotiationResult {
+            checksum: self.fixed_checksum,
+            compression: self.fixed_compression,
+        })
+    }
+}
+
+impl ChecksumSeedExchanger for MockNegotiator {
+    fn write_seed(
+        &self,
+        _writer: &mut dyn std::io::Write,
+        _fixed_seed: Option<u32>,
+    ) -> std::io::Result<i32> {
+        Ok(self.fixed_seed)
+    }
+
+    fn read_seed(&self, _reader: &mut dyn std::io::Read) -> std::io::Result<i32> {
+        Ok(self.fixed_seed)
+    }
+}
+
+#[test]
+fn setup_protocol_with_mock_negotiator_server_mode() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let client_args = ["-efxCIvu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args),
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("mock setup should succeed");
+
+    assert_eq!(result.checksum_seed, 777, "should use mock's fixed seed");
+    assert!(
+        result.compat_flags.is_some(),
+        "protocol 31 should exchange compat flags"
+    );
+    assert_eq!(
+        result.compat_flags.unwrap(),
+        CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS,
+        "should return mock's flags"
+    );
+    assert!(
+        result.negotiated_algorithms.is_some(),
+        "should have negotiated algorithms from mock"
+    );
+    let algos = result.negotiated_algorithms.unwrap();
+    assert_eq!(
+        algos.checksum,
+        protocol::ChecksumAlgorithm::MD5,
+        "should use mock's checksum"
+    );
+}
+
+#[test]
+fn setup_protocol_with_mock_negotiator_client_mode() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        is_server: false,
+        is_daemon_mode: false,
+        do_compression: false,
+        checksum_seed: None,
+        allow_inc_recurse: false,
+    };
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("mock client setup should succeed");
+
+    assert_eq!(result.checksum_seed, 777);
+    assert!(result.compat_flags.is_some());
+    assert!(result.negotiated_algorithms.is_some());
+}
+
+#[test]
+fn setup_protocol_with_mock_skips_compat_for_old_protocol() {
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig::new(protocol, true);
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("protocol 29 mock setup should succeed");
+
+    assert!(
+        result.compat_flags.is_none(),
+        "protocol 29 should skip compat flags"
+    );
+    assert!(
+        result.negotiated_algorithms.is_none(),
+        "protocol 29 should skip negotiation"
+    );
+    assert_eq!(result.checksum_seed, 777);
+}
+
+#[test]
+fn rsync_negotiator_implements_protocol_negotiator() {
+    // Verify the default RsyncNegotiator satisfies the trait bound.
+    fn assert_negotiator(_n: &dyn ProtocolNegotiator) {}
+    assert_negotiator(&RsyncNegotiator);
+}
+
+#[test]
+fn setup_protocol_delegates_to_default_negotiator() {
+    // Verify setup_protocol (no _with) produces the same result as
+    // setup_protocol_with using RsyncNegotiator.
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let config = ProtocolSetupConfig::new(protocol, true).with_checksum_seed(Some(42));
+
+    let mut stdout1 = Vec::new();
+    let mut stdin1 = &b""[..];
+    let result1 =
+        setup_protocol(&mut stdout1, &mut stdin1, &config).expect("setup_protocol should succeed");
+
+    let mut stdout2 = Vec::new();
+    let mut stdin2 = &b""[..];
+    let result2 = setup_protocol_with(&mut stdout2, &mut stdin2, &config, &RsyncNegotiator)
+        .expect("setup_protocol_with should succeed");
+
+    assert_eq!(result1.checksum_seed, result2.checksum_seed);
+    assert_eq!(stdout1, stdout2);
+}
