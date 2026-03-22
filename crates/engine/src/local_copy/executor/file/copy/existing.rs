@@ -1,3 +1,10 @@
+//! Pre-copy skip checks for `--update` and `--ignore-existing`.
+//!
+//! Evaluates whether a file should be skipped based on modification time
+//! comparison or the presence of an existing destination file.
+//!
+//! // upstream: generator.c:recv_generator() - update and ignore-existing checks
+
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
