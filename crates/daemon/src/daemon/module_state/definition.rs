@@ -9,6 +9,10 @@ use crate::daemon::HostPattern;
 ///
 /// A module represents a named filesystem path that can be accessed via rsync daemon.
 /// Each module has its own access controls, bandwidth limits, and metadata handling options.
+///
+/// upstream: loadparm.c - each `[module]` section in `rsyncd.conf` produces one
+/// set of parameters accessible via `lp_*()` functions. daemon-parm.h defines
+/// the parameter table with types, defaults, and scope (P_LOCAL vs P_GLOBAL).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ModuleDefinition {
     pub(crate) name: String,
@@ -147,6 +151,13 @@ pub(crate) struct ModuleDefinition {
 
 impl ModuleDefinition {
     /// Checks whether a peer is permitted to access this module.
+    ///
+    /// Evaluates `hosts allow` then `hosts deny` patterns. If `hosts allow`
+    /// is non-empty the peer must match at least one allow pattern. If the
+    /// peer matches any deny pattern, access is refused.
+    ///
+    /// upstream: clientserver.c - `allow_access()` checks `hosts allow` and
+    /// `hosts deny` using `match_hostname()` and `match_address()`.
     pub(crate) fn permits(&self, addr: std::net::IpAddr, hostname: Option<&str>) -> bool {
         if !self.hosts_allow.is_empty()
             && !self

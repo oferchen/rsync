@@ -2,6 +2,10 @@
 ///
 /// When a username in `auth users` includes a suffix (`:ro`, `:rw`, or `:deny`),
 /// the access level overrides the module's default read_only/write_only settings.
+///
+/// upstream: loadparm.c - `auth users` parameter supports `user:ro`, `user:rw`,
+/// and `user:deny` suffixes to control per-user access independently of the
+/// module's `read only` and `write only` settings.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum UserAccessLevel {
     /// Use module's default access (read_only/write_only settings).

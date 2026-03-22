@@ -21,6 +21,10 @@ const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 ///
 /// Uses a shared lock file to coordinate connection counts across multiple
 /// daemon processes. Each module's active count is stored as a line in the file.
+///
+/// upstream: clientserver.c - `claim_connection()` uses `lp_lock_file()` with
+/// `flock()` to atomically check and increment the per-module connection count.
+/// The file format stores `module_name count` pairs, one per line.
 pub(crate) struct ConnectionLimiter {
     path: PathBuf,
 }

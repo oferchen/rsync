@@ -1,6 +1,11 @@
 // Module listing - formats and sends the list of available modules to clients.
 //
-// upstream: clientserver.c:1246-1254
+// When a client sends `#list` as its module request, the daemon responds with
+// the MOTD lines followed by one `%-15s\t%s\n` line per listable module,
+// terminated by `@RSYNCD: EXIT`.
+//
+// upstream: clientserver.c:1246-1254 - `rsync_module()` handles the `#list`
+// request by iterating `lp_numservices()` and printing each listable module.
 
 /// Formats a single module listing line using upstream's `%-15s\t%s\n` layout.
 ///

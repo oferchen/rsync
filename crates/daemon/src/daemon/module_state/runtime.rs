@@ -6,6 +6,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use super::{ConnectionLimiter, ConnectionLockGuard, ModuleDefinition};
 
 /// Live state for a module, pairing its static definition with runtime connection tracking.
+///
+/// upstream: clientserver.c - upstream rsync maintains a global connection count
+/// per module via `lp_lock_file()`. Our `AtomicU32` tracks in-process counts
+/// while the optional `ConnectionLimiter` coordinates across daemon processes.
 pub(crate) struct ModuleRuntime {
     pub(crate) definition: ModuleDefinition,
     pub(crate) active_connections: AtomicU32,

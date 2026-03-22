@@ -14,6 +14,10 @@ use std::collections::HashMap;
 /// Returns `None` when hostname lookup is disabled, the module has no hostname-based
 /// host patterns, or DNS resolution fails. Results are cached in `cache` to avoid
 /// repeated DNS lookups for the same peer.
+///
+/// upstream: clientserver.c - reverse DNS is performed when `hosts allow` or
+/// `hosts deny` patterns contain hostnames. The `reverse lookup` global parameter
+/// controls whether reverse DNS is attempted at all.
 pub(crate) fn module_peer_hostname<'a>(
     module: &ModuleDefinition,
     cache: &'a mut Option<Option<String>>,
@@ -32,6 +36,9 @@ pub(crate) fn module_peer_hostname<'a>(
 }
 
 /// Performs a reverse DNS lookup for the given IP address.
+///
+/// The result is normalized by removing trailing dots and lowercasing, matching
+/// upstream rsync's hostname normalization for `hosts allow`/`hosts deny` matching.
 pub(in crate::daemon) fn resolve_peer_hostname(peer_ip: IpAddr) -> Option<String> {
     #[cfg(test)]
     if let Some(mapped) = TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow().get(&peer_ip).cloned()) {
