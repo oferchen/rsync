@@ -158,9 +158,8 @@ impl GeneratorContext {
                 v.extend(0..len);
                 v
             };
-            let cmp = |&a: &usize, &b: &usize| {
-                compare_file_entries(&file_list_ref[a], &file_list_ref[b])
-            };
+            let cmp =
+                |&a: &usize, &b: &usize| compare_file_entries(&file_list_ref[a], &file_list_ref[b]);
             if self.config.qsort {
                 indices.sort_unstable_by(cmp);
             } else {
