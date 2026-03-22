@@ -1,7 +1,7 @@
 
 #[test]
 fn execute_with_trailing_separator_copies_contents() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     fs::create_dir_all(&nested).expect("create nested");
@@ -21,7 +21,7 @@ fn execute_with_trailing_separator_copies_contents() {
 
 #[test]
 fn execute_skips_directories_when_recursion_disabled_without_dirs() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested_dir = source_root.join("child");
     fs::create_dir_all(&nested_dir).expect("create nested dir");
@@ -64,7 +64,7 @@ fn execute_skips_directories_when_recursion_disabled_without_dirs() {
 
 #[test]
 fn execute_creates_directories_when_dirs_enabled_without_recursion() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested_dir = source_root.join("child");
     fs::create_dir_all(&nested_dir).expect("create nested dir");
@@ -109,7 +109,7 @@ fn execute_creates_directories_when_dirs_enabled_without_recursion() {
 
 #[test]
 fn execute_into_child_directory_succeeds_without_recursing() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested_dir = source_root.join("dir");
     fs::create_dir_all(&nested_dir).expect("create nested dir");
@@ -143,7 +143,7 @@ fn execute_into_child_directory_succeeds_without_recursing() {
 
 #[test]
 fn execute_with_delete_removes_extraneous_entries() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
 
     // Write destination FIRST so its mtime is older than source.
     // Both "fresh" and "stale" are 5 bytes, so without distinct mtimes the
@@ -181,7 +181,7 @@ fn execute_with_delete_removes_extraneous_entries() {
 
 #[test]
 fn execute_with_delete_after_removes_extraneous_entries() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
@@ -215,7 +215,7 @@ fn execute_with_delete_after_removes_extraneous_entries() {
 
 #[test]
 fn execute_with_delete_delay_removes_extraneous_entries() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
@@ -249,7 +249,7 @@ fn execute_with_delete_delay_removes_extraneous_entries() {
 
 #[test]
 fn execute_with_delete_before_removes_conflicting_entries() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::write(source_root.join("file"), b"fresh").expect("write source file");
@@ -276,7 +276,7 @@ fn execute_with_delete_before_removes_conflicting_entries() {
 
 #[test]
 fn execute_with_max_delete_limit_enforced() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::write(source_root.join("keep.txt"), b"fresh").expect("write source file");
@@ -314,7 +314,7 @@ fn execute_with_max_delete_limit_enforced() {
 
 #[test]
 fn execute_with_max_delete_limit_in_dry_run_reports_error() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
 
@@ -344,7 +344,7 @@ fn execute_with_max_delete_limit_in_dry_run_reports_error() {
 
 #[test]
 fn execute_with_delete_respects_dry_run() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
@@ -375,7 +375,7 @@ fn execute_with_delete_respects_dry_run() {
 
 #[test]
 fn execute_with_dry_run_leaves_destination_absent() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"preview").expect("write source");
@@ -394,7 +394,7 @@ fn execute_with_dry_run_leaves_destination_absent() {
 
 #[test]
 fn execute_without_implied_dirs_requires_existing_parent() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("missing").join("dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -422,7 +422,7 @@ fn execute_without_implied_dirs_requires_existing_parent() {
 
 #[test]
 fn execute_dry_run_without_implied_dirs_requires_existing_parent() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("missing").join("dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -450,7 +450,7 @@ fn execute_dry_run_without_implied_dirs_requires_existing_parent() {
 
 #[test]
 fn execute_with_implied_dirs_creates_missing_parents() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("missing").join("dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -469,7 +469,7 @@ fn execute_with_implied_dirs_creates_missing_parents() {
 
 #[test]
 fn execute_with_mkpath_creates_missing_parents_without_implied_dirs() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("missing").join("dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -490,7 +490,7 @@ fn execute_with_mkpath_creates_missing_parents_without_implied_dirs() {
 
 #[test]
 fn execute_with_dry_run_detects_directory_conflict() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     fs::write(&source, b"data").expect("write source");
 
@@ -516,7 +516,7 @@ fn execute_with_dry_run_detects_directory_conflict() {
 
 #[test]
 fn execute_directory_replaces_file_when_force_enabled() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source-dir");
     fs::create_dir_all(&source_root).expect("create source directory");
     fs::write(source_root.join("file.txt"), b"payload").expect("write source file");
@@ -550,7 +550,7 @@ fn execute_directory_replaces_file_when_force_enabled() {
 fn execute_preserves_hard_links() {
     use std::os::unix::fs::MetadataExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     let file_a = source_root.join("file-a");
@@ -588,7 +588,7 @@ fn execute_preserves_hard_links() {
 fn execute_without_hard_links_materialises_independent_files() {
     use std::os::unix::fs::MetadataExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     let file_a = source_root.join("file-a");
@@ -623,7 +623,7 @@ fn execute_without_hard_links_materialises_independent_files() {
 fn execute_directory_preserves_mode_777() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::set_permissions(&source_root, PermissionsExt::from_mode(0o777)).expect("set perms");
@@ -649,7 +649,7 @@ fn execute_directory_preserves_mode_777() {
 fn execute_directory_preserves_mode_755() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::set_permissions(&source_root, PermissionsExt::from_mode(0o755)).expect("set perms");
@@ -675,7 +675,7 @@ fn execute_directory_preserves_mode_755() {
 fn execute_directory_preserves_mode_700() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::set_permissions(&source_root, PermissionsExt::from_mode(0o700)).expect("set perms");
@@ -701,7 +701,7 @@ fn execute_directory_preserves_mode_700() {
 fn execute_directory_preserves_mode_750() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::set_permissions(&source_root, PermissionsExt::from_mode(0o750)).expect("set perms");
@@ -727,7 +727,7 @@ fn execute_directory_preserves_mode_750() {
 fn execute_nested_directory_preserves_permissions() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     let deeply_nested = nested.join("deep");
@@ -762,7 +762,7 @@ fn execute_nested_directory_preserves_permissions() {
 fn execute_directory_without_preserve_permissions_uses_default() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::set_permissions(&source_root, PermissionsExt::from_mode(0o700)).expect("set restrictive perms");
@@ -794,7 +794,7 @@ fn execute_directory_without_preserve_permissions_uses_default() {
 
 #[test]
 fn execute_recursive_copies_deep_hierarchy() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
 
     // Create a deep hierarchy: source/a/b/c/d/e
@@ -824,7 +824,7 @@ fn execute_recursive_copies_deep_hierarchy() {
 
 #[test]
 fn execute_recursive_copies_wide_hierarchy() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
 
@@ -858,7 +858,7 @@ fn execute_recursive_copies_wide_hierarchy() {
 
 #[test]
 fn execute_recursive_handles_empty_directories() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let empty_dir = source_root.join("empty");
     fs::create_dir_all(&empty_dir).expect("create empty dir");
@@ -883,7 +883,7 @@ fn execute_recursive_handles_empty_directories() {
 
 #[test]
 fn execute_recursive_with_prune_empty_dirs_removes_empty_directories() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let empty_dir = source_root.join("empty");
     fs::create_dir_all(&empty_dir).expect("create empty dir");
@@ -908,7 +908,7 @@ fn execute_recursive_with_prune_empty_dirs_removes_empty_directories() {
 
 #[test]
 fn execute_recursive_disabled_only_copies_single_level() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     fs::create_dir_all(&nested).expect("create nested");
@@ -943,7 +943,7 @@ fn execute_directory_fails_on_permission_denied_when_creating() {
         return;
     }
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
@@ -975,7 +975,7 @@ fn execute_directory_fails_on_permission_denied_when_creating() {
 
 #[test]
 fn execute_directory_already_exists_succeeds() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
@@ -998,7 +998,7 @@ fn execute_directory_already_exists_succeeds() {
 
 #[test]
 fn execute_directory_nested_already_exists_merges_content() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let source_nested = source_root.join("nested");
     fs::create_dir_all(&source_nested).expect("create source nested");
@@ -1025,7 +1025,7 @@ fn execute_directory_nested_already_exists_merges_content() {
 
 #[test]
 fn execute_directory_errors_when_destination_is_file_without_force() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source dir");
     fs::write(source_root.join("child.txt"), b"content").expect("write child");
@@ -1052,7 +1052,7 @@ fn execute_directory_errors_when_destination_is_file_without_force() {
 
 #[test]
 fn execute_dry_run_does_not_create_directory() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
@@ -1076,7 +1076,7 @@ fn execute_dry_run_does_not_create_directory() {
 
 #[test]
 fn execute_dry_run_reports_correct_directory_counts() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("a").join("b").join("c");
     fs::create_dir_all(&nested).expect("create nested");
@@ -1102,7 +1102,7 @@ fn execute_dry_run_reports_correct_directory_counts() {
 
 #[test]
 fn execute_dry_run_with_existing_destination_reports_no_creation() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"new content").expect("write source");
@@ -1128,7 +1128,7 @@ fn execute_dry_run_with_existing_destination_reports_no_creation() {
 
 #[test]
 fn execute_dry_run_with_collect_events_records_directory_creation() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     fs::create_dir_all(&nested).expect("create nested");
@@ -1162,7 +1162,7 @@ fn execute_dry_run_with_collect_events_records_directory_creation() {
 fn execute_directory_preserve_times_sets_mtime() {
     use filetime::{FileTime, set_file_mtime};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1194,7 +1194,7 @@ fn execute_directory_preserve_times_sets_mtime() {
 fn execute_directory_omit_dir_times_does_not_set_mtime() {
     use filetime::{FileTime, set_file_mtime};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1226,7 +1226,7 @@ fn execute_directory_omit_dir_times_does_not_set_mtime() {
 fn execute_directory_with_chmod_applies_modifiers() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::set_permissions(&source_root, PermissionsExt::from_mode(0o777)).expect("set full perms");
@@ -1255,7 +1255,7 @@ fn execute_directory_with_chmod_applies_modifiers() {
 
 #[test]
 fn execute_directory_with_special_characters_in_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let special_dir = source_root.join("dir with spaces & special-chars_123");
     fs::create_dir_all(&special_dir).expect("create special dir");
@@ -1276,7 +1276,7 @@ fn execute_directory_with_special_characters_in_name() {
 #[cfg(unix)]
 #[test]
 fn execute_directory_with_unicode_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let unicode_dir = source_root.join("dir_with_unicode_\u{1F600}_\u{4E2D}\u{6587}");
     fs::create_dir_all(&unicode_dir).expect("create unicode dir");
@@ -1298,7 +1298,7 @@ fn execute_directory_with_unicode_name() {
 fn execute_directory_one_file_system_stays_on_same_device() {
     // This test verifies that the one_file_system option is accepted
     // (actual cross-device testing would require mount points)
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     fs::create_dir_all(&nested).expect("create nested");
@@ -1320,7 +1320,7 @@ fn execute_directory_one_file_system_stays_on_same_device() {
 
 #[test]
 fn execute_directory_ignore_existing_skips_existing_dirs() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     fs::create_dir_all(&nested).expect("create nested");
@@ -1349,7 +1349,7 @@ fn execute_directory_ignore_existing_skips_existing_dirs() {
 
 #[test]
 fn execute_directory_existing_only_skips_new_dirs() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let new_dir = source_root.join("new_dir");
     let existing_dir = source_root.join("existing_dir");
@@ -1384,7 +1384,7 @@ fn execute_directory_existing_only_skips_new_dirs() {
 
 #[test]
 fn execute_multiple_source_directories_to_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_a = temp.path().join("source_a");
     let source_b = temp.path().join("source_b");
     fs::create_dir_all(&source_a).expect("create source_a");
@@ -1410,7 +1410,7 @@ fn execute_multiple_source_directories_to_destination() {
 
 #[test]
 fn execute_directory_update_only_copies_newer() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"new content").expect("write source");
@@ -1445,7 +1445,7 @@ fn execute_directory_update_only_copies_newer() {
 
 #[test]
 fn execute_directory_update_skips_older_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"old content").expect("write source");
@@ -1485,7 +1485,7 @@ fn execute_directory_archive_mode_preserves_all() {
     use std::os::unix::fs::PermissionsExt;
     use filetime::{FileTime, set_file_mtime};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     fs::create_dir_all(&nested).expect("create nested");
@@ -1534,7 +1534,7 @@ fn execute_directory_archive_mode_preserves_all() {
 
 #[test]
 fn execute_dry_run_with_delete_and_force_reports_all_actions() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("nested");
     fs::create_dir_all(&nested).expect("create nested");
@@ -1573,7 +1573,7 @@ fn execute_dry_run_with_delete_and_force_reports_all_actions() {
 #[test]
 fn execute_recursive_creates_mixed_content_hierarchy() {
     // A hierarchy with files at various depths, empty dirs, and deep nesting
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("a").join("b").join("c")).expect("create deep");
     fs::create_dir_all(source_root.join("a").join("empty_sibling")).expect("create empty sibling");
@@ -1628,7 +1628,7 @@ fn execute_recursive_creates_mixed_content_hierarchy() {
 #[test]
 fn execute_recursive_creates_only_subdirs_no_files() {
     // Source has a tree of directories with no files at all
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("a").join("b")).expect("create a/b");
     fs::create_dir_all(source_root.join("c")).expect("create c");
@@ -1654,7 +1654,7 @@ fn execute_recursive_creates_only_subdirs_no_files() {
 #[test]
 fn execute_recursive_files_at_every_level() {
     // Files at each nesting level to ensure all are copied
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("l1").join("l2").join("l3")).expect("create dirs");
     fs::write(source_root.join("f0.txt"), b"level0").expect("write f0");
@@ -1740,7 +1740,7 @@ fn execute_recursive_idempotent_second_run() {
 #[test]
 fn execute_trailing_separator_with_nested_empty_dirs() {
     // Trailing separator + nested empty directories
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("empty1")).expect("create empty1");
     fs::create_dir_all(source_root.join("empty2").join("nested_empty")).expect("create nested empty");
@@ -1767,7 +1767,7 @@ fn execute_trailing_separator_with_nested_empty_dirs() {
 
 #[test]
 fn execute_mkpath_creates_deeply_nested_missing_parents() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     fs::write(&source, b"mkpath deep").expect("write source");
 
@@ -1795,7 +1795,7 @@ fn execute_mkpath_creates_deeply_nested_missing_parents() {
 
 #[test]
 fn execute_mkpath_with_directory_source_creates_parents() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::write(source_root.join("file.txt"), b"content").expect("write file");
@@ -1822,7 +1822,7 @@ fn execute_mkpath_with_directory_source_creates_parents() {
 
 #[test]
 fn execute_mkpath_dry_run_does_not_create_parents() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     fs::write(&source, b"mkpath dry").expect("write source");
 
@@ -1846,7 +1846,7 @@ fn execute_mkpath_dry_run_does_not_create_parents() {
 
 #[test]
 fn execute_mkpath_with_existing_parents_succeeds() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     fs::write(&source, b"data").expect("write source");
 
@@ -1870,7 +1870,7 @@ fn execute_mkpath_with_existing_parents_succeeds() {
 #[test]
 fn execute_prune_empty_dirs_nested_hierarchy_file_at_bottom() {
     // Deep nesting: only the very deepest directory has a file
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let deep = source_root.join("a").join("b").join("c").join("d");
     fs::create_dir_all(&deep).expect("create deep");
@@ -1900,7 +1900,7 @@ fn execute_prune_empty_dirs_nested_hierarchy_file_at_bottom() {
 
 #[test]
 fn execute_prune_empty_dirs_with_trailing_separator_and_nested() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("populated").join("sub")).expect("create populated");
     fs::create_dir_all(source_root.join("barren").join("sub")).expect("create barren");
@@ -1931,7 +1931,7 @@ fn execute_prune_empty_dirs_with_trailing_separator_and_nested() {
 #[test]
 fn execute_prune_empty_dirs_preserves_dir_with_only_subdirs_containing_files() {
     // Parent dir has no files of its own, but grandchild does
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("parent").join("child")).expect("create dirs");
     fs::write(
@@ -1963,7 +1963,7 @@ fn execute_prune_empty_dirs_preserves_dir_with_only_subdirs_containing_files() {
 fn execute_omit_dir_times_nested_dirs_preserves_file_times_at_all_levels() {
     use filetime::{FileTime, set_file_mtime};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("sub1").join("sub2");
     fs::create_dir_all(&nested).expect("create nested");
@@ -2033,7 +2033,7 @@ fn execute_omit_dir_times_nested_dirs_preserves_file_times_at_all_levels() {
 fn execute_omit_dir_times_with_trailing_separator() {
     use filetime::{FileTime, set_file_mtime};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("sub");
     fs::create_dir_all(&nested).expect("create sub");
@@ -2074,7 +2074,7 @@ fn execute_omit_dir_times_with_trailing_separator() {
 fn execute_directory_permissions_with_chmod_nested_applies_to_all_dirs() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("a").join("b");
     fs::create_dir_all(&nested).expect("create nested");
@@ -2123,7 +2123,7 @@ fn execute_directory_permissions_with_chmod_nested_applies_to_all_dirs() {
 fn execute_directory_preserves_mixed_permissions_in_hierarchy() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let public_dir = source_root.join("public");
     let private_dir = source_root.join("private");
@@ -2187,7 +2187,7 @@ fn execute_directory_preserves_mixed_permissions_in_hierarchy() {
 fn execute_directory_permissions_with_dry_run_does_not_set() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
     fs::set_permissions(&source_root, PermissionsExt::from_mode(0o700)).expect("set perms");
@@ -2212,7 +2212,7 @@ fn execute_directory_permissions_with_dry_run_does_not_set() {
 #[test]
 fn execute_nested_hierarchy_with_overlapping_names() {
     // Test directories with similar names at different levels
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("dir").join("dir").join("dir")).expect("create same-name dirs");
     fs::write(source_root.join("dir").join("file.txt"), b"level1").expect("write level1");
@@ -2265,7 +2265,7 @@ fn execute_nested_hierarchy_with_overlapping_names() {
 #[test]
 fn execute_nested_hierarchy_mixed_empty_and_populated() {
     // Verify that a hierarchy with intermixed empty and populated directories works
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     // populated -> empty -> populated
     fs::create_dir_all(source_root.join("top").join("empty").join("bottom")).expect("create dirs");
@@ -2310,7 +2310,7 @@ fn execute_nested_hierarchy_mixed_empty_and_populated() {
 #[test]
 fn execute_directory_with_many_siblings() {
     // Stress test with many sibling directories
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -2347,7 +2347,7 @@ fn execute_directory_with_many_siblings() {
 fn execute_directory_prune_empty_dirs_with_permissions() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let kept = source_root.join("kept");
     let pruned = source_root.join("pruned");
@@ -2390,7 +2390,7 @@ fn execute_directory_prune_empty_dirs_with_permissions() {
 fn execute_directory_prune_empty_dirs_with_omit_dir_times() {
     use filetime::{FileTime, set_file_mtime};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let kept = source_root.join("kept");
     let pruned = source_root.join("pruned");
@@ -2429,7 +2429,7 @@ fn execute_directory_prune_empty_dirs_with_omit_dir_times() {
 #[test]
 fn execute_directory_mkpath_with_prune_empty_dirs() {
     // mkpath creates missing parents, prune removes empty dirs from source
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("kept")).expect("create kept");
     fs::create_dir_all(source_root.join("empty")).expect("create empty");
@@ -2458,7 +2458,7 @@ fn execute_directory_mkpath_with_prune_empty_dirs() {
 
 #[test]
 fn execute_directory_collect_events_records_all_directory_operations() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested = source_root.join("a").join("b");
     fs::create_dir_all(&nested).expect("create nested");
@@ -2499,7 +2499,7 @@ fn execute_directory_collect_events_records_all_directory_operations() {
 
 #[test]
 fn execute_directory_delete_removes_extraneous_subdirs() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(source_root.join("keep")).expect("create keep");
     fs::write(source_root.join("keep").join("file.txt"), b"data").expect("write file");
@@ -2534,7 +2534,7 @@ fn execute_directory_archive_preserves_permissions_and_times_nested() {
     use filetime::{FileTime, set_file_mtime};
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let sub_a = source_root.join("a");
     let sub_b = sub_a.join("b");

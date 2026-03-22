@@ -18,7 +18,7 @@
 use filters::{FilterAction, FilterSet, read_rules, read_rules_recursive};
 use std::fs;
 use std::path::Path;
-use tempfile::tempdir;
+use test_support::create_tempdir;
 
 mod reading_from_file {
     use super::*;
@@ -27,7 +27,7 @@ mod reading_from_file {
     /// Note: Filter files use rsync filter rule syntax (- for exclude, + for include).
     #[test]
     fn reads_simple_patterns_from_file() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n- *.bak\n- *.log\n").expect("write");
 
@@ -41,7 +41,7 @@ mod reading_from_file {
     /// Test: File with mixed rule types (short form).
     #[test]
     fn reads_mixed_rule_types() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("filters.txt");
         fs::write(&path, "+ *.rs\n- *.tmp\nP /important\n").expect("write");
 
@@ -55,7 +55,7 @@ mod reading_from_file {
     /// Test: File with long form rule syntax.
     #[test]
     fn reads_long_form_rules() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("filters.txt");
         fs::write(&path, "include *.txt\nexclude *.bak\nprotect /data\n").expect("write");
 
@@ -70,7 +70,7 @@ mod reading_from_file {
     /// Test: File with directory patterns.
     #[test]
     fn reads_directory_patterns() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- build/\n- node_modules/\n- .git/\n").expect("write");
 
@@ -85,7 +85,7 @@ mod reading_from_file {
     /// Test: File with anchored patterns.
     #[test]
     fn reads_anchored_patterns() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- /root.txt\n- /config/\n").expect("write");
 
@@ -100,7 +100,7 @@ mod reading_from_file {
     /// Test: File with double-star patterns.
     #[test]
     fn reads_double_star_patterns() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- **/cache/**\n- **/*.log\n").expect("write");
 
@@ -114,7 +114,7 @@ mod reading_from_file {
     /// Test: File with character class patterns.
     #[test]
     fn reads_character_class_patterns() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- file[0-9].txt\n- *.[ch]\n").expect("write");
 
@@ -129,7 +129,7 @@ mod reading_from_file {
     /// Test: Single pattern file.
     #[test]
     fn reads_single_pattern_file() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp").expect("write");
 
@@ -141,7 +141,7 @@ mod reading_from_file {
     /// Test: Empty file returns no rules.
     #[test]
     fn empty_file_returns_empty_rules() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("empty.txt");
         fs::write(&path, "").expect("write");
 
@@ -156,7 +156,7 @@ mod comment_handling {
     /// Test: Lines starting with # are comments (hash comments).
     #[test]
     fn skips_hash_comments() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(
             &path,
@@ -173,7 +173,7 @@ mod comment_handling {
     /// Test: Lines starting with ; are comments (semicolon comments).
     #[test]
     fn skips_semicolon_comments() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(
             &path,
@@ -190,7 +190,7 @@ mod comment_handling {
     /// Test: Mixed hash and semicolon comments.
     #[test]
     fn mixed_comment_styles() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(
             &path,
@@ -205,7 +205,7 @@ mod comment_handling {
     /// Test: Comment with leading whitespace is still a comment.
     #[test]
     fn comment_with_leading_whitespace() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "  # Comment with leading spaces\n- *.tmp\n").expect("write");
 
@@ -217,7 +217,7 @@ mod comment_handling {
     /// Test: File with only comments returns no rules.
     #[test]
     fn only_comments_returns_empty() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(
             &path,
@@ -233,7 +233,7 @@ mod comment_handling {
     /// Pattern `*.tmp # comment` should include the comment as part of pattern.
     #[test]
     fn inline_comments_not_supported() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp # this is part of pattern\n").expect("write");
 
@@ -246,7 +246,7 @@ mod comment_handling {
     /// Test: Comment at end of file without newline.
     #[test]
     fn comment_at_end_without_newline() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n# trailing comment").expect("write");
 
@@ -258,7 +258,7 @@ mod comment_handling {
     /// Test: Comment character inside pattern (not at start).
     #[test]
     fn comment_char_inside_pattern() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- file#1.txt\n- file;2.txt\n").expect("write");
 
@@ -275,7 +275,7 @@ mod blank_line_handling {
     /// Test: Empty lines are skipped.
     #[test]
     fn skips_empty_lines() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n\n- *.bak\n\n\n- *.log\n").expect("write");
 
@@ -289,7 +289,7 @@ mod blank_line_handling {
     /// Test: Whitespace-only lines are skipped.
     #[test]
     fn skips_whitespace_only_lines() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n   \n- *.bak\n\t\t\n- *.log\n").expect("write");
 
@@ -300,7 +300,7 @@ mod blank_line_handling {
     /// Test: Lines with only tabs are skipped.
     #[test]
     fn skips_tab_only_lines() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n\t\n- *.bak\n").expect("write");
 
@@ -311,7 +311,7 @@ mod blank_line_handling {
     /// Test: File with blank lines at start.
     #[test]
     fn blank_lines_at_start() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "\n\n\n- *.tmp\n- *.bak\n").expect("write");
 
@@ -322,7 +322,7 @@ mod blank_line_handling {
     /// Test: File with blank lines at end.
     #[test]
     fn blank_lines_at_end() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n- *.bak\n\n\n\n").expect("write");
 
@@ -333,7 +333,7 @@ mod blank_line_handling {
     /// Test: File with only blank lines.
     #[test]
     fn only_blank_lines() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "\n\n   \n\t\n").expect("write");
 
@@ -344,7 +344,7 @@ mod blank_line_handling {
     /// Test: Mixed blank lines and comments.
     #[test]
     fn mixed_blank_lines_and_comments() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "\n# Comment\n\n; Another comment\n   \n- *.tmp\n\n").expect("write");
 
@@ -360,7 +360,7 @@ mod multiple_exclude_from_files {
     /// Test: Rules from multiple files are combined.
     #[test]
     fn combines_rules_from_multiple_files() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         let path1 = dir.path().join("excludes1.txt");
         let path2 = dir.path().join("excludes2.txt");
@@ -383,7 +383,7 @@ mod multiple_exclude_from_files {
     /// Test: Order of files matters (first-match-wins).
     #[test]
     fn file_order_matters() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         let path1 = dir.path().join("includes.txt");
         let path2 = dir.path().join("excludes.txt");
@@ -407,7 +407,7 @@ mod multiple_exclude_from_files {
     /// Test: Same pattern in multiple files (duplicates allowed).
     #[test]
     fn duplicate_patterns_allowed() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         let path1 = dir.path().join("file1.txt");
         let path2 = dir.path().join("file2.txt");
@@ -427,7 +427,7 @@ mod multiple_exclude_from_files {
     /// Test: Clear rule in second file.
     #[test]
     fn clear_in_second_file() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         let path1 = dir.path().join("file1.txt");
         let path2 = dir.path().join("file2.txt");
@@ -452,7 +452,7 @@ mod multiple_exclude_from_files {
     /// Test: Empty first file, rules in second.
     #[test]
     fn empty_first_file() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         let path1 = dir.path().join("empty.txt");
         let path2 = dir.path().join("excludes.txt");
@@ -472,7 +472,7 @@ mod multiple_exclude_from_files {
     /// Test: Conflicting rules across files (include then exclude).
     #[test]
     fn conflicting_rules_across_files() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         // File 1: include all txt
         let path1 = dir.path().join("includes.txt");
@@ -518,7 +518,7 @@ mod error_handling_missing_files {
     /// Test: Reading a directory instead of file returns error.
     #[test]
     fn directory_instead_of_file_returns_error() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let result = read_rules(dir.path());
         assert!(result.is_err());
     }
@@ -529,7 +529,7 @@ mod error_handling_missing_files {
     fn unreadable_file_returns_error() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("unreadable.txt");
         fs::write(&path, "- *.tmp\n").expect("write");
 
@@ -555,7 +555,7 @@ mod line_ending_handling {
     /// Test: Unix line endings (LF).
     #[test]
     fn unix_line_endings() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n- *.bak\n- *.log\n").expect("write");
 
@@ -569,7 +569,7 @@ mod line_ending_handling {
     /// Test: Windows line endings (CRLF).
     #[test]
     fn windows_line_endings() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\r\n- *.bak\r\n- *.log\r\n").expect("write");
 
@@ -583,7 +583,7 @@ mod line_ending_handling {
     /// Test: Mixed line endings (LF and CRLF).
     #[test]
     fn mixed_line_endings() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n- *.bak\r\n- *.log\n").expect("write");
 
@@ -597,7 +597,7 @@ mod line_ending_handling {
     /// Test: Old Mac line endings (CR only) - handled as single line.
     #[test]
     fn old_mac_line_endings() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         // CR-only line endings result in one long line
         fs::write(&path, "- *.tmp\r- *.bak\r- *.log\r").expect("write");
@@ -611,7 +611,7 @@ mod line_ending_handling {
     /// Test: No trailing newline.
     #[test]
     fn no_trailing_newline() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\n- *.bak").expect("write"); // No newline after *.bak
 
@@ -624,7 +624,7 @@ mod line_ending_handling {
     /// Test: CRLF with no trailing newline.
     #[test]
     fn crlf_no_trailing_newline() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\r\n- *.bak").expect("write");
 
@@ -643,7 +643,7 @@ mod pattern_preservation {
     /// and leading whitespace between the action and pattern is consumed.
     #[test]
     fn leading_whitespace_trimmed() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         // Pattern with leading space (after the action)
         fs::write(&path, "-   spaced_file.txt\n").expect("write");
@@ -657,7 +657,7 @@ mod pattern_preservation {
     /// Test: Trailing whitespace in pattern is trimmed.
     #[test]
     fn trailing_whitespace_trimmed() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- pattern_with_trailing   \n").expect("write");
 
@@ -670,7 +670,7 @@ mod pattern_preservation {
     /// Test: Pattern case is preserved.
     #[test]
     fn preserves_pattern_case() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- README.TXT\n- Makefile\n- CamelCase\n").expect("write");
 
@@ -683,7 +683,7 @@ mod pattern_preservation {
     /// Test: Special glob characters are preserved.
     #[test]
     fn preserves_special_characters() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.[ch]\n- file[0-9]?.txt\n- **/*.log\n").expect("write");
 
@@ -696,7 +696,7 @@ mod pattern_preservation {
     /// Test: Escaped characters are preserved.
     #[test]
     fn preserves_escaped_characters() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- file\\*.txt\n- what\\?\n").expect("write");
 
@@ -708,7 +708,7 @@ mod pattern_preservation {
     /// Test: Unicode patterns are preserved.
     #[test]
     fn preserves_unicode_patterns() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- \u{4e2d}\u{6587}.txt\n- caf\u{e9}.doc\n").expect("write");
 
@@ -724,7 +724,7 @@ mod merge_file_functionality {
     /// Test: Merge directive includes nested file.
     #[test]
     fn merge_directive_includes_nested_file() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         let nested_path = dir.path().join("nested.rules");
         fs::write(&nested_path, "- *.nested\n").expect("write");
@@ -746,7 +746,7 @@ mod merge_file_functionality {
     /// Test: Recursive merge depth limit.
     #[test]
     fn merge_depth_limit_enforced() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         // Create self-referencing file
         let path = dir.path().join("loop.rules");
@@ -761,7 +761,7 @@ mod merge_file_functionality {
     /// Test: Relative path merge.
     #[test]
     fn relative_path_merge() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         let nested_path = dir.path().join("subdir/nested.rules");
         fs::create_dir(dir.path().join("subdir")).expect("mkdir");
@@ -778,7 +778,7 @@ mod merge_file_functionality {
     /// Test: Dir-merge rules are preserved (not expanded).
     #[test]
     fn dir_merge_preserved_not_expanded() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
 
         let path = dir.path().join("rules.txt");
         fs::write(&path, ": .rsync-filter\n- *.tmp\n").expect("write");
@@ -797,7 +797,7 @@ mod large_file_handling {
     /// Test: File with many patterns (stress test).
     #[test]
     fn many_patterns() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
 
         // Generate 1000 patterns
@@ -816,7 +816,7 @@ mod large_file_handling {
     /// Test: Long pattern (PATH_MAX-ish length).
     #[test]
     fn long_pattern() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
 
         let long_name = "x".repeat(1000);
@@ -830,7 +830,7 @@ mod large_file_handling {
     /// Test: Many comments interspersed with patterns.
     #[test]
     fn many_comments_interspersed() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
 
         let mut content = String::new();
@@ -852,7 +852,7 @@ mod rule_modifiers_from_file {
     /// Test: Negation modifier from file.
     #[test]
     fn negation_modifier() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "-! *.txt\n").expect("write");
 
@@ -864,7 +864,7 @@ mod rule_modifiers_from_file {
     /// Test: Perishable modifier from file.
     #[test]
     fn perishable_modifier() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "-p *.tmp\n").expect("write");
 
@@ -876,7 +876,7 @@ mod rule_modifiers_from_file {
     /// Test: Sender-only modifier from file.
     #[test]
     fn sender_only_modifier() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "-s *.bak\n").expect("write");
 
@@ -889,7 +889,7 @@ mod rule_modifiers_from_file {
     /// Test: Receiver-only modifier from file.
     #[test]
     fn receiver_only_modifier() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "-r *.bak\n").expect("write");
 
@@ -902,7 +902,7 @@ mod rule_modifiers_from_file {
     /// Test: Combined modifiers from file.
     #[test]
     fn combined_modifiers() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "-!ps *.tmp\n").expect("write");
 
@@ -917,7 +917,7 @@ mod rule_modifiers_from_file {
     /// Test: Word-split modifier from file.
     #[test]
     fn word_split_modifier() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "-w *.tmp *.bak *.log\n").expect("write");
 
@@ -935,7 +935,7 @@ mod parse_error_handling {
     /// Test: Invalid rule returns error with line number.
     #[test]
     fn invalid_rule_error_with_line_number() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "- *.tmp\ninvalid rule\n- *.bak\n").expect("write");
 
@@ -948,7 +948,7 @@ mod parse_error_handling {
     /// Test: Error includes file path.
     #[test]
     fn error_includes_file_path() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("bad_rules.txt");
         fs::write(&path, "garbage").expect("write");
 
@@ -961,7 +961,7 @@ mod parse_error_handling {
     /// Test: Empty pattern after action.
     #[test]
     fn empty_pattern_error() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "+ \n").expect("write");
 
@@ -976,7 +976,7 @@ mod integration_tests {
     /// Test: Full workflow - read file, compile set, match paths.
     #[test]
     fn full_workflow() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("filters.txt");
         fs::write(
             &path,
@@ -1010,7 +1010,7 @@ mod integration_tests {
     /// Note: rsync uses first-match-wins, so we need to order rules properly.
     #[test]
     fn complex_project_filtering() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("filters.txt");
         fs::write(
             &path,
@@ -1051,7 +1051,7 @@ mod integration_tests {
     /// Test: CVS-style exclusion from file.
     #[test]
     fn cvs_style_exclusion() {
-        let dir = tempdir().expect("tempdir");
+        let dir = create_tempdir();
         let path = dir.path().join("cvsignore.txt");
         fs::write(
             &path,

@@ -5,9 +5,7 @@ use super::*;
 
 #[test]
 fn files_from_reads_list_from_specified_file() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("file.list");
 
     // Create a file list with three entries
@@ -24,10 +22,8 @@ fn files_from_reads_list_from_specified_file() {
 
 #[test]
 fn files_from_reports_read_failures() {
-    use tempfile::tempdir;
-
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let missing = tmp.path().join("missing.list");
     let dest_dir = tmp.path().join("files-from-error-dest");
     std::fs::create_dir(&dest_dir).expect("create dest");
@@ -47,9 +43,7 @@ fn files_from_reports_read_failures() {
 #[cfg(unix)]
 #[test]
 fn files_from_preserves_non_utf8_entries() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("binary.list");
     std::fs::write(&list_path, [b'f', b'o', 0x80, b'\n']).expect("write binary list");
 
@@ -64,9 +58,7 @@ fn files_from_preserves_non_utf8_entries() {
 
 #[test]
 fn files_from_parses_one_filename_per_line() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("multiline.list");
 
     // Multiple filenames with various line endings
@@ -83,9 +75,7 @@ fn files_from_parses_one_filename_per_line() {
 
 #[test]
 fn files_from_handles_crlf_line_endings() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("crlf.list");
 
     // Windows-style CRLF line endings
@@ -102,9 +92,7 @@ fn files_from_handles_crlf_line_endings() {
 
 #[test]
 fn files_from_handles_mixed_line_endings() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("mixed.list");
 
     // Mix of LF and CRLF
@@ -123,9 +111,7 @@ fn files_from_handles_mixed_line_endings() {
 
 #[test]
 fn files_from_skips_hash_comments() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("comments.list");
 
     std::fs::write(
@@ -144,9 +130,7 @@ fn files_from_skips_hash_comments() {
 
 #[test]
 fn files_from_skips_semicolon_comments() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("semicolon.list");
 
     std::fs::write(
@@ -165,9 +149,7 @@ fn files_from_skips_semicolon_comments() {
 
 #[test]
 fn files_from_skips_blank_lines() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("blank.list");
 
     std::fs::write(&list_path, "file1.txt\n\n\nfile2.txt\n\n").expect("write list");
@@ -182,9 +164,7 @@ fn files_from_skips_blank_lines() {
 
 #[test]
 fn files_from_handles_comments_and_blank_lines_together() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("mixed_comments.list");
 
     std::fs::write(
@@ -273,9 +253,7 @@ fn from0_reader_accepts_missing_trailing_separator() {
 
 #[test]
 fn from0_disables_comment_handling() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("from0_comments.list");
 
     // With --from0, # and ; should not be treated as comments
@@ -298,9 +276,7 @@ fn from0_disables_comment_handling() {
 
 #[test]
 fn files_from_handles_empty_file() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("empty.list");
 
     std::fs::write(&list_path, "").expect("write empty list");
@@ -313,9 +289,7 @@ fn files_from_handles_empty_file() {
 
 #[test]
 fn files_from_handles_whitespace_only_file() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("whitespace.list");
 
     std::fs::write(&list_path, "\n\n\n").expect("write whitespace list");
@@ -330,9 +304,7 @@ fn files_from_handles_whitespace_only_file() {
 
 #[test]
 fn files_from_reads_from_multiple_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list1 = tmp.path().join("list1.txt");
     let list2 = tmp.path().join("list2.txt");
 
@@ -360,9 +332,7 @@ fn files_from_empty_list_returns_empty_vec() {
 
 #[test]
 fn files_from_handles_unicode_filenames() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("unicode.list");
 
     // Various Unicode characters including CJK, emoji representations, accented chars
@@ -384,9 +354,7 @@ fn files_from_handles_unicode_filenames() {
 
 #[test]
 fn files_from_handles_filenames_with_spaces() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("spaces.list");
 
     std::fs::write(
@@ -407,9 +375,7 @@ fn files_from_handles_filenames_with_spaces() {
 
 #[test]
 fn files_from_handles_special_characters_in_filenames() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("special.list");
 
     // Various special characters that might appear in filenames
@@ -434,9 +400,7 @@ fn files_from_handles_special_characters_in_filenames() {
 
 #[test]
 fn files_from_preserves_absolute_paths() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("absolute.list");
 
     std::fs::write(
@@ -455,9 +419,7 @@ fn files_from_preserves_absolute_paths() {
 
 #[test]
 fn files_from_preserves_relative_paths() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("relative.list");
 
     std::fs::write(
@@ -477,9 +439,7 @@ fn files_from_preserves_relative_paths() {
 
 #[test]
 fn files_from_handles_deeply_nested_paths() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("nested.list");
 
     std::fs::write(
@@ -571,9 +531,7 @@ fn from0_preserves_non_utf8_in_zero_terminated() {
 
 #[test]
 fn files_from_hash_only_on_first_char_is_comment() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("hash_position.list");
 
     // Only lines starting with # are comments; # elsewhere is preserved
@@ -593,9 +551,7 @@ fn files_from_hash_only_on_first_char_is_comment() {
 
 #[test]
 fn files_from_semicolon_only_on_first_char_is_comment() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("semicolon_position.list");
 
     // Only lines starting with ; are comments
@@ -615,9 +571,7 @@ fn files_from_semicolon_only_on_first_char_is_comment() {
 
 #[test]
 fn files_from_comments_only_file_returns_empty() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("comments_only.list");
 
     std::fs::write(
@@ -685,9 +639,7 @@ fn reader_handles_trailing_carriage_returns() {
 
 #[test]
 fn files_from_integration_copies_listed_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
 
@@ -722,9 +674,7 @@ fn files_from_integration_copies_listed_files() {
 
 #[test]
 fn files_from_integration_handles_nested_directories() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
     let nested = source_dir.join("subdir");
@@ -758,9 +708,7 @@ fn files_from_integration_handles_nested_directories() {
 
 #[test]
 fn files_from_integration_with_empty_list_succeeds() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
     std::fs::write(source_dir.join("file.txt"), b"content").expect("write file");
@@ -785,9 +733,7 @@ fn files_from_integration_with_empty_list_succeeds() {
 
 #[test]
 fn files_from_integration_with_comments_only_list_succeeds() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
     std::fs::write(source_dir.join("file.txt"), b"content").expect("write file");
@@ -906,9 +852,7 @@ fn parse_args_files_from_empty_value() {
 #[test]
 fn files_from_reports_permission_error() {
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("unreadable.list");
     std::fs::write(&list_path, "file.txt\n").expect("write list");
 
@@ -947,9 +891,7 @@ fn files_from_reports_permission_error() {
 
 #[test]
 fn files_from_with_nonexistent_source_file_reports_error() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
 
@@ -984,9 +926,7 @@ fn files_from_with_nonexistent_source_file_reports_error() {
 
 #[test]
 fn files_from_handles_actual_unicode_characters() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("unicode_real.list");
 
     // Real Unicode characters: Chinese, Japanese, emoji-like symbols, accented
@@ -1009,9 +949,7 @@ fn files_from_handles_actual_unicode_characters() {
 
 #[test]
 fn files_from_handles_rtl_and_bidi_characters() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("bidi.list");
 
     // Right-to-left text (Arabic, Hebrew)
@@ -1031,9 +969,7 @@ fn files_from_handles_rtl_and_bidi_characters() {
 
 #[test]
 fn files_from_handles_combining_characters() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("combining.list");
 
     // Combining diacritical marks
@@ -1054,9 +990,7 @@ fn files_from_handles_combining_characters() {
 
 #[test]
 fn files_from_handles_zero_width_characters() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("zerowidth.list");
 
     // Zero-width joiner and non-joiner
@@ -1075,9 +1009,7 @@ fn files_from_handles_zero_width_characters() {
 
 #[test]
 fn files_from_handles_glob_metacharacters() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("glob.list");
 
     // Glob metacharacters that might be interpreted by shells
@@ -1099,9 +1031,7 @@ fn files_from_handles_glob_metacharacters() {
 
 #[test]
 fn files_from_handles_shell_special_characters() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("shell.list");
 
     // Shell special characters
@@ -1125,9 +1055,7 @@ fn files_from_handles_shell_special_characters() {
 
 #[test]
 fn files_from_handles_backslash_in_filenames() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("backslash.list");
 
     // Backslashes (note: on Unix these are literal filename characters)
@@ -1148,9 +1076,7 @@ fn files_from_handles_backslash_in_filenames() {
 
 #[test]
 fn files_from_handles_equals_and_colon_in_filenames() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("punctuation.list");
 
     // Characters that might be confused with argument separators
@@ -1174,9 +1100,7 @@ fn files_from_handles_equals_and_colon_in_filenames() {
 
 #[test]
 fn files_from_handles_tab_characters() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("tabs.list");
 
     // Tab characters in filenames
@@ -1197,9 +1121,7 @@ fn files_from_handles_tab_characters() {
 
 #[test]
 fn files_from_handles_form_feed_and_vertical_tab() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("control.list");
 
     // Form feed and vertical tab
@@ -1214,9 +1136,7 @@ fn files_from_handles_form_feed_and_vertical_tab() {
 
 #[test]
 fn files_from_preserves_multiple_consecutive_spaces() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("multispaces.list");
 
     std::fs::write(
@@ -1338,9 +1258,7 @@ fn from0_handles_multiple_consecutive_nulls() {
 
 #[test]
 fn files_from_handles_dot_and_dotdot_paths() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("dots.list");
 
     std::fs::write(
@@ -1362,9 +1280,7 @@ fn files_from_handles_dot_and_dotdot_paths() {
 
 #[test]
 fn files_from_handles_hidden_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("hidden.list");
 
     // Unix hidden files (starting with dot)
@@ -1386,9 +1302,7 @@ fn files_from_handles_hidden_files() {
 
 #[test]
 fn files_from_handles_trailing_slash() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("trailing_slash.list");
 
     std::fs::write(&list_path, "directory/\npath/to/dir/\n./relative/\n")
@@ -1405,9 +1319,7 @@ fn files_from_handles_trailing_slash() {
 
 #[test]
 fn files_from_handles_double_slashes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("double_slash.list");
 
     std::fs::write(
@@ -1429,9 +1341,7 @@ fn files_from_handles_double_slashes() {
 
 #[test]
 fn files_from_handles_whitespace_before_comment() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("whitespace_comment.list");
 
     // Lines with leading whitespace before # or ; are NOT comments
@@ -1452,9 +1362,7 @@ fn files_from_handles_whitespace_before_comment() {
 
 #[test]
 fn files_from_handles_inline_hash_after_text() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("inline_hash.list");
 
     // Hash/semicolon after text is preserved
@@ -1474,9 +1382,7 @@ fn files_from_handles_inline_hash_after_text() {
 
 #[test]
 fn files_from_handles_empty_comment_lines() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("empty_comment.list");
 
     // Comment character alone on a line
@@ -1493,9 +1399,7 @@ fn files_from_handles_empty_comment_lines() {
 
 #[test]
 fn files_from_handles_large_number_of_entries() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("large.list");
 
     // Create a file with 10000 entries
@@ -1512,9 +1416,7 @@ fn files_from_handles_large_number_of_entries() {
 
 #[test]
 fn files_from_handles_large_file_with_comments() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("large_with_comments.list");
 
     // Alternate between files and comments
@@ -1533,9 +1435,7 @@ fn files_from_handles_large_file_with_comments() {
 
 #[test]
 fn files_from_handles_comprehensive_mixed_content() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("comprehensive.list");
 
     std::fs::write(
@@ -1593,9 +1493,7 @@ more_files.txt
 
 #[test]
 fn files_from_combines_multiple_list_files_preserving_order() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list1 = tmp.path().join("list1.txt");
     let list2 = tmp.path().join("list2.txt");
     let list3 = tmp.path().join("list3.txt");
@@ -1625,9 +1523,7 @@ fn files_from_combines_multiple_list_files_preserving_order() {
 
 #[test]
 fn files_from_handles_duplicate_entries_across_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list1 = tmp.path().join("dup1.txt");
     let list2 = tmp.path().join("dup2.txt");
 
@@ -1647,9 +1543,7 @@ fn files_from_handles_duplicate_entries_across_files() {
 
 #[test]
 fn files_from_handles_one_empty_file_among_many() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let list1 = tmp.path().join("nonempty1.txt");
     let list2 = tmp.path().join("empty.txt");
     let list3 = tmp.path().join("nonempty2.txt");
@@ -1679,9 +1573,7 @@ fn files_from_handles_one_empty_file_among_many() {
 
 #[test]
 fn files_from_integration_with_from0_copies_listed_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
 
@@ -1722,9 +1614,7 @@ fn files_from_integration_with_from0_copies_listed_files() {
 
 #[test]
 fn files_from_integration_with_recursive_copies_nested_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
     std::fs::create_dir_all(source_dir.join("a/b/c")).expect("create nested");
@@ -1761,9 +1651,7 @@ fn files_from_integration_with_recursive_copies_nested_files() {
 
 #[test]
 fn files_from_integration_with_unicode_filenames() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
 
@@ -1800,9 +1688,7 @@ fn files_from_integration_with_unicode_filenames() {
 
 #[test]
 fn files_from_integration_with_spaces_in_filenames() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
 
