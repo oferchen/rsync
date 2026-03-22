@@ -35,11 +35,17 @@ use super::state::{FileListCompressionState, FileListStats};
 pub use flags::FlagsResult;
 pub(crate) use metadata::MetadataResult;
 
-/// State maintained while reading a file list.
+/// State maintained while reading a file list from the wire.
 ///
 /// The rsync protocol uses compression across entries, where fields that match
 /// the previous entry are omitted. This reader maintains the necessary state
 /// to decode these compressed entries.
+///
+/// # Upstream Reference
+///
+/// Mirrors the static local state in `flist.c:recv_file_entry()` - the
+/// `lastname`, `modtime`, `mode`, `uid`, `gid`, `rdev`, and `rdev_major`
+/// variables that persist across calls during `recv_file_list()`.
 #[derive(Debug)]
 pub struct FileListReader {
     /// Protocol version being used.
@@ -629,6 +635,10 @@ impl FileListReader {
 ///
 /// Returns `Ok(Some(entry))` on success, `Ok(None)` at end-of-list, or
 /// `Err` on I/O or protocol error.
+///
+/// # Upstream Reference
+///
+/// See `flist.c:recv_file_entry()` for the canonical wire format decoding.
 pub fn read_file_entry<R: Read>(
     reader: &mut R,
     protocol: ProtocolVersion,
