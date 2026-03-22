@@ -1,3 +1,35 @@
+/// Produces an upstream-compatible source location string.
+///
+/// Upstream rsync includes source file and line number in error messages using
+/// the format `at <basename>(<line>)` - for example `at io.c(234)`. This macro
+/// expands to a [`String`] matching that format, using the basename of the
+/// current source file and the call-site line number.
+///
+/// # Upstream Reference
+///
+/// - `log.c:rwrite()` - formats the `at <file>(<line>)` suffix
+///
+/// # Examples
+///
+/// ```
+/// use core::error_location;
+///
+/// let location = error_location!();
+/// assert!(location.starts_with("at "));
+/// assert!(location.contains(".rs("));
+/// assert!(location.ends_with(')'));
+/// ```
+#[macro_export]
+macro_rules! error_location {
+    () => {
+        format!(
+            "at {}({})",
+            $crate::message::file_basename(file!()),
+            line!(),
+        )
+    };
+}
+
 /// Captures the current source location for rsync diagnostics.
 #[macro_export]
 macro_rules! message_source {

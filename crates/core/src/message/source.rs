@@ -108,6 +108,35 @@ impl fmt::Display for SourceLocation {
     }
 }
 
+/// Extracts the file basename from a path string.
+///
+/// Returns the portion after the last `/` or `\` separator. When the path
+/// contains no separators the entire string is returned. This mirrors how
+/// upstream rsync prints source file names in diagnostics - e.g. `io.c`
+/// rather than the full repository-relative path.
+///
+/// The function is designed to work with the compile-time strings produced by
+/// `file!()`, so it accepts `&str` and returns a `&str` slice into the same
+/// storage.
+///
+/// # Examples
+///
+/// ```
+/// use core::message::file_basename;
+///
+/// assert_eq!(file_basename("crates/core/src/message/source.rs"), "source.rs");
+/// assert_eq!(file_basename("lib.rs"), "lib.rs");
+/// assert_eq!(file_basename("src\\main.rs"), "main.rs");
+/// ```
+#[must_use]
+pub fn file_basename(path: &str) -> &str {
+    let last_sep = path.rfind('/').or_else(|| path.rfind('\\'));
+    match last_sep {
+        Some(pos) => &path[pos + 1..],
+        None => path,
+    }
+}
+
 /// Removes the workspace root prefix from a normalized path when possible.
 ///
 /// The input string must already be normalised via [`normalize_path`]. When the path lives outside
@@ -447,5 +476,121 @@ mod tests {
         let mut buffer = String::new();
         append_normalized_os_str(&mut buffer, OsStr::new("dir\\nested\\file"));
         assert_eq!(buffer, "dir/nested/file");
+    }
+
+    // Tests for file_basename
+
+    #[test]
+    fn file_basename_extracts_filename_from_unix_path() {
+        assert_eq!(
+            file_basename("crates/core/src/message/source.rs"),
+            "source.rs"
+        );
+    }
+
+    #[test]
+    fn file_basename_extracts_filename_from_windows_path() {
+        assert_eq!(file_basename("crates\\core\\src\\main.rs"), "main.rs");
+    }
+
+    #[test]
+    fn file_basename_returns_input_when_no_separator() {
+        assert_eq!(file_basename("lib.rs"), "lib.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_trailing_separator() {
+        assert_eq!(file_basename("src/"), "");
+    }
+
+    #[test]
+    fn file_basename_handles_single_component() {
+        assert_eq!(file_basename("main.rs"), "main.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_deeply_nested_path() {
+        assert_eq!(file_basename("a/b/c/d/e/transfer.rs"), "transfer.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_mixed_separators() {
+        assert_eq!(file_basename("src/subdir\\file.rs"), "file.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_empty_string() {
+        assert_eq!(file_basename(""), "");
+    }
+
+    // Tests for error_location! macro
+
+    #[test]
+    fn error_location_starts_with_at() {
+        let location = crate::error_location!();
+        assert!(
+            location.starts_with("at "),
+            "expected 'at ' prefix, got: {location}"
+        );
+    }
+
+    #[test]
+    fn error_location_contains_rs_extension() {
+        let location = crate::error_location!();
+        assert!(
+            location.contains(".rs("),
+            "expected '.rs(' in location, got: {location}"
+        );
+    }
+
+    #[test]
+    fn error_location_ends_with_closing_paren() {
+        let location = crate::error_location!();
+        assert!(
+            location.ends_with(')'),
+            "expected ')' suffix, got: {location}"
+        );
+    }
+
+    #[test]
+    fn error_location_uses_basename_not_full_path() {
+        let location = crate::error_location!();
+        // Should not contain path separators before the filename
+        let after_at = &location["at ".len()..];
+        let paren_pos = after_at.find('(').expect("missing '('");
+        let basename = &after_at[..paren_pos];
+        assert!(
+            !basename.contains('/') && !basename.contains('\\'),
+            "expected basename without separators, got: {basename}"
+        );
+    }
+
+    #[test]
+    fn error_location_contains_valid_line_number() {
+        let location = crate::error_location!();
+        let paren_start = location.find('(').expect("missing '('");
+        let paren_end = location.find(')').expect("missing ')'");
+        let line_str = &location[paren_start + 1..paren_end];
+        let line_num: u32 = line_str.parse().expect("line number should be a valid u32");
+        assert!(line_num > 0, "line number should be positive");
+    }
+
+    #[test]
+    fn error_location_matches_upstream_format() {
+        let location = crate::error_location!();
+        // Upstream format: "at <basename>(<line>)"
+        // Example: "at io.c(234)" or "at source.rs(42)"
+        assert!(location.starts_with("at "));
+        let after_at = &location["at ".len()..];
+        let paren_pos = after_at.find('(').expect("missing '('");
+        let basename = &after_at[..paren_pos];
+        assert!(!basename.is_empty(), "basename should not be empty");
+        assert!(!basename.contains('/'), "basename should not contain '/'");
+        assert!(after_at.ends_with(')'), "should end with ')'");
+        let line_str = &after_at[paren_pos + 1..after_at.len() - 1];
+        assert!(
+            line_str.chars().all(|c| c.is_ascii_digit()),
+            "line number should be all digits, got: {line_str}"
+        );
     }
 }
