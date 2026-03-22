@@ -66,3 +66,7 @@ harness = false
 [[bench]]
 name = "file_entry_memory"
 harness = false
+
+[[bench]]
+name = "wire_protocol_bench"
+harness = false
