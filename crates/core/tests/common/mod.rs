@@ -192,19 +192,26 @@ numeric ids = yes
 
         let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn()?;
 
-        // Verify daemon didn't exit immediately.
-        // Use a brief yield to let the process initialize before checking.
-        thread::sleep(Duration::from_millis(10));
-        if let Some(status) = child.try_wait()? {
-            let stderr = child.stderr.take();
-            let mut error_msg = format!("daemon exited immediately with status: {status}");
-            if let Some(mut stderr) = stderr {
-                let mut buf = String::new();
-                if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                    error_msg.push_str(&format!("\nStderr: {buf}"));
+        // Verify daemon didn't exit immediately by polling for up to 500ms.
+        // A single fixed sleep is flaky on slow CI runners - poll instead.
+        let startup_deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            if let Some(status) = child.try_wait()? {
+                let stderr = child.stderr.take();
+                let mut error_msg =
+                    format!("daemon exited immediately with status: {status}");
+                if let Some(mut stderr) = stderr {
+                    let mut buf = String::new();
+                    if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
+                        error_msg.push_str(&format!("\nStderr: {buf}"));
+                    }
                 }
+                return Err(io::Error::other(error_msg));
             }
-            return Err(io::Error::other(error_msg));
+            if Instant::now() >= startup_deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
         }
 
         let daemon = Self {
