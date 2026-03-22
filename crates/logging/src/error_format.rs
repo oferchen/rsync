@@ -200,28 +200,40 @@ mod tests {
     fn strips_prefix_when_crates_present() {
         let manifest = "/home/user/project/crates/logging";
         let file = "/home/user/project/crates/logging/src/lib.rs";
-        assert_eq!(strip_repo_prefix(manifest, file), "crates/logging/src/lib.rs");
+        assert_eq!(
+            strip_repo_prefix(manifest, file),
+            "crates/logging/src/lib.rs"
+        );
     }
 
     #[test]
     fn strips_prefix_different_crate() {
         let manifest = "/repo/crates/protocol";
         let file = "/repo/crates/protocol/src/wire.rs";
-        assert_eq!(strip_repo_prefix(manifest, file), "crates/protocol/src/wire.rs");
+        assert_eq!(
+            strip_repo_prefix(manifest, file),
+            "crates/protocol/src/wire.rs"
+        );
     }
 
     #[test]
     fn returns_full_path_when_no_crates() {
         let manifest = "/tmp/standalone";
         let file = "/tmp/standalone/src/main.rs";
-        assert_eq!(strip_repo_prefix(manifest, file), "/tmp/standalone/src/main.rs");
+        assert_eq!(
+            strip_repo_prefix(manifest, file),
+            "/tmp/standalone/src/main.rs"
+        );
     }
 
     #[test]
     fn handles_file_path_with_crates_directly() {
         let manifest = "/other/path";
         let file = "/some/repo/crates/engine/src/delta.rs";
-        assert_eq!(strip_repo_prefix(manifest, file), "crates/engine/src/delta.rs");
+        assert_eq!(
+            strip_repo_prefix(manifest, file),
+            "crates/engine/src/delta.rs"
+        );
     }
 
     #[test]
@@ -229,7 +241,10 @@ mod tests {
         let manifest = "C:\\Users\\dev\\project\\crates\\logging";
         let file = "crates/logging/src/lib.rs";
         // file_path uses forward slashes via file!(), fallback to crates/ search
-        assert_eq!(strip_repo_prefix(manifest, file), "crates/logging/src/lib.rs");
+        assert_eq!(
+            strip_repo_prefix(manifest, file),
+            "crates/logging/src/lib.rs"
+        );
     }
 
     // -- format_rsync_error tests --
