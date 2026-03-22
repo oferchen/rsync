@@ -788,4 +788,452 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Per-token compression flush tests against upstream wire format
+    //
+    // Upstream rsync (token.c) uses a persistent deflate stream across an
+    // entire file transfer. Between tokens it issues Z_SYNC_FLUSH so that
+    // the receiver can inflate each segment independently. The sync flush
+    // appends the 4-byte marker 0x00 0x00 0xFF 0xFF which the sender strips
+    // before putting data on the wire. These tests verify that the flush
+    // mechanics produce correct, independently decompressible segments and
+    // that token boundaries survive a roundtrip.
+    //
+    // Reference: upstream token.c lines 433-454 (Z_SYNC_FLUSH + marker strip).
+    // -----------------------------------------------------------------------
+
+    /// Compresses `input` with raw deflate and Z_SYNC_FLUSH, returning the
+    /// compressed bytes *including* the trailing sync marker.
+    fn compress_with_sync_flush(input: &[u8], level: Compression) -> Vec<u8> {
+        use flate2::{Compress, FlushCompress};
+
+        let mut compressor = Compress::new(level, false);
+        let mut out = vec![0u8; input.len() * 2 + 128];
+        let mut total_out;
+
+        // Feed input with Z_NO_FLUSH (matches upstream chunk feeding)
+        let mut consumed = 0;
+        while consumed < input.len() {
+            let before_in = compressor.total_in() as usize;
+            let before_out = compressor.total_out() as usize;
+            compressor
+                .compress(
+                    &input[consumed..],
+                    &mut out[before_out..],
+                    FlushCompress::None,
+                )
+                .expect("compress with no-flush");
+            consumed += (compressor.total_in() as usize) - before_in;
+        }
+
+        // Issue Z_SYNC_FLUSH to produce a decompressible boundary
+        loop {
+            let before_out = compressor.total_out();
+            let status = compressor
+                .compress(
+                    &[],
+                    &mut out[compressor.total_out() as usize..],
+                    FlushCompress::Sync,
+                )
+                .expect("sync flush");
+            if status == flate2::Status::Ok
+                || compressor.total_out() == before_out
+            {
+                break;
+            }
+        }
+
+        total_out = compressor.total_out() as usize;
+        out.truncate(total_out);
+        out
+    }
+
+    #[test]
+    fn sync_flush_produces_marker_bytes() {
+        // upstream token.c: Z_SYNC_FLUSH always ends with 0x00 0x00 0xFF 0xFF
+        let data = b"per-token flush marker test payload";
+        let compressed = compress_with_sync_flush(data, Compression::default());
+
+        assert!(
+            compressed.len() >= 4,
+            "compressed output too short for sync marker"
+        );
+        assert_eq!(
+            &compressed[compressed.len() - 4..],
+            &[0x00, 0x00, 0xFF, 0xFF],
+            "sync flush must end with the 4-byte marker"
+        );
+    }
+
+    #[test]
+    fn each_token_independently_decompressible() {
+        // Simulates upstream per-token pattern: compress each token's literal
+        // data with its own deflate context + Z_SYNC_FLUSH, strip the marker,
+        // then verify the receiver can inflate each segment independently by
+        // re-appending the marker.
+        use flate2::{Decompress, FlushDecompress};
+
+        let tokens: &[&[u8]] = &[
+            b"first token payload with some repetitive data data data",
+            b"second token - different content entirely",
+            b"third token: short",
+        ];
+
+        for (i, token_data) in tokens.iter().enumerate() {
+            let compressed = compress_with_sync_flush(token_data, Compression::default());
+
+            // Strip the trailing sync marker (as upstream sender does)
+            assert!(compressed.len() >= 4);
+            let stripped = &compressed[..compressed.len() - 4];
+
+            // Re-append the marker (as upstream receiver does)
+            let mut to_inflate = stripped.to_vec();
+            to_inflate.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
+
+            // Inflate independently with a fresh decompressor
+            let mut decompressor = Decompress::new(false);
+            let mut output = vec![0u8; token_data.len() + 64];
+            decompressor
+                .decompress(&to_inflate, &mut output, FlushDecompress::Sync)
+                .unwrap_or_else(|e| {
+                    panic!("token {i} failed to decompress independently: {e}");
+                });
+
+            let produced = decompressor.total_out() as usize;
+            assert_eq!(
+                &output[..produced], *token_data,
+                "token {i} roundtrip mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_token_produces_valid_sync_flush_output() {
+        // upstream token.c: even with zero literal bytes, Z_SYNC_FLUSH must
+        // produce valid output (at minimum the sync marker itself).
+        use flate2::{Compress, Decompress, FlushCompress, FlushDecompress};
+
+        let mut compressor = Compress::new(Compression::default(), false);
+        let mut out = vec![0u8; 64];
+
+        // Feed nothing, just sync-flush
+        loop {
+            let before = compressor.total_out();
+            let status = compressor
+                .compress(&[], &mut out[compressor.total_out() as usize..], FlushCompress::Sync)
+                .expect("sync flush on empty");
+            if status == flate2::Status::Ok || compressor.total_out() == before {
+                break;
+            }
+        }
+
+        let total = compressor.total_out() as usize;
+        let compressed = &out[..total];
+
+        // Must contain at least the sync marker
+        assert!(
+            compressed.len() >= 4,
+            "empty sync flush should still produce output (got {} bytes)",
+            compressed.len()
+        );
+        assert_eq!(
+            &compressed[compressed.len() - 4..],
+            &[0x00, 0x00, 0xFF, 0xFF],
+        );
+
+        // Must decompress to empty output
+        let mut decompressor = Decompress::new(false);
+        let mut decoded = vec![0u8; 64];
+        decompressor
+            .decompress(compressed, &mut decoded, FlushDecompress::Sync)
+            .expect("empty sync flush should decompress");
+        assert_eq!(decompressor.total_out(), 0, "empty token should produce no output bytes");
+    }
+
+    #[test]
+    fn token_boundaries_preserved_persistent_stream() {
+        // upstream token.c: a single deflate context persists across the entire
+        // file, with Z_SYNC_FLUSH between tokens. Verify that the receiver can
+        // recover each token's data from the concatenated stream by re-injecting
+        // the sync markers at token boundaries.
+        use flate2::{Compress, Decompress, FlushCompress, FlushDecompress};
+
+        let tokens: &[&[u8]] = &[
+            b"AAAAAAAAAA first token with repetition AAAAAAAAAA",
+            b"BBBBBBBBBB second token BBBBBBBBBB different pattern",
+            b"CCCCCCCCCC third token CCCCCCCCCC yet another",
+            b"D",
+        ];
+
+        // Sender side: single persistent compressor, sync flush per token,
+        // strip marker after each flush.
+        let mut compressor = Compress::new(Compression::default(), false);
+        let mut segments: Vec<Vec<u8>> = Vec::new();
+        let mut scratch = vec![0u8; 4096];
+
+        for token_data in tokens {
+            let mut segment = Vec::new();
+
+            // Feed token data with Z_NO_FLUSH
+            let mut consumed = 0;
+            while consumed < token_data.len() {
+                let before_in = compressor.total_in() as usize;
+                let before_out = compressor.total_out() as usize;
+                compressor
+                    .compress(
+                        &token_data[consumed..],
+                        &mut scratch[..],
+                        FlushCompress::None,
+                    )
+                    .expect("no-flush compress");
+                let produced = (compressor.total_out() as usize) - before_out;
+                if produced > 0 {
+                    segment.extend_from_slice(&scratch[..produced]);
+                }
+                consumed += (compressor.total_in() as usize) - before_in;
+            }
+
+            // Z_SYNC_FLUSH
+            loop {
+                let before_out = compressor.total_out() as usize;
+                let status = compressor
+                    .compress(&[], &mut scratch[..], FlushCompress::Sync)
+                    .expect("sync flush");
+                let produced = (compressor.total_out() as usize) - before_out;
+                if produced > 0 {
+                    segment.extend_from_slice(&scratch[..produced]);
+                }
+                if status == flate2::Status::Ok || produced == 0 {
+                    break;
+                }
+            }
+
+            // Strip the trailing sync marker (upstream wire format)
+            assert!(
+                segment.len() >= 4,
+                "segment too short for sync marker strip"
+            );
+            assert_eq!(&segment[segment.len() - 4..], &[0x00, 0x00, 0xFF, 0xFF]);
+            segment.truncate(segment.len() - 4);
+
+            segments.push(segment);
+        }
+
+        // Receiver side: single persistent decompressor, re-inject sync marker
+        // at each token boundary before inflating.
+        let mut decompressor = Decompress::new(false);
+        let mut output_buf = vec![0u8; 4096];
+
+        for (i, segment) in segments.iter().enumerate() {
+            // Re-append sync marker
+            let mut to_inflate = segment.clone();
+            to_inflate.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
+
+            let mut recovered = Vec::new();
+            let mut input = &to_inflate[..];
+
+            loop {
+                let before_in = decompressor.total_in();
+                let before_out = decompressor.total_out();
+                decompressor
+                    .decompress(input, &mut output_buf, FlushDecompress::Sync)
+                    .unwrap_or_else(|e| {
+                        panic!("token {i} decompression failed: {e}");
+                    });
+
+                let consumed = (decompressor.total_in() - before_in) as usize;
+                let produced = (decompressor.total_out() - before_out) as usize;
+
+                if produced > 0 {
+                    recovered.extend_from_slice(&output_buf[..produced]);
+                }
+                if consumed > 0 {
+                    input = &input[consumed..];
+                }
+                if input.is_empty() || (consumed == 0 && produced == 0) {
+                    break;
+                }
+            }
+
+            assert_eq!(
+                recovered, tokens[i],
+                "token {i} boundary not preserved: expected {:?}, got {:?}",
+                String::from_utf8_lossy(tokens[i]),
+                String::from_utf8_lossy(&recovered),
+            );
+        }
+    }
+
+    #[test]
+    fn stripped_sync_marker_roundtrips_all_levels() {
+        // Verify the strip-and-restore pattern works at every compression level.
+        // upstream token.c always uses this pattern regardless of -z level.
+        use flate2::{Decompress, FlushDecompress};
+
+        let payload = b"payload for multi-level sync flush test with some repeated words words words";
+
+        for level in 1..=9u32 {
+            let compression = Compression::new(level);
+            let compressed = compress_with_sync_flush(payload, compression);
+
+            // Strip marker
+            assert!(compressed.len() >= 4);
+            let mut stripped = compressed[..compressed.len() - 4].to_vec();
+
+            // Restore marker
+            stripped.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
+
+            // Decompress
+            let mut decompressor = Decompress::new(false);
+            let mut output = vec![0u8; payload.len() + 64];
+            decompressor
+                .decompress(&stripped, &mut output, FlushDecompress::Sync)
+                .unwrap_or_else(|e| panic!("level {level} decompress failed: {e}"));
+
+            let produced = decompressor.total_out() as usize;
+            assert_eq!(
+                &output[..produced], &payload[..],
+                "level {level} roundtrip after marker strip/restore failed"
+            );
+        }
+    }
+
+    #[test]
+    fn sync_flush_after_each_write_produces_decompressible_prefix() {
+        // Verify that flushing after each write (simulating per-token behavior)
+        // allows the receiver to decompress all data seen so far at any boundary.
+        use flate2::{Compress, Decompress, FlushCompress, FlushDecompress};
+
+        let chunks: &[&[u8]] = &[
+            b"chunk-one ",
+            b"chunk-two ",
+            b"chunk-three",
+        ];
+
+        let mut compressor = Compress::new(Compression::default(), false);
+        let mut wire = Vec::new();
+        let mut scratch = vec![0u8; 4096];
+        let mut boundaries: Vec<usize> = Vec::new();
+
+        for chunk in chunks {
+            // Feed with NO_FLUSH
+            let mut consumed = 0;
+            while consumed < chunk.len() {
+                let bi = compressor.total_in() as usize;
+                let bo = compressor.total_out() as usize;
+                compressor
+                    .compress(&chunk[consumed..], &mut scratch, FlushCompress::None)
+                    .expect("no-flush");
+                let produced = (compressor.total_out() as usize) - bo;
+                if produced > 0 {
+                    wire.extend_from_slice(&scratch[..produced]);
+                }
+                consumed += (compressor.total_in() as usize) - bi;
+            }
+
+            // Sync flush
+            loop {
+                let bo = compressor.total_out() as usize;
+                let status = compressor
+                    .compress(&[], &mut scratch, FlushCompress::Sync)
+                    .expect("sync flush");
+                let produced = (compressor.total_out() as usize) - bo;
+                if produced > 0 {
+                    wire.extend_from_slice(&scratch[..produced]);
+                }
+                if status == flate2::Status::Ok || produced == 0 {
+                    break;
+                }
+            }
+
+            boundaries.push(wire.len());
+        }
+
+        // At each boundary, the wire prefix must decompress to the
+        // concatenation of all chunks up to that point.
+        let mut expected = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            expected.extend_from_slice(chunk);
+
+            let prefix = &wire[..boundaries[i]];
+            let mut decompressor = Decompress::new(false);
+            let mut output = vec![0u8; expected.len() + 64];
+            let mut input = prefix;
+            let mut recovered = Vec::new();
+
+            loop {
+                let bi = decompressor.total_in();
+                let bo = decompressor.total_out();
+                decompressor
+                    .decompress(input, &mut output, FlushDecompress::Sync)
+                    .unwrap_or_else(|e| {
+                        panic!("boundary {i} decompress failed: {e}");
+                    });
+                let consumed = (decompressor.total_in() - bi) as usize;
+                let produced = (decompressor.total_out() - bo) as usize;
+                if produced > 0 {
+                    recovered.extend_from_slice(&output[..produced]);
+                }
+                if consumed > 0 {
+                    input = &input[consumed..];
+                }
+                if input.is_empty() || (consumed == 0 && produced == 0) {
+                    break;
+                }
+            }
+
+            assert_eq!(
+                recovered, expected,
+                "at boundary {i}, decompressed prefix should equal all chunks so far"
+            );
+        }
+    }
+
+    #[test]
+    fn counting_encoder_flush_produces_sync_flush() {
+        // Verify that calling flush() on CountingZlibEncoder produces
+        // a Z_SYNC_FLUSH, matching the upstream per-token pattern.
+        // flate2::write::DeflateEncoder::flush() triggers Z_SYNC_FLUSH.
+        let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
+
+        // Write first token
+        encoder.write(b"token-one data payload").expect("write token 1");
+        encoder.flush().expect("flush after token 1");
+
+        let after_flush_1 = encoder.get_ref().len();
+        assert!(after_flush_1 > 0, "flush should produce output");
+
+        // The flushed output ending with the sync marker confirms Z_SYNC_FLUSH
+        let buf = encoder.get_ref().clone();
+        assert!(buf.len() >= 4, "flushed output too short for sync marker");
+        assert_eq!(
+            &buf[buf.len() - 4..],
+            &[0x00, 0x00, 0xFF, 0xFF],
+            "CountingZlibEncoder::flush() must produce Z_SYNC_FLUSH marker"
+        );
+
+        // Write second token
+        encoder.write(b"token-two different data").expect("write token 2");
+        encoder.flush().expect("flush after token 2");
+
+        let after_flush_2 = encoder.get_ref().len();
+        assert!(after_flush_2 > after_flush_1, "second flush should produce more output");
+
+        // Verify the cumulative output ends with sync marker
+        let buf2 = encoder.get_ref().clone();
+        assert_eq!(
+            &buf2[buf2.len() - 4..],
+            &[0x00, 0x00, 0xFF, 0xFF],
+            "second flush must also produce Z_SYNC_FLUSH marker"
+        );
+
+        // The entire output (two sync-flushed segments) must decompress to both tokens
+        let (compressed, _bytes) = encoder.finish_into_inner().expect("finish");
+        let decompressed = decompress_to_vec(&compressed).expect("decompress combined");
+        assert_eq!(
+            decompressed,
+            b"token-one data payloadtoken-two different data",
+        );
+    }
 }
