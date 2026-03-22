@@ -767,4 +767,86 @@ mod integration {
         assert_eq!(read_entries.len(), 1);
         assert_eq!(reader.io_error(), 0);
     }
+
+    /// End-to-end test: write a batch file with flist + token-format delta data,
+    /// then replay it to a destination directory and verify file contents.
+    #[test]
+    fn test_replay_with_token_deltas() {
+        use protocol::flist::{FileEntry, FileListWriter};
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("replay_test.batch");
+        let dest_dir = temp_dir.path().join("dest");
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let protocol_version = 31;
+
+        // -- Write phase: build a batch file with flist + token deltas --
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(99);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        // Write one directory entry + one regular file entry in flist format
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol);
+
+        let dir_entry = {
+            let mut e = FileEntry::new_directory("subdir".into(), 0o755);
+            e.set_mtime(1_700_000_000, 0);
+            e
+        };
+        let file_entry = {
+            let mut e = FileEntry::new_file("subdir/hello.txt".into(), 13, 0o644);
+            e.set_mtime(1_700_000_000, 0);
+            e
+        };
+
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        let mut buf2 = Vec::new();
+        flist_writer.write_entry(&mut buf2, &file_entry).unwrap();
+        writer.write_data(&buf2).unwrap();
+
+        // Flist end marker
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // Token-format delta data for the one regular file (whole-file literal)
+        let mut delta_buf = Vec::new();
+        protocol::wire::delta::write_token_literal(&mut delta_buf, b"Hello, batch!").unwrap();
+        protocol::wire::delta::write_token_end(&mut delta_buf).unwrap();
+        writer.write_data(&delta_buf).unwrap();
+
+        writer.finalize().unwrap();
+
+        // -- Replay phase --
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+
+        assert_eq!(result.file_count, 2); // 1 dir + 1 file
+        assert!(result.recurse);
+        assert!(dest_dir.join("subdir").is_dir());
+        assert!(dest_dir.join("subdir/hello.txt").exists());
+
+        let content = fs::read(dest_dir.join("subdir/hello.txt")).unwrap();
+        assert_eq!(content, b"Hello, batch!");
+    }
 }

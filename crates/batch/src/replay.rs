@@ -55,6 +55,54 @@ pub struct ReplayResult {
     pub symlinks_created: u64,
 }
 
+/// Write literal-only delta operations to a new file.
+///
+/// When no basis file exists at the destination, the delta stream consists
+/// entirely of literal data. This function creates the output file and writes
+/// all literal chunks sequentially, ignoring any copy operations (which should
+/// not be present without a basis).
+fn write_literals_to_file(
+    dest_path: &Path,
+    delta_ops: &[protocol::wire::DeltaOp],
+) -> BatchResult<()> {
+    let output_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(dest_path)
+        .map_err(|e| {
+            BatchError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "failed to create output file '{}': {}",
+                    dest_path.display(),
+                    e
+                ),
+            ))
+        })?;
+    let mut output = BufWriter::new(output_file);
+
+    for op in delta_ops {
+        if let protocol::wire::DeltaOp::Literal(data) = op {
+            output.write_all(data).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to write literal data: {e}"),
+                ))
+            })?;
+        }
+    }
+
+    output.flush().map_err(|e| {
+        BatchError::Io(std::io::Error::new(
+            e.kind(),
+            format!("failed to flush output file: {e}"),
+        ))
+    })?;
+
+    Ok(())
+}
+
 /// Apply delta operations to reconstruct a target file from a basis file.
 ///
 /// Reads copy and literal tokens from `delta_ops` and writes the
@@ -134,7 +182,15 @@ pub fn apply_delta_ops(
                     ))
                 })?;
 
-                let mut remaining = length as usize;
+                // Token-format block matches encode length=0 because the
+                // receiver derives block size from the signature. Use
+                // block_length when the explicit length is zero.
+                let effective_length = if length == 0 {
+                    block_length
+                } else {
+                    length as usize
+                };
+                let mut remaining = effective_length;
                 while remaining > 0 {
                     let chunk_size = remaining.min(buffer.len());
                     basis.read_exact(&mut buffer[..chunk_size]).map_err(|e| {
@@ -364,16 +420,16 @@ pub fn replay(
     }
 
     // Phase 2: Apply delta operations for regular files.
+    // upstream: receiver.c:recv_files() reads per-file delta token streams
+    // from the protocol fd (which for --read-batch is the batch file).
+    // Each file's data is a token stream terminated by write_int(0).
     for entry in &regular_files {
         let dest_path = dest_root.join(entry.name());
 
-        let delta_ops = reader.read_all_delta_ops().map_err(|e| {
+        let delta_ops = reader.read_file_delta_tokens().map_err(|e| {
             BatchError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "failed to read delta operations for '{}': {e}",
-                    entry.name()
-                ),
+                format!("failed to read delta tokens for '{}': {e}", entry.name()),
             ))
         })?;
 
@@ -381,16 +437,36 @@ pub fn replay(
             println!("  {} delta operations", delta_ops.len());
         }
 
-        // For batch replay, the basis file is the existing file at the
-        // destination (upstream receiver.c uses the same path for both).
-        let basis_path = dest_path.clone();
+        // If the file does not yet exist at the destination, create it from
+        // pure literal data. If it does exist, it serves as the basis file.
+        let basis_exists = dest_path.exists();
 
         // Upstream rsync calculates block_length dynamically based on file
         // size (match.c:365, choose_block_size()). The entry carries the
         // original file size, so we derive the block length using the same
         // heuristic: sqrt(file_size) clamped to [700, 128*1024].
         let block_length = choose_block_length(entry.size());
-        apply_delta_ops(&basis_path, &dest_path, delta_ops, block_length)?;
+
+        if !basis_exists {
+            // No basis file - write literals directly to the destination.
+            // upstream: receiver.c creates the file and applies literal-only delta.
+            write_literals_to_file(&dest_path, &delta_ops)?;
+        } else {
+            // Basis file exists - apply delta ops against it.
+            // Use a temp file to avoid self-referencing read/write conflicts.
+            let temp_path = dest_path.with_extension("~batch-tmp");
+            apply_delta_ops(&dest_path, &temp_path, delta_ops, block_length)?;
+            fs::rename(&temp_path, &dest_path).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "failed to rename temp file '{}' to '{}': {e}",
+                        temp_path.display(),
+                        dest_path.display()
+                    ),
+                ))
+            })?;
+        }
     }
 
     // Phase 3: Apply metadata. Directories are done last (in reverse order)
@@ -546,5 +622,40 @@ mod tests {
         }];
         let result = apply_delta_ops(&basis_path, &dest_path, ops, 10);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_literals_to_new_file() {
+        let temp = TempDir::new().unwrap();
+        let dest_path = temp.path().join("new_file.txt");
+
+        let ops = vec![
+            protocol::wire::DeltaOp::Literal(b"hello ".to_vec()),
+            protocol::wire::DeltaOp::Literal(b"world".to_vec()),
+        ];
+        write_literals_to_file(&dest_path, &ops).unwrap();
+
+        let result = fs::read(&dest_path).unwrap();
+        assert_eq!(result, b"hello world");
+    }
+
+    #[test]
+    fn write_literals_ignores_copy_ops() {
+        let temp = TempDir::new().unwrap();
+        let dest_path = temp.path().join("literals_only.txt");
+
+        let ops = vec![
+            protocol::wire::DeltaOp::Literal(b"data".to_vec()),
+            // Copy ops should be ignored when no basis exists
+            protocol::wire::DeltaOp::Copy {
+                block_index: 0,
+                length: 100,
+            },
+            protocol::wire::DeltaOp::Literal(b"more".to_vec()),
+        ];
+        write_literals_to_file(&dest_path, &ops).unwrap();
+
+        let result = fs::read(&dest_path).unwrap();
+        assert_eq!(result, b"datamore");
     }
 }
