@@ -1,4 +1,14 @@
-//! Item flags received from the receiver indicating transfer requirements.
+//! Item flags for transfer requirements and itemize output.
+//!
+//! Defines the 16-bit wire flags and 3 log-only upper bits that encode per-file
+//! transfer state. Used by both the generator (reading receiver requests) and
+//! the receiver (emitting itemize output via MSG_INFO).
+//!
+//! # Upstream Reference
+//!
+//! - `rsync.h:214-236` - `ITEM_*` flag definitions and `SIGNIFICANT_ITEM_FLAGS`
+//! - `rsync.c:227` - `read_ndx_and_attrs()` reads iflags from wire
+//! - `log.c:695-746` - `%i` expansion uses these flags for itemize output
 
 use std::io::{self, Read};
 
