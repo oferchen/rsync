@@ -4,6 +4,12 @@
 //! signatures (parallel when batch is large enough), sends requests
 //! sequentially, and processes responses with a background disk commit
 //! thread. Used by both `run_pipelined` and `run_pipelined_incremental`.
+//!
+//! # Upstream Reference
+//!
+//! - `receiver.c:720` - `recv_files()` main reception loop
+//! - `generator.c:2157-2163` - phase 1 vs phase 2 checksum length selection
+//! - `io.c:perform_io()` - upstream bidirectional I/O batching via `select()`
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};

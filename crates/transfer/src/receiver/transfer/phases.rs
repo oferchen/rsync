@@ -3,6 +3,12 @@
 //! Contains the wire-level handshake methods that manage NDX_DONE exchanges
 //! between phase transitions, the goodbye sequence, and sender statistics
 //! parsing. Called by `finalize_transfer` at the end of every transfer mode.
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:875-906` - `read_final_goodbye()` with extended goodbye
+//! - `main.c:356-384` - `handle_stats()` sends/receives statistics
+//! - `io.c:read_ndx()` / `write_ndx()` - NDX wire encoding
 
 use std::io::{self, Read, Write};
 
