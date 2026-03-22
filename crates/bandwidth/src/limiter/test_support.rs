@@ -1,3 +1,11 @@
+//! Deterministic sleep recording for bandwidth limiter tests.
+//!
+//! When the `test-support` feature is active, the limiter records requested
+//! sleep durations into a shared buffer instead of calling
+//! [`std::thread::sleep`]. Tests obtain exclusive access via
+//! [`RecordedSleepSession`], which guards the buffer with a mutex so
+//! concurrent test threads do not interfere with each other.
+
 use std::iter::{ExactSizeIterator, FusedIterator};
 use std::marker::PhantomData;
 use std::mem;

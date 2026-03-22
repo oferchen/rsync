@@ -1,3 +1,14 @@
+//! Sleep primitives for the bandwidth limiter.
+//!
+//! [`LimiterSleep`] records the requested and actual durations of a single
+//! pacing interval. The internal [`sleep_for`] helper chunks large durations
+//! so that a single sleep never exceeds `MAX_SLEEP_DURATION`, matching the
+//! defensive approach in upstream rsync's `io.c:sleep_for_bwlimit()`.
+//!
+//! Under the `test-support` feature (or in `#[cfg(test)]` builds), actual
+//! sleeping is replaced by recording the requested chunks into a shared
+//! buffer inspected via [`super::test_support::RecordedSleepSession`].
+
 use super::{MAX_REPRESENTABLE_MICROSECONDS, MAX_SLEEP_DURATION, MICROS_PER_SECOND};
 use std::time::Duration;
 

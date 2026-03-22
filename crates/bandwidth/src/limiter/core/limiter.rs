@@ -1,3 +1,12 @@
+//! Core token-bucket bandwidth limiter.
+//!
+//! The algorithm mirrors upstream rsync's `io.c:sleep_for_bwlimit()`. Each
+//! call to [`BandwidthLimiter::register`] accumulates byte debt, subtracts
+//! the time-based allowance elapsed since the previous call, and sleeps when
+//! the outstanding debt exceeds the minimum sleep threshold
+//! (`MINIMUM_SLEEP_MICROS`). An optional burst cap prevents excessive debt
+//! accumulation after idle periods.
+
 use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
@@ -7,6 +16,8 @@ use super::super::{
 use super::write_max::calculate_write_max;
 
 /// Token-bucket style limiter that mirrors upstream rsync's pacing rules.
+///
+// upstream: io.c:sleep_for_bwlimit()
 #[doc(alias = "--bwlimit")]
 #[derive(Clone, Debug)]
 pub struct BandwidthLimiter {
@@ -102,6 +113,7 @@ impl BandwidthLimiter {
     }
 
     /// Records a completed write and sleeps if the limiter accumulated debt.
+    // upstream: io.c:sleep_for_bwlimit() - debt accumulation and sleep logic
     pub fn register(&mut self, bytes: usize) -> super::super::LimiterSleep {
         if bytes == 0 {
             return super::super::LimiterSleep::default();
