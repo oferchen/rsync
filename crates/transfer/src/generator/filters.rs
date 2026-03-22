@@ -16,6 +16,8 @@ pub use ::filters::FilterSet;
 use logging::info_log;
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 
+use crate::role_trailer::error_location;
+
 use super::GeneratorContext;
 use ::filters::FilterRule;
 
@@ -214,8 +216,16 @@ impl GeneratorContext {
             rules.push(rule);
         }
 
-        FilterSet::from_rules(rules)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("filter error: {e}")))
+        FilterSet::from_rules(rules).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "filter error: {e} {}{}",
+                    error_location!(),
+                    crate::role_trailer::sender()
+                ),
+            )
+        })
     }
 }
 
