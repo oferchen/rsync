@@ -48,6 +48,8 @@ use protocol::idlist::IdList;
 use protocol::stats::DeleteStats;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
+use crate::role_trailer::error_location;
+
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
 
@@ -570,9 +572,10 @@ impl GeneratorContext {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "invalid file index {}, file list has {} entries{}",
+                    "invalid file index {}, file list has {} entries {}{}",
                     ndx,
                     self.file_list.len(),
+                    error_location!(),
                     crate::role_trailer::sender()
                 ),
             ));

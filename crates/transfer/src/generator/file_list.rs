@@ -21,6 +21,8 @@ use protocol::flist::{FileEntry, compare_file_entries};
 #[cfg(unix)]
 use protocol::flist::{DevIno, HardlinkLookup, HardlinkTable};
 
+use crate::role_trailer::error_location;
+
 use super::io_error_flags;
 use super::{GeneratorContext, PendingSegment, SegmentClassification};
 
