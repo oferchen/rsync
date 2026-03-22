@@ -1,3 +1,9 @@
+//! Module list request parsing from CLI operands.
+//!
+//! Parses `rsync://host/` URLs and `host::` double-colon syntax into a
+//! [`ModuleListRequest`] that can be executed against a daemon. The parsing
+//! logic mirrors upstream `main.c:check_for_hostspec()`.
+
 use std::ffi::{OsStr, OsString};
 use std::net::SocketAddr;
 

@@ -7,6 +7,15 @@
 //! points without keeping the primary orchestration module monolithic. All
 //! definitions are re-exported from [`crate::client`] to preserve the existing
 //! public API.
+//!
+//! The configuration model corresponds to the option parsing in upstream
+//! `options.c`, with [`ClientConfig`] capturing the full set of flags and
+//! [`ClientConfigBuilder`] providing a fluent API for incremental assembly.
+//!
+//! # Upstream Reference
+//!
+//! - `options.c` - Option parsing, validation, and server options building
+//! - `options.c:server_options()` - Server flag string generation
 
 mod bandwidth;
 mod builder;

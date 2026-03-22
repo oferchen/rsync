@@ -12,6 +12,7 @@ use engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
 // Re-export exit code constants for backward compatibility.
 // These map directly to ExitCode variants and should be preferred
 // when type safety is important.
+// upstream: errcode.h - Exit code definitions
 
 /// Exit code returned when client functionality is unavailable.
 pub const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = ExitCode::Syntax.as_i32();
@@ -35,7 +36,8 @@ pub const REMOTE_COMMAND_NOT_FOUND_EXIT_CODE: i32 = ExitCode::CommandNotFound.as
 /// Error returned when the client orchestration fails.
 ///
 /// Uses the centralized [`ExitCode`] enum to ensure exit codes match
-/// upstream rsync behavior.
+/// upstream rsync behavior. Exit codes are defined in upstream `errcode.h`
+/// and mapped to string names in `log.c`.
 #[derive(Clone, Debug, Error)]
 #[error("{message}")]
 pub struct ClientError {

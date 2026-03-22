@@ -1,7 +1,9 @@
 //! Remote-to-remote transfer via local proxy.
 //!
 //! This module implements transfers between two remote hosts, with the local
-//! machine acting as a relay/proxy. The local process spawns two SSH connections:
+//! machine acting as a relay/proxy. This mirrors the behavior of upstream
+//! `main.c` when both source and destination are remote. The local process
+//! spawns two SSH connections:
 //!
 //! 1. To the source host with `rsync --server --sender` (generator role)
 //! 2. To the destination host with `rsync --server` (receiver role)
@@ -25,6 +27,10 @@
 //! - One thread copies source → destination
 //! - Another thread copies destination → source
 //! - Both threads run until EOF or error
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:do_cmd()` - Detects remote-to-remote and spawns two shells
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};

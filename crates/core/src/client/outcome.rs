@@ -2,7 +2,8 @@
 //!
 //! This module defines the [`ClientOutcome`] wrapper that carries the
 //! [`ClientSummary`] produced by the native engine after a successful
-//! transfer.
+//! transfer. The outcome discriminates between local and remote transfer
+//! paths, allowing callers to retrieve role-specific statistics.
 
 use super::summary::ClientSummary;
 

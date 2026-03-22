@@ -1,4 +1,8 @@
 //! Client transfer event types and action mapping.
+//!
+//! Maps engine-level `LocalCopyAction` values to user-facing
+//! [`ClientEventKind`] variants. The event kinds correspond to the
+//! itemize change indicators emitted by upstream `log.c:log_item()`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

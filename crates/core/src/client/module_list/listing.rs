@@ -1,3 +1,15 @@
+//! Daemon module list retrieval and parsing.
+//!
+//! Connects to an rsync daemon, negotiates the `@RSYNCD:` greeting, and
+//! retrieves the advertised module table. This mirrors the protocol exchange
+//! in upstream `clientserver.c:start_inband_exchange()` when no module is
+//! selected (empty module name triggers listing mode).
+//!
+//! # Upstream Reference
+//!
+//! - `clientserver.c:start_inband_exchange()` - Module listing handshake
+//! - `authenticate.c` - Challenge/response authentication
+
 use std::io::{BufReader, Write};
 use std::time::Duration;
 

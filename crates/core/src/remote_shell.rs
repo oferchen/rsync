@@ -33,8 +33,9 @@ use std::borrow::Cow;
 
 /// Remote shell configuration for executing rsync on remote hosts.
 ///
-/// Handles parsing of shell command strings (e.g., from --rsh/-e flag) and
-/// construction of full command lines for remote execution.
+/// Handles parsing of shell command strings (e.g., from `--rsh`/`-e` flag) and
+/// construction of full command lines for remote execution. Mirrors the shell
+/// handling in upstream `options.c:parse_arguments()` and `main.c:do_cmd()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteShell {
     program: String,

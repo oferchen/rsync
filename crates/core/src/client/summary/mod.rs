@@ -6,8 +6,13 @@
 //! type describes individual file-level actions taken during the transfer.
 //!
 //! These types enable post-transfer analysis, test assertions, and status
-//! displays that mirror the output of rsync's `--stats` and `--itemize-changes`
-//! flags.
+//! displays that mirror the output of upstream rsync's `--stats` and
+//! `--itemize-changes` flags.
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:output_summary()` - Stats display after transfer
+//! - `log.c:log_item()` - Per-file itemize output
 //!
 //! # Examples
 //!
