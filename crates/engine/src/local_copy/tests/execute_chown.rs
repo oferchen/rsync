@@ -584,6 +584,11 @@ fn execute_applies_owner_override_with_existing_destination() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"new content").expect("write source");
     fs::write(&destination, b"old content").expect("write dest");
+    // Backdate destination to prevent quick-check skip (same size files)
+    let one_hour_ago = FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    set_file_mtime(&destination, one_hour_ago).expect("backdate dest");
 
     let existing_uid = 2000;
     let existing_gid = 3000;
@@ -635,6 +640,11 @@ fn execute_applies_group_override_with_existing_destination() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"new content").expect("write source");
     fs::write(&destination, b"old content").expect("write dest");
+    // Backdate destination to prevent quick-check skip (same size files)
+    let one_hour_ago = FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    set_file_mtime(&destination, one_hour_ago).expect("backdate dest");
 
     let existing_uid = 2000;
     let existing_gid = 3000;
