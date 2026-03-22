@@ -1,7 +1,7 @@
 //! DEBUG_FILTER tracing for filter/exclude operations.
 //!
 //! This module provides structured tracing for filter rule evaluation operations
-//! that match upstream rsync's exclude.c debug output format. All tracing is
+//! that match upstream rsync's `exclude.c` debug output format. All tracing is
 //! conditionally compiled behind the `tracing` feature flag and produces no-op
 //! inline functions when disabled.
 //!

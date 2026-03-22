@@ -2,6 +2,10 @@ use std::fmt;
 
 /// Action taken when a [`FilterRule`](crate::FilterRule) matches a path.
 ///
+/// These actions correspond to upstream rsync's filter rule prefixes defined in
+/// `exclude.c`. Short-form prefixes (`+`, `-`, `P`, `R`, `.`, `:`, `!`) and
+/// long-form keywords (`include`, `exclude`, etc.) both map to these variants.
+///
 /// Actions fall into three categories:
 ///
 /// | Category | Variants | Effect |

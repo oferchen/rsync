@@ -25,12 +25,14 @@
 //! # References
 //!
 //! - [rsync man page](https://download.samba.org/pub/rsync/rsync.1)
-//! - Upstream rsync `exclude.c` and `options.c`
+//! - upstream: exclude.c:get_cvs_excludes() - builds the default CVS list
+//! - upstream: options.c - `--cvs-exclude` (`-C`) option handling
 
 /// Default CVS exclusion patterns.
 ///
-/// These patterns are space-separated and match rsync's built-in defaults.
-/// The patterns use rsync's filter syntax:
+/// These patterns are space-separated and match rsync's built-in defaults
+/// from `exclude.c:get_cvs_excludes()`. The patterns use rsync's filter
+/// syntax:
 /// - Simple names match files/directories at any level
 /// - `*` matches any characters except `/`
 /// - Trailing `/` marks directory-only patterns

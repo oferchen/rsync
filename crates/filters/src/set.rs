@@ -1,3 +1,18 @@
+//! Compiled, immutable filter set with first-match-wins evaluation.
+//!
+//! [`FilterSet`] is the central type in the Chain of Responsibility pattern
+//! used by this crate. It compiles [`FilterRule`]s into optimised glob matchers
+//! and evaluates paths against two independent chains:
+//!
+//! 1. **Include/Exclude** - controls transfer decisions (sender side).
+//! 2. **Protect/Risk** - controls deletion decisions (receiver side).
+//!
+//! Both chains use first-match-wins semantics. If no rule matches in the
+//! include/exclude chain, the path is included by default.
+//!
+//! // upstream: exclude.c:check_filter() - first-match-wins evaluation loop
+//! // upstream: exclude.c:parse_filter_str() - rule parsing and compilation
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -302,6 +317,10 @@ impl From<FilterError> for FilterSetError {
 }
 
 /// Recursively expands merge rules by reading and inlining their contents.
+///
+/// This mirrors upstream rsync's behavior in `exclude.c` where `. FILE` rules
+/// cause the referenced file to be read and its rules inserted at that
+/// position in the chain.
 fn expand_merge_rules(
     rules: Vec<FilterRule>,
     max_depth: usize,
