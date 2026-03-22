@@ -123,6 +123,11 @@ fn delete_after_files_present_during_transfer() {
     fs::write(dest.join("update.txt"), b"old version").expect("write old update");
     fs::write(dest.join("delete_me.txt"), b"to be deleted").expect("write delete_me");
     fs::write(dest.join("also_delete.txt"), b"also deleted").expect("write also_delete");
+    // Backdate update.txt to prevent quick-check skip (same size as source)
+    let one_hour_ago = FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    set_file_mtime(dest.join("update.txt"), one_hour_ago).expect("backdate dest");
 
     let mut source_operand = source.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
