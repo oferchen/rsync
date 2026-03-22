@@ -479,6 +479,10 @@ mod tests {
         );
     }
 
+    /// Serializes environment mutations so parallel test threads do not race on
+    /// the same process-global variable.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct EnvGuard {
         key: &'static str,
         original: Option<OsString>,
@@ -512,6 +516,7 @@ mod tests {
     #[test]
     fn env_guard_restores_environment() {
         const KEY: &str = "OC_RSYNC_EMBEDDING_TEST_ENVGUARD";
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let original = std::env::var_os(KEY);
 
         {
