@@ -563,7 +563,9 @@ fn test_choose_compression_empty_list() {
 
 #[test]
 fn test_daemon_client_handles_empty_capabilities() {
-    // Edge case: server sends empty capability lists (should fall back to defaults)
+    // Edge case: server sends empty capability lists.
+    // Upstream recv_negotiate_str (compat.c:383-406) treats an empty list
+    // as a hard error - no fallback to defaults.
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let server_lists = b"\x00\x00"; // Two empty vstrings
     let mut stdin = &server_lists[..];
@@ -577,14 +579,11 @@ fn test_daemon_client_handles_empty_capabilities() {
         true,  // send_compression
         true,  // is_daemon_mode
         false, // is_server = false
-    )
-    .unwrap();
+    );
 
-    // Should fall back to defaults when no match found
-    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-    assert_eq!(result.compression, CompressionAlgorithm::None);
-    // Client also sends its lists (bidirectional)
-    assert!(!stdout.is_empty());
+    // Empty checksum list from server is a negotiation failure
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
 }
 
 #[test]
