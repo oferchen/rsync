@@ -230,15 +230,31 @@ mod tests {
 
     #[test]
     fn backpressure_bounded() {
-        // Queue of capacity 2 — sender must spin-wait when full.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        // Queue of capacity 2 - sender must spin-wait when full.
         let (tx, rx) = channel::<i32>(2);
         tx.send(1).unwrap();
         tx.send(2).unwrap();
         // Queue is full.  Spawn a thread to drain all items, keeping rx
         // alive until after the sender unblocks (avoids race where rx
         // drops before the spin-waiting send completes).
+        //
+        // Use an atomic flag instead of a fixed sleep so the drain thread
+        // waits until the sender is about to enter its spin-wait loop.
+        let sender_ready = Arc::new(AtomicBool::new(false));
+        let sender_ready_clone = Arc::clone(&sender_ready);
         let drain = thread::spawn(move || {
-            thread::sleep(std::time::Duration::from_millis(10));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !sender_ready_clone.load(Ordering::Acquire) {
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for sender to be ready"
+                );
+                thread::yield_now();
+            }
             let mut received = Vec::new();
             // Drain all items: the 2 already queued + the 1 the sender
             // will push once a slot opens.
@@ -247,7 +263,8 @@ mod tests {
             }
             received
         });
-        // This send should spin-wait until the drain thread pops.
+        // Signal the drain thread, then immediately enter the blocking send.
+        sender_ready.store(true, Ordering::Release);
         tx.send(3).unwrap();
         let received = drain.join().unwrap();
         assert_eq!(received, vec![1, 2, 3]);
