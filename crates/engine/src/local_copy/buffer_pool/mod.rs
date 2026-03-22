@@ -862,11 +862,11 @@ mod tests {
         let pool = Arc::new(BufferPool::new(8));
 
         let file_sizes: Vec<u64> = vec![
-            512,                  // tiny
-            100 * 1024,           // small
-            10 * 1024 * 1024,     // medium (matches pool default)
-            100 * 1024 * 1024,    // large
-            500 * 1024 * 1024,    // huge
+            512,               // tiny
+            100 * 1024,        // small
+            10 * 1024 * 1024,  // medium (matches pool default)
+            100 * 1024 * 1024, // large
+            500 * 1024 * 1024, // huge
         ];
 
         let handles: Vec<_> = file_sizes
@@ -875,8 +875,7 @@ mod tests {
                 let pool = Arc::clone(&pool);
                 thread::spawn(move || {
                     for _ in 0..100 {
-                        let buf =
-                            BufferPool::acquire_adaptive_from(Arc::clone(&pool), size);
+                        let buf = BufferPool::acquire_adaptive_from(Arc::clone(&pool), size);
                         assert!(!buf.is_empty());
                     }
                 })
