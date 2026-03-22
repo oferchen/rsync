@@ -1,12 +1,13 @@
-//! Thread-safe buffer pool for reusing I/O buffers.
+//! Thread-safe, lock-free buffer pool for reusing I/O buffers.
 //!
 //! This module provides a [`BufferPool`] that reduces allocation overhead during
 //! file copy operations by reusing fixed-size buffers. Buffers are automatically
-//! returned to the pool when the [`BufferGuard`] is dropped.
+//! returned to the pool when the RAII guard ([`BufferGuard`] or
+//! [`BorrowedBufferGuard`]) is dropped.
 //!
 //! # Adaptive Buffer Sizing
 //!
-//! The `adaptive_buffer_size` function selects an appropriate I/O buffer size
+//! The [`adaptive_buffer_size`] function selects an appropriate I/O buffer size
 //! based on the file being transferred. Small files use smaller buffers to reduce
 //! memory overhead, while large files use larger buffers for better throughput.
 //! Use [`BufferPool::acquire_adaptive_from`] to acquire a buffer sized to match
@@ -14,20 +15,50 @@
 //!
 //! # Design
 //!
-//! The pool uses a simple stack-based approach: buffers are pushed when released
-//! and popped when acquired. This provides good cache locality as recently-used
-//! buffers are reused first.
+//! The pool uses [`crossbeam_queue::ArrayQueue`], a bounded, lock-free MPMC
+//! queue backed by a contiguous array. Buffers are pushed when released and
+//! popped when acquired. Because `ArrayQueue` is array-backed, recently returned
+//! buffers tend to be reused first, providing reasonable cache locality.
 //!
-//! # Thread Safety
+//! # Contention Characteristics
 //!
-//! The pool uses [`crossbeam_queue::ArrayQueue`] for lock-free concurrent
-//! access. Push and pop are wait-free CAS operations with no mutex overhead.
+//! All pool operations (acquire and return) use lock-free compare-and-swap (CAS)
+//! rather than a mutex. Under typical rsync workloads - where rayon worker
+//! threads each process one file at a time - contention is negligible because
+//! acquire and return calls are separated by the full duration of a file copy.
+//!
+//! Under extreme contention (many threads acquiring and returning buffers in
+//! tight loops), CAS retries may increase slightly, but the operations remain
+//! wait-free in practice. The pool never blocks: when empty, it allocates a
+//! fresh buffer; when full, returned buffers are simply dropped. This means
+//! contention affects allocation frequency rather than latency.
+//!
+//! If per-thread buffer pools become necessary for very high thread counts,
+//! the `ArrayQueue` can be replaced with thread-local storage without changing
+//! the guard API.
+//!
+//! # RAII Guard Pattern
+//!
+//! Buffers are never handed out directly. Instead, callers receive an RAII guard
+//! that derefs to `[u8]` and automatically returns the buffer to the pool on
+//! drop. Two guard variants are provided:
+//!
+//! - [`BufferGuard`] - holds an `Arc<BufferPool>`, decoupling the buffer
+//!   lifetime from the pool borrow. Use this when the pool is part of a larger
+//!   struct that needs to be mutably borrowed while a buffer is checked out.
+//! - [`BorrowedBufferGuard`] - borrows the pool by reference, tying the guard
+//!   lifetime to the pool. Lighter weight when the borrow checker allows it.
+//!
+//! Both guards use an internal `Option<Vec<u8>>` with take-on-drop semantics:
+//! the `Drop` impl calls `Option::take` to move the buffer out, then passes it
+//! to `BufferPool::return_buffer`. This pattern ensures the buffer is returned
+//! exactly once, even if the guard is dropped during a panic unwind.
 //!
 //! # Ownership Model
 //!
-//! The pool is wrapped in [`Arc`](std::sync::Arc) to allow [`BufferGuard`] to hold an owned
-//! reference, avoiding borrow checker issues when the pool is part of a larger
-//! context struct.
+//! The pool is typically wrapped in [`Arc`](std::sync::Arc) so that
+//! [`BufferGuard`] instances can hold an owned reference, avoiding borrow
+//! checker issues when the pool is part of a larger context struct.
 //!
 //! # Example
 //!
@@ -89,19 +120,31 @@ pub const fn adaptive_buffer_size(file_size: u64) -> usize {
     super::adaptive_buffer_size(file_size)
 }
 
-/// A thread-safe pool of reusable I/O buffers.
+/// A thread-safe, lock-free pool of reusable I/O buffers.
 ///
 /// Reduces allocation overhead during file copy operations by maintaining
-/// a pool of fixed-size buffers that can be reused across operations.
+/// a bounded set of buffers that can be reused across operations. Internally
+/// backed by [`crossbeam_queue::ArrayQueue`], all acquire and return
+/// operations are lock-free CAS loops with no mutex overhead.
 ///
 /// # Capacity
 ///
 /// The pool has a maximum capacity to prevent unbounded memory growth.
 /// When the pool is full, returning a buffer simply drops it.
-/// When the pool is empty, acquiring creates a new buffer.
+/// When the pool is empty, acquiring allocates a fresh buffer rather than
+/// blocking. This non-blocking guarantee means contention only affects
+/// allocation frequency, never caller latency.
+///
+/// # Buffer Lifecycle
+///
+/// 1. **Acquire** - pop a buffer from the queue, or allocate if empty.
+/// 2. **Use** - caller reads/writes through the RAII guard's `Deref`/`DerefMut`.
+/// 3. **Return** - guard's `Drop` impl passes the buffer back via
+///    [`return_buffer`](Self::return_buffer), which restores its length to
+///    the pool default (without zeroing) and pushes it onto the queue.
 #[derive(Debug)]
 pub struct BufferPool {
-    /// Lock-free queue of available buffers.
+    /// Lock-free bounded queue of available buffers.
     buffers: ArrayQueue<Vec<u8>>,
     /// Size of each buffer in bytes.
     buffer_size: usize,
@@ -257,7 +300,12 @@ impl BufferPool {
 }
 
 impl Default for BufferPool {
-    /// Creates a buffer pool with capacity based on available parallelism.
+    /// Creates a buffer pool sized for the host's available parallelism.
+    ///
+    /// Capacity is set to the number of hardware threads
+    /// ([`std::thread::available_parallelism`]), falling back to 4 if
+    /// detection fails. This matches the typical rayon thread pool size,
+    /// ensuring one pooled buffer per worker thread.
     fn default() -> Self {
         let max_buffers = std::thread::available_parallelism()
             .map(std::num::NonZero::get)
