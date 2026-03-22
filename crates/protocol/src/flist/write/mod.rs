@@ -32,6 +32,10 @@ use super::state::{FileListCompressionState, FileListStats};
 /// Used by both [`FileListWriter`] and [`BatchedFileListWriter`] to configure
 /// which fields appear in the wire format.
 ///
+/// These correspond to the `--owner`, `--group`, `--links`, `--devices`,
+/// `--specials`, `--hard-links`, `--atimes`, `--crtimes`, `--acls`, and
+/// `--xattrs` command-line options negotiated during protocol setup.
+///
 /// [`BatchedFileListWriter`]: super::batched_writer::BatchedFileListWriter
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PreserveFlags {
@@ -57,11 +61,17 @@ pub struct PreserveFlags {
     pub xattrs: bool,
 }
 
-/// State maintained while writing a file list.
+/// State maintained while writing a file list to the wire.
 ///
 /// The rsync protocol uses compression across entries, where fields that match
 /// the previous entry are omitted. This writer maintains the necessary state
 /// to encode these compressed entries.
+///
+/// # Upstream Reference
+///
+/// Mirrors the static local state in `flist.c:send_file_entry()` - the
+/// `lastname`, `modtime`, `mode`, `uid`, `gid`, `rdev`, and `rdev_major`
+/// variables that persist across calls during `send_file_list()`.
 #[derive(Debug)]
 pub struct FileListWriter {
     /// Protocol version being used.
@@ -339,6 +349,14 @@ impl FileListWriter {
 }
 
 /// Writes a single file entry to a writer.
+///
+/// Convenience function for writing individual entries without maintaining
+/// writer state. For writing multiple entries, use [`FileListWriter`] to
+/// benefit from cross-entry compression.
+///
+/// # Upstream Reference
+///
+/// See `flist.c:send_file_entry()` for the canonical wire format encoding.
 pub fn write_file_entry<W: Write>(
     writer: &mut W,
     entry: &FileEntry,

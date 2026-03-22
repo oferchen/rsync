@@ -1,4 +1,12 @@
-/// Type of filesystem entry.
+/// Type of filesystem entry in the rsync file list.
+///
+/// Maps to the `S_IFMT` mask values from Unix mode bits. Used to classify
+/// file entries during list building, sorting, and transfer.
+///
+/// # Upstream Reference
+///
+/// - `rsync.h`: `IS_DEVICE()`, `IS_SPECIAL()` macros
+/// - `flist.c:send_file_entry()`: type-specific encoding branches
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum FileType {
     /// Regular file.
@@ -21,6 +29,9 @@ impl FileType {
     /// Extracts the file type from Unix mode bits.
     ///
     /// The file type is encoded in the upper 4 bits of the mode (S_IFMT mask).
+    /// Returns `None` for unrecognized mode patterns.
+    ///
+    /// // upstream: rsync.h S_IFMT mask (0o170000)
     pub const fn from_mode(mode: u32) -> Option<Self> {
         // S_IFMT = 0o170000
         match mode & 0o170000 {
@@ -35,7 +46,10 @@ impl FileType {
         }
     }
 
-    /// Returns the mode bits for this file type.
+    /// Returns the canonical POSIX mode bits for this file type.
+    ///
+    /// The returned value occupies the upper 4 bits of the mode word and can be
+    /// ORed with permission bits to produce a complete mode value.
     #[must_use]
     pub const fn to_mode_bits(self) -> u32 {
         match self {

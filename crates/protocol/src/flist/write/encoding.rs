@@ -18,6 +18,13 @@ use super::FileListWriter;
 
 impl FileListWriter {
     /// Writes flags to the wire in the appropriate format.
+    ///
+    /// Three encoding modes depending on protocol and negotiated capabilities:
+    /// - Varint mode (VARINT_FLIST_FLAGS): single varint, zero avoided
+    /// - Protocol 28+: one or two bytes depending on extended flags
+    /// - Protocol < 28: single byte
+    ///
+    /// // upstream: flist.c:send_file_entry() lines 545-565
     pub(super) fn write_flags<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -59,6 +66,11 @@ impl FileListWriter {
     }
 
     /// Writes name compression info and suffix.
+    ///
+    /// Encodes the shared prefix length (if `XMIT_SAME_NAME`) and the name
+    /// suffix. Long names (> 255 bytes) use varint length encoding.
+    ///
+    /// // upstream: flist.c:send_file_entry() lines 566-580
     pub(super) fn write_name<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -83,6 +95,8 @@ impl FileListWriter {
     /// Writes symlink target if preserving links and entry is a symlink.
     ///
     /// Wire format: varint30(len) + raw bytes (no null terminator)
+    ///
+    /// // upstream: flist.c:send_file_entry() lines 660-670
     pub(super) fn write_symlink_target<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -109,6 +123,8 @@ impl FileListWriter {
     /// Wire format (protocol 28+):
     /// - Major: varint30 (omitted if XMIT_SAME_RDEV_MAJOR set)
     /// - Minor: varint (protocol 30+) or byte/int (protocol 28-29)
+    ///
+    /// // upstream: flist.c:send_file_entry() lines 640-660
     pub(super) fn write_rdev<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -163,6 +179,8 @@ impl FileListWriter {
     /// Wire format (protocol 30+):
     /// - If XMIT_HLINKED is set but not XMIT_HLINK_FIRST: write varint index
     /// - If XMIT_HLINK_FIRST is also set: no index (this is the first/leader)
+    ///
+    /// // upstream: flist.c:send_file_entry() lines 583-595
     pub(super) fn write_hardlink_idx<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -193,6 +211,8 @@ impl FileListWriter {
     /// Wire format:
     /// - If not XMIT_SAME_DEV_PRE30: write longint(dev + 1)
     /// - Always write longint(ino)
+    ///
+    /// // upstream: flist.c:send_file_entry() lines 670-690
     pub(super) fn write_hardlink_dev_ino<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -232,6 +252,8 @@ impl FileListWriter {
     /// Wire format: raw bytes of length flist_csum_len
     /// - For regular files: actual checksum from entry
     /// - For non-regular files (proto < 28 only): empty_sum (all zeros)
+    ///
+    /// // upstream: flist.c:send_file_entry() lines 700-720
     pub(super) fn write_checksum<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -274,6 +296,9 @@ impl FileListWriter {
     }
 
     /// Applies iconv encoding conversion to a filename.
+    ///
+    /// When `--iconv` is used, filenames are converted from the local encoding
+    /// to the remote encoding before transmission.
     pub(super) fn apply_encoding_conversion<'a>(
         &self,
         name: &'a [u8],
@@ -303,7 +328,14 @@ impl FileListWriter {
         hlinked && !hlink_first
     }
 
-    /// Writes the end-of-list marker.
+    /// Writes the end-of-list marker to terminate the file list.
+    ///
+    /// Three encoding modes:
+    /// - Varint mode: zero varint + error code varint
+    /// - Safe file list with error: two-byte sentinel + varint error code
+    /// - Normal: single zero byte
+    ///
+    /// // upstream: flist.c:send_file_list() end-of-list write
     pub fn write_end<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -332,6 +364,8 @@ impl FileListWriter {
     }
 
     /// Updates file list statistics based on the entry type.
+    ///
+    /// // upstream: flist.c:send_file_list() stat accumulation at end of loop
     pub(super) fn update_stats(&mut self, entry: &FileEntry) {
         if entry.is_dir() {
             self.stats.num_dirs += 1;

@@ -4,6 +4,11 @@
 //! match the previous entry. This module provides a shared state structure
 //! used by both [`FileListReader`] and [`FileListWriter`] to track the
 //! previous entry's values.
+//!
+//! # Upstream Reference
+//!
+//! - `flist.c`: `static char lastname[MAXPATHLEN]` and `static int*` state variables
+//!   used across `send_file_entry()` / `recv_file_entry()` calls
 
 /// upstream: rsync.h `MAXPATHLEN` — maximum path length for file list name compression.
 const MAXPATHLEN: usize = 4096;
