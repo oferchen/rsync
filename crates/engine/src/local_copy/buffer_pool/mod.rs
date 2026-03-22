@@ -78,7 +78,9 @@ use crossbeam_queue::ArrayQueue;
 
 use super::COPY_BUFFER_SIZE;
 
+mod allocator;
 mod guard;
+pub use allocator::{BufferAllocator, DefaultAllocator};
 pub use guard::{BorrowedBufferGuard, BufferGuard};
 
 /// Buffer size for files smaller than 64 KB (8 KB).
@@ -143,15 +145,20 @@ pub const fn adaptive_buffer_size(file_size: u64) -> usize {
 ///    [`return_buffer`](Self::return_buffer), which restores its length to
 ///    the pool default (without zeroing) and pushes it onto the queue.
 #[derive(Debug)]
-pub struct BufferPool {
+pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// Lock-free bounded queue of available buffers.
     buffers: ArrayQueue<Vec<u8>>,
     /// Size of each buffer in bytes.
     buffer_size: usize,
+    /// Allocation strategy for creating and disposing of buffers.
+    allocator: A,
 }
 
 impl BufferPool {
     /// Creates a new buffer pool with the specified maximum capacity.
+    ///
+    /// Uses [`DefaultAllocator`] for buffer creation. To supply a custom
+    /// allocator, use [`with_allocator`](Self::with_allocator).
     ///
     /// # Arguments
     ///
@@ -168,10 +175,13 @@ impl BufferPool {
         Self {
             buffers: ArrayQueue::new(max_buffers),
             buffer_size: COPY_BUFFER_SIZE,
+            allocator: DefaultAllocator,
         }
     }
 
     /// Creates a new buffer pool with custom buffer size.
+    ///
+    /// Uses [`DefaultAllocator`] for buffer creation.
     ///
     /// # Arguments
     ///
@@ -182,6 +192,29 @@ impl BufferPool {
         Self {
             buffers: ArrayQueue::new(max_buffers),
             buffer_size,
+            allocator: DefaultAllocator,
+        }
+    }
+}
+
+impl<A: BufferAllocator> BufferPool<A> {
+    /// Creates a new buffer pool with a custom allocator.
+    ///
+    /// This is the fully general constructor. The allocator controls how
+    /// buffers are created ([`BufferAllocator::allocate`]) and how excess
+    /// buffers are disposed ([`BufferAllocator::deallocate`]).
+    ///
+    /// # Arguments
+    ///
+    /// * `max_buffers` - Maximum number of buffers to retain.
+    /// * `buffer_size` - Size of each buffer in bytes.
+    /// * `allocator`   - The allocation strategy to use.
+    #[must_use]
+    pub fn with_allocator(max_buffers: usize, buffer_size: usize, allocator: A) -> Self {
+        Self {
+            buffers: ArrayQueue::new(max_buffers),
+            buffer_size,
+            allocator,
         }
     }
 
@@ -190,16 +223,15 @@ impl BufferPool {
     /// This is the preferred method when the pool is part of a larger struct
     /// that needs to be mutably borrowed while the buffer is in use.
     ///
-    /// Returns a pooled buffer if available, otherwise allocates a new one.
-    /// The returned [`BufferGuard`] automatically returns the buffer to the
-    /// pool when dropped.
-    ///
+    /// Returns a pooled buffer if available, otherwise allocates a new one
+    /// via the pool's [`BufferAllocator`]. The returned [`BufferGuard`]
+    /// automatically returns the buffer to the pool when dropped.
     #[must_use]
-    pub fn acquire_from(pool: Arc<Self>) -> BufferGuard {
+    pub fn acquire_from(pool: Arc<Self>) -> BufferGuard<A> {
         let buffer = pool
             .buffers
             .pop()
-            .unwrap_or_else(|| vec![0u8; pool.buffer_size]);
+            .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
 
         BufferGuard {
             buffer: Some(buffer),
@@ -214,21 +246,20 @@ impl BufferPool {
     /// is returned when available. Otherwise a fresh buffer of the adaptive
     /// size is allocated (it will still be returned to the pool on drop,
     /// where its length is restored to the pool's default).
-    ///
     #[must_use]
-    pub fn acquire_adaptive_from(pool: Arc<Self>, file_size: u64) -> BufferGuard {
+    pub fn acquire_adaptive_from(pool: Arc<Self>, file_size: u64) -> BufferGuard<A> {
         let desired = adaptive_buffer_size(file_size);
 
         if desired == pool.buffer_size {
-            // Fast path: adaptive size matches pool default -- reuse pooled buffers.
+            // Fast path: adaptive size matches pool default - reuse pooled buffers.
             return Self::acquire_from(pool);
         }
 
-        // Slow path: non-standard size -- allocate a fresh buffer.
+        // Slow path: non-standard size - allocate a fresh buffer.
         // On drop the guard will pass it through `return_buffer` which
         // resizes it to the pool default before returning it.
         BufferGuard {
-            buffer: Some(vec![0u8; desired]),
+            buffer: Some(pool.allocator.allocate(desired)),
             pool,
         }
     }
@@ -238,13 +269,12 @@ impl BufferPool {
     /// **Note:** This method returns a guard with a lifetime tied to `self`.
     /// Use [`acquire_from`](Self::acquire_from) when the pool is part of a
     /// larger context that needs to be mutably borrowed.
-    ///
     #[must_use]
-    pub fn acquire(&self) -> BorrowedBufferGuard<'_> {
+    pub fn acquire(&self) -> BorrowedBufferGuard<'_, A> {
         let buffer = self
             .buffers
             .pop()
-            .unwrap_or_else(|| vec![0u8; self.buffer_size]);
+            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
 
         BorrowedBufferGuard {
             buffer: Some(buffer),
@@ -259,7 +289,8 @@ impl BufferPool {
     /// overwrites the buffer via [`Read::read`] before consuming data (see
     /// `transfer.rs` and `parallel_checksum.rs`).
     ///
-    /// If the pool is at capacity, the buffer is dropped instead.
+    /// If the pool is at capacity, the buffer is disposed via
+    /// [`BufferAllocator::deallocate`].
     #[allow(unsafe_code)]
     fn return_buffer(&self, mut buffer: Vec<u8>) {
         if buffer.capacity() < self.buffer_size {
@@ -274,8 +305,10 @@ impl BufferPool {
         // #1 CPU hotspot (26% of runtime per flamegraph profiling).
         unsafe { buffer.set_len(self.buffer_size) };
 
-        // ArrayQueue::push returns Err when full - the buffer is simply dropped.
-        let _ = self.buffers.push(buffer);
+        // ArrayQueue::push returns Err when full - dispose via the allocator.
+        if let Err(buffer) = self.buffers.push(buffer) {
+            self.allocator.deallocate(buffer);
+        }
     }
 
     /// Returns the number of buffers currently in the pool.
@@ -297,9 +330,15 @@ impl BufferPool {
     pub fn buffer_size(&self) -> usize {
         self.buffer_size
     }
+
+    /// Returns a reference to the pool's allocator.
+    #[must_use]
+    pub fn allocator(&self) -> &A {
+        &self.allocator
+    }
 }
 
-impl Default for BufferPool {
+impl Default for BufferPool<DefaultAllocator> {
     /// Creates a buffer pool sized for the host's available parallelism.
     ///
     /// Capacity is set to the number of hardware threads
@@ -993,5 +1032,120 @@ mod tests {
         // Dropping b exceeds capacity - it should be discarded.
         drop(b);
         assert_eq!(pool.available(), 1);
+    }
+
+    // ---------------------------------------------------------------
+    // Custom allocator tests
+    // ---------------------------------------------------------------
+
+    /// A test-only allocator that counts allocations and deallocations.
+    #[derive(Debug)]
+    struct TrackingAllocator {
+        alloc_count: std::sync::atomic::AtomicUsize,
+        dealloc_count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl TrackingAllocator {
+        fn new() -> Self {
+            Self {
+                alloc_count: std::sync::atomic::AtomicUsize::new(0),
+                dealloc_count: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn alloc_count(&self) -> usize {
+            self.alloc_count
+                .load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        fn dealloc_count(&self) -> usize {
+            self.dealloc_count
+                .load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    impl BufferAllocator for TrackingAllocator {
+        fn allocate(&self, size: usize) -> Vec<u8> {
+            self.alloc_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            vec![0u8; size]
+        }
+
+        fn deallocate(&self, _buffer: Vec<u8>) {
+            self.dealloc_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn with_allocator_uses_custom_allocator() {
+        let pool = BufferPool::with_allocator(4, 1024, TrackingAllocator::new());
+        assert_eq!(pool.buffer_size(), 1024);
+        assert_eq!(pool.allocator().alloc_count(), 0);
+
+        let buf = pool.acquire();
+        assert_eq!(buf.len(), 1024);
+        assert_eq!(pool.allocator().alloc_count(), 1);
+    }
+
+    #[test]
+    fn custom_allocator_deallocate_called_on_overflow() {
+        // Pool with capacity 1 - second returned buffer triggers deallocate.
+        let pool = Arc::new(BufferPool::with_allocator(
+            1,
+            512,
+            TrackingAllocator::new(),
+        ));
+
+        let a = BufferPool::acquire_from(Arc::clone(&pool));
+        let b = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(pool.allocator().alloc_count(), 2);
+
+        drop(a); // returned to pool (pool was empty)
+        assert_eq!(pool.available(), 1);
+        assert_eq!(pool.allocator().dealloc_count(), 0);
+
+        drop(b); // pool is full - deallocate is called
+        assert_eq!(pool.available(), 1);
+        assert_eq!(pool.allocator().dealloc_count(), 1);
+    }
+
+    #[test]
+    fn custom_allocator_with_arc_guards() {
+        let pool = Arc::new(BufferPool::with_allocator(
+            4,
+            2048,
+            TrackingAllocator::new(),
+        ));
+
+        {
+            let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
+            buf[0] = 0xAB;
+            assert_eq!(buf[0], 0xAB);
+        }
+
+        assert_eq!(pool.available(), 1);
+        assert_eq!(pool.allocator().alloc_count(), 1);
+    }
+
+    #[test]
+    fn custom_allocator_adaptive_acquire() {
+        let pool = Arc::new(BufferPool::with_allocator(
+            4,
+            COPY_BUFFER_SIZE,
+            TrackingAllocator::new(),
+        ));
+
+        // Tiny file - non-standard size, allocator should be used
+        let buf = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 1024);
+        assert_eq!(buf.len(), ADAPTIVE_BUFFER_TINY);
+        assert_eq!(pool.allocator().alloc_count(), 1);
+    }
+
+    #[test]
+    fn allocator_accessor_returns_reference() {
+        let pool = BufferPool::with_allocator(2, 256, TrackingAllocator::new());
+        let _alloc: &TrackingAllocator = pool.allocator();
+        assert_eq!(_alloc.alloc_count(), 0);
     }
 }
