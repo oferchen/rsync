@@ -3,6 +3,23 @@
 //! This module provides AVX2 and SSE2 implementations of the rolling checksum
 //! accumulation used for rsync's delta transfer algorithm.
 //!
+//! # Upstream Reference
+//!
+//! - `checksum.c:get_checksum1()` - scalar rolling checksum this accelerates
+//! - `match.c:hash_search()` - consumer of rolling checksums during delta detection
+//!
+//! # Runtime Feature Detection
+//!
+//! CPU features are detected once at first use via `std::arch::is_x86_feature_detected!`
+//! and cached in a `OnceLock`. The dispatch order is:
+//!
+//! 1. **AVX2** (32 bytes/iteration) - if `is_x86_feature_detected!("avx2")`
+//! 2. **SSE2** (16 bytes/iteration) - if `is_x86_feature_detected!("sse2")`
+//! 3. **Scalar fallback** - 4-byte unrolled loop
+//!
+//! Use [`simd_available()`](super::simd_acceleration_available) to query whether
+//! AVX2 or SSE2 acceleration is active on the current CPU.
+//!
 //! # Safety
 //!
 //! This module contains `unsafe` code for SIMD operations. Safety is ensured by:

@@ -9,7 +9,14 @@ use super::openssl_support;
 ///
 /// Rsync uses seeded MD5 checksums for file list validation. The
 /// `CHECKSUM_SEED_FIX` compatibility flag (protocol 30+) determines whether the
-/// seed is hashed before or after the file data:
+/// seed is hashed before or after the file data.
+///
+/// # Upstream Reference
+///
+/// - `checksum.c:get_checksum2()` - seed ordering logic
+/// - `compat.c` - `CHECKSUM_SEED_FIX` negotiation
+///
+/// The flag controls:
 ///
 /// - `proper_order = true` (new behavior): hash seed, then data
 /// - `proper_order = false` (old behavior): hash data, then seed
@@ -141,6 +148,12 @@ impl Default for Md5Seed {
 ///
 /// Supports optional seeded hashing with configurable ordering for protocol
 /// compatibility. See [`Md5Seed`] for details on seed ordering behavior.
+///
+/// # Upstream Reference
+///
+/// - `checksum.c:get_checksum2()` - strong checksum computation (MD5 for protocol >= 30)
+/// - `checksum.c:file_checksum()` - whole-file MD5 for file list validation
+/// - `compat.c` - `CHECKSUM_SEED_FIX` controls seed ordering
 ///
 /// # Examples
 ///

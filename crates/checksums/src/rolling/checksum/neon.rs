@@ -3,6 +3,21 @@
 //! This module provides NEON (Advanced SIMD) implementation of the rolling checksum
 //! accumulation used for rsync's delta transfer algorithm on aarch64 platforms.
 //!
+//! # Upstream Reference
+//!
+//! - `checksum.c:get_checksum1()` - scalar rolling checksum this accelerates
+//! - `match.c:hash_search()` - consumer of rolling checksums during delta detection
+//!
+//! # Runtime Feature Detection
+//!
+//! NEON availability is detected once at first use via
+//! `std::arch::is_aarch64_feature_detected!("neon")` and cached in a `OnceLock`.
+//! On aarch64, NEON is mandatory so this always returns `true`. The detection is
+//! still performed for correctness on hypothetical future platforms.
+//!
+//! Use [`simd_available()`](super::simd_acceleration_available) to query whether
+//! NEON acceleration is active on the current CPU.
+//!
 //! # Safety
 //!
 //! This module contains `unsafe` code for SIMD operations. Safety is ensured by:

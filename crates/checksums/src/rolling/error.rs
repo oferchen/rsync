@@ -1,6 +1,9 @@
 use thiserror::Error;
 
 /// Errors that can occur while updating the rolling checksum state.
+///
+/// These errors prevent incorrect checksum values that would cause
+/// false block matches during delta detection.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum RollingError {
     /// The checksum window is empty, preventing the rolling update from making progress.
@@ -56,7 +59,6 @@ impl RollingSliceError {
     /// Number of bytes required to decode a rolling checksum digest.
     pub const EXPECTED_LEN: usize = 4;
 
-    #[cfg_attr(test, allow(dead_code))]
     pub(crate) const fn new(len: usize) -> Self {
         Self { len }
     }
