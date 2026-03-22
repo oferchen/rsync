@@ -201,16 +201,23 @@ pub(in crate::local_copy) fn execute_transfer(
     let mut guard = None;
     let mut staging_path: Option<PathBuf> = None;
 
+    let strategy = select_write_strategy(
+        append_offset,
+        inplace_enabled,
+        partial_enabled,
+        delay_updates_enabled,
+        existing_metadata.is_some(),
+        context.temp_directory_path().is_some(),
+    );
+
     let mut writer = open_destination_writer(
         context,
         destination,
         record_path,
         &delta_signature,
         append_offset,
-        inplace_enabled,
         partial_enabled,
-        delay_updates_enabled,
-        existing_metadata,
+        strategy,
         &mut guard,
         &mut staging_path,
     )?;
@@ -570,13 +577,13 @@ fn select_write_strategy(
     }
 }
 
-/// Opens the destination file using the appropriate write strategy.
+/// Opens the destination file using the pre-selected write strategy.
 ///
-/// Selects among four strategies based on transfer mode:
+/// Each strategy maps to a distinct I/O path:
 /// - **Append**: opens existing file and seeks to append offset
 /// - **Inplace**: opens for writing without temp file (truncates only when no delta)
-/// - **Direct write**: creates new file directly when no existing destination
-/// - **Temp file**: creates a staging file via `DestinationWriteGuard`
+/// - **Direct**: creates new file directly when no existing destination
+/// - **TempFileRename**: creates a staging file via `DestinationWriteGuard`
 #[allow(clippy::too_many_arguments)]
 fn open_destination_writer(
     context: &CopyContext,
@@ -584,22 +591,11 @@ fn open_destination_writer(
     record_path: &Path,
     delta_signature: &Option<crate::delta::DeltaSignatureIndex>,
     append_offset: u64,
-    inplace_enabled: bool,
     partial_enabled: bool,
-    delay_updates_enabled: bool,
-    existing_metadata: Option<&fs::Metadata>,
+    strategy: WriteStrategy,
     guard: &mut Option<DestinationWriteGuard>,
     staging_path: &mut Option<PathBuf>,
 ) -> Result<fs::File, LocalCopyError> {
-    let strategy = select_write_strategy(
-        append_offset,
-        inplace_enabled,
-        partial_enabled,
-        delay_updates_enabled,
-        existing_metadata.is_some(),
-        context.temp_directory_path().is_some(),
-    );
-
     match strategy {
         WriteStrategy::Append => {
             let mut file = fs::OpenOptions::new()
