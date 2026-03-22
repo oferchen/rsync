@@ -224,7 +224,7 @@ impl ReceiverContext {
 
             let mut basis_map = if let Some(ref path) = basis_path_opt {
                 Some(MapFile::open(path).map_err(|e| {
-                    io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
+                    io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e} {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()))
                 })?)
             } else {
                 None
@@ -251,7 +251,9 @@ impl ReceiverContext {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
                                 format!(
-                                    "checksum length mismatch for {file_path:?}: expected {checksum_len} bytes, got {computed_len} bytes",
+                                    "checksum length mismatch for {file_path:?}: expected {checksum_len} bytes, got {computed_len} bytes {}{}",
+                                    crate::role_trailer::error_location!(),
+                                    crate::role_trailer::receiver(),
                                 ),
                             ));
                         }
@@ -259,9 +261,11 @@ impl ReceiverContext {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
                                 format!(
-                                    "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?}",
+                                    "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?} {}{}",
                                     &expected_buf[..checksum_len],
-                                    &computed[..computed_len]
+                                    &computed[..computed_len],
+                                    crate::role_trailer::error_location!(),
+                                    crate::role_trailer::receiver(),
                                 ),
                             ));
                         }
@@ -309,7 +313,9 @@ impl ReceiverContext {
                                 return Err(io::Error::new(
                                     io::ErrorKind::InvalidData,
                                     format!(
-                                        "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                                        "block index {block_idx} out of bounds (file has {block_count} blocks) {}{}",
+                                        crate::role_trailer::error_location!(),
+                                        crate::role_trailer::receiver(),
                                     ),
                                 ));
                             }
@@ -344,7 +350,7 @@ impl ReceiverContext {
                         } else {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
-                                format!("block reference {block_idx} without basis file"),
+                                format!("block reference {block_idx} without basis file {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()),
                             ));
                         }
                     }
@@ -359,7 +365,9 @@ impl ReceiverContext {
                         io::ErrorKind::InvalidData,
                         format!(
                             "sparse file size mismatch for {file_path:?}: \
-                             expected {expected_size} bytes, got {final_pos} bytes"
+                             expected {expected_size} bytes, got {final_pos} bytes {}{}",
+                            crate::role_trailer::error_location!(),
+                            crate::role_trailer::receiver(),
                         ),
                     ));
                 }
@@ -367,12 +375,14 @@ impl ReceiverContext {
 
             let file = output.into_inner().map_err(|e| {
                 io::Error::other(format!(
-                    "failed to flush output buffer for {file_path:?}: {e}"
+                    "failed to flush output buffer for {file_path:?}: {e} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver(),
                 ))
             })?;
             if self.config.write.fsync {
                 file.sync_all().map_err(|e| {
-                    io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
+                    io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e} {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()))
                 })?;
             }
             drop(file);
@@ -744,7 +754,7 @@ impl ReceiverContext {
     ) -> io::Result<(crate::reader::ServerReader<R>, usize, PipelineSetup)> {
         let mut reader = if self.should_activate_input_multiplex() {
             reader.activate_multiplex().map_err(|e| {
-                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
+                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e} {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()))
             })?
         } else {
             reader
@@ -752,7 +762,7 @@ impl ReceiverContext {
 
         if self.should_read_filter_list() {
             let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
-                io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
+                io::Error::new(e.kind(), format!("failed to read filter list: {e} {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()))
             })?;
         }
 

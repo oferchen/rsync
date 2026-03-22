@@ -183,7 +183,7 @@ impl SenderAttrs {
             Some(protocol::FnameCmpType::from_wire(byte[0]).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("invalid fnamecmp type: 0x{:02X}", byte[0]),
+                    format!("invalid fnamecmp type: 0x{:02X} {}{}", byte[0], crate::role_trailer::error_location!(), crate::role_trailer::receiver()),
                 )
             })?)
         } else {
@@ -207,7 +207,7 @@ impl SenderAttrs {
             if xname_len > MAX_XNAME_LEN {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("xname length {xname_len} exceeds maximum {MAX_XNAME_LEN}"),
+                    format!("xname length {xname_len} exceeds maximum {MAX_XNAME_LEN} {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()),
                 ));
             }
             if xname_len > 0 {
