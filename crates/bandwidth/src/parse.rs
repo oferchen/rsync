@@ -1,3 +1,12 @@
+//! Bandwidth limit argument parsing compatible with upstream rsync.
+//!
+//! The parsers mirror the `--bwlimit` syntax accepted by upstream rsync's
+//! `util2.c:parse_size_arg()`. Supported features include binary and decimal
+//! suffixes (`K`, `M`, `G`, `T`, `P`, `B`, `iB`), fractional values with
+//! dot or comma separators, scientific notation, leading `+`/`-` signs,
+//! and optional `+1`/`-1` adjustment modifiers. A colon-separated burst
+//! component (`RATE:BURST`) is also handled for daemon configurations.
+
 use std::num::NonZeroU64;
 
 use thiserror::Error;
@@ -25,6 +34,7 @@ pub enum BandwidthParseError {
 }
 
 /// Parses a `--bwlimit` style argument into an optional byte-per-second limit.
+// upstream: util2.c:parse_size_arg()
 #[doc(alias = "--bwlimit")]
 ///
 /// The function mirrors upstream rsync's behaviour. Inputs must match the
