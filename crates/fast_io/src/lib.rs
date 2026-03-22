@@ -38,6 +38,7 @@
 //! - **Zero-copy file transfer** using `copy_file_range` for file-to-file copies
 //! - **Zero-copy socket send** using `sendfile` for file-to-socket transfers
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
+//! - **Platform copy trait** abstracting `copy_file_range`, `clonefile`, `CopyFileExW`
 //! - **Cached sorting** with Schwartzian transform
 //!
 //! # I/O Fallback Chain
@@ -74,6 +75,7 @@ pub mod traits;
 
 pub mod copy_file_range;
 pub mod o_tmpfile;
+pub mod platform_copy;
 pub mod sendfile;
 pub mod syscall_batch;
 
@@ -100,6 +102,7 @@ pub mod io_uring;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
+pub use platform_copy::{CopyMethod, CopyResult, DefaultPlatformCopy, PlatformCopy};
 pub use traits::{FileReader, FileWriter};
 
 pub use mmap_reader::MmapReader;
