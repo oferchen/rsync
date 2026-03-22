@@ -5,16 +5,23 @@
 //! where updating the checksum for a shifted window requires O(1) operations
 //! rather than recomputing from scratch.
 //!
+//! # Upstream Reference
+//!
+//! - `checksum.c:get_checksum1()` - rolling checksum computation
+//! - `match.c:hash_search()` - block matching via rolling checksum
+//! - `match.c:build_hash_table()` - hash table construction from rolling checksums
+//!
 //! # Algorithm
 //!
-//! This module implements the Adler-32–style rolling checksum used by rsync,
+//! This module implements the Adler-32-style rolling checksum used by rsync,
 //! which maintains two 16-bit components (a simple sum and a weighted sum)
 //! that can be incrementally updated as the window slides over data.
 //!
 //! # SIMD Acceleration
 //!
-//! On supported platforms (x86_64 with AVX2/SSE4.1, aarch64 with NEON), the
+//! On supported platforms (x86_64 with AVX2/SSE2, aarch64 with NEON), the
 //! bulk update operations use SIMD instructions for improved throughput.
+//! Runtime feature detection is cached in a `OnceLock` on first use.
 //! Use [`simd_acceleration_available`] to query runtime SIMD support.
 //!
 //! # Example
