@@ -1,19 +1,18 @@
-//! Zero-copy file transfer using `copy_file_range` syscall with automatic fallback.
+//! High-performance file copying with tiered fallback.
 //!
-//! This module provides high-performance file copying using Linux's `copy_file_range`
-//! syscall when available, with automatic fallback to standard read/write on other
-//! platforms or when the syscall fails.
+//! This module provides optimized file-to-file copying that selects the best
+//! available mechanism at runtime, falling through on failure:
 //!
-//! # Platform Support
-//!
-//! - **Linux 4.5+**: Uses `copy_file_range` for same-filesystem copies
-//! - **Linux 5.3+**: Supports cross-filesystem copies
-//! - **Other platforms**: Automatic fallback to buffered read/write
+//! 1. **io_uring** - Linux 5.6+, `io_uring` feature enabled. Batches read and
+//!    write syscalls through a single ring for minimal kernel transitions.
+//! 2. **`copy_file_range`** - Linux 4.5+ (same-fs), 5.3+ (cross-fs). Zero-copy
+//!    in-kernel transfer.
+//! 3. **Buffered read/write** - All platforms. Standard portable fallback.
 //!
 //! # Performance Characteristics
 //!
 //! - For files < 64KB: Uses read/write directly (lower syscall overhead)
-//! - For files >= 64KB: Attempts `copy_file_range` for zero-copy transfer
+//! - For files >= 64KB: Attempts io_uring, then `copy_file_range`, then read/write
 //! - Fallback path uses 256KB buffer for efficient bulk transfer
 //!
 //! # Example
@@ -36,17 +35,22 @@ use std::io;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 
+/// Minimum file size to attempt io_uring copy (below this, simpler paths win).
+///
+/// io_uring has ring setup overhead, so it only pays off for larger transfers.
+const IO_URING_COPY_THRESHOLD: u64 = 256 * 1024; // 256KB
+
 /// Minimum file size to attempt copy_file_range (below this, read/write is faster).
 ///
 /// Small files benefit from the simpler read/write path due to lower syscall overhead.
 const COPY_FILE_RANGE_THRESHOLD: u64 = 64 * 1024; // 64KB
 
-/// Copies bytes between two files, using `copy_file_range` on Linux when available,
-/// falling back to userspace read/write otherwise.
+/// Copies bytes between two files using the best available I/O mechanism.
 ///
 /// This function automatically selects the optimal transfer method:
-/// - Files < 64KB: Direct read/write
-/// - Files >= 64KB: Attempts zero-copy via `copy_file_range`, falls back on error
+/// - Files >= 256KB: Tries io_uring batched read/write (Linux 5.6+)
+/// - Files >= 64KB: Tries `copy_file_range` zero-copy (Linux 4.5+)
+/// - All sizes: Falls back to standard buffered read/write
 ///
 /// # Arguments
 ///
@@ -80,12 +84,19 @@ const COPY_FILE_RANGE_THRESHOLD: u64 = 64 * 1024; // 64KB
 /// # }
 /// ```
 pub fn copy_file_contents(source: &File, destination: &File, length: u64) -> io::Result<u64> {
+    // Tier 1: io_uring batched read/write (Linux 5.6+, large files)
+    if length >= IO_URING_COPY_THRESHOLD {
+        if let Ok(copied) = try_io_uring_copy(source, destination, length) {
+            return Ok(copied);
+        }
+    }
+    // Tier 2: copy_file_range zero-copy (Linux 4.5+)
     if length >= COPY_FILE_RANGE_THRESHOLD {
-        // Attempt zero-copy via copy_file_range, fall back to read/write on error
         if let Ok(copied) = try_copy_file_range(source, destination, length) {
             return Ok(copied);
         }
     }
+    // Tier 3: standard buffered read/write
     copy_file_contents_readwrite(source, destination, length)
 }
 
@@ -102,12 +113,155 @@ pub fn copy_file_contents_buffered(
     length: u64,
     buffer: &mut [u8],
 ) -> io::Result<u64> {
+    // Tier 1: io_uring batched read/write (Linux 5.6+, large files)
+    if length >= IO_URING_COPY_THRESHOLD {
+        if let Ok(copied) = try_io_uring_copy(source, destination, length) {
+            return Ok(copied);
+        }
+    }
+    // Tier 2: copy_file_range zero-copy (Linux 4.5+)
     if length >= COPY_FILE_RANGE_THRESHOLD {
         if let Ok(copied) = try_copy_file_range(source, destination, length) {
             return Ok(copied);
         }
     }
+    // Tier 3: buffered read/write with caller-provided buffer
     copy_file_contents_readwrite_with_buffer(source, destination, length, buffer)
+}
+
+/// Attempts file copy using io_uring batched read/write operations.
+///
+/// Creates a temporary io_uring ring and alternates between read and write
+/// submissions to transfer data from `source` to `destination`. This avoids
+/// the per-syscall overhead of standard read/write by batching operations
+/// through the ring.
+///
+/// Returns the number of bytes copied, or an error if io_uring is unavailable
+/// or any ring operation fails - allowing the caller to fall back to
+/// `copy_file_range` or standard read/write.
+///
+/// # Platform support
+///
+/// - **Linux 5.6+** with `io_uring` feature: Full implementation
+/// - **Other platforms**: Always returns `Unsupported` error
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+fn try_io_uring_copy(source: &File, destination: &File, length: u64) -> io::Result<u64> {
+    use crate::io_uring::{IoUringConfig, is_io_uring_available};
+
+    if !is_io_uring_available() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring not available",
+        ));
+    }
+
+    let config = IoUringConfig::default();
+    let ring = config.build_ring()?;
+
+    let src_fd = source.as_raw_fd();
+    let dst_fd = destination.as_raw_fd();
+    let buf_size = config.buffer_size;
+    let mut buf = vec![0u8; buf_size];
+    let mut total_copied: u64 = 0;
+    let mut src_offset: u64 = 0;
+    let mut dst_offset: u64 = 0;
+
+    while total_copied < length {
+        let want = ((length - total_copied) as usize).min(buf_size);
+
+        // Submit read from source
+        let read_entry = io_uring::opcode::Read::new(
+            io_uring::types::Fd(src_fd),
+            buf.as_mut_ptr(),
+            want as u32,
+        )
+        .offset(src_offset)
+        .build()
+        .user_data(0);
+
+        // SAFETY: fd is valid (borrowed from &File), buffer outlives the operation,
+        // and we wait for completion before accessing the buffer.
+        unsafe {
+            ring.submission()
+                .push(&read_entry)
+                .map_err(|_| io::Error::other("io_uring SQ full on read"))?;
+        }
+
+        ring.submit_and_wait(1)?;
+
+        let cqe = ring
+            .completion()
+            .next()
+            .ok_or_else(|| io::Error::other("io_uring: missing read CQE"))?;
+
+        let read_result = cqe.result();
+        if read_result < 0 {
+            return Err(io::Error::from_raw_os_error(-read_result));
+        }
+        if read_result == 0 {
+            break; // EOF
+        }
+
+        let bytes_read = read_result as usize;
+        src_offset += bytes_read as u64;
+
+        // Submit write to destination
+        let write_entry = io_uring::opcode::Write::new(
+            io_uring::types::Fd(dst_fd),
+            buf.as_ptr(),
+            bytes_read as u32,
+        )
+        .offset(dst_offset)
+        .build()
+        .user_data(1);
+
+        // SAFETY: fd is valid (borrowed from &File), buffer outlives the operation,
+        // and we wait for completion before reusing the buffer.
+        unsafe {
+            ring.submission()
+                .push(&write_entry)
+                .map_err(|_| io::Error::other("io_uring SQ full on write"))?;
+        }
+
+        ring.submit_and_wait(1)?;
+
+        let cqe = ring
+            .completion()
+            .next()
+            .ok_or_else(|| io::Error::other("io_uring: missing write CQE"))?;
+
+        let write_result = cqe.result();
+        if write_result < 0 {
+            return Err(io::Error::from_raw_os_error(-write_result));
+        }
+
+        let bytes_written = write_result as usize;
+        if bytes_written == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "io_uring write returned 0",
+            ));
+        }
+
+        // Handle short writes by adjusting source offset back
+        if bytes_written < bytes_read {
+            src_offset -= (bytes_read - bytes_written) as u64;
+        }
+
+        dst_offset += bytes_written as u64;
+        total_copied += bytes_written as u64;
+    }
+
+    Ok(total_copied)
+}
+
+/// Stub for platforms without io_uring - always returns `Unsupported`.
+#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+fn try_io_uring_copy(_source: &File, _destination: &File, _length: u64) -> io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "io_uring not available on this platform",
+    ))
 }
 
 /// Attempts zero-copy transfer via `copy_file_range` syscall.
@@ -495,5 +649,66 @@ mod tests {
         let result = try_copy_file_range(source.as_file(), dest.as_file(), content.len() as u64);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "io_uring"))]
+    #[test]
+    fn test_try_io_uring_copy_linux() {
+        // On Linux with io_uring, try_io_uring_copy should succeed when the
+        // kernel supports it. Falls back gracefully on older kernels.
+        let size = 512 * 1024; // 512KB - above IO_URING_COPY_THRESHOLD
+        let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+        let source = create_temp_file(&content).unwrap();
+        let mut dest = NamedTempFile::new().unwrap();
+
+        match try_io_uring_copy(source.as_file(), dest.as_file(), size as u64) {
+            Ok(copied) => {
+                assert_eq!(copied, size as u64);
+                dest.seek(SeekFrom::Start(0)).unwrap();
+                let dest_content = read_file_contents(dest.as_file()).unwrap();
+                assert_eq!(dest_content, content);
+            }
+            Err(_) => {
+                // io_uring unavailable on this kernel - expected fallback
+                eprintln!("io_uring not available, fallback will be used");
+            }
+        }
+    }
+
+    #[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+    #[test]
+    fn test_try_io_uring_copy_stub() {
+        // On non-Linux or without io_uring feature, should return Unsupported
+        let content = b"Test io_uring stub";
+        let source = create_temp_file(content).unwrap();
+        let dest = NamedTempFile::new().unwrap();
+
+        let result = try_io_uring_copy(source.as_file(), dest.as_file(), content.len() as u64);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn test_buffered_copy_above_io_uring_threshold() {
+        // Files above IO_URING_COPY_THRESHOLD should try io_uring first,
+        // then fall through to copy_file_range or read/write
+        let size = 512 * 1024; // 512KB
+        let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+        let source = create_temp_file(&content).unwrap();
+        let mut dest = NamedTempFile::new().unwrap();
+        let mut buffer = vec![0u8; 256 * 1024];
+
+        let copied = copy_file_contents_buffered(
+            source.as_file(),
+            dest.as_file(),
+            size as u64,
+            &mut buffer,
+        )
+        .unwrap();
+
+        assert_eq!(copied, size as u64);
+        dest.seek(SeekFrom::Start(0)).unwrap();
+        let dest_content = read_file_contents(dest.as_file()).unwrap();
+        assert_eq!(dest_content, content);
     }
 }
