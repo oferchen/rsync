@@ -4,6 +4,15 @@ use super::checksum::RollingChecksum;
 use super::error::RollingSliceError;
 
 /// Digest produced by the rolling checksum.
+///
+/// Stores the two 16-bit components (`s1`, `s2`) and the window length.
+/// The packed 32-bit representation `(s2 << 16) | s1` matches the wire format
+/// used by upstream rsync's `SIVAL` macro.
+///
+/// # Upstream Reference
+///
+/// - `checksum.c:get_checksum1()` - produces this packed format
+/// - `rsync.h:SIVALu()` - serialises the checksum as little-endian on the wire
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RollingDigest {
     s1: u16,

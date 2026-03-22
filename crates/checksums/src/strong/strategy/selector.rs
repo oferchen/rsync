@@ -1,4 +1,9 @@
 //! Factory for creating checksum strategies based on algorithm selection.
+//!
+//! # Upstream Reference
+//!
+//! - `checksum.c` - protocol version determines default algorithm (MD4 < 30, MD5 >= 30)
+//! - `compat.c` - checksum capability negotiation for XXH3/SHA family
 
 use super::impls::{
     Md4Strategy, Md5Strategy, Sha1Strategy, Sha256Strategy, Sha512Strategy, Xxh3_128Strategy,

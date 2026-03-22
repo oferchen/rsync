@@ -1,5 +1,3 @@
-//! crates/checksums/src/strong/xxhash.rs
-//!
 //! XXHash implementations with optional runtime SIMD detection.
 //!
 //! One-shot digest operations use the `xxh3` crate which provides runtime
@@ -10,6 +8,11 @@
 //! Streaming operations use `xxhash-rust` as the `xxh3` crate does not
 //! provide streaming hashers. For most rsync block checksum operations, the
 //! one-shot path is used, so SIMD acceleration applies where it matters most.
+//!
+//! # Upstream Reference
+//!
+//! - `checksum.c:get_checksum2()` - XXH3/XXH64 used for protocol >= 30 when negotiated
+//! - `-e.LsfxCIvu` capability string enables XXH3/XXH128 negotiation
 
 use super::StrongDigest;
 
@@ -171,6 +174,9 @@ impl StrongDigest for Xxh64 {
 /// runtime SIMD detection (AVX2/NEON) and automatic scalar fallback.
 /// Streaming operations use `xxhash-rust` as the `xxh3` crate lacks streaming support.
 ///
+/// Note: `Xxh3` does not implement `Clone` because the underlying `xxhash_rust::xxh3::Xxh3`
+/// hasher does not support cloning.
+///
 /// # Examples
 ///
 /// One-shot hashing (uses SIMD when available):
@@ -204,7 +210,7 @@ impl StrongDigest for Xxh64 {
 /// ```
 /// use checksums::strong::xxh3_simd_available;
 ///
-/// assert!(xxh3_simd_available()); // always true -- xxh3 is always compiled in
+/// assert!(xxh3_simd_available()); // always true - xxh3 is always compiled in
 /// ```
 pub struct Xxh3 {
     inner: xxhash_rust::xxh3::Xxh3,
