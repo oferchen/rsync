@@ -7,6 +7,13 @@
 //!
 //! Both types are `Send` so they can safely cross thread boundaries in the
 //! pipelined architecture.
+//!
+//! # Upstream Reference
+//!
+//! The work/result split parallels upstream's `recv_files()` loop in
+//! `receiver.c`, which calls `receive_data()` per file and tracks literal vs
+//! matched byte counts. Redo disposition maps to the `MSG_REDO` mechanism
+//! in `receiver.c:960-968` triggered by whole-file checksum mismatch.
 
 use std::path::PathBuf;
 
@@ -36,11 +43,16 @@ pub struct DeltaWork {
 }
 
 /// Distinguishes whole-file transfers from delta-based transfers.
+///
+/// Upstream rsync decides between these modes in `recv_generator()` (`generator.c`)
+/// based on whether a usable basis file exists on the receiver side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeltaWorkKind {
     /// Whole-file transfer - no basis file exists or delta is not beneficial.
+    // upstream: generator.c - recv_generator() when no usable basis file found
     WholeFile,
     /// Delta transfer - a basis file exists and will be used for block matching.
+    // upstream: match.c:match_sums() drives the rolling checksum scan
     Delta,
 }
 
@@ -183,6 +195,7 @@ impl DeltaResult {
     }
 
     /// Creates a redo result (checksum mismatch in phase 1).
+    // upstream: receiver.c - sends MSG_REDO when whole-file checksum fails
     #[must_use]
     pub fn needs_redo(ndx: u32, reason: String) -> Self {
         Self {
@@ -248,8 +261,6 @@ impl DeltaResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ==================== DeltaWork tests ====================
 
     #[test]
     fn whole_file_work_has_no_basis() {
@@ -323,8 +334,6 @@ mod tests {
         assert_eq!(DeltaWorkKind::Delta, DeltaWorkKind::Delta);
         assert_ne!(DeltaWorkKind::WholeFile, DeltaWorkKind::Delta);
     }
-
-    // ==================== DeltaResult tests ====================
 
     #[test]
     fn success_result() {

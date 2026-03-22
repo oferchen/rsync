@@ -17,6 +17,14 @@
 //!    basis path)    delta apply)      success/redo/fail)
 //! ```
 //!
+//! # Upstream Reference
+//!
+//! Upstream rsync processes files sequentially in `recv_files()` (`receiver.c`)
+//! and computes deltas in `match_sums()` (`match.c`). This module parallelizes
+//! that work by splitting file processing into discrete [`DeltaWork`] items
+//! dispatched to worker threads, with [`DeltaResult`] carrying per-file
+//! statistics back for aggregation.
+//!
 //! # See Also
 //!
 //! - [`crate::delta`] for block-matching primitives
