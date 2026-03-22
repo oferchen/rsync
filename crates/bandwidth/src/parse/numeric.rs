@@ -1,3 +1,9 @@
+//! Low-level numeric parsing for bandwidth limit arguments.
+//!
+//! These helpers decompose a mantissa-exponent string representation into
+//! integer, fractional, denominator, and exponent components, matching the
+//! numeric parsing behaviour of upstream rsync's `util2.c:parse_size_arg()`.
+
 use super::BandwidthParseError;
 use memchr::memchr2;
 
