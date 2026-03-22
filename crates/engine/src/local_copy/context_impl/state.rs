@@ -30,7 +30,7 @@ impl<'a> CopyContext<'a> {
         let dir_merge_marker_ephemeral = Vec::new();
         let timeout = options.timeout();
 
-        let buffer_pool = Arc::new(BufferPool::default());
+        let buffer_pool = global_buffer_pool();
 
         let deferred_sync = if options.fsync_enabled() {
             DeferredSync::new(SyncStrategy::Batched(100))

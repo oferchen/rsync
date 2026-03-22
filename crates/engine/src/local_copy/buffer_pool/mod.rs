@@ -80,8 +80,10 @@ use crossbeam_queue::ArrayQueue;
 use super::COPY_BUFFER_SIZE;
 
 mod allocator;
+mod global;
 mod guard;
 pub use allocator::{BufferAllocator, DefaultAllocator};
+pub use global::{global_buffer_pool, init_global_buffer_pool, GlobalBufferPoolConfig};
 pub use guard::{BorrowedBufferGuard, BufferGuard};
 
 /// Buffer size for files smaller than 64 KB (8 KB).

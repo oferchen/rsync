@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::sync::Arc;
 
 use super::ActiveCompressor;
-use super::buffer_pool::BufferPool;
+use super::buffer_pool::{global_buffer_pool, BufferPool};
 use super::deferred_sync::{DeferredSync, SyncStrategy};
 use super::filter_program::{
     ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
