@@ -1,6 +1,11 @@
 // Re-export core munge/unmunge functions from the metadata crate.
 // The canonical implementation lives in `metadata::symlink_munge` so that
 // both the daemon and the client-side transfer path share the same logic.
+//
+// upstream: clientserver.c - `munge_symlinks` defaults to `!use_chroot`.
+// When enabled, symlink targets are prefixed with `/rsyncd-munged/` on send
+// and the prefix is stripped on receive, preventing symlinks from escaping
+// the module root on non-chrooted modules.
 #[allow(unused_imports)]
 pub(crate) use ::metadata::symlink_munge::{munge_symlink, unmunge_symlink};
 
