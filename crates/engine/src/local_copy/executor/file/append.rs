@@ -1,3 +1,5 @@
+//! Append-mode transfer logic for resuming partial file copies.
+
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -6,6 +8,7 @@ use crate::local_copy::LocalCopyError;
 
 use super::super::super::COPY_BUFFER_SIZE;
 
+/// Result of evaluating `--append` mode for a file transfer.
 pub(crate) enum AppendMode {
     /// Append is not active; proceed with normal transfer.
     Disabled,
@@ -15,6 +18,13 @@ pub(crate) enum AppendMode {
     Append(u64),
 }
 
+/// Decides the append strategy for a file based on existing destination size.
+///
+/// Returns `Disabled` when append is off, `Skip` when the destination is
+/// already at least as large, or `Append(offset)` when the destination is
+/// shorter and the transfer should resume from that offset.
+///
+/// // upstream: receiver.c:recv_files() - append mode size comparison
 pub(crate) fn determine_append_mode(
     append_allowed: bool,
     append_verify: bool,
@@ -89,7 +99,6 @@ fn verify_append_prefix(
     })?;
     let mut remaining = existing_len;
 
-    // Use a single buffer split into two halves to reduce allocations
     let half_size = COPY_BUFFER_SIZE / 2;
     let mut unified_buffer = vec![0u8; COPY_BUFFER_SIZE];
     let (source_buffer, destination_buffer) = unified_buffer.split_at_mut(half_size);

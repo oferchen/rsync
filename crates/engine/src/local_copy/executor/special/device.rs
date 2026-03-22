@@ -17,6 +17,12 @@ use crate::local_copy::{
 use ::metadata::create_device_node;
 use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 
+/// Copies a device node (block or character) from source to destination.
+///
+/// Handles hard-link deduplication, `--existing`, directory replacement via
+/// `--force`, backup, and dry-run mode.
+///
+/// // upstream: receiver.c - device node handling
 pub(crate) fn copy_device(
     context: &mut CopyContext,
     source: &Path,

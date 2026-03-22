@@ -12,6 +12,12 @@ use rustix::{
 
 use crate::local_copy::LocalCopyError;
 
+/// Preallocates disk space for the destination file when enabled and needed.
+///
+/// Skips preallocation when disabled, when `total_len` is zero, or when the
+/// file already has at least `total_len` bytes allocated.
+///
+/// // upstream: receiver.c:recv_files() - preallocate_file()
 pub(crate) fn maybe_preallocate_destination(
     file: &mut fs::File,
     path: &Path,
