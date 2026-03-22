@@ -1,14 +1,11 @@
-//! Setter methods for integrity, filter, timeout, batch, logging, and error handling options.
+//! Setter methods for integrity, timeout, batch, logging, and error handling options.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use filters::FilterSet;
-
 use super::LocalCopyOptionsBuilder;
 use crate::batch::BatchWriter;
-use crate::local_copy::filter_program::FilterProgram;
 use crate::signature::SignatureAlgorithm;
 
 impl LocalCopyOptionsBuilder {
@@ -90,20 +87,6 @@ impl LocalCopyOptionsBuilder {
     #[must_use]
     pub fn modify_window(mut self, window: Duration) -> Self {
         self.modify_window = window;
-        self
-    }
-
-    /// Sets the filter set.
-    #[must_use]
-    pub fn filters(mut self, filters: Option<FilterSet>) -> Self {
-        self.filters = filters;
-        self
-    }
-
-    /// Sets the filter program.
-    #[must_use]
-    pub fn filter_program(mut self, program: Option<FilterProgram>) -> Self {
-        self.filter_program = program;
         self
     }
 
