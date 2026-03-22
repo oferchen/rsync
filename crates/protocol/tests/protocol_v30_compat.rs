@@ -747,6 +747,9 @@ mod protocol_30_edge_cases {
     use super::*;
 
     /// Protocol 30 rejects invalid checksum algorithms.
+    ///
+    /// Upstream `recv_negotiate_str` (compat.c:383-406) treats unknown/invalid
+    /// algorithms as a hard error - no fallback to defaults.
     #[test]
     fn version_30_rejects_invalid_checksums() {
         let protocol = ProtocolVersion::V30;
@@ -759,12 +762,15 @@ mod protocol_30_edge_cases {
         let result =
             negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true);
 
-        // Should fall back to MD5 when client sends unknown checksum
-        assert!(result.is_ok(), "Should fall back to default");
-        assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
+        // No valid checksum in the list - negotiation fails
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
     }
 
-    /// Protocol 30 handles empty capability lists.
+    /// Protocol 30 rejects empty capability lists.
+    ///
+    /// Upstream `recv_negotiate_str` (compat.c:383-406) treats empty/no-match
+    /// lists as a hard error - no fallback to defaults.
     #[test]
     fn version_30_handles_empty_capability_lists() {
         let protocol = ProtocolVersion::V30;
@@ -784,9 +790,9 @@ mod protocol_30_edge_cases {
             true,
         );
 
-        // Should fall back to MD5 default
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
+        // Empty checksum list is a negotiation failure per upstream
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
     }
 
     /// Protocol 30 handles truncated capability negotiation.
@@ -1425,9 +1431,12 @@ mod protocol_30_vstring_format {
         assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::XXH128);
     }
 
-    /// Protocol 30 vstring fallback on unknown algorithms.
+    /// Protocol 30 rejects unknown algorithms in vstring negotiation.
+    ///
+    /// Upstream `recv_negotiate_str` (compat.c:383-406) treats no-match
+    /// as a hard error - no fallback to defaults.
     #[test]
-    fn version_30_vstring_unknown_algorithm_fallback() {
+    fn version_30_vstring_unknown_algorithm_error() {
         let protocol = ProtocolVersion::V30;
 
         // Client sends unknown algorithm
@@ -1442,9 +1451,9 @@ mod protocol_30_vstring_format {
         let result =
             negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, false, false, true);
 
-        // Should fall back to MD5 default
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
+        // No valid checksum in the list - negotiation fails
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
     }
 }
 

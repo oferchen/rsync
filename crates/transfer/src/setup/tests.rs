@@ -216,7 +216,7 @@ fn setup_protocol_server_writes_compat_flags_and_seed() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
     // Server doesn't read stdin during its turn (compat exchange is unidirectional)
     // Provide algorithm list for negotiation (empty list = use defaults)
-    let mut stdin = &b"\x00"[..]; // Empty checksum list (0 = end of list)
+    let mut stdin = &b"\x03md5"[..]; // vstring: "md5" checksum list
     let mut stdout = Vec::new();
 
     let client_args = ["-efxCIvu".to_owned()];
@@ -354,7 +354,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
     // Rsync varint encoding of 161: [0x80, 0xA1] (marker byte, then value byte)
     let mut peer_data: Vec<u8> = vec![
         0x80, 0xA1, // varint for 161 (VARINT_FLIST_FLAGS | INC_RECURSE | CHECKSUM_SEED_FIX)
-        0x00, // empty checksum list (end marker)
+        0x03, b'm', b'd', b'5', // vstring "md5" - valid checksum list
     ];
     peer_data.extend_from_slice(&0x12345678_i32.to_le_bytes()); // seed
 
@@ -398,7 +398,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
     // Test with minimal capabilities
-    let mut stdin = &b"\x00"[..]; // empty checksum list
+    let mut stdin = &b"\x03md5"[..]; // vstring: "md5" checksum list
     let mut stdout = Vec::new();
 
     let client_args_minimal = ["-ev".to_owned()];
@@ -427,7 +427,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
     );
 
     // Test with full capabilities
-    let mut stdin = &b"\x00"[..];
+    let mut stdin = &b"\x03md5"[..];
     let mut stdout = Vec::new();
 
     let client_args_full = ["-e.LsfxCIvu".to_owned()];
@@ -468,7 +468,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
 fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
     // Protocol 30 is the minimum for compat exchange
     let protocol_30 = ProtocolVersion::try_from(30).unwrap();
-    let mut stdin = &b"\x00"[..]; // empty checksum list
+    let mut stdin = &b"\x03md5"[..]; // vstring: "md5" checksum list
     let mut stdout = Vec::new();
 
     let client_args = ["-efxCIvu".to_owned()];
@@ -855,7 +855,7 @@ fn write_compat_flags_v_flag_low_value_readable_by_read_varint() {
 fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
     // Server with 'V' capability client should use single-byte compat flags encoding
     let protocol = ProtocolVersion::try_from(31).unwrap();
-    let mut stdin = &b"\x00"[..]; // empty checksum list
+    let mut stdin = &b"\x03md5"[..]; // vstring: "md5" checksum list
     let mut stdout = Vec::new();
 
     // Client has 'V' (pre-release) instead of 'v'
@@ -900,7 +900,7 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
 fn setup_protocol_server_v_flag_enables_negotiation() {
     // 'V' should trigger algorithm negotiation just like 'v' does
     let protocol = ProtocolVersion::try_from(31).unwrap();
-    let mut stdin = &b"\x00"[..]; // empty checksum list
+    let mut stdin = &b"\x03md5"[..]; // vstring: "md5" checksum list
     let mut stdout = Vec::new();
 
     let client_args = ["-e.LsfxCIVu".to_owned()];
@@ -928,7 +928,7 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
 fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
     // If both 'v' and 'V' are present, 'V' takes precedence for encoding
     let protocol = ProtocolVersion::try_from(31).unwrap();
-    let mut stdin = &b"\x00"[..];
+    let mut stdin = &b"\x03md5"[..];
     let mut stdout_v = Vec::new();
     let mut stdout_both = Vec::new();
 
@@ -949,7 +949,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         setup_protocol(&mut stdout_v, &mut stdin, &config_v).expect("V-only setup should succeed");
 
     // Both v and V
-    let mut stdin = &b"\x00"[..];
+    let mut stdin = &b"\x03md5"[..];
     let client_args_both = ["-e.LsfxCIvVu".to_owned()];
     let config_both = ProtocolSetupConfig {
         protocol,
