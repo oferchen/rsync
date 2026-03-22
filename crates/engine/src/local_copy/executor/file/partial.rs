@@ -229,8 +229,42 @@ fn remove_if_exists(path: &Path) -> Result<(), LocalCopyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use std::fs;
     use tempfile::tempdir;
+
+    /// Scoped helper that sets or removes an environment variable and restores
+    /// the previous value when dropped.
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                unsafe {
+                    std::env::set_var(self.key, value);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     #[test]
     fn partial_mode_from_options_default_is_delete() {
@@ -253,14 +287,8 @@ mod tests {
 
     #[test]
     fn partial_mode_from_options_respects_env_var() {
-        // Safety: This test is single-threaded and we restore the environment after
-        unsafe {
-            env::set_var("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
-        }
+        let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
         let mode = PartialMode::from_options(true, None);
-        unsafe {
-            env::remove_var("RSYNC_PARTIAL_DIR");
-        }
 
         assert_eq!(
             mode,
@@ -270,29 +298,17 @@ mod tests {
 
     #[test]
     fn partial_mode_from_options_explicit_dir_overrides_env() {
-        // Safety: This test is single-threaded and we restore the environment after
-        unsafe {
-            env::set_var("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
-        }
+        let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
         let dir = PathBuf::from("/tmp/explicit");
         let mode = PartialMode::from_options(true, Some(dir.clone()));
-        unsafe {
-            env::remove_var("RSYNC_PARTIAL_DIR");
-        }
 
         assert_eq!(mode, PartialMode::PartialDir(dir));
     }
 
     #[test]
     fn partial_mode_from_options_ignores_empty_env_var() {
-        // Safety: This test is single-threaded and we restore the environment after
-        unsafe {
-            env::set_var("RSYNC_PARTIAL_DIR", "");
-        }
+        let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "");
         let mode = PartialMode::from_options(true, None);
-        unsafe {
-            env::remove_var("RSYNC_PARTIAL_DIR");
-        }
 
         assert_eq!(mode, PartialMode::Keep);
     }
