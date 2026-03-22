@@ -13,7 +13,7 @@ mod permission_denied {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
-    use core::client::{ClientConfig, run_client, PARTIAL_TRANSFER_EXIT_CODE};
+    use core::client::{ClientConfig, PARTIAL_TRANSFER_EXIT_CODE, run_client};
     use tempfile::tempdir;
 
     /// Helper: create a file with the given content, creating parent dirs as needed.
@@ -76,9 +76,8 @@ mod permission_denied {
         let result = run_client(config);
 
         // The transfer must return an error with exit code 23.
-        let error = result.expect_err(
-            "transfer with unreadable source file should return Err, not Ok",
-        );
+        let error =
+            result.expect_err("transfer with unreadable source file should return Err, not Ok");
         assert_eq!(
             error.exit_code(),
             PARTIAL_TRANSFER_EXIT_CODE,
@@ -142,9 +141,7 @@ mod permission_denied {
 
         let result = run_client(config);
 
-        let error = result.expect_err(
-            "transfer with unreadable source file should return Err",
-        );
+        let error = result.expect_err("transfer with unreadable source file should return Err");
         assert_eq!(
             error.exit_code(),
             PARTIAL_TRANSFER_EXIT_CODE,
@@ -200,9 +197,7 @@ mod permission_denied {
 
         let result = run_client(config);
 
-        let error = result.expect_err(
-            "transfer with nested unreadable file should return Err",
-        );
+        let error = result.expect_err("transfer with nested unreadable file should return Err");
         assert_eq!(
             error.exit_code(),
             PARTIAL_TRANSFER_EXIT_CODE,

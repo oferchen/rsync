@@ -839,8 +839,7 @@ mod tests {
             };
             writer.write_header(flags).unwrap();
 
-            let protocol =
-                protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+            let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
             let mut flist_writer = FileListWriter::new(protocol)
                 .with_preserve_uid(true)
                 .with_preserve_gid(true);
@@ -932,10 +931,8 @@ mod tests {
             };
             writer.write_header(flags).unwrap();
 
-            let protocol =
-                protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
-            let mut flist_writer = FileListWriter::new(protocol)
-                .with_always_checksum(csum_len);
+            let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+            let mut flist_writer = FileListWriter::new(protocol).with_always_checksum(csum_len);
 
             // Two regular files - each will have a checksum after it on the wire
             let entries = vec![
@@ -1015,9 +1012,8 @@ mod tests {
             let mut writer = BatchWriter::new(write_config).unwrap();
             writer.write_header(BatchFlags::default()).unwrap();
 
-            let protocol =
-                protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
-            let mut flist_writer = FileListWriter::new(protocol);
+            let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+            let flist_writer = FileListWriter::new(protocol);
 
             // Write only the end marker, no entries
             let mut end_buf = Vec::new();

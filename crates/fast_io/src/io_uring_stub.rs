@@ -273,6 +273,15 @@ pub enum IoUringOrStdReader {
     Std(StdFileReader),
 }
 
+impl std::fmt::Debug for IoUringOrStdReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IoUring(_) => f.debug_tuple("IoUring").field(&"<io_uring>").finish(),
+            Self::Std(_) => f.debug_tuple("Std").field(&"<buffered>").finish(),
+        }
+    }
+}
+
 impl Read for IoUringOrStdReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
@@ -359,6 +368,15 @@ pub enum IoUringOrStdWriter {
     IoUring(IoUringWriter),
     /// Standard buffered writer.
     Std(StdFileWriter),
+}
+
+impl std::fmt::Debug for IoUringOrStdWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IoUring(_) => f.debug_tuple("IoUring").field(&"<io_uring>").finish(),
+            Self::Std(_) => f.debug_tuple("Std").field(&"<buffered>").finish(),
+        }
+    }
 }
 
 impl Write for IoUringOrStdWriter {
@@ -978,9 +996,8 @@ mod tests {
     fn socket_reader_disabled_policy_uses_std() {
         let (fd_a, fd_b) = {
             let mut fds = [0i32; 2];
-            let ret = unsafe {
-                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
-            };
+            let ret =
+                unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
             assert_eq!(ret, 0);
             (fds[0], fds[1])
         };
@@ -999,9 +1016,8 @@ mod tests {
     fn socket_writer_disabled_policy_uses_std() {
         let (fd_a, fd_b) = {
             let mut fds = [0i32; 2];
-            let ret = unsafe {
-                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
-            };
+            let ret =
+                unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
             assert_eq!(ret, 0);
             (fds[0], fds[1])
         };
@@ -1020,9 +1036,8 @@ mod tests {
     fn socket_enabled_policy_returns_error() {
         let (fd_a, fd_b) = {
             let mut fds = [0i32; 2];
-            let ret = unsafe {
-                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
-            };
+            let ret =
+                unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
             assert_eq!(ret, 0);
             (fds[0], fds[1])
         };

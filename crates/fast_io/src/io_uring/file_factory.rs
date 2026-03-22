@@ -61,6 +61,15 @@ pub enum IoUringOrStdReader {
     Std(crate::traits::StdFileReader),
 }
 
+impl std::fmt::Debug for IoUringOrStdReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IoUring(_) => f.debug_tuple("IoUring").field(&"<io_uring>").finish(),
+            Self::Std(_) => f.debug_tuple("Std").field(&"<buffered>").finish(),
+        }
+    }
+}
+
 impl Read for IoUringOrStdReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
@@ -165,6 +174,15 @@ pub enum IoUringOrStdWriter {
     IoUring(IoUringWriter),
     /// Standard buffered writer (fallback on all platforms).
     Std(crate::traits::StdFileWriter),
+}
+
+impl std::fmt::Debug for IoUringOrStdWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IoUring(_) => f.debug_tuple("IoUring").field(&"<io_uring>").finish(),
+            Self::Std(_) => f.debug_tuple("Std").field(&"<buffered>").finish(),
+        }
+    }
 }
 
 impl Write for IoUringOrStdWriter {
