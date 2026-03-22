@@ -1,5 +1,19 @@
-//! crates/logging/src/thread_local.rs
 //! Thread-local storage for verbosity configuration and event collection.
+//!
+//! Upstream rsync stores `info_levels[]` and `debug_levels[]` as file-scope
+//! globals (upstream: rsync.h). In a multi-threaded Rust process each thread
+//! may run a separate transfer pipeline (sender, receiver, generator), so
+//! this module uses `thread_local!` storage instead of a global `static`.
+//!
+//! The [`init`] function installs a [`VerbosityConfig`] for the calling
+//! thread. The [`info_gte`] and [`debug_gte`] functions check levels against
+//! that config - these are the Rust equivalents of upstream's `INFO_GTE()`
+//! and `DEBUG_GTE()` macros (upstream: rsync.h).
+//!
+//! Events emitted via [`emit_info`] and [`emit_debug`] are buffered in a
+//! thread-local `Vec<DiagnosticEvent>` and retrieved with [`drain_events`].
+//! The caller routes them to stderr, the multiplexed I/O stream, or a log
+//! file - mirroring upstream's `rwrite()` dispatch (upstream: log.c:rwrite()).
 
 use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
@@ -11,7 +25,10 @@ thread_local! {
     static EVENTS: RefCell<Vec<DiagnosticEvent>> = RefCell::new(Vec::new());
 }
 
-/// Diagnostic event collected during execution.
+/// A diagnostic event collected during execution.
+///
+/// Events are buffered per-thread and drained by the caller for output.
+/// The two variants correspond to the info and debug flag systems.
 #[derive(Clone, Debug)]
 pub enum DiagnosticEvent {
     /// Info-level diagnostic event.
@@ -35,6 +52,9 @@ pub enum DiagnosticEvent {
 }
 
 /// Initialize verbosity configuration for the current thread.
+///
+/// Must be called once per thread before any logging macros are used.
+/// Subsequent calls overwrite the previous configuration.
 pub fn init(config: VerbosityConfig) {
     VERBOSITY.with(|v| {
         *v.borrow_mut() = config;
@@ -42,16 +62,24 @@ pub fn init(config: VerbosityConfig) {
 }
 
 /// Check if the info flag is at or above the specified level.
+///
+/// Equivalent to upstream's `INFO_GTE(flag, level)` macro (upstream: rsync.h).
 pub fn info_gte(flag: InfoFlag, level: u8) -> bool {
     VERBOSITY.with(|v| v.borrow().info.get(flag) >= level)
 }
 
 /// Check if the debug flag is at or above the specified level.
+///
+/// Equivalent to upstream's `DEBUG_GTE(flag, level)` macro (upstream: rsync.h).
 pub fn debug_gte(flag: DebugFlag, level: u8) -> bool {
     VERBOSITY.with(|v| v.borrow().debug.get(flag) >= level)
 }
 
-/// Emit an info diagnostic event.
+/// Emit an info diagnostic event into the thread-local buffer.
+///
+/// The caller is responsible for checking [`info_gte`] first; the
+/// [`info_log!`](crate::info_log) macro handles this automatically.
+// upstream: log.c:rwrite() dispatches FINFO messages
 pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
     EVENTS.with(|e| {
         e.borrow_mut().push(DiagnosticEvent::Info {
@@ -62,7 +90,11 @@ pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
     });
 }
 
-/// Emit a debug diagnostic event.
+/// Emit a debug diagnostic event into the thread-local buffer.
+///
+/// The caller is responsible for checking [`debug_gte`] first; the
+/// [`debug_log!`](crate::debug_log) macro handles this automatically.
+// upstream: log.c:rwrite() dispatches FLOG/FCLIENT debug messages
 pub fn emit_debug(flag: DebugFlag, level: u8, message: String) {
     EVENTS.with(|e| {
         e.borrow_mut().push(DiagnosticEvent::Debug {
@@ -74,16 +106,27 @@ pub fn emit_debug(flag: DebugFlag, level: u8, message: String) {
 }
 
 /// Drain all collected events, clearing the internal buffer.
+///
+/// Returns events in emission order. After draining, the buffer is empty
+/// and ready to accumulate new events.
 pub fn drain_events() -> Vec<DiagnosticEvent> {
     EVENTS.with(|e| e.borrow_mut().drain(..).collect())
 }
 
-/// Apply an info flag token to the current configuration.
+/// Apply an info flag token to the current thread's configuration.
+///
+/// Parses tokens like `"copy2"` or `"del"` and updates the corresponding
+/// flag level. This supports the `--info=FLAGS` CLI option
+/// (upstream: options.c:parse_output_words()).
 pub fn apply_info_flag(token: &str) -> Result<(), String> {
     VERBOSITY.with(|v| v.borrow_mut().apply_info_flag(token))
 }
 
-/// Apply a debug flag token to the current configuration.
+/// Apply a debug flag token to the current thread's configuration.
+///
+/// Parses tokens like `"recv2"` or `"flist"` and updates the corresponding
+/// flag level. This supports the `--debug=FLAGS` CLI option
+/// (upstream: options.c:parse_output_words()).
 pub fn apply_debug_flag(token: &str) -> Result<(), String> {
     VERBOSITY.with(|v| v.borrow_mut().apply_debug_flag(token))
 }

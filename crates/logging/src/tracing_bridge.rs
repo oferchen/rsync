@@ -1,5 +1,4 @@
-//! crates/logging/src/tracing_bridge.rs
-//! Bridge between the tracing crate and rsync's verbosity system.
+//! Bridge between the `tracing` crate and rsync's verbosity system.
 //!
 //! This module provides a custom tracing subscriber layer that maps tracing events
 //! to rsync's info and debug flag system. It enables using standard Rust tracing
