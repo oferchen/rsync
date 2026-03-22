@@ -20,12 +20,6 @@ fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
 }
 
-/// Calculate expected sleep duration for a given transfer size and rate.
-#[allow(dead_code)]
-fn expected_sleep(bytes: u64, bytes_per_second: u64) -> Duration {
-    Duration::from_secs_f64(bytes as f64 / bytes_per_second as f64)
-}
-
 /// Check if actual duration is within tolerance of expected.
 fn within_tolerance(actual: Duration, expected: Duration, tolerance_percent: f64) -> bool {
     let tolerance = Duration::from_secs_f64(expected.as_secs_f64() * tolerance_percent / 100.0);
