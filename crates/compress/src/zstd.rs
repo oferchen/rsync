@@ -75,6 +75,23 @@ where
         self.inner.write_all(input)
     }
 
+    /// Flushes the encoder, emitting all buffered data as decompressible output.
+    ///
+    /// This calls `flush()` on the underlying `ZstdEncoder`, which triggers a
+    /// zstd flush operation that materializes all pending compressed data. The
+    /// receiver can then decompress all data written so far without waiting for
+    /// more input.
+    ///
+    /// This provides per-token flush semantics analogous to zlib's `Z_SYNC_FLUSH`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `token.c:send_deflated_token()` - upstream rsync flushes the
+    /// compressor after each token so the receiver can decompress incrementally.
+    pub fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+
     /// Returns the number of compressed bytes produced so far.
     #[inline]
     #[must_use]
@@ -438,5 +455,83 @@ mod tests {
                 "single byte round-trip failed at level {level}"
             );
         }
+    }
+
+    // Per-token flush tests - verify that flush produces output enabling
+    // incremental decompression, matching the upstream per-token pattern
+    // (token.c:send_deflated_token).
+
+    #[test]
+    fn flush_emits_compressed_data() {
+        let mut encoder =
+            CountingZstdEncoder::with_sink(Vec::new(), CompressionLevel::Default).expect("encoder");
+        encoder.write(b"token payload data").expect("write");
+
+        let before_flush = encoder.get_ref().len();
+        encoder.flush().expect("flush");
+        let after_flush = encoder.get_ref().len();
+
+        assert!(
+            after_flush > before_flush,
+            "flush must emit compressed data to the sink (before={before_flush}, after={after_flush})"
+        );
+    }
+
+    #[test]
+    fn flush_then_finish_produces_valid_stream() {
+        let mut encoder =
+            CountingZstdEncoder::with_sink(Vec::new(), CompressionLevel::Default).expect("encoder");
+
+        let token1 = b"first token data for zstd flush test";
+        encoder.write(token1).expect("write token 1");
+        encoder.flush().expect("flush after token 1");
+
+        let token2 = b"second token after zstd flush";
+        encoder.write(token2).expect("write token 2");
+
+        let (compressed, bytes) = encoder.finish_into_inner().expect("finish");
+        assert!(bytes > 0);
+
+        let decompressed = decompress_to_vec(&compressed).expect("decompress");
+        let mut expected = Vec::new();
+        expected.extend_from_slice(token1);
+        expected.extend_from_slice(token2);
+        assert_eq!(decompressed, expected);
+    }
+
+    #[test]
+    fn flush_after_each_token_all_data_recoverable() {
+        let tokens: &[&[u8]] = &[
+            b"zstd token one: file header",
+            b"zstd token two: delta literal",
+            b"zstd token three: block match",
+        ];
+
+        let mut encoder =
+            CountingZstdEncoder::with_sink(Vec::new(), CompressionLevel::Default).expect("encoder");
+
+        for token in tokens {
+            encoder.write(token).expect("write token");
+            encoder.flush().expect("flush after token");
+        }
+
+        let (compressed, _) = encoder.finish_into_inner().expect("finish");
+        let decompressed = decompress_to_vec(&compressed).expect("decompress");
+        let expected: Vec<u8> = tokens.iter().flat_map(|t| t.iter().copied()).collect();
+        assert_eq!(decompressed, expected);
+    }
+
+    #[test]
+    fn flush_on_empty_buffer_is_noop() {
+        let mut encoder =
+            CountingZstdEncoder::with_sink(Vec::new(), CompressionLevel::Default).expect("encoder");
+
+        encoder.flush().expect("flush on empty");
+        let before = encoder.get_ref().len();
+
+        encoder.flush().expect("second flush on empty");
+        let after = encoder.get_ref().len();
+
+        assert_eq!(before, after, "empty flush should not produce additional output");
     }
 }
