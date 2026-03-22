@@ -1,3 +1,12 @@
+//! User-visible filter rule type and builder methods.
+//!
+//! This module defines [`FilterRule`], the primary input type for constructing
+//! a [`FilterSet`](crate::FilterSet). Rules are created via named constructors
+//! (e.g., [`FilterRule::include`], [`FilterRule::exclude`]) and configured
+//! with builder-style modifier methods.
+//!
+//! // upstream: exclude.c - filter_rule struct and FILTRULE_* flags
+
 use crate::FilterAction;
 
 /// User-visible filter rule consisting of an action and a glob pattern.

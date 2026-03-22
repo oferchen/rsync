@@ -1,4 +1,9 @@
 //! File I/O for reading merge files from disk.
+//!
+//! Provides [`read_rules`] for single-file reads and [`read_rules_recursive`]
+//! for automatic expansion of nested `. FILE` (merge) directives.
+//!
+//! // upstream: exclude.c:parse_filter_file() - merge file reading
 
 use std::fs;
 use std::path::Path;

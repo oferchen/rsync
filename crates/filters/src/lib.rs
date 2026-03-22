@@ -5,9 +5,9 @@
 //! # Overview
 //!
 //! `filters` provides ordered include/exclude/protect pattern evaluation for the
-//! Rust `rsync` workspace. The implementation focuses on reproducing the
-//! subset of rsync's filter grammar that governs `--include`/`--exclude`
-//! handling for local filesystem transfers. Patterns honour anchored matches
+//! Rust `rsync` workspace, implementing the Chain of Responsibility pattern.
+//! The implementation reproduces rsync's filter grammar that governs
+//! `--include`/`--exclude`/`--filter` handling. Patterns honour anchored matches
 //! (leading `/`), directory-only rules (trailing `/`), and recursive wildcards
 //! using the same glob semantics exposed by upstream rsync. Rules are evaluated
 //! sequentially with the first matching include/exclude directive determining
@@ -15,11 +15,28 @@
 //! rules to prevent matching destination paths from being removed during
 //! `--delete` sweeps.
 //!
+//! # Chain of Responsibility
+//!
+//! Filter evaluation follows the Chain of Responsibility pattern: each compiled
+//! rule is a handler in an ordered chain. When a path is evaluated, rules are
+//! tested in definition order and the first matching rule determines the
+//! outcome (first-match-wins). If no rule matches, the default action is to
+//! include the path. This mirrors upstream rsync's `check_filter()` in
+//! `exclude.c`, which iterates from the head of the filter list and returns on
+//! the first match.
+//!
+//! Two independent chains are maintained:
+//!
+//! 1. **Include/Exclude chain** - governs whether a path is transferred.
+//! 2. **Protect/Risk chain** - governs whether a path may be deleted on the
+//!    receiver when `--delete` is active.
+//!
 //! # Design
 //!
 //! - [`FilterRule`] captures the user-supplied action (`Include`/`Exclude`/
-//!   `Protect`) and pattern text. The rule itself is lightweight; heavy lifting
-//!   happens when a [`FilterSet`] is constructed.
+//!   `Protect`/`Risk`/`Clear`/`Merge`/`DirMerge`) and pattern text. The rule
+//!   itself is lightweight; heavy lifting happens when a [`FilterSet`] is
+//!   constructed.
 //! - [`FilterSet`] owns the compiled representation of each rule, expanding
 //!   directory-only patterns into matchers that also cover their contents while
 //!   deduplicating equivalent glob expressions. Protect rules are tracked in a
@@ -28,6 +45,13 @@
 //! - Matching occurs against relative paths using native [`std::path::Path`] semantics so
 //!   callers can operate directly on `std::path::PathBuf` instances without
 //!   additional conversions.
+//!
+//! # Upstream References
+//!
+//! - `exclude.c` - filter rule parsing, compilation, and evaluation
+//! - `exclude.c:check_filter()` - first-match-wins evaluation loop
+//! - `exclude.c:parse_filter_str()` - rule parsing from `--filter` strings
+//! - `rsync.1` - man page documentation for filter rules
 //!
 //! # Invariants
 //!
