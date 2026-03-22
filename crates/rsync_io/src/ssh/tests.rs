@@ -214,48 +214,105 @@ fn spawned_connection_forwards_io() {
 
 #[cfg(unix)]
 #[test]
-fn stderr_stream_is_accessible() {
+fn stderr_output_collected_via_child_handle() {
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
     command.set_batch_mode(false);
     command.push_option("-c");
-    command.push_option("printf err >&2");
+    command.push_option("printf 'err-line\\n' >&2");
+    command.set_target_override(Some(OsString::new()));
 
-    let mut connection = command.spawn().expect("spawn shell");
-    connection.close_stdin().expect("close stdin");
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
 
-    let mut stderr = String::new();
-    connection
-        .stderr_mut()
-        .expect("stderr handle")
-        .read_to_string(&mut stderr)
-        .expect("read stderr");
-    assert!(stderr.contains("err"));
-
-    let status = connection.wait().expect("wait status");
+    let (status, stderr) = child_handle.wait_with_stderr().expect("wait status");
     assert!(status.success());
+
+    let text = String::from_utf8_lossy(&stderr);
+    assert!(
+        text.contains("err-line"),
+        "expected stderr to contain 'err-line', got: {text}"
+    );
 }
 
 #[cfg(unix)]
 #[test]
-fn take_stderr_transfers_handle() {
+fn stderr_output_empty_when_no_errors() {
+    let connection = spawn_echo_process();
+    let (_reader, writer, child_handle) = connection.split().expect("split");
+    writer.close().expect("close writer");
+
+    let (status, stderr) = child_handle.wait_with_stderr().expect("wait");
+    assert!(status.success());
+    assert!(stderr.is_empty(), "expected empty stderr, got: {stderr:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn stderr_output_bounded_to_cap() {
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
     command.set_batch_mode(false);
     command.push_option("-c");
-    command.push_option("printf err >&2");
+    // Generate ~128 KB of stderr output to exceed the 64 KB cap.
+    command.push_option(
+        "i=0; while [ $i -lt 2048 ]; do printf 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n' >&2; i=$((i+1)); done",
+    );
+    command.set_target_override(Some(OsString::new()));
 
-    let mut connection = command.spawn().expect("spawn shell");
-    connection.close_stdin().expect("close stdin");
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
 
-    let mut handle = connection.take_stderr().expect("stderr handle");
-    assert!(connection.take_stderr().is_none());
+    let (status, stderr) = child_handle.wait_with_stderr().expect("wait");
+    assert!(status.success());
 
-    let mut captured = String::new();
-    handle.read_to_string(&mut captured).expect("read stderr");
-    assert!(captured.contains("err"));
+    // Buffer should be bounded to 64 KB.
+    let cap = 64 * 1024;
+    assert!(
+        stderr.len() <= cap,
+        "stderr buffer should be bounded to {cap}, got {}",
+        stderr.len()
+    );
+    // Should have collected some output (not empty).
+    assert!(!stderr.is_empty(), "expected non-empty stderr output");
+}
 
-    let status = connection.wait().expect("wait status");
+#[cfg(unix)]
+#[test]
+fn stderr_output_readable_before_wait() {
+    use std::time::{Duration, Instant};
+
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("printf 'early-msg\\n' >&2");
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
+
+    // Poll stderr_output() before wait() - the drain thread collects
+    // output asynchronously, so we poll until it arrives.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let output = child_handle.stderr_output();
+        if !output.is_empty() {
+            let text = String::from_utf8_lossy(&output);
+            assert!(
+                text.contains("early-msg"),
+                "expected 'early-msg', got: {text}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for stderr output"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let status = child_handle.wait().expect("wait");
     assert!(status.success());
 }
 
