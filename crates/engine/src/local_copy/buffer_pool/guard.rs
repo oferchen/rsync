@@ -1,10 +1,17 @@
 //! RAII buffer guards for the [`BufferPool`](super::BufferPool).
 //!
 //! This module provides two guard types that automatically return buffers
-//! to the pool when dropped:
+//! to the pool when dropped. Both use an internal `Option<Vec<u8>>` with
+//! take-on-drop semantics - the `Drop` impl calls `Option::take` to move
+//! the buffer out, then passes it to `BufferPool::return_buffer`. This
+//! guarantees the buffer is returned exactly once, even during panic unwind.
 //!
-//! - [`BufferGuard`] - holds an [`Arc`] to the pool (owned version).
-//! - [`BorrowedBufferGuard`] - borrows the pool (lifetime-bound version).
+//! - [`BufferGuard`] - holds an [`Arc`] to the pool, decoupling the guard
+//!   lifetime from the pool borrow. Preferred when the pool is part of a
+//!   larger struct that may be mutably borrowed while buffers are checked out.
+//! - [`BorrowedBufferGuard`] - borrows the pool by reference, tying the
+//!   guard lifetime to the pool. Lighter weight when the borrow checker
+//!   permits it (single-thread or scoped usage).
 
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -13,12 +20,18 @@ use super::BufferPool;
 
 /// RAII guard that returns a buffer to the pool on drop (owned version).
 ///
-/// This guard holds an [`Arc`] to the pool, allowing it to be used when
-/// the pool is part of a larger context that needs to be mutably borrowed.
+/// Holds an [`Arc<BufferPool>`] so the guard's lifetime is independent of
+/// any borrow on the pool. This is the preferred variant for concurrent
+/// use with rayon, where buffers are acquired in worker threads and may
+/// outlive the scope that created the pool reference.
 ///
-/// Provides transparent access to the underlying buffer via [`Deref`] and
-/// [`DerefMut`], allowing it to be used wherever `&[u8]` or `&mut [u8]`
-/// is expected.
+/// Provides transparent access to the underlying `Vec<u8>` via [`Deref`]
+/// and [`DerefMut`] to `[u8]`, so the guard can be passed to any API
+/// expecting `&[u8]` or `&mut [u8]`.
+///
+/// On drop, the buffer is passed to [`BufferPool::return_buffer`](super::BufferPool),
+/// which restores its length to the pool default and pushes it back onto
+/// the lock-free queue. If the pool is at capacity, the buffer is dropped.
 #[derive(Debug)]
 pub struct BufferGuard {
     /// The buffer, wrapped in Option for take-on-drop pattern.
@@ -71,8 +84,12 @@ impl BufferGuard {
 
 /// RAII guard that returns a buffer to the pool on drop (borrowed version).
 ///
-/// This guard borrows the pool, suitable for simple use cases where the pool
-/// lifetime is clear.
+/// Borrows the pool by reference, so the guard's lifetime is tied to the
+/// pool via `'a`. This avoids the `Arc` overhead and is suitable for
+/// single-thread or scoped usage where the pool outlives all guards.
+///
+/// Behaves identically to [`BufferGuard`] in all other respects: derefs
+/// to `[u8]`, and the `Drop` impl returns the buffer to the pool.
 #[derive(Debug)]
 pub struct BorrowedBufferGuard<'a> {
     /// The buffer, wrapped in Option for take-on-drop pattern.
