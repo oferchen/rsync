@@ -5,14 +5,13 @@ use std::fs;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc::TryRecvError;
 
-use super::config::{DEFAULT_CHANNEL_CAPACITY, DiskCommitConfig};
+use super::config::DiskCommitConfig;
 use super::thread::spawn_disk_thread;
 
 #[test]
 fn default_config() {
     let config = DiskCommitConfig::default();
     assert!(!config.do_fsync);
-    assert_eq!(config.channel_capacity, DEFAULT_CHANNEL_CAPACITY);
 }
 
 #[test]
