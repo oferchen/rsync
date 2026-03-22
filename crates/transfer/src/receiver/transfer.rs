@@ -14,7 +14,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use logging::info_log;
+use logging::{PhaseTimer, info_log};
 use protocol::codec::{NdxCodec, create_ndx_codec};
 use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
@@ -82,6 +82,7 @@ impl ReceiverContext {
         reader: crate::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<TransferStats> {
+        let _t = PhaseTimer::new("receiver-transfer");
         let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
@@ -493,6 +494,7 @@ impl ReceiverContext {
         writer: &mut W,
         pipeline_config: PipelineConfig,
     ) -> io::Result<TransferStats> {
+        let _t = PhaseTimer::new("receiver-transfer-pipelined");
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
@@ -631,6 +633,7 @@ impl ReceiverContext {
         pipeline_config: PipelineConfig,
         mut progress: Option<&mut dyn crate::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
+        let _t = PhaseTimer::new("receiver-transfer-incremental");
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 

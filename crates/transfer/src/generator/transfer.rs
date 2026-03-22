@@ -13,7 +13,7 @@
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use logging::debug_log;
+use logging::{PhaseTimer, debug_log};
 use protocol::codec::{
     NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec,
 };
@@ -546,15 +546,18 @@ impl GeneratorContext {
         let reader = &mut reader;
 
         // upstream: flist.c:2192 - send_file_list()
-        if files_from_paths.is_empty() {
-            self.build_file_list(paths)?;
-        } else {
-            // upstream: flist.c:2240-2244 - argv[0] is the base for --files-from
-            let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
-            self.build_file_list_with_base(&base_dir, &files_from_paths)?;
-        }
-        self.partition_file_list_for_inc_recurse();
-        let file_count = self.send_file_list(writer)?;
+        let file_count = {
+            let _t = PhaseTimer::new("file-list-build-send");
+            if files_from_paths.is_empty() {
+                self.build_file_list(paths)?;
+            } else {
+                // upstream: flist.c:2240-2244 - argv[0] is the base for --files-from
+                let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
+                self.build_file_list_with_base(&base_dir, &files_from_paths)?;
+            }
+            self.partition_file_list_for_inc_recurse();
+            self.send_file_list(writer)?
+        };
 
         // Step 4: Send ID lists for non-INC_RECURSE protocols
         self.send_id_lists(writer)?;
@@ -570,7 +573,10 @@ impl GeneratorContext {
         self.send_flist_eof_if_inc_recurse(writer)?;
 
         // Step 7: Run main transfer loop
-        let transfer_result = self.run_transfer_loop(reader, writer, &mut progress)?;
+        let transfer_result = {
+            let _t = PhaseTimer::new("generator-transfer-loop");
+            self.run_transfer_loop(reader, writer, &mut progress)?
+        };
 
         // Step 8: Handle goodbye handshake
         //
