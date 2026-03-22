@@ -341,6 +341,10 @@ fn delete_directory_tree_recursive(
     Ok(())
 }
 
+/// Removes the source entry after a successful copy when `--remove-source-files` is active.
+///
+/// Directories are never removed (upstream rsync only removes files).
+/// No-ops in dry-run mode.
 pub(crate) fn remove_source_entry_if_requested(
     context: &mut CopyContext,
     source: &Path,

@@ -1,3 +1,5 @@
+//! File comparison and skip-decision logic for local copies.
+
 use std::fs;
 use std::io::{self, Read};
 use std::num::{NonZeroU8, NonZeroU32};
@@ -41,6 +43,11 @@ pub(crate) fn destination_is_newer(
     }
 }
 
+/// Builds a delta signature index from an existing destination file.
+///
+/// Returns `None` for empty files or when signature generation fails
+/// for non-I/O reasons. Used by the delta transfer path to compute
+/// block matches against the existing content.
 pub(crate) fn build_delta_signature(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -159,6 +166,10 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
     }
 }
 
+/// Returns `true` when two timestamps differ by no more than `window`.
+///
+/// With a zero window, only exact equality matches.
+/// // upstream: generator.c:unchanged_file() - modify window comparison
 pub(crate) fn system_time_within_window(a: SystemTime, b: SystemTime, window: Duration) -> bool {
     if window.is_zero() {
         return a.eq(&b);

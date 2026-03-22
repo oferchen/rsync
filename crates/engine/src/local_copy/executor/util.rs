@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::local_copy::LocalCopyError;
 
+/// Returns `Some(path)` when `path` is non-empty, or `None` for empty paths.
 pub(crate) fn non_empty_path(path: &Path) -> Option<&Path> {
     if path.as_os_str().is_empty() {
         None
@@ -13,6 +14,7 @@ pub(crate) fn non_empty_path(path: &Path) -> Option<&Path> {
     }
 }
 
+/// Follows a symlink and returns the metadata of its target.
 pub(crate) fn follow_symlink_metadata(path: &Path) -> Result<fs::Metadata, LocalCopyError> {
     fs::metadata(path).map_err(|error| LocalCopyError::io("inspect symlink target", path, error))
 }

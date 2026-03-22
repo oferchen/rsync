@@ -9,6 +9,7 @@ use crate::local_copy::{
 
 use super::super::append::{AppendMode, determine_append_mode};
 
+/// Aggregated parameters for simulating a file copy in dry-run mode.
 pub(super) struct DryRunRequest<'a> {
     pub source: &'a Path,
     pub destination: &'a Path,
@@ -17,6 +18,10 @@ pub(super) struct DryRunRequest<'a> {
     pub existing_metadata: Option<&'a fs::Metadata>,
 }
 
+/// Processes a file copy in dry-run mode without writing any data.
+///
+/// Records the transfer in the summary and event log, respecting
+/// `--update`, `--ignore-existing`, and `--append` semantics.
 pub(super) fn handle_dry_run(
     context: &mut CopyContext,
     request: DryRunRequest<'_>,
