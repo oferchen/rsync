@@ -1,3 +1,14 @@
+//! CLI entry points for the rsync daemon binary.
+//!
+//! Provides the top-level [`run`] function that parses command-line arguments,
+//! dispatches to `--help`/`--version` fast paths, or delegates to
+//! [`run_daemon`] for full daemon mode. Diagnostics are routed through the
+//! central [`core::message`] system so output formatting and exit codes match
+//! upstream rsync behaviour.
+//!
+//! upstream: main.c - the daemon CLI is a mode of the main `rsync` binary,
+//! triggered by `--daemon` on the command line.
+
 use std::ffi::OsString;
 use std::io::Write;
 

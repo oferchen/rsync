@@ -1,8 +1,18 @@
 // Module request handling - context, error responses, and main entry point.
 //
-// upstream: clientserver.c
+// When the client sends a module name (anything other than `#list`), the
+// daemon looks up the module definition, checks host-based access control,
+// acquires a connection slot, authenticates the user (if required), reads
+// client arguments, and delegates to the transfer engine.
+//
+// upstream: clientserver.c - `rsync_module()` is the dispatcher that handles
+// module lookup, access control, authentication, and transfer setup.
 
 /// Context for module request handling, passed to helper functions.
+///
+/// Bundles the connection state (reader, bandwidth limiter, peer address)
+/// with the module request metadata so helper functions receive a single
+/// context parameter instead of many individual arguments.
 struct ModuleRequestContext<'a> {
     reader: &'a mut BufReader<TcpStream>,
     limiter: &'a mut Option<BandwidthLimiter>,

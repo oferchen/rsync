@@ -208,6 +208,9 @@ fn parse_v1_header<R: Read>(prefix: &[u8; 12], reader: &mut R) -> io::Result<Opt
 ///
 /// Returns the original client address when a proxied header is present,
 /// or `None` for health-check / LOCAL connections.
+///
+/// upstream: clientserver.c:1298 - `read_proxy_protocol_header()` is called
+/// before any rsync protocol data when `proxy protocol = true` in the config.
 pub(crate) fn parse_proxy_header(stream: &TcpStream) -> io::Result<Option<SocketAddr>> {
     // Borrow as Read via reference - TcpStream implements Read for &TcpStream.
     let mut reader = BufReader::new(stream);

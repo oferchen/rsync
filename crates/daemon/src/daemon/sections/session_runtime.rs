@@ -1,3 +1,8 @@
+/// Immutable parameters shared across session handlers.
+///
+/// Carries the daemon-wide configuration (module table, MOTD, bandwidth
+/// limits, log sink) that every connection handler needs. Passed by
+/// reference from the accept loop to per-connection threads.
 struct SessionParams<'a> {
     modules: &'a [ModuleRuntime],
     motd_lines: &'a [String],
@@ -8,6 +13,14 @@ struct SessionParams<'a> {
     proxy_protocol: bool,
 }
 
+/// Parameters for the legacy `@RSYNCD:` session handler.
+///
+/// Extends [`SessionParams`] with the resolved peer hostname, which is
+/// computed once in the top-level session handler and reused across the
+/// greeting, module lookup, and authentication phases.
+///
+/// upstream: clientserver.c - the daemon resolves the peer hostname via
+/// reverse DNS before entering the module request loop.
 struct LegacySessionParams<'a> {
     modules: &'a [ModuleRuntime],
     motd_lines: &'a [String],
@@ -18,6 +31,15 @@ struct LegacySessionParams<'a> {
     reverse_lookup: bool,
 }
 
+/// Handles a single daemon connection from accept to completion.
+///
+/// Resolves the peer hostname (if reverse lookup is enabled), reads the
+/// optional PROXY protocol header, and dispatches to the legacy `@RSYNCD:`
+/// session handler. The function is the per-thread entry point called from
+/// the accept loop with `catch_unwind` crash isolation.
+///
+/// upstream: clientserver.c - `start_daemon()` forks a child per connection;
+/// each child calls `rsync_module()` which performs the full session lifecycle.
 #[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "session_handler"))]
 fn handle_session(
     stream: TcpStream,
@@ -89,6 +111,11 @@ fn handle_session(
     }
 }
 
+/// Peeks at the first bytes from the client to determine the session style.
+///
+/// Currently unused because daemon connections always use the legacy protocol -
+/// the server must send the `@RSYNCD:` greeting first, creating a deadlock if
+/// we wait for client data to determine the style.
 #[allow(dead_code)]
 fn detect_session_style(stream: &TcpStream, fallback_available: bool) -> io::Result<SessionStyle> {
     stream.set_nonblocking(true)?;
@@ -120,13 +147,32 @@ fn detect_session_style(stream: &TcpStream, fallback_available: bool) -> io::Res
     }
 }
 
+/// Discriminates between the two wire-level negotiation styles.
+///
+/// The legacy style uses line-oriented `@RSYNCD:` text messages for the
+/// greeting and module selection phases. The binary style uses 4-byte
+/// little-endian integers for the initial version exchange, as used by
+/// the multiplex I/O layer in protocol versions 28+.
+///
+/// In daemon mode the protocol is always legacy - the server sends the
+/// `@RSYNCD:` greeting first and the client responds in kind.
+///
+/// upstream: clientserver.c - daemon connections always use the legacy
+/// `@RSYNCD:` greeting protocol.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SessionStyle {
+    /// Line-oriented `@RSYNCD:` text protocol.
     Legacy,
+    /// Binary 4-byte LE version exchange followed by multiplex frames.
     #[allow(dead_code)]
     Binary,
 }
 
+/// Writes `payload` to `stream`, respecting the optional bandwidth limiter.
+///
+/// When a limiter is active, the payload is split into recommended-size
+/// chunks and each chunk is registered with the limiter before sending.
+/// When no limiter is present, the payload is written in a single call.
 fn write_limited(
     stream: &mut TcpStream,
     limiter: &mut Option<BandwidthLimiter>,
@@ -146,6 +192,16 @@ fn write_limited(
     }
 }
 
+/// Runs the legacy `@RSYNCD:` session protocol for a single connection.
+///
+/// Sends the greeting with the protocol version and supported digest list,
+/// reads the client's version response and module request, then dispatches
+/// to either `#list` handling or module-specific access control and transfer.
+///
+/// upstream: clientserver.c - the daemon greeting/response sequence is:
+/// 1. Server sends `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n`
+/// 2. Client responds with `@RSYNCD: 32.0\n`
+/// 3. Client sends module name (or `#list`)
 #[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "legacy_session"))]
 fn handle_legacy_session(
     stream: TcpStream,
