@@ -180,8 +180,11 @@ pub use delta::{
     generate_delta,
 };
 
-/// Concurrent delta pipeline work-item and result types.
-pub use concurrent_delta::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind};
+/// Concurrent delta pipeline work-item, result, and strategy types.
+pub use concurrent_delta::{
+    DeltaResult, DeltaResultStatus, DeltaStrategy, DeltaTransferStrategy, DeltaWork, DeltaWorkKind,
+    WholeFileStrategy,
+};
 
 /// Common error types for engine operations.
 pub use error::{EngineError, EngineResult};
