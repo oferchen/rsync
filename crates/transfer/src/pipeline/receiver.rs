@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn write_file_through_mediator() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("test.dat");
 
         let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
@@ -580,7 +580,7 @@ mod tests {
             return;
         }
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         // Create a read-only directory so file creation inside fails
         let readonly_dir = dir.path().join("readonly");
         std::fs::create_dir(&readonly_dir).unwrap();

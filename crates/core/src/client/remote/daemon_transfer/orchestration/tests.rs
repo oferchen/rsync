@@ -500,7 +500,7 @@ mod files_from_forwarding_tests {
 
     #[test]
     fn read_from_local_file_newline_delimited() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let list_file = dir.path().join("list.txt");
         std::fs::write(&list_file, "file1.txt\nfile2.txt\nsubdir/file3.txt\n").unwrap();
 
@@ -520,7 +520,7 @@ mod files_from_forwarding_tests {
 
     #[test]
     fn read_from_local_file_nul_delimited() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let list_file = dir.path().join("list.txt");
         std::fs::write(&list_file, "alpha.txt\0beta.txt\0").unwrap();
 
@@ -568,7 +568,7 @@ mod files_from_forwarding_tests {
 
     #[test]
     fn empty_local_file_produces_terminator() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let list_file = dir.path().join("empty.txt");
         std::fs::write(&list_file, "").unwrap();
 
@@ -587,7 +587,7 @@ mod files_from_forwarding_tests {
 
     #[test]
     fn roundtrip_with_crlf_line_endings() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let list_file = dir.path().join("list.txt");
         std::fs::write(&list_file, "file1.txt\r\nfile2.txt\r\n").unwrap();
 
