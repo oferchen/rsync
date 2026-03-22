@@ -33,15 +33,18 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::time::Duration;
 
 /// Runs oc-rsync with given arguments and returns the output.
+///
+/// Uses a 60-second timeout to prevent CI hangs from stuck processes.
 fn run_rsync(args: &[&str]) -> Output {
     let _cmd = RsyncCommand::new();
     let binary = locate_binary("oc-rsync").expect("oc-rsync binary must be available");
 
     let mut command = Command::new(binary);
     command.args(args);
-    command.output().expect("failed to run oc-rsync")
+    spawn_with_timeout(command, Duration::from_secs(60)).expect("failed to run oc-rsync")
 }
 
 /// Asserts that the exit code matches the expected value.

@@ -14,6 +14,52 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::Duration;
+
+/// Default timeout for spawned test processes (60 seconds).
+///
+/// Long enough for any reasonable test, short enough to unblock CI if a process hangs.
+const DEFAULT_SPAWN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Spawn a process from a `Command` and wait for it to complete within `timeout`.
+///
+/// If the process exceeds the timeout, it is killed (SIGKILL on Unix, TerminateProcess
+/// on Windows) and an error is returned. This prevents CI hangs caused by processes
+/// that deadlock or block indefinitely on I/O.
+///
+/// # Errors
+///
+/// Returns `io::Error` if the process cannot be spawned, if the timeout is exceeded
+/// (in which case the process is killed before returning), or if collecting output fails.
+pub fn spawn_with_timeout(mut command: Command, timeout: Duration) -> io::Result<Output> {
+    let mut child = command.spawn()?;
+    let start = std::time::Instant::now();
+
+    loop {
+        match child.try_wait()? {
+            Some(_status) => {
+                // Process exited - collect output. We need stdout/stderr, so
+                // use wait_with_output on a child that has already exited.
+                // Since try_wait consumed the status, we call wait_with_output
+                // which will return immediately.
+                return child.wait_with_output();
+            }
+            None => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "process exceeded timeout of {timeout:?} and was killed"
+                        ),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
 
 /// Test directory with automatic cleanup on drop.
 pub struct TestDir {
@@ -134,6 +180,9 @@ impl RsyncCommand {
     }
 
     /// Execute the command and return the output.
+    ///
+    /// Uses `spawn_with_timeout` with a 60-second default to prevent CI hangs
+    /// from processes that deadlock or block indefinitely.
     pub fn run(&self) -> io::Result<Output> {
         let mut command = if let Some(runner) = cargo_target_runner() {
             let mut cmd = Command::new(&runner[0]);
@@ -145,7 +194,7 @@ impl RsyncCommand {
         };
 
         command.args(&self.args);
-        command.output()
+        spawn_with_timeout(command, DEFAULT_SPAWN_TIMEOUT)
     }
 
     /// Execute and assert success.
