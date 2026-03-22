@@ -16,11 +16,13 @@
 //! - [`capability`] - Capability string building and parsing (`-e.xxx`)
 //! - [`compat`] - Compatibility flags exchange
 //! - [`negotiator`] - Trait abstractions and default implementation
+//! - [`restrictions`] - Protocol version feature restrictions (compat.c:641-709)
 //! - [`types`] - Configuration and result types
 
 mod capability;
 mod compat;
 mod negotiator;
+mod restrictions;
 mod types;
 
 pub use capability::build_capability_string;
@@ -28,6 +30,9 @@ pub use compat::exchange_compat_flags_direct;
 pub use negotiator::{
     CapabilityNegotiator, ChecksumSeedExchanger, CompatFlagsExchanger, ProtocolNegotiator,
     RsyncNegotiator,
+};
+pub use restrictions::{
+    ProtocolRestrictionFlags, RestrictionAdjustments, apply_protocol_restrictions,
 };
 pub use types::{ProtocolSetupConfig, SetupResult};
 
