@@ -296,13 +296,19 @@ fn run_bidirectional_relay(
 
     // Wait for child processes and check exit status.
     // Mirror upstream: propagate the worst exit code from either child.
-    let source_exit = match source_handle.wait() {
-        Ok(status) => super::ssh_transfer::map_child_exit_status(status),
-        Err(_) => ExitCode::WaitChild,
+    let (source_exit, source_stderr) = match source_handle.wait_with_stderr() {
+        Ok((status, stderr_bytes)) => (
+            super::ssh_transfer::map_child_exit_status(status),
+            stderr_bytes,
+        ),
+        Err(_) => (ExitCode::WaitChild, Vec::new()),
     };
-    let dest_exit = match dest_handle.wait() {
-        Ok(status) => super::ssh_transfer::map_child_exit_status(status),
-        Err(_) => ExitCode::WaitChild,
+    let (dest_exit, dest_stderr) = match dest_handle.wait_with_stderr() {
+        Ok((status, stderr_bytes)) => (
+            super::ssh_transfer::map_child_exit_status(status),
+            stderr_bytes,
+        ),
+        Err(_) => (ExitCode::WaitChild, Vec::new()),
     };
 
     // Take the worst (highest) exit code from either child.
@@ -313,9 +319,17 @@ fn run_bidirectional_relay(
     };
 
     if !worst_exit.is_success() {
+        // Combine stderr from both sides for the error message.
+        let mut combined_stderr = source_stderr;
+        if !combined_stderr.is_empty() && !dest_stderr.is_empty() {
+            combined_stderr.push(b'\n');
+        }
+        combined_stderr.extend_from_slice(&dest_stderr);
+        let stderr_text = super::ssh_transfer::format_stderr_context(&combined_stderr);
+
         return Err(invalid_argument_error_typed(
             &format!(
-                "remote process exited with error: {}",
+                "remote process exited with error: {}{stderr_text}",
                 worst_exit.description()
             ),
             worst_exit,
