@@ -17,7 +17,7 @@
 
 #[test]
 fn copy_file_with_single_space_in_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -44,7 +44,7 @@ fn copy_file_with_single_space_in_name() {
 
 #[test]
 fn copy_file_with_multiple_consecutive_spaces() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -68,7 +68,7 @@ fn copy_file_with_multiple_consecutive_spaces() {
 
 #[test]
 fn copy_file_with_leading_space() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -92,7 +92,7 @@ fn copy_file_with_leading_space() {
 
 #[test]
 fn copy_file_with_trailing_space() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -116,7 +116,7 @@ fn copy_file_with_trailing_space() {
 
 #[test]
 fn copy_file_named_only_spaces() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -140,7 +140,7 @@ fn copy_file_named_only_spaces() {
 
 #[test]
 fn copy_directory_with_spaces_in_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -169,7 +169,7 @@ fn copy_directory_with_spaces_in_name() {
 
 #[test]
 fn copy_file_with_single_quotes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -193,7 +193,7 @@ fn copy_file_with_single_quotes() {
 
 #[test]
 fn copy_file_with_double_quotes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -217,7 +217,7 @@ fn copy_file_with_double_quotes() {
 
 #[test]
 fn copy_file_with_mixed_quotes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -241,7 +241,7 @@ fn copy_file_with_mixed_quotes() {
 
 #[test]
 fn copy_file_with_consecutive_quotes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -265,7 +265,7 @@ fn copy_file_with_consecutive_quotes() {
 
 #[test]
 fn copy_file_with_backslash() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -289,7 +289,7 @@ fn copy_file_with_backslash() {
 
 #[test]
 fn copy_file_with_consecutive_backslashes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -313,7 +313,7 @@ fn copy_file_with_consecutive_backslashes() {
 
 #[test]
 fn copy_file_with_trailing_backslash() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -337,7 +337,7 @@ fn copy_file_with_trailing_backslash() {
 
 #[test]
 fn copy_file_with_escape_like_sequences() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -367,7 +367,7 @@ fn copy_file_with_escape_like_sequences() {
 
 #[test]
 fn copy_file_with_asterisk() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -391,7 +391,7 @@ fn copy_file_with_asterisk() {
 
 #[test]
 fn copy_file_with_question_mark() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -415,7 +415,7 @@ fn copy_file_with_question_mark() {
 
 #[test]
 fn copy_file_named_asterisk_only() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -439,7 +439,7 @@ fn copy_file_named_asterisk_only() {
 
 #[test]
 fn copy_file_with_glob_pattern() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -463,7 +463,7 @@ fn copy_file_with_glob_pattern() {
 
 #[test]
 fn copy_file_with_square_brackets() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -487,7 +487,7 @@ fn copy_file_with_square_brackets() {
 
 #[test]
 fn copy_file_with_nested_brackets() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -511,7 +511,7 @@ fn copy_file_with_nested_brackets() {
 
 #[test]
 fn copy_file_with_curly_braces() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -535,7 +535,7 @@ fn copy_file_with_curly_braces() {
 
 #[test]
 fn copy_file_with_nested_curly_braces() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -559,7 +559,7 @@ fn copy_file_with_nested_curly_braces() {
 
 #[test]
 fn copy_file_with_angle_brackets() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -583,7 +583,7 @@ fn copy_file_with_angle_brackets() {
 
 #[test]
 fn copy_file_with_redirection_like_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -612,7 +612,7 @@ fn copy_file_with_redirection_like_name() {
 
 #[test]
 fn copy_file_with_pipe_character() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -636,7 +636,7 @@ fn copy_file_with_pipe_character() {
 
 #[test]
 fn copy_file_with_multiple_pipes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -660,7 +660,7 @@ fn copy_file_with_multiple_pipes() {
 
 #[test]
 fn copy_file_with_semicolon() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -684,7 +684,7 @@ fn copy_file_with_semicolon() {
 
 #[test]
 fn copy_file_with_colon() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -708,7 +708,7 @@ fn copy_file_with_colon() {
 
 #[test]
 fn copy_file_with_time_like_colons() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -732,7 +732,7 @@ fn copy_file_with_time_like_colons() {
 
 #[test]
 fn copy_file_with_ampersand() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -756,7 +756,7 @@ fn copy_file_with_ampersand() {
 
 #[test]
 fn copy_file_with_double_ampersand() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -780,7 +780,7 @@ fn copy_file_with_double_ampersand() {
 
 #[test]
 fn copy_file_with_dollar_sign() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -804,7 +804,7 @@ fn copy_file_with_dollar_sign() {
 
 #[test]
 fn copy_file_with_variable_like_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -833,7 +833,7 @@ fn copy_file_with_variable_like_name() {
 
 #[test]
 fn copy_file_with_newline_in_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -857,7 +857,7 @@ fn copy_file_with_newline_in_name() {
 
 #[test]
 fn copy_file_with_carriage_return() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -881,7 +881,7 @@ fn copy_file_with_carriage_return() {
 
 #[test]
 fn copy_file_with_crlf() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -905,7 +905,7 @@ fn copy_file_with_crlf() {
 
 #[test]
 fn copy_directory_with_newline() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -930,7 +930,7 @@ fn copy_directory_with_newline() {
 
 #[test]
 fn copy_file_with_tab_in_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -954,7 +954,7 @@ fn copy_file_with_tab_in_name() {
 
 #[test]
 fn copy_file_with_leading_tab() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -978,7 +978,7 @@ fn copy_file_with_leading_tab() {
 
 #[test]
 fn copy_file_with_trailing_tab() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1002,7 +1002,7 @@ fn copy_file_with_trailing_tab() {
 
 #[test]
 fn copy_file_with_consecutive_tabs() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1026,7 +1026,7 @@ fn copy_file_with_consecutive_tabs() {
 
 #[test]
 fn copy_file_with_mixed_tabs_and_spaces() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1050,7 +1050,7 @@ fn copy_file_with_mixed_tabs_and_spaces() {
 
 #[test]
 fn copy_file_with_bell_character() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1074,7 +1074,7 @@ fn copy_file_with_bell_character() {
 
 #[test]
 fn copy_file_with_backspace_character() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1098,7 +1098,7 @@ fn copy_file_with_backspace_character() {
 
 #[test]
 fn copy_file_with_escape_character() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1122,7 +1122,7 @@ fn copy_file_with_escape_character() {
 
 #[test]
 fn copy_file_with_form_feed() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1146,7 +1146,7 @@ fn copy_file_with_form_feed() {
 
 #[test]
 fn copy_file_with_vertical_tab() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1170,7 +1170,7 @@ fn copy_file_with_vertical_tab() {
 
 #[test]
 fn copy_file_with_multiple_control_characters() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1194,7 +1194,7 @@ fn copy_file_with_multiple_control_characters() {
 
 #[test]
 fn copy_file_with_del_character() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1219,7 +1219,7 @@ fn copy_file_with_del_character() {
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_file_with_high_ascii_128() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1244,7 +1244,7 @@ fn copy_file_with_high_ascii_128() {
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_file_with_high_ascii_255() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1269,7 +1269,7 @@ fn copy_file_with_high_ascii_255() {
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_files_with_various_high_ascii() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1299,7 +1299,7 @@ fn copy_files_with_various_high_ascii() {
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
 #[test]
 fn copy_file_with_non_utf8_sequence() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1324,7 +1324,7 @@ fn copy_file_with_non_utf8_sequence() {
 
 #[test]
 fn copy_file_with_all_quotes_consecutive() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1348,7 +1348,7 @@ fn copy_file_with_all_quotes_consecutive() {
 
 #[test]
 fn copy_file_with_all_brackets_consecutive() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1372,7 +1372,7 @@ fn copy_file_with_all_brackets_consecutive() {
 
 #[test]
 fn copy_file_with_shell_injection_like_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1409,7 +1409,7 @@ fn copy_file_with_shell_injection_like_name() {
 
 #[test]
 fn copy_file_with_all_glob_characters() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1433,7 +1433,7 @@ fn copy_file_with_all_glob_characters() {
 
 #[test]
 fn copy_multiple_files_with_various_special_characters() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1474,7 +1474,7 @@ fn copy_multiple_files_with_various_special_characters() {
 
 #[test]
 fn copy_deeply_nested_directories_with_special_characters() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1510,7 +1510,7 @@ fn copy_deeply_nested_directories_with_special_characters() {
 
 #[test]
 fn copy_file_with_special_characters_preserves_content() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1538,7 +1538,7 @@ fn copy_file_with_special_characters_preserves_content() {
 
 #[test]
 fn copy_file_with_special_characters_dry_run() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1565,7 +1565,7 @@ fn copy_file_with_special_characters_dry_run() {
 
 #[test]
 fn copy_file_with_special_characters_with_times_preservation() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1598,7 +1598,7 @@ fn copy_file_with_special_characters_with_times_preservation() {
 
 #[test]
 fn copy_file_with_at_sign() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1622,7 +1622,7 @@ fn copy_file_with_at_sign() {
 
 #[test]
 fn copy_file_with_hash() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1646,7 +1646,7 @@ fn copy_file_with_hash() {
 
 #[test]
 fn copy_file_with_percent() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1670,7 +1670,7 @@ fn copy_file_with_percent() {
 
 #[test]
 fn copy_file_with_caret() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1694,7 +1694,7 @@ fn copy_file_with_caret() {
 
 #[test]
 fn copy_file_with_tilde() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1720,7 +1720,7 @@ fn copy_file_with_tilde() {
 
 #[test]
 fn copy_file_with_backtick() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1744,7 +1744,7 @@ fn copy_file_with_backtick() {
 
 #[test]
 fn copy_file_with_exclamation() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1768,7 +1768,7 @@ fn copy_file_with_exclamation() {
 
 #[test]
 fn copy_file_with_equals_sign() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1792,7 +1792,7 @@ fn copy_file_with_equals_sign() {
 
 #[test]
 fn copy_file_with_plus_sign() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1816,7 +1816,7 @@ fn copy_file_with_plus_sign() {
 
 #[test]
 fn copy_file_with_comma() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1840,7 +1840,7 @@ fn copy_file_with_comma() {
 
 #[test]
 fn copy_file_with_leading_dot() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1864,7 +1864,7 @@ fn copy_file_with_leading_dot() {
 
 #[test]
 fn copy_file_with_multiple_leading_dots() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1890,7 +1890,7 @@ fn copy_file_with_multiple_leading_dots() {
 
 #[test]
 fn copy_file_with_leading_dash() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1916,7 +1916,7 @@ fn copy_file_with_leading_dash() {
 
 #[test]
 fn copy_file_named_only_dots() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1943,7 +1943,7 @@ fn copy_file_named_only_dots() {
 
 #[test]
 fn update_file_with_special_characters() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let filename = "file'with\"special*chars.txt";
     let source = temp.path().join(format!("src_{filename}"));
     let destination = temp.path().join(filename);
@@ -1977,7 +1977,7 @@ fn update_file_with_special_characters() {
 
 #[test]
 fn delete_file_with_special_characters() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");

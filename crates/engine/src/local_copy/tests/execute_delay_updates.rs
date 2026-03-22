@@ -18,7 +18,7 @@
 
 #[test]
 fn delay_updates_writes_to_temp_names_during_transfer() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"delay updates test").expect("write source");
@@ -57,7 +57,7 @@ fn delay_updates_writes_to_temp_names_during_transfer() {
 
 #[test]
 fn delay_updates_applies_all_changes_atomically() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -105,7 +105,7 @@ fn delay_updates_applies_all_changes_atomically() {
 
 #[test]
 fn delay_updates_no_temp_files_remain_after_success() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -156,7 +156,7 @@ fn delay_updates_no_temp_files_remain_after_success() {
 
 #[test]
 fn delay_updates_works_with_temp_dir() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     let temp_staging = temp.path().join("staging");
@@ -195,7 +195,7 @@ fn delay_updates_works_with_temp_dir() {
 
 #[test]
 fn delay_updates_with_temp_dir_multiple_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     let temp_staging = temp.path().join("staging");
@@ -250,7 +250,7 @@ fn delay_updates_with_temp_dir_multiple_files() {
 fn delay_updates_preserves_permissions() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"perms test").expect("write source");
@@ -283,7 +283,7 @@ fn delay_updates_preserves_permissions() {
 
 #[test]
 fn delay_updates_preserves_modification_time() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"time test").expect("write source");
@@ -315,7 +315,7 @@ fn delay_updates_preserves_modification_time() {
 
 #[test]
 fn delay_updates_handles_nested_directories() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
@@ -365,7 +365,7 @@ fn delay_updates_handles_nested_directories() {
 
 #[test]
 fn delay_updates_replaces_existing_files_atomically() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -392,7 +392,7 @@ fn delay_updates_replaces_existing_files_atomically() {
 
 #[test]
 fn delay_updates_with_multiple_existing_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -440,7 +440,7 @@ fn delay_updates_with_multiple_existing_files() {
 
 #[test]
 fn delay_updates_handles_empty_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("empty.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"").expect("write empty source");
@@ -465,7 +465,7 @@ fn delay_updates_handles_empty_file() {
 
 #[test]
 fn delay_updates_handles_large_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("large.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -495,7 +495,7 @@ fn delay_updates_handles_large_file() {
 
 #[test]
 fn delay_updates_dry_run_does_not_create_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"dry run content").expect("write source");
@@ -519,7 +519,7 @@ fn delay_updates_dry_run_does_not_create_files() {
 
 #[test]
 fn delay_updates_dry_run_does_not_modify_existing() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"new content").expect("write source");
@@ -549,7 +549,7 @@ fn delay_updates_dry_run_does_not_modify_existing() {
 #[test]
 #[ignore = "delay_updates with delete: partial file finalization not yet working"]
 fn delay_updates_with_delete_removes_extraneous() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("source dir");
@@ -584,7 +584,7 @@ fn delay_updates_with_delete_removes_extraneous() {
 
 #[test]
 fn delay_updates_with_update_flag_skips_older_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"source content").expect("write source");
@@ -621,7 +621,7 @@ fn delay_updates_with_update_flag_skips_older_files() {
 
 #[test]
 fn delay_updates_handles_files_with_spaces_in_name() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("file with spaces.txt");
     let destination = temp.path().join("dest with spaces.txt");
     fs::write(&source, b"spaces content").expect("write source");
@@ -648,7 +648,7 @@ fn delay_updates_handles_files_with_spaces_in_name() {
 
 #[test]
 fn delay_updates_handles_files_with_special_characters() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("file-with_special.chars!.txt");
     let destination = temp.path().join("dest-special!.txt");
     fs::write(&source, b"special chars").expect("write source");
@@ -677,7 +677,7 @@ fn delay_updates_provides_atomic_directory_update() {
     // This test verifies that the destination directory transitions atomically
     // from old state to new state - files are either all old or all new,
     // never a mix.
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -725,7 +725,7 @@ fn delay_updates_differs_from_immediate_mode() {
     // This test documents the difference between delay_updates and normal mode.
     // In normal mode, files are renamed immediately after being written.
     // In delay_updates mode, all renames happen at the end.
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest1 = temp.path().join("dest1");
     let dest2 = temp.path().join("dest2");
@@ -791,7 +791,7 @@ fn delay_updates_can_be_disabled() {
 
 #[test]
 fn delay_updates_handles_mix_of_new_and_existing_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -840,7 +840,7 @@ fn delay_updates_handles_mix_of_new_and_existing_files() {
 /// and verifying no .~tmp~ files remain afterward (they would be renamed).
 #[test]
 fn delay_updates_temp_files_use_upstream_rsync_prefix() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -895,7 +895,7 @@ fn delay_updates_temp_files_use_upstream_rsync_prefix() {
 
 #[test]
 fn delay_updates_handles_multiple_subdirectories() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
@@ -969,7 +969,7 @@ fn delay_updates_handles_multiple_subdirectories() {
 
 #[test]
 fn delay_updates_with_backup_creates_backup_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1015,7 +1015,7 @@ fn delay_updates_with_backup_creates_backup_files() {
 
 #[test]
 fn delay_updates_with_backup_suffix() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1054,7 +1054,7 @@ fn delay_updates_with_backup_suffix() {
 
 #[test]
 fn delay_updates_with_checksum_comparison() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1093,7 +1093,7 @@ fn delay_updates_with_checksum_comparison() {
 
 #[test]
 fn delay_updates_with_checksum_skips_identical_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1136,7 +1136,7 @@ fn delay_updates_with_checksum_skips_identical_files() {
 #[cfg(unix)]
 #[test]
 fn delay_updates_preserves_symlinks() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1187,7 +1187,7 @@ fn delay_updates_preserves_symlinks() {
 fn delay_updates_preserves_multiple_hard_link_groups() {
     use std::os::unix::fs::MetadataExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1251,7 +1251,7 @@ fn delay_updates_preserves_multiple_hard_link_groups() {
 
 #[test]
 fn delay_updates_with_ignore_existing_skips_existing_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1293,7 +1293,7 @@ fn delay_updates_with_ignore_existing_skips_existing_files() {
 
 #[test]
 fn delay_updates_with_existing_only_skips_new_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1334,7 +1334,7 @@ fn delay_updates_with_existing_only_skips_new_files() {
 
 #[test]
 fn delay_updates_handles_unicode_filenames() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1381,7 +1381,7 @@ fn delay_updates_handles_unicode_filenames() {
 
 #[test]
 fn delay_updates_with_size_only_skips_same_size_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1418,7 +1418,7 @@ fn delay_updates_with_size_only_skips_same_size_files() {
 
 #[test]
 fn delay_updates_with_ignore_times_always_transfers() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1456,7 +1456,7 @@ fn delay_updates_with_ignore_times_always_transfers() {
 
 #[test]
 fn delay_updates_handles_many_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1510,7 +1510,7 @@ fn delay_updates_handles_many_files() {
 
 #[test]
 fn delay_updates_handles_deeply_nested_structure() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
@@ -1576,7 +1576,7 @@ fn builder_accepts_delay_updates_without_inplace() {
 
 #[test]
 fn delay_updates_is_idempotent_on_second_run() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1627,7 +1627,7 @@ fn delay_updates_is_idempotent_on_second_run() {
 
 #[test]
 fn delay_updates_only_transfers_changed_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1678,7 +1678,7 @@ fn delay_updates_only_transfers_changed_files() {
 
 #[test]
 fn delay_updates_with_remove_source_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1719,7 +1719,7 @@ fn delay_updates_with_remove_source_files() {
 
 #[test]
 fn delay_updates_preserves_times_across_multiple_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1771,7 +1771,7 @@ fn delay_updates_preserves_times_across_multiple_files() {
 fn delay_updates_preserves_permissions_across_multiple_files() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1824,7 +1824,7 @@ fn delay_updates_preserves_permissions_across_multiple_files() {
 
 #[test]
 fn delay_updates_handles_binary_content() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -1854,7 +1854,7 @@ fn delay_updates_handles_binary_content() {
 
 #[test]
 fn delay_updates_handles_file_with_null_bytes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("null_bytes.dat");
     let destination = temp.path().join("dest.dat");
 
@@ -1916,7 +1916,7 @@ fn delay_updates_disabled_does_not_set_partial() {
 
 #[test]
 fn delay_updates_dry_run_with_nested_tree_no_changes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
@@ -1949,7 +1949,7 @@ fn delay_updates_dry_run_with_nested_tree_no_changes() {
 
 #[test]
 fn delay_updates_replaces_smaller_file_with_larger() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1978,7 +1978,7 @@ fn delay_updates_replaces_smaller_file_with_larger() {
 
 #[test]
 fn delay_updates_replaces_larger_file_with_smaller() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2009,7 +2009,7 @@ fn delay_updates_replaces_larger_file_with_smaller() {
 
 #[test]
 fn delay_updates_creates_destination_directories_as_needed() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
 
@@ -2081,7 +2081,7 @@ fn delay_updates_preserves_user_partial_dir() {
 /// cleaned up after all updates have been committed.
 #[test]
 fn delay_updates_staging_dir_created_and_cleaned_up() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -2127,7 +2127,7 @@ fn delay_updates_staging_dir_created_and_cleaned_up() {
 /// contains the correct content and no staging artifacts remain.
 #[test]
 fn delay_updates_files_atomically_moved_from_staging() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -2171,7 +2171,7 @@ fn delay_updates_files_atomically_moved_from_staging() {
 /// must be removed after flush.
 #[test]
 fn delay_updates_staging_dirs_cleaned_in_subdirectories() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(source_root.join("sub1")).expect("create sub1");

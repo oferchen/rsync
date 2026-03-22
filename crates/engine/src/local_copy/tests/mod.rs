@@ -1,6 +1,7 @@
 use super::*;
 use crate::signature::SignatureAlgorithm;
 use ::metadata::ChmodModifiers;
+use ::test_support::create_tempdir;
 use bandwidth::BandwidthLimiter;
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
@@ -326,7 +327,7 @@ mod test_helpers {
     /// assert!(ctx.dest.join("source/file.txt").exists());
     /// ```
     pub fn setup_copy_test() -> CopyTestContext {
-        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let temp_dir = test_support::create_tempdir();
         let source = temp_dir.path().join("source");
         let dest = temp_dir.path().join("dest");
         std::fs::create_dir_all(&source).expect("create source");

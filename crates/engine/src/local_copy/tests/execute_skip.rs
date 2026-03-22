@@ -16,7 +16,7 @@
 
 #[test]
 fn execute_skips_rewriting_identical_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -64,7 +64,7 @@ fn execute_skips_rewriting_identical_destination() {
 
 #[test]
 fn execute_without_times_rewrites_when_checksum_disabled() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -96,7 +96,7 @@ fn execute_without_times_rewrites_when_checksum_disabled() {
 /// even if the actual content differs (timestamp-based comparison is the default).
 #[test]
 fn execute_skip_timestamp_same_mtime_same_size_different_content() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -132,7 +132,7 @@ fn execute_skip_timestamp_same_mtime_same_size_different_content() {
 /// Files with matching size but different mtimes are transferred (not skipped).
 #[test]
 fn execute_skip_timestamp_same_size_different_mtime_transfers() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -165,7 +165,7 @@ fn execute_skip_timestamp_same_size_different_mtime_transfers() {
 /// Files with different sizes are always transferred regardless of mtime.
 #[test]
 fn execute_skip_timestamp_different_size_same_mtime_transfers() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -199,7 +199,7 @@ fn execute_skip_timestamp_different_size_same_mtime_transfers() {
 /// Mixed directory with some files matching and some needing transfer.
 #[test]
 fn execute_skip_timestamp_directory_mixed_match_and_transfer() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -256,7 +256,7 @@ fn execute_skip_timestamp_directory_mixed_match_and_transfer() {
 
 #[test]
 fn execute_without_times_skips_with_checksum() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -297,7 +297,7 @@ fn execute_without_times_skips_with_checksum() {
 /// 3. Summary statistics accurately reflect the operations
 #[test]
 fn execute_with_checksum_skips_matching_directory_contents() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let target_root = temp.path().join("target");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -364,7 +364,7 @@ fn execute_with_checksum_skips_matching_directory_contents() {
 
 #[test]
 fn execute_with_checksum_handles_empty_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -390,7 +390,7 @@ fn execute_with_checksum_handles_empty_files() {
 
 #[test]
 fn execute_with_checksum_copies_different_empty_and_nonempty() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -417,7 +417,7 @@ fn execute_with_checksum_copies_different_empty_and_nonempty() {
 /// Checksum mode detects content differences even when timestamps match.
 #[test]
 fn execute_skip_checksum_detects_mismatch_despite_matching_timestamps() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -452,7 +452,7 @@ fn execute_skip_checksum_detects_mismatch_despite_matching_timestamps() {
 /// Checksum mode skips files with matching content regardless of differing timestamps.
 #[test]
 fn execute_skip_checksum_skips_matching_content_despite_different_timestamps() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -486,7 +486,7 @@ fn execute_skip_checksum_skips_matching_content_despite_different_timestamps() {
 /// Checksum with a large file that spans multiple read buffers.
 #[test]
 fn execute_skip_checksum_large_identical_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -515,7 +515,7 @@ fn execute_skip_checksum_large_identical_files() {
 /// Checksum detects single byte difference in a large file.
 #[test]
 fn execute_skip_checksum_large_files_single_byte_difference() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -551,7 +551,7 @@ fn execute_skip_checksum_large_files_single_byte_difference() {
 /// so all existing-dest files are reported as DataCopied rather than matched.
 #[test]
 fn execute_skip_checksum_dry_run_reports_correctly() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -588,7 +588,7 @@ fn execute_skip_checksum_dry_run_reports_correctly() {
 
 #[test]
 fn execute_with_size_only_skips_same_size_different_content() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let target_root = temp.path().join("target");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -619,7 +619,7 @@ fn execute_with_size_only_skips_same_size_different_content() {
 
 #[test]
 fn execute_with_size_only_copies_different_size_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -645,7 +645,7 @@ fn execute_with_size_only_copies_different_size_files() {
 
 #[test]
 fn execute_with_size_only_handles_empty_vs_nonempty() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -671,7 +671,7 @@ fn execute_with_size_only_handles_empty_vs_nonempty() {
 
 #[test]
 fn execute_with_size_only_skips_same_size_different_mtime() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -706,7 +706,7 @@ fn execute_with_size_only_skips_same_size_different_mtime() {
 
 #[test]
 fn execute_with_size_only_handles_both_empty() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -733,7 +733,7 @@ fn execute_with_size_only_handles_both_empty() {
 
 #[test]
 fn execute_with_size_only_and_update_skips_same_size() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -767,7 +767,7 @@ fn execute_with_size_only_and_update_skips_same_size() {
 
 #[test]
 fn execute_with_size_only_and_checksum_skips_same_size() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -798,7 +798,7 @@ fn execute_with_size_only_and_checksum_skips_same_size() {
 fn execute_with_size_only_and_ignore_times_skips_same_size() {
     // Upstream: generator.c:unchanged_file() checks size_only before
     // ignore_times. When both are set and sizes match, size_only wins.
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -829,7 +829,7 @@ fn execute_with_size_only_and_ignore_times_skips_same_size() {
 
 #[test]
 fn execute_with_size_only_and_times_preserves_metadata() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -867,7 +867,7 @@ fn execute_with_size_only_and_times_preserves_metadata() {
 
 #[test]
 fn execute_with_size_only_directory_tree() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -936,7 +936,7 @@ fn execute_with_size_only_directory_tree() {
 
 #[test]
 fn execute_with_size_only_copies_larger_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -965,7 +965,7 @@ fn execute_with_size_only_copies_larger_file() {
 
 #[test]
 fn execute_with_size_only_copies_smaller_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -995,7 +995,7 @@ fn execute_with_size_only_copies_smaller_file() {
 /// so same-size files are still reported as DataCopied rather than matched.
 #[test]
 fn execute_skip_size_only_dry_run() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1026,7 +1026,7 @@ fn execute_skip_size_only_dry_run() {
 /// Size-only skips when destination is missing (new file is always transferred).
 #[test]
 fn execute_skip_size_only_new_file_transferred() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1052,7 +1052,7 @@ fn execute_skip_size_only_new_file_transferred() {
 
 #[test]
 fn execute_with_ignore_times_rewrites_matching_timestamps() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("destination.txt");
 
@@ -1086,7 +1086,7 @@ fn execute_with_ignore_times_rewrites_matching_timestamps() {
 /// Ignore-times forces transfer even when content, size, and mtime all match.
 #[test]
 fn execute_skip_ignore_times_forces_rewrite_of_identical_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1117,7 +1117,7 @@ fn execute_skip_ignore_times_forces_rewrite_of_identical_file() {
 
 #[test]
 fn execute_with_update_skips_newer_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let target_root = temp.path().join("target");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -1154,7 +1154,7 @@ fn execute_with_update_skips_newer_destination() {
 
 #[test]
 fn execute_with_update_copies_when_destination_older() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1185,7 +1185,7 @@ fn execute_with_update_copies_when_destination_older() {
 
 #[test]
 fn execute_with_update_copies_when_destination_missing() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1211,7 +1211,7 @@ fn execute_with_update_copies_when_destination_missing() {
 /// Update combined with checksum still respects the newer-destination check.
 #[test]
 fn execute_skip_update_with_checksum_still_skips_newer_dest() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1246,7 +1246,7 @@ fn execute_skip_update_with_checksum_still_skips_newer_dest() {
 /// Update in a recursive directory tree with mixed timestamp scenarios.
 #[test]
 fn execute_skip_update_directory_mixed_timestamps() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1300,7 +1300,7 @@ fn execute_skip_update_directory_mixed_timestamps() {
 
 #[test]
 fn execute_with_existing_only_skips_missing_entries() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let nested_dir = source_root.join("nested");
     fs::create_dir_all(&nested_dir).expect("create nested dir");
@@ -1347,7 +1347,7 @@ fn execute_with_existing_only_skips_missing_entries() {
 /// Existing-only updates files that already exist at the destination.
 #[test]
 fn execute_skip_existing_only_updates_present_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1384,7 +1384,7 @@ fn execute_skip_existing_only_updates_present_files() {
 /// Existing-only combined with update: both filters apply.
 #[test]
 fn execute_skip_existing_only_with_update() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1438,7 +1438,7 @@ fn execute_skip_existing_only_with_update() {
 
 #[test]
 fn execute_with_ignore_existing_skips_existing_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let target_root = temp.path().join("target");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -1471,7 +1471,7 @@ fn execute_with_ignore_existing_skips_existing_destination() {
 
 #[test]
 fn execute_with_ignore_existing_creates_new_destination() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1496,7 +1496,7 @@ fn execute_with_ignore_existing_creates_new_destination() {
 
 #[test]
 fn execute_with_multiple_sources_and_ignore_existing() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1530,7 +1530,7 @@ fn execute_with_multiple_sources_and_ignore_existing() {
 /// Ignore-existing takes precedence over update (source newer, but dest exists -> skip).
 #[test]
 fn execute_skip_ignore_existing_takes_precedence_over_update() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1567,7 +1567,7 @@ fn execute_skip_ignore_existing_takes_precedence_over_update() {
 /// Ignore-existing with report/records generates the correct action.
 #[test]
 fn execute_skip_ignore_existing_with_records() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1616,7 +1616,7 @@ fn execute_skip_ignore_existing_with_records() {
 /// When both --existing and --ignore-existing are set, no files are transferred.
 #[test]
 fn execute_skip_existing_and_ignore_existing_skips_everything() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -1655,7 +1655,7 @@ fn execute_skip_existing_and_ignore_existing_skips_everything() {
 
 #[test]
 fn execute_skips_files_smaller_than_min_size_limit() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("tiny.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1682,7 +1682,7 @@ fn execute_skips_files_smaller_than_min_size_limit() {
 
 #[test]
 fn execute_skips_files_larger_than_max_size_limit() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("large.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1709,7 +1709,7 @@ fn execute_skips_files_larger_than_max_size_limit() {
 
 #[test]
 fn execute_copies_files_matching_size_boundaries() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("boundary.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -1739,7 +1739,7 @@ fn execute_copies_files_matching_size_boundaries() {
 
 #[test]
 fn execute_with_min_max_size_filters_correctly() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1772,7 +1772,7 @@ fn execute_with_min_max_size_filters_correctly() {
 
 #[test]
 fn execute_skips_within_modify_window() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1807,7 +1807,7 @@ fn execute_skips_within_modify_window() {
 /// Timestamps outside the modify window cause a transfer.
 #[test]
 fn execute_skip_transfers_outside_modify_window() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1842,7 +1842,7 @@ fn execute_skip_transfers_outside_modify_window() {
 
 #[test]
 fn execute_with_filter_excludes_matching_files() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
@@ -1874,7 +1874,7 @@ fn execute_with_filter_excludes_matching_files() {
 
 #[test]
 fn execute_with_ignore_missing_args_skips_absent_sources() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let missing = temp.path().join("missing.txt");
     let destination_root = temp.path().join("dest");
     fs::create_dir_all(&destination_root).expect("create destination root");
@@ -1904,7 +1904,7 @@ fn execute_with_ignore_missing_args_skips_absent_sources() {
 
 #[test]
 fn execute_with_delete_missing_args_removes_destination_entries() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let missing = temp.path().join("absent.txt");
     let destination_root = temp.path().join("dest");
     fs::create_dir_all(&destination_root).expect("create destination root");
@@ -1932,7 +1932,7 @@ fn execute_with_delete_missing_args_removes_destination_entries() {
 
 #[test]
 fn execute_dry_run_reports_skipped_files_as_matched() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1965,7 +1965,7 @@ fn execute_dry_run_reports_skipped_files_as_matched() {
 /// Dry run with update correctly counts skipped-newer without modifying files.
 #[test]
 fn execute_skip_dry_run_update_reports_skipped_newer() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -1999,7 +1999,7 @@ fn execute_skip_dry_run_update_reports_skipped_newer() {
 /// Dry run with existing_only correctly counts missing-destination skips.
 #[test]
 fn execute_skip_dry_run_existing_only_reports_skipped_missing() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2027,7 +2027,7 @@ fn execute_skip_dry_run_existing_only_reports_skipped_missing() {
 /// Dry run with ignore_existing correctly counts ignored-existing skips.
 #[test]
 fn execute_skip_dry_run_ignore_existing_reports_skipped() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2056,7 +2056,7 @@ fn execute_skip_dry_run_ignore_existing_reports_skipped() {
 /// Size-only + checksum: checksum takes priority and detects content difference.
 #[test]
 fn execute_skip_checksum_overrides_size_only_for_matching_sizes() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2085,7 +2085,7 @@ fn execute_skip_checksum_overrides_size_only_for_matching_sizes() {
 /// All skip options combined: existing_only + ignore_existing + update.
 #[test]
 fn execute_skip_triple_combined_all_files_skipped() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -2129,7 +2129,7 @@ fn execute_skip_triple_combined_all_files_skipped() {
 /// Ignore-times overrides timestamp-based skip but respects ignore_existing.
 #[test]
 fn execute_skip_ignore_times_respects_ignore_existing() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2161,7 +2161,7 @@ fn execute_skip_ignore_times_respects_ignore_existing() {
 /// but still sync timestamps.
 #[test]
 fn execute_skip_checksum_with_times_syncs_mtime_on_skip() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2201,7 +2201,7 @@ fn execute_skip_checksum_with_times_syncs_mtime_on_skip() {
 /// The destination is genuinely newer, so --update skips regardless of window.
 #[test]
 fn execute_skip_update_respects_modify_window() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2237,7 +2237,7 @@ fn execute_skip_update_respects_modify_window() {
 /// When all files are skipped, bytes_copied should be zero.
 #[test]
 fn execute_skip_all_files_zero_bytes_copied() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -2271,7 +2271,7 @@ fn execute_skip_all_files_zero_bytes_copied() {
 /// When some files are skipped and some are copied, bytes_copied reflects only copied files.
 #[test]
 fn execute_skip_partial_skip_correct_bytes_copied() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source_root = temp.path().join("source");
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source");
@@ -2308,7 +2308,7 @@ fn execute_skip_partial_skip_correct_bytes_copied() {
 /// Skip logic with a single byte file.
 #[test]
 fn execute_skip_single_byte_files_size_only() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2337,7 +2337,7 @@ fn execute_skip_single_byte_files_size_only() {
 /// Skip logic with a single byte file using checksum.
 #[test]
 fn execute_skip_single_byte_files_checksum() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
@@ -2365,7 +2365,7 @@ fn execute_skip_single_byte_files_checksum() {
 /// Checksum matching with binary data containing null bytes.
 #[test]
 fn execute_skip_checksum_binary_with_nulls() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.bin");
     let destination = temp.path().join("dest.bin");
 
@@ -2394,7 +2394,7 @@ fn execute_skip_checksum_binary_with_nulls() {
 /// do not prevent the transfer.
 #[test]
 fn execute_skip_new_file_always_transferred_regardless_of_skip_mode() {
-    let temp = tempdir().expect("tempdir");
+    let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 

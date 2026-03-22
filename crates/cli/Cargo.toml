@@ -67,6 +67,7 @@ assert_cmd = "2.0"
 predicates = "3.1"
 filetime = "0.2"
 tempfile = "3.15"
+test-support = { path = "../test-support" }
 filters = { path = "../filters" }
 rustix = { version = "0.38", features = ["fs"] }
 base64 = "0.22"

@@ -23,7 +23,7 @@
 //! 4. **Edge Cases**: Test boundary conditions and error handling
 
 use std::fs;
-use tempfile::tempdir;
+use test_support::create_tempdir;
 
 #[cfg(all(unix, feature = "xattr"))]
 mod nfsv4_acl_tests {
@@ -324,7 +324,7 @@ mod nfsv4_acl_tests {
 
     #[test]
     fn get_nfsv4_acl_regular_file_no_acl() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"test").expect("write file");
 
@@ -347,7 +347,7 @@ mod nfsv4_acl_tests {
 
     #[test]
     fn has_nfsv4_acl_returns_false_for_file_without_acl() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"test").expect("write file");
 
@@ -360,7 +360,7 @@ mod nfsv4_acl_tests {
 
     #[test]
     fn set_and_get_nfsv4_acl_roundtrip() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("acl_test.txt");
         fs::write(&file, b"test").expect("write file");
 
@@ -390,7 +390,7 @@ mod nfsv4_acl_tests {
 
     #[test]
     fn sync_nfsv4_acls_between_files() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("source.txt");
         let dest = temp.path().join("dest.txt");
         fs::write(&source, b"source").expect("write source");
@@ -411,7 +411,7 @@ mod nfsv4_acl_tests {
 
     #[test]
     fn remove_nfsv4_acl() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("remove_acl.txt");
         fs::write(&file, b"test").expect("write file");
 
@@ -428,7 +428,7 @@ mod nfsv4_acl_tests {
 
     #[test]
     fn sync_nfsv4_acls_on_directories() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source_dir = temp.path().join("source_dir");
         let dest_dir = temp.path().join("dest_dir");
         fs::create_dir(&source_dir).expect("create source dir");
@@ -449,7 +449,7 @@ mod nfsv4_acl_tests {
     fn nfsv4_acl_does_not_follow_symlinks_when_requested() {
         use std::os::unix::fs::symlink;
 
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let target = temp.path().join("target.txt");
         let link = temp.path().join("link");
         fs::write(&target, b"target").expect("write target");
@@ -543,7 +543,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_skips_when_not_following_symlinks() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
         File::create(&source).expect("create src");
@@ -556,7 +556,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_copies_between_regular_files() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
         File::create(&source).expect("create src");
@@ -569,7 +569,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_works_with_directories() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src_dir");
         let destination = temp.path().join("dst_dir");
         fs::create_dir(&source).expect("create src_dir");
@@ -581,7 +581,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_handles_nonexistent_source() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("nonexistent");
         let destination = temp.path().join("dst");
         File::create(&destination).expect("create dst");
@@ -593,7 +593,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_handles_nonexistent_destination() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("nonexistent");
         File::create(&source).expect("create src");
@@ -608,7 +608,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_file_to_file() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let src = temp.path().join("src.txt");
         let dst = temp.path().join("dst.txt");
         fs::write(&src, b"source data").expect("write src");
@@ -620,7 +620,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_directory_to_directory() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let src_dir = temp.path().join("src_dir");
         let dst_dir = temp.path().join("dst_dir");
         fs::create_dir(&src_dir).expect("create src_dir");
@@ -632,7 +632,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_idempotent() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
         File::create(&source).expect("create src");
@@ -647,7 +647,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_chain() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file1 = temp.path().join("file1");
         let file2 = temp.path().join("file2");
         let file3 = temp.path().join("file3");
@@ -668,7 +668,7 @@ mod posix_acl_tests {
     fn sync_acls_respects_follow_symlinks_false() {
         use std::os::unix::fs::symlink;
 
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let target = temp.path().join("target.txt");
         let link = temp.path().join("link");
         let dest = temp.path().join("dest.txt");
@@ -687,7 +687,7 @@ mod posix_acl_tests {
     fn sync_acls_follows_symlinks_when_requested() {
         use std::os::unix::fs::symlink;
 
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let target = temp.path().join("target.txt");
         let link = temp.path().join("link");
         let dest = temp.path().join("dest.txt");
@@ -703,7 +703,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_resets_to_mode_when_no_extended_acl() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
         File::create(&source).expect("create src");
@@ -717,7 +717,7 @@ mod posix_acl_tests {
 
     #[test]
     fn sync_acls_nested_directories() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let src_root = temp.path().join("src_root");
         let dst_root = temp.path().join("dst_root");
         let src_nested = src_root.join("nested");
@@ -743,7 +743,7 @@ mod default_acl_tests {
 
     #[test]
     fn sync_acls_handles_directory_default_acls() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src_dir");
         let destination = temp.path().join("dst_dir");
         fs::create_dir(&source).expect("create src_dir");
@@ -756,7 +756,7 @@ mod default_acl_tests {
 
     #[test]
     fn sync_acls_clears_default_acl_when_source_has_none() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src_dir");
         let destination = temp.path().join("dst_dir");
         fs::create_dir(&source).expect("create src_dir");
@@ -777,7 +777,7 @@ mod macos_acl_tests {
     #[test]
     fn macos_sync_acls_extended_acl_format() {
         // macOS uses extended ACLs (NFSv4-style), not POSIX ACLs
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
         File::create(&source).expect("create src");
@@ -790,7 +790,7 @@ mod macos_acl_tests {
     #[test]
     fn macos_directories_no_default_acls() {
         // macOS doesn't have default ACLs on directories like POSIX
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let src_dir = temp.path().join("src_dir");
         let dst_dir = temp.path().join("dst_dir");
         fs::create_dir(&src_dir).expect("create src_dir");
@@ -810,7 +810,7 @@ mod linux_acl_tests {
     #[test]
     fn linux_sync_acls_posix_format() {
         // Linux uses POSIX ACLs with access and default types
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
         File::create(&source).expect("create src");
@@ -823,7 +823,7 @@ mod linux_acl_tests {
     #[test]
     fn linux_directory_default_acls_supported() {
         // Linux supports default ACLs on directories
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let src_dir = temp.path().join("src_dir");
         let dst_dir = temp.path().join("dst_dir");
         fs::create_dir(&src_dir).expect("create src_dir");
@@ -837,7 +837,7 @@ mod linux_acl_tests {
     fn linux_symlinks_dont_have_acls() {
         use std::os::unix::fs::symlink;
 
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let target = temp.path().join("target");
         let link = temp.path().join("link");
         File::create(&target).expect("create target");
@@ -865,7 +865,7 @@ mod stub_acl_tests {
     #[test]
     fn stub_sync_acls_returns_ok() {
         // On unsupported platforms, sync_acls is a no-op that returns Ok
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
         File::create(&source).expect("create src");
@@ -878,7 +878,7 @@ mod stub_acl_tests {
     #[test]
     fn stub_emits_warning_once() {
         // The stub emits a warning once per process
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         let destination = temp.path().join("dst");
         File::create(&source).expect("create src");
@@ -902,7 +902,7 @@ mod error_message_tests {
 
     #[test]
     fn error_contains_path_information() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let nonexistent = temp.path().join("does_not_exist");
         let destination = temp.path().join("dst");
         fs::write(&destination, b"data").expect("write dst");
@@ -918,7 +918,7 @@ mod error_message_tests {
 
     #[test]
     fn error_contains_operation_context() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src");
         fs::write(&source, b"data").expect("write src");
         let nonexistent_dest = temp.path().join("nonexistent/dest");
@@ -938,7 +938,7 @@ mod acl_with_perms_tests {
 
     #[test]
     fn permissions_preserved_after_acl_operations() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"data").expect("write file");
 
@@ -954,7 +954,7 @@ mod acl_with_perms_tests {
     #[test]
     fn permissions_and_acl_coexistence() {
         // Test that setting permissions doesn't interfere with ACL operations
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let source = temp.path().join("src.txt");
         let dest = temp.path().join("dst.txt");
 
@@ -975,7 +975,7 @@ mod acl_with_perms_tests {
 
     #[test]
     fn directory_permissions_preserved_after_acl_operations() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let dir = temp.path().join("test_dir");
         fs::create_dir(&dir).expect("create dir");
 
@@ -1002,7 +1002,7 @@ mod unsupported_error_tests {
     fn unsupported_error_kind_recognized() {
         // This tests the behavior without exposing internals
         // We create scenarios that should be handled gracefully
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"data").expect("write file");
 
@@ -1023,7 +1023,7 @@ mod concurrent_tests {
 
     #[test]
     fn concurrent_acl_sync_different_files() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let temp_path = Arc::new(temp.path().to_path_buf());
 
         let handles: Vec<_> = (0..4)
@@ -1059,7 +1059,7 @@ mod apply_acls_from_cache_tests {
 
     #[test]
     fn apply_from_cache_basic_file() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"data").expect("write file");
 
@@ -1073,7 +1073,7 @@ mod apply_acls_from_cache_tests {
 
     #[test]
     fn apply_from_cache_skips_symlinks() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"data").expect("write file");
 
@@ -1087,7 +1087,7 @@ mod apply_acls_from_cache_tests {
 
     #[test]
     fn apply_from_cache_empty_acl() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"data").expect("write file");
 
@@ -1101,7 +1101,7 @@ mod apply_acls_from_cache_tests {
 
     #[test]
     fn apply_from_cache_missing_index() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"data").expect("write file");
 
@@ -1112,7 +1112,7 @@ mod apply_acls_from_cache_tests {
 
     #[test]
     fn apply_from_cache_multiple_files_same_acl() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
 
         let mut cache = AclCache::new();
         let acl = RsyncAcl::from_mode(0o755);
@@ -1129,7 +1129,7 @@ mod apply_acls_from_cache_tests {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn apply_from_cache_directory_with_default_acl() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let dir = temp.path().join("subdir");
         fs::create_dir(&dir).expect("create dir");
 
@@ -1162,7 +1162,7 @@ mod noop_apply_acls_tests {
 
     #[test]
     fn noop_apply_from_cache_returns_ok() {
-        let temp = tempdir().expect("tempdir");
+        let temp = create_tempdir();
         let file = temp.path().join("test.txt");
         fs::write(&file, b"data").expect("write file");
 
