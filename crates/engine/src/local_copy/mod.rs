@@ -91,7 +91,10 @@ pub(crate) mod prefetch;
 mod skip_compress;
 pub mod win_copy;
 
-pub use buffer_pool::{BufferAllocator, BufferGuard, BufferPool, DefaultAllocator};
+pub use buffer_pool::{
+    global_buffer_pool, init_global_buffer_pool, BufferAllocator, BufferGuard, BufferPool,
+    DefaultAllocator, GlobalBufferPoolConfig,
+};
 pub use deferred_sync::{DeferredSync, SyncStrategy};
 
 pub use plan::{
