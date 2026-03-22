@@ -48,7 +48,13 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
         result.push(if change.checksum_changed { 'c' } else { '.' });
 
         // Position 3: Size
-        result.push(if change.size_changed { 's' } else { '.' });
+        // upstream: log.c:705-707 - symlinks never report size changes
+        let is_symlink = matches!(change.file_type, super::types::FileType::Symlink);
+        result.push(if !is_symlink && change.size_changed {
+            's'
+        } else {
+            '.'
+        });
 
         // Position 4: Time (T takes precedence over t)
         result.push(if change.time_set_to_transfer {
@@ -83,8 +89,12 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
         result.push(if change.xattr_changed { 'x' } else { '.' });
 
         // upstream: log.c:735-744 - when update type is '.', 'h', or 'c' and all
-        // attribute positions (2-10) are dots, collapse them to spaces.
-        if matches!(update_char, '.' | 'h' | 'c') && change.is_unchanged() {
+        // rendered attribute positions (2-10) are dots, collapse them to spaces.
+        // We check the rendered chars, not the raw flags, because symlink size
+        // suppression may produce all-dot attributes even when size_changed is set.
+        if matches!(update_char, '.' | 'h' | 'c')
+            && result.as_bytes()[2..].iter().all(|&b| b == b'.')
+        {
             result.replace_range(2.., "         ");
         }
     }
