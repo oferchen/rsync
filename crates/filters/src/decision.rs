@@ -5,6 +5,10 @@ use logging::debug_log;
 use crate::{FilterAction, compiled::CompiledRule};
 
 /// Internal rule storage shared by [`FilterSet`](crate::FilterSet) instances.
+///
+/// Maintains two independent rule chains following the Chain of Responsibility
+/// pattern. Each chain is evaluated with first-match-wins semantics, mirroring
+/// upstream rsync's `check_filter()` in `exclude.c`.
 #[derive(Debug, Default)]
 pub(crate) struct FilterSetInner {
     pub(crate) include_exclude: Vec<CompiledRule>,
@@ -12,6 +16,14 @@ pub(crate) struct FilterSetInner {
 }
 
 impl FilterSetInner {
+    /// Evaluates a path against both the include/exclude and protect/risk
+    /// chains, returning a composite decision.
+    ///
+    /// The evaluation context determines which side's rules are consulted:
+    /// - `Transfer` checks sender-side include/exclude rules.
+    /// - `Deletion` checks receiver-side rules with perishable rules excluded.
+    ///
+    /// // upstream: exclude.c:check_filter()
     pub(crate) fn decision(
         &self,
         path: &Path,
@@ -154,6 +166,10 @@ where
 }
 
 /// Whether a filter evaluation is for the transfer or deletion phase.
+///
+/// Transfer checks use sender-side rules and include perishable rules.
+/// Deletion checks use receiver-side rules and skip perishable rules,
+/// matching upstream rsync's `--delete` semantics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecisionContext {
     Transfer,
@@ -161,6 +177,9 @@ pub(crate) enum DecisionContext {
 }
 
 /// Outcome of evaluating a path against the compiled filter rules.
+///
+/// Captures both the transfer decision (include or exclude) and the deletion
+/// protection state. The default allows both transfer and deletion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FilterDecision {
     transfer_allowed: bool,
@@ -169,22 +188,33 @@ pub(crate) struct FilterDecision {
 }
 
 impl FilterDecision {
+    /// Returns `true` if the path should be included in the transfer.
     pub(crate) const fn allows_transfer(self) -> bool {
         self.transfer_allowed
     }
 
+    /// Returns `true` if the path may be deleted on the receiver.
+    ///
+    /// Deletion requires both that the path is included (not excluded by
+    /// receiver-side rules) and that no protect rule matches.
     pub(crate) const fn allows_deletion(self) -> bool {
         self.transfer_allowed && !self.protected
     }
 
+    /// Returns `true` if the path may be removed during `--delete-excluded`.
+    ///
+    /// Unlike `allows_deletion`, this checks whether the path is excluded
+    /// rather than included, supporting the `--delete-excluded` flag.
     pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
         self.excluded_for_delete_excluded && !self.protected
     }
 
+    /// Marks this path as protected from deletion.
     pub(crate) const fn protect(&mut self) {
         self.protected = true;
     }
 
+    /// Removes deletion protection from this path.
     pub(crate) const fn unprotect(&mut self) {
         self.protected = false;
     }

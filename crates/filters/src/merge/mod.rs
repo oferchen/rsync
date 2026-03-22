@@ -31,6 +31,12 @@
 //! Example: `-w foo bar baz` creates three exclude rules for "foo", "bar", "baz".
 //!
 //! Lines starting with `#` or `;` are comments. Empty lines are ignored.
+//!
+//! # Upstream References
+//!
+//! - upstream: exclude.c:parse_filter_str() - rule parsing from filter strings
+//! - upstream: exclude.c:parse_filter_file() - reading rules from merge files
+//! - upstream: exclude.c lines 1220-1288 - modifier character handling
 
 mod error;
 pub(crate) mod parse;
