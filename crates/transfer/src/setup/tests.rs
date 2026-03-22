@@ -354,7 +354,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
     // Rsync varint encoding of 161: [0x80, 0xA1] (marker byte, then value byte)
     let mut peer_data: Vec<u8> = vec![
         0x80, 0xA1, // varint for 161 (VARINT_FLIST_FLAGS | INC_RECURSE | CHECKSUM_SEED_FIX)
-        0x00, // empty checksum list (end marker)
+        0x03, b'm', b'd', b'5', // vstring "md5" - valid checksum list
     ];
     peer_data.extend_from_slice(&0x12345678_i32.to_le_bytes()); // seed
 
