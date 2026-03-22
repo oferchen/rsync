@@ -128,6 +128,7 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub mod async_io;
 
+pub mod concurrent_delta;
 pub mod delta;
 pub mod error;
 pub mod hardlink;
@@ -178,6 +179,9 @@ pub use delta::{
     SignatureLayoutError, SignatureLayoutParams, apply_delta, calculate_signature_layout,
     generate_delta,
 };
+
+/// Concurrent delta pipeline work-item and result types.
+pub use concurrent_delta::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind};
 
 /// Common error types for engine operations.
 pub use error::{EngineError, EngineResult};
