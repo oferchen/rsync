@@ -5,6 +5,11 @@
 //! approach tries Windows API copy first (with optional no-buffering optimization),
 //! then falls back to standard read/write copy on error.
 //!
+//! The low-level `CopyFileExW` FFI wrapper lives in [`fast_io::copy_file_ex`],
+//! consistent with the project convention of isolating platform-specific unsafe
+//! I/O primitives in the `fast_io` crate. This module provides the higher-level
+//! dual-path selection logic consumed by the engine.
+//!
 //! On Windows, `CopyFileExW` with `COPY_FILE_NO_BUFFERING` flag can improve
 //! performance for large files by bypassing the system cache. This is particularly
 //! useful for rsync-style operations involving large file transfers.
@@ -37,9 +42,9 @@ use std::path::Path;
 
 /// Threshold above which COPY_FILE_NO_BUFFERING is used on Windows.
 ///
-/// Files larger than 4MB benefit from unbuffered I/O by bypassing the system
-/// cache, reducing memory pressure and improving throughput for large transfers.
-pub const NO_BUFFERING_THRESHOLD: u64 = 4 * 1024 * 1024;
+/// Re-exported from [`fast_io::copy_file_ex::NO_BUFFERING_THRESHOLD`] for
+/// backward compatibility.
+pub const NO_BUFFERING_THRESHOLD: u64 = fast_io::copy_file_ex::NO_BUFFERING_THRESHOLD;
 
 /// Result of a Windows-optimized copy operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,13 +115,8 @@ impl WinCopyResult {
 /// assert_eq!(result.bytes_copied(), 4);
 /// ```
 pub fn copy_file_optimized(src: &Path, dst: &Path) -> io::Result<WinCopyResult> {
-    // Get source file size to determine if we should use no-buffering
-    let metadata = std::fs::metadata(src)?;
-    let file_size = metadata.len();
-    let use_no_buffering = file_size > NO_BUFFERING_THRESHOLD;
-
-    // Try Windows-optimized copy first (Windows only, returns Unsupported on other platforms)
-    match try_win_copy(src, dst, use_no_buffering) {
+    // Try Windows-optimized copy first (returns Unsupported on other platforms)
+    match fast_io::copy_file_ex::try_copy_file_ex(src, dst) {
         Ok(bytes) => Ok(WinCopyResult::WindowsCopy(bytes)),
         Err(_e) => {
             // Windows copy failed or not available, clean up any partial destination
@@ -132,7 +132,8 @@ pub fn copy_file_optimized(src: &Path, dst: &Path) -> io::Result<WinCopyResult> 
 
 /// Copy a file using Windows CopyFileExW (Windows only).
 ///
-/// Returns `Unsupported` error on non-Windows platforms.
+/// Returns `Unsupported` error on non-Windows platforms. Delegates to
+/// [`fast_io::copy_file_ex::try_copy_file_ex`].
 ///
 /// # Platform Support
 ///
@@ -143,7 +144,7 @@ pub fn copy_file_optimized(src: &Path, dst: &Path) -> io::Result<WinCopyResult> 
 ///
 /// * `src` - Source file path
 /// * `dst` - Destination file path
-/// * `use_no_buffering` - Whether to use `COPY_FILE_NO_BUFFERING` flag (for large files)
+/// * `_use_no_buffering` - Ignored; no-buffering is applied automatically based on file size
 ///
 /// # Errors
 ///
@@ -169,8 +170,8 @@ pub fn copy_file_optimized(src: &Path, dst: &Path) -> io::Result<WinCopyResult> 
 /// # #[cfg(not(target_os = "windows"))]
 /// # assert!(result.is_err());
 /// ```
-pub fn try_win_copy(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Result<u64> {
-    try_win_copy_impl(src, dst, use_no_buffering)
+pub fn try_win_copy(src: &Path, dst: &Path, _use_no_buffering: bool) -> io::Result<u64> {
+    fast_io::copy_file_ex::try_copy_file_ex(src, dst)
 }
 
 /// Standard file copy (always available on all platforms).
@@ -203,70 +204,6 @@ pub fn try_win_copy(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Resul
 /// ```
 pub fn copy_file_standard(src: &Path, dst: &Path) -> io::Result<u64> {
     std::fs::copy(src, dst)
-}
-
-/// Minimal FFI wrapper isolating the single unsafe call behind a safe API.
-#[cfg(target_os = "windows")]
-#[allow(unsafe_code)]
-mod ffi {
-    use std::io;
-
-    /// Call `CopyFileExW` with the given null-terminated wide-string paths.
-    pub fn copy_file_ex_w(src_wide: &[u16], dst_wide: &[u16], flags: u32) -> io::Result<()> {
-        // SAFETY: src_wide and dst_wide are null-terminated UTF-16 slices
-        // produced by OsStrExt::encode_wide + chain(once(0)).
-        // Progress callback, data, and cancel pointers are null (unused).
-        let result = unsafe {
-            windows_sys::Win32::Storage::FileSystem::CopyFileExW(
-                src_wide.as_ptr(),
-                dst_wide.as_ptr(),
-                None,
-                std::ptr::null(),
-                std::ptr::null_mut(),
-                flags,
-            )
-        };
-        if result != 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn try_win_copy_impl(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Result<u64> {
-    use std::os::windows::ffi::OsStrExt;
-
-    let src_wide: Vec<u16> = src
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let dst_wide: Vec<u16> = dst
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-
-    let flags = if use_no_buffering {
-        0x00000008_u32 // COPY_FILE_NO_BUFFERING
-    } else {
-        0_u32
-    };
-
-    ffi::copy_file_ex_w(&src_wide, &dst_wide, flags)?;
-
-    let metadata = std::fs::metadata(dst)?;
-    Ok(metadata.len())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn try_win_copy_impl(_src: &Path, _dst: &Path, _use_no_buffering: bool) -> io::Result<u64> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "CopyFileExW not available on this platform",
-    ))
 }
 
 #[cfg(test)]
