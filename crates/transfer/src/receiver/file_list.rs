@@ -37,16 +37,13 @@ impl ReceiverContext {
         let mut flist_reader = self.build_flist_reader();
         let mut count = 0;
 
-        // Read entries until end marker or error
-        // If SAFE_FILE_LIST is enabled, sender may transmit I/O error marker
+        // upstream: flist.c:recv_file_list() - reads entries until end marker
         while let Some(entry) = flist_reader.read_entry(reader)? {
             self.file_list.push(entry);
             count += 1;
         }
 
-        // Read ID lists (UID/GID mappings) after file list
-        // Upstream: recv_id_list() is called when !inc_recurse
-        // See flist.c:2726-2727 and uidlist.c:460
+        // upstream: flist.c:2726-2727 - recv_id_list() called when !inc_recurse
         let inc_recurse = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
@@ -69,14 +66,12 @@ impl ReceiverContext {
             }
         }
 
-        // Sort file list to match sender's sorted order.
-        // Upstream: flist_sort_and_clean() is called after recv_id_list()
-        // See flist.c:2736 - both sides must sort to ensure matching NDX indices.
+        // upstream: flist.c:2736 - flist_sort_and_clean() after recv_id_list()
         sort_file_list(&mut self.file_list, self.config.qsort);
         match_hard_links(&mut self.file_list);
 
-        // Cache the reader so receive_extra_file_lists() inherits the compression
-        // state (prev_name, prev_mode, etc.), matching upstream's static variables.
+        // upstream: flist.c:recv_file_entry() uses static variables that persist
+        // across recv_file_list() calls - cache the reader to preserve that state.
         self.flist_reader_cache = Some(flist_reader);
 
         Ok(count)
@@ -109,9 +104,8 @@ impl ReceiverContext {
         }
 
         let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
-        // Reuse the cached reader from receive_file_list() to preserve compression
-        // state across sub-lists, matching upstream's static variables in
-        // recv_file_entry() (prev_name, prev_mode, prev_uid, prev_gid).
+        // upstream: flist.c:recv_file_entry() - reuse cached reader to preserve
+        // compression state (prev_name, prev_mode, prev_uid, prev_gid).
         let mut flist_reader = self
             .flist_reader_cache
             .take()
@@ -158,16 +152,12 @@ impl ReceiverContext {
                 }
             }
 
-            // Sort sub-list segment to match sender's sorted order.
-            // upstream: flist.c:2155 - sender calls flist_sort_and_clean() after sending
-            // upstream: flist.c:2736 - receiver calls flist_sort_and_clean() after receiving
-            // Entries arrive in readdir() order; both sides must sort independently.
-            // Use unstable sort (true) - sub-list entries have unique paths within
-            // a directory, so stability is irrelevant and unstable is ~15% faster.
+            // upstream: flist.c:2155,2736 - both sides call flist_sort_and_clean()
+            // independently. Unstable sort (true) is safe - entries have unique paths.
             sort_file_list(&mut self.file_list[flat_start..], true);
             match_hard_links(&mut self.file_list[flat_start..]);
 
-            // Record ndx_segments entry for this sub-list (already computed above).
+            // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
             self.ndx_segments.push((flat_start, seg_ndx_start));
 
             debug_log!(
@@ -208,7 +198,7 @@ impl ReceiverContext {
     /// - Condition: `(preserve_uid || preserve_acls) && numeric_ids <= 0`
     #[cfg(unix)]
     pub(crate) fn receive_id_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<()> {
-        // Skip ID lists when numeric_ids is set (upstream: numeric_ids <= 0)
+        // upstream: uidlist.c:460 - skip when numeric_ids is set
         if self.config.flags.numeric_ids {
             return Ok(());
         }
@@ -219,7 +209,7 @@ impl ReceiverContext {
 
         let protocol_version = self.protocol.as_u8();
 
-        // Read UID list if preserving ownership
+        // upstream: uidlist.c:467 - recv_uid_list()
         if self.config.flags.owner {
             self.uid_list
                 .read(reader, id0_names, protocol_version, |name| {
@@ -227,7 +217,7 @@ impl ReceiverContext {
                 })?;
         }
 
-        // Read GID list if preserving group
+        // upstream: uidlist.c:471 - recv_gid_list()
         if self.config.flags.group {
             self.gid_list
                 .read(reader, id0_names, protocol_version, |name| {
@@ -439,33 +429,26 @@ impl<R: Read> IncrementalFileListReceiver<R> {
     /// - `Ok(None)` - No more entries (end of list reached and all processed)
     /// - `Err(e)` - An I/O or protocol error occurred
     pub fn next_ready(&mut self) -> io::Result<Option<FileEntry>> {
-        // First check if we have any ready entries
         if let Some(entry) = self.incremental.pop() {
             return Ok(Some(entry));
         }
 
-        // If we've finished reading, nothing more to yield
         if self.finished_reading {
             return Ok(None);
         }
 
-        // Read entries until we get one that's ready or hit end of list
         loop {
             match self.flist_reader.read_entry(&mut self.source)? {
                 Some(entry) => {
                     self.entries_read += 1;
                     self.incremental.push(entry);
 
-                    // Check if this or any other entry is now ready
                     if let Some(ready) = self.incremental.pop() {
                         return Ok(Some(ready));
                     }
-                    // No entry ready yet, keep reading
                 }
                 None => {
-                    // End of file list
                     self.finished_reading = true;
-                    // Return any remaining ready entry
                     return Ok(self.incremental.pop());
                 }
             }
@@ -562,11 +545,8 @@ impl<R: Read> IncrementalFileListReceiver<R> {
     /// For truly incremental processing, use [`Self::next_ready`] instead.
     pub fn collect_sorted(mut self) -> io::Result<Vec<FileEntry>> {
         let mut entries = Vec::new();
-
-        // Drain any already-ready entries
         entries.extend(self.incremental.drain_ready());
 
-        // Read remaining entries
         while !self.finished_reading {
             match self.flist_reader.read_entry(&mut self.source)? {
                 Some(entry) => {
@@ -579,10 +559,9 @@ impl<R: Read> IncrementalFileListReceiver<R> {
             }
         }
 
-        // Drain any pending entries (they may have become orphans)
         entries.extend(self.incremental.drain_ready());
 
-        // Sort to match sender's order for NDX indexing
+        // upstream: flist.c:2736 - sort to match sender's order for NDX indexing
         sort_file_list(&mut entries, self.use_qsort);
         match_hard_links(&mut entries);
 
