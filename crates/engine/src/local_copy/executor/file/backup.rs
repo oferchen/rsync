@@ -66,6 +66,9 @@ pub fn compute_backup_path(
     base
 }
 
+/// Copies a file or recreates a symlink at the backup path.
+///
+/// // upstream: backup.c:make_backup() - backup creation
 pub(crate) fn copy_entry_to_backup(
     source: &Path,
     backup_path: &Path,

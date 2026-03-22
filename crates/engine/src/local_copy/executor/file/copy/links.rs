@@ -20,11 +20,18 @@ use ::metadata::apply_file_metadata_with_options;
 use super::super::super::super::CROSS_DEVICE_ERROR_CODE;
 use super::super::guard::remove_existing_destination;
 
+/// Result of hard-link and reference-directory processing for a file.
 pub(super) struct LinkOutcome {
     pub(super) copy_source_override: Option<PathBuf>,
     pub(super) completed: bool,
 }
 
+/// Attempts hard-link deduplication and reference directory lookups before
+/// falling back to a full file copy.
+///
+/// Returns `completed: true` when the file was fully handled (linked or
+/// skipped), or `completed: false` with an optional `copy_source_override`
+/// when the caller should proceed with a data copy.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn process_links(
     context: &mut CopyContext<'_>,
@@ -44,7 +51,6 @@ pub(super) fn process_links(
     #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
     #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
 ) -> Result<LinkOutcome, LocalCopyError> {
-    // keep the param used on non-unix builds to avoid warnings
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
 

@@ -145,10 +145,7 @@ impl SparseDetector {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Zero-run detection primitives
-// ---------------------------------------------------------------------------
-
+/// Returns the number of leading zero bytes in `bytes` using 16-byte `u128` scanning.
 #[inline]
 pub(super) fn leading_zero_run(bytes: &[u8]) -> usize {
     let mut offset = 0usize;
@@ -174,6 +171,7 @@ fn leading_zero_run_scalar(bytes: &[u8]) -> usize {
     bytes.iter().take_while(|&&byte| byte == 0).count()
 }
 
+/// Returns the number of trailing zero bytes in `bytes` using 16-byte `u128` scanning.
 #[inline]
 pub(super) fn trailing_zero_run(bytes: &[u8]) -> usize {
     let mut offset = 0usize;

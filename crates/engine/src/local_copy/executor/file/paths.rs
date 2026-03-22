@@ -11,6 +11,7 @@ fn cached_pid() -> u32 {
     *PID.get_or_init(std::process::id)
 }
 
+/// Computes the partial-file path by prefixing the filename with `.rsync-partial-`.
 pub(crate) fn partial_destination_path(destination: &Path) -> PathBuf {
     let file_name = destination.file_name().map_or_else(
         || "partial".to_owned(),
@@ -20,6 +21,8 @@ pub(crate) fn partial_destination_path(destination: &Path) -> PathBuf {
     destination.with_file_name(partial_name)
 }
 
+/// Computes the partial-file path inside a `--partial-dir` directory,
+/// creating the directory if it does not exist.
 pub(crate) fn partial_directory_destination_path(
     destination: &Path,
     partial_dir: &Path,
@@ -41,6 +44,10 @@ pub(crate) fn partial_directory_destination_path(
     Ok(base_dir.join(file_name))
 }
 
+/// Computes the temporary file path used during atomic writes.
+///
+/// The name includes the PID and a unique counter to prevent collisions.
+/// // upstream: receiver.c:get_tmpname()
 pub(crate) fn temporary_destination_path(
     destination: &Path,
     unique: usize,

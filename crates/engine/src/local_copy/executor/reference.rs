@@ -8,12 +8,17 @@ use crate::local_copy::{CopyContext, LocalCopyError, ReferenceDirectoryKind};
 
 use super::{CopyComparison, should_skip_copy};
 
+/// Outcome of evaluating a reference directory candidate against source metadata.
 pub(crate) enum ReferenceDecision {
     Skip,
     Copy(PathBuf),
     Link(PathBuf),
 }
 
+/// Computes the full path for a reference directory candidate.
+///
+/// Absolute bases are joined directly; relative bases are resolved from
+/// the destination ancestor at the same depth as `relative`.
 pub(crate) fn resolve_reference_candidate(
     base: &Path,
     relative: &Path,
@@ -33,6 +38,7 @@ pub(crate) fn resolve_reference_candidate(
     }
 }
 
+/// Parameters for finding a matching file in reference directories.
 pub(crate) struct ReferenceQuery<'a> {
     pub(crate) destination: &'a Path,
     pub(crate) relative: &'a Path,
@@ -43,6 +49,10 @@ pub(crate) struct ReferenceQuery<'a> {
     pub(crate) checksum: bool,
 }
 
+/// Searches configured reference directories for a file matching the source.
+///
+/// Returns the first matching decision (skip, copy, or link) based on the
+/// reference directory kind, or `None` if no candidate matches.
 pub(crate) fn find_reference_action(
     context: &CopyContext<'_>,
     query: ReferenceQuery<'_>,
@@ -100,8 +110,6 @@ pub(crate) fn find_reference_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ==================== resolve_reference_candidate tests ====================
 
     #[test]
     fn resolve_absolute_base_ignores_destination() {
@@ -187,8 +195,6 @@ mod tests {
         assert_eq!(result, PathBuf::from("/ref/../other/file.txt"));
     }
 
-    // ==================== ReferenceDecision tests ====================
-
     #[test]
     fn reference_decision_skip_variant() {
         let decision = ReferenceDecision::Skip;
@@ -214,8 +220,6 @@ mod tests {
             _ => panic!("Expected Link variant"),
         }
     }
-
-    // ==================== ReferenceQuery tests ====================
 
     #[test]
     fn reference_query_fields_accessible() {
