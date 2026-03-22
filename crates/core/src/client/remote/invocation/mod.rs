@@ -2,11 +2,17 @@
 //!
 //! This module constructs the command-line arguments for invoking rsync in
 //! `--server` mode on a remote host via SSH. The invocation format mirrors
-//! upstream rsync's `server_options()` function.
+//! upstream rsync's `options.c:server_options()` function.
 //!
-//! Submodules:
-//! - `builder` - `RemoteInvocationBuilder` for constructing server args.
-//! - `transfer_role` - Transfer role detection and remote operand parsing.
+//! # Submodules
+//!
+//! - `builder` - [`RemoteInvocationBuilder`] for constructing server args
+//! - `transfer_role` - Transfer role detection and remote operand parsing
+//!
+//! # Upstream Reference
+//!
+//! - `options.c:server_options()` - Server argument generation
+//! - `main.c:do_cmd()` - Role determination from operand positions
 
 mod builder;
 #[cfg(test)]

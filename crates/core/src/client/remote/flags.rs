@@ -2,6 +2,13 @@
 //!
 //! Contains logic for building server flag strings and converting client filter
 //! rules to wire format, shared between SSH and daemon transfer orchestration.
+//! The flag ordering and encoding mirror upstream `options.c:server_options()`.
+//!
+//! # Upstream Reference
+//!
+//! - `options.c:server_options()` - Compact flag string generation
+//! - `options.c:parse_arguments()` - Server-side flag parsing
+//! - `exclude.c:send_rules()` - Filter rule wire format
 
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 

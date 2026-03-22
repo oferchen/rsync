@@ -2,6 +2,13 @@
 //!
 //! Analyzes source and destination operands to determine whether a transfer is
 //! push (local -> remote), pull (remote -> local), or proxy (remote -> remote).
+//! This mirrors the operand analysis in upstream `main.c:do_cmd()` which
+//! determines the local process role based on which operands are remote.
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:do_cmd()` - Role determination from operand positions
+//! - `main.c:check_for_hostspec()` - Remote operand detection
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -11,7 +18,9 @@ use super::{RemoteOperandParsed, RemoteOperands, TransferSpec};
 
 /// Checks if an operand represents a remote path.
 ///
-/// This is a simplified version that matches the logic in
+/// Detects `rsync://` URLs, double-colon daemon syntax (`host::module`), and
+/// single-colon SSH syntax (`host:path`). This mirrors upstream
+/// `main.c:check_for_hostspec()`. A simplified version that matches the logic in
 /// `engine::local_copy::operand_is_remote` which is not public.
 pub fn operand_is_remote(path: &OsStr) -> bool {
     let text = path.to_string_lossy();

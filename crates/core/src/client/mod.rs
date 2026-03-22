@@ -1,14 +1,13 @@
 #![allow(clippy::module_name_repetitions)]
 
+//! Client-side orchestration for rsync transfers.
+//!
 //! # Overview
 //!
 //! The `client` module exposes the orchestration entry points consumed by the
-//! `rsync` CLI binary. The current implementation focuses on providing a
-//! deterministic, synchronous local copy engine that mirrors the high-level
-//! behaviour of `rsync SOURCE DEST` when no remote shells or daemons are
-//! involved. The API models the configuration and error structures that higher
-//! layers will reuse once network transports and the full delta-transfer engine
-//! land.
+//! `rsync` CLI binary. It mirrors the session lifecycle in upstream
+//! `main.c:start_client()`, dispatching local, SSH, and daemon transfers
+//! through a unified configuration and error model.
 //!
 //! # Design
 //!
@@ -82,6 +81,13 @@
 //!   orchestration.
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
 //! - [`engine::local_copy`] for the transfer plan executed by this module.
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:start_client()` - Client session entry point
+//! - `main.c:do_cmd()` - SSH command spawning and role dispatch
+//! - `clientserver.c:start_daemon_client()` - Daemon URL handling
+//! - `options.c:server_options()` - Server flag string construction
 
 mod config;
 mod error;
@@ -127,4 +133,9 @@ pub(crate) use self::error::{
     daemon_authentication_required_error, daemon_error, daemon_listing_unavailable_error,
     daemon_protocol_error, socket_error,
 };
+/// Default socket timeout for daemon connections.
+///
+/// Mirrors the connect timeout applied in upstream
+/// `clientserver.c:start_daemon_client()` when no explicit `--contimeout`
+/// is provided.
 pub(crate) const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);

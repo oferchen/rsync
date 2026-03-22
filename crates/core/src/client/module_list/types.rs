@@ -1,3 +1,8 @@
+//! Daemon address and socket display types.
+//!
+//! Provides [`DaemonAddress`] for specifying the target host and port
+//! of an rsync daemon connection.
+
 use std::fmt;
 
 use super::super::{ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, daemon_error};
