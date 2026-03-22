@@ -58,7 +58,7 @@ mod early_input_tests {
 
     #[test]
     fn read_normal_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("early.txt");
         std::fs::write(&file_path, b"hello early input").unwrap();
 
@@ -68,7 +68,7 @@ mod early_input_tests {
 
     #[test]
     fn read_empty_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("empty.txt");
         std::fs::write(&file_path, b"").unwrap();
 
@@ -78,7 +78,7 @@ mod early_input_tests {
 
     #[test]
     fn read_file_exactly_at_limit() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("exact.bin");
         let content = vec![0xABu8; EARLY_INPUT_MAX_SIZE];
         std::fs::write(&file_path, &content).unwrap();
@@ -90,7 +90,7 @@ mod early_input_tests {
 
     #[test]
     fn read_file_exceeding_limit_is_truncated() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("large.bin");
         let content = vec![0xCDu8; EARLY_INPUT_MAX_SIZE + 1024];
         std::fs::write(&file_path, &content).unwrap();
@@ -102,7 +102,7 @@ mod early_input_tests {
 
     #[test]
     fn read_missing_file_returns_error() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("nonexistent.txt");
 
         let err = read_early_input_file(&file_path).unwrap_err();
@@ -117,7 +117,7 @@ mod early_input_tests {
 
     #[test]
     fn read_file_with_binary_content() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("binary.bin");
         let content: Vec<u8> = (0..=255u8).cycle().take(1024).collect();
         std::fs::write(&file_path, &content).unwrap();
@@ -128,7 +128,7 @@ mod early_input_tests {
 
     #[test]
     fn read_file_well_over_limit_truncated_to_max() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("huge.bin");
         let content = vec![0xFFu8; EARLY_INPUT_MAX_SIZE * 10];
         std::fs::write(&file_path, &content).unwrap();
@@ -215,7 +215,7 @@ mod early_input_roundtrip_tests {
 
     #[test]
     fn roundtrip_normal_content() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("early.txt");
         let content = b"hello early-input roundtrip";
         std::fs::write(&file_path, content).unwrap();
@@ -237,7 +237,7 @@ mod early_input_roundtrip_tests {
 
     #[test]
     fn roundtrip_empty_file_sends_nothing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("empty.txt");
         std::fs::write(&file_path, b"").unwrap();
 
@@ -261,7 +261,7 @@ mod early_input_roundtrip_tests {
 
     #[test]
     fn roundtrip_file_exactly_at_5k_limit() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("exact.bin");
         let content = vec![0xABu8; EARLY_INPUT_MAX_SIZE];
         std::fs::write(&file_path, &content).unwrap();
@@ -284,7 +284,7 @@ mod early_input_roundtrip_tests {
 
     #[test]
     fn roundtrip_file_over_limit_is_truncated() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("large.bin");
         let content = vec![0xCDu8; EARLY_INPUT_MAX_SIZE + 2048];
         std::fs::write(&file_path, &content).unwrap();
@@ -307,7 +307,7 @@ mod early_input_roundtrip_tests {
 
     #[test]
     fn roundtrip_binary_content_preserves_all_byte_values() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("binary.bin");
         let content: Vec<u8> = (0..=255u8).cycle().take(1024).collect();
         std::fs::write(&file_path, &content).unwrap();
@@ -329,7 +329,7 @@ mod early_input_roundtrip_tests {
 
     #[test]
     fn roundtrip_wire_header_matches_daemon_protocol() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("proto.txt");
         let content = b"auth-token-data";
         std::fs::write(&file_path, content).unwrap();
@@ -360,7 +360,7 @@ mod early_input_roundtrip_tests {
 
     #[test]
     fn roundtrip_single_byte_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("one.bin");
         std::fs::write(&file_path, [0x42]).unwrap();
 
@@ -381,7 +381,7 @@ mod early_input_roundtrip_tests {
 
     #[test]
     fn roundtrip_content_with_newlines_and_nulls() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("special.bin");
         let content = b"line1\nline2\n\0\0\nline3\n";
         std::fs::write(&file_path, content).unwrap();

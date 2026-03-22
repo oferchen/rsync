@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn existing_target_returns_none_for_new_tracker() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let file = temp.path().join("test.txt");
         std::fs::write(&file, "content").unwrap();
         let metadata = std::fs::metadata(&file).unwrap();
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn record_does_not_panic() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let file = temp.path().join("test.txt");
         std::fs::write(&file, "content").unwrap();
         let metadata = std::fs::metadata(&file).unwrap();
@@ -174,7 +174,7 @@ mod detection_tests {
     /// Test that files with nlink > 1 are detected as hard links.
     #[test]
     fn detects_hard_linked_files_by_nlink() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let file1 = temp.path().join("file1.txt");
         let file2 = temp.path().join("file2.txt");
 
@@ -206,7 +206,7 @@ mod detection_tests {
     /// Test that standalone files (nlink = 1) are not tracked.
     #[test]
     fn ignores_standalone_files_with_nlink_one() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let file = temp.path().join("standalone.txt");
         std::fs::write(&file, "standalone content").unwrap();
 
@@ -223,7 +223,7 @@ mod detection_tests {
     /// Test that the tracker correctly identifies first occurrence vs subsequent.
     #[test]
     fn tracker_identifies_first_and_subsequent_occurrences() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let file1 = temp.path().join("first.txt");
         let file2 = temp.path().join("second.txt");
         let file3 = temp.path().join("third.txt");
@@ -310,7 +310,7 @@ mod detection_tests {
     /// Test tracking of multiple independent hardlink groups.
     #[test]
     fn tracks_multiple_independent_hardlink_groups() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
 
         // Group 1: file1a and file1b
         let file1a = temp.path().join("group1_a.txt");
@@ -366,7 +366,7 @@ mod detection_tests {
     /// Test that recording a standalone file (nlink=1) does nothing.
     #[test]
     fn recording_standalone_file_has_no_effect() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let file = temp.path().join("standalone.txt");
         std::fs::write(&file, "content").unwrap();
 
@@ -499,7 +499,7 @@ mod preservation_tests {
     /// Test that first file in a hardlink group is copied, subsequent are linked.
     #[test]
     fn first_file_copied_subsequent_linked() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let files: Vec<_> = (0..5)
             .map(|i| temp.path().join(format!("file{i}.txt")))
             .collect();
@@ -535,7 +535,7 @@ mod preservation_tests {
     /// Test that different content files with nlink=1 remain separate.
     #[test]
     fn standalone_files_remain_separate() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let file1 = temp.path().join("file1.txt");
         let file2 = temp.path().join("file2.txt");
 
@@ -568,7 +568,7 @@ mod preservation_tests {
     /// This can happen when some files in a group are deleted during transfer.
     #[test]
     fn handles_varying_nlink_values() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let file1 = temp.path().join("file1.txt");
         let file2 = temp.path().join("file2.txt");
         let file3 = temp.path().join("file3.txt");
@@ -670,7 +670,7 @@ mod scale_tests {
     /// Test tracking many hardlink groups.
     #[test]
     fn many_hardlink_groups() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let num_groups = 50;
         let mut tracker = HardLinkTracker::new();
 
@@ -695,7 +695,7 @@ mod scale_tests {
     /// Test many links to the same file.
     #[test]
     fn many_links_to_same_file() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let original = temp.path().join("original.txt");
         std::fs::write(&original, "content").unwrap();
 
