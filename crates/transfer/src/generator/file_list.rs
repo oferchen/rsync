@@ -464,17 +464,19 @@ impl GeneratorContext {
                 // upstream: flist.c:1286-1294 — log vanished warning or general error
                 if e.kind() == io::ErrorKind::NotFound {
                     eprintln!(
-                        "file has vanished: {}{}",
+                        "file has vanished: {} {}{}",
                         path.display(),
+                        error_location!(),
                         crate::role_trailer::generator()
                     );
                 } else {
                     // upstream: flist.c:1290 — rsyserr(FERROR_XFER, ...) for non-ENOENT
                     eprintln!(
-                        "rsync: link_stat \"{}\" failed: {} ({}){}",
+                        "rsync: link_stat \"{}\" failed: {} ({}) {}{}",
                         path.display(),
                         e,
                         e.raw_os_error().unwrap_or(0),
+                        error_location!(),
                         crate::role_trailer::sender()
                     );
                 }
@@ -505,10 +507,11 @@ impl GeneratorContext {
                             Err(e) => {
                                 // upstream: flist.c — rsyserr for readdir() failures
                                 eprintln!(
-                                    "rsync: readdir \"{}\" failed: {} ({}){}",
+                                    "rsync: readdir \"{}\" failed: {} ({}) {}{}",
                                     path.display(),
                                     e,
                                     e.raw_os_error().unwrap_or(0),
+                                    error_location!(),
                                     crate::role_trailer::sender()
                                 );
                                 self.record_io_error(&e);
@@ -519,10 +522,11 @@ impl GeneratorContext {
                 Err(e) => {
                     // upstream: flist.c — rsyserr for opendir() failures
                     eprintln!(
-                        "rsync: opendir \"{}\" failed: {} ({}){}",
+                        "rsync: opendir \"{}\" failed: {} ({}) {}{}",
                         path.display(),
                         e,
                         e.raw_os_error().unwrap_or(0),
+                        error_location!(),
                         crate::role_trailer::sender()
                     );
                     self.record_io_error(&e);
@@ -569,10 +573,11 @@ impl GeneratorContext {
             Err(e) => {
                 // upstream: flist.c — rsyserr for make_file() failures
                 eprintln!(
-                    "rsync: make_file failed for \"{}\": {} ({}){}",
+                    "rsync: make_file failed for \"{}\": {} ({}) {}{}",
                     path.display(),
                     e,
                     e.raw_os_error().unwrap_or(0),
+                    error_location!(),
                     crate::role_trailer::sender()
                 );
                 self.add_io_error(io_error_flags::IOERR_GENERAL);
@@ -588,10 +593,11 @@ impl GeneratorContext {
                 Err(e) => {
                     // upstream: flist.c — rsyserr for opendir() failures
                     eprintln!(
-                        "rsync: opendir \"{}\" failed: {} ({}){}",
+                        "rsync: opendir \"{}\" failed: {} ({}) {}{}",
                         path.display(),
                         e,
                         e.raw_os_error().unwrap_or(0),
+                        error_location!(),
                         crate::role_trailer::sender()
                     );
                     self.record_io_error(&e);
@@ -613,9 +619,10 @@ impl GeneratorContext {
                     Err(e) => {
                         // upstream: flist.c — rsyserr for readdir() failures
                         eprintln!(
-                            "rsync: readdir failed: {} ({}){}",
+                            "rsync: readdir failed: {} ({}) {}{}",
                             e,
                             e.raw_os_error().unwrap_or(0),
+                            error_location!(),
                             crate::role_trailer::sender()
                         );
                         self.record_io_error(&e);
