@@ -103,9 +103,10 @@ pub use parallel::{ParallelExecutor, ParallelResult};
 pub use traits::{FileReader, FileWriter};
 
 pub use mmap_reader::MmapReader;
-pub use o_tmpfile::{link_anonymous_tmpfile, o_tmpfile_available, open_anonymous_tmpfile};
-
-pub use o_tmpfile::o_tmpfile_available;
+pub use o_tmpfile::{
+    AnonymousTempFile, OTmpfileSupport, TempFileResult, link_anonymous_tmpfile,
+    o_tmpfile_available, o_tmpfile_probe, open_anonymous_tmpfile, open_temp_file,
+};
 
 pub use io_uring::{
     IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
