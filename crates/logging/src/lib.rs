@@ -76,6 +76,7 @@ mod config;
 pub mod error_format;
 mod levels;
 mod macros;
+mod phase_timer;
 mod thread_local;
 
 #[cfg(feature = "tracing")]
@@ -85,6 +86,7 @@ mod tracing_bridge;
 mod tracing_macros;
 
 pub use config::VerbosityConfig;
+pub use phase_timer::PhaseTimer;
 pub use error_format::{format_rsync_error, format_rsync_warning, strip_repo_prefix};
 pub use levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 pub use thread_local::{
