@@ -50,7 +50,11 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
         // Position 3: Size
         // upstream: log.c:705-707 - symlinks never report size changes
         let is_symlink = matches!(change.file_type, super::types::FileType::Symlink);
-        result.push(if !is_symlink && change.size_changed { 's' } else { '.' });
+        result.push(if !is_symlink && change.size_changed {
+            's'
+        } else {
+            '.'
+        });
 
         // Position 4: Time (T takes precedence over t)
         result.push(if change.time_set_to_transfer {
