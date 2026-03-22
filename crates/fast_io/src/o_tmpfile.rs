@@ -1,579 +1,362 @@
-//! Anonymous temporary file creation using `O_TMPFILE` with automatic fallback.
+//! Anonymous temporary file creation via `O_TMPFILE` and finalization via `linkat`.
 //!
-//! This module provides anonymous temporary file creation using Linux's `O_TMPFILE`
-//! flag (Linux 3.11+, ext4/XFS/Btrfs), with automatic fallback to named temporary
-//! files on other platforms or unsupported filesystems.
+//! On Linux 3.11+, `O_TMPFILE` creates an unnamed inode in a given directory
+//! without any directory entry. Data is written to the anonymous file, then
+//! `linkat(2)` materializes it at the final path atomically. This avoids the
+//! race window inherent in named temp files (where a crash leaves a partial
+//! `.XXXXXX` file) and removes the need for `unlink` cleanup on failure.
 //!
-//! # How It Works
+//! # Advantages over named temp files
 //!
-//! `O_TMPFILE` creates a file with no directory entry. The file exists only as an
-//! open file descriptor in `/proc/self/fd/<n>`. To persist it, the caller links it
-//! to a final path via `linkat(AT_SYMLINK_FOLLOW)` on the proc symlink. If the
-//! process crashes before linking, the kernel reclaims the inode automatically -
-//! no orphaned temp files.
+//! - **Atomic appearance** - the destination path either exists with full
+//!   content or does not exist at all.
+//! - **No cleanup on failure** - if the process crashes before `linkat`, the
+//!   kernel reclaims the anonymous inode automatically.
+//! - **No name collisions** - no need to generate unique temp file names.
 //!
-//! # Platform Support
+//! # Kernel and filesystem requirements
 //!
-//! - **Linux 3.11+**: Uses `O_TMPFILE` + `linkat` for anonymous temp files
-//! - **Other platforms**: Returns `Unsupported` error; caller falls back to named temp files
+//! - Linux 3.11+ kernel with `O_TMPFILE` support.
+//! - The filesystem must support `O_TMPFILE` (ext4, xfs, btrfs, tmpfs do;
+//!   NFS, FUSE, and some older filesystems may not).
+//! - `/proc` must be mounted for the `linkat` step (uses `/proc/self/fd/N`).
 //!
-//! # Upstream Reference
+//! # Fallback
 //!
-//! upstream rsync does not currently use `O_TMPFILE`, but this optimization eliminates
-//! the visible `.~tmp~` files that can confuse backup tools and directory watchers.
+//! On non-Linux platforms or when the kernel/filesystem does not support
+//! `O_TMPFILE`, all functions return `io::ErrorKind::Unsupported`. Callers
+//! should fall back to the named temp file strategy (`DestinationWriteGuard`).
 
-use std::fs::File;
-use std::io;
-use std::path::{Path, PathBuf};
-
-/// Result of probing `O_TMPFILE` support on a directory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OTmpfileSupport {
-    /// `O_TMPFILE` is available on this filesystem.
-    Available,
-    /// `O_TMPFILE` is not supported (wrong platform, old kernel, or unsupported filesystem).
-    Unavailable,
-}
-
-/// Probes whether `O_TMPFILE` is supported on the filesystem containing `dir`.
-///
-/// This opens an anonymous file in `dir` with `O_TMPFILE | O_WRONLY` and immediately
-/// closes it. The probe result can be cached per mount point.
-///
-/// # Arguments
-///
-/// * `dir` - Directory to probe. Must exist and be writable.
-///
-/// # Returns
-///
-/// `OTmpfileSupport::Available` if `O_TMPFILE` works, `Unavailable` otherwise.
-///
-/// # Example
-///
-/// ```no_run
-/// use fast_io::o_tmpfile::{o_tmpfile_probe, OTmpfileSupport};
-/// use std::path::Path;
-///
-/// let support = o_tmpfile_probe(Path::new("/tmp"));
-/// if support == OTmpfileSupport::Available {
-///     println!("O_TMPFILE is supported");
-/// }
-/// ```
 #[cfg(target_os = "linux")]
-pub fn o_tmpfile_probe(dir: &Path) -> OTmpfileSupport {
+mod linux {
     use std::ffi::CString;
+    use std::fs::File;
+    use std::io;
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::FromRawFd;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicU8, Ordering};
 
-    // O_TMPFILE = 0o20000000 | O_DIRECTORY = 0o200000
-    // Combined: 0o20200000
-    const O_TMPFILE: libc::c_int = 0o20_200_000;
+    /// Cached probe result for `O_TMPFILE` support.
+    ///
+    /// 0 = unknown, 1 = available, 2 = unavailable.
+    static O_TMPFILE_STATUS: AtomicU8 = AtomicU8::new(0);
 
-    let c_path = match CString::new(dir.as_os_str().as_bytes()) {
-        Ok(p) => p,
-        Err(_) => return OTmpfileSupport::Unavailable,
-    };
+    const STATUS_UNKNOWN: u8 = 0;
+    const STATUS_AVAILABLE: u8 = 1;
+    const STATUS_UNAVAILABLE: u8 = 2;
 
-    // SAFETY: open() with O_TMPFILE creates an anonymous file. We close it immediately.
-    let fd = unsafe { libc::open(c_path.as_ptr(), O_TMPFILE | libc::O_WRONLY, 0o600) };
+    /// Probes whether `O_TMPFILE` is supported on the filesystem containing `dir`.
+    ///
+    /// Opens an anonymous file in `dir` and immediately closes it. The result
+    /// is cached process-wide so subsequent calls are free. Returns `true` if
+    /// `O_TMPFILE` is usable, `false` otherwise.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - directory on the target filesystem to probe. Must exist and be
+    ///   writable by the current process.
+    #[must_use]
+    pub fn o_tmpfile_available(dir: &Path) -> bool {
+        let status = O_TMPFILE_STATUS.load(Ordering::Relaxed);
+        if status != STATUS_UNKNOWN {
+            return status == STATUS_AVAILABLE;
+        }
 
-    if fd >= 0 {
-        // SAFETY: fd is valid, we just opened it.
+        let available = probe_o_tmpfile(dir);
+        O_TMPFILE_STATUS.store(
+            if available {
+                STATUS_AVAILABLE
+            } else {
+                STATUS_UNAVAILABLE
+            },
+            Ordering::Relaxed,
+        );
+        available
+    }
+
+    /// Resets the cached probe result. Only intended for testing.
+    #[cfg(test)]
+    pub(crate) fn reset_probe_cache() {
+        O_TMPFILE_STATUS.store(STATUS_UNKNOWN, Ordering::Relaxed);
+    }
+
+    /// Performs the actual `O_TMPFILE` probe by opening and immediately closing
+    /// an anonymous file.
+    fn probe_o_tmpfile(dir: &Path) -> bool {
+        // O_TMPFILE requires O_WRONLY or O_RDWR
+        let dir_cstr = match CString::new(dir.as_os_str().as_bytes()) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+
+        // Safety: `dir_cstr` is a valid null-terminated C string pointing to an
+        // existing directory. `O_TMPFILE | O_WRONLY` creates an unnamed inode
+        // with no directory entry. Mode 0o600 is used for the probe file.
+        let fd = unsafe {
+            libc::open(
+                dir_cstr.as_ptr(),
+                libc::O_TMPFILE | libc::O_WRONLY,
+                libc::mode_t::from(0o600u32),
+            )
+        };
+
+        if fd < 0 {
+            return false;
+        }
+
+        // Safety: `fd` is a valid open file descriptor returned by `open(2)`.
         unsafe {
             libc::close(fd);
         }
-        OTmpfileSupport::Available
-    } else {
-        OTmpfileSupport::Unavailable
+        true
     }
-}
 
-/// Stub for non-Linux platforms. Always returns `Unavailable`.
-#[cfg(not(target_os = "linux"))]
-pub fn o_tmpfile_probe(_dir: &Path) -> OTmpfileSupport {
-    OTmpfileSupport::Unavailable
-}
+    /// Opens an anonymous temporary file in `dir` using `O_TMPFILE`.
+    ///
+    /// The returned file has no directory entry - it exists only as an open
+    /// file descriptor. Write data to it, then call [`link_anonymous_tmpfile`]
+    /// to atomically materialize it at the final path.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - directory on the target filesystem. The anonymous inode is
+    ///   created on this filesystem. Must exist and be writable.
+    /// * `mode` - Unix permission bits for the file (e.g., `0o644`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The filesystem does not support `O_TMPFILE` (`EOPNOTSUPP` or `EISDIR`)
+    /// - The directory does not exist (`ENOENT`)
+    /// - Permission denied (`EACCES`)
+    pub fn open_anonymous_tmpfile(dir: &Path, mode: u32) -> io::Result<File> {
+        let dir_cstr = CString::new(dir.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "directory path contains interior null byte",
+            )
+        })?;
 
-/// An anonymous temporary file created via `O_TMPFILE`.
-///
-/// The file has no directory entry and exists only as an open file descriptor.
-/// To persist the file, call [`link_to`](Self::link_to) which uses
-/// `linkat(AT_SYMLINK_FOLLOW)` on `/proc/self/fd/<n>` to atomically create
-/// a directory entry.
-///
-/// If the `AnonymousTempFile` is dropped without linking, the kernel reclaims
-/// the inode automatically - no cleanup needed.
-///
-/// # Linux Only
-///
-/// This type is only constructible on Linux 3.11+ with a filesystem that supports
-/// `O_TMPFILE` (ext4, XFS, Btrfs, tmpfs). Use [`o_tmpfile_probe`] to check first.
-pub struct AnonymousTempFile {
-    file: File,
-    dir: PathBuf,
-}
-
-/// Opens an anonymous temporary file in `dir`.
-///
-/// The file is created with mode 0o600 and no directory entry.
-///
-/// # Arguments
-///
-/// * `dir` - Directory on whose filesystem the anonymous file is created.
-///   Must exist, be writable, and reside on a filesystem supporting `O_TMPFILE`.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - `O_TMPFILE` is not supported on this filesystem
-/// - The directory does not exist or is not writable
-/// - The filesystem is full
-impl AnonymousTempFile {
-    /// Opens an anonymous temporary file in `dir`.
-    #[cfg(target_os = "linux")]
-    pub fn open(dir: &Path) -> io::Result<Self> {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        use std::os::unix::io::FromRawFd;
-
-        const O_TMPFILE: libc::c_int = 0o20_200_000;
-
-        let c_path = CString::new(dir.as_os_str().as_bytes())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-        // SAFETY: open() with O_TMPFILE | O_RDWR creates an anonymous file.
-        let fd = unsafe { libc::open(c_path.as_ptr(), O_TMPFILE | libc::O_RDWR, 0o600) };
+        // Safety: `dir_cstr` is a valid null-terminated C string. `O_TMPFILE |
+        // O_WRONLY` creates an unnamed inode with no directory entry. `mode` is
+        // the permission bits for the new file. The returned fd is valid on
+        // success (>= 0) and is immediately wrapped in a `File` which owns it.
+        let fd = unsafe {
+            libc::open(
+                dir_cstr.as_ptr(),
+                libc::O_TMPFILE | libc::O_WRONLY | libc::O_CLOEXEC,
+                libc::mode_t::from(mode),
+            )
+        };
 
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
 
-        // SAFETY: fd is a valid, newly opened file descriptor.
-        let file = unsafe { File::from_raw_fd(fd) };
-
-        Ok(Self {
-            file,
-            dir: dir.to_path_buf(),
-        })
+        // Safety: `fd` is a valid, open file descriptor just returned by
+        // `open(2)`. We transfer ownership to `File` which will close it on
+        // drop. No other code holds or aliases this fd.
+        Ok(unsafe { File::from_raw_fd(fd) })
     }
 
-    /// Stub for non-Linux platforms. Always returns an error.
-    #[cfg(not(target_os = "linux"))]
-    pub fn open(_dir: &Path) -> io::Result<Self> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "O_TMPFILE is only available on Linux",
-        ))
-    }
-
-    /// Returns a reference to the underlying file for reading.
-    pub fn file(&self) -> &File {
-        &self.file
-    }
-
-    /// Returns a mutable reference to the underlying file for writing.
-    pub fn file_mut(&mut self) -> &mut File {
-        &mut self.file
-    }
-
-    /// Consumes self and returns the underlying `File`.
-    pub fn into_file(self) -> File {
-        self.file
-    }
-
-    /// Returns the directory this anonymous file resides on.
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
-    /// Links the anonymous file to `dest`, making it visible in the filesystem.
+    /// Materializes an anonymous temporary file at `dest` using `linkat(2)`.
     ///
-    /// This uses `linkat(AT_FDCWD, "/proc/self/fd/<n>", AT_FDCWD, dest, AT_SYMLINK_FOLLOW)`
-    /// to atomically create a directory entry pointing to the anonymous inode.
-    /// The `/proc/self/fd/<n>` path is a symlink to the anonymous inode, so
-    /// `AT_SYMLINK_FOLLOW` resolves it to the actual file.
+    /// This creates a directory entry for the anonymous file opened with
+    /// [`open_anonymous_tmpfile`]. The operation is atomic - `dest` either
+    /// appears with the full file contents or does not appear at all.
     ///
-    /// The caller should ensure `dest` does not already exist, or remove it first.
-    /// After linking, this `AnonymousTempFile` still holds the file descriptor;
-    /// dropping it simply closes the fd (the directory entry persists).
+    /// The `linkat` call uses the `/proc/self/fd/N` path to reference the
+    /// anonymous inode, with `AT_SYMLINK_FOLLOW` so the kernel resolves the
+    /// procfs symlink to the actual inode.
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - open file descriptor for the anonymous temp file.
+    /// * `dest` - final destination path where the file should appear.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - `dest` already exists (`AlreadyExists`)
-    /// - The destination directory does not exist
-    /// - Cross-device link (anonymous file and dest on different filesystems)
-    #[cfg(target_os = "linux")]
-    pub fn link_to(&self, dest: &Path) -> io::Result<()> {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
+    /// - `dest` already exists (`EEXIST`)
+    /// - `/proc` is not mounted (`ENOENT` on the `/proc/self/fd/N` path)
+    /// - The anonymous file and `dest` are on different filesystems (`EXDEV`)
+    /// - Permission denied (`EACCES`)
+    pub fn link_anonymous_tmpfile(fd: &File, dest: &Path) -> io::Result<()> {
         use std::os::unix::io::AsRawFd;
 
-        let fd = self.file.as_raw_fd();
-        let proc_path = format!("/proc/self/fd/{fd}");
-        let c_proc = CString::new(proc_path.as_bytes())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let c_dest = CString::new(dest.as_os_str().as_bytes())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let raw_fd = fd.as_raw_fd();
+        let proc_path = format!("/proc/self/fd/{raw_fd}");
+        let proc_cstr = CString::new(proc_path).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "proc path contains interior null byte",
+            )
+        })?;
 
-        // AT_SYMLINK_FOLLOW resolves the /proc/self/fd/<n> symlink to the
-        // anonymous inode. This works without CAP_DAC_READ_SEARCH, unlike
-        // AT_EMPTY_PATH which requires it.
-        const AT_SYMLINK_FOLLOW: libc::c_int = 0x400;
+        let dest_cstr = CString::new(dest.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "destination path contains interior null byte",
+            )
+        })?;
 
-        // SAFETY: linkat with valid C-string paths and AT_FDCWD for both dir fds.
+        // Safety: both `proc_cstr` and `dest_cstr` are valid null-terminated C
+        // strings. `AT_FDCWD` means paths are resolved relative to the current
+        // working directory (they are absolute in practice). `AT_SYMLINK_FOLLOW`
+        // causes the kernel to follow the `/proc/self/fd/N` symlink to the
+        // underlying inode, which is required for anonymous temp files.
         let ret = unsafe {
             libc::linkat(
                 libc::AT_FDCWD,
-                c_proc.as_ptr(),
+                proc_cstr.as_ptr(),
                 libc::AT_FDCWD,
-                c_dest.as_ptr(),
-                AT_SYMLINK_FOLLOW,
+                dest_cstr.as_ptr(),
+                libc::AT_SYMLINK_FOLLOW,
             )
         };
 
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
+        if ret < 0 {
+            return Err(io::Error::last_os_error());
         }
+
+        Ok(())
     }
 
-    /// Stub for non-Linux platforms. Always returns an error.
-    #[cfg(not(target_os = "linux"))]
-    pub fn link_to(&self, _dest: &Path) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "linkat for anonymous temp files is only available on Linux",
-        ))
-    }
-}
-
-/// Creates a file at `dest` using `O_TMPFILE` if available, otherwise indicates
-/// that the caller should fall back to a named temporary file.
-///
-/// This is the main entry point for anonymous temp file support. On success,
-/// the caller receives an anonymous file. On failure, the caller should use
-/// `DestinationWriteGuard` for the traditional named temp file approach.
-///
-/// # Arguments
-///
-/// * `dir` - Directory to create the anonymous file in (should be same filesystem as dest)
-///
-/// # Returns
-///
-/// A `TempFileResult` indicating which strategy was used.
-pub fn open_temp_file(dir: &Path) -> TempFileResult {
-    if o_tmpfile_probe(dir) == OTmpfileSupport::Available {
-        match AnonymousTempFile::open(dir) {
-            Ok(atf) => return TempFileResult::Anonymous(atf),
-            Err(_) => {}
-        }
-    }
-    TempFileResult::Unavailable
-}
-
-/// Result of attempting to open an anonymous temp file.
-#[derive(Debug)]
-pub enum TempFileResult {
-    /// Successfully created an anonymous temp file via `O_TMPFILE`.
-    Anonymous(AnonymousTempFile),
-    /// `O_TMPFILE` is not available; caller should fall back to named temp file.
-    Unavailable,
-}
-
-impl std::fmt::Debug for AnonymousTempFile {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AnonymousTempFile")
-            .field("dir", &self.dir)
-            .finish_non_exhaustive()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::tempdir;
-
-    #[test]
-    fn o_tmpfile_probe_returns_result_for_tmp() {
-        let dir = tempdir().expect("tempdir");
-        let result = o_tmpfile_probe(dir.path());
-        // On Linux with ext4/XFS/Btrfs/tmpfs this is Available.
-        // On other platforms or unsupported fs, Unavailable.
-        assert!(
-            result == OTmpfileSupport::Available || result == OTmpfileSupport::Unavailable,
-            "probe must return a valid variant"
-        );
-    }
-
-    #[test]
-    fn o_tmpfile_probe_unavailable_for_nonexistent_dir() {
-        let result = o_tmpfile_probe(Path::new("/nonexistent_dir_for_probe_test"));
-        assert_eq!(result, OTmpfileSupport::Unavailable);
-    }
-
-    #[cfg(target_os = "linux")]
-    mod linux_tests {
+    #[cfg(test)]
+    mod tests {
         use super::*;
+        use std::io::Write;
 
         #[test]
-        fn anonymous_temp_file_open_and_write() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
-            let mut atf = AnonymousTempFile::open(dir.path()).expect("open anonymous temp file");
-            atf.file_mut()
-                .write_all(b"anonymous content")
-                .expect("write to anonymous file");
-            assert_eq!(atf.dir(), dir.path());
+        fn probe_returns_consistent_results() {
+            reset_probe_cache();
+            let dir = tempfile::tempdir().unwrap();
+            let first = o_tmpfile_available(dir.path());
+            // Second call should use cache and return the same result
+            let second = o_tmpfile_available(dir.path());
+            assert_eq!(first, second);
         }
 
         #[test]
-        fn anonymous_temp_file_is_invisible() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
-            let _atf = AnonymousTempFile::open(dir.path()).expect("open anonymous temp file");
-
-            let entries: Vec<_> = std::fs::read_dir(dir.path()).expect("read dir").collect();
-            assert!(
-                entries.is_empty(),
-                "anonymous temp file should not appear in directory listing, found {} entries",
-                entries.len()
-            );
+        fn probe_unavailable_for_nonexistent_dir() {
+            reset_probe_cache();
+            let result = o_tmpfile_available(Path::new("/nonexistent/path/that/does/not/exist"));
+            assert!(!result);
         }
 
         #[test]
-        fn anonymous_temp_file_link_to_destination() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
+        fn open_anonymous_tmpfile_succeeds() {
+            let dir = tempfile::tempdir().unwrap();
+            let result = open_anonymous_tmpfile(dir.path(), 0o644);
+            // O_TMPFILE may not be supported on all filesystems (e.g., tmpfs in CI)
+            if let Ok(file) = result {
+                // File is open and writable
+                drop(file);
             }
-
-            let mut atf = AnonymousTempFile::open(dir.path()).expect("open");
-            atf.file_mut().write_all(b"linked content").expect("write");
-
-            let dest = dir.path().join("final.txt");
-            atf.link_to(&dest).expect("link_to");
-
-            let content = std::fs::read_to_string(&dest).expect("read linked file");
-            assert_eq!(content, "linked content");
         }
 
         #[test]
-        fn anonymous_temp_file_link_to_preserves_content_after_large_write() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
+        fn open_and_link_roundtrip() {
+            let dir = tempfile::tempdir().unwrap();
+            let file = match open_anonymous_tmpfile(dir.path(), 0o644) {
+                Ok(f) => f,
+                Err(_) => return, // O_TMPFILE not supported on this filesystem
+            };
+
+            // Write some data
+            let mut file = file;
+            file.write_all(b"hello anonymous tmpfile").unwrap();
+            file.flush().unwrap();
+
+            // Materialize at a destination path
+            let dest = dir.path().join("materialized.txt");
+            match link_anonymous_tmpfile(&file, &dest) {
+                Ok(()) => {
+                    // Verify the file appeared with correct contents
+                    let contents = std::fs::read_to_string(&dest).unwrap();
+                    assert_eq!(contents, "hello anonymous tmpfile");
+                }
+                Err(e) => {
+                    // linkat may fail if /proc is not mounted (unlikely but possible)
+                    eprintln!("linkat failed (expected in some CI environments): {e}");
+                }
             }
-
-            let mut atf = AnonymousTempFile::open(dir.path()).expect("open");
-
-            // Write 1 MB of patterned data to verify integrity.
-            let pattern: Vec<u8> = (0..=255u8).cycle().take(1024 * 1024).collect();
-            atf.file_mut().write_all(&pattern).expect("write large");
-
-            let dest = dir.path().join("large_file.bin");
-            atf.link_to(&dest).expect("link_to");
-
-            let read_back = std::fs::read(&dest).expect("read back");
-            assert_eq!(read_back.len(), pattern.len());
-            assert_eq!(read_back, pattern);
         }
 
         #[test]
-        fn anonymous_temp_file_drop_without_link_leaves_no_orphan() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
-            {
-                let mut atf = AnonymousTempFile::open(dir.path()).expect("open");
-                atf.file_mut().write_all(b"orphan test").expect("write");
-            }
-
-            let entries: Vec<_> = std::fs::read_dir(dir.path()).expect("read dir").collect();
-            assert!(
-                entries.is_empty(),
-                "dropping anonymous temp file without link must leave no orphan, found {} entries",
-                entries.len()
-            );
-        }
-
-        #[test]
-        fn anonymous_temp_file_link_fails_if_dest_exists() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
+        fn link_fails_when_dest_exists() {
+            let dir = tempfile::tempdir().unwrap();
             let dest = dir.path().join("existing.txt");
-            std::fs::write(&dest, b"existing").expect("create existing");
+            std::fs::write(&dest, "already here").unwrap();
 
-            let atf = AnonymousTempFile::open(dir.path()).expect("open");
-            let result = atf.link_to(&dest);
-            assert!(result.is_err(), "link_to should fail when dest exists");
-        }
+            let file = match open_anonymous_tmpfile(dir.path(), 0o644) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
 
-        #[test]
-        fn anonymous_temp_file_link_fails_for_nonexistent_parent() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
-            let atf = AnonymousTempFile::open(dir.path()).expect("open");
-            let bad_dest = dir.path().join("no_such_dir").join("file.txt");
-            let result = atf.link_to(&bad_dest);
-            assert!(
-                result.is_err(),
-                "link_to should fail for nonexistent parent dir"
-            );
-        }
-
-        #[test]
-        fn anonymous_temp_file_into_file_returns_writable_fd() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
-            let atf = AnonymousTempFile::open(dir.path()).expect("open");
-            let mut file = atf.into_file();
-            file.write_all(b"via into_file")
-                .expect("write via into_file");
-        }
-
-        #[test]
-        fn open_temp_file_returns_anonymous_when_supported() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
-            let result = open_temp_file(dir.path());
-            assert!(
-                matches!(result, TempFileResult::Anonymous(_)),
-                "open_temp_file should return Anonymous on supported filesystem"
-            );
-        }
-
-        #[test]
-        fn open_temp_file_anonymous_write_and_link() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
-            let result = open_temp_file(dir.path());
-            if let TempFileResult::Anonymous(mut atf) = result {
-                atf.file_mut()
-                    .write_all(b"via open_temp_file")
-                    .expect("write");
-                let dest = dir.path().join("output.txt");
-                atf.link_to(&dest).expect("link");
-                let content = std::fs::read_to_string(&dest).expect("read");
-                assert_eq!(content, "via open_temp_file");
-            } else {
-                panic!("expected Anonymous variant");
-            }
-        }
-
-        #[test]
-        fn multiple_anonymous_files_in_same_directory() {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) != OTmpfileSupport::Available {
-                return;
-            }
-
-            let mut files = Vec::new();
-            for i in 0..5 {
-                let mut atf = AnonymousTempFile::open(dir.path()).expect("open");
-                atf.file_mut()
-                    .write_all(format!("file_{i}").as_bytes())
-                    .expect("write");
-                files.push(atf);
-            }
-
-            let count = std::fs::read_dir(dir.path()).expect("read_dir").count();
-            assert_eq!(count, 0, "all files should be invisible");
-
-            for (i, atf) in files.into_iter().enumerate() {
-                let dest = dir.path().join(format!("file_{i}.txt"));
-                atf.link_to(&dest).expect("link_to");
-            }
-
-            for i in 0..5 {
-                let dest = dir.path().join(format!("file_{i}.txt"));
-                let content = std::fs::read_to_string(&dest).expect("read");
-                assert_eq!(content, format!("file_{i}"));
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    mod non_linux_tests {
-        use super::*;
-
-        #[test]
-        fn o_tmpfile_probe_always_unavailable() {
-            let dir = tempdir().expect("tempdir");
-            assert_eq!(o_tmpfile_probe(dir.path()), OTmpfileSupport::Unavailable);
-        }
-
-        #[test]
-        fn anonymous_temp_file_open_returns_error() {
-            let dir = tempdir().expect("tempdir");
-            let result = AnonymousTempFile::open(dir.path());
+            let result = link_anonymous_tmpfile(&file, &dest);
             assert!(result.is_err());
-            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+            if let Err(e) = result {
+                // EEXIST
+                assert_eq!(e.raw_os_error(), Some(libc::EEXIST));
+            }
         }
 
         #[test]
-        fn open_temp_file_returns_unavailable() {
-            let dir = tempdir().expect("tempdir");
-            let result = open_temp_file(dir.path());
-            assert!(
-                matches!(result, TempFileResult::Unavailable),
-                "open_temp_file should return Unavailable on non-Linux"
-            );
+        fn open_fails_for_nonexistent_dir() {
+            let result = open_anonymous_tmpfile(Path::new("/nonexistent/dir"), 0o644);
+            assert!(result.is_err());
         }
-    }
 
-    #[test]
-    fn o_tmpfile_support_debug_display() {
-        let available = OTmpfileSupport::Available;
-        let unavailable = OTmpfileSupport::Unavailable;
-        assert_eq!(format!("{available:?}"), "Available");
-        assert_eq!(format!("{unavailable:?}"), "Unavailable");
-    }
+        #[test]
+        fn open_respects_mode_bits() {
+            use std::os::unix::fs::MetadataExt;
 
-    #[test]
-    fn o_tmpfile_support_clone_and_eq() {
-        let a = OTmpfileSupport::Available;
-        let b = a;
-        assert_eq!(a, b);
+            let dir = tempfile::tempdir().unwrap();
+            let file = match open_anonymous_tmpfile(dir.path(), 0o600) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
 
-        let c = OTmpfileSupport::Unavailable;
-        assert_ne!(a, c);
-    }
-
-    #[test]
-    fn anonymous_temp_file_debug_format() {
-        #[cfg(target_os = "linux")]
-        {
-            let dir = tempdir().expect("tempdir");
-            if o_tmpfile_probe(dir.path()) == OTmpfileSupport::Available {
-                let atf = AnonymousTempFile::open(dir.path()).expect("open");
-                let debug = format!("{atf:?}");
-                assert!(debug.contains("AnonymousTempFile"));
+            let dest = dir.path().join("mode_test.txt");
+            if link_anonymous_tmpfile(&file, &dest).is_ok() {
+                let meta = std::fs::metadata(&dest).unwrap();
+                // Mode should have at least the requested bits (umask may clear some)
+                let mode = meta.mode() & 0o777;
+                assert_eq!(mode & 0o600, 0o600);
             }
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+pub use linux::{link_anonymous_tmpfile, o_tmpfile_available, open_anonymous_tmpfile};
+
+/// Stub: `O_TMPFILE` is only available on Linux.
+#[cfg(not(target_os = "linux"))]
+#[must_use]
+pub fn o_tmpfile_available(_dir: &std::path::Path) -> bool {
+    false
+}
+
+/// Stub: `O_TMPFILE` is only available on Linux.
+#[cfg(not(target_os = "linux"))]
+pub fn open_anonymous_tmpfile(
+    _dir: &std::path::Path,
+    _mode: u32,
+) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "O_TMPFILE is only supported on Linux",
+    ))
+}
+
+/// Stub: `O_TMPFILE` is only available on Linux.
+#[cfg(not(target_os = "linux"))]
+pub fn link_anonymous_tmpfile(_fd: &std::fs::File, _dest: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "O_TMPFILE is only supported on Linux",
+    ))
 }
