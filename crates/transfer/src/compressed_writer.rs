@@ -106,12 +106,12 @@ impl<W: Write> CompressedWriter<W> {
         })
     }
 
-    /// Flushes compressed data to the underlying writer.
+    /// Drains the encoder's internal sink to the underlying writer.
     ///
-    /// This drains the encoder's internal sink and writes accumulated compressed
-    /// data to the underlying writer, then clears the output buffer.
-    fn flush_compressed(&mut self) -> io::Result<()> {
-        // Get compressed bytes from encoder's sink and write to inner
+    /// This writes accumulated compressed bytes from the encoder's Vec sink
+    /// to the underlying writer without triggering a compressor-level flush.
+    /// Used by `write()` for threshold-based buffer draining.
+    fn drain_sink(&mut self) -> io::Result<()> {
         match &mut self.encoder {
             EncoderVariant::Zlib(encoder) => {
                 let sink = encoder.get_mut();
@@ -137,6 +137,34 @@ impl<W: Write> CompressedWriter<W> {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Performs a sync flush on the encoder and drains all output.
+    ///
+    /// Calls `Z_SYNC_FLUSH` (or equivalent) on the compressor to materialize
+    /// all pending compressed data, then drains the encoder's sink to the
+    /// underlying writer. This ensures the receiver can decompress all data
+    /// written so far without waiting for more input.
+    ///
+    /// Upstream rsync uses `Z_SYNC_FLUSH` at token boundaries
+    /// (token.c:send_deflated_token lines 433-434) so each token is
+    /// independently decompressible. This method provides the same guarantee
+    /// at the stream-compression layer.
+    fn flush_compressed(&mut self) -> io::Result<()> {
+        // First, sync-flush the encoder so all pending data in the deflate
+        // state is materialized into the encoder's Vec sink.
+        // upstream: token.c uses Z_SYNC_FLUSH after each token's data.
+        match &mut self.encoder {
+            EncoderVariant::Zlib(encoder) => encoder.flush()?,
+            #[cfg(feature = "lz4")]
+            EncoderVariant::Lz4(encoder) => encoder.flush()?,
+            #[cfg(feature = "zstd")]
+            EncoderVariant::Zstd(encoder) => encoder.flush()?,
+        }
+
+        // Drain the sink (now contains all flushed output) to inner writer
+        self.drain_sink()?;
 
         // Flush the underlying writer
         self.inner.flush()
@@ -231,7 +259,7 @@ impl<W: Write> Write for CompressedWriter<W> {
         };
 
         if current_size > self.flush_threshold {
-            self.flush_compressed()?;
+            self.drain_sink()?;
         }
 
         // Always report full write to match upstream behavior
@@ -368,6 +396,67 @@ mod tests {
         // Verify inner_mut returns a valid reference
         let _inner = writer.inner_mut();
         writer.finish().unwrap();
+    }
+
+    /// Verifies that flush() triggers Z_SYNC_FLUSH, producing output that
+    /// is independently decompressible without finishing the stream.
+    ///
+    /// This mirrors upstream rsync's per-token flush behavior where
+    /// Z_SYNC_FLUSH is called after each token so the receiver can
+    /// decompress tokens individually (token.c:send_deflated_token
+    /// lines 433-434).
+    #[test]
+    fn flush_triggers_sync_flush_producing_decompressible_output() {
+        use compress::zlib::CountingZlibDecoder;
+        use std::io::Read;
+
+        let mut buf = Vec::new();
+        let mut writer = CompressedWriter::new(
+            &mut buf,
+            CompressionAlgorithm::Zlib,
+            CompressionLevel::Default,
+        )
+        .unwrap();
+
+        let token_data = b"first token data for sync flush test";
+        writer.write_all(token_data).unwrap();
+        // flush() should trigger Z_SYNC_FLUSH on the encoder, materializing
+        // all pending compressed data so it can be decompressed immediately.
+        writer.flush().unwrap();
+
+        // The compressed output after flush must be decompressible without
+        // needing more input. This is the key property of Z_SYNC_FLUSH.
+        assert!(!buf.is_empty(), "flush must produce compressed output");
+
+        // Before the fix, flush() only drained the encoder's Vec sink
+        // without calling Z_SYNC_FLUSH. This left data buffered inside
+        // the deflate state, so buf would be empty or contain incomplete
+        // compressed data that cannot be decompressed.
+        //
+        // After the fix, flush() calls encoder.flush() (which triggers
+        // Z_SYNC_FLUSH) before draining, so all data is decompressible.
+        let snapshot = buf.clone();
+        let mut decoder = CountingZlibDecoder::new(snapshot.as_slice());
+        let mut decoded = vec![0u8; token_data.len()];
+        decoder
+            .read_exact(&mut decoded)
+            .expect("sync-flushed data must be decompressible without stream end");
+        assert_eq!(
+            &decoded, token_data,
+            "decompressed output must match original token data"
+        );
+
+        // Write a second token and finish normally
+        let token2 = b"second token after flush";
+        writer.write_all(token2).unwrap();
+        writer.finish().unwrap();
+
+        // Verify full stream decompresses correctly
+        let full = decompress_to_vec(&buf).unwrap();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(token_data);
+        expected.extend_from_slice(token2);
+        assert_eq!(full, expected);
     }
 
     #[cfg(feature = "lz4")]
