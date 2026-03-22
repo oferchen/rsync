@@ -82,8 +82,7 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
         drop(reader);
         drop(stream);
 
-        // Small sleep to allow daemon to fully process
-        thread::sleep(Duration::from_millis(50));
+        // join() blocks until daemon thread finishes processing the connection
         let _result = handle.join();
     }
 

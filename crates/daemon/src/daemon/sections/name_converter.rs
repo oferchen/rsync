@@ -180,10 +180,9 @@ mod name_converter_tests {
     #[cfg(unix)]
     #[test]
     fn broken_pipe_returns_none() {
-        // Child exits immediately, causing broken pipe on write
+        // Child exits immediately, causing broken pipe on write or EOF on read.
+        // The query call blocks on read_line which returns EOF once the child exits.
         let mut nc = NameConverter::spawn("exit 0").expect("spawn should succeed");
-        // Give child time to exit
-        std::thread::sleep(std::time::Duration::from_millis(50));
         assert_eq!(nc.uid_to_name(1000), None);
     }
 

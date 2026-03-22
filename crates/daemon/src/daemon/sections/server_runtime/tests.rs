@@ -216,7 +216,7 @@ fn join_worker_swallows_panicking_thread() {
     let handle = thread::spawn(|| -> WorkerResult {
         panic!("simulated handler crash");
     });
-    thread::sleep(Duration::from_millis(50));
+    // join_worker blocks until the thread completes - no sleep needed
     let result = join_worker(handle);
     assert!(
         result.is_ok(),

@@ -90,11 +90,11 @@ fn skip_unchanged_files_with_checksum() {
     let src_file = test_dir.write_file("source.txt", b"same content").unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"same content").unwrap();
 
-    // Get original mtime
-    let original_mtime = fs::metadata(&dest_file).unwrap().modified().unwrap();
+    // Backdate dest so any write by rsync would produce a different mtime
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(&dest_file, past, past).unwrap();
 
-    // Sleep briefly to ensure mtime would change if file is written
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    let original_mtime = fs::metadata(&dest_file).unwrap().modified().unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -224,12 +224,10 @@ fn update_flag_transfers_when_source_newer() {
     let src_file = test_dir.write_file("source.txt", b"new").unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"old").unwrap();
 
-    // Make source newer than dest
+    // Make source newer than dest by backdating dest
     let src_mtime = fs::metadata(&src_file).unwrap().modified().unwrap();
     let older_time = src_mtime - std::time::Duration::from_secs(10);
     filetime::set_file_mtime(&dest_file, filetime::FileTime::from_system_time(older_time)).unwrap();
-
-    std::thread::sleep(std::time::Duration::from_millis(10));
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -431,10 +429,11 @@ fn size_only_skips_files_with_same_size() {
     let src_file = test_dir.write_file("source.txt", b"12345").unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"abcde").unwrap();
 
-    // Same size (5 bytes) but different content
-    let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
+    // Backdate dest so any write by rsync would produce a different mtime
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(&dest_file, past, past).unwrap();
 
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([

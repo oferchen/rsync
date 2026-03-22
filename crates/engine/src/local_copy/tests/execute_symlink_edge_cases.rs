@@ -733,8 +733,10 @@ fn symlink_omit_link_times_option() {
     let link = source_root.join("link");
     symlink(Path::new("target.txt"), &link).expect("create symlink");
 
-    // Add a small delay so times differ
-    thread::sleep(Duration::from_millis(50));
+    // Backdate source files so times differ from "now" without sleeping
+    let past = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+    filetime::set_file_mtime(&target, past).expect("backdate target");
+    filetime::set_symlink_file_times(&link, past, past).expect("backdate link");
 
     let dest_root = temp.path().join("dest");
     let operands = vec![

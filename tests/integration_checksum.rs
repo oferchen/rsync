@@ -14,7 +14,6 @@ use integration::helpers::*;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 #[test]
 fn checksum_flag_long_form_accepted() {
@@ -65,8 +64,7 @@ fn checksum_mode_ignores_mtime_for_identical_content() {
     // Record destination mtime before sync
     let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
 
-    // Brief sleep to ensure mtime would change if file is written
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -148,7 +146,7 @@ fn checksum_skips_identical_files() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -240,7 +238,7 @@ fn checksum_empty_files() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -265,7 +263,7 @@ fn checksum_small_files() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -293,7 +291,7 @@ fn checksum_medium_files() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -321,7 +319,7 @@ fn checksum_large_files() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -389,7 +387,7 @@ fn checksum_recursive_directory() {
     set_file_mtime(dest_dir.join("file2.txt"), preserved_time).unwrap();
     set_file_mtime(dest_dir.join("subdir/file3.txt"), preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -430,7 +428,7 @@ fn checksum_recursive_with_some_changes() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(dest_dir.join("unchanged.txt"), preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -477,7 +475,7 @@ fn checksum_with_archive_mode() {
     set_file_mtime(src_dir.join("file.txt"), preserved_time).unwrap();
     set_file_mtime(dest_dir.join("file.txt"), preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -594,7 +592,7 @@ fn upstream_comparison_checksum_skips_identical() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&upstream_dest, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let upstream_output = run_upstream_rsync(&[
         "--checksum",
@@ -610,7 +608,7 @@ fn upstream_comparison_checksum_skips_identical() {
 
     set_file_mtime(&oc_dest, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -778,7 +776,7 @@ fn checksum_binary_files() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -810,7 +808,7 @@ fn checksum_files_with_special_characters_in_name() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -894,7 +892,7 @@ fn checksum_very_small_files() {
         let preserved_time = FileTime::from_unix_time(1600000000, 0);
         set_file_mtime(&dest_file, preserved_time).unwrap();
 
-        std::thread::sleep(Duration::from_millis(10));
+        // Dest file is backdated via filetime - no sleep needed to detect writes
 
         let mut cmd = RsyncCommand::new();
         cmd.args([
@@ -927,7 +925,7 @@ fn checksum_buffer_boundary_sizes() {
         let preserved_time = FileTime::from_unix_time(1600000000, 0);
         set_file_mtime(&dest_file, preserved_time).unwrap();
 
-        std::thread::sleep(Duration::from_millis(10));
+        // Dest file is backdated via filetime - no sleep needed to detect writes
 
         let mut cmd = RsyncCommand::new();
         cmd.args([
@@ -957,7 +955,7 @@ fn checksum_all_zeros_file() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -983,7 +981,7 @@ fn checksum_all_ones_file() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -1013,7 +1011,7 @@ fn checksum_alternating_pattern() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -1079,7 +1077,7 @@ fn checksum_repeated_transfer_is_idempotent() {
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     // Run transfer multiple times
     for _ in 0..3 {
@@ -1123,7 +1121,7 @@ fn checksum_with_archive_preserves_all_metadata() {
     let dest_time_before =
         FileTime::from_last_modification_time(&fs::metadata(dest_dir.join("file.txt")).unwrap());
 
-    std::thread::sleep(Duration::from_millis(50));
+    // Dest file is backdated via filetime - no sleep needed to detect writes
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
