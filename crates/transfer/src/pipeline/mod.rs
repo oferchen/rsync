@@ -216,36 +216,6 @@ impl Default for AsyncPipelineConfig {
     }
 }
 
-impl AsyncPipelineConfig {
-    /// Sets the job channel capacity for backpressure control.
-    #[must_use]
-    pub const fn with_job_channel_capacity(mut self, capacity: usize) -> Self {
-        self.job_channel_capacity = capacity;
-        self
-    }
-
-    /// Sets the base pipeline configuration.
-    #[must_use]
-    pub fn with_pipeline_config(mut self, config: PipelineConfig) -> Self {
-        self.pipeline = config;
-        self
-    }
-
-    /// Enables or disables the retry channel.
-    #[must_use]
-    pub const fn with_retry(mut self, enabled: bool) -> Self {
-        self.retry_enabled = enabled;
-        self
-    }
-
-    /// Sets the maximum retry count per file.
-    #[must_use]
-    pub const fn with_max_retries(mut self, max: u8) -> Self {
-        self.max_retries = max;
-        self
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
