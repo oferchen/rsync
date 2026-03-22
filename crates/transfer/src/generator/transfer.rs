@@ -25,6 +25,8 @@ use super::delta::{
 };
 use super::item_flags::ItemFlags;
 use super::protocol_io::calculate_duration_ms;
+use crate::role_trailer::error_location;
+
 use super::{GeneratorContext, GeneratorStats, TransferLoopResult, is_early_close_error};
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::receiver::SumHead;
@@ -374,7 +376,8 @@ impl GeneratorContext {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "expected goodbye NDX_DONE (-1) from receiver, got {ndx}{}",
+                    "expected goodbye NDX_DONE (-1) from receiver, got {ndx} {}{}",
+                    error_location!(),
                     crate::role_trailer::sender()
                 ),
             ));
@@ -420,7 +423,8 @@ impl GeneratorContext {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!(
-                                "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx}{}",
+                                "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx} {}{}",
+                                error_location!(),
                                 crate::role_trailer::sender()
                             ),
                         ));
@@ -525,7 +529,8 @@ impl GeneratorContext {
                 io::Error::new(
                     e.kind(),
                     format!(
-                        "failed to activate INPUT multiplex: {e}{}",
+                        "failed to activate INPUT multiplex: {e} {}{}",
+                        error_location!(),
                         crate::role_trailer::sender()
                     ),
                 )

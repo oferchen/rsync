@@ -18,6 +18,8 @@ use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum, create_ndx_codec};
 use protocol::wire::SignatureBlock;
 
+use crate::role_trailer::error_location;
+
 use super::GeneratorContext;
 use super::item_flags::ItemFlags;
 use crate::receiver::SumHead;
