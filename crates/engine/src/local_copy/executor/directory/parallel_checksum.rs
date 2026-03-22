@@ -317,11 +317,11 @@ impl ChecksumCache {
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::tempdir;
+    use test_support::create_tempdir;
 
     #[test]
     fn prefetch_checksums_matches_identical_files() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
 
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn prefetch_checksums_detects_different_files() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
 
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn prefetch_checksums_skips_size_mismatch() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
 
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn prefetch_checksums_handles_missing_destination() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("nonexistent.txt");
 
@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn prefetch_checksums_parallel_multiple_files() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let mut pairs = Vec::new();
 
         // Create 100 file pairs
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn prefetch_checksums_works_with_xxh3() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
 
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn should_skip_with_prefetched_returns_match_status() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
 

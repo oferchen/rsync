@@ -24,7 +24,7 @@ fn spawn_and_shutdown() {
 
 #[test]
 fn write_and_commit_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let file_path = dir.path().join("output.dat");
 
     let h = spawn_disk_thread(DiskCommitConfig::default());
@@ -59,7 +59,7 @@ fn write_and_commit_file() {
 
 #[test]
 fn abort_cleans_up_temp_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let file_path = dir.path().join("aborted.dat");
 
     let h = spawn_disk_thread(DiskCommitConfig::default());
@@ -96,7 +96,7 @@ fn abort_cleans_up_temp_file() {
 
 #[test]
 fn multiple_files_sequential() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let h = spawn_disk_thread(DiskCommitConfig::default());
 
     for i in 0..3 {
@@ -144,7 +144,7 @@ fn channel_disconnect_stops_thread() {
 
 #[test]
 fn multi_chunk_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let file_path = dir.path().join("multi_chunk.dat");
 
     let h = spawn_disk_thread(DiskCommitConfig::default());
@@ -176,7 +176,7 @@ fn multi_chunk_file() {
 
 #[test]
 fn buffer_recycling() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let file_path = dir.path().join("recycle.dat");
 
     let h = spawn_disk_thread(DiskCommitConfig::default());
@@ -216,7 +216,7 @@ fn buffer_recycling() {
 
 #[test]
 fn whole_file_coalesced() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let file_path = dir.path().join("whole.dat");
 
     let h = spawn_disk_thread(DiskCommitConfig::default());

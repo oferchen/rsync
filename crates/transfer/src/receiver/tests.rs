@@ -857,11 +857,9 @@ fn basis_file_result_is_not_empty_when_has_signature() {
 fn try_reference_directories_finds_file_in_first_directory() {
     use super::basis::try_reference_directories;
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
-    use tempfile::tempdir;
-
     // Create two reference directories
-    let ref_dir1 = tempdir().unwrap();
-    let ref_dir2 = tempdir().unwrap();
+    let ref_dir1 = test_support::create_tempdir();
+    let ref_dir2 = test_support::create_tempdir();
 
     // Create a file in the first reference directory
     let test_file = ref_dir1.path().join("subdir/test.txt");
@@ -892,11 +890,9 @@ fn try_reference_directories_finds_file_in_first_directory() {
 fn try_reference_directories_finds_file_in_second_directory() {
     use super::basis::try_reference_directories;
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
-    use tempfile::tempdir;
-
     // Create two reference directories
-    let ref_dir1 = tempdir().unwrap();
-    let ref_dir2 = tempdir().unwrap();
+    let ref_dir1 = test_support::create_tempdir();
+    let ref_dir2 = test_support::create_tempdir();
 
     // Create a file only in the second reference directory
     let test_file = ref_dir2.path().join("test.txt");
@@ -926,9 +922,7 @@ fn try_reference_directories_finds_file_in_second_directory() {
 fn try_reference_directories_returns_none_when_not_found() {
     use super::basis::try_reference_directories;
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
-    use tempfile::tempdir;
-
-    let ref_dir = tempdir().unwrap();
+    let ref_dir = test_support::create_tempdir();
 
     let ref_dirs = vec![ReferenceDirectory {
         kind: ReferenceDirectoryKind::Link,
@@ -2254,7 +2248,7 @@ mod relative_parents {
 
     #[test]
     fn ensure_relative_parents_creates_missing_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dest = tmp.path();
 
         let entries = vec![FileEntry::new_file("a/b/c/file.txt".into(), 100, 0o644)];
@@ -2269,7 +2263,7 @@ mod relative_parents {
 
     #[test]
     fn ensure_relative_parents_handles_multiple_entries_shared_prefix() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dest = tmp.path();
 
         let entries = vec![
@@ -2288,7 +2282,7 @@ mod relative_parents {
 
     #[test]
     fn ensure_relative_parents_noop_without_relative_flag() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dest = tmp.path();
 
         let entries = vec![FileEntry::new_file("a/b/file.txt".into(), 100, 0o644)];
@@ -2302,7 +2296,7 @@ mod relative_parents {
 
     #[test]
     fn ensure_relative_parents_skips_dot_path() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dest = tmp.path();
 
         let entries = vec![
@@ -2317,7 +2311,7 @@ mod relative_parents {
 
     #[test]
     fn ensure_relative_parents_handles_directory_entries() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dest = tmp.path();
 
         // Directory entry at "a/b/c" - parents "a/" and "a/b/" should be created
@@ -2335,7 +2329,7 @@ mod relative_parents {
 
     #[test]
     fn ensure_relative_parents_existing_dirs_not_clobbered() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dest = tmp.path();
 
         // Pre-create directory with a file inside
@@ -2358,7 +2352,7 @@ mod relative_parents {
 
     #[test]
     fn ensure_relative_parents_dry_run_creates_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dest = tmp.path();
 
         let handshake = test_handshake();
@@ -2388,7 +2382,7 @@ mod relative_parents {
 
     #[test]
     fn ensure_relative_parents_single_component_path() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dest = tmp.path();
 
         // File at root level - no parent creation needed
