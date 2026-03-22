@@ -99,6 +99,7 @@ tracing = ["dep:tracing"]
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.15"
+test-support = { path = "../test-support" }
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
 apple-fs = { path = "../apple-fs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

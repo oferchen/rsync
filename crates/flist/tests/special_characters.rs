@@ -47,7 +47,7 @@ fn create_test_dir(root: &Path, name: &OsStr) -> PathBuf {
 /// Verifies handling of single space in filename.
 #[test]
 fn single_space_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces");
     fs::create_dir(&root).expect("create root");
 
@@ -63,7 +63,7 @@ fn single_space_in_filename() {
 /// Verifies handling of multiple consecutive spaces.
 #[test]
 fn multiple_consecutive_spaces() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces");
     fs::create_dir(&root).expect("create root");
 
@@ -82,7 +82,7 @@ fn multiple_consecutive_spaces() {
 /// Verifies handling of leading space in filename.
 #[test]
 fn leading_space_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces");
     fs::create_dir(&root).expect("create root");
 
@@ -98,7 +98,7 @@ fn leading_space_in_filename() {
 /// Verifies handling of trailing space in filename.
 #[test]
 fn trailing_space_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces");
     fs::create_dir(&root).expect("create root");
 
@@ -114,7 +114,7 @@ fn trailing_space_in_filename() {
 /// Verifies handling of space-only filename.
 #[test]
 fn space_only_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces");
     fs::create_dir(&root).expect("create root");
 
@@ -130,7 +130,7 @@ fn space_only_filename() {
 /// Verifies handling of multiple spaces only filename.
 #[test]
 fn multiple_spaces_only_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces");
     fs::create_dir(&root).expect("create root");
 
@@ -146,7 +146,7 @@ fn multiple_spaces_only_filename() {
 /// Verifies handling of directory with spaces.
 #[test]
 fn directory_with_spaces() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces");
     fs::create_dir(&root).expect("create root");
 
@@ -164,7 +164,7 @@ fn directory_with_spaces() {
 /// Verifies handling of single quote in filename.
 #[test]
 fn single_quote_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("quotes");
     fs::create_dir(&root).expect("create root");
 
@@ -180,7 +180,7 @@ fn single_quote_in_filename() {
 /// Verifies handling of double quote in filename.
 #[test]
 fn double_quote_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("quotes");
     fs::create_dir(&root).expect("create root");
 
@@ -196,7 +196,7 @@ fn double_quote_in_filename() {
 /// Verifies handling of mixed quotes in filename.
 #[test]
 fn mixed_quotes_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("quotes");
     fs::create_dir(&root).expect("create root");
 
@@ -212,7 +212,7 @@ fn mixed_quotes_in_filename() {
 /// Verifies handling of consecutive quotes.
 #[test]
 fn consecutive_quotes() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("quotes");
     fs::create_dir(&root).expect("create root");
 
@@ -228,7 +228,7 @@ fn consecutive_quotes() {
 /// Verifies handling of quotes with spaces.
 #[test]
 fn quotes_with_spaces() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("quotes");
     fs::create_dir(&root).expect("create root");
 
@@ -246,7 +246,7 @@ fn quotes_with_spaces() {
 /// Verifies handling of directory with quotes.
 #[test]
 fn directory_with_quotes() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("quotes");
     fs::create_dir(&root).expect("create root");
 
@@ -267,7 +267,7 @@ fn directory_with_quotes() {
 /// Verifies handling of backslash in filename.
 #[test]
 fn backslash_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("backslash");
     fs::create_dir(&root).expect("create root");
 
@@ -283,7 +283,7 @@ fn backslash_in_filename() {
 /// Verifies handling of consecutive backslashes.
 #[test]
 fn consecutive_backslashes() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("backslash");
     fs::create_dir(&root).expect("create root");
 
@@ -299,7 +299,7 @@ fn consecutive_backslashes() {
 /// Verifies handling of backslash at end of filename.
 #[test]
 fn trailing_backslash() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("backslash");
     fs::create_dir(&root).expect("create root");
 
@@ -315,7 +315,7 @@ fn trailing_backslash() {
 /// Verifies handling of backslash with escape-like sequences.
 #[test]
 fn backslash_escape_sequences() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("backslash");
     fs::create_dir(&root).expect("create root");
 
@@ -336,7 +336,7 @@ fn backslash_escape_sequences() {
 /// Verifies handling of directory with backslash.
 #[test]
 fn directory_with_backslash() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("backslash");
     fs::create_dir(&root).expect("create root");
 
@@ -354,7 +354,7 @@ fn directory_with_backslash() {
 /// Verifies handling of newline in filename.
 #[test]
 fn newline_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("newline");
     fs::create_dir(&root).expect("create root");
 
@@ -370,7 +370,7 @@ fn newline_in_filename() {
 /// Verifies handling of carriage return in filename.
 #[test]
 fn carriage_return_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("newline");
     fs::create_dir(&root).expect("create root");
 
@@ -386,7 +386,7 @@ fn carriage_return_in_filename() {
 /// Verifies handling of CRLF in filename.
 #[test]
 fn crlf_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("newline");
     fs::create_dir(&root).expect("create root");
 
@@ -402,7 +402,7 @@ fn crlf_in_filename() {
 /// Verifies handling of directory with newline.
 #[test]
 fn directory_with_newline() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("newline");
     fs::create_dir(&root).expect("create root");
 
@@ -420,7 +420,7 @@ fn directory_with_newline() {
 /// Verifies handling of tab in filename.
 #[test]
 fn tab_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tab");
     fs::create_dir(&root).expect("create root");
 
@@ -436,7 +436,7 @@ fn tab_in_filename() {
 /// Verifies handling of leading tab in filename.
 #[test]
 fn leading_tab_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tab");
     fs::create_dir(&root).expect("create root");
 
@@ -452,7 +452,7 @@ fn leading_tab_in_filename() {
 /// Verifies handling of trailing tab in filename.
 #[test]
 fn trailing_tab_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tab");
     fs::create_dir(&root).expect("create root");
 
@@ -468,7 +468,7 @@ fn trailing_tab_in_filename() {
 /// Verifies handling of consecutive tabs.
 #[test]
 fn consecutive_tabs() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tab");
     fs::create_dir(&root).expect("create root");
 
@@ -484,7 +484,7 @@ fn consecutive_tabs() {
 /// Verifies handling of tab and space mix.
 #[test]
 fn tab_and_space_mix() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tab");
     fs::create_dir(&root).expect("create root");
 
@@ -500,7 +500,7 @@ fn tab_and_space_mix() {
 /// Verifies handling of directory with tab.
 #[test]
 fn directory_with_tab() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tab");
     fs::create_dir(&root).expect("create root");
 
@@ -518,7 +518,7 @@ fn directory_with_tab() {
 /// Verifies handling of bell character (ASCII 7) in filename.
 #[test]
 fn bell_character_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
@@ -537,7 +537,7 @@ fn bell_character_in_filename() {
 /// Verifies handling of backspace character (ASCII 8) in filename.
 #[test]
 fn backspace_character_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
@@ -556,7 +556,7 @@ fn backspace_character_in_filename() {
 /// Verifies handling of escape character (ASCII 27) in filename.
 #[test]
 fn escape_character_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
@@ -575,7 +575,7 @@ fn escape_character_in_filename() {
 /// Verifies handling of form feed character (ASCII 12) in filename.
 #[test]
 fn form_feed_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
@@ -594,7 +594,7 @@ fn form_feed_in_filename() {
 /// Verifies handling of vertical tab character (ASCII 11) in filename.
 #[test]
 fn vertical_tab_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
@@ -613,7 +613,7 @@ fn vertical_tab_in_filename() {
 /// Verifies handling of multiple control characters.
 #[test]
 fn multiple_control_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
@@ -632,7 +632,7 @@ fn multiple_control_characters() {
 /// Verifies handling of DEL character (ASCII 127) in filename.
 #[test]
 fn del_character_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
@@ -651,7 +651,7 @@ fn del_character_in_filename() {
 /// Verifies handling of directory with control characters.
 #[test]
 fn directory_with_control_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("control");
     fs::create_dir(&root).expect("create root");
 
@@ -668,7 +668,7 @@ fn directory_with_control_characters() {
 /// Verifies handling of asterisk in filename.
 #[test]
 fn asterisk_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -684,7 +684,7 @@ fn asterisk_in_filename() {
 /// Verifies handling of question mark in filename.
 #[test]
 fn question_mark_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -700,7 +700,7 @@ fn question_mark_in_filename() {
 /// Verifies handling of square brackets in filename.
 #[test]
 fn square_brackets_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -716,7 +716,7 @@ fn square_brackets_in_filename() {
 /// Verifies handling of glob pattern in filename.
 #[test]
 fn glob_pattern_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -736,7 +736,7 @@ fn glob_pattern_in_filename() {
 /// Verifies handling of combined metacharacters.
 #[test]
 fn combined_metacharacters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -752,7 +752,7 @@ fn combined_metacharacters() {
 /// Verifies handling of curly braces in filename (brace expansion).
 #[test]
 fn curly_braces_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -768,7 +768,7 @@ fn curly_braces_in_filename() {
 /// Verifies handling of pipe character in filename.
 #[test]
 fn pipe_character_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -784,7 +784,7 @@ fn pipe_character_in_filename() {
 /// Verifies handling of ampersand in filename.
 #[test]
 fn ampersand_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -800,7 +800,7 @@ fn ampersand_in_filename() {
 /// Verifies handling of semicolon in filename.
 #[test]
 fn semicolon_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -816,7 +816,7 @@ fn semicolon_in_filename() {
 /// Verifies handling of dollar sign in filename.
 #[test]
 fn dollar_sign_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -834,7 +834,7 @@ fn dollar_sign_in_filename() {
 /// Verifies handling of backtick in filename.
 #[test]
 fn backtick_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -850,7 +850,7 @@ fn backtick_in_filename() {
 /// Verifies handling of parentheses in filename.
 #[test]
 fn parentheses_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -866,7 +866,7 @@ fn parentheses_in_filename() {
 /// Verifies handling of redirection characters in filename.
 #[test]
 fn redirection_characters_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -886,7 +886,7 @@ fn redirection_characters_in_filename() {
 /// Verifies handling of directory with shell metacharacters.
 #[test]
 fn directory_with_shell_metacharacters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metachar");
     fs::create_dir(&root).expect("create root");
 
@@ -904,7 +904,7 @@ fn directory_with_shell_metacharacters() {
 /// Verifies handling of single leading dot (hidden file).
 #[test]
 fn leading_single_dot() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dots");
     fs::create_dir(&root).expect("create root");
 
@@ -920,7 +920,7 @@ fn leading_single_dot() {
 /// Verifies handling of double leading dots (but not ..).
 #[test]
 fn leading_double_dots_in_name() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dots");
     fs::create_dir(&root).expect("create root");
 
@@ -938,7 +938,7 @@ fn leading_double_dots_in_name() {
 /// Verifies handling of trailing dot.
 #[test]
 fn trailing_single_dot() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dots");
     fs::create_dir(&root).expect("create root");
 
@@ -954,7 +954,7 @@ fn trailing_single_dot() {
 /// Verifies handling of multiple trailing dots.
 #[test]
 fn trailing_multiple_dots() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dots");
     fs::create_dir(&root).expect("create root");
 
@@ -972,7 +972,7 @@ fn trailing_multiple_dots() {
 /// Verifies handling of dots-only filename.
 #[test]
 fn dots_only_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dots");
     fs::create_dir(&root).expect("create root");
 
@@ -991,7 +991,7 @@ fn dots_only_filename() {
 /// Verifies handling of hidden directory (leading dot).
 #[test]
 fn hidden_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dots");
     fs::create_dir(&root).expect("create root");
 
@@ -1009,7 +1009,7 @@ fn hidden_directory() {
 /// Verifies multiple consecutive dots in middle.
 #[test]
 fn dots_in_middle() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dots");
     fs::create_dir(&root).expect("create root");
 
@@ -1027,7 +1027,7 @@ fn dots_in_middle() {
 /// Verifies handling of single leading dash.
 #[test]
 fn leading_single_dash() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dashes");
     fs::create_dir(&root).expect("create root");
 
@@ -1043,7 +1043,7 @@ fn leading_single_dash() {
 /// Verifies handling of double leading dash.
 #[test]
 fn leading_double_dash() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dashes");
     fs::create_dir(&root).expect("create root");
 
@@ -1059,7 +1059,7 @@ fn leading_double_dash() {
 /// Verifies handling of dash-only filename.
 #[test]
 fn dash_only_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dashes");
     fs::create_dir(&root).expect("create root");
 
@@ -1077,7 +1077,7 @@ fn dash_only_filename() {
 /// Verifies handling of option-like filename.
 #[test]
 fn option_like_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dashes");
     fs::create_dir(&root).expect("create root");
 
@@ -1099,7 +1099,7 @@ fn option_like_filename() {
 /// Verifies handling of trailing dash.
 #[test]
 fn trailing_dash() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dashes");
     fs::create_dir(&root).expect("create root");
 
@@ -1117,7 +1117,7 @@ fn trailing_dash() {
 /// Verifies handling of directory with leading dash.
 #[test]
 fn directory_with_leading_dash() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dashes");
     fs::create_dir(&root).expect("create root");
 
@@ -1135,7 +1135,7 @@ fn directory_with_leading_dash() {
 /// Tests multiple special character categories in same directory.
 #[test]
 fn mixed_special_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed");
     fs::create_dir(&root).expect("create root");
 
@@ -1157,7 +1157,7 @@ fn mixed_special_characters() {
 /// Tests deeply nested paths with special characters.
 #[test]
 fn deeply_nested_special_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("nested");
     fs::create_dir(&root).expect("create root");
 
@@ -1179,7 +1179,7 @@ fn deeply_nested_special_characters() {
 /// Tests entry metadata access with special character filenames.
 #[test]
 fn metadata_access_with_special_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metadata");
     fs::create_dir(&root).expect("create root");
 
@@ -1203,7 +1203,7 @@ fn metadata_access_with_special_characters() {
 /// Tests file_name accessor with special character filenames.
 #[test]
 fn file_name_with_special_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("filename");
     fs::create_dir(&root).expect("create root");
 
@@ -1224,7 +1224,7 @@ fn file_name_with_special_characters() {
 /// Tests sorting with mixed special characters.
 #[test]
 fn sorting_with_special_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("sorting");
     fs::create_dir(&root).expect("create root");
 
@@ -1257,7 +1257,7 @@ fn sorting_with_special_characters() {
 /// Verifies handling of Windows reserved device names (valid on Unix).
 #[test]
 fn windows_reserved_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("reserved");
     fs::create_dir(&root).expect("create root");
 
@@ -1287,7 +1287,7 @@ fn windows_reserved_names() {
 /// Verifies handling of Windows reserved names with extensions.
 #[test]
 fn windows_reserved_names_with_extensions() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("reserved_ext");
     fs::create_dir(&root).expect("create root");
 
@@ -1316,7 +1316,7 @@ fn windows_reserved_names_with_extensions() {
 /// Verifies handling of Windows reserved names in lowercase.
 #[test]
 fn windows_reserved_names_lowercase() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("reserved_lower");
     fs::create_dir(&root).expect("create root");
 
@@ -1336,7 +1336,7 @@ fn windows_reserved_names_lowercase() {
 /// Verifies handling of Windows reserved names as directory names.
 #[test]
 fn windows_reserved_names_as_directories() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("reserved_dirs");
     fs::create_dir(&root).expect("create root");
 
@@ -1354,7 +1354,7 @@ fn windows_reserved_names_as_directories() {
 /// Verifies handling of colon in filename (valid on Unix, invalid on Windows).
 #[test]
 fn colon_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("colon");
     fs::create_dir(&root).expect("create root");
 
@@ -1370,7 +1370,7 @@ fn colon_in_filename() {
 /// Verifies handling of colon at various positions.
 #[test]
 fn colon_positions() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("colon_pos");
     fs::create_dir(&root).expect("create root");
 
@@ -1392,7 +1392,7 @@ fn colon_positions() {
 /// Verifies handling of directory with colon.
 #[test]
 fn directory_with_colon() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("colon_dir");
     fs::create_dir(&root).expect("create root");
 
@@ -1410,7 +1410,7 @@ fn directory_with_colon() {
 /// Verifies handling of hash/pound sign in filename.
 #[test]
 fn hash_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("hash");
     fs::create_dir(&root).expect("create root");
 
@@ -1430,7 +1430,7 @@ fn hash_in_filename() {
 /// Verifies handling of at sign in filename.
 #[test]
 fn at_sign_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("at");
     fs::create_dir(&root).expect("create root");
 
@@ -1450,7 +1450,7 @@ fn at_sign_in_filename() {
 /// Verifies handling of percent sign in filename.
 #[test]
 fn percent_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("percent");
     fs::create_dir(&root).expect("create root");
 
@@ -1470,7 +1470,7 @@ fn percent_in_filename() {
 /// Verifies handling of caret in filename.
 #[test]
 fn caret_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("caret");
     fs::create_dir(&root).expect("create root");
 
@@ -1490,7 +1490,7 @@ fn caret_in_filename() {
 /// Verifies handling of tilde in filename.
 #[test]
 fn tilde_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tilde");
     fs::create_dir(&root).expect("create root");
 
@@ -1512,7 +1512,7 @@ fn tilde_in_filename() {
 /// Verifies handling of plus sign in filename.
 #[test]
 fn plus_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("plus");
     fs::create_dir(&root).expect("create root");
 
@@ -1534,7 +1534,7 @@ fn plus_in_filename() {
 /// Verifies handling of equals sign in filename.
 #[test]
 fn equals_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("equals");
     fs::create_dir(&root).expect("create root");
 
@@ -1556,7 +1556,7 @@ fn equals_in_filename() {
 /// Verifies handling of exclamation mark in filename.
 #[test]
 fn exclamation_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("exclaim");
     fs::create_dir(&root).expect("create root");
 
@@ -1578,7 +1578,7 @@ fn exclamation_in_filename() {
 /// Verifies handling of comma in filename.
 #[test]
 fn comma_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("comma");
     fs::create_dir(&root).expect("create root");
 
@@ -1603,7 +1603,7 @@ fn comma_in_filename() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore = "macOS APFS rejects non-UTF8 filenames")]
 fn non_utf8_bytes_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("nonutf8");
     fs::create_dir(&root).expect("create root");
 
@@ -1625,7 +1625,7 @@ fn non_utf8_bytes_in_filename() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore = "macOS APFS rejects non-UTF8 filenames")]
 fn high_bytes_in_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("highbytes");
     fs::create_dir(&root).expect("create root");
 
@@ -1650,7 +1650,7 @@ fn high_bytes_in_filename() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore = "macOS APFS rejects non-UTF8 filenames")]
 fn directory_with_non_utf8_name() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("nonutf8_dir");
     fs::create_dir(&root).expect("create root");
 
@@ -1669,7 +1669,7 @@ fn directory_with_non_utf8_name() {
 /// Verifies handling of all ASCII printable characters in one filename.
 #[test]
 fn all_ascii_printable_combined() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("allascii");
     fs::create_dir(&root).expect("create root");
 
@@ -1694,7 +1694,7 @@ fn all_ascii_printable_combined() {
 /// Verifies each ASCII printable character in separate files.
 #[test]
 fn each_ascii_printable_separately() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("eachascii");
     fs::create_dir(&root).expect("create root");
 
@@ -1719,7 +1719,7 @@ fn each_ascii_printable_separately() {
 /// Verifies handling of filename that looks like current directory.
 #[test]
 fn filename_looks_like_current_dir() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dotlike");
     fs::create_dir(&root).expect("create root");
 
@@ -1744,7 +1744,7 @@ fn filename_looks_like_current_dir() {
 /// Verifies handling of very short filenames.
 #[test]
 fn very_short_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("short");
     fs::create_dir(&root).expect("create root");
 
@@ -1769,7 +1769,7 @@ fn very_short_filenames() {
 /// Verifies handling of files with only special characters.
 #[test]
 fn only_special_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("onlyspecial");
     fs::create_dir(&root).expect("create root");
 
@@ -1811,7 +1811,7 @@ fn only_special_characters() {
 /// Verifies handling of various whitespace characters.
 #[test]
 fn various_whitespace_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("whitespace");
     fs::create_dir(&root).expect("create root");
 
@@ -1830,7 +1830,7 @@ fn various_whitespace_characters() {
 /// Verifies handling of mixed whitespace in single filename.
 #[test]
 fn mixed_whitespace_single_file() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixedws");
     fs::create_dir(&root).expect("create root");
 
@@ -1847,7 +1847,7 @@ fn mixed_whitespace_single_file() {
 /// Verifies handling of filenames that could cause shell injection.
 #[test]
 fn shell_injection_patterns() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("injection");
     fs::create_dir(&root).expect("create root");
 
@@ -1879,7 +1879,7 @@ fn shell_injection_patterns() {
 /// Verifies handling of filenames with escape sequences.
 #[test]
 fn escape_sequence_patterns() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("escape");
     fs::create_dir(&root).expect("create root");
 
@@ -1901,7 +1901,7 @@ fn escape_sequence_patterns() {
 /// Verifies handling of Unicode look-alikes.
 #[test]
 fn unicode_lookalikes() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("lookalikes");
     fs::create_dir(&root).expect("create root");
 
@@ -1919,7 +1919,7 @@ fn unicode_lookalikes() {
 /// Verifies handling of fullwidth characters.
 #[test]
 fn fullwidth_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("fullwidth");
     fs::create_dir(&root).expect("create root");
 
