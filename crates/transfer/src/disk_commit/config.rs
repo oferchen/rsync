@@ -10,13 +10,6 @@ use std::sync::Arc;
 use metadata::MetadataOptions;
 use protocol::acl::AclCache;
 
-/// Default bounded-channel capacity.
-///
-/// 128 slots x ~32 KB average chunk = 4 MB peak memory from buffered messages.
-/// Larger capacity reduces spin-wait contention when the disk thread falls
-/// behind, keeping the network thread productive instead of busy-spinning.
-pub const DEFAULT_CHANNEL_CAPACITY: usize = 128;
-
 /// Backup configuration for creating backup copies before overwriting.
 ///
 /// # Upstream Reference
@@ -38,8 +31,6 @@ pub struct BackupConfig {
 pub struct DiskCommitConfig {
     /// Whether to fsync files after writing.
     pub do_fsync: bool,
-    /// Bounded channel capacity (back-pressure threshold).
-    pub channel_capacity: usize,
     /// Whether to use sparse file writing.
     pub use_sparse: bool,
     /// Temporary directory for staging received files before final placement.
@@ -66,7 +57,6 @@ impl Default for DiskCommitConfig {
     fn default() -> Self {
         Self {
             do_fsync: false,
-            channel_capacity: DEFAULT_CHANNEL_CAPACITY,
             use_sparse: false,
             temp_dir: None,
             file_list: None,
