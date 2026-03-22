@@ -1108,7 +1108,9 @@ fn test_policy_large_payload_roundtrip() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("large_roundtrip.bin");
     // 1 MB payload
-    let test_data: Vec<u8> = (0..1024 * 1024).map(|i| ((i * 17 + 5) % 256) as u8).collect();
+    let test_data: Vec<u8> = (0..1024 * 1024)
+        .map(|i| ((i * 17 + 5) % 256) as u8)
+        .collect();
 
     {
         let file = std::fs::File::create(&path).unwrap();

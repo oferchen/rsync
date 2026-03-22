@@ -563,7 +563,9 @@ fn test_choose_compression_empty_list() {
 
 #[test]
 fn test_daemon_client_handles_empty_capabilities() {
-    // Edge case: server sends empty capability lists (should fall back to defaults)
+    // Edge case: server sends empty capability lists.
+    // Upstream recv_negotiate_str (compat.c:383-406) treats an empty list
+    // as a hard error - no fallback to defaults.
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let server_lists = b"\x00\x00"; // Two empty vstrings
     let mut stdin = &server_lists[..];
@@ -577,14 +579,11 @@ fn test_daemon_client_handles_empty_capabilities() {
         true,  // send_compression
         true,  // is_daemon_mode
         false, // is_server = false
-    )
-    .unwrap();
+    );
 
-    // Should fall back to defaults when no match found
-    assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-    assert_eq!(result.compression, CompressionAlgorithm::None);
-    // Client also sends its lists (bidirectional)
-    assert!(!stdout.is_empty());
+    // Empty checksum list from server is a negotiation failure
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
 }
 
 #[test]
@@ -1683,7 +1682,10 @@ fn phase5_negotiate_only_unsupported_checksums() {
     // upstream: compat.c:383-406 - no common algorithm is a hard error
     let list = "blake3 sha256 sha512 xxh256";
     let result = choose_checksum_algorithm(list);
-    assert!(result.is_err(), "no common algorithm should be a negotiation error");
+    assert!(
+        result.is_err(),
+        "no common algorithm should be a negotiation error"
+    );
 }
 
 #[test]
@@ -1699,7 +1701,10 @@ fn phase5_negotiate_whitespace_only_list() {
     // upstream: compat.c:383-406 - whitespace-only list has no valid algorithms
     let list = "   \t   \n   ";
     let checksum = choose_checksum_algorithm(list);
-    assert!(checksum.is_err(), "whitespace-only list should be a negotiation error");
+    assert!(
+        checksum.is_err(),
+        "whitespace-only list should be a negotiation error"
+    );
 
     let compression = choose_compression_algorithm(list).unwrap();
     assert_eq!(compression, CompressionAlgorithm::None);
@@ -1948,7 +1953,10 @@ fn capability_fallback_unknown_checksum_strings() {
     // upstream: compat.c:383-406 - all unknown algorithm names is a hard error
     let remote_list = "blake2b blake3 argon2 scrypt";
     let result = choose_checksum_algorithm(remote_list);
-    assert!(result.is_err(), "all unknown algorithms should be a negotiation error");
+    assert!(
+        result.is_err(),
+        "all unknown algorithms should be a negotiation error"
+    );
 }
 
 /// Tests handling of completely unknown compression algorithm names.
@@ -1984,7 +1992,10 @@ fn capability_fallback_malformed_algorithm_names() {
     // upstream: compat.c:383-406 - malformed names with no valid match is a hard error
     let remote_list = "MD5 Md5 mD5 md-5 md_5 md55 mdv md5!";
     let result = choose_checksum_algorithm(remote_list);
-    assert!(result.is_err(), "all malformed algorithms should be a negotiation error");
+    assert!(
+        result.is_err(),
+        "all malformed algorithms should be a negotiation error"
+    );
 }
 
 /// Tests handling of empty algorithm string between spaces.
@@ -2002,7 +2013,10 @@ fn capability_fallback_numeric_strings() {
     // upstream: compat.c:383-406 - no valid algorithms is a hard error
     let remote_list = "123 456 789";
     let result = choose_checksum_algorithm(remote_list);
-    assert!(result.is_err(), "numeric-only list should be a negotiation error");
+    assert!(
+        result.is_err(),
+        "numeric-only list should be a negotiation error"
+    );
 }
 
 /// Tests handling of special characters in algorithm names.
@@ -2011,7 +2025,10 @@ fn capability_fallback_special_chars() {
     // upstream: compat.c:383-406 - no valid algorithms is a hard error
     let remote_list = "md5@ sha1# xxh* md5-v2";
     let result = choose_checksum_algorithm(remote_list);
-    assert!(result.is_err(), "special-char names should be a negotiation error");
+    assert!(
+        result.is_err(),
+        "special-char names should be a negotiation error"
+    );
 }
 
 /// Tests handling of very long unknown algorithm names.
@@ -2301,19 +2318,21 @@ fn capability_fallback_xxh_alias_in_list() {
 /// Tests that algorithm names must be exact matches.
 #[test]
 fn capability_fallback_exact_match_required() {
-    // These should NOT match any algorithm
-    let test_cases = [
-        ("md5-hmac", ChecksumAlgorithm::MD5),   // suffix
-        ("prefix-md5", ChecksumAlgorithm::MD5), // prefix
-        ("MD5", ChecksumAlgorithm::MD5),        // uppercase
-        ("Md5", ChecksumAlgorithm::MD5),        // mixed case
+    // These should NOT match any algorithm - upstream compat.c:383-406
+    // rejects lists with no common algorithm as a hard error.
+    let invalid_names = [
+        "md5-hmac",   // suffix
+        "prefix-md5", // prefix
+        "MD5",        // uppercase
+        "Md5",        // mixed case
     ];
 
-    for (name, _) in test_cases {
-        let list = name;
-        let result = choose_checksum_algorithm(list).unwrap();
-        // Should fall back to MD5 (default), not match the variant
-        assert_eq!(result, ChecksumAlgorithm::MD5);
+    for name in invalid_names {
+        let result = choose_checksum_algorithm(name);
+        assert!(
+            result.is_err(),
+            "'{name}' should not match any supported algorithm"
+        );
     }
 }
 
@@ -2332,25 +2351,44 @@ fn capability_fallback_very_long_list() {
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
 
-/// Tests behavior with list containing only whitespace variations.
+/// Tests that whitespace-only lists produce an error (no algorithms to match).
+///
+/// Upstream `recv_negotiate_str` (compat.c:383-406) treats empty/no-match as
+/// a hard error. Whitespace-only strings contain zero algorithm names after
+/// `split_whitespace()`, so they must fail.
 #[test]
-fn capability_fallback_whitespace_variations() {
-    // Various whitespace-only or whitespace-heavy lists
-    let lists = [
-        "   ",                // only spaces
-        "\t\t\t",             // only tabs
-        "  \t  \n  ",         // mixed whitespace
-        "   md5   ",          // md5 with lots of space
-        "  \t md5 \n sha1  ", // mixed with valid algorithms
+fn capability_fallback_whitespace_only_lists_error() {
+    let whitespace_only = ["   ", "\t\t\t", "  \t  \n  "];
+
+    for list in whitespace_only {
+        let result = choose_checksum_algorithm(list);
+        assert!(
+            result.is_err(),
+            "whitespace-only list '{}' should produce an error",
+            list.escape_debug()
+        );
+    }
+}
+
+/// Tests that valid algorithms surrounded by whitespace are found correctly.
+///
+/// `split_whitespace()` handles leading/trailing/mixed whitespace, so
+/// algorithm names embedded in whitespace must still match.
+#[test]
+fn capability_fallback_whitespace_padded_valid_lists() {
+    let valid_lists = [
+        ("   md5   ", ChecksumAlgorithm::MD5),
+        ("  \t md5 \n sha1  ", ChecksumAlgorithm::MD5), // first match wins
     ];
 
-    for list in lists {
+    for (list, expected) in valid_lists {
         let result = choose_checksum_algorithm(list).unwrap();
-        // Should either find md5/sha1 or fall back to MD5
-        assert!(
-            result == ChecksumAlgorithm::MD5 || result == ChecksumAlgorithm::SHA1,
-            "list '{}' should result in MD5 or SHA1",
-            list.escape_debug()
+        assert_eq!(
+            result,
+            expected,
+            "list '{}' should produce {:?}",
+            list.escape_debug(),
+            expected
         );
     }
 }
@@ -2393,9 +2431,8 @@ fn capability_fallback_empty_vstring() {
         true,
     );
 
-    // Should succeed with MD5 fallback (empty list → default)
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
+    // upstream: compat.c:383-406 - empty remote checksum list is a hard error
+    assert!(result.is_err());
 }
 
 /// Tests that all protocol versions handle fallback consistently.
