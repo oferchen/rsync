@@ -20,6 +20,7 @@
 mod definition;
 mod error;
 mod setters_deletion;
+mod setters_filter;
 mod setters_metadata;
 mod setters_misc;
 mod setters_path;
