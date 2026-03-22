@@ -41,7 +41,10 @@
 //! // Buffer automatically returned to pool on drop
 //! ```
 
-use std::ops::{Deref, DerefMut};
+mod guard;
+
+pub use guard::{BorrowedBufferGuard, BufferGuard};
+
 use std::sync::{Arc, Mutex};
 
 use super::COPY_BUFFER_SIZE;
@@ -185,11 +188,11 @@ impl BufferPool {
         let desired = adaptive_buffer_size(file_size);
 
         if desired == pool.buffer_size {
-            // Fast path: adaptive size matches pool default -- reuse pooled buffers.
+            // Fast path: adaptive size matches pool default - reuse pooled buffers.
             return Self::acquire_from(pool);
         }
 
-        // Slow path: non-standard size -- allocate a fresh buffer.
+        // Slow path: non-standard size - allocate a fresh buffer.
         // On drop the guard will pass it through `return_buffer` which
         // resizes it to the pool default before returning it.
         BufferGuard {
@@ -231,9 +234,9 @@ impl BufferPool {
     ///
     /// If the pool is at capacity, the buffer is dropped instead.
     #[allow(unsafe_code)]
-    fn return_buffer(&self, mut buffer: Vec<u8>) {
+    pub(crate) fn return_buffer(&self, mut buffer: Vec<u8>) {
         if buffer.capacity() < self.buffer_size {
-            // Small adaptive buffer — replace with fresh allocation at pool size.
+            // Small adaptive buffer - replace with fresh allocation at pool size.
             buffer = Vec::with_capacity(self.buffer_size);
         }
         // SAFETY: capacity >= self.buffer_size is guaranteed by the branch
@@ -281,118 +284,6 @@ impl Default for BufferPool {
             .map(|p| p.get())
             .unwrap_or(4);
         Self::new(max_buffers)
-    }
-}
-
-/// RAII guard that returns a buffer to the pool on drop (owned version).
-///
-/// This guard holds an [`Arc`] to the pool, allowing it to be used when
-/// the pool is part of a larger context that needs to be mutably borrowed.
-///
-/// Provides transparent access to the underlying buffer via [`Deref`] and
-/// [`DerefMut`], allowing it to be used wherever `&[u8]` or `&mut [u8]`
-/// is expected.
-#[derive(Debug)]
-pub struct BufferGuard {
-    /// The buffer, wrapped in Option for take-on-drop pattern.
-    buffer: Option<Vec<u8>>,
-    /// Arc reference to the pool for returning the buffer.
-    pool: Arc<BufferPool>,
-}
-
-impl Deref for BufferGuard {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.buffer.as_ref().expect("buffer already taken")
-    }
-}
-
-impl DerefMut for BufferGuard {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.buffer.as_mut().expect("buffer already taken")
-    }
-}
-
-impl Drop for BufferGuard {
-    fn drop(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            self.pool.return_buffer(buffer);
-        }
-    }
-}
-
-impl BufferGuard {
-    /// Returns the length of the buffer in bytes.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.buffer.as_ref().map(Vec::len).unwrap_or(0)
-    }
-
-    /// Returns true if the buffer is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Returns the buffer as a mutable slice.
-    #[must_use]
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.buffer.as_mut().expect("buffer already taken")
-    }
-}
-
-/// RAII guard that returns a buffer to the pool on drop (borrowed version).
-///
-/// This guard borrows the pool, suitable for simple use cases where the pool
-/// lifetime is clear.
-#[derive(Debug)]
-pub struct BorrowedBufferGuard<'a> {
-    /// The buffer, wrapped in Option for take-on-drop pattern.
-    buffer: Option<Vec<u8>>,
-    /// Reference to the pool for returning the buffer.
-    pool: &'a BufferPool,
-}
-
-impl Deref for BorrowedBufferGuard<'_> {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.buffer.as_ref().expect("buffer already taken")
-    }
-}
-
-impl DerefMut for BorrowedBufferGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.buffer.as_mut().expect("buffer already taken")
-    }
-}
-
-impl Drop for BorrowedBufferGuard<'_> {
-    fn drop(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            self.pool.return_buffer(buffer);
-        }
-    }
-}
-
-impl BorrowedBufferGuard<'_> {
-    /// Returns the length of the buffer in bytes.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.buffer.as_ref().map(Vec::len).unwrap_or(0)
-    }
-
-    /// Returns true if the buffer is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Returns the buffer as a mutable slice.
-    #[must_use]
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.buffer.as_mut().expect("buffer already taken")
     }
 }
 
@@ -526,7 +417,7 @@ mod tests {
             }
         }
 
-        // Acquire again — length should be restored (contents are stale but
+        // Acquire again - length should be restored (contents are stale but
         // will be overwritten by Read::read before consumption).
         let buffer = pool.acquire();
         assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
@@ -716,7 +607,7 @@ mod tests {
         }
         assert_eq!(pool.available(), 1);
 
-        // Acquire adaptively for a medium file -- should reuse the pooled buffer
+        // Acquire adaptively for a medium file - should reuse the pooled buffer
         let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 10 * 1024 * 1024);
         assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
         assert_eq!(pool.available(), 0); // was taken from pool
