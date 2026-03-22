@@ -155,7 +155,7 @@ fn get_device_id(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
 mod tests {
     use super::*;
     use std::fs::File;
-    use tempfile::tempdir;
+    use test_support::create_tempdir;
 
     fn create_test_entry(path: std::path::PathBuf) -> DirectoryEntry {
         let metadata = fs::symlink_metadata(&path).unwrap();
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn prefetch_returns_correct_count() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let file1 = dir.path().join("a.txt");
         let file2 = dir.path().join("b.txt");
         File::create(&file1).unwrap();
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn prefetch_skips_when_not_needed() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let file = dir.path().join("test.txt");
         File::create(&file).unwrap();
 
@@ -211,7 +211,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn prefetch_gets_device_id_for_directories() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let subdir = dir.path().join("subdir");
         std::fs::create_dir(&subdir).unwrap();
 
@@ -230,7 +230,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn prefetch_follows_symlinks_when_configured() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let target = dir.path().join("target.txt");
         let link = dir.path().join("link.txt");
         File::create(&target).unwrap();

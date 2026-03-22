@@ -621,9 +621,7 @@ fn adaptive_strategy_file_not_found() {
 #[cfg(unix)]
 fn permission_denied_error_buffered() {
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
-
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("no_read.txt");
     std::fs::write(&path, b"test data").unwrap();
 
@@ -647,9 +645,7 @@ fn permission_denied_error_buffered() {
 #[cfg(unix)]
 fn permission_denied_error_mmap() {
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
-
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("no_read.txt");
     std::fs::write(&path, b"test data").unwrap();
 
