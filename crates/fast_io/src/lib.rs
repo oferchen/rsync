@@ -37,6 +37,7 @@
 //! - **Memory-mapped I/O** for large files with runtime fallback to buffered I/O
 //! - **Zero-copy file transfer** using `copy_file_range` for file-to-file copies
 //! - **Zero-copy socket send** using `sendfile` for file-to-socket transfers
+//! - **Windows optimized copy** using `CopyFileExW` with optional no-buffering
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
 //! - **Platform copy trait** abstracting `copy_file_range`, `clonefile`, `CopyFileExW`
 //! - **Cached sorting** with Schwartzian transform
@@ -73,6 +74,7 @@ pub mod cached_sort;
 pub mod parallel;
 pub mod traits;
 
+pub mod copy_file_ex;
 pub mod copy_file_range;
 pub mod o_tmpfile;
 pub mod platform_copy;
