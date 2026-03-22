@@ -46,6 +46,28 @@ pub fn remove_incomplete_destination(destination: &Path) {
     }
 }
 
+/// Finalization strategy for destination writes.
+///
+/// Named temp files use rename; anonymous temp files use `linkat(2)`.
+#[derive(Debug)]
+enum GuardStrategy {
+    /// Traditional named temp file - commit via rename.
+    NamedTempFile {
+        temp_path: PathBuf,
+        preserve_on_error: bool,
+    },
+    /// Linux `O_TMPFILE` anonymous file - commit via `linkat(2)`.
+    ///
+    /// The file descriptor is held by the caller; `commit` uses
+    /// `fast_io::link_anonymous_tmpfile` to materialize it. On drop
+    /// without commit, the kernel reclaims the anonymous inode.
+    #[cfg(target_os = "linux")]
+    Anonymous {
+        /// Kept alive so the fd stays open until `link_anonymous_tmpfile`.
+        file: Option<fs::File>,
+    },
+}
+
 /// A guard for atomic file writes via temporary files.
 ///
 /// This type provides atomic file updates by writing to a temporary file and then
@@ -59,6 +81,8 @@ pub fn remove_incomplete_destination(destination: &Path) {
 ///   name (including process ID and counter) and are automatically cleaned up on failure.
 /// - **Partial mode** (`partial = true`): Temporary files are preserved on failure to
 ///   allow for transfer resumption. These files use the `.rsync-partial-` prefix.
+/// - **Anonymous mode** (Linux only): Uses `O_TMPFILE` + `linkat(2)` for zero-cleanup
+///   atomic writes. No directory entry exists until commit.
 ///
 /// # Example
 ///
@@ -80,8 +104,7 @@ pub fn remove_incomplete_destination(destination: &Path) {
 /// ```
 pub struct DestinationWriteGuard {
     final_path: PathBuf,
-    temp_path: PathBuf,
-    preserve_on_error: bool,
+    strategy: GuardStrategy,
     committed: bool,
 }
 
@@ -139,8 +162,10 @@ impl DestinationWriteGuard {
             Ok((
                 Self {
                     final_path: destination.to_path_buf(),
-                    temp_path,
-                    preserve_on_error: true,
+                    strategy: GuardStrategy::NamedTempFile {
+                        temp_path,
+                        preserve_on_error: true,
+                    },
                     committed: false,
                 },
                 file,
@@ -158,8 +183,10 @@ impl DestinationWriteGuard {
                         return Ok((
                             Self {
                                 final_path: destination.to_path_buf(),
-                                temp_path,
-                                preserve_on_error: false,
+                                strategy: GuardStrategy::NamedTempFile {
+                                    temp_path,
+                                    preserve_on_error: false,
+                                },
                                 committed: false,
                             },
                             file,
@@ -176,84 +203,150 @@ impl DestinationWriteGuard {
         }
     }
 
+    /// Creates a write guard backed by an anonymous `O_TMPFILE` file descriptor.
+    ///
+    /// On Linux 3.11+ with a supporting filesystem, this opens an anonymous inode
+    /// via `O_TMPFILE`. The returned `File` is writable but invisible in the
+    /// directory listing. Calling [`commit`](Self::commit) materializes it at the
+    /// destination using `linkat(2)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `O_TMPFILE` is not supported or the directory is not
+    /// writable. Callers should fall back to [`new`](Self::new) on failure.
+    #[cfg(target_os = "linux")]
+    pub fn new_anonymous(destination: &Path) -> Result<(Self, fs::File), LocalCopyError> {
+        let dir = destination.parent().unwrap_or(Path::new("."));
+        let file = fast_io::open_anonymous_tmpfile(dir, 0o644)
+            .map_err(|error| LocalCopyError::io("open anonymous temp file", destination, error))?;
+        // Clone the fd so the guard retains one for linkat while the caller
+        // writes through the other. Both refer to the same anonymous inode.
+        let writer = file
+            .try_clone()
+            .map_err(|error| LocalCopyError::io("clone anonymous temp fd", destination, error))?;
+        Ok((
+            Self {
+                final_path: destination.to_path_buf(),
+                strategy: GuardStrategy::Anonymous { file: Some(file) },
+                committed: false,
+            },
+            writer,
+        ))
+    }
+
     /// Returns the path to the staging (temporary) file.
     ///
-    /// This path can be used to access or modify the temporary file directly
-    /// before it is committed to the final destination.
+    /// For named temp files this is the on-disk temp path. For anonymous files
+    /// this returns the final destination path since no intermediate path exists.
     pub fn staging_path(&self) -> &Path {
-        &self.temp_path
+        match &self.strategy {
+            GuardStrategy::NamedTempFile { temp_path, .. } => temp_path,
+            #[cfg(target_os = "linux")]
+            GuardStrategy::Anonymous { .. } => &self.final_path,
+        }
     }
 
     /// Commits the temporary file to the final destination.
     ///
-    /// This method atomically moves the temporary file to the final destination path
-    /// using rename operations when possible. If the rename fails due to crossing
-    /// filesystem boundaries, it falls back to copy-and-delete.
+    /// For named temp files, this atomically renames the temp file. For anonymous
+    /// files, this uses `linkat(2)` to materialize the inode at the destination.
     ///
-    /// If the destination already exists, it is removed before the rename.
+    /// If the destination already exists, it is removed before the commit.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The rename or copy operation fails
+    /// - The rename, linkat, or copy operation fails
     /// - The destination cannot be removed
     /// - Permission is denied
     pub fn commit(mut self) -> Result<(), LocalCopyError> {
-        // upstream: util1.c:robust_rename() — retry up to 4 times on ETXTBSY
+        match &mut self.strategy {
+            GuardStrategy::NamedTempFile {
+                temp_path,
+                preserve_on_error: _,
+            } => {
+                self.commit_named_temp_file(temp_path.clone())?;
+            }
+            #[cfg(target_os = "linux")]
+            GuardStrategy::Anonymous { file } => {
+                self.commit_anonymous(file.take())?;
+            }
+        }
+        self.committed = true;
+        Ok(())
+    }
+
+    /// Commits a named temp file via rename with retry logic.
+    ///
+    /// upstream: `util1.c:robust_rename()` - retry up to 4 times on `ETXTBSY`.
+    fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<(), LocalCopyError> {
         let mut tries = 4u32;
         loop {
-            match fs::rename(&self.temp_path, &self.final_path) {
-                Ok(()) => break,
+            match fs::rename(&temp_path, &self.final_path) {
+                Ok(()) => return Ok(()),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(&self.final_path)?;
-                    fs::rename(&self.temp_path, &self.final_path).map_err(|rename_error| {
+                    fs::rename(&temp_path, &self.final_path).map_err(|rename_error| {
                         LocalCopyError::io(
                             self.finalise_action(),
-                            self.temp_path.clone(),
+                            temp_path.clone(),
                             rename_error,
                         )
                     })?;
-                    break;
+                    return Ok(());
                 }
                 Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
                     tries -= 1;
                     if tries == 0 {
                         return Err(LocalCopyError::io(
                             self.finalise_action(),
-                            self.temp_path.clone(),
+                            temp_path,
                             error,
                         ));
                     }
                     remove_existing_destination(&self.final_path)?;
                 }
                 Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-                    fs::copy(&self.temp_path, &self.final_path).map_err(|copy_error| {
+                    fs::copy(&temp_path, &self.final_path).map_err(|copy_error| {
                         LocalCopyError::io(
                             self.finalise_action(),
                             self.final_path.clone(),
                             copy_error,
                         )
                     })?;
-                    fs::remove_file(&self.temp_path).map_err(|remove_error| {
-                        LocalCopyError::io(
-                            self.finalise_action(),
-                            self.temp_path.clone(),
-                            remove_error,
-                        )
+                    fs::remove_file(&temp_path).map_err(|remove_error| {
+                        LocalCopyError::io(self.finalise_action(), temp_path, remove_error)
                     })?;
-                    break;
+                    return Ok(());
                 }
                 Err(error) => {
                     return Err(LocalCopyError::io(
                         self.finalise_action(),
-                        self.temp_path.clone(),
+                        temp_path,
                         error,
                     ));
                 }
             }
         }
-        self.committed = true;
-        Ok(())
+    }
+
+    /// Commits an anonymous `O_TMPFILE` via `linkat(2)`.
+    ///
+    /// If the destination already exists, it is removed first so `linkat` succeeds.
+    #[cfg(target_os = "linux")]
+    fn commit_anonymous(&self, file: Option<fs::File>) -> Result<(), LocalCopyError> {
+        let file = file.ok_or_else(|| {
+            LocalCopyError::io(
+                "finalise anonymous temp file",
+                &self.final_path,
+                io::Error::new(io::ErrorKind::Other, "anonymous fd already consumed"),
+            )
+        })?;
+        // Remove existing destination so linkat does not fail with EEXIST.
+        remove_existing_destination(&self.final_path)?;
+        fast_io::link_anonymous_tmpfile(&file, &self.final_path).map_err(|error| {
+            LocalCopyError::io("finalise anonymous temp file", &self.final_path, error)
+        })
     }
 
     /// Returns the final destination path.
@@ -263,48 +356,90 @@ impl DestinationWriteGuard {
         &self.final_path
     }
 
+    /// Returns `true` if this guard uses the anonymous `O_TMPFILE` strategy.
+    #[cfg(target_os = "linux")]
+    pub fn is_anonymous(&self) -> bool {
+        matches!(self.strategy, GuardStrategy::Anonymous { .. })
+    }
+
+    /// Returns `true` if this guard uses the anonymous `O_TMPFILE` strategy.
+    #[cfg(not(target_os = "linux"))]
+    pub fn is_anonymous(&self) -> bool {
+        false
+    }
+
     /// Discards the temporary file without committing.
     ///
     /// In normal mode, this removes the temporary file. In partial mode, the file
     /// is preserved to allow for transfer resumption with an ancient mtime so
-    /// that `--update` will not skip it on retry.
+    /// that `--update` will not skip it on retry. In anonymous mode, the kernel
+    /// reclaims the inode automatically on drop.
     ///
     /// This method consumes the guard, preventing accidental use after discard.
     pub fn discard(mut self) {
-        if self.preserve_on_error {
-            // upstream: receiver.c — set mtime to epoch 0 on partial files so
-            // --update won't skip them during a subsequent retry.
-            let epoch = std::time::SystemTime::UNIX_EPOCH;
-            let times = fs::FileTimes::new().set_modified(epoch);
-            if let Ok(file) = fs::File::options().write(true).open(&self.temp_path) {
-                let _ = file.set_times(times);
+        match &self.strategy {
+            GuardStrategy::NamedTempFile {
+                temp_path,
+                preserve_on_error,
+            } => {
+                if *preserve_on_error {
+                    // upstream: receiver.c - set mtime to epoch 0 on partial files so
+                    // --update won't skip them during a subsequent retry.
+                    let epoch = std::time::SystemTime::UNIX_EPOCH;
+                    let times = fs::FileTimes::new().set_modified(epoch);
+                    if let Ok(file) = fs::File::options().write(true).open(temp_path) {
+                        let _ = file.set_times(times);
+                    }
+                } else if let Err(error) = fs::remove_file(temp_path)
+                    && error.kind() != io::ErrorKind::NotFound
+                {
+                    // Best-effort cleanup: the file may have been removed concurrently.
+                }
             }
-            self.committed = true;
-            return;
+            #[cfg(target_os = "linux")]
+            GuardStrategy::Anonymous { .. } => {
+                // Dropping the guard drops the anonymous fd; the kernel reclaims the inode.
+            }
         }
-
-        if let Err(error) = fs::remove_file(&self.temp_path)
-            && error.kind() != io::ErrorKind::NotFound
-        {
-            // Best-effort cleanup: the file may have been removed concurrently.
-        }
-
         self.committed = true;
     }
 
+    /// Returns the action description for error messages.
     const fn finalise_action(&self) -> &'static str {
-        if self.preserve_on_error {
-            "finalise partial file"
-        } else {
-            "finalise temporary file"
+        match &self.strategy {
+            GuardStrategy::NamedTempFile {
+                preserve_on_error, ..
+            } => {
+                if *preserve_on_error {
+                    "finalise partial file"
+                } else {
+                    "finalise temporary file"
+                }
+            }
+            #[cfg(target_os = "linux")]
+            GuardStrategy::Anonymous { .. } => "finalise anonymous temp file",
         }
     }
 }
 
 impl Drop for DestinationWriteGuard {
     fn drop(&mut self) {
-        if !self.committed && !self.preserve_on_error {
-            let _ = fs::remove_file(&self.temp_path);
+        if self.committed {
+            return;
+        }
+        match &self.strategy {
+            GuardStrategy::NamedTempFile {
+                temp_path,
+                preserve_on_error,
+            } => {
+                if !preserve_on_error {
+                    let _ = fs::remove_file(temp_path);
+                }
+            }
+            #[cfg(target_os = "linux")]
+            GuardStrategy::Anonymous { .. } => {
+                // Anonymous fd is dropped, kernel reclaims the inode.
+            }
         }
     }
 }
@@ -505,5 +640,113 @@ mod tests {
         assert!(staging.is_file());
 
         guard.discard();
+    }
+
+    #[test]
+    fn is_anonymous_false_for_named_temp_file() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let (guard, _file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        assert!(!guard.is_anonymous());
+        guard.discard();
+    }
+
+    // --- Linux-specific anonymous guard tests ---
+
+    #[cfg(target_os = "linux")]
+    mod anonymous {
+        use super::*;
+
+        fn o_tmpfile_supported(dir: &Path) -> bool {
+            fast_io::o_tmpfile_available(dir)
+        }
+
+        #[test]
+        fn new_anonymous_creates_guard() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("anon.txt");
+            if !o_tmpfile_supported(temp.path()) {
+                return;
+            }
+
+            let (guard, _file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            assert!(guard.is_anonymous());
+            // Anonymous files have no visible staging path - staging_path returns final_path.
+            assert_eq!(guard.staging_path(), guard.final_path());
+            guard.discard();
+        }
+
+        #[test]
+        fn anonymous_write_and_commit() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("anon_commit.txt");
+            if !o_tmpfile_supported(temp.path()) {
+                return;
+            }
+
+            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            file.write_all(b"anonymous content").expect("write");
+            drop(file);
+
+            guard.commit().expect("commit");
+            assert!(dest.exists());
+            assert_eq!(fs::read_to_string(&dest).expect("read"), "anonymous content");
+        }
+
+        #[test]
+        fn anonymous_commit_replaces_existing() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("anon_replace.txt");
+            if !o_tmpfile_supported(temp.path()) {
+                return;
+            }
+
+            fs::write(&dest, b"old").expect("create existing");
+
+            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            file.write_all(b"new").expect("write");
+            drop(file);
+
+            guard.commit().expect("commit");
+            assert_eq!(fs::read_to_string(&dest).expect("read"), "new");
+        }
+
+        #[test]
+        fn anonymous_discard_leaves_no_file() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("anon_discard.txt");
+            if !o_tmpfile_supported(temp.path()) {
+                return;
+            }
+
+            let (guard, mut file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            file.write_all(b"discarded").expect("write");
+            drop(file);
+            guard.discard();
+
+            assert!(!dest.exists());
+            // Directory should be empty - no orphaned temp files.
+            let count = fs::read_dir(temp.path()).expect("read_dir").count();
+            assert_eq!(count, 0);
+        }
+
+        #[test]
+        fn anonymous_drop_without_commit_leaves_no_file() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("anon_drop.txt");
+            if !o_tmpfile_supported(temp.path()) {
+                return;
+            }
+
+            {
+                let (_guard, _file) =
+                    DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+            }
+
+            assert!(!dest.exists());
+            let count = fs::read_dir(temp.path()).expect("read_dir").count();
+            assert_eq!(count, 0);
+        }
     }
 }
