@@ -349,3 +349,5 @@ include!("tests/chunks/daemon_compress_push.rs");
 include!("tests/chunks/daemon_delete_push.rs");
 // Daemon inplace push end-to-end test
 include!("tests/chunks/daemon_inplace_push.rs");
+// Daemon push/pull lifecycle end-to-end tests
+include!("tests/chunks/daemon_push_pull_lifecycle.rs");
