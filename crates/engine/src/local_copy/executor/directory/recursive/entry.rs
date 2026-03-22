@@ -1,4 +1,8 @@
-/// Single planned entry processing during directory recursion.
+//! Single planned entry processing during directory recursion.
+//!
+//! Dispatches each [`PlannedEntry`] to the appropriate copy handler based on
+//! its [`EntryAction`]. Mirrors the per-entry dispatch in upstream
+//! `generator.c:recv_generator()`.
 use std::path::Path;
 
 use crate::local_copy::{

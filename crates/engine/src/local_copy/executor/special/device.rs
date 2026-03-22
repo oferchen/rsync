@@ -1,3 +1,10 @@
+//! Device node (block and character) copy with hard-link deduplication.
+//!
+//! Recreates block and character device nodes at the destination using
+//! `mknod(2)`, with optional hard-link deduplication to earlier devices.
+//!
+//! // upstream: receiver.c - device node handling, syscall.c:do_mknod()
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

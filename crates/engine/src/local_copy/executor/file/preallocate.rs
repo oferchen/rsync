@@ -1,3 +1,10 @@
+//! File preallocation for reducing fragmentation during writes.
+//!
+//! Uses `fallocate(2)` on Linux to reserve contiguous disk space before
+//! writing file data, falling back to a no-op on other platforms.
+//!
+//! // upstream: receiver.c - preallocate support via --preallocate
+
 use std::fs;
 #[cfg(unix)]
 use std::io;

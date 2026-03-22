@@ -1,4 +1,8 @@
-/// Parallel checksum prefetching for directory entries.
+//! Parallel checksum prefetching for directory entries.
+//!
+//! When `--checksum` mode is active, pre-computes whole-file checksums for
+//! source/destination pairs in parallel using rayon, populating a cache
+//! that the per-file comparison step consults.
 use std::fs;
 use std::path::Path;
 

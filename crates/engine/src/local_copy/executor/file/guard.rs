@@ -1,3 +1,11 @@
+//! Destination file write guard with atomic temp-file-and-rename semantics.
+//!
+//! Provides [`DestinationWriteGuard`] which manages the lifecycle of a
+//! temporary file during transfer: creation, writing, and atomic rename
+//! to the final destination on commit.
+//!
+//! // upstream: receiver.c:recv_files() - temp file creation and rename
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

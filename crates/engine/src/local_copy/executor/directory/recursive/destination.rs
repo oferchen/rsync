@@ -1,4 +1,8 @@
-/// Destination directory state checking and preparation.
+//! Destination directory state checking and preparation.
+//!
+//! Inspects the destination path to determine whether it exists, is a directory,
+//! or conflicts with the source type. Handles `--force` replacement of
+//! non-directory destinations and records skip events for `--existing` mode.
 use std::fs;
 use std::io;
 use std::path::Path;

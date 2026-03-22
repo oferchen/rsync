@@ -1,3 +1,8 @@
+//! High-level sparse file writer wrapping a standard `File`.
+//!
+//! Provides a [`Write`] implementation that transparently creates filesystem
+//! holes for zero-filled regions when sparse mode is enabled.
+
 use std::fs;
 use std::io::{self, Seek, SeekFrom, Write};
 

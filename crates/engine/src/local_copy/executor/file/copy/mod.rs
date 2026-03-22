@@ -1,3 +1,9 @@
+//! File copy orchestration - entry point for single-file transfers.
+//!
+//! Coordinates pre-copy checks (existing, update, hard-link, reference dirs),
+//! dry-run simulation, and the actual transfer pipeline. Mirrors the top-level
+//! per-file logic in upstream `receiver.c:recv_files()`.
+
 mod dry_run;
 mod existing;
 mod links;

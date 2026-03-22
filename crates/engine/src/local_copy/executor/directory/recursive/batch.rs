@@ -1,4 +1,9 @@
-/// Batch file entry capture using protocol wire format.
+//! Batch file entry capture using protocol wire format.
+//!
+//! When `--write-batch` is active, each transferred entry is serialized into
+//! the protocol's file-list wire format for later replay.
+//!
+//! // upstream: batch.c:write_batch_flist_info()
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
