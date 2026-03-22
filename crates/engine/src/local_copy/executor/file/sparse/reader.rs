@@ -1,3 +1,9 @@
+//! Sparse file reader using `SEEK_HOLE`/`SEEK_DATA` for efficient reading.
+//!
+//! On Linux, uses `lseek(SEEK_HOLE)` and `lseek(SEEK_DATA)` to skip over
+//! filesystem holes without reading zero bytes. Falls back to sequential
+//! reading with zero-run detection on other platforms.
+
 use std::fs;
 use std::io::{self, Seek, SeekFrom};
 

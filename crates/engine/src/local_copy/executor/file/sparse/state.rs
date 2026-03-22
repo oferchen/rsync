@@ -1,3 +1,11 @@
+//! Sparse write state machine for tracking pending zero runs.
+//!
+//! Maintains the offset of the current pending zero-byte region during a
+//! sequential write pass, converting zero runs into seeks (holes) and
+//! flushing them with hole-punch or trailing-zero finalization.
+//!
+//! // upstream: fileio.c - sparse write buffering logic
+
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
