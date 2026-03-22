@@ -39,16 +39,6 @@ pub(crate) enum EntryAction {
     /// Copy a device node as a regular file (`--copy-devices`).
     CopyDeviceAsFile,
 }
-    SkipExcluded,
-    SkipNonRegular,
-    SkipMountPoint,
-    CopyDirectory,
-    CopyFile,
-    CopySymlink,
-    CopyFifo,
-    CopyDevice,
-    CopyDeviceAsFile,
-}
 
 /// A directory entry paired with its planned action and computed relative path.
 pub(crate) struct PlannedEntry<'a> {

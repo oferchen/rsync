@@ -50,9 +50,7 @@ pub fn spawn_with_timeout(mut command: Command, timeout: Duration) -> io::Result
                     let _ = child.wait();
                     return Err(io::Error::new(
                         io::ErrorKind::TimedOut,
-                        format!(
-                            "process exceeded timeout of {timeout:?} and was killed"
-                        ),
+                        format!("process exceeded timeout of {timeout:?} and was killed"),
                     ));
                 }
                 std::thread::sleep(Duration::from_millis(50));

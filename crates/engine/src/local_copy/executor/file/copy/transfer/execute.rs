@@ -772,94 +772,154 @@ mod tests {
 
     #[test]
     fn append_offset_selects_append_strategy() {
-        assert_eq!(strategy(1024, false, false, false, false, false), WriteStrategy::Append);
+        assert_eq!(
+            strategy(1024, false, false, false, false, false),
+            WriteStrategy::Append
+        );
     }
 
     #[test]
     fn append_offset_overrides_inplace() {
-        assert_eq!(strategy(512, true, false, false, true, false), WriteStrategy::Append);
+        assert_eq!(
+            strategy(512, true, false, false, true, false),
+            WriteStrategy::Append
+        );
     }
 
     #[test]
     fn append_offset_overrides_partial() {
-        assert_eq!(strategy(256, false, true, false, false, false), WriteStrategy::Append);
+        assert_eq!(
+            strategy(256, false, true, false, false, false),
+            WriteStrategy::Append
+        );
     }
 
     // --- Inplace strategy ---
 
     #[test]
     fn inplace_enabled_selects_inplace_strategy() {
-        assert_eq!(strategy(0, true, false, false, true, false), WriteStrategy::Inplace);
+        assert_eq!(
+            strategy(0, true, false, false, true, false),
+            WriteStrategy::Inplace
+        );
     }
 
     #[test]
     fn inplace_without_existing_dest_still_selects_inplace() {
-        assert_eq!(strategy(0, true, false, false, false, false), WriteStrategy::Inplace);
+        assert_eq!(
+            strategy(0, true, false, false, false, false),
+            WriteStrategy::Inplace
+        );
     }
 
     #[test]
     fn inplace_overrides_partial_and_delay_updates() {
-        assert_eq!(strategy(0, true, true, true, true, true), WriteStrategy::Inplace);
+        assert_eq!(
+            strategy(0, true, true, true, true, true),
+            WriteStrategy::Inplace
+        );
     }
 
     // --- Direct strategy ---
 
     #[test]
     fn no_existing_dest_selects_direct_strategy() {
-        assert_eq!(strategy(0, false, false, false, false, false), WriteStrategy::Direct);
+        assert_eq!(
+            strategy(0, false, false, false, false, false),
+            WriteStrategy::Direct
+        );
     }
 
     // --- TempFileRename strategy ---
 
     #[test]
     fn partial_forces_temp_file_rename() {
-        assert_eq!(strategy(0, false, true, false, false, false), WriteStrategy::TempFileRename);
+        assert_eq!(
+            strategy(0, false, true, false, false, false),
+            WriteStrategy::TempFileRename
+        );
     }
 
     #[test]
     fn delay_updates_forces_temp_file_rename() {
-        assert_eq!(strategy(0, false, false, true, false, false), WriteStrategy::TempFileRename);
+        assert_eq!(
+            strategy(0, false, false, true, false, false),
+            WriteStrategy::TempFileRename
+        );
     }
 
     #[test]
     fn temp_dir_forces_temp_file_rename() {
-        assert_eq!(strategy(0, false, false, false, false, true), WriteStrategy::TempFileRename);
+        assert_eq!(
+            strategy(0, false, false, false, false, true),
+            WriteStrategy::TempFileRename
+        );
     }
 
     #[test]
     fn existing_dest_forces_temp_file_rename() {
-        assert_eq!(strategy(0, false, false, false, true, false), WriteStrategy::TempFileRename);
+        assert_eq!(
+            strategy(0, false, false, false, true, false),
+            WriteStrategy::TempFileRename
+        );
     }
 
     #[test]
     fn existing_dest_with_partial_forces_temp_file_rename() {
-        assert_eq!(strategy(0, false, true, false, true, false), WriteStrategy::TempFileRename);
+        assert_eq!(
+            strategy(0, false, true, false, true, false),
+            WriteStrategy::TempFileRename
+        );
     }
 
     #[test]
     fn all_temp_file_flags_active_selects_temp_file_rename() {
-        assert_eq!(strategy(0, false, true, true, true, true), WriteStrategy::TempFileRename);
+        assert_eq!(
+            strategy(0, false, true, true, true, true),
+            WriteStrategy::TempFileRename
+        );
     }
 
     // --- Priority ordering ---
 
     #[test]
     fn append_has_highest_priority() {
-        assert_eq!(strategy(100, true, true, true, true, true), WriteStrategy::Append);
+        assert_eq!(
+            strategy(100, true, true, true, true, true),
+            WriteStrategy::Append
+        );
     }
 
     #[test]
     fn inplace_has_second_highest_priority() {
-        assert_eq!(strategy(0, true, true, true, true, true), WriteStrategy::Inplace);
+        assert_eq!(
+            strategy(0, true, true, true, true, true),
+            WriteStrategy::Inplace
+        );
     }
 
     #[test]
     fn direct_requires_all_conditions_false() {
-        assert_eq!(strategy(0, false, true, false, false, false), WriteStrategy::TempFileRename);
-        assert_eq!(strategy(0, false, false, true, false, false), WriteStrategy::TempFileRename);
-        assert_eq!(strategy(0, false, false, false, true, false), WriteStrategy::TempFileRename);
-        assert_eq!(strategy(0, false, false, false, false, true), WriteStrategy::TempFileRename);
-        assert_eq!(strategy(0, false, false, false, false, false), WriteStrategy::Direct);
+        assert_eq!(
+            strategy(0, false, true, false, false, false),
+            WriteStrategy::TempFileRename
+        );
+        assert_eq!(
+            strategy(0, false, false, true, false, false),
+            WriteStrategy::TempFileRename
+        );
+        assert_eq!(
+            strategy(0, false, false, false, true, false),
+            WriteStrategy::TempFileRename
+        );
+        assert_eq!(
+            strategy(0, false, false, false, false, true),
+            WriteStrategy::TempFileRename
+        );
+        assert_eq!(
+            strategy(0, false, false, false, false, false),
+            WriteStrategy::Direct
+        );
     }
 
     // --- AnonymousTempFile strategy ---
@@ -912,6 +972,8 @@ mod tests {
 
     #[test]
     fn can_use_anonymous_returns_false_for_nonexistent_dir() {
-        assert!(!can_use_anonymous_tmpfile(Path::new("/no_such_dir_tmpfile_test/file")));
+        assert!(!can_use_anonymous_tmpfile(Path::new(
+            "/no_such_dir_tmpfile_test/file"
+        )));
     }
 }

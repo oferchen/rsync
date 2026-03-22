@@ -59,12 +59,7 @@ impl DeltaWork {
 
     /// Creates a new delta transfer work item.
     #[must_use]
-    pub fn delta(
-        ndx: u32,
-        dest_path: PathBuf,
-        basis_path: PathBuf,
-        target_size: u64,
-    ) -> Self {
+    pub fn delta(ndx: u32, dest_path: PathBuf, basis_path: PathBuf, target_size: u64) -> Self {
         Self {
             ndx,
             dest_path,
@@ -167,12 +162,7 @@ pub enum DeltaResultStatus {
 impl DeltaResult {
     /// Creates a successful result.
     #[must_use]
-    pub fn success(
-        ndx: u32,
-        bytes_written: u64,
-        literal_bytes: u64,
-        matched_bytes: u64,
-    ) -> Self {
+    pub fn success(ndx: u32, bytes_written: u64, literal_bytes: u64, matched_bytes: u64) -> Self {
         Self {
             ndx,
             bytes_written,
@@ -283,12 +273,7 @@ mod tests {
 
     #[test]
     fn work_into_parts_returns_components() {
-        let work = DeltaWork::delta(
-            3,
-            PathBuf::from("/dest"),
-            PathBuf::from("/basis"),
-            500,
-        );
+        let work = DeltaWork::delta(3, PathBuf::from("/dest"), PathBuf::from("/basis"), 500);
         let (ndx, dest, basis, size) = work.into_parts();
         assert_eq!(ndx, 3);
         assert_eq!(dest, PathBuf::from("/dest"));

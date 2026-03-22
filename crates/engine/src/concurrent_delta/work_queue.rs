@@ -158,8 +158,8 @@ pub fn default_capacity() -> usize {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -405,10 +405,7 @@ mod tests {
         let items: Vec<u32> = rx
             .into_iter()
             .map(|w| {
-                assert!(
-                    Instant::now() < deadline,
-                    "deadlock detected - timed out"
-                );
+                assert!(Instant::now() < deadline, "deadlock detected - timed out");
                 w.ndx()
             })
             .collect();

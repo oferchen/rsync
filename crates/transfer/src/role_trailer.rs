@@ -72,7 +72,10 @@ mod tests {
 
     #[test]
     fn file_basename_extracts_unix_path() {
-        assert_eq!(file_basename("crates/transfer/src/role_trailer.rs"), "role_trailer.rs");
+        assert_eq!(
+            file_basename("crates/transfer/src/role_trailer.rs"),
+            "role_trailer.rs"
+        );
     }
 
     #[test]
@@ -88,8 +91,14 @@ mod tests {
     #[test]
     fn error_location_format_matches_upstream() {
         let location = error_location!();
-        assert!(location.starts_with("at "), "should start with 'at ': {location}");
-        assert!(location.contains(".rs("), "should contain '.rs(': {location}");
+        assert!(
+            location.starts_with("at "),
+            "should start with 'at ': {location}"
+        );
+        assert!(
+            location.contains(".rs("),
+            "should contain '.rs(': {location}"
+        );
         assert!(location.ends_with(')'), "should end with ')': {location}");
     }
 
