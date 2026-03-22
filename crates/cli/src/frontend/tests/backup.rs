@@ -17,6 +17,11 @@ fn backup_flag_creates_default_suffix_backups() {
     let dest_root = dest_dir.join("source");
     std::fs::create_dir_all(&dest_root).expect("create dest root");
     std::fs::write(dest_root.join("file.txt"), b"old data").expect("seed dest");
+    // Backdate destination to prevent quick-check skip (same size files)
+    let one_hour_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    filetime::set_file_mtime(dest_root.join("file.txt"), one_hour_ago).expect("backdate dest");
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -92,6 +97,11 @@ fn backup_suffix_flag_overrides_default_suffix() {
     let dest_root = dest_dir.join("source");
     std::fs::create_dir_all(&dest_root).expect("create dest root");
     std::fs::write(dest_root.join("file.txt"), b"stale").expect("seed dest");
+    // Backdate destination to prevent quick-check skip (same size files)
+    let one_hour_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    filetime::set_file_mtime(dest_root.join("file.txt"), one_hour_ago).expect("backdate dest");
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
