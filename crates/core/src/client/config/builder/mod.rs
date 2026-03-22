@@ -96,6 +96,10 @@ use engine::SkipCompressList;
 /// with incremental configuration of transfer settings. Methods are chainable and
 /// return `self` to allow multiple options to be set in a single expression.
 ///
+/// The available options mirror the flags parsed by upstream `options.c`. Mutual
+/// exclusion constraints (e.g. `--inplace` vs `--partial-dir`) are validated at
+/// build time via [`ConfigConflict`].
+///
 /// Create a builder via [`ClientConfig::builder()`].
 ///
 /// # Examples

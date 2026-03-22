@@ -1,4 +1,8 @@
 //! Entry kind and metadata types for client transfer events.
+//!
+//! Provides [`ClientEntryKind`] and [`ClientEntryMetadata`] which snapshot
+//! the file-system metadata of entries affected by a transfer. These types
+//! are used by `ClientEvent` to report per-file details.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
