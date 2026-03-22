@@ -283,6 +283,11 @@ fn permission_write_denied_overwriting_readonly_file() {
     fs::create_dir_all(&dest_root).expect("create dest");
     let dest_file = dest_root.join("file.txt");
     fs::write(&dest_file, b"old content").expect("write dest");
+    // Backdate destination to prevent quick-check skip (same size files)
+    let one_hour_ago = FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    set_file_mtime(&dest_file, one_hour_ago).expect("backdate dest");
     fs::set_permissions(&dest_file, PermissionsExt::from_mode(0o444)).expect("make readonly");
 
     let mut source_operand = source_root.into_os_string();
@@ -574,6 +579,11 @@ fn permission_immutable_file_handling() {
     // Create a file we can't write to (simulating immutable)
     let dest_file = dest_root.join("new.txt");
     fs::write(&dest_file, b"old content").expect("write old");
+    // Backdate destination to prevent quick-check skip (same size files)
+    let one_hour_ago = FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    set_file_mtime(&dest_file, one_hour_ago).expect("backdate dest");
     fs::set_permissions(&dest_file, PermissionsExt::from_mode(0o000)).expect("make immutable");
 
     let mut source_operand = source_root.into_os_string();
