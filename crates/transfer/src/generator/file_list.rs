@@ -15,7 +15,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use logging::{debug_log, info_log};
+use logging::{PhaseTimer, debug_log, info_log};
 use protocol::flist::{FileEntry, compare_file_entries};
 
 #[cfg(unix)]
@@ -149,24 +149,28 @@ impl GeneratorContext {
 
         // upstream: flist.c:f_name_cmp() - sort both arrays via indirect permutation.
         // --qsort uses unstable sort (flist.c:2991).
-        let file_list_ref = &self.file_list;
-        let mut indices: Vec<usize> = {
-            let len = self.file_list.len();
-            let mut v = Vec::with_capacity(len);
-            v.extend(0..len);
-            v
-        };
-        let cmp =
-            |&a: &usize, &b: &usize| compare_file_entries(&file_list_ref[a], &file_list_ref[b]);
-        if self.config.qsort {
-            indices.sort_unstable_by(cmp);
-        } else {
-            indices.sort_by(cmp);
-        }
+        {
+            let _t = PhaseTimer::new("file-list-sort");
+            let file_list_ref = &self.file_list;
+            let mut indices: Vec<usize> = {
+                let len = self.file_list.len();
+                let mut v = Vec::with_capacity(len);
+                v.extend(0..len);
+                v
+            };
+            let cmp = |&a: &usize, &b: &usize| {
+                compare_file_entries(&file_list_ref[a], &file_list_ref[b])
+            };
+            if self.config.qsort {
+                indices.sort_unstable_by(cmp);
+            } else {
+                indices.sort_by(cmp);
+            }
 
-        // Apply permutation in-place using cycle-following algorithm.
-        // This avoids cloning every element - O(n) swaps instead of O(n) clones.
-        apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
+            // Apply permutation in-place using cycle-following algorithm.
+            // This avoids cloning every element - O(n) swaps instead of O(n) clones.
+            apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
+        }
 
         // upstream: hlink.c:match_hard_links() - must be called after sort
         #[cfg(unix)]
