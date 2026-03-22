@@ -60,9 +60,14 @@ checksums = { path = "../checksums", default-features = false }
 
 [dev-dependencies]
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 filetime = "0.2"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = "1.6"
 exacl = { workspace = true }
+
+[[bench]]
+name = "daemon_bench"
+harness = false
