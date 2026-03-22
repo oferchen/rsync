@@ -1,5 +1,5 @@
-use super::accessors::is_effective_root;
 use super::super::types::LocalCopyOptions;
+use super::accessors::is_effective_root;
 use ::metadata::CopyAsIds;
 
 #[test]

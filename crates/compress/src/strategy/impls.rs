@@ -187,9 +187,8 @@ impl Default for Lz4Strategy {
 #[cfg(feature = "lz4")]
 impl CompressionStrategy for Lz4Strategy {
     fn compress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
-        let compressed = raw::compress_block_to_vec(input).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-        })?;
+        let compressed = raw::compress_block_to_vec(input)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         let len = compressed.len();
         output.extend_from_slice(&compressed);
         Ok(len)

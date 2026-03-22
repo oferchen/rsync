@@ -393,7 +393,10 @@ mod tests {
         let after = encoder.get_ref().len();
 
         // No data should have been emitted (or at most frame header bytes)
-        assert_eq!(before, after, "empty flush should not produce additional output");
+        assert_eq!(
+            before, after,
+            "empty flush should not produce additional output"
+        );
     }
 
     #[test]
@@ -481,7 +484,9 @@ mod tests {
     fn counting_sink_encoder_flush() {
         // Verify flush works with the CountingSink (discard) variant
         let mut encoder = CountingLz4Encoder::new(CompressionLevel::Default);
-        encoder.write(b"data for counting sink flush").expect("write");
+        encoder
+            .write(b"data for counting sink flush")
+            .expect("write");
         encoder.flush().expect("flush with counting sink");
 
         let bytes = encoder.finish().expect("finish");

@@ -38,8 +38,7 @@ pub struct DiskThreadHandle {
 pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
     let capacity = config.effective_channel_capacity();
     let (file_tx, file_rx) = spsc::channel::<FileMessage>(capacity);
-    let (result_tx, result_rx) =
-        spsc::channel::<io::Result<CommitResult>>(capacity * 2);
+    let (result_tx, result_rx) = spsc::channel::<io::Result<CommitResult>>(capacity * 2);
     let (buf_return_tx, buf_return_rx) = spsc::channel::<Vec<u8>>(capacity * 2);
 
     let join_handle = thread::Builder::new()

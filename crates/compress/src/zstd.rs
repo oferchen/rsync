@@ -532,6 +532,9 @@ mod tests {
         encoder.flush().expect("second flush on empty");
         let after = encoder.get_ref().len();
 
-        assert_eq!(before, after, "empty flush should not produce additional output");
+        assert_eq!(
+            before, after,
+            "empty flush should not produce additional output"
+        );
     }
 }

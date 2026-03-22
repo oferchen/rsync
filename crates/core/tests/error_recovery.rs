@@ -14,9 +14,9 @@ mod error_recovery {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
+    use crate::test_timeout::{LOCAL_TIMEOUT, run_with_timeout};
     use core::client::{ClientConfig, PARTIAL_TRANSFER_EXIT_CODE, run_client};
     use tempfile::tempdir;
-    use crate::test_timeout::{LOCAL_TIMEOUT, run_with_timeout};
 
     /// Helper: create a file with the given content, creating parent dirs as needed.
     fn touch(path: &Path, contents: &[u8]) {
@@ -301,8 +301,7 @@ mod error_recovery {
             // In a real scenario this would happen during transfer, but for a
             // deterministic test we modify between file list build and data transfer.
             let modified_content = vec![b'B'; 64 * 1024 + 512];
-            fs::write(source.join("mutable.bin"), &modified_content)
-                .expect("modify source file");
+            fs::write(source.join("mutable.bin"), &modified_content).expect("modify source file");
 
             let mut source_arg = source.into_os_string();
             source_arg.push("/");
