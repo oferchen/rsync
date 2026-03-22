@@ -1,10 +1,37 @@
-use std::process::Command;
+use std::io;
+use std::process::{Command, Output};
 use std::str;
+use std::time::{Duration, Instant};
 
-fn run_xtask(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(args)
-        .output()
+/// Spawn a process and wait for completion with a timeout.
+///
+/// Kills the process if it exceeds the timeout, preventing CI hangs.
+fn spawn_with_timeout(mut command: Command, timeout: Duration) -> io::Result<Output> {
+    let mut child = command.spawn()?;
+    let start = Instant::now();
+
+    loop {
+        match child.try_wait()? {
+            Some(_status) => return child.wait_with_output(),
+            None => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("process exceeded timeout of {timeout:?} and was killed"),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+fn run_xtask(args: &[&str]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+    command.args(args);
+    spawn_with_timeout(command, Duration::from_secs(60))
         .unwrap_or_else(|error| panic!("failed to run xtask: {error}"))
 }
 
