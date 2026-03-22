@@ -104,7 +104,9 @@ pub mod io_uring;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
-pub use platform_copy::{CopyMethod, CopyResult, DefaultPlatformCopy, PlatformCopy};
+pub use platform_copy::{
+    CopyMethod, CopyResult, DefaultPlatformCopy, PlatformCopy, try_clonefile, try_fcopyfile,
+};
 pub use traits::{FileReader, FileWriter};
 
 pub use mmap_reader::MmapReader;
