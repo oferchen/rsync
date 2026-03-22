@@ -1,4 +1,13 @@
-//! Filter rule handling and files-from path resolution.
+//! Filter rule handling and `--files-from` path resolution.
+//!
+//! Receives filter rules from the client (server mode) or applies config-provided
+//! rules (client mode), converts wire format to [`FilterSet`], and resolves
+//! `--files-from` filenames to filesystem paths for file list building.
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:1258` - `recv_filter_list()` in server mode
+//! - `flist.c:2240-2264` - `--files-from` filename reading and resolution
 
 use std::io::{self, Read};
 use std::path::PathBuf;

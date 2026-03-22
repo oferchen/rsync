@@ -1,4 +1,14 @@
 //! Main transfer loop and goodbye handshake for the generator role.
+//!
+//! Contains `run_transfer_loop` (NDX-driven file sending with delta/whole-file
+//! paths), `handle_goodbye` (protocol 31+ extended goodbye with `NDX_DEL_STATS`),
+//! and the top-level `run` orchestrator that ties together file list building,
+//! transmission, transfer, and finalization.
+//!
+//! # Upstream Reference
+//!
+//! - `sender.c:send_files()` - Main transfer loop (lines 210-462)
+//! - `main.c:875-906` - `read_final_goodbye()` with del_stats handling
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -494,13 +504,15 @@ impl GeneratorContext {
 
     /// Runs the generator role to completion.
     ///
-    /// This orchestrates the full send operation:
-    /// 1. Build file list from paths
-    /// 2. Send file list
-    /// 3. For each file: receive signature, generate delta, send delta
+    /// Orchestrates the full send operation: build file list, send it, process
+    /// NDX requests (receive signatures, generate deltas, send data), and
+    /// finalize with the goodbye handshake.
     ///
-    /// The writer must be a ServerWriter to support `write_raw` for protocol
-    /// messages that bypass multiplexing (like the goodbye NDX_DONE).
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:send_files()` - Main transfer loop
+    /// - `flist.c:2192` - `send_file_list()` builds and sends file list
+    /// - `main.c:875-906` - `read_final_goodbye()` protocol finalization
     pub fn run<R: Read, W: Write>(
         &mut self,
         mut reader: super::super::reader::ServerReader<R>,

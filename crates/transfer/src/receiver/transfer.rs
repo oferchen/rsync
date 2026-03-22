@@ -46,6 +46,11 @@ impl ReceiverContext {
     /// Orchestrates the full receive operation: file list reception, signature
     /// generation, delta application, and metadata finalization. Delegates to
     /// `run_pipelined_incremental` (with `incremental-flist`) or `run_pipelined`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:720` - `recv_files()` main reception loop
+    /// - `main.c:1160-1200` - `do_recv()` orchestration
     pub fn run<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
@@ -65,8 +70,13 @@ impl ReceiverContext {
 
     /// Runs the receiver with synchronous (non-pipelined) transfer.
     ///
-    /// Kept for compatibility and testing. For production use, prefer `run()`
-    /// which uses pipelining for improved throughput.
+    /// Processes files sequentially: send NDX + signature, receive delta, apply,
+    /// verify checksum. Kept for compatibility and testing. For production use,
+    /// prefer [`run`](Self::run) which uses pipelining for improved throughput.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:720` - `recv_files()` processes one file at a time
     pub fn run_sync<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
@@ -441,6 +451,14 @@ impl ReceiverContext {
     /// Creates directories and symlinks, optionally deletes extraneous files,
     /// builds the candidate list, runs the pipeline loop, handles redo pass,
     /// and finalizes the transfer.
+    ///
+    /// Phase 1 uses `SHORT_SUM_LENGTH` (2 bytes) for reduced signature overhead.
+    /// Phase 2 redo uses `SUM_LENGTH` (16 bytes) for full collision resistance.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:720` - `recv_files()` main loop
+    /// - `generator.c:2157-2163` - phase 1 vs phase 2 checksum length
     pub fn run_pipelined<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
@@ -570,9 +588,14 @@ impl ReceiverContext {
 
     /// Runs the receiver with incremental directory creation and failed-dir tracking.
     ///
-    /// Unlike `run_pipelined`, tracks directory creation failures and skips files
-    /// whose parent directories could not be created. Emits per-directory itemize
-    /// output for both new and existing directories.
+    /// Unlike [`run_pipelined`](Self::run_pipelined), tracks directory creation
+    /// failures and skips files whose parent directories could not be created.
+    /// Emits per-directory itemize output for both new and existing directories.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1432` - itemize new directory
+    /// - `generator.c:2260` - itemize existing directory (metadata only)
     pub fn run_pipelined_incremental<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,

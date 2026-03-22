@@ -1,4 +1,14 @@
-//! Protocol I/O operations for file list sending, ID lists, and signature reading.
+//! Protocol I/O operations for the generator role.
+//!
+//! Handles file list transmission (`send_file_list`, `send_extra_file_lists`),
+//! UID/GID name mapping lists (`send_id_lists`), signature block reading from
+//! the receiver, and NDX + iflags wire encoding.
+//!
+//! # Upstream Reference
+//!
+//! - `flist.c:2192-2545` - File list building and sending
+//! - `uidlist.c:407-414` - `send_id_lists()` for name-based ownership
+//! - `sender.c:120` - `receive_sums()` reads signature blocks
 
 use std::io::{self, Read, Write};
 use std::time::Instant;
@@ -217,6 +227,20 @@ impl GeneratorContext {
     }
 
     /// Sends the file list to the receiver.
+    ///
+    /// Encodes file entries using the configured `FileListWriter`, writes them to
+    /// the wire, appends the io_error marker if any errors were accumulated during
+    /// building, and caches the writer for INC_RECURSE sub-list continuation.
+    ///
+    /// When INC_RECURSE is active, only the initial segment is sent here; remaining
+    /// per-directory segments are dispatched by [`send_extra_file_lists`](Self::send_extra_file_lists).
+    ///
+    /// Returns the total file list length (all segments).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2192` - `send_file_list()` main entry point
+    /// - `flist.c:2518` - `write_int(f, io_error)` end marker with SAFE_FILE_LIST
     pub fn send_file_list<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<usize> {
         // upstream: stats.flist_xfertime
         self.timing.flist_xfer_start = Some(Instant::now());
