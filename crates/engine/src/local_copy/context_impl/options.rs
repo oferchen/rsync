@@ -570,4 +570,109 @@ impl<'a> CopyContext<'a> {
 
         Ok(())
     }
+
+    /// Writes a token-format end marker to the batch file for the current file.
+    ///
+    /// Each file's delta data in the batch stream is terminated by write_int(0),
+    /// matching upstream `token.c:simple_send_token()` with token=-1. Without this
+    /// marker, the batch replay reader cannot determine where one file's data ends
+    /// and the next begins.
+    ///
+    /// Call this after `copy_file_contents` completes for each regular file.
+    pub(crate) fn finalize_batch_file_delta(
+        &self,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
+            None => return Ok(()),
+        };
+
+        // upstream: token.c - end-of-file marker is write_int(0)
+        let mut buf = Vec::with_capacity(4);
+        protocol::wire::delta::write_token_end(&mut buf).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch token end marker",
+                std::path::PathBuf::new(),
+                e,
+            )
+        })?;
+
+        let mut writer_guard = batch_writer_arc.lock().unwrap();
+        writer_guard.write_data(&buf).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch token end marker",
+                std::path::PathBuf::new(),
+                std::io::Error::other(e),
+            )
+        })?;
+
+        Ok(())
+    }
+
+    /// Captures whole-file content to the batch file as token-format literals.
+    ///
+    /// When batch mode is active and the transfer does not use delta encoding
+    /// (new file, whole-file mode, or no basis), the entire file content must
+    /// still be captured to the batch file so that replay can reconstruct it.
+    ///
+    /// upstream: match.c:match_sums() writes literals + end marker for whole-file
+    /// transfers via the batch monitor.
+    pub(crate) fn capture_batch_whole_file(
+        &self,
+        source: &std::path::Path,
+        file_size: u64,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
+            None => return Ok(()),
+        };
+
+        // Read the source file and write it as token-format literals.
+        let mut reader = std::fs::File::open(source).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "open source for batch capture",
+                source.to_path_buf(),
+                e,
+            )
+        })?;
+
+        let mut buf = vec![0u8; 32 * 1024]; // CHUNK_SIZE
+        let mut remaining = file_size;
+
+        while remaining > 0 {
+            let to_read = (remaining as usize).min(buf.len());
+            use std::io::Read;
+            let n = reader.read(&mut buf[..to_read]).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "read source for batch capture",
+                    source.to_path_buf(),
+                    e,
+                )
+            })?;
+            if n == 0 {
+                break;
+            }
+            remaining = remaining.saturating_sub(n as u64);
+
+            let mut encoded = Vec::with_capacity(n + 4);
+            protocol::wire::delta::write_token_literal(&mut encoded, &buf[..n]).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "encode batch literal token",
+                    source.to_path_buf(),
+                    e,
+                )
+            })?;
+
+            let mut writer_guard = batch_writer_arc.lock().unwrap();
+            writer_guard.write_data(&encoded).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch literal token",
+                    source.to_path_buf(),
+                    std::io::Error::other(e),
+                )
+            })?;
+        }
+
+        Ok(())
+    }
 }
