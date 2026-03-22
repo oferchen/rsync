@@ -51,17 +51,14 @@ impl GeneratorContext {
 
         let mut files_transferred = 0;
         let mut bytes_sent = 0u64;
-        // Pre-allocate to match upstream IO_BUFFER_SIZE (32KB) for write batching
+        // upstream: io.c IO_BUFFER_SIZE (32KB)
         let mut stream_buf = Vec::with_capacity(32 * 1024);
 
-        // Create NDX codecs using Strategy pattern for protocol-version-aware encoding.
-        // Upstream rsync uses separate static variables for read and write state (io.c:2244-2245).
+        // upstream: io.c:2244-2245 - separate read/write NDX state
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
 
-        // During dry-run the upstream daemon may close the connection at any
-        // point after file list exchange because no actual data transfer occurs.
-        // upstream: sender.c - dry-run skips data transfer entirely.
+        // upstream: sender.c - dry-run skips data transfer; daemon may close early
         let tolerant = self.config.flags.dry_run;
 
         loop {
@@ -71,21 +68,16 @@ impl GeneratorContext {
             // when buffered delta data hasn't reached the receiver yet.
             writer.flush()?;
 
-            // Read NDX value from receiver.
-            // Connection may close early in dry-run or abbreviated transfers - treat
-            // as end of transfer once we have completed at least one phase.
+            // upstream: sender.c:210-462 - read NDX request from receiver
             let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
                 Ok(ndx) => ndx,
-                // Connection may close early in dry-run mode (upstream daemon
-                // exits after file list exchange) or after phase transitions.
-                // upstream: sender.c - dry-run skips data transfer entirely.
                 Err(e) if (phase > 0 || tolerant) && is_early_close_error(&e) => {
                     break;
                 }
                 Err(e) => return Err(e),
             };
 
-            // Handle negative NDX values (upstream io.c:1736-1750, sender.c:236-258)
+            // upstream: io.c:1736-1750, sender.c:236-258 - handle control NDX values
             if ndx < 0 {
                 match ndx {
                     NDX_DONE => {
@@ -145,17 +137,15 @@ impl GeneratorContext {
                 }
             }
 
-            // Convert wire NDX to array index using segment boundary table.
-            // upstream: rsync.c:424 — i = ndx - cur_flist->ndx_start
+            // upstream: rsync.c:424 - i = ndx - cur_flist->ndx_start
             let ndx = self.wire_to_flat_ndx(ndx);
 
-            // Read item flags using ItemFlags helper
+            // upstream: rsync.c:227 - read_ndx_and_attrs() reads iflags
             let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
             if self.protocol.supports_iflags() {
                 self.timing.total_bytes_read += 2;
             }
 
-            // Read and discard optional trailing fields (basis type, xname)
             let (_fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
             if iflags.has_basis_type() {
                 self.timing.total_bytes_read += 1;
@@ -164,23 +154,19 @@ impl GeneratorContext {
                 self.timing.total_bytes_read += 4 + xname_data.len() as u64;
             }
 
-            // Check if file should be transferred
             if !iflags.needs_transfer() {
                 // upstream: sender.c:287 — maybe_log_item() for non-transfer items
                 self.maybe_emit_itemize(writer, &iflags, ndx)?;
                 continue;
             }
 
-            // Read sum_head using SumHead helper
+            // upstream: sender.c:120 - receive_sums()
             let sum_head = SumHead::read(&mut *reader)?;
             self.timing.total_bytes_read += 16;
 
-            // Validate file index
             self.validate_file_index(ndx)?;
 
             let file_entry = &self.file_list[ndx];
-            // Direct field access to allow subsequent mutable access to self.timing
-            // (Rust's borrow checker allows disjoint field borrows)
             debug_assert_eq!(
                 self.file_list.len(),
                 self.full_paths.len(),
@@ -189,10 +175,7 @@ impl GeneratorContext {
             let source_path = &self.full_paths[ndx];
             let source_path_display = source_path.display().to_string();
 
-            // Read signature blocks
             let sig_blocks = read_signature_blocks(&mut *reader, &sum_head)?;
-
-            // Track bytes read for signature blocks
             let bytes_per_block = 4 + sum_head.s2length as u64;
             self.timing.total_bytes_read += sum_head.count as u64 * bytes_per_block;
 
@@ -200,23 +183,15 @@ impl GeneratorContext {
             let strong_sum_length = sum_head.s2length as u8;
             let has_basis = !sum_head.is_empty();
 
-            // Skip non-regular files
             if !file_entry.is_file() {
                 continue;
             }
 
-            // Generate and send file data.
-            // We already know file_size from the file list, so no fstat needed —
-            // this gives openat + read + close = 3 syscalls per file, matching
-            // upstream's pattern (upstream does openat + fstat + read + close = 4).
             let file_size = file_entry.size();
-            // Echo the wire NDX back to the receiver using segment boundary table.
-            // upstream: sender.c:389 — write_ndx(f_out, ndx) uses the original wire ndx
+            // upstream: sender.c:389 - write_ndx(f_out, ndx)
             let ndx_i32 = self.flat_to_wire_ndx(ndx);
 
             if has_basis {
-                // Delta path: build DeltaScript (needs random access for block matching),
-                // then hash and write in separate passes.
                 let source: Box<dyn Read> = match self.open_source_reader(source_path, file_size) {
                     Ok(r) => r,
                     Err(e) => {
@@ -243,7 +218,6 @@ impl GeneratorContext {
                     &sum_head,
                 )?;
 
-                // Compute checksum, convert to wire ops, write
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let (checksum_buf, checksum_len) = compute_file_checksum(
                     &delta_script,
@@ -258,9 +232,7 @@ impl GeneratorContext {
                 writer.write_all(&checksum_buf[..checksum_len])?;
                 bytes_sent += delta_total_bytes;
             } else {
-                // Whole-file path: single-pass streaming (read -> hash -> write).
-                // Pre-open file to fail before sending protocol headers.
-                // upstream: sender.c:354-369 — send MSG_NO_SEND on open failure.
+                // upstream: sender.c:354-369 - whole-file path; MSG_NO_SEND on open failure
                 let source: Box<dyn Read> = match self.open_source_reader(source_path, file_size) {
                     Ok(r) => r,
                     Err(e) => {
@@ -277,9 +249,6 @@ impl GeneratorContext {
                     &sum_head,
                 )?;
 
-                // Stream: read -> hash -> write in one pass (no DeltaScript intermediate).
-                // The loop-top flush before read_ndx() ensures all buffered data
-                // reaches the receiver before we block waiting for the next request.
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let compression = self.file_compression(source_path);
                 let result = stream_whole_file_transfer(
@@ -539,7 +508,6 @@ impl GeneratorContext {
         paths: &[PathBuf],
         mut progress: Option<&mut dyn super::super::TransferProgressCallback>,
     ) -> io::Result<GeneratorStats> {
-        // Step 1: Activate input multiplex if needed (mode and protocol dependent)
         if self.should_activate_input_multiplex() {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(
@@ -552,27 +520,19 @@ impl GeneratorContext {
             })?;
         }
 
-        // NOTE: Compression is NOT applied at the stream level.
-        // Upstream rsync uses token-level compression (send_deflated_token/recv_deflated_token)
-        // only during the delta transfer phase. The filter list and file list are plain data.
-
-        // Step 2: Receive filter list from client (server mode only)
+        // upstream: main.c:1258 - recv_filter_list() in server mode
         self.receive_filter_list_if_server(&mut reader)?;
 
-        // Step 2b: Read files-from list if configured.
-        // upstream: flist.c:2240-2264 — when filesfrom_fd != -1, sender does
-        // chdir(argv[0]) then reads filenames from the fd, walking each one
-        // individually instead of recursing from the positional args.
+        // upstream: flist.c:2240-2264 - resolve --files-from paths if configured
         let files_from_paths = self.resolve_files_from_paths(paths, &mut reader)?;
 
-        let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
+        let reader = &mut reader;
 
-        // Step 3: Build and send file list
+        // upstream: flist.c:2192 - send_file_list()
         if files_from_paths.is_empty() {
             self.build_file_list(paths)?;
         } else {
-            // upstream: flist.c:2240-2244 — use argv[0] as the base directory
-            // for all --files-from entries so relative names are correct.
+            // upstream: flist.c:2240-2244 - argv[0] is the base for --files-from
             let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
             self.build_file_list_with_base(&base_dir, &files_from_paths)?;
         }

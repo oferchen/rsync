@@ -124,7 +124,6 @@ pub fn generate_delta_from_signature<R: Read>(
     );
     let checksum_algorithm = checksum_factory.signature_algorithm();
 
-    // Create index for delta generation
     let index =
         DeltaSignatureIndex::from_signature(&signature, checksum_algorithm).ok_or_else(|| {
             io::Error::new(
@@ -133,7 +132,6 @@ pub fn generate_delta_from_signature<R: Read>(
             )
         })?;
 
-    // Generate delta
     let generator = DeltaGenerator::new();
     generator
         .generate(source, &index)
@@ -243,18 +241,13 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
 
 /// Computes the file transfer checksum from delta script data.
 ///
-/// After sending delta tokens, upstream rsync sends a file checksum for verification.
-/// This checksum is computed over all bytes being transferred (literal data + copy sources).
+/// Hashes all literal bytes from the delta script for whole-file verification.
 ///
-/// Reference: upstream match.c lines 370, 411, 426:
-/// - `sum_init(xfer_sum_nni, checksum_seed);` - start with seed
-/// - `sum_end(sender_file_sum);` - finalize
-/// - `write_buf(f, sender_file_sum, xfer_sum_len);` - send checksum
+/// # Upstream Reference
 ///
-/// Computes file checksum for delta transfer, returning result on the stack.
-///
-/// Mirrors upstream `sum_end(char *sum)` (checksum.c:686) which writes the
-/// digest into a caller-provided buffer, never allocating.
+/// - `match.c:370` - `sum_init(xfer_sum_nni, checksum_seed)`
+/// - `match.c:411` - `sum_update()` on each data chunk
+/// - `checksum.c:686` - `sum_end(char *sum)` finalizes into caller buffer
 pub(super) fn compute_file_checksum(
     script: &DeltaScript,
     algorithm: ChecksumAlgorithm,
@@ -263,14 +256,10 @@ pub(super) fn compute_file_checksum(
 ) -> ([u8; ChecksumVerifier::MAX_DIGEST_LEN], usize) {
     let mut verifier = ChecksumVerifier::for_algorithm(algorithm);
 
-    // Feed all literal bytes from the script to the verifier
     for token in script.tokens() {
         if let DeltaToken::Literal(data) = token {
             verifier.update(data);
         }
-        // Note: Copy tokens reference basis file blocks - the receiver has those.
-        // The checksum is computed on all data bytes (matching upstream behavior
-        // where sum_update is called on each data chunk during match processing).
     }
 
     let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
