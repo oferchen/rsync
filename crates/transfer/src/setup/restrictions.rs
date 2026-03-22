@@ -96,9 +96,7 @@ pub fn apply_protocol_restrictions(
         if flags.preserve_acls && !flags.local_server {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!(
-                    "--acls requires protocol 30 or higher (negotiated {version})."
-                ),
+                format!("--acls requires protocol 30 or higher (negotiated {version})."),
             ));
         }
 
@@ -106,9 +104,7 @@ pub fn apply_protocol_restrictions(
         if flags.preserve_xattrs && !flags.local_server {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!(
-                    "--xattrs requires protocol 30 or higher (negotiated {version})."
-                ),
+                format!("--xattrs requires protocol 30 or higher (negotiated {version})."),
             ));
         }
     }
@@ -128,9 +124,7 @@ pub fn apply_protocol_restrictions(
         if flags.fuzzy_basis {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!(
-                    "--fuzzy requires protocol 29 or higher (negotiated {version})."
-                ),
+                format!("--fuzzy requires protocol 29 or higher (negotiated {version})."),
             ));
         }
 
@@ -271,7 +265,10 @@ mod tests {
             ..Default::default()
         };
         let err = apply_protocol_restrictions(proto(28), &flags).unwrap_err();
-        assert!(err.to_string().contains("--prune-empty-dirs requires protocol 29"));
+        assert!(
+            err.to_string()
+                .contains("--prune-empty-dirs requires protocol 29")
+        );
     }
 
     #[test]

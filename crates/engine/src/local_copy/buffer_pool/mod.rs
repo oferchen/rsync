@@ -83,7 +83,7 @@ mod allocator;
 mod global;
 mod guard;
 pub use allocator::{BufferAllocator, DefaultAllocator};
-pub use global::{global_buffer_pool, init_global_buffer_pool, GlobalBufferPoolConfig};
+pub use global::{GlobalBufferPoolConfig, global_buffer_pool, init_global_buffer_pool};
 pub use guard::{BorrowedBufferGuard, BufferGuard};
 
 /// Buffer size for files smaller than 64 KB (8 KB).
@@ -495,7 +495,10 @@ impl<A: BufferAllocator> BufferPool<A> {
         }
 
         // Slow path: wait on the condvar until memory is available.
-        let mut guard = cap.backpressure.lock().expect("backpressure mutex poisoned");
+        let mut guard = cap
+            .backpressure
+            .lock()
+            .expect("backpressure mutex poisoned");
         while cap.outstanding.load(Ordering::Acquire) + requested > cap.limit {
             guard = cap
                 .returned
@@ -1248,8 +1251,7 @@ mod tests {
         }
 
         fn alloc_count(&self) -> usize {
-            self.alloc_count
-                .load(std::sync::atomic::Ordering::Relaxed)
+            self.alloc_count.load(std::sync::atomic::Ordering::Relaxed)
         }
 
         fn dealloc_count(&self) -> usize {
@@ -1285,11 +1287,7 @@ mod tests {
     #[test]
     fn custom_allocator_deallocate_called_on_overflow() {
         // Pool with capacity 1 - second returned buffer triggers deallocate.
-        let pool = Arc::new(BufferPool::with_allocator(
-            1,
-            512,
-            TrackingAllocator::new(),
-        ));
+        let pool = Arc::new(BufferPool::with_allocator(1, 512, TrackingAllocator::new()));
 
         let a = BufferPool::acquire_from(Arc::clone(&pool));
         let b = BufferPool::acquire_from(Arc::clone(&pool));
@@ -1490,8 +1488,8 @@ mod tests {
 
     #[test]
     fn memory_cap_with_builder_chain() {
-        let pool = BufferPool::with_allocator(4, 512, TrackingAllocator::new())
-            .with_memory_cap(2048);
+        let pool =
+            BufferPool::with_allocator(4, 512, TrackingAllocator::new()).with_memory_cap(2048);
 
         assert_eq!(pool.memory_cap(), Some(2048));
         assert_eq!(pool.buffer_size(), 512);

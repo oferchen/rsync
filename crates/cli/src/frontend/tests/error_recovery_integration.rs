@@ -292,12 +292,9 @@ fn multiple_dangling_symlinks_all_preserved() {
         let dest_link = dst.join(name);
         let meta = std::fs::symlink_metadata(&dest_link)
             .unwrap_or_else(|e| panic!("{name} should exist at destination: {e}"));
-        assert!(
-            meta.file_type().is_symlink(),
-            "{name} should be a symlink"
-        );
-        let target = std::fs::read_link(&dest_link)
-            .unwrap_or_else(|e| panic!("read_link {name}: {e}"));
+        assert!(meta.file_type().is_symlink(), "{name} should be a symlink");
+        let target =
+            std::fs::read_link(&dest_link).unwrap_or_else(|e| panic!("read_link {name}: {e}"));
         assert_eq!(
             target.to_string_lossy(),
             expected_target,
