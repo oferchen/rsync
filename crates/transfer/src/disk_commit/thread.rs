@@ -14,6 +14,13 @@ use super::config::DiskCommitConfig;
 use super::process::{process_file, process_whole_file};
 use super::writer::WRITE_BUF_SIZE;
 
+/// Bounded SPSC channel capacity for the disk commit thread.
+///
+/// 128 slots x ~32 KB average chunk = 4 MB peak memory from buffered messages.
+/// Larger capacity reduces spin-wait contention when the disk thread falls
+/// behind, keeping the network thread productive instead of busy-spinning.
+const CHANNEL_CAPACITY: usize = 128;
+
 /// Channels and handle returned by [`spawn_disk_thread`].
 pub struct DiskThreadHandle {
     /// Send `FileMessage` items to the disk thread.
@@ -33,10 +40,10 @@ pub struct DiskThreadHandle {
 /// sends used `Vec<u8>` buffers back through `buf_return_rx` for reuse by the
 /// network thread, eliminating per-chunk malloc/free overhead.
 pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
-    let (file_tx, file_rx) = spsc::channel::<FileMessage>(config.channel_capacity);
+    let (file_tx, file_rx) = spsc::channel::<FileMessage>(CHANNEL_CAPACITY);
     let (result_tx, result_rx) =
-        spsc::channel::<io::Result<CommitResult>>(config.channel_capacity * 2);
-    let (buf_return_tx, buf_return_rx) = spsc::channel::<Vec<u8>>(config.channel_capacity * 2);
+        spsc::channel::<io::Result<CommitResult>>(CHANNEL_CAPACITY * 2);
+    let (buf_return_tx, buf_return_rx) = spsc::channel::<Vec<u8>>(CHANNEL_CAPACITY * 2);
 
     let join_handle = thread::Builder::new()
         .name("disk-commit".into())
