@@ -1,6 +1,6 @@
 //! File list building, walking, and sorting for the generator role.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -224,6 +224,35 @@ impl GeneratorContext {
                     0,
                 ));
                 self.push_file_item(dot_entry, base_dir.to_path_buf());
+            }
+        }
+
+        // Emit implied parent directory entries for files-from paths that
+        // contain subdirectories. Without these entries the receiver cannot
+        // create the parent directories needed for nested files.
+        // upstream: flist.c:send_implied_dirs() — creates directory entries
+        // for every intermediate path component of a --files-from entry.
+        let mut emitted_dirs: HashSet<PathBuf> = HashSet::new();
+        for path in file_paths {
+            if let Ok(rel) = path.strip_prefix(base_dir) {
+                // Walk each ancestor of the relative path and emit a
+                // directory entry when we haven't seen it yet.
+                let mut ancestor = PathBuf::new();
+                for component in rel.parent().into_iter().flat_map(Path::components) {
+                    ancestor.push(component);
+                    if emitted_dirs.contains(&ancestor) {
+                        continue;
+                    }
+                    let full = base_dir.join(&ancestor);
+                    if let Ok(meta) = std::fs::symlink_metadata(&full) {
+                        if meta.is_dir() {
+                            if let Ok(entry) = self.create_entry(&full, ancestor.clone(), &meta) {
+                                self.push_file_item(entry, full);
+                            }
+                        }
+                    }
+                    emitted_dirs.insert(ancestor.clone());
+                }
             }
         }
 
