@@ -1,9 +1,12 @@
-//! MD4 hashing implementations.
+//! MD4 hashing implementations with optional SIMD batch acceleration.
 //!
 //! MD4 is a predecessor to MD5 with a simpler structure:
 //! - 3 rounds of 16 operations each (vs MD5's 4 rounds of 16)
 //! - Only 3 constants (vs MD5's 64)
 //! - Simpler round functions
+//!
+//! Used by upstream rsync for protocol versions < 30.
+//! See upstream `checksum.c:get_checksum2()` for algorithm selection.
 
 pub mod scalar;
 
@@ -24,7 +27,9 @@ pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
     md4_dispatcher().digest_batch(inputs)
 }
 
-/// Compute MD4 digest for a single input.
+/// Computes an MD4 digest for a single input using the scalar path.
+///
+/// For multiple inputs, prefer [`digest_batch`] to benefit from SIMD parallelism.
 #[allow(dead_code)]
 pub fn digest(input: &[u8]) -> Digest {
     scalar::digest(input)

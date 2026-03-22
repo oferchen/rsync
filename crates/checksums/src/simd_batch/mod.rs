@@ -36,23 +36,26 @@ pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
     md5_dispatcher::global().digest_batch(inputs)
 }
 
-/// Compute MD5 digest for a single input.
+/// Computes an MD5 digest for a single input.
+///
+/// Uses the global dispatcher's scalar path. Prefer [`digest_batch`] for
+/// multiple inputs to benefit from SIMD parallelism.
 #[must_use]
 #[allow(dead_code)]
 pub fn digest(input: &[u8]) -> Digest {
     md5_dispatcher::global().digest(input)
 }
 
-/// Get the currently active SIMD backend.
+/// Returns the currently active SIMD backend detected at runtime.
 ///
-/// Useful for logging or diagnostics.
+/// Useful for logging, diagnostics, and SIMD parity tests.
 #[must_use]
 #[allow(dead_code)]
 pub fn active_backend() -> Backend {
     md5_dispatcher::global().backend()
 }
 
-/// Returns whether SIMD acceleration is available on this platform.
+/// Returns whether SIMD acceleration is available for batch MD5 hashing.
 ///
 /// Returns `true` for any backend other than `Scalar`.
 #[must_use]

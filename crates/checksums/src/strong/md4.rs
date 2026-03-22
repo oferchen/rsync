@@ -13,6 +13,11 @@ use super::openssl_support;
 /// is used for improved throughput; otherwise a pure-Rust implementation
 /// is used.
 ///
+/// # Upstream Reference
+///
+/// - `checksum.c:get_checksum2()` - strong checksum computation using MD4
+/// - `match.c:hash_search()` - verifies rolling checksum matches with MD4
+///
 /// # Examples
 ///
 /// One-shot hashing:
