@@ -1,4 +1,7 @@
 //! Error type for merge file operations.
+//!
+//! [`MergeFileError`] covers both I/O failures (file not found, permission
+//! denied) and parse errors (unrecognised syntax, depth limit exceeded).
 
 use std::io;
 use std::path::Path;
@@ -31,6 +34,7 @@ impl std::fmt::Display for MergeFileError {
 impl std::error::Error for MergeFileError {}
 
 impl MergeFileError {
+    /// Creates an error from a file I/O failure.
     pub(crate) fn io_error(path: &Path, error: &io::Error) -> Self {
         Self {
             path: path.display().to_string(),
@@ -39,6 +43,7 @@ impl MergeFileError {
         }
     }
 
+    /// Creates an error from a parse failure at a specific line.
     pub(crate) fn parse_error(path: &Path, line: usize, message: impl Into<String>) -> Self {
         Self {
             path: path.display().to_string(),
