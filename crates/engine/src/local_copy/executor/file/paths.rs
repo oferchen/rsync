@@ -1,3 +1,10 @@
+//! Temporary, partial, and destination path computation.
+//!
+//! Generates temp file paths (`.~tmp~` prefix with PID), partial transfer
+//! paths (`--partial-dir`), and resolves the final destination for each file.
+//!
+//! // upstream: receiver.c - temp file naming, util1.c:partial_dir_fname()
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};

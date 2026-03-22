@@ -1,6 +1,11 @@
-/// Recursive directory copying - orchestrates destination preparation, entry
-/// processing, deletion, checksum prefetching, batch capture, and metadata
-/// finalization.
+//! Recursive directory copying - orchestrates destination preparation, entry
+//! processing, deletion, checksum prefetching, batch capture, and metadata
+//! finalization.
+//!
+//! Mirrors the receiver-side file processing loop in upstream
+//! `receiver.c:recv_files()` and the generator-side directory traversal
+//! in `generator.c:recv_generator()`.
+
 mod batch;
 mod checksum;
 mod deletion;

@@ -1,3 +1,10 @@
+//! Backup file creation for `--backup` and `--backup-dir`.
+//!
+//! Computes backup paths (with optional suffix and directory prefix) and
+//! creates the backup copy or symlink before the destination is overwritten.
+//!
+//! // upstream: backup.c:make_backup() - backup path computation and creation
+
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
