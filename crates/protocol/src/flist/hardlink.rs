@@ -15,6 +15,8 @@
 use rustc_hash::FxHashMap;
 
 /// Device and inode pair identifying a unique file.
+///
+/// // upstream: hlink.c struct idev - dev/ino pair for hardlink tracking
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct DevIno {
     /// Device number.
@@ -31,7 +33,9 @@ impl DevIno {
     }
 }
 
-/// Entry in the hardlink table.
+/// Entry in the hardlink table tracking the first occurrence and link count.
+///
+/// // upstream: hlink.c struct hlink - tracks first file and nlink count
 #[derive(Debug, Clone)]
 pub struct HardlinkEntry {
     /// Index of the first file in the hardlink group.
@@ -52,6 +56,9 @@ impl HardlinkEntry {
 }
 
 /// Result of looking up a hardlink in the table.
+///
+/// Determines whether a file is the first occurrence (leader) or a subsequent
+/// link (follower) in a hardlink group.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum HardlinkLookup {
     /// This is the first occurrence of this file - assign a new index.
