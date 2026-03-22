@@ -40,9 +40,12 @@ const RETRY_DELAY: Duration = Duration::from_secs(1);
 fn ssh_localhost_available() -> bool {
     Command::new("ssh")
         .args([
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=5",
-            "-o", "StrictHostKeyChecking=accept-new",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
             "localhost",
             "true",
         ])
@@ -57,10 +60,13 @@ fn ssh_localhost_available() -> bool {
 fn remote_rsync_available() -> bool {
     Command::new("ssh")
         .args([
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=5",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
             "localhost",
-            "which", "rsync",
+            "which",
+            "rsync",
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -140,14 +146,13 @@ fn ssh_localhost_single_file_transfer() {
 
     let result = run_client_with_retry(|| {
         ClientConfig::builder()
-            .transfer_args([
-                OsString::from(&src_arg),
-                OsString::from(&dst_arg),
-            ])
+            .transfer_args([OsString::from(&src_arg), OsString::from(&dst_arg)])
             .set_remote_shell(vec![
                 "ssh",
-                "-o", "BatchMode=yes",
-                "-o", "StrictHostKeyChecking=accept-new",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
             ])
             .times(true)
             .build()
@@ -156,11 +161,11 @@ fn ssh_localhost_single_file_transfer() {
     match result {
         Ok(_) => {
             let dest_file = dst_dir.join("hello.txt");
-            assert!(dest_file.exists(), "transferred file should exist at destination");
-            assert_eq!(
-                fs::read(&dest_file).expect("read dest"),
-                b"hello via ssh"
+            assert!(
+                dest_file.exists(),
+                "transferred file should exist at destination"
             );
+            assert_eq!(fs::read(&dest_file).expect("read dest"), b"hello via ssh");
         }
         Err(e) => {
             panic!("SSH transfer failed unexpectedly: {e}");
@@ -193,14 +198,13 @@ fn ssh_localhost_pull_transfer() {
 
     let result = run_client_with_retry(|| {
         ClientConfig::builder()
-            .transfer_args([
-                OsString::from(&src_arg),
-                OsString::from(&dst_arg),
-            ])
+            .transfer_args([OsString::from(&src_arg), OsString::from(&dst_arg)])
             .set_remote_shell(vec![
                 "ssh",
-                "-o", "BatchMode=yes",
-                "-o", "StrictHostKeyChecking=accept-new",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
             ])
             .times(true)
             .build()
@@ -209,11 +213,11 @@ fn ssh_localhost_pull_transfer() {
     match result {
         Ok(_) => {
             let dest_file = dst_dir.join("pulled.txt");
-            assert!(dest_file.exists(), "pulled file should exist at destination");
-            assert_eq!(
-                fs::read(&dest_file).expect("read dest"),
-                b"pulled content"
+            assert!(
+                dest_file.exists(),
+                "pulled file should exist at destination"
             );
+            assert_eq!(fs::read(&dest_file).expect("read dest"), b"pulled content");
         }
         Err(e) => {
             panic!("SSH pull transfer failed unexpectedly: {e}");
@@ -248,14 +252,13 @@ fn ssh_localhost_recursive_transfer() {
 
     let result = run_client_with_retry(|| {
         ClientConfig::builder()
-            .transfer_args([
-                OsString::from(&src_arg),
-                OsString::from(&dst_arg),
-            ])
+            .transfer_args([OsString::from(&src_arg), OsString::from(&dst_arg)])
             .set_remote_shell(vec![
                 "ssh",
-                "-o", "BatchMode=yes",
-                "-o", "StrictHostKeyChecking=accept-new",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
             ])
             .recursive(true)
             .times(true)
@@ -266,7 +269,10 @@ fn ssh_localhost_recursive_transfer() {
         Ok(_) => {
             assert!(dst_dir.join("a.txt").exists(), "a.txt should exist");
             assert!(dst_dir.join("sub/b.txt").exists(), "sub/b.txt should exist");
-            assert!(dst_dir.join("sub/deep/c.txt").exists(), "sub/deep/c.txt should exist");
+            assert!(
+                dst_dir.join("sub/deep/c.txt").exists(),
+                "sub/deep/c.txt should exist"
+            );
             assert_eq!(fs::read(dst_dir.join("a.txt")).unwrap(), b"file a");
             assert_eq!(fs::read(dst_dir.join("sub/b.txt")).unwrap(), b"file b");
             assert_eq!(fs::read(dst_dir.join("sub/deep/c.txt")).unwrap(), b"file c");
@@ -294,10 +300,7 @@ fn ssh_command_not_found_exit_code() {
 
     let result = run_client(
         ClientConfig::builder()
-            .transfer_args([
-                OsString::from(&src_arg),
-                OsString::from(&dst_arg),
-            ])
+            .transfer_args([OsString::from(&src_arg), OsString::from(&dst_arg)])
             .set_remote_shell(vec!["/usr/bin/nonexistent_shell_binary_xyz"])
             .build(),
     );
@@ -337,15 +340,15 @@ fn ssh_connection_failure_exit_code() {
 
     let result = run_client(
         ClientConfig::builder()
-            .transfer_args([
-                OsString::from(&src_arg),
-                OsString::from(&dst_arg),
-            ])
+            .transfer_args([OsString::from(&src_arg), OsString::from(&dst_arg)])
             .set_remote_shell(vec![
                 "ssh",
-                "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=2",
-                "-p", "1", // port 1 - should be refused or timed out
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=2",
+                "-p",
+                "1", // port 1 - should be refused or timed out
             ])
             .build(),
     );
@@ -387,14 +390,13 @@ fn ssh_rsync_path_not_found() {
 
     let result = run_client(
         ClientConfig::builder()
-            .transfer_args([
-                OsString::from(&src_arg),
-                OsString::from(&dst_arg),
-            ])
+            .transfer_args([OsString::from(&src_arg), OsString::from(&dst_arg)])
             .set_remote_shell(vec![
                 "ssh",
-                "-o", "BatchMode=yes",
-                "-o", "StrictHostKeyChecking=accept-new",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
             ])
             .set_rsync_path("/nonexistent/rsync/binary/xyz")
             .build(),
@@ -417,8 +419,8 @@ fn ssh_rsync_path_not_found() {
 /// Verify the retry helper retries transient failures without looping forever.
 #[test]
 fn retry_logic_stops_on_persistent_failure() {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     let attempts = Arc::new(AtomicU32::new(0));
     let attempts_clone = Arc::clone(&attempts);
@@ -435,7 +437,10 @@ fn retry_logic_stops_on_persistent_failure() {
             .build()
     });
 
-    assert!(result.is_err(), "persistent failures should not be retried to success");
+    assert!(
+        result.is_err(),
+        "persistent failures should not be retried to success"
+    );
     // The error is not transient (CommandNotFound/Ipc/StartClient), so retry
     // should stop after the first attempt or after MAX_SSH_RETRIES if it
     // happens to be classified as transient.
