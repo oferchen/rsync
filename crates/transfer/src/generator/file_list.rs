@@ -1,4 +1,14 @@
 //! File list building, walking, and sorting for the generator role.
+//!
+//! Implements filesystem scanning (`walk_path`), `FileEntry` construction
+//! (`create_entry`), hardlink index assignment, UID/GID collection, and
+//! INC_RECURSE partitioning into per-directory segments.
+//!
+//! # Upstream Reference
+//!
+//! - `flist.c:2192` - `send_file_list()` main file list builder
+//! - `flist.c:1456` - `send_file_entry()` per-file encoding
+//! - `hlink.c:match_hard_links()` - post-sort hardlink index assignment
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -104,8 +114,7 @@ impl GeneratorContext {
         }
     }
 
-    /// Collects unique UID/GID values from the file list.
-    /// No-op on non-Unix platforms since ownership is not preserved.
+    /// No-op on non-Unix platforms - ownership is not preserved.
     #[cfg(not(unix))]
     pub fn collect_id_mappings(&mut self) {}
 
@@ -654,11 +663,16 @@ impl GeneratorContext {
         Ok(meta)
     }
 
+    /// Creates a `FileEntry` from filesystem metadata for wire transmission.
+    ///
+    /// Populates mode, mtime, uid/gid, atime/crtime, symlink targets, device numbers,
+    /// and hardlink dev/ino fields based on the active preservation flags.
+    ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:make_file()` — determines file type and populates the `file_struct`.
-    /// - Device files (block/char) use `new_block_device`/`new_char_device` with rdev fields.
-    /// - Special files (FIFOs/sockets) use `new_fifo`/`new_socket`.
+    /// - `flist.c:make_file()` - determines file type and populates the `file_struct`
+    /// - Device files (block/char) use `new_block_device`/`new_char_device` with rdev fields
+    /// - Special files (FIFOs/sockets) use `new_fifo`/`new_socket`
     fn create_entry(
         &self,
         full_path: &Path,
@@ -777,19 +791,12 @@ impl GeneratorContext {
     }
 }
 
-/// Applies a source-based permutation to two slices in-place using cycle-following.
+/// Applies a source-based permutation to two parallel slices in-place.
 ///
-/// This reorders elements according to the permutation `source_indices` without
-/// cloning elements - only swaps are used. The algorithm inverts the permutation
-/// and then follows each cycle, placing elements in their final positions.
+/// Reorders elements according to `source_indices` using cycle-following with
+/// only swaps (no cloning). Used after sorting via indirect permutation to
+/// reorder `file_list` and `full_paths` simultaneously.
 ///
-/// # Arguments
-/// * `slice_a` - First slice to reorder
-/// * `slice_b` - Second slice to reorder (must have same length)
-/// * `source_indices` - Source-based permutation where `source_indices[i]` is the
-///   index of the element that should end up at position `i`
-///
-/// # Time Complexity
 /// O(n) time and O(n) space for the inverse permutation.
 pub(super) fn apply_permutation_in_place<A, B>(
     slice_a: &mut [A],
