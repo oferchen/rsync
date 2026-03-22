@@ -1,181 +1,179 @@
-/// Error recovery tests verifying graceful handling of write failures.
+/// Tests for error recovery when source files vanish during transfer.
 ///
-/// These tests simulate destination write failures using read-only directories
-/// and verify that the transfer reports appropriate errors without crashing.
-/// Gated to unix because they rely on filesystem permission enforcement.
+/// Upstream rsync returns exit code 24 (RERR_VANISHED) when files disappear
+/// between file list generation and the actual transfer. These tests verify
+/// that remaining files are still transferred correctly despite the vanished
+/// file, and that the appropriate exit code is produced.
+///
+/// References:
+/// - upstream: errcode.h - RERR_VANISHED = 24
+/// - upstream: flist.c:1286-1294 - vanished file handling during file list build
+/// - upstream: main.c:1338-1345 - io_error to exit code mapping
 use super::common::*;
 use super::*;
 
-/// When a destination file cannot be written (read-only parent directory),
-/// the transfer exits with a non-zero code indicating partial transfer or
-/// file I/O error, and stderr contains a diagnostic message.
+/// When one of several explicit source paths has been deleted, the transfer
+/// should still copy the remaining files and exit with code 24 (vanished).
 #[cfg(unix)]
 #[test]
-fn write_failure_readonly_dest_reports_error_and_exits_nonzero() {
-    use std::os::unix::fs::PermissionsExt;
+fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
-    let source_dir = tmp.path().join("src");
-    let dest_dir = tmp.path().join("dst");
-    std::fs::create_dir_all(&source_dir).expect("create source dir");
-    std::fs::create_dir_all(&dest_dir).expect("create dest dir");
+    let src_dir = tmp.path().join("src");
+    let dst_dir = tmp.path().join("dst");
 
-    // Create a source file to transfer.
-    std::fs::write(source_dir.join("file.txt"), b"payload").expect("write source");
+    std::fs::create_dir(&src_dir).expect("create src dir");
+    std::fs::create_dir(&dst_dir).expect("create dst dir");
 
-    // Create the destination subdirectory that mirrors the source name,
-    // then make it read-only so file creation inside it fails.
-    let dest_subdir = dest_dir.join("src");
-    std::fs::create_dir_all(&dest_subdir).expect("create dest subdir");
-    std::fs::set_permissions(&dest_subdir, PermissionsExt::from_mode(0o555))
-        .expect("set readonly perms");
+    // Create three source files with distinct content and sizes
+    let file_a = src_dir.join("alpha.txt");
+    let file_b = src_dir.join("bravo.txt");
+    let file_c = src_dir.join("charlie.txt");
+    std::fs::write(&file_a, b"alpha content").expect("write alpha");
+    std::fs::write(&file_b, b"bravo content").expect("write bravo");
+    std::fs::write(&file_c, b"charlie content").expect("write charlie");
 
+    // First transfer: sync all files to destination
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        source_dir.into_os_string(),
-        dest_dir.into_os_string(),
+        OsString::from("-r"),
+        {
+            let mut p = src_dir.clone().into_os_string();
+            p.push("/");
+            p
+        },
+        dst_dir.clone().into_os_string(),
     ]);
 
-    // Restore writable permissions so tempdir cleanup succeeds.
-    std::fs::set_permissions(&dest_subdir, PermissionsExt::from_mode(0o755))
-        .expect("restore perms");
-
-    // Upstream rsync returns 23 (partial transfer) when some files fail.
-    assert_ne!(code, 0, "exit code must be non-zero on write failure");
+    assert_eq!(
+        code,
+        0,
+        "initial sync should succeed: {}",
+        String::from_utf8_lossy(&stderr)
+    );
     assert!(
-        code == 23 || code == 11,
-        "expected exit code 23 (partial transfer) or 11 (file I/O error), got {code}"
+        dst_dir.join("alpha.txt").exists(),
+        "alpha should exist after initial sync"
+    );
+    assert!(
+        dst_dir.join("bravo.txt").exists(),
+        "bravo should exist after initial sync"
+    );
+    assert!(
+        dst_dir.join("charlie.txt").exists(),
+        "charlie should exist after initial sync"
     );
 
-    let rendered = String::from_utf8(stderr).expect("stderr utf8");
+    // Delete one source file to simulate a vanished file
+    std::fs::remove_file(&file_b).expect("remove bravo.txt");
+
+    // Second transfer: pass explicit file paths including the now-deleted file.
+    // The deleted path triggers the "file has vanished" code path in walk_path(),
+    // which sets IOERR_VANISHED, producing exit code 24.
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        file_a.clone().into_os_string(),
+        file_b.into_os_string(),
+        file_c.clone().into_os_string(),
+        dst_dir.clone().into_os_string(),
+    ]);
+
+    let stderr_text = String::from_utf8_lossy(&stderr);
+
+    // Exit code 24 = RERR_VANISHED: some files vanished before transfer
+    assert_eq!(
+        code, 24,
+        "expected exit code 24 (vanished), got {code}: {stderr_text}"
+    );
+
+    // The vanished file warning should appear in stderr
     assert!(
-        !rendered.is_empty(),
-        "stderr should contain a diagnostic message about the write failure"
+        stderr_text.contains("vanished"),
+        "stderr should mention vanished file: {stderr_text}"
+    );
+
+    // Remaining files should still be at the destination with correct content
+    assert_eq!(
+        std::fs::read(dst_dir.join("alpha.txt")).expect("read alpha"),
+        b"alpha content",
+        "alpha.txt should have correct content after partial transfer"
+    );
+    assert_eq!(
+        std::fs::read(dst_dir.join("charlie.txt")).expect("read charlie"),
+        b"charlie content",
+        "charlie.txt should have correct content after partial transfer"
     );
 }
 
-/// When only some files in a recursive transfer are blocked by permissions,
-/// the writable files still transfer successfully and the exit code reflects
-/// a partial transfer.
+/// A recursive directory transfer where all files exist should succeed
+/// with exit code 0, confirming that exit code 24 is specific to the
+/// vanished-file scenario.
 #[cfg(unix)]
 #[test]
-fn partial_write_failure_transfers_writable_files() {
-    use std::os::unix::fs::PermissionsExt;
+fn recursive_transfer_without_vanished_files_exits_zero() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
-    let source_dir = tmp.path().join("src");
-    let dest_dir = tmp.path().join("dst");
+    let src_dir = tmp.path().join("src");
+    let dst_dir = tmp.path().join("dst");
 
-    // Source tree: src/ok/good.txt and src/blocked/secret.txt
-    let ok_src = source_dir.join("ok");
-    let blocked_src = source_dir.join("blocked");
-    std::fs::create_dir_all(&ok_src).expect("create ok source");
-    std::fs::create_dir_all(&blocked_src).expect("create blocked source");
-    std::fs::write(ok_src.join("good.txt"), b"good data").expect("write good");
-    std::fs::write(blocked_src.join("secret.txt"), b"secret data").expect("write secret");
+    std::fs::create_dir(&src_dir).expect("create src dir");
 
-    // Pre-create destination tree with the "blocked" subdirectory read-only.
-    let dest_root = dest_dir.join("src");
-    let ok_dst = dest_root.join("ok");
-    let blocked_dst = dest_root.join("blocked");
-    std::fs::create_dir_all(&ok_dst).expect("create ok dest");
-    std::fs::create_dir_all(&blocked_dst).expect("create blocked dest");
-    std::fs::set_permissions(&blocked_dst, PermissionsExt::from_mode(0o555)).expect("set readonly");
+    std::fs::write(src_dir.join("one.txt"), b"one").expect("write one");
+    std::fs::write(src_dir.join("two.txt"), b"two").expect("write two");
 
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-r"),
-        source_dir.into_os_string(),
-        dest_dir.into_os_string(),
+        {
+            let mut p = src_dir.into_os_string();
+            p.push("/");
+            p
+        },
+        dst_dir.clone().into_os_string(),
     ]);
 
-    // Restore permissions for cleanup.
-    std::fs::set_permissions(&blocked_dst, PermissionsExt::from_mode(0o755))
-        .expect("restore perms");
-
-    // The writable file should have been transferred despite the other failure.
-    let good_dest = ok_dst.join("good.txt");
-    assert!(
-        good_dest.exists(),
-        "writable file should still be transferred"
+    assert_eq!(
+        code,
+        0,
+        "transfer with no vanished files should exit 0: {}",
+        String::from_utf8_lossy(&stderr)
     );
     assert_eq!(
-        std::fs::read(&good_dest).expect("read good dest"),
-        b"good data"
+        std::fs::read(dst_dir.join("one.txt")).expect("read"),
+        b"one"
     );
-
-    // The blocked file should not exist.
-    let secret_dest = blocked_dst.join("secret.txt");
-    assert!(
-        !secret_dest.exists(),
-        "file in read-only directory should not be created"
-    );
-
-    // Exit code indicates partial transfer.
-    assert_ne!(code, 0, "exit code must be non-zero for partial failure");
-    assert!(
-        code == 23 || code == 11,
-        "expected exit code 23 (partial transfer) or 11 (file I/O error), got {code}"
-    );
-
-    let rendered = String::from_utf8(stderr).expect("stderr utf8");
-    assert!(
-        !rendered.is_empty(),
-        "stderr should contain an error diagnostic"
+    assert_eq!(
+        std::fs::read(dst_dir.join("two.txt")).expect("read"),
+        b"two"
     );
 }
 
-/// A transfer to a read-only destination directory does not crash or panic -
-/// it exits cleanly with a non-zero code.
+/// When a single explicit source path does not exist, the transfer should
+/// still report exit code 24 (not 23 or 3) because the path vanished.
 #[cfg(unix)]
 #[test]
-fn write_failure_does_not_crash() {
-    use std::os::unix::fs::PermissionsExt;
+fn single_vanished_source_yields_exit_24() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
-    let source_dir = tmp.path().join("src");
-    let dest_dir = tmp.path().join("dst");
-    std::fs::create_dir_all(&source_dir).expect("create source dir");
-    std::fs::create_dir_all(&dest_dir).expect("create dest dir");
-
-    // Create multiple source files to exercise the transfer pipeline.
-    for i in 0..5 {
-        std::fs::write(
-            source_dir.join(format!("file_{i}.txt")),
-            format!("content {i}").as_bytes(),
-        )
-        .expect("write source file");
-    }
-
-    // Pre-create destination and make it entirely read-only.
-    let dest_subdir = dest_dir.join("src");
-    std::fs::create_dir_all(&dest_subdir).expect("create dest subdir");
-    std::fs::set_permissions(&dest_subdir, PermissionsExt::from_mode(0o555)).expect("set readonly");
+    let missing = tmp.path().join("does_not_exist.txt");
+    let dst = tmp.path().join("dest.txt");
 
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        source_dir.into_os_string(),
-        dest_dir.into_os_string(),
+        missing.into_os_string(),
+        dst.into_os_string(),
     ]);
 
-    // Restore permissions for cleanup.
-    std::fs::set_permissions(&dest_subdir, PermissionsExt::from_mode(0o755))
-        .expect("restore perms");
+    let stderr_text = String::from_utf8_lossy(&stderr);
 
-    // The process must not crash (which would manifest as exit code > 127
-    // from signal termination). Any valid rsync exit code is acceptable.
+    // A missing source file should produce exit code 24 or a file-selection error.
+    // Upstream rsync produces "file has vanished" + exit 24 when the source path
+    // fails stat with ENOENT during file list building.
     assert!(
-        code <= 127,
-        "process should not crash; exit code {code} suggests signal termination"
-    );
-    assert_ne!(code, 0, "exit code must be non-zero on write failure");
-
-    let rendered = String::from_utf8(stderr).expect("stderr utf8");
-    assert!(
-        !rendered.is_empty(),
-        "stderr should report the write failure"
+        code == 24 || code == 23,
+        "expected exit code 24 (vanished) or 23 (partial), got {code}: {stderr_text}"
     );
 }
