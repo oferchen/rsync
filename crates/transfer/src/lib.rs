@@ -385,7 +385,8 @@ pub fn run_server_with_handshake<W: Write>(
             && !flags.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
         {
             eprintln!(
-                "WARNING: remote daemon does not support extended attributes - disabling xattr preservation{}",
+                "WARNING: remote daemon does not support extended attributes - disabling xattr preservation {}{}",
+                role_trailer::error_location!(),
                 role_trailer::receiver()
             );
             config.flags.xattrs = false;
