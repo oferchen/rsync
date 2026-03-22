@@ -72,7 +72,8 @@
 //! // Buffer automatically returned to pool on drop
 //! ```
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use crossbeam_queue::ArrayQueue;
 
@@ -122,6 +123,24 @@ pub const fn adaptive_buffer_size(file_size: u64) -> usize {
     super::adaptive_buffer_size(file_size)
 }
 
+/// Hard memory cap with backpressure support.
+///
+/// When set, the pool tracks total memory outstanding (checked-out buffers)
+/// and blocks `acquire` calls that would exceed the cap until a buffer is
+/// returned. This prevents unbounded memory growth in high-concurrency
+/// scenarios.
+#[derive(Debug)]
+struct MemoryCap {
+    /// Maximum allowed bytes across all outstanding and pooled buffers.
+    limit: usize,
+    /// Current outstanding bytes (buffers checked out by callers, not in pool).
+    outstanding: AtomicUsize,
+    /// Mutex + condvar pair for blocking when the cap is reached.
+    backpressure: Mutex<()>,
+    /// Notified when a buffer is returned and outstanding bytes decrease.
+    returned: Condvar,
+}
+
 /// A thread-safe, lock-free pool of reusable I/O buffers.
 ///
 /// Reduces allocation overhead during file copy operations by maintaining
@@ -136,6 +155,14 @@ pub const fn adaptive_buffer_size(file_size: u64) -> usize {
 /// When the pool is empty, acquiring allocates a fresh buffer rather than
 /// blocking. This non-blocking guarantee means contention only affects
 /// allocation frequency, never caller latency.
+///
+/// # Memory Cap
+///
+/// An optional hard memory cap can be set via [`with_memory_cap`](Self::with_memory_cap).
+/// When configured, the pool tracks outstanding (checked-out) memory and
+/// blocks `acquire` calls that would exceed the cap until a buffer is
+/// returned (backpressure). Use `try_acquire` / `try_acquire_from` for
+/// non-blocking semantics that return `None` at the cap.
 ///
 /// # Buffer Lifecycle
 ///
@@ -152,6 +179,8 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     buffer_size: usize,
     /// Allocation strategy for creating and disposing of buffers.
     allocator: A,
+    /// Optional hard memory cap with backpressure.
+    memory_cap: Option<MemoryCap>,
 }
 
 impl BufferPool {
@@ -176,6 +205,7 @@ impl BufferPool {
             buffers: ArrayQueue::new(max_buffers),
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
+            memory_cap: None,
         }
     }
 
@@ -193,6 +223,7 @@ impl BufferPool {
             buffers: ArrayQueue::new(max_buffers),
             buffer_size,
             allocator: DefaultAllocator,
+            memory_cap: None,
         }
     }
 }
@@ -215,7 +246,35 @@ impl<A: BufferAllocator> BufferPool<A> {
             buffers: ArrayQueue::new(max_buffers),
             buffer_size,
             allocator,
+            memory_cap: None,
         }
+    }
+
+    /// Sets a hard memory cap on the pool.
+    ///
+    /// When the total memory outstanding (buffers checked out by callers)
+    /// reaches `max_bytes`, subsequent `acquire` and `acquire_from` calls
+    /// block until a buffer is returned (backpressure). Use `try_acquire`
+    /// or `try_acquire_from` for non-blocking semantics that return `None`
+    /// when the cap is reached.
+    ///
+    /// The cap applies to outstanding (checked-out) buffers only. Buffers
+    /// sitting idle in the pool do not count against the cap because they
+    /// are available for immediate reuse without new allocation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_bytes` is zero.
+    #[must_use]
+    pub fn with_memory_cap(mut self, max_bytes: usize) -> Self {
+        assert!(max_bytes > 0, "memory cap must be greater than zero");
+        self.memory_cap = Some(MemoryCap {
+            limit: max_bytes,
+            outstanding: AtomicUsize::new(0),
+            backpressure: Mutex::new(()),
+            returned: Condvar::new(),
+        });
+        self
     }
 
     /// Acquires a buffer from the pool using an Arc reference.
@@ -226,17 +285,46 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// Returns a pooled buffer if available, otherwise allocates a new one
     /// via the pool's [`BufferAllocator`]. The returned [`BufferGuard`]
     /// automatically returns the buffer to the pool when dropped.
+    ///
+    /// If a memory cap is configured and the outstanding memory equals or
+    /// exceeds the cap, this method blocks until a buffer is returned by
+    /// another thread (backpressure). Use [`try_acquire_from`](Self::try_acquire_from)
+    /// for a non-blocking alternative.
     #[must_use]
     pub fn acquire_from(pool: Arc<Self>) -> BufferGuard<A> {
+        pool.wait_for_memory_capacity(pool.buffer_size);
         let buffer = pool
             .buffers
             .pop()
             .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
 
+        pool.track_checkout(buffer.len());
         BufferGuard {
             buffer: Some(buffer),
             pool,
         }
+    }
+
+    /// Tries to acquire a buffer without blocking.
+    ///
+    /// Returns `None` if a memory cap is configured and outstanding memory
+    /// is at or above the cap. Otherwise behaves identically to
+    /// [`acquire_from`](Self::acquire_from).
+    #[must_use]
+    pub fn try_acquire_from(pool: Arc<Self>) -> Option<BufferGuard<A>> {
+        if !pool.try_reserve_memory(pool.buffer_size) {
+            return None;
+        }
+        let buffer = pool
+            .buffers
+            .pop()
+            .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
+
+        pool.track_checkout(buffer.len());
+        Some(BufferGuard {
+            buffer: Some(buffer),
+            pool,
+        })
     }
 
     /// Acquires a buffer sized adaptively for the given file size.
@@ -258,8 +346,11 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Slow path: non-standard size - allocate a fresh buffer.
         // On drop the guard will pass it through `return_buffer` which
         // resizes it to the pool default before returning it.
+        pool.wait_for_memory_capacity(desired);
+        let buffer = pool.allocator.allocate(desired);
+        pool.track_checkout(buffer.len());
         BufferGuard {
-            buffer: Some(pool.allocator.allocate(desired)),
+            buffer: Some(buffer),
             pool,
         }
     }
@@ -269,17 +360,42 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// **Note:** This method returns a guard with a lifetime tied to `self`.
     /// Use [`acquire_from`](Self::acquire_from) when the pool is part of a
     /// larger context that needs to be mutably borrowed.
+    ///
+    /// Blocks if a memory cap is configured and the cap is reached.
     #[must_use]
     pub fn acquire(&self) -> BorrowedBufferGuard<'_, A> {
+        self.wait_for_memory_capacity(self.buffer_size);
         let buffer = self
             .buffers
             .pop()
             .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
 
+        self.track_checkout(buffer.len());
         BorrowedBufferGuard {
             buffer: Some(buffer),
             pool: self,
         }
+    }
+
+    /// Tries to acquire a buffer without blocking (borrows self).
+    ///
+    /// Returns `None` if a memory cap is configured and outstanding memory
+    /// is at or above the cap.
+    #[must_use]
+    pub fn try_acquire(&self) -> Option<BorrowedBufferGuard<'_, A>> {
+        if !self.try_reserve_memory(self.buffer_size) {
+            return None;
+        }
+        let buffer = self
+            .buffers
+            .pop()
+            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
+
+        self.track_checkout(buffer.len());
+        Some(BorrowedBufferGuard {
+            buffer: Some(buffer),
+            pool: self,
+        })
     }
 
     /// Returns a buffer to the pool.
@@ -291,8 +407,13 @@ impl<A: BufferAllocator> BufferPool<A> {
     ///
     /// If the pool is at capacity, the buffer is disposed via
     /// [`BufferAllocator::deallocate`].
+    ///
+    /// When a memory cap is configured, outstanding bytes are decremented
+    /// and any threads blocked in `acquire` are notified.
     #[allow(unsafe_code)]
     fn return_buffer(&self, mut buffer: Vec<u8>) {
+        let returned_len = buffer.len();
+
         if buffer.capacity() < self.buffer_size {
             // Small adaptive buffer - replace with fresh allocation at pool size.
             buffer = Vec::with_capacity(self.buffer_size);
@@ -309,6 +430,9 @@ impl<A: BufferAllocator> BufferPool<A> {
         if let Err(buffer) = self.buffers.push(buffer) {
             self.allocator.deallocate(buffer);
         }
+
+        // Release outstanding memory and wake blocked acquirers.
+        self.track_return(returned_len);
     }
 
     /// Returns the number of buffers currently in the pool.
@@ -336,6 +460,74 @@ impl<A: BufferAllocator> BufferPool<A> {
     pub fn allocator(&self) -> &A {
         &self.allocator
     }
+
+    /// Returns the number of bytes currently checked out (outstanding).
+    ///
+    /// Returns `0` if no memory cap is configured (no tracking overhead
+    /// is incurred without a cap).
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.memory_cap
+            .as_ref()
+            .map(|cap| cap.outstanding.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    /// Returns the configured memory cap in bytes, or `None` if uncapped.
+    #[must_use]
+    pub fn memory_cap(&self) -> Option<usize> {
+        self.memory_cap.as_ref().map(|cap| cap.limit)
+    }
+
+    /// Blocks until outstanding memory is below the cap.
+    ///
+    /// No-op when no memory cap is configured.
+    fn wait_for_memory_capacity(&self, requested: usize) {
+        let Some(cap) = &self.memory_cap else {
+            return;
+        };
+
+        // Fast path: check without locking.
+        if cap.outstanding.load(Ordering::Acquire) + requested <= cap.limit {
+            return;
+        }
+
+        // Slow path: wait on the condvar until memory is available.
+        let mut guard = cap.backpressure.lock().expect("backpressure mutex poisoned");
+        while cap.outstanding.load(Ordering::Acquire) + requested > cap.limit {
+            guard = cap
+                .returned
+                .wait(guard)
+                .expect("backpressure condvar poisoned");
+        }
+    }
+
+    /// Returns `true` if the requested bytes can be allocated without
+    /// exceeding the memory cap. Returns `true` unconditionally when no
+    /// cap is configured.
+    fn try_reserve_memory(&self, requested: usize) -> bool {
+        let Some(cap) = &self.memory_cap else {
+            return true;
+        };
+        cap.outstanding.load(Ordering::Acquire) + requested <= cap.limit
+    }
+
+    /// Records that `size` bytes have been checked out.
+    fn track_checkout(&self, size: usize) {
+        if let Some(cap) = &self.memory_cap {
+            cap.outstanding.fetch_add(size, Ordering::Release);
+        }
+    }
+
+    /// Records that `size` bytes have been returned and wakes waiters.
+    fn track_return(&self, size: usize) {
+        if let Some(cap) = &self.memory_cap {
+            cap.outstanding.fetch_sub(size, Ordering::Release);
+            // Wake one blocked acquirer. notify_one is sufficient because
+            // each returned buffer can only satisfy one waiter.
+            cap.returned.notify_one();
+        }
+    }
 }
 
 impl Default for BufferPool<DefaultAllocator> {
@@ -344,7 +536,7 @@ impl Default for BufferPool<DefaultAllocator> {
     /// Capacity is set to the number of hardware threads
     /// ([`std::thread::available_parallelism`]), falling back to 4 if
     /// detection fails. This matches the typical rayon thread pool size,
-    /// ensuring one pooled buffer per worker thread.
+    /// ensuring one pooled buffer per worker thread. No memory cap is set.
     fn default() -> Self {
         let max_buffers = std::thread::available_parallelism()
             .map(std::num::NonZero::get)
@@ -1147,5 +1339,207 @@ mod tests {
         let pool = BufferPool::with_allocator(2, 256, TrackingAllocator::new());
         let _alloc: &TrackingAllocator = pool.allocator();
         assert_eq!(_alloc.alloc_count(), 0);
+    }
+
+    // ---------------------------------------------------------------
+    // Memory cap tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn no_memory_cap_by_default() {
+        let pool = BufferPool::new(4);
+        assert_eq!(pool.memory_cap(), None);
+        assert_eq!(pool.memory_usage(), 0);
+    }
+
+    #[test]
+    fn memory_cap_is_set() {
+        let pool = BufferPool::with_buffer_size(4, 1024).with_memory_cap(4096);
+        assert_eq!(pool.memory_cap(), Some(4096));
+    }
+
+    #[test]
+    fn memory_usage_tracks_outstanding_buffers() {
+        let pool = BufferPool::with_buffer_size(4, 1024).with_memory_cap(8192);
+        assert_eq!(pool.memory_usage(), 0);
+
+        let buf1 = pool.acquire();
+        assert_eq!(pool.memory_usage(), 1024);
+
+        let buf2 = pool.acquire();
+        assert_eq!(pool.memory_usage(), 2048);
+
+        drop(buf1);
+        assert_eq!(pool.memory_usage(), 1024);
+
+        drop(buf2);
+        assert_eq!(pool.memory_usage(), 0);
+    }
+
+    #[test]
+    fn allocation_under_cap_succeeds() {
+        // Cap allows 4 buffers of 1024 bytes each.
+        let pool = BufferPool::with_buffer_size(8, 1024).with_memory_cap(4096);
+
+        let b1 = pool.acquire();
+        let b2 = pool.acquire();
+        let b3 = pool.acquire();
+        let b4 = pool.acquire();
+
+        assert_eq!(pool.memory_usage(), 4096);
+        assert_eq!(b1.len(), 1024);
+        assert_eq!(b2.len(), 1024);
+        assert_eq!(b3.len(), 1024);
+        assert_eq!(b4.len(), 1024);
+    }
+
+    #[test]
+    fn try_acquire_returns_none_at_cap() {
+        // Cap allows exactly 2 buffers of 1024 bytes.
+        let pool = BufferPool::with_buffer_size(4, 1024).with_memory_cap(2048);
+
+        let _b1 = pool.acquire();
+        let _b2 = pool.acquire();
+        assert_eq!(pool.memory_usage(), 2048);
+
+        // At cap - try_acquire should return None.
+        assert!(pool.try_acquire().is_none());
+    }
+
+    #[test]
+    fn try_acquire_succeeds_after_return() {
+        let pool = BufferPool::with_buffer_size(4, 1024).with_memory_cap(2048);
+
+        let b1 = pool.acquire();
+        let _b2 = pool.acquire();
+
+        // At cap.
+        assert!(pool.try_acquire().is_none());
+
+        // Return one buffer.
+        drop(b1);
+        assert_eq!(pool.memory_usage(), 1024);
+
+        // Now try_acquire should succeed.
+        let b3 = pool.try_acquire();
+        assert!(b3.is_some());
+        assert_eq!(pool.memory_usage(), 2048);
+    }
+
+    #[test]
+    fn try_acquire_from_returns_none_at_cap() {
+        let pool = Arc::new(BufferPool::with_buffer_size(4, 1024).with_memory_cap(1024));
+
+        let _b1 = BufferPool::acquire_from(Arc::clone(&pool));
+        assert!(BufferPool::try_acquire_from(Arc::clone(&pool)).is_none());
+    }
+
+    #[test]
+    fn acquire_blocks_then_succeeds_on_return() {
+        // Cap allows exactly 1 buffer. Acquire one, then spawn a thread
+        // that acquires (blocks). Return the buffer from the main thread
+        // to unblock.
+        let pool = Arc::new(BufferPool::with_buffer_size(4, 1024).with_memory_cap(1024));
+
+        let b1 = BufferPool::acquire_from(Arc::clone(&pool));
+        assert_eq!(pool.memory_usage(), 1024);
+
+        let pool2 = Arc::clone(&pool);
+        let handle = thread::spawn(move || {
+            // This should block until the main thread drops b1.
+            let buf = BufferPool::acquire_from(pool2);
+            assert_eq!(buf.len(), 1024);
+        });
+
+        // Give the spawned thread time to reach the blocking acquire.
+        thread::sleep(std::time::Duration::from_millis(50));
+
+        // Return the buffer - this should unblock the waiting thread.
+        drop(b1);
+
+        handle.join().expect("blocking acquire thread panicked");
+        assert_eq!(pool.memory_usage(), 0);
+    }
+
+    #[test]
+    fn memory_cap_with_concurrent_pressure() {
+        // Cap allows 4 buffers of 1024 bytes. 8 threads compete.
+        let pool = Arc::new(BufferPool::with_buffer_size(8, 1024).with_memory_cap(4096));
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
+                        buf[0] = 0xAB;
+                        // Guard dropped here - returns buffer.
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        assert_eq!(pool.memory_usage(), 0);
+    }
+
+    #[test]
+    fn memory_cap_with_builder_chain() {
+        let pool = BufferPool::with_allocator(4, 512, TrackingAllocator::new())
+            .with_memory_cap(2048);
+
+        assert_eq!(pool.memory_cap(), Some(2048));
+        assert_eq!(pool.buffer_size(), 512);
+
+        let b1 = pool.acquire();
+        assert_eq!(pool.allocator().alloc_count(), 1);
+        assert_eq!(pool.memory_usage(), 512);
+        drop(b1);
+    }
+
+    #[test]
+    #[should_panic(expected = "memory cap must be greater than zero")]
+    fn memory_cap_zero_panics() {
+        let _ = BufferPool::new(4).with_memory_cap(0);
+    }
+
+    #[test]
+    fn memory_usage_without_cap_is_zero() {
+        // Without a cap, memory_usage always returns 0 (no tracking overhead).
+        let pool = BufferPool::new(4);
+        let _buf = pool.acquire();
+        assert_eq!(pool.memory_usage(), 0);
+    }
+
+    #[test]
+    fn memory_cap_backpressure_multiple_waiters() {
+        // Cap allows 1 buffer. Two threads compete for it; they must
+        // take turns.
+        let pool = Arc::new(BufferPool::with_buffer_size(4, 1024).with_memory_cap(1024));
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let pool = Arc::clone(&pool);
+                let completed = Arc::clone(&completed);
+                thread::spawn(move || {
+                    for _ in 0..50 {
+                        let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
+                        buf[0] = 0xFF;
+                    }
+                    completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        assert_eq!(completed.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert_eq!(pool.memory_usage(), 0);
     }
 }
