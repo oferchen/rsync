@@ -62,6 +62,9 @@ mod dry_run_tests;
 #[cfg(unix)]
 #[path = "error_recovery.rs"]
 mod error_recovery_tests;
+#[cfg(unix)]
+#[path = "error_recovery_integration.rs"]
+mod error_recovery_integration_tests;
 #[path = "files_from.rs"]
 mod files_from_tests;
 #[path = "filter_behavior_comprehensive.rs"]
