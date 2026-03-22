@@ -17,7 +17,7 @@ pub use role::{ParseRoleError, Role};
 pub use scratch::MessageScratch;
 pub use segments::{CopyToSliceError, MessageSegments};
 pub use severity::{ParseSeverityError, Severity};
-pub use source::SourceLocation;
+pub use source::{SourceLocation, file_basename};
 
 /// Version tag appended to message trailers.
 pub const VERSION_SUFFIX: &str = crate::version::RUST_VERSION;
