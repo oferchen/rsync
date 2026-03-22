@@ -288,7 +288,7 @@ mod tests {
     use super::super::planner::{DirectoryPlan, EntryAction, PlannedEntry};
     use super::super::support::DirectoryEntry;
     use super::checksum::collect_file_pairs_for_checksum;
-    use tempfile::tempdir;
+    use test_support::create_tempdir;
 
     fn create_test_entry(path: PathBuf, file_name: &str, size: u64) -> DirectoryEntry {
         // Create the actual file so we can get metadata
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn collect_file_pairs_filters_to_copyfile_actions() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source_dir = dir.path().join("src");
         let dest_dir = dir.path().join("dst");
         std::fs::create_dir_all(&source_dir).unwrap();
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn collect_file_pairs_skips_missing_destination() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source_dir = dir.path().join("src");
         let dest_dir = dir.path().join("dst");
         std::fs::create_dir_all(&source_dir).unwrap();
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn collect_file_pairs_skips_size_mismatch() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source_dir = dir.path().join("src");
         let dest_dir = dir.path().join("dst");
         std::fs::create_dir_all(&source_dir).unwrap();
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn collect_file_pairs_includes_matching_sizes() {
-        let dir = tempdir().unwrap();
+        let dir = create_tempdir();
         let source_dir = dir.path().join("src");
         let dest_dir = dir.path().join("dst");
         std::fs::create_dir_all(&source_dir).unwrap();
