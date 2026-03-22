@@ -26,6 +26,7 @@ use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken
 use super::super::delta_apply::ChecksumVerifier;
 use super::super::delta_config::DeltaGeneratorConfig;
 use super::super::shared::ChecksumFactory;
+use crate::role_trailer::error_location;
 
 /// Soft warning threshold for whole-file transfers (8 GB).
 ///
@@ -71,13 +72,16 @@ pub fn generate_delta_from_signature<R: Read>(
 
     // Reconstruct engine signature from wire format
     let block_length_nz = NonZeroU32::new(config.block_length).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "block length must be non-zero")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("block length must be non-zero {}{}", error_location!(), crate::role_trailer::sender()),
+        )
     })?;
 
     let strong_sum_length_nz = NonZeroU8::new(config.strong_sum_length).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            "strong sum length must be non-zero",
+            format!("strong sum length must be non-zero {}{}", error_location!(), crate::role_trailer::sender()),
         )
     })?;
 
@@ -121,14 +125,14 @@ pub fn generate_delta_from_signature<R: Read>(
         DeltaSignatureIndex::from_signature(&signature, checksum_algorithm).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                "failed to create signature index",
+                format!("failed to create signature index {}{}", error_location!(), crate::role_trailer::sender()),
             )
         })?;
 
     let generator = DeltaGenerator::new();
     generator
         .generate(source, &index)
-        .map_err(|e| io::Error::other(format!("delta generation failed: {e}")))
+        .map_err(|e| io::Error::other(format!("delta generation failed: {e} {}{}", error_location!(), crate::role_trailer::sender())))
 }
 
 /// Streams a whole file to the wire in a single pass: read -> hash -> write.

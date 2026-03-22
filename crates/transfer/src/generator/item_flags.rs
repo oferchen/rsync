@@ -12,6 +12,8 @@
 
 use std::io::{self, Read};
 
+use crate::role_trailer::error_location;
+
 /// Item flags received from the receiver indicating transfer requirements.
 ///
 /// The generator reads these flags to determine how to handle each file request.
@@ -168,7 +170,12 @@ impl ItemFlags {
             Some(protocol::FnameCmpType::from_wire(byte[0]).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("invalid fnamecmp type: 0x{:02X}", byte[0]),
+                    format!(
+                        "invalid fnamecmp type: 0x{:02X} {}{}",
+                        byte[0],
+                        error_location!(),
+                        crate::role_trailer::sender(),
+                    ),
                 )
             })?)
         } else {
