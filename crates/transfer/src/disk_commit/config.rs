@@ -26,6 +26,17 @@ pub struct BackupConfig {
     pub suffix: OsString,
 }
 
+/// Default SPSC channel capacity for the disk commit thread.
+///
+/// 128 slots x ~32 KB average chunk = 4 MB peak memory from buffered messages.
+pub const DEFAULT_CHANNEL_CAPACITY: usize = 128;
+
+/// Minimum allowed channel capacity (prevents degenerate single-slot behavior).
+const MIN_CHANNEL_CAPACITY: usize = 8;
+
+/// Maximum allowed channel capacity (prevents unbounded memory growth).
+const MAX_CHANNEL_CAPACITY: usize = 4096;
+
 /// Configuration for the disk commit thread.
 #[derive(Debug, Clone)]
 pub struct DiskCommitConfig {
@@ -51,6 +62,14 @@ pub struct DiskCommitConfig {
     /// ACL cache from flist reception, shared via `Arc` for thread safety.
     /// When `Some`, the disk thread applies cached ACLs after metadata.
     pub acl_cache: Option<Arc<AclCache>>,
+    /// SPSC channel capacity for the disk commit thread.
+    ///
+    /// Controls how many `FileMessage` items can be buffered between the
+    /// network thread and the disk thread. Clamped to
+    /// [`MIN_CHANNEL_CAPACITY`]..=[`MAX_CHANNEL_CAPACITY`] at runtime.
+    ///
+    /// Defaults to [`DEFAULT_CHANNEL_CAPACITY`] (128).
+    pub channel_capacity: usize,
 }
 
 impl Default for DiskCommitConfig {
@@ -63,6 +82,19 @@ impl Default for DiskCommitConfig {
             metadata_opts: None,
             backup: None,
             acl_cache: None,
+            channel_capacity: DEFAULT_CHANNEL_CAPACITY,
         }
+    }
+}
+
+impl DiskCommitConfig {
+    /// Returns the effective channel capacity, clamped to valid bounds.
+    ///
+    /// Values below [`MIN_CHANNEL_CAPACITY`] are raised to the minimum;
+    /// values above [`MAX_CHANNEL_CAPACITY`] are lowered to the maximum.
+    #[must_use]
+    pub fn effective_channel_capacity(&self) -> usize {
+        self.channel_capacity
+            .clamp(MIN_CHANNEL_CAPACITY, MAX_CHANNEL_CAPACITY)
     }
 }
