@@ -59,6 +59,9 @@ mod daemon_tests;
 mod delete_tests;
 #[path = "dry_run.rs"]
 mod dry_run_tests;
+#[cfg(unix)]
+#[path = "error_recovery.rs"]
+mod error_recovery_tests;
 #[path = "files_from.rs"]
 mod files_from_tests;
 #[path = "filter_behavior_comprehensive.rs"]
