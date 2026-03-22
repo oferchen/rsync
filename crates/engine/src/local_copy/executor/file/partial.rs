@@ -231,7 +231,12 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::fs;
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    /// Serializes environment mutations so parallel test threads do not race on
+    /// the same process-global variable.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     /// Scoped helper that sets or removes an environment variable and restores
     /// the previous value when dropped.
@@ -287,6 +292,7 @@ mod tests {
 
     #[test]
     fn partial_mode_from_options_respects_env_var() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
         let mode = PartialMode::from_options(true, None);
 
@@ -298,6 +304,7 @@ mod tests {
 
     #[test]
     fn partial_mode_from_options_explicit_dir_overrides_env() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
         let dir = PathBuf::from("/tmp/explicit");
         let mode = PartialMode::from_options(true, Some(dir.clone()));
@@ -307,6 +314,7 @@ mod tests {
 
     #[test]
     fn partial_mode_from_options_ignores_empty_env_var() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "");
         let mode = PartialMode::from_options(true, None);
 
