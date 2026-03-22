@@ -158,6 +158,12 @@ pub const XMIT_CRTIME_EQ_MTIME: u8 = 1 << 1;
 pub const XMIT_SAME_HIGH_RDEV: u8 = XMIT_SAME_RDEV_MAJOR;
 
 /// Parsed file entry flags from the wire format.
+///
+/// Encapsulates the three bytes of transmission flags that precede each file
+/// entry on the wire. These flags control which metadata fields follow and
+/// which can be reconstructed from the previous entry's state.
+///
+/// // upstream: rsync.h XMIT_* constants, flist.c:send_file_entry()/recv_file_entry()
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub struct FileFlags {
     /// First byte of flags (bits 0-7).
@@ -169,7 +175,7 @@ pub struct FileFlags {
 }
 
 impl FileFlags {
-    /// Creates flags from the raw bytes.
+    /// Creates flags from the raw primary and extended bytes.
     #[must_use]
     pub const fn new(primary: u8, extended: u8) -> Self {
         Self {

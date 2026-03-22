@@ -2,6 +2,10 @@
 //!
 //! Writes size, time, mode, atime, uid/gid, and owner name fields
 //! in the upstream rsync wire format order.
+//!
+//! # Upstream Reference
+//!
+//! See `flist.c:send_file_entry()` lines 580-640 for the metadata writing logic.
 
 use std::io::{self, Write};
 
@@ -163,6 +167,11 @@ impl FileListWriter {
     }
 
     /// Writes a user or group name (truncated to 255 bytes).
+    ///
+    /// The name is preceded by a single length byte, limiting names to 255
+    /// bytes. Longer names are silently truncated.
+    ///
+    /// // upstream: flist.c:send_file_entry() - uid_ndx/gid_ndx name writing
     #[inline]
     fn write_owner_name<W: Write + ?Sized>(
         &self,
