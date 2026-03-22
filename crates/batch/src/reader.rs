@@ -184,10 +184,71 @@ impl BatchReader {
         }
     }
 
-    /// Read all delta operations from the batch file.
+    /// Read delta operations for a single file from the batch stream.
     ///
-    /// This reads delta operations until EOF is reached.
-    /// Suitable for single-file batches or when processing one file at a time.
+    /// Reads the upstream token-format delta stream until the end marker
+    /// (write_int(0)) is encountered. Each call consumes exactly one file's
+    /// worth of delta data.
+    ///
+    /// Returns a vector of [`DeltaOp`](protocol::wire::DeltaOp) that can be
+    /// applied to reconstruct the file.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `token.c:simple_send_token()` - token format:
+    ///   positive i32 = literal length, negative i32 = block match, 0 = end
+    pub fn read_file_delta_tokens(&mut self) -> BatchResult<Vec<protocol::wire::DeltaOp>> {
+        if self.header.is_none() {
+            return Err(BatchError::Io(io::Error::other(
+                "Must read header before delta operations",
+            )));
+        }
+
+        if let Some(ref mut reader) = self.batch_file {
+            let mut ops = Vec::new();
+            loop {
+                let token = protocol::wire::delta::read_token(reader).map_err(|e| {
+                    BatchError::Io(io::Error::new(
+                        e.kind(),
+                        format!("Failed to read delta token: {e}"),
+                    ))
+                })?;
+
+                match token {
+                    None => break, // End marker (token value 0)
+                    Some(n) if n > 0 => {
+                        // Literal data: n bytes follow
+                        let mut data = vec![0u8; n as usize];
+                        reader.read_exact(&mut data).map_err(|e| {
+                            BatchError::Io(io::Error::new(
+                                e.kind(),
+                                format!("Failed to read literal data ({n} bytes): {e}"),
+                            ))
+                        })?;
+                        ops.push(protocol::wire::DeltaOp::Literal(data));
+                    }
+                    Some(n) => {
+                        // Block match: block_index = -(n+1)
+                        let block_index = (-(n + 1)) as u32;
+                        ops.push(protocol::wire::DeltaOp::Copy {
+                            block_index,
+                            length: 0, // Length determined by block size at replay time
+                        });
+                    }
+                }
+            }
+            Ok(ops)
+        } else {
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
+        }
+    }
+
+    /// Read all delta operations from the batch file using internal format.
+    ///
+    /// This reads delta operations using the internal opcode-based format
+    /// (count prefix + individual operations). For batch files written with
+    /// the token format, use [`read_file_delta_tokens`](Self::read_file_delta_tokens)
+    /// instead.
     pub fn read_all_delta_ops(&mut self) -> BatchResult<Vec<protocol::wire::DeltaOp>> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(
@@ -1032,6 +1093,126 @@ mod tests {
             let read_entries = reader.read_protocol_flist().unwrap();
             assert!(read_entries.is_empty());
             assert_eq!(reader.io_error(), 0);
+        }
+    }
+
+    mod token_delta_tests {
+        use super::*;
+
+        /// Write a batch file with token-format delta data and verify that
+        /// `read_file_delta_tokens` decodes it correctly.
+        #[test]
+        fn read_token_delta_roundtrip() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("token_delta.batch");
+
+            // Write a batch with token-format delta data for one file
+            let config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            )
+            .with_checksum_seed(42);
+
+            let mut writer = BatchWriter::new(config).unwrap();
+            writer.write_header(BatchFlags::default()).unwrap();
+
+            // Write token-format delta data: one literal + end marker
+            let mut buf = Vec::new();
+            protocol::wire::delta::write_token_literal(&mut buf, b"hello batch world").unwrap();
+            protocol::wire::delta::write_token_end(&mut buf).unwrap();
+            writer.write_data(&buf).unwrap();
+            writer.finalize().unwrap();
+
+            // Read back
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            let ops = reader.read_file_delta_tokens().unwrap();
+            assert_eq!(ops.len(), 1);
+            match &ops[0] {
+                protocol::wire::DeltaOp::Literal(data) => {
+                    assert_eq!(data, b"hello batch world");
+                }
+                _ => panic!("expected literal op"),
+            }
+        }
+
+        /// Verify that multiple files' delta streams can be read sequentially.
+        #[test]
+        fn read_multiple_file_deltas() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("multi_delta.batch");
+
+            let config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            )
+            .with_checksum_seed(7);
+
+            let mut writer = BatchWriter::new(config).unwrap();
+            writer.write_header(BatchFlags::default()).unwrap();
+
+            // File 1: literal "AAA" + end
+            let mut buf = Vec::new();
+            protocol::wire::delta::write_token_literal(&mut buf, b"AAA").unwrap();
+            protocol::wire::delta::write_token_end(&mut buf).unwrap();
+            writer.write_data(&buf).unwrap();
+
+            // File 2: literal "BBBBB" + block match 0 + end
+            let mut buf2 = Vec::new();
+            protocol::wire::delta::write_token_literal(&mut buf2, b"BBBBB").unwrap();
+            protocol::wire::delta::write_token_block_match(&mut buf2, 0).unwrap();
+            protocol::wire::delta::write_token_end(&mut buf2).unwrap();
+            writer.write_data(&buf2).unwrap();
+
+            writer.finalize().unwrap();
+
+            // Read back
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            // File 1
+            let ops1 = reader.read_file_delta_tokens().unwrap();
+            assert_eq!(ops1.len(), 1);
+            assert_eq!(ops1[0], protocol::wire::DeltaOp::Literal(b"AAA".to_vec()));
+
+            // File 2
+            let ops2 = reader.read_file_delta_tokens().unwrap();
+            assert_eq!(ops2.len(), 2);
+            assert_eq!(ops2[0], protocol::wire::DeltaOp::Literal(b"BBBBB".to_vec()));
+            assert!(matches!(
+                ops2[1],
+                protocol::wire::DeltaOp::Copy { block_index: 0, .. }
+            ));
+        }
+
+        #[test]
+        fn read_delta_tokens_without_header() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            let result = reader.read_file_delta_tokens();
+            assert!(result.is_err());
         }
     }
 }
