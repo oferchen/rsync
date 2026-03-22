@@ -1,5 +1,11 @@
 // Integration tests for partial file transfer functionality.
 
+use std::sync::Mutex;
+
+/// Serializes environment mutations so parallel test threads do not race on
+/// the same process-global variable.
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
 /// Scoped helper that sets or removes an environment variable and restores the
 /// previous value when dropped.
 struct PartialEnvGuard {
@@ -57,6 +63,7 @@ fn partial_mode_partial_dir_preserves_in_separate_directory() {
 
 #[test]
 fn partial_mode_respects_rsync_partial_dir_env() {
+    let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
     let _guard = PartialEnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/test-partial");
     let mode = PartialMode::from_options(true, None);
 
@@ -69,6 +76,7 @@ fn partial_mode_respects_rsync_partial_dir_env() {
 
 #[test]
 fn partial_mode_explicit_dir_overrides_env_var() {
+    let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
     let _guard = PartialEnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
     let mode = PartialMode::from_options(true, Some("/tmp/explicit-partial".into()));
 
