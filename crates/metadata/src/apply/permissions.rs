@@ -18,6 +18,10 @@ use std::os::fd::BorrowedFd;
 
 /// Sets permissions on `destination` to match `metadata` (full mode on Unix,
 /// read-only flag on Windows).
+///
+/// On Unix, copies the full mode bits (including suid/sgid/sticky). On
+/// Windows, only the read-only flag is mirrored.
+// upstream: rsync.c:set_file_attrs() - chmod path for direct permission copy
 pub(super) fn set_permissions_like(
     metadata: &fs::Metadata,
     destination: &Path,
@@ -50,6 +54,7 @@ pub(super) fn set_permissions_like(
 
 /// Returns `true` when `target_mode` already matches the permission bits on
 /// `existing`, comparing only the lower 12 bits (suid/sgid/sticky + rwx).
+// upstream: rsync.c:set_file_attrs() - skips chmod when mode already matches
 #[cfg(unix)]
 pub(super) fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -57,6 +62,11 @@ pub(super) fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bo
 }
 
 /// Applies permissions with optional chmod modifiers (path-based).
+///
+/// When chmod modifiers are configured, applies them on top of the base mode.
+/// Otherwise delegates to [`apply_permissions_without_chmod`] for direct
+/// permission copy or executability-only preservation.
+// upstream: rsync.c:set_file_attrs() - chmod with optional modifier chain
 pub(super) fn apply_permissions_with_chmod(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -263,6 +273,11 @@ fn apply_permissions_without_chmod(
 }
 
 /// Applies permissions from a protocol `FileEntry`.
+///
+/// Handles the receiver-side chmod path: applies the entry's permission bits
+/// directly, then layers any `--chmod` modifiers on top. Skips the syscall
+/// when the resulting mode already matches `cached_meta`.
+// upstream: rsync.c:set_file_attrs() - receiver-side permission application
 pub(super) fn apply_permissions_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
