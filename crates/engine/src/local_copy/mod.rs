@@ -53,10 +53,6 @@
 pub mod buffer_pool;
 pub mod clonefile;
 mod compressor;
-/// Concurrent delta generation infrastructure using rayon.
-///
-/// See [`concurrent_delta::DeltaPipeline`] for the main entry point.
-pub mod concurrent_delta;
 mod context;
 #[cfg(test)]
 mod debug_del;
