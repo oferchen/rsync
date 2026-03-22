@@ -27,6 +27,10 @@ use std::os::unix::fs::MetadataExt;
 /// Resolves the target UID and GID after applying overrides, mappings, and
 /// numeric-id rules. Returns `(None, None)` when no ownership change is
 /// requested.
+///
+/// Resolution priority: override > mapping > source metadata, matching
+/// upstream's chown logic.
+// upstream: rsync.c:set_file_attrs() - UID/GID resolution before chown
 #[cfg(unix)]
 pub(super) fn resolve_ownership(
     metadata: &fs::Metadata,
@@ -76,6 +80,10 @@ pub(super) fn resolve_ownership(
 }
 
 /// Returns `true` when the resolved ownership already matches `existing`.
+///
+/// Compares only the fields that are being changed - `None` values are
+/// treated as "no change requested" and always match.
+// upstream: rsync.c:set_file_attrs() - skips chown when uid/gid already match
 #[cfg(unix)]
 pub(super) fn ownership_matches(
     owner: &Option<unix_fs::Uid>,
@@ -94,6 +102,11 @@ pub(super) fn ownership_matches(
 }
 
 /// Applies ownership (chown) to a path, optionally following symlinks.
+///
+/// Uses `chownat` with `AT_SYMLINK_NOFOLLOW` when `follow_symlinks` is false.
+/// Skips the syscall entirely when both resolved UID and GID are `None`,
+/// or when the resolved values already match `existing`.
+// upstream: rsync.c:set_file_attrs() - chownat with conditional AT_SYMLINK_NOFOLLOW
 pub(super) fn set_owner_like(
     metadata: &fs::Metadata,
     destination: &Path,
@@ -167,6 +180,11 @@ pub(super) fn set_owner_like_with_fd(
 }
 
 /// Applies ownership from a protocol `FileEntry` on Unix.
+///
+/// Resolves UID/GID from the entry using overrides, mappings, and numeric-id
+/// rules. Delegates to fake-super xattr storage when `--fake-super` is active.
+/// Skips the chown syscall when the resolved values already match `cached_meta`.
+// upstream: rsync.c:set_file_attrs() - chown path for receiver-side file entries
 #[cfg(unix)]
 pub(super) fn apply_ownership_from_entry(
     destination: &Path,
@@ -265,7 +283,9 @@ pub(super) fn apply_ownership_from_entry(
 /// Stores ownership metadata via fake-super xattr instead of applying directly.
 ///
 /// Used when `--fake-super` is enabled, allowing non-root users to
-/// preserve ownership information in extended attributes.
+/// preserve ownership information in extended attributes. Encodes
+/// mode, uid, gid, and rdev into a `user.rsync.%stat` xattr.
+// upstream: rsync.c:set_file_attrs() with am_root==0 and fake_super active
 #[cfg(unix)]
 fn apply_ownership_via_fake_super(
     destination: &Path,
@@ -299,7 +319,10 @@ fn apply_ownership_via_fake_super(
         .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
 }
 
-/// No-op stub for non-Unix platforms where ownership is not supported.
+/// No-op stub for non-Unix platforms where ownership (`chown`) is not supported.
+///
+/// Returns `Ok(())` unconditionally since Windows and other non-Unix targets
+/// do not support POSIX ownership semantics.
 #[cfg(not(unix))]
 pub(super) fn apply_ownership_from_entry(
     _destination: &Path,

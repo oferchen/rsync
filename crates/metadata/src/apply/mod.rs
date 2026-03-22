@@ -22,7 +22,9 @@ use std::path::Path;
 /// Applies metadata from `metadata` to the destination directory.
 ///
 /// Preserves permission bits (best-effort on non-Unix targets) and
-/// nanosecond timestamps.
+/// nanosecond timestamps. Delegates to [`apply_directory_metadata_with_options`]
+/// with default options (all preservation flags enabled).
+// upstream: rsync.c:set_file_attrs() - directory metadata application
 pub fn apply_directory_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -31,6 +33,10 @@ pub fn apply_directory_metadata(
 }
 
 /// Applies metadata from `metadata` to the destination directory using explicit options.
+///
+/// Applies ownership, permissions, and timestamps in the same order as
+/// upstream rsync's `set_file_attrs()`: chown, chmod, then utimensat.
+// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat
 pub fn apply_directory_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -47,7 +53,9 @@ pub fn apply_directory_metadata_with_options(
 /// Applies metadata from `metadata` to the destination file.
 ///
 /// Preserves permission bits (best-effort on non-Unix targets) and
-/// nanosecond timestamps.
+/// nanosecond timestamps. Delegates to [`apply_file_metadata_with_options`]
+/// with default options (all preservation flags enabled).
+// upstream: rsync.c:set_file_attrs() - file metadata application
 pub fn apply_file_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -56,6 +64,10 @@ pub fn apply_file_metadata(
 }
 
 /// Applies file metadata using explicit [`MetadataOptions`].
+///
+/// Applies ownership, permissions, timestamps, and creation time in the
+/// same order as upstream rsync's `set_file_attrs()`.
+// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat → crtime
 pub fn apply_file_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -152,7 +164,9 @@ pub fn apply_file_metadata_with_fd_if_changed(
 }
 
 /// Applies metadata from `metadata` to the destination symbolic link without
-/// following the link target.
+/// following the link target. Delegates to [`apply_symlink_metadata_with_options`]
+/// with default options.
+// upstream: rsync.c:set_file_attrs() - symlink path uses AT_SYMLINK_NOFOLLOW
 pub fn apply_symlink_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -161,6 +175,10 @@ pub fn apply_symlink_metadata(
 }
 
 /// Applies symbolic link metadata using explicit [`MetadataOptions`].
+///
+/// Only ownership and timestamps are applied - permissions are not preserved
+/// for symlinks because most systems ignore symlink permission bits.
+// upstream: rsync.c:set_file_attrs() - skips chmod for symlinks
 pub fn apply_symlink_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,

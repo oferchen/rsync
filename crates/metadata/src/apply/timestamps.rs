@@ -16,6 +16,11 @@ use std::io;
 use std::os::fd::BorrowedFd;
 
 /// Applies timestamps (atime + mtime) to a path, optionally following symlinks.
+///
+/// Uses [`set_file_times`] for regular files/directories and
+/// [`set_symlink_file_times`] for symlinks. Skips the syscall when the
+/// mtime already matches `existing`.
+// upstream: rsync.c:set_file_attrs() - utimensat / lutimensat based on follow flag
 pub(super) fn set_timestamp_like(
     metadata: &fs::Metadata,
     destination: &Path,
@@ -43,6 +48,10 @@ pub(super) fn set_timestamp_like(
 }
 
 /// fd-based variant of [`set_timestamp_like`] that uses `futimens` on the open fd.
+///
+/// Avoids a path lookup by operating directly on the file descriptor.
+/// Skips the syscall when the mtime already matches `existing`.
+// upstream: rsync.c:set_file_attrs() - futimens path when fd is available
 #[cfg(unix)]
 pub(super) fn set_timestamp_with_fd(
     metadata: &fs::Metadata,
@@ -78,6 +87,11 @@ pub(super) fn set_timestamp_with_fd(
 }
 
 /// Applies mtime (and atime when `--atimes`) from a protocol `FileEntry`.
+///
+/// When `--atimes` is not active, both atime and mtime are set to the entry's
+/// mtime value. Skips the syscall when both timestamps already match
+/// `cached_meta`.
+// upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
 pub(super) fn apply_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -188,6 +202,7 @@ pub(super) fn apply_crtime_from_source_metadata(
 ///
 /// On macOS this uses `setattrlist(2)` with `ATTR_CMN_CRTIME`. On other
 /// platforms this is a no-op since creation time is not universally settable.
+// upstream: rsync.c:615 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
 pub(super) fn apply_crtime_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
