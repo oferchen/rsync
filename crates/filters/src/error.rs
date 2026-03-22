@@ -1,3 +1,5 @@
+//! Error types for filter rule compilation.
+
 use thiserror::Error;
 
 /// Error produced when a [`FilterRule`](crate::FilterRule) cannot be compiled

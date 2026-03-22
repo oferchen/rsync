@@ -32,6 +32,18 @@ pub(crate) struct CompiledRule {
 }
 
 impl CompiledRule {
+    /// Compiles a [`FilterRule`] into optimised glob matchers.
+    ///
+    /// The pattern is normalised (anchored/directory flags extracted), then
+    /// expanded into direct matchers (for the pattern itself) and descendant
+    /// matchers (for `pattern/**` to cover directory contents). Unanchored
+    /// patterns additionally get `**/pattern` variants for matching at any
+    /// depth.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FilterError`] if the pattern cannot be compiled into a valid
+    /// glob matcher.
     pub(crate) fn new(rule: FilterRule) -> Result<Self, FilterError> {
         let FilterRule {
             action,
@@ -162,6 +174,10 @@ impl CompiledRule {
 }
 
 /// Removes rules whose cleared side flags leave them inactive.
+///
+/// Called when processing a `!` (clear) rule. Each remaining rule has its
+/// applicability flags cleared for the specified sides, and rules that no
+/// longer apply to any side are removed from the list.
 pub(crate) fn apply_clear_rule(rules: &mut Vec<CompiledRule>, sender: bool, receiver: bool) {
     if !sender && !receiver {
         return;
@@ -170,6 +186,11 @@ pub(crate) fn apply_clear_rule(rules: &mut Vec<CompiledRule>, sender: bool, rece
     rules.retain_mut(|rule| rule.clear_sides(sender, receiver));
 }
 
+/// Compiles a set of glob pattern strings into sorted, deduplicated matchers.
+///
+/// Patterns are sorted for deterministic evaluation order. Each pattern is
+/// built with `literal_separator(true)` so that `*` does not match `/`,
+/// matching upstream rsync's wildcard semantics.
 fn compile_patterns(
     patterns: HashSet<String>,
     original: &str,
@@ -189,14 +210,19 @@ fn compile_patterns(
     Ok(matchers)
 }
 
-/// Normalizes a pattern by stripping leading '/' (anchored) and trailing '/' (directory-only).
+/// Normalizes a pattern by stripping leading `/` (anchored) and trailing `/` (directory-only).
 ///
 /// Returns `Cow::Borrowed` when no stripping is needed (most common case),
 /// avoiding a heap allocation.
 ///
 /// A pattern is anchored if:
-/// - It starts with '/', OR
-/// - It contains '/' anywhere in the pattern (besides trailing '/')
+/// - It starts with `/`, OR
+/// - It contains `/` anywhere in the pattern (besides trailing `/`)
+///
+/// This mirrors upstream rsync's pattern normalization in
+/// `exclude.c:parse_filter_str()` where leading and trailing slashes are
+/// stripped and used to set `FILTRULE_ABS_PATH` and `FILTRULE_DIRECTORY`
+/// flags respectively.
 fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let starts_with_slash = pattern.starts_with('/');
     let directory_only = pattern.ends_with('/');
