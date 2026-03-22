@@ -25,3 +25,4 @@ tracing = ["dep:tracing"]
 [dev-dependencies]
 proptest = "1.4"
 tempfile = "3.15"
+test-support = { path = "../test-support" }
