@@ -478,6 +478,24 @@ pub(super) fn map_child_exit_status(status: std::process::ExitStatus) -> ExitCod
     }
 }
 
+/// Formats captured SSH stderr output as a suffix for error messages.
+///
+/// Returns an empty string when `stderr_bytes` is empty. Otherwise returns
+/// a newline-separated block prefixed with "SSH stderr:" that gives the user
+/// visibility into what the remote process wrote to stderr before exiting.
+/// The output is trimmed to remove trailing whitespace.
+pub(super) fn format_stderr_context(stderr_bytes: &[u8]) -> String {
+    if stderr_bytes.is_empty() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(stderr_bytes);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    format!("\nSSH stderr:\n{trimmed}")
+}
+
 /// Runs server over an SSH connection using split read/write halves.
 ///
 /// This uses [`SshConnection::split`] to obtain separate reader and writer handles,
@@ -504,9 +522,12 @@ fn run_server_over_ssh_connection(
 
     // Wait for SSH child and map its exit status.
     // Mirror upstream: wait_process_with_flush() in main.c
-    let child_exit_code = match child_handle.wait() {
-        Ok(status) => map_child_exit_status(status),
-        Err(_) => ExitCode::WaitChild,
+    let (child_exit_code, stderr_text) = match child_handle.wait_with_stderr() {
+        Ok((status, stderr_bytes)) => {
+            let stderr_text = format_stderr_context(&stderr_bytes);
+            (map_child_exit_status(status), stderr_text)
+        }
+        Err(_) => (ExitCode::WaitChild, String::new()),
     };
 
     match transfer_result {
@@ -517,7 +538,7 @@ fn run_server_over_ssh_connection(
             } else {
                 Err(invalid_argument_error_typed(
                     &format!(
-                        "remote process exited with error: {}",
+                        "remote process exited with error: {}{stderr_text}",
                         child_exit_code.description()
                     ),
                     child_exit_code,
@@ -529,14 +550,14 @@ fn run_server_over_ssh_connection(
             if child_exit_code.as_i32() > transfer_exit.as_i32() {
                 Err(invalid_argument_error_typed(
                     &format!(
-                        "transfer failed and remote process exited with error: {}",
+                        "transfer failed and remote process exited with error: {}{stderr_text}",
                         child_exit_code.description()
                     ),
                     child_exit_code,
                 ))
             } else {
                 Err(invalid_argument_error(
-                    &format!("transfer failed: {transfer_error}"),
+                    &format!("transfer failed: {transfer_error}{stderr_text}"),
                     transfer_exit.as_i32(),
                 ))
             }
@@ -620,6 +641,39 @@ mod tests {
         assert_eq!(server_config.args.len(), 2);
         assert_eq!(server_config.args[0], "file1.txt");
         assert_eq!(server_config.args[1], "file2.txt");
+    }
+
+    #[test]
+    fn format_stderr_context_empty_input() {
+        assert_eq!(format_stderr_context(&[]), "");
+    }
+
+    #[test]
+    fn format_stderr_context_whitespace_only() {
+        assert_eq!(format_stderr_context(b"  \n\n  "), "");
+    }
+
+    #[test]
+    fn format_stderr_context_single_line() {
+        let output = format_stderr_context(b"Permission denied (publickey).\n");
+        assert_eq!(output, "\nSSH stderr:\nPermission denied (publickey).");
+    }
+
+    #[test]
+    fn format_stderr_context_multi_line() {
+        let input = b"Warning: Permanently added 'host' to known hosts.\nrsync error: some error\n";
+        let output = format_stderr_context(input);
+        assert!(output.starts_with("\nSSH stderr:\n"));
+        assert!(output.contains("Warning: Permanently added"));
+        assert!(output.contains("rsync error: some error"));
+    }
+
+    #[test]
+    fn format_stderr_context_invalid_utf8() {
+        let input = b"error: \xff\xfe bad bytes\n";
+        let output = format_stderr_context(input);
+        assert!(output.starts_with("\nSSH stderr:\n"));
+        assert!(output.contains("error:"));
     }
 
     // Tests for map_child_exit_status
