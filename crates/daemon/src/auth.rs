@@ -446,12 +446,17 @@ mod tests {
         let peer_ip: IpAddr = "10.0.0.1".parse().unwrap();
         let challenge1 = ChallengeGenerator::generate(peer_ip, Some(32));
 
-        // Small delay to ensure different timestamp
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Retry until the microsecond timestamp changes (bounded)
+        let mut challenge2 = challenge1.clone();
+        for i in 0..200 {
+            challenge2 = ChallengeGenerator::generate(peer_ip, Some(32));
+            if challenge2 != challenge1 {
+                break;
+            }
+            assert!(i < 199, "challenge did not change after 200 retries");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
 
-        let challenge2 = ChallengeGenerator::generate(peer_ip, Some(32));
-
-        // Challenges should differ due to timestamp
         assert_ne!(challenge1, challenge2);
     }
 

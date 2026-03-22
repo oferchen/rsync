@@ -106,15 +106,19 @@ fn test_oc_daemon_shutdown_cleanup() {
         // Daemon dropped here
     }
 
-    // Give OS time to release port
-    thread::sleep(Duration::from_millis(100));
-
-    // Port should be available again after daemon cleanup
-    let result = TcpStream::connect(format!("127.0.0.1:{port}"));
-    assert!(
-        result.is_err(),
-        "port should be unbound after daemon shutdown"
-    );
+    // Poll until OS releases the port (up to 2 seconds)
+    let start = std::time::Instant::now();
+    loop {
+        let result = TcpStream::connect(format!("127.0.0.1:{port}"));
+        if result.is_err() {
+            break; // Port is unbound - daemon cleaned up
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "port still bound after 2 seconds - daemon did not shut down"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// Test upstream rsync 3.4.1 client connecting to oc-rsync daemon.
