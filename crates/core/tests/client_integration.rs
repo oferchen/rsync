@@ -1,3 +1,5 @@
+mod test_timeout;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,6 +9,7 @@ use core::client::{
     run_client, run_client_with_observer,
 };
 use tempfile::tempdir;
+use test_timeout::{LOCAL_TIMEOUT, run_with_timeout};
 
 /// Sets the creation time (birth time) of a file via `setattrlist(2)`.
 #[cfg(target_os = "macos")]
@@ -67,69 +70,71 @@ fn touch(path: &Path, contents: &[u8]) {
 
 #[test]
 fn run_client_copies_with_delete_and_filters() {
-    let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("source");
-    let dest_root = temp.path().join("dest");
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let dest_root = temp.path().join("dest");
 
-    fs::create_dir_all(&source_root).expect("source root");
-    fs::create_dir_all(&dest_root).expect("dest root");
+        fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&dest_root).expect("dest root");
 
-    touch(&source_root.join("keep.txt"), b"keep");
-    touch(&source_root.join("nested/data.bin"), b"payload");
-    touch(&source_root.join("remove.tmp"), b"temporary");
+        touch(&source_root.join("keep.txt"), b"keep");
+        touch(&source_root.join("nested/data.bin"), b"payload");
+        touch(&source_root.join("remove.tmp"), b"temporary");
 
-    #[cfg(unix)]
-    std::os::unix::fs::symlink("keep.txt", source_root.join("keep-link")).expect("symlink");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("keep.txt", source_root.join("keep-link")).expect("symlink");
 
-    touch(&dest_root.join("stale.txt"), b"obsolete");
-    touch(&dest_root.join("remove.tmp"), b"old temporary");
-    touch(&dest_root.join("protected.txt"), b"protected");
+        touch(&dest_root.join("stale.txt"), b"obsolete");
+        touch(&dest_root.join("remove.tmp"), b"old temporary");
+        touch(&dest_root.join("protected.txt"), b"protected");
 
-    let mut source_arg = source_root.into_os_string();
-    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
-    let config = ClientConfig::builder()
-        .transfer_args([source_arg, dest_root.clone().into_os_string()])
-        .mkpath(true)
-        .delete_before(true)
-        .delete_excluded(true)
-        .add_filter_rule(FilterRuleSpec::exclude("*.tmp"))
-        .add_filter_rule(FilterRuleSpec::protect("protected.txt"))
-        .permissions(true)
-        .links(true)
-        .times(true)
-        .progress(true)
-        .stats(true)
-        .build();
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg, dest_root.clone().into_os_string()])
+            .mkpath(true)
+            .delete_before(true)
+            .delete_excluded(true)
+            .add_filter_rule(FilterRuleSpec::exclude("*.tmp"))
+            .add_filter_rule(FilterRuleSpec::protect("protected.txt"))
+            .permissions(true)
+            .links(true)
+            .times(true)
+            .progress(true)
+            .stats(true)
+            .build();
 
-    let summary = run_client(config).expect("run client");
+        let summary = run_client(config).expect("run client");
 
-    assert_eq!(fs::read(dest_root.join("keep.txt")).unwrap(), b"keep");
-    assert_eq!(
-        fs::read(dest_root.join("nested/data.bin")).unwrap(),
-        b"payload"
-    );
-    #[cfg(unix)]
-    {
-        let target = fs::read_link(dest_root.join("keep-link")).expect("symlink created");
-        assert_eq!(target, PathBuf::from("keep.txt"));
-    }
-    assert!(
-        !dest_root.join("remove.tmp").exists(),
-        "excluded files deleted"
-    );
-    assert!(
-        dest_root.join("protected.txt").exists(),
-        "protected entries are preserved"
-    );
-    assert!(
-        !dest_root.join("stale.txt").exists(),
-        "stale entries removed during delete-before"
-    );
+        assert_eq!(fs::read(dest_root.join("keep.txt")).unwrap(), b"keep");
+        assert_eq!(
+            fs::read(dest_root.join("nested/data.bin")).unwrap(),
+            b"payload"
+        );
+        #[cfg(unix)]
+        {
+            let target = fs::read_link(dest_root.join("keep-link")).expect("symlink created");
+            assert_eq!(target, PathBuf::from("keep.txt"));
+        }
+        assert!(
+            !dest_root.join("remove.tmp").exists(),
+            "excluded files deleted"
+        );
+        assert!(
+            dest_root.join("protected.txt").exists(),
+            "protected entries are preserved"
+        );
+        assert!(
+            !dest_root.join("stale.txt").exists(),
+            "stale entries removed during delete-before"
+        );
 
-    assert!(summary.files_copied() >= 2);
-    assert!(summary.items_deleted() >= 1);
-    assert!(summary.bytes_copied() > 0);
+        assert!(summary.files_copied() >= 2);
+        assert!(summary.items_deleted() >= 1);
+        assert!(summary.bytes_copied() > 0);
+    });
 }
 
 #[derive(Default)]
@@ -151,67 +156,69 @@ impl ClientProgressObserver for RecordingObserver {
 
 #[test]
 fn progress_observer_reports_transfers() {
-    let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("src");
-    let dest_root = temp.path().join("dst");
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("src");
+        let dest_root = temp.path().join("dst");
 
-    touch(&source_root.join("first.bin"), b"1234567890");
-    touch(&source_root.join("nested/second.bin"), b"abcdefghij");
+        touch(&source_root.join("first.bin"), b"1234567890");
+        touch(&source_root.join("nested/second.bin"), b"abcdefghij");
 
-    let mut source_arg = source_root.into_os_string();
-    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
-    let config = ClientConfig::builder()
-        .transfer_args([source_arg, dest_root.into_os_string()])
-        .mkpath(true)
-        .progress(true)
-        .stats(true)
-        .build();
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg, dest_root.into_os_string()])
+            .mkpath(true)
+            .progress(true)
+            .stats(true)
+            .build();
 
-    let mut observer = RecordingObserver::default();
-    let summary = run_client_with_observer(config, Some(&mut observer)).expect("run client");
+        let mut observer = RecordingObserver::default();
+        let summary = run_client_with_observer(config, Some(&mut observer)).expect("run client");
 
-    assert_eq!(summary.files_copied(), 2);
-    let data_updates: Vec<_> = observer
-        .updates
-        .iter()
-        .filter(|(_, kind, ..)| matches!(kind, ClientEventKind::DataCopied))
-        .collect();
-    assert!(data_updates.len() >= 2, "expected data copy updates");
+        assert_eq!(summary.files_copied(), 2);
+        let data_updates: Vec<_> = observer
+            .updates
+            .iter()
+            .filter(|(_, kind, ..)| matches!(kind, ClientEventKind::DataCopied))
+            .collect();
+        assert!(data_updates.len() >= 2, "expected data copy updates");
 
-    let mut seen_nested = false;
-    let mut last_transferred = 0;
-    let mut completions: HashMap<PathBuf, bool> = HashMap::new();
-    for (path, _, final_update, total_bytes, transferred) in data_updates {
-        let file_name = path
-            .file_name()
-            .expect("progress events reference concrete files");
-        assert!(
-            file_name.to_string_lossy().ends_with(".bin"),
-            "unexpected event path: {path:?}"
-        );
-        assert!(total_bytes.is_some(), "byte counts emitted for each file");
-        assert!(
-            *transferred >= last_transferred,
-            "progress increments transferred bytes"
-        );
-        last_transferred = *transferred;
-        if path
-            .components()
-            .any(|component| component.as_os_str() == "nested")
-        {
-            seen_nested = true;
+        let mut seen_nested = false;
+        let mut last_transferred = 0;
+        let mut completions: HashMap<PathBuf, bool> = HashMap::new();
+        for (path, _, final_update, total_bytes, transferred) in data_updates {
+            let file_name = path
+                .file_name()
+                .expect("progress events reference concrete files");
+            assert!(
+                file_name.to_string_lossy().ends_with(".bin"),
+                "unexpected event path: {path:?}"
+            );
+            assert!(total_bytes.is_some(), "byte counts emitted for each file");
+            assert!(
+                *transferred >= last_transferred,
+                "progress increments transferred bytes"
+            );
+            last_transferred = *transferred;
+            if path
+                .components()
+                .any(|component| component.as_os_str() == "nested")
+            {
+                seen_nested = true;
+            }
+            completions
+                .entry(path.clone())
+                .and_modify(|done| *done |= *final_update)
+                .or_insert(*final_update);
         }
-        completions
-            .entry(path.clone())
-            .and_modify(|done| *done |= *final_update)
-            .or_insert(*final_update);
-    }
-    assert!(seen_nested, "progress includes nested entries");
-    assert!(
-        completions.values().filter(|done| **done).count() >= 2,
-        "all files eventually report completion"
-    );
+        assert!(seen_nested, "progress includes nested entries");
+        assert!(
+            completions.values().filter(|done| **done).count() >= 2,
+            "all files eventually report completion"
+        );
+    });
 }
 
 /// Verifies that `--atimes` (`-U`) preserves access times on destination files
@@ -219,77 +226,80 @@ fn progress_observer_reports_transfers() {
 #[cfg(unix)]
 #[test]
 fn test_atimes_preservation() {
-    use filetime::FileTime;
-    use std::time::Duration;
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        use filetime::FileTime;
+        use std::time::Duration;
 
-    let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("source");
-    let dest_root = temp.path().join("dest");
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let dest_root = temp.path().join("dest");
 
-    fs::create_dir_all(&source_root).expect("create source root");
-    fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&dest_root).expect("create dest root");
 
-    // Create source files with distinct content sizes so quick-check never skips them.
-    touch(&source_root.join("alpha.txt"), b"alpha-content");
-    touch(&source_root.join("subdir/beta.txt"), b"beta-content-longer");
+        // Create source files with distinct content sizes so quick-check never skips them.
+        touch(&source_root.join("alpha.txt"), b"alpha-content");
+        touch(&source_root.join("subdir/beta.txt"), b"beta-content-longer");
 
-    // Set well-known timestamps on source files and the subdirectory.
-    // Use second-level precision - upstream rsync protocol transmits times as
-    // whole seconds, so sub-second components are not preserved over the wire.
-    let src_atime = FileTime::from_unix_time(1_600_000_000, 0);
-    let src_mtime = FileTime::from_unix_time(1_650_000_000, 0);
+        // Set well-known timestamps on source files and the subdirectory.
+        // Use second-level precision - upstream rsync protocol transmits times as
+        // whole seconds, so sub-second components are not preserved over the wire.
+        let src_atime = FileTime::from_unix_time(1_600_000_000, 0);
+        let src_mtime = FileTime::from_unix_time(1_650_000_000, 0);
 
-    let src_dir_atime = FileTime::from_unix_time(1_500_000_000, 0);
-    let src_dir_mtime = FileTime::from_unix_time(1_550_000_000, 0);
+        let src_dir_atime = FileTime::from_unix_time(1_500_000_000, 0);
+        let src_dir_mtime = FileTime::from_unix_time(1_550_000_000, 0);
 
-    filetime::set_file_times(source_root.join("alpha.txt"), src_atime, src_mtime)
-        .expect("set alpha timestamps");
-    filetime::set_file_times(source_root.join("subdir/beta.txt"), src_atime, src_mtime)
-        .expect("set beta timestamps");
-    filetime::set_file_times(source_root.join("subdir"), src_dir_atime, src_dir_mtime)
-        .expect("set subdir timestamps");
+        filetime::set_file_times(source_root.join("alpha.txt"), src_atime, src_mtime)
+            .expect("set alpha timestamps");
+        filetime::set_file_times(source_root.join("subdir/beta.txt"), src_atime, src_mtime)
+            .expect("set beta timestamps");
+        filetime::set_file_times(source_root.join("subdir"), src_dir_atime, src_dir_mtime)
+            .expect("set subdir timestamps");
 
-    let mut source_arg = source_root.into_os_string();
-    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
-    let config = ClientConfig::builder()
-        .transfer_args([source_arg, dest_root.clone().into_os_string()])
-        .mkpath(true)
-        .atimes(true)
-        .times(true)
-        .build();
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg, dest_root.clone().into_os_string()])
+            .mkpath(true)
+            .atimes(true)
+            .times(true)
+            .build();
 
-    let summary = run_client(config).expect("atimes transfer succeeds");
-    assert!(summary.files_copied() >= 2);
+        let summary = run_client(config).expect("atimes transfer succeeds");
+        assert!(summary.files_copied() >= 2);
 
-    // Helper: assert that two `FileTime` values are within `tolerance` of each other.
-    let assert_time_close = |actual: FileTime, expected: FileTime, label: &str| {
-        let diff_secs = (actual.unix_seconds() - expected.unix_seconds()).unsigned_abs();
-        let tolerance = Duration::from_secs(2);
-        assert!(
-            diff_secs <= tolerance.as_secs(),
-            "{label}: expected {expected:?}, got {actual:?} (diff {diff_secs}s)"
-        );
-    };
+        // Helper: assert that two `FileTime` values are within `tolerance` of each other.
+        let assert_time_close = |actual: FileTime, expected: FileTime, label: &str| {
+            let diff_secs = (actual.unix_seconds() - expected.unix_seconds()).unsigned_abs();
+            let tolerance = Duration::from_secs(2);
+            assert!(
+                diff_secs <= tolerance.as_secs(),
+                "{label}: expected {expected:?}, got {actual:?} (diff {diff_secs}s)"
+            );
+        };
 
-    // Verify file atimes and mtimes.
-    for name in &["alpha.txt", "subdir/beta.txt"] {
-        let dest_path = dest_root.join(name);
-        let meta = fs::metadata(&dest_path).unwrap_or_else(|e| panic!("metadata for {name}: {e}"));
-        let dest_atime = FileTime::from_last_access_time(&meta);
-        let dest_mtime = FileTime::from_last_modification_time(&meta);
+        // Verify file atimes and mtimes.
+        for name in &["alpha.txt", "subdir/beta.txt"] {
+            let dest_path = dest_root.join(name);
+            let meta =
+                fs::metadata(&dest_path).unwrap_or_else(|e| panic!("metadata for {name}: {e}"));
+            let dest_atime = FileTime::from_last_access_time(&meta);
+            let dest_mtime = FileTime::from_last_modification_time(&meta);
 
-        assert_time_close(dest_atime, src_atime, &format!("{name} atime"));
-        assert_time_close(dest_mtime, src_mtime, &format!("{name} mtime"));
-    }
+            assert_time_close(dest_atime, src_atime, &format!("{name} atime"));
+            assert_time_close(dest_mtime, src_mtime, &format!("{name} mtime"));
+        }
 
-    // Verify subdirectory timestamps.
-    let subdir_meta = fs::metadata(dest_root.join("subdir")).expect("subdir metadata");
-    let subdir_atime = FileTime::from_last_access_time(&subdir_meta);
-    let subdir_mtime = FileTime::from_last_modification_time(&subdir_meta);
+        // Verify subdirectory timestamps.
+        let subdir_meta = fs::metadata(dest_root.join("subdir")).expect("subdir metadata");
+        let subdir_atime = FileTime::from_last_access_time(&subdir_meta);
+        let subdir_mtime = FileTime::from_last_modification_time(&subdir_meta);
 
-    assert_time_close(subdir_atime, src_dir_atime, "subdir atime");
-    assert_time_close(subdir_mtime, src_dir_mtime, "subdir mtime");
+        assert_time_close(subdir_atime, src_dir_atime, "subdir atime");
+        assert_time_close(subdir_mtime, src_dir_mtime, "subdir mtime");
+    });
 }
 
 /// Verifies that `crtimes(true)` preserves file creation times end-to-end.
@@ -300,65 +310,67 @@ fn test_atimes_preservation() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_crtimes_preservation() {
-    let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("crtime-src");
-    let dest_root = temp.path().join("crtime-dst");
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("crtime-src");
+        let dest_root = temp.path().join("crtime-dst");
 
-    fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&source_root).expect("source root");
 
-    touch(&source_root.join("alpha.txt"), b"alpha content");
-    touch(&source_root.join("nested/beta.txt"), b"beta content here");
+        touch(&source_root.join("alpha.txt"), b"alpha content");
+        touch(&source_root.join("nested/beta.txt"), b"beta content here");
 
-    let alpha_crtime: i64 = 1_600_000_000; // 2020-09-13
-    let beta_crtime: i64 = 1_500_000_000; // 2017-07-14
-    set_birthtime(&source_root.join("alpha.txt"), alpha_crtime);
-    set_birthtime(&source_root.join("nested/beta.txt"), beta_crtime);
+        let alpha_crtime: i64 = 1_600_000_000; // 2020-09-13
+        let beta_crtime: i64 = 1_500_000_000; // 2017-07-14
+        set_birthtime(&source_root.join("alpha.txt"), alpha_crtime);
+        set_birthtime(&source_root.join("nested/beta.txt"), beta_crtime);
 
-    assert_eq!(
-        get_birthtime_secs(&source_root.join("alpha.txt")),
-        alpha_crtime,
-        "source alpha birthtime must match the value we set"
-    );
-    assert_eq!(
-        get_birthtime_secs(&source_root.join("nested/beta.txt")),
-        beta_crtime,
-        "source beta birthtime must match the value we set"
-    );
+        assert_eq!(
+            get_birthtime_secs(&source_root.join("alpha.txt")),
+            alpha_crtime,
+            "source alpha birthtime must match the value we set"
+        );
+        assert_eq!(
+            get_birthtime_secs(&source_root.join("nested/beta.txt")),
+            beta_crtime,
+            "source beta birthtime must match the value we set"
+        );
 
-    let mut source_arg = source_root.into_os_string();
-    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
-    let config = ClientConfig::builder()
-        .transfer_args([source_arg, dest_root.clone().into_os_string()])
-        .mkpath(true)
-        .times(true)
-        .crtimes(true)
-        .build();
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg, dest_root.clone().into_os_string()])
+            .mkpath(true)
+            .times(true)
+            .crtimes(true)
+            .build();
 
-    let summary = run_client(config).expect("run client with crtimes");
+        let summary = run_client(config).expect("run client with crtimes");
 
-    assert!(
-        summary.files_copied() >= 2,
-        "both files should be transferred"
-    );
+        assert!(
+            summary.files_copied() >= 2,
+            "both files should be transferred"
+        );
 
-    assert_eq!(
-        fs::read(dest_root.join("alpha.txt")).unwrap(),
-        b"alpha content"
-    );
-    assert_eq!(
-        fs::read(dest_root.join("nested/beta.txt")).unwrap(),
-        b"beta content here"
-    );
+        assert_eq!(
+            fs::read(dest_root.join("alpha.txt")).unwrap(),
+            b"alpha content"
+        );
+        assert_eq!(
+            fs::read(dest_root.join("nested/beta.txt")).unwrap(),
+            b"beta content here"
+        );
 
-    assert_eq!(
-        get_birthtime_secs(&dest_root.join("alpha.txt")),
-        alpha_crtime,
-        "destination alpha birthtime should match source"
-    );
-    assert_eq!(
-        get_birthtime_secs(&dest_root.join("nested/beta.txt")),
-        beta_crtime,
-        "destination beta birthtime should match source"
-    );
+        assert_eq!(
+            get_birthtime_secs(&dest_root.join("alpha.txt")),
+            alpha_crtime,
+            "destination alpha birthtime should match source"
+        );
+        assert_eq!(
+            get_birthtime_secs(&dest_root.join("nested/beta.txt")),
+            beta_crtime,
+            "destination beta birthtime should match source"
+        );
+    });
 }
