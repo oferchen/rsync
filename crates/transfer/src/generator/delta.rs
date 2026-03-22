@@ -27,17 +27,23 @@ use super::super::delta_apply::ChecksumVerifier;
 use super::super::delta_config::DeltaGeneratorConfig;
 use super::super::shared::ChecksumFactory;
 
-/// Maximum file size for in-memory whole-file transfer.
+/// Soft warning threshold for whole-file transfers (8 GB).
 ///
-/// This constant is used only as a soft warning threshold. Files of any size
-/// can be transferred, but very large files may cause high memory usage.
-/// For files over this size, consider using delta transfers with a basis file.
+/// Files of any size can be transferred, but very large whole-file transfers
+/// generate a debug log warning. For files over this size, delta transfers
+/// with a basis file are strongly preferred to reduce bandwidth.
 pub(super) const LARGE_FILE_WARNING_THRESHOLD: u64 = 8 * 1024 * 1024 * 1024; // 8 GB
 
 /// Result of streaming a whole file to the wire.
+///
+/// Returned by [`stream_whole_file_transfer`] with the byte count and
+/// whole-file checksum that the sender appends after the token stream.
 pub(super) struct StreamResult {
+    /// Total bytes of file content written to the wire.
     pub total_bytes: u64,
+    /// Whole-file checksum computed during streaming.
     pub checksum_buf: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+    /// Number of valid bytes in `checksum_buf`.
     pub checksum_len: usize,
 }
 
@@ -257,6 +263,11 @@ pub(super) fn compute_file_checksum(
 /// Converts engine delta script to wire protocol delta operations.
 ///
 /// Takes ownership of the script to avoid cloning literal data.
+///
+/// # Upstream Reference
+///
+/// - `match.c:matched()` - emits tokens as they are generated
+/// - `token.c:send_token()` - writes tokens to the wire
 pub(super) fn script_to_wire_delta(script: DeltaScript) -> Vec<DeltaOp> {
     script
         .into_tokens()

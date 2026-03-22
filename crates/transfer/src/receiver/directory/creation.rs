@@ -27,6 +27,11 @@ impl ReceiverContext {
     /// threshold.
     ///
     /// Returns a list of metadata errors encountered (path, error message).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:693` - `dry_run` skips all filesystem modifications
+    /// - `generator.c:1432-1500` - directory creation and metadata in `recv_generator()`
     pub(in crate::receiver) fn create_directories(
         &self,
         dest_dir: &Path,
@@ -224,6 +229,11 @@ impl ReceiverContext {
     /// Returns `Ok(Some(true))` when a new directory was created.
     /// Returns `Ok(Some(false))` when an existing directory had metadata applied.
     /// Only returns `Err` for unrecoverable errors.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1432` - `recv_generator()` creates directories
+    /// - `generator.c:1472-1475` - retry `mkdir` after `make_path()`
     pub(in crate::receiver) fn create_directory_incremental(
         &self,
         dest_dir: &Path,

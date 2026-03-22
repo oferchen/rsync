@@ -806,7 +806,15 @@ impl GeneratorContext {
 /// only swaps (no cloning). Used after sorting via indirect permutation to
 /// reorder `file_list` and `full_paths` simultaneously.
 ///
+/// The permutation is inverted first (`source_indices[i] = j` becomes
+/// `dest_perm[j] = i`) so that cycle-following can use in-place swaps.
+///
 /// O(n) time and O(n) space for the inverse permutation.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:f_name_cmp()` - upstream sorts the file list in-place;
+///   we sort via indirect permutation to avoid O(n) clones of `FileEntry`.
 pub(super) fn apply_permutation_in_place<A, B>(
     slice_a: &mut [A],
     slice_b: &mut [B],
@@ -856,6 +864,8 @@ pub(super) fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
 }
 
 /// Extracts major and minor device numbers from a raw `rdev` value (BSD/macOS).
+///
+/// BSD layout: major in bits 31-24, minor in bits 23-0.
 #[cfg(all(unix, not(target_os = "linux")))]
 pub(super) fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
     let major = (rdev >> 24) as u32;
