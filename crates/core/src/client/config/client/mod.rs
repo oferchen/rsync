@@ -21,6 +21,9 @@ use super::{
 /// network options. Instances are typically constructed via [`ClientConfig::builder()`]
 /// to enable incremental configuration through a fluent builder API.
 ///
+/// The fields correspond to the option set parsed by upstream `options.c` and
+/// transmitted to the remote side via `options.c:server_options()`.
+///
 /// # Examples
 ///
 /// Basic local copy:

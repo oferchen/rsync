@@ -2,12 +2,20 @@
 //!
 //! This module coordinates SSH-based remote transfers by spawning SSH connections,
 //! negotiating the rsync protocol, and executing transfers using the server
-//! infrastructure.
+//! infrastructure. It mirrors the flow in upstream `main.c:do_cmd()` where the
+//! client forks the remote shell, sets up pipes, and dispatches to the sender
+//! or receiver role.
 //!
 //! # Architecture
 //!
 //! Transfers use the [`SshConnection::split`] method to obtain separate read/write
 //! halves, which are then passed to the server infrastructure for protocol handling.
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:do_cmd()` - SSH fork/exec and pipe setup
+//! - `main.c:client_run()` - Role dispatch after SSH connection
+//! - `options.c:server_options()` - Remote `--server` argument construction
 
 use std::ffi::{OsStr, OsString};
 use std::time::{Duration, Instant};
@@ -92,11 +100,12 @@ type SshInvocationResult = (
 
 /// Executes a transfer over SSH transport.
 ///
-/// This is the main entry point for SSH-based remote transfers. It:
+/// This is the main entry point for SSH-based remote transfers, mirroring
+/// upstream `main.c:do_cmd()`. It:
 /// 1. Determines push vs pull from operand positions
 /// 2. Parses the remote operand
-/// 3. Builds the remote rsync invocation
-/// 4. Spawns an SSH connection
+/// 3. Builds the remote rsync invocation (upstream: `options.c:server_options()`)
+/// 4. Spawns an SSH connection (upstream: `main.c:do_cmd()`)
 /// 5. Negotiates the protocol
 /// 6. Executes the transfer using server infrastructure
 ///

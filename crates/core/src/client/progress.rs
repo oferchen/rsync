@@ -1,10 +1,14 @@
 //! Progress tracking for client transfers.
 //!
 //! This module provides the infrastructure for reporting incremental progress
-//! updates during file transfers, mirroring the behavior of rsync's `--info=progress2`
-//! flag. The [`ClientProgressObserver`] trait allows custom progress handlers
-//! to be notified as files are copied, enabling progress bars and status displays
-//! in user interfaces.
+//! updates during file transfers, mirroring the behavior of upstream rsync's
+//! `--info=progress2` flag. The [`ClientProgressObserver`] trait allows custom
+//! progress handlers to be notified as files are copied, enabling progress bars
+//! and status displays in user interfaces.
+//!
+//! # Upstream Reference
+//!
+//! - `progress.c` - Progress display logic
 //!
 //! # Examples
 //!

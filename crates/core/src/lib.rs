@@ -17,14 +17,23 @@ pub mod timeout;
 /// Branding constants shared across binaries and packaging layers.
 pub use ::branding::branding;
 /// Client orchestration helpers consumed by the CLI binary.
+///
+/// Mirrors the session lifecycle in upstream `main.c:start_client()`,
+/// dispatching local, SSH, and daemon transfers through a unified
+/// configuration and error model.
 pub mod client;
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
 /// Remote shell command construction and SSH argument parsing.
+///
+/// Implements the `--rsh`/`-e` option handling from upstream `options.c`
+/// and the shell execution logic from `main.c:do_cmd()`.
 pub mod remote_shell;
 /// Server orchestration helpers consumed by CLI and embedding entry points.
 ///
 /// Re-exported from the [`transfer`] crate for backward compatibility.
+/// Provides the `--server` mode entry points that mirror upstream
+/// `main.c:start_server()` for both sender (generator) and receiver roles.
 pub use ::transfer as server;
 /// Version constants and capability helpers used by CLI and daemon entry points.
 pub mod version;
