@@ -1,3 +1,12 @@
+//! OpenSSL-backed MD4 and MD5 hasher creation for improved throughput.
+//!
+//! When the `openssl` feature is enabled, this module provides factory functions
+//! that create OpenSSL-backed hashers for MD4 and MD5. OpenSSL's hand-optimised
+//! assembly provides roughly 2x throughput over pure-Rust implementations for
+//! these legacy algorithms.
+//!
+//! Availability is detected once via `OnceLock` and cached for the process lifetime.
+
 #![allow(clippy::module_name_repetitions)]
 
 use openssl::hash::{Hasher, MessageDigest};

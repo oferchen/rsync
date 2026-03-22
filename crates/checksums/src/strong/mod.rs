@@ -5,6 +5,12 @@
 //! for MD4, MD5, XXH64, XXH3/64, and XXH3/128 so higher layers can compose the
 //! desired strategy without reimplementing the hashing primitives.
 //!
+//! # Upstream Reference
+//!
+//! - `checksum.c:get_checksum2()` - strong checksum dispatch by algorithm
+//! - `checksum.c:file_checksum()` - whole-file checksum for file list validation
+//! - `compat.c` - checksum negotiation and `CHECKSUM_SEED_FIX` handling
+//!
 //! # Algorithm Examples
 //!
 //! ## Cryptographic Hashes (MD4, MD5, SHA family)

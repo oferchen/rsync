@@ -1,4 +1,9 @@
 //! Enumeration of supported checksum algorithms.
+//!
+//! # Upstream Reference
+//!
+//! - `checksum.c` - algorithm selection based on protocol version
+//! - `compat.c` - checksum negotiation via capability strings
 
 use std::fmt;
 
@@ -60,6 +65,9 @@ impl ChecksumAlgorithmKind {
     }
 
     /// Returns `true` if this is a cryptographic hash algorithm.
+    ///
+    /// MD4, MD5, SHA-1, SHA-256, and SHA-512 are cryptographic (though MD4/MD5/SHA-1
+    /// are considered broken). XXH64, XXH3, and XXH3-128 are non-cryptographic.
     #[must_use]
     pub const fn is_cryptographic(&self) -> bool {
         matches!(
