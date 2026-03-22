@@ -23,12 +23,13 @@ fn size_only_same_size_different_content_no_transfer() {
     let src_file = test_dir.write_file("source.txt", b"AAAAA").unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"BBBBB").unwrap();
 
+    // Backdate dest so any write by rsync would produce a different mtime
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(&dest_file, past, past).unwrap();
+
     // Record destination state before rsync
     let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
     let dest_content_before = fs::read(&dest_file).unwrap();
-
-    // Brief sleep to ensure any modification would be detectable
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -95,10 +96,11 @@ fn size_only_same_size_same_content_no_transfer() {
     let src_file = test_dir.write_file("source.txt", content).unwrap();
     let dest_file = test_dir.write_file("dest.txt", content).unwrap();
 
-    // Record destination state before rsync
-    let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
+    // Backdate dest so any write by rsync would produce a different mtime
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(&dest_file, past, past).unwrap();
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -233,12 +235,15 @@ fn size_only_recursive_directory() {
     fs::write(dest_dir.join("same_size.txt"), b"BBBBB").unwrap(); // Same size, different content
     fs::write(dest_dir.join("different_size.txt"), b"short").unwrap(); // Different size
 
+    // Backdate dest files so any write by rsync would produce a different mtime
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(dest_dir.join("same_size.txt"), past, past).unwrap();
+    set_file_times(dest_dir.join("different_size.txt"), past, past).unwrap();
+
     let dest_same_mtime = fs::metadata(dest_dir.join("same_size.txt"))
         .unwrap()
         .modified()
         .unwrap();
-
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -293,12 +298,14 @@ fn size_only_with_archive_mode() {
     // but with --size-only it should be skipped if sizes match
     fs::write(dest_dir.join("file.txt"), b"dest contents!").unwrap(); // 14 bytes each
 
+    // Backdate dest so any write by rsync would produce a different mtime
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(dest_dir.join("file.txt"), past, past).unwrap();
+
     let dest_mtime_before = fs::metadata(dest_dir.join("file.txt"))
         .unwrap()
         .modified()
         .unwrap();
-
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -385,9 +392,11 @@ fn size_only_empty_files_no_transfer() {
     let src_file = test_dir.write_file("source.txt", b"").unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"").unwrap();
 
-    let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
+    // Backdate dest so any write by rsync would produce a different mtime
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(&dest_file, past, past).unwrap();
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -489,9 +498,11 @@ fn size_only_large_files_same_size() {
     let src_file = test_dir.write_file("source.bin", &src_content).unwrap();
     let dest_file = test_dir.write_file("dest.bin", &dest_content).unwrap();
 
-    let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
+    // Backdate dest so any write by rsync would produce a different mtime
+    let past = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_times(&dest_file, past, past).unwrap();
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    let dest_mtime_before = fs::metadata(&dest_file).unwrap().modified().unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
