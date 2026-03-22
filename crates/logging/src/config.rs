@@ -1,15 +1,33 @@
-//! crates/logging/src/config.rs
 //! Verbosity configuration combining info and debug levels.
+//!
+//! This module provides [`VerbosityConfig`], the top-level container that
+//! pairs [`InfoLevels`] with [`DebugLevels`]. It supports construction from
+//! a global verbose count (matching upstream rsync's `-v` flag accumulation)
+//! and fine-grained per-flag overrides (matching `--info=FLAGS` and
+//! `--debug=FLAGS`).
+//!
+//! The cumulative mapping in [`VerbosityConfig::from_verbose_level`] mirrors
+//! upstream's `set_output_verbosity()` (upstream: options.c:513), which
+//! iterates `j = 0..=level` over the `info_verbosity[]` and
+//! `debug_verbosity[]` tables (upstream: options.c:228-243).
 
 use super::levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 
 /// Combined verbosity configuration for info and debug flags.
+///
+/// Holds one [`InfoLevels`] and one [`DebugLevels`] struct. Construct via
+/// [`from_verbose_level`](Self::from_verbose_level) for `-v` flag mapping,
+/// or build a default and apply individual flags via
+/// [`apply_info_flag`](Self::apply_info_flag) /
+/// [`apply_debug_flag`](Self::apply_debug_flag) for `--info=`/`--debug=`
+/// overrides.
+// upstream: options.c struct that backs info_levels[] + debug_levels[]
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VerbosityConfig {
-    /// Info flag levels.
+    /// Per-category info verbosity levels.
     pub info: InfoLevels,
-    /// Debug flag levels.
+    /// Per-category debug verbosity levels.
     pub debug: DebugLevels,
 }
 
@@ -176,7 +194,12 @@ impl VerbosityConfig {
         config
     }
 
-    /// Apply a single info flag token (e.g., "copy2", "del").
+    /// Apply a single info flag token (e.g., `"copy2"`, `"del"`).
+    ///
+    /// Parses the token into a flag name and optional numeric level suffix
+    /// (defaulting to 1), then sets that flag. This implements the per-flag
+    /// override syntax used by `--info=FLAGS`.
+    // upstream: options.c:parse_output_words()
     pub fn apply_info_flag(&mut self, token: &str) -> Result<(), String> {
         let (name, level) = parse_flag_token(token)?;
 
@@ -201,7 +224,12 @@ impl VerbosityConfig {
         Ok(())
     }
 
-    /// Apply a single debug flag token (e.g., "recv2", "flist").
+    /// Apply a single debug flag token (e.g., `"recv2"`, `"flist"`).
+    ///
+    /// Parses the token into a flag name and optional numeric level suffix
+    /// (defaulting to 1), then sets that flag. This implements the per-flag
+    /// override syntax used by `--debug=FLAGS`.
+    // upstream: options.c:parse_output_words()
     pub fn apply_debug_flag(&mut self, token: &str) -> Result<(), String> {
         let (name, level) = parse_flag_token(token)?;
 
@@ -238,7 +266,10 @@ impl VerbosityConfig {
     }
 }
 
-/// Parse a flag token like "copy2" into ("copy", 2) or "del" into ("del", 1).
+/// Parse a flag token like `"copy2"` into `("copy", 2)` or `"del"` into `("del", 1)`.
+///
+/// Tokens without a trailing digit default to level 1, matching upstream
+/// rsync's `parse_output_words()` behaviour (upstream: options.c).
 fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
     if token.is_empty() {
         return Err("empty flag token".to_owned());
