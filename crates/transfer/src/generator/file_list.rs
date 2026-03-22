@@ -107,9 +107,7 @@ impl GeneratorContext {
     /// Collects unique UID/GID values from the file list.
     /// No-op on non-Unix platforms since ownership is not preserved.
     #[cfg(not(unix))]
-    pub fn collect_id_mappings(&mut self) {
-        // No-op on non-Unix platforms
-    }
+    pub fn collect_id_mappings(&mut self) {}
 
     /// Builds the file list from the specified paths.
     ///
@@ -123,16 +121,13 @@ impl GeneratorContext {
     ///
     /// Mirrors upstream recursive directory scanning and file list construction behavior.
     pub fn build_file_list(&mut self, base_paths: &[PathBuf]) -> io::Result<usize> {
-        // Track timing for flist_buildtime statistic (upstream stats.flist_buildtime)
+        // upstream: stats.flist_buildtime
         self.timing.flist_build_start = Some(Instant::now());
 
         info_log!(Flist, 1, "building file list...");
         self.clear_file_list();
 
-        // Pre-allocate capacity to reduce reallocations during recursive walk.
-        // Upstream rsync pre-allocates FLIST_START_LARGE = 32768 pointer slots
-        // (flist.c:2192). clear() retains existing capacity, so this only
-        // allocates on the first call.
+        // upstream: flist.c:2192 - pre-allocate FLIST_START pointer slots
         const FLIST_START: usize = 4096;
         self.file_list.reserve(FLIST_START);
         self.full_paths.reserve(FLIST_START);
@@ -141,10 +136,8 @@ impl GeneratorContext {
             self.walk_path(base_path, base_path.clone())?;
         }
 
-        // Sort file list using rsync's ordering (upstream flist.c:f_name_cmp).
-        // We need to sort both file_list and full_paths together to maintain correspondence.
-        // Create index array, sort by rsync rules, then reorder both arrays.
-        // When --qsort is set, use unstable sort (upstream: flist.c:2991).
+        // upstream: flist.c:f_name_cmp() - sort both arrays via indirect permutation.
+        // --qsort uses unstable sort (flist.c:2991).
         let file_list_ref = &self.file_list;
         let mut indices: Vec<usize> = {
             let len = self.file_list.len();
@@ -164,17 +157,13 @@ impl GeneratorContext {
         // This avoids cloning every element - O(n) swaps instead of O(n) clones.
         apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
 
-        // Assign hardlink indices after sort (indices are post-sort file list positions).
-        // upstream: hlink.c:match_hard_links() called after sort_file_list()
+        // upstream: hlink.c:match_hard_links() - must be called after sort
         #[cfg(unix)]
         if self.config.flags.hard_links {
             self.assign_hardlink_indices();
         }
 
-        // Record end time for flist_buildtime statistic
         self.timing.flist_build_end = Some(Instant::now());
-
-        // Collect UID/GID mappings for name-based ownership transfer
         self.collect_id_mappings();
 
         let count = self.file_list.len();
@@ -263,7 +252,7 @@ impl GeneratorContext {
             self.walk_path(base_dir, path.clone())?;
         }
 
-        // Sort file list using rsync's ordering (upstream flist.c:f_name_cmp).
+        // upstream: flist.c:f_name_cmp() - sort via indirect permutation
         let file_list_ref = &self.file_list;
         let mut indices: Vec<usize> = {
             let len = self.file_list.len();
@@ -281,6 +270,7 @@ impl GeneratorContext {
 
         apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
 
+        // upstream: hlink.c:match_hard_links() - must be called after sort
         #[cfg(unix)]
         if self.config.flags.hard_links {
             self.assign_hardlink_indices();
@@ -484,7 +474,6 @@ impl GeneratorContext {
             }
         };
 
-        // Calculate relative path
         let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
         // upstream: flist.c:2287 — always emit "." with XMIT_TOP_DIR for the
@@ -533,8 +522,7 @@ impl GeneratorContext {
             return Ok(());
         }
 
-        // Skip file types that are not being preserved.
-        // upstream: flist.c:send_file_name() / make_file() skips unsupported types.
+        // upstream: flist.c:send_file_name() - skip unsupported file types
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileTypeExt;
@@ -547,7 +535,7 @@ impl GeneratorContext {
             }
         }
 
-        // Check filters if present
+        // upstream: flist.c:1332 - is_excluded() applied during make_file()
         if let Some(ref filters) = self.filters {
             let is_dir = metadata.is_dir();
             if !filters.allows(&relative, is_dir) {
@@ -567,7 +555,6 @@ impl GeneratorContext {
             }
         }
 
-        // Create file entry based on type (moves relative — no clone)
         let entry = match self.create_entry(&path, relative, &metadata) {
             Ok(e) => e,
             Err(e) => {
@@ -584,8 +571,7 @@ impl GeneratorContext {
             }
         };
 
-        // Read directory entries BEFORE moving path into push_file_item.
-        // Upstream rsync: flist.c send_file_list() similarly scans then records.
+        // upstream: flist.c:send_file_list() - scan directory before recording entry
         let should_recurse = metadata.is_dir() && self.config.flags.recursive;
         let dir_entries = if should_recurse {
             match std::fs::read_dir(&path) {
@@ -607,9 +593,8 @@ impl GeneratorContext {
             None
         };
 
-        self.push_file_item(entry, path); // Move, no clone
+        self.push_file_item(entry, path);
 
-        // Recurse into directories if recursive mode is enabled
         if let Some(entries) = dir_entries {
             for dir_entry in entries {
                 match dir_entry {
@@ -733,7 +718,7 @@ impl GeneratorContext {
             }
         };
 
-        // Set modification time
+        // upstream: flist.c:make_file() - set mtime
         #[cfg(unix)]
         {
             entry.set_mtime(metadata.mtime(), metadata.mtime_nsec() as u32);
@@ -770,7 +755,7 @@ impl GeneratorContext {
             }
         }
 
-        // Set ownership if preserving
+        // upstream: flist.c:make_file() - set uid/gid
         #[cfg(unix)]
         if self.config.flags.owner {
             entry.set_uid(metadata.uid());

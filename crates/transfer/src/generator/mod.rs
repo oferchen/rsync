@@ -51,7 +51,6 @@ use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
 
-// Public re-exports
 pub use self::delta::generate_delta_from_signature;
 pub use self::item_flags::ItemFlags;
 pub use self::protocol_io::{calculate_duration_ms, read_signature_blocks};
@@ -140,6 +139,7 @@ struct TransferTiming {
 }
 
 impl TransferTiming {
+    /// Creates a new timing tracker with no recorded timestamps.
     fn new() -> Self {
         Self {
             flist_build_start: None,
@@ -186,6 +186,7 @@ struct IncrementalState {
 }
 
 impl IncrementalState {
+    /// Creates initial state with `ndx_start` derived from INC_RECURSE negotiation.
     fn new(initial_ndx_start: i32) -> Self {
         Self {
             pending_segments: Vec::new(),
@@ -328,7 +329,7 @@ impl GeneratorContext {
         self.compat_flags
     }
 
-    /// Returns `true` when incremental recursion is negotiated.
+    /// Returns `true` when `INC_RECURSE` compat flag is negotiated.
     fn inc_recurse(&self) -> bool {
         self.compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))

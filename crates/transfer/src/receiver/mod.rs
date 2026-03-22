@@ -52,7 +52,6 @@ use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
 use crate::shared::ChecksumFactory;
 
-// Public re-exports
 pub use self::basis::{BasisFileConfig, BasisFileResult, find_basis_file_with_config};
 pub use self::file_list::IncrementalFileListReceiver;
 pub use self::stats::{SenderStats, TransferStats};
