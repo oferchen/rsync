@@ -2,11 +2,20 @@
 //!
 //! Coordinates daemon-based remote transfers (rsync:// URLs) by connecting to
 //! rsync daemons, performing handshakes, and executing transfers using the
-//! server infrastructure.
+//! server infrastructure. This mirrors the flow in upstream
+//! `clientserver.c:start_inband_exchange()` and
+//! `clientserver.c:start_daemon_client()`.
 //!
 //! Split into submodules by responsibility:
 //! - [`connection`] - connection establishment, authentication, early-input
 //! - [`orchestration`] - argument building, transfer execution, server config
+//!
+//! # Upstream Reference
+//!
+//! - `clientserver.c:start_daemon_client()` - Daemon connection entry point
+//! - `clientserver.c:start_inband_exchange()` - Module selection and auth
+//! - `authenticate.c` - Challenge/response authentication
+//! - `socket.c:open_socket_out()` - TCP connection establishment
 
 mod connection;
 mod orchestration;
@@ -27,10 +36,11 @@ use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments}
 
 /// Executes a transfer over daemon protocol (rsync://).
 ///
-/// Entry point for daemon-based remote transfers:
+/// Entry point for daemon-based remote transfers, mirroring upstream
+/// `clientserver.c:start_daemon_client()`:
 /// 1. Parses the rsync:// URL
-/// 2. Connects to the daemon
-/// 3. Performs the daemon handshake
+/// 2. Connects to the daemon (upstream: `socket.c:open_socket_out()`)
+/// 3. Performs the daemon handshake (upstream: `clientserver.c:start_inband_exchange()`)
 /// 4. Sends arguments to daemon
 /// 5. Determines role from operand positions
 /// 6. Executes the transfer using server infrastructure

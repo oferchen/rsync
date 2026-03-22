@@ -1,3 +1,15 @@
+//! Diagnostic message formatting utilities.
+//!
+//! This module provides the [`Message`] type and supporting infrastructure for
+//! constructing formatted error and informational messages that match upstream
+//! rsync's output conventions. Messages carry a severity level, optional role
+//! trailer (e.g. `[sender]`, `[receiver]`), and source location metadata.
+//!
+//! # Upstream Reference
+//!
+//! - `log.c` - Error and info message formatting
+//! - `errcode.h` - Exit code to message mapping
+
 pub mod strings;
 
 mod errors;

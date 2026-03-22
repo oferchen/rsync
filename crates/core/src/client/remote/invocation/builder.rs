@@ -1,7 +1,13 @@
 //! Remote invocation argument builder.
 //!
 //! Translates `ClientConfig` options into the compact flag string and long-form
-//! arguments expected by `rsync --server`.
+//! arguments expected by `rsync --server`. The argument format mirrors upstream
+//! `options.c:server_options()`.
+//!
+//! # Upstream Reference
+//!
+//! - `options.c:server_options()` - Server argument generation
+//! - `options.c:parse_arguments()` - Server-side argument parsing
 
 use std::ffi::OsString;
 

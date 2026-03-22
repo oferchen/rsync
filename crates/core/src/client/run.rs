@@ -3,7 +3,7 @@
 //! This module implements the primary entry points for executing file transfers,
 //! including [`run_client`] and [`run_client_with_observer`]. These functions
 //! coordinate local copies and remote transfers over SSH and rsync daemon
-//! protocols.
+//! protocols, mirroring the dispatch logic in upstream `main.c:start_client()`.
 //!
 //! The orchestration layer handles:
 //! - Configuration validation and argument parsing
@@ -11,6 +11,13 @@
 //! - Filter rule compilation and application
 //! - Batch mode file replay and recording
 //! - Remote transfer role determination
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:start_client()` - Top-level client dispatch
+//! - `main.c:do_cmd()` - SSH fork/exec and role selection
+//! - `main.c:read_batch()` - Batch file replay entry point
+//! - `options.c` - Argument validation and server options building
 //!
 //! # Examples
 //!
@@ -69,9 +76,9 @@ use super::summary::ClientSummary;
 
 /// Runs the client orchestration using the provided configuration.
 ///
-/// The helper executes the local copy engine for local transfers, or the
-/// native SSH transport for remote transfers. Both paths return a summary
-/// of the work performed.
+/// Mirrors upstream `main.c:start_client()` by dispatching to the local copy
+/// engine, SSH transport, or daemon protocol based on the operand format.
+/// Both paths return a summary of the work performed.
 ///
 /// # Arguments
 ///
@@ -115,7 +122,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
 /// Runs the client orchestration while reporting progress events.
 ///
 /// When an observer is supplied the transfer emits progress updates mirroring
-/// the behaviour of `--info=progress2`.
+/// the behaviour of upstream rsync's `--info=progress2`.
 ///
 /// # Arguments
 ///
@@ -441,8 +448,11 @@ fn run_client_internal(
 /// optional [`FilterProgram`].
 ///
 /// This encapsulates the translation from CLI-facing configuration to
-/// engine options using a Builder-style façade, keeping
+/// engine options using a Builder-style facade, keeping
 /// `build_local_copy_options` small and testable.
+///
+/// The option mapping mirrors upstream `options.c:server_options()` which
+/// translates CLI flags into the compact server argument format.
 struct LocalCopyOptionsBuilder<'a> {
     config: &'a ClientConfig,
     filter_program: Option<FilterProgram>,
