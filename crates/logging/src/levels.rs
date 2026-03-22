@@ -1,7 +1,17 @@
-//! crates/logging/src/levels.rs
 //! Flag enums and level structures for info and debug verbosity.
+//!
+//! Each flag corresponds to an entry in upstream rsync's `info_verbosity[]`
+//! and `debug_verbosity[]` tables (upstream: options.c:228-243). The flag
+//! names match upstream exactly - for example, `InfoFlag::Flist` corresponds
+//! to upstream's `INFO_FLIST`, and `DebugFlag::Deltasum` to `DEBUG_DELTASUM`.
 
-/// Info flags for diagnostic categories.
+/// Info flags for user-visible diagnostic categories.
+///
+/// These flags control output that end users see - file names, statistics,
+/// skip/delete notifications. They are set by `-v` (level 1) and `-vv`
+/// (level 2). Upstream defines these in `rsync.h` as `INFO_*` constants
+/// and indexes into the `info_levels[]` array.
+// upstream: rsync.h INFO_BACKUP..INFO_SYMSAFE, options.c:228 info_verbosity[]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InfoFlag {
@@ -33,7 +43,14 @@ pub enum InfoFlag {
     Symsafe,
 }
 
-/// Debug flags for diagnostic categories.
+/// Debug flags for developer-oriented diagnostic categories.
+///
+/// These flags control detailed internal output - protocol negotiation,
+/// delta-sum calculations, I/O tracing. They are first activated at `-vv`
+/// (verbose level 2) and increase through `-vvvvv` (level 5). Upstream
+/// defines these in `rsync.h` as `DEBUG_*` constants and indexes into
+/// the `debug_levels[]` array.
+// upstream: rsync.h DEBUG_ACL..DEBUG_TIME, options.c:237 debug_verbosity[]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DebugFlag {
@@ -87,7 +104,12 @@ pub enum DebugFlag {
     Time,
 }
 
-/// Info verbosity levels for each flag.
+/// Per-flag info verbosity levels.
+///
+/// Each field holds the current verbosity level for its corresponding
+/// [`InfoFlag`]. A value of 0 means the flag is disabled. Upstream rsync
+/// stores these in the global `info_levels[]` array (upstream: rsync.h).
+// upstream: rsync.h info_levels[]
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InfoLevels {
@@ -177,7 +199,12 @@ impl InfoLevels {
     }
 }
 
-/// Debug verbosity levels for each flag.
+/// Per-flag debug verbosity levels.
+///
+/// Each field holds the current verbosity level for its corresponding
+/// [`DebugFlag`]. A value of 0 means the flag is disabled. Upstream rsync
+/// stores these in the global `debug_levels[]` array (upstream: rsync.h).
+// upstream: rsync.h debug_levels[]
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DebugLevels {
