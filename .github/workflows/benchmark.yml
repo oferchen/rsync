@@ -119,51 +119,61 @@ jobs:
             benchmark.svg
             benchmark.png
 
+      - name: Generate step summary
+        run: |
+          {
+            echo "## Performance Benchmark Results"
+            echo ""
+            echo "**Tag:** \`${GITHUB_REF##*/}\`"
+            echo "**Commit:** \`${GITHUB_SHA::8}\`"
+            echo "**Runner:** \`$(uname -m)\` on \`$(lsb_release -ds 2>/dev/null || echo 'Ubuntu')\`"
+            echo ""
+            cat benchmark_report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Add benchmark to release notes
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF##*/}"
 
-          # Get current release body (wait for release to exist on tag push)
-          CURRENT_BODY=$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo "")
+          # Wait for the release to exist (created by release-cross workflow)
+          for i in 1 2 3 4 5; do
+            CURRENT_BODY=$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo "")
+            if [ -n "$CURRENT_BODY" ] || [ "$i" -eq 5 ]; then
+              break
+            fi
+            sleep 10
+          done
 
-          NEW_BODY="${CURRENT_BODY}
+          # Avoid duplicate sections on re-runs
+          if echo "$CURRENT_BODY" | grep -q "Performance Benchmark"; then
+            echo "Performance benchmark section already present in release notes, skipping."
+            exit 0
+          fi
+
+          REPORT=$(cat benchmark_report.md)
+
+          NEW_BODY=$(cat <<EOF
+          ${CURRENT_BODY}
 
           ---
 
-          $(cat benchmark_report.md)"
+          ${REPORT}
+          EOF
+          )
+          # Strip leading whitespace from heredoc indentation
+          NEW_BODY=$(echo "$NEW_BODY" | sed 's/^          //')
 
-          # Update release
           gh release edit "$TAG" --notes "$NEW_BODY" || echo "Could not update release notes"
 
-      - name: Upload benchmark chart to release
+      - name: Upload benchmark assets to release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF##*/}"
-          else
-            TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
-          fi
-          if [ -n "$TAG" ]; then
-            gh release upload "$TAG" benchmark.png --clobber || echo "Could not upload benchmark chart"
-          else
-            echo "No release found to upload benchmark chart"
-          fi
-
-      - name: Comment on PR (if applicable)
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
-        with:
-          script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('benchmark_report.md', 'utf8');
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: report
-            });
+          TAG="${GITHUB_REF##*/}"
+          gh release upload "$TAG" benchmark.png benchmark_results.json benchmark_report.md --clobber \
+            || echo "Could not upload benchmark assets to release"
