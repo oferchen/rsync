@@ -3,6 +3,12 @@
 //! Builds the list of files that need transfer by applying quick-check
 //! heuristics, size bounds, failed directory tracking, and parallel stat.
 //! Emits metadata-only itemize lines for up-to-date files.
+//!
+//! # Upstream Reference
+//!
+//! - `generator.c:recv_generator()` - per-file quick-check and skip logic
+//! - `generator.c:942` - `try_dests_reg()` for reference directory handling
+//! - `generator.c:617` - `quick_check_ok()` evaluation order
 
 use std::fs;
 use std::io::Write;
