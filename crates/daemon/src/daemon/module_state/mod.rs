@@ -5,6 +5,10 @@
 //! - [`ModuleRuntime`] - live state pairing configuration with connection tracking
 //! - [`ConnectionLimiter`] - cross-process connection limit enforcement via lock files
 //! - Hostname resolution utilities for host-based access control
+//!
+//! upstream: loadparm.c - module parameters are loaded via `lp_load()` from
+//! `rsyncd.conf`. clientserver.c - `rsync_module()` reads per-module settings
+//! via `lp_*()` accessor functions at connection time.
 
 mod auth;
 mod connection_limiter;

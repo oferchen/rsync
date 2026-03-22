@@ -1,6 +1,12 @@
 // Challenge-response authentication for protected modules.
 //
-// upstream: authenticate.c, compat.c:858
+// Implements the daemon side of the rsync AUTHREQD handshake: the server
+// generates a random challenge, sends it to the client, reads back the
+// username + hashed response, and verifies against the secrets file.
+//
+// upstream: authenticate.c - `auth_server()` generates the challenge and
+// verifies the client response. compat.c:858 - selects MD5 (protocol >= 30)
+// or MD4 (protocol < 30) for the challenge digest.
 
 /// Result of a module authentication attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]
