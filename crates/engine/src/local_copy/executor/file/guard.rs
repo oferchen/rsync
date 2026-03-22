@@ -295,22 +295,14 @@ impl DestinationWriteGuard {
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(&self.final_path)?;
                     fs::rename(&temp_path, &self.final_path).map_err(|rename_error| {
-                        LocalCopyError::io(
-                            self.finalise_action(),
-                            temp_path.clone(),
-                            rename_error,
-                        )
+                        LocalCopyError::io(self.finalise_action(), temp_path.clone(), rename_error)
                     })?;
                     return Ok(());
                 }
                 Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
                     tries -= 1;
                     if tries == 0 {
-                        return Err(LocalCopyError::io(
-                            self.finalise_action(),
-                            temp_path,
-                            error,
-                        ));
+                        return Err(LocalCopyError::io(self.finalise_action(), temp_path, error));
                     }
                     remove_existing_destination(&self.final_path)?;
                 }
@@ -328,11 +320,7 @@ impl DestinationWriteGuard {
                     return Ok(());
                 }
                 Err(error) => {
-                    return Err(LocalCopyError::io(
-                        self.finalise_action(),
-                        temp_path,
-                        error,
-                    ));
+                    return Err(LocalCopyError::io(self.finalise_action(), temp_path, error));
                 }
             }
         }
@@ -699,7 +687,10 @@ mod tests {
 
             guard.commit().expect("commit");
             assert!(dest.exists());
-            assert_eq!(fs::read_to_string(&dest).expect("read"), "anonymous content");
+            assert_eq!(
+                fs::read_to_string(&dest).expect("read"),
+                "anonymous content"
+            );
         }
 
         #[test]
@@ -748,8 +739,7 @@ mod tests {
             }
 
             {
-                let (_guard, _file) =
-                    DestinationWriteGuard::new_anonymous(&dest).expect("guard");
+                let (_guard, _file) = DestinationWriteGuard::new_anonymous(&dest).expect("guard");
             }
 
             assert!(!dest.exists());

@@ -131,9 +131,7 @@ mod tests {
     fn probe_returns_valid_enum() {
         let dir = tempdir().expect("tempdir");
         let result = o_tmpfile_probe(dir.path());
-        assert!(
-            result == OTmpfileSupport::Available || result == OTmpfileSupport::Unavailable
-        );
+        assert!(result == OTmpfileSupport::Available || result == OTmpfileSupport::Unavailable);
     }
 
     #[test]

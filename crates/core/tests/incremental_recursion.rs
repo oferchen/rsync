@@ -191,12 +191,10 @@ fn symlinks_within_incremental_directories() {
             b"deep-file-data"
         );
 
-        let link_same =
-            fs::read_link(dest.join("dir1/link_same_dir")).expect("read link_same_dir");
+        let link_same = fs::read_link(dest.join("dir1/link_same_dir")).expect("read link_same_dir");
         assert_eq!(link_same.to_str().unwrap(), "real.txt");
 
-        let link_deep =
-            fs::read_link(dest.join("dir1/link_to_deep")).expect("read link_to_deep");
+        let link_deep = fs::read_link(dest.join("dir1/link_to_deep")).expect("read link_to_deep");
         assert_eq!(link_deep.to_str().unwrap(), "sub/deep.txt");
 
         let link_up = fs::read_link(dest.join("dir2/nested/link_up")).expect("read link_up");
@@ -285,8 +283,7 @@ fn mixed_content_deep_tree() {
         let dest = temp.path().join("dst");
 
         touch(&source.join("level1/data.txt"), b"l1-data");
-        std::os::unix::fs::symlink("data.txt", source.join("level1/link.txt"))
-            .expect("l1 symlink");
+        std::os::unix::fs::symlink("data.txt", source.join("level1/link.txt")).expect("l1 symlink");
 
         fs::create_dir_all(source.join("level1/level2/empty")).expect("l2 empty");
         touch(

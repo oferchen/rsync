@@ -198,8 +198,7 @@ numeric ids = yes
         loop {
             if let Some(status) = child.try_wait()? {
                 let stderr = child.stderr.take();
-                let mut error_msg =
-                    format!("daemon exited immediately with status: {status}");
+                let mut error_msg = format!("daemon exited immediately with status: {status}");
                 if let Some(mut stderr) = stderr {
                     let mut buf = String::new();
                     if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {

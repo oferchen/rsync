@@ -837,9 +837,7 @@ mod tests {
                     FlushCompress::Sync,
                 )
                 .expect("sync flush");
-            if status == flate2::Status::Ok
-                || compressor.total_out() == before_out
-            {
+            if status == flate2::Status::Ok || compressor.total_out() == before_out {
                 break;
             }
         }
@@ -902,7 +900,8 @@ mod tests {
 
             let produced = decompressor.total_out() as usize;
             assert_eq!(
-                &output[..produced], *token_data,
+                &output[..produced],
+                *token_data,
                 "token {i} roundtrip mismatch"
             );
         }
@@ -921,7 +920,11 @@ mod tests {
         loop {
             let before = compressor.total_out();
             let status = compressor
-                .compress(&[], &mut out[compressor.total_out() as usize..], FlushCompress::Sync)
+                .compress(
+                    &[],
+                    &mut out[compressor.total_out() as usize..],
+                    FlushCompress::Sync,
+                )
                 .expect("sync flush on empty");
             if status == flate2::Status::Ok || compressor.total_out() == before {
                 break;
@@ -948,7 +951,11 @@ mod tests {
         decompressor
             .decompress(compressed, &mut decoded, FlushDecompress::Sync)
             .expect("empty sync flush should decompress");
-        assert_eq!(decompressor.total_out(), 0, "empty token should produce no output bytes");
+        assert_eq!(
+            decompressor.total_out(),
+            0,
+            "empty token should produce no output bytes"
+        );
     }
 
     #[test]
@@ -1057,7 +1064,8 @@ mod tests {
             }
 
             assert_eq!(
-                recovered, tokens[i],
+                recovered,
+                tokens[i],
                 "token {i} boundary not preserved: expected {:?}, got {:?}",
                 String::from_utf8_lossy(tokens[i]),
                 String::from_utf8_lossy(&recovered),
@@ -1071,7 +1079,8 @@ mod tests {
         // upstream token.c always uses this pattern regardless of -z level.
         use flate2::{Decompress, FlushDecompress};
 
-        let payload = b"payload for multi-level sync flush test with some repeated words words words";
+        let payload =
+            b"payload for multi-level sync flush test with some repeated words words words";
 
         for level in 1..=9u32 {
             let compression = Compression::new(level);
@@ -1093,7 +1102,8 @@ mod tests {
 
             let produced = decompressor.total_out() as usize;
             assert_eq!(
-                &output[..produced], &payload[..],
+                &output[..produced],
+                &payload[..],
                 "level {level} roundtrip after marker strip/restore failed"
             );
         }
@@ -1105,11 +1115,7 @@ mod tests {
         // allows the receiver to decompress all data seen so far at any boundary.
         use flate2::{Compress, Decompress, FlushCompress, FlushDecompress};
 
-        let chunks: &[&[u8]] = &[
-            b"chunk-one ",
-            b"chunk-two ",
-            b"chunk-three",
-        ];
+        let chunks: &[&[u8]] = &[b"chunk-one ", b"chunk-two ", b"chunk-three"];
 
         let mut compressor = Compress::new(Compression::default(), false);
         let mut wire = Vec::new();
@@ -1198,7 +1204,9 @@ mod tests {
         let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
         // Write first token
-        encoder.write(b"token-one data payload").expect("write token 1");
+        encoder
+            .write(b"token-one data payload")
+            .expect("write token 1");
         encoder.flush().expect("flush after token 1");
 
         let after_flush_1 = encoder.get_ref().len();
@@ -1214,11 +1222,16 @@ mod tests {
         );
 
         // Write second token
-        encoder.write(b"token-two different data").expect("write token 2");
+        encoder
+            .write(b"token-two different data")
+            .expect("write token 2");
         encoder.flush().expect("flush after token 2");
 
         let after_flush_2 = encoder.get_ref().len();
-        assert!(after_flush_2 > after_flush_1, "second flush should produce more output");
+        assert!(
+            after_flush_2 > after_flush_1,
+            "second flush should produce more output"
+        );
 
         // Verify the cumulative output ends with sync marker
         let buf2 = encoder.get_ref().clone();
