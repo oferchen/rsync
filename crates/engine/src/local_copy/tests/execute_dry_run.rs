@@ -957,6 +957,11 @@ fn dry_run_with_backup_does_not_create_backup_files() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"new").expect("write source");
     fs::write(&destination, b"old").expect("write dest");
+    // Backdate dest so quick-check (same size + mtime) does not skip the file
+    let one_hour_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    filetime::set_file_mtime(&destination, one_hour_ago).expect("backdate dest mtime");
 
     let operands = vec![
         source.into_os_string(),
