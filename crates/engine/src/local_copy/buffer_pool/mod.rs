@@ -20,8 +20,8 @@
 //!
 //! # Thread Safety
 //!
-//! The pool uses [`std::sync::Mutex`] for thread-safe access. The lock is held
-//! only briefly during acquire/release operations, minimizing contention.
+//! The pool uses [`crossbeam_queue::ArrayQueue`] for lock-free concurrent
+//! access. Push and pop are wait-free CAS operations with no mutex overhead.
 //!
 //! # Ownership Model
 //!
@@ -41,11 +41,10 @@
 //! // Buffer automatically returned to pool on drop
 //! ```
 
-mod guard;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
-pub use guard::{BorrowedBufferGuard, BufferGuard};
-
-use std::sync::{Arc, Mutex};
+use crossbeam_queue::ArrayQueue;
 
 use super::COPY_BUFFER_SIZE;
 
@@ -100,10 +99,8 @@ pub const fn adaptive_buffer_size(file_size: u64) -> usize {
 /// When the pool is empty, acquiring creates a new buffer.
 #[derive(Debug)]
 pub struct BufferPool {
-    /// Stack of available buffers, protected by mutex.
-    buffers: Mutex<Vec<Vec<u8>>>,
-    /// Maximum number of buffers to retain in the pool.
-    max_buffers: usize,
+    /// Lock-free queue of available buffers.
+    buffers: ArrayQueue<Vec<u8>>,
     /// Size of each buffer in bytes.
     buffer_size: usize,
 }
@@ -124,8 +121,7 @@ impl BufferPool {
     #[must_use]
     pub fn new(max_buffers: usize) -> Self {
         Self {
-            buffers: Mutex::new(Vec::with_capacity(max_buffers)),
-            max_buffers,
+            buffers: ArrayQueue::new(max_buffers),
             buffer_size: COPY_BUFFER_SIZE,
         }
     }
@@ -139,8 +135,7 @@ impl BufferPool {
     #[must_use]
     pub fn with_buffer_size(max_buffers: usize, buffer_size: usize) -> Self {
         Self {
-            buffers: Mutex::new(Vec::with_capacity(max_buffers)),
-            max_buffers,
+            buffers: ArrayQueue::new(max_buffers),
             buffer_size,
         }
     }
@@ -154,17 +149,12 @@ impl BufferPool {
     /// The returned [`BufferGuard`] automatically returns the buffer to the
     /// pool when dropped.
     ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned.
     #[must_use]
     pub fn acquire_from(pool: Arc<Self>) -> BufferGuard {
-        let buffer = {
-            let mut buffers = pool.buffers.lock().expect("buffer pool mutex poisoned");
-            buffers.pop()
-        };
-
-        let buffer = buffer.unwrap_or_else(|| vec![0u8; pool.buffer_size]);
+        let buffer = pool
+            .buffers
+            .pop()
+            .unwrap_or_else(|| vec![0u8; pool.buffer_size]);
 
         BufferGuard {
             buffer: Some(buffer),
@@ -180,19 +170,16 @@ impl BufferPool {
     /// size is allocated (it will still be returned to the pool on drop,
     /// where its length is restored to the pool's default).
     ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned.
     #[must_use]
     pub fn acquire_adaptive_from(pool: Arc<Self>, file_size: u64) -> BufferGuard {
         let desired = adaptive_buffer_size(file_size);
 
         if desired == pool.buffer_size {
-            // Fast path: adaptive size matches pool default - reuse pooled buffers.
+            // Fast path: adaptive size matches pool default -- reuse pooled buffers.
             return Self::acquire_from(pool);
         }
 
-        // Slow path: non-standard size - allocate a fresh buffer.
+        // Slow path: non-standard size -- allocate a fresh buffer.
         // On drop the guard will pass it through `return_buffer` which
         // resizes it to the pool default before returning it.
         BufferGuard {
@@ -207,17 +194,12 @@ impl BufferPool {
     /// Use [`acquire_from`](Self::acquire_from) when the pool is part of a
     /// larger context that needs to be mutably borrowed.
     ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned.
     #[must_use]
     pub fn acquire(&self) -> BorrowedBufferGuard<'_> {
-        let buffer = {
-            let mut pool = self.buffers.lock().expect("buffer pool mutex poisoned");
-            pool.pop()
-        };
-
-        let buffer = buffer.unwrap_or_else(|| vec![0u8; self.buffer_size]);
+        let buffer = self
+            .buffers
+            .pop()
+            .unwrap_or_else(|| vec![0u8; self.buffer_size]);
 
         BorrowedBufferGuard {
             buffer: Some(buffer),
@@ -234,7 +216,7 @@ impl BufferPool {
     ///
     /// If the pool is at capacity, the buffer is dropped instead.
     #[allow(unsafe_code)]
-    pub(crate) fn return_buffer(&self, mut buffer: Vec<u8>) {
+    fn return_buffer(&self, mut buffer: Vec<u8>) {
         if buffer.capacity() < self.buffer_size {
             // Small adaptive buffer - replace with fresh allocation at pool size.
             buffer = Vec::with_capacity(self.buffer_size);
@@ -247,10 +229,8 @@ impl BufferPool {
         // #1 CPU hotspot (26% of runtime per flamegraph profiling).
         unsafe { buffer.set_len(self.buffer_size) };
 
-        let mut pool = self.buffers.lock().expect("buffer pool mutex poisoned");
-        if pool.len() < self.max_buffers {
-            pool.push(buffer);
-        }
+        // ArrayQueue::push returns Err when full - the buffer is simply dropped.
+        let _ = self.buffers.push(buffer);
     }
 
     /// Returns the number of buffers currently in the pool.
@@ -258,16 +238,13 @@ impl BufferPool {
     /// This is primarily useful for testing and monitoring.
     #[must_use]
     pub fn available(&self) -> usize {
-        self.buffers
-            .lock()
-            .expect("buffer pool mutex poisoned")
-            .len()
+        self.buffers.len()
     }
 
     /// Returns the maximum number of buffers the pool will retain.
     #[must_use]
     pub fn max_buffers(&self) -> usize {
-        self.max_buffers
+        self.buffers.capacity()
     }
 
     /// Returns the size of each buffer in bytes.
@@ -281,9 +258,121 @@ impl Default for BufferPool {
     /// Creates a buffer pool with capacity based on available parallelism.
     fn default() -> Self {
         let max_buffers = std::thread::available_parallelism()
-            .map(|p| p.get())
+            .map(std::num::NonZero::get)
             .unwrap_or(4);
         Self::new(max_buffers)
+    }
+}
+
+/// RAII guard that returns a buffer to the pool on drop (owned version).
+///
+/// This guard holds an [`Arc`] to the pool, allowing it to be used when
+/// the pool is part of a larger context that needs to be mutably borrowed.
+///
+/// Provides transparent access to the underlying buffer via [`Deref`] and
+/// [`DerefMut`], allowing it to be used wherever `&[u8]` or `&mut [u8]`
+/// is expected.
+#[derive(Debug)]
+pub struct BufferGuard {
+    /// The buffer, wrapped in Option for take-on-drop pattern.
+    buffer: Option<Vec<u8>>,
+    /// Arc reference to the pool for returning the buffer.
+    pool: Arc<BufferPool>,
+}
+
+impl Deref for BufferGuard {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.buffer.as_ref().expect("buffer already taken")
+    }
+}
+
+impl DerefMut for BufferGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.buffer.as_mut().expect("buffer already taken")
+    }
+}
+
+impl Drop for BufferGuard {
+    fn drop(&mut self) {
+        if let Some(buffer) = self.buffer.take() {
+            self.pool.return_buffer(buffer);
+        }
+    }
+}
+
+impl BufferGuard {
+    /// Returns the length of the buffer in bytes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.buffer.as_ref().map(Vec::len).unwrap_or(0)
+    }
+
+    /// Returns true if the buffer is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns the buffer as a mutable slice.
+    #[must_use]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.buffer.as_mut().expect("buffer already taken")
+    }
+}
+
+/// RAII guard that returns a buffer to the pool on drop (borrowed version).
+///
+/// This guard borrows the pool, suitable for simple use cases where the pool
+/// lifetime is clear.
+#[derive(Debug)]
+pub struct BorrowedBufferGuard<'a> {
+    /// The buffer, wrapped in Option for take-on-drop pattern.
+    buffer: Option<Vec<u8>>,
+    /// Reference to the pool for returning the buffer.
+    pool: &'a BufferPool,
+}
+
+impl Deref for BorrowedBufferGuard<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.buffer.as_ref().expect("buffer already taken")
+    }
+}
+
+impl DerefMut for BorrowedBufferGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.buffer.as_mut().expect("buffer already taken")
+    }
+}
+
+impl Drop for BorrowedBufferGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(buffer) = self.buffer.take() {
+            self.pool.return_buffer(buffer);
+        }
+    }
+}
+
+impl BorrowedBufferGuard<'_> {
+    /// Returns the length of the buffer in bytes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.buffer.as_ref().map(Vec::len).unwrap_or(0)
+    }
+
+    /// Returns true if the buffer is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns the buffer as a mutable slice.
+    #[must_use]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.buffer.as_mut().expect("buffer already taken")
     }
 }
 
@@ -417,7 +506,7 @@ mod tests {
             }
         }
 
-        // Acquire again - length should be restored (contents are stale but
+        // Acquire again — length should be restored (contents are stale but
         // will be overwritten by Read::read before consumption).
         let buffer = pool.acquire();
         assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
@@ -607,7 +696,7 @@ mod tests {
         }
         assert_eq!(pool.available(), 1);
 
-        // Acquire adaptively for a medium file - should reuse the pooled buffer
+        // Acquire adaptively for a medium file -- should reuse the pooled buffer
         let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 10 * 1024 * 1024);
         assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
         assert_eq!(pool.available(), 0); // was taken from pool
