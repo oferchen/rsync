@@ -16,7 +16,7 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use super::BufferPool;
+use super::{BufferAllocator, BufferPool, DefaultAllocator};
 
 /// RAII guard that returns a buffer to the pool on drop (owned version).
 ///
@@ -31,16 +31,17 @@ use super::BufferPool;
 ///
 /// On drop, the buffer is passed to [`BufferPool::return_buffer`](super::BufferPool),
 /// which restores its length to the pool default and pushes it back onto
-/// the lock-free queue. If the pool is at capacity, the buffer is dropped.
+/// the lock-free queue. If the pool is at capacity, the buffer is disposed
+/// via the pool's [`BufferAllocator`].
 #[derive(Debug)]
-pub struct BufferGuard {
+pub struct BufferGuard<A: BufferAllocator = DefaultAllocator> {
     /// The buffer, wrapped in Option for take-on-drop pattern.
     pub(super) buffer: Option<Vec<u8>>,
     /// Arc reference to the pool for returning the buffer.
-    pub(super) pool: Arc<BufferPool>,
+    pub(super) pool: Arc<BufferPool<A>>,
 }
 
-impl Deref for BufferGuard {
+impl<A: BufferAllocator> Deref for BufferGuard<A> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -48,13 +49,13 @@ impl Deref for BufferGuard {
     }
 }
 
-impl DerefMut for BufferGuard {
+impl<A: BufferAllocator> DerefMut for BufferGuard<A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.buffer.as_mut().expect("buffer already taken")
     }
 }
 
-impl Drop for BufferGuard {
+impl<A: BufferAllocator> Drop for BufferGuard<A> {
     fn drop(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             self.pool.return_buffer(buffer);
@@ -62,7 +63,7 @@ impl Drop for BufferGuard {
     }
 }
 
-impl BufferGuard {
+impl<A: BufferAllocator> BufferGuard<A> {
     /// Returns the length of the buffer in bytes.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -91,14 +92,14 @@ impl BufferGuard {
 /// Behaves identically to [`BufferGuard`] in all other respects: derefs
 /// to `[u8]`, and the `Drop` impl returns the buffer to the pool.
 #[derive(Debug)]
-pub struct BorrowedBufferGuard<'a> {
+pub struct BorrowedBufferGuard<'a, A: BufferAllocator = DefaultAllocator> {
     /// The buffer, wrapped in Option for take-on-drop pattern.
     pub(super) buffer: Option<Vec<u8>>,
     /// Reference to the pool for returning the buffer.
-    pub(super) pool: &'a BufferPool,
+    pub(super) pool: &'a BufferPool<A>,
 }
 
-impl Deref for BorrowedBufferGuard<'_> {
+impl<A: BufferAllocator> Deref for BorrowedBufferGuard<'_, A> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -106,13 +107,13 @@ impl Deref for BorrowedBufferGuard<'_> {
     }
 }
 
-impl DerefMut for BorrowedBufferGuard<'_> {
+impl<A: BufferAllocator> DerefMut for BorrowedBufferGuard<'_, A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.buffer.as_mut().expect("buffer already taken")
     }
 }
 
-impl Drop for BorrowedBufferGuard<'_> {
+impl<A: BufferAllocator> Drop for BorrowedBufferGuard<'_, A> {
     fn drop(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             self.pool.return_buffer(buffer);
@@ -120,7 +121,7 @@ impl Drop for BorrowedBufferGuard<'_> {
     }
 }
 
-impl BorrowedBufferGuard<'_> {
+impl<A: BufferAllocator> BorrowedBufferGuard<'_, A> {
     /// Returns the length of the buffer in bytes.
     #[must_use]
     pub fn len(&self) -> usize {
