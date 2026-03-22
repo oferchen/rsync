@@ -753,11 +753,12 @@ fn execute_overwrites_existing_file_with_different_content() {
     fs::write(&source, b"new content here").expect("write source");
     fs::write(&destination, b"old").expect("write dest");
 
-    // Sleep briefly to ensure different mtimes
-    std::thread::sleep(std::time::Duration::from_millis(10));
-
-    // Touch source to make it newer
-    fs::write(&source, b"new content here").expect("update source");
+    // Backdate dest so source is newer without requiring a sleep
+    filetime::set_file_mtime(
+        &destination,
+        filetime::FileTime::from_unix_time(1_600_000_000, 0),
+    )
+    .expect("backdate dest");
 
     let operands = vec![
         source.into_os_string(),

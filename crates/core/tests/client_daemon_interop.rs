@@ -27,6 +27,8 @@ use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 
+use filetime::{FileTime, set_file_mtime};
+
 use common::{
     DaemonBinary, TestDaemon, UPSTREAM_3_0_9, UPSTREAM_3_1_3, UPSTREAM_3_4_1, create_test_file,
     require_upstream,
@@ -767,12 +769,13 @@ fn test_metadata_preservation_times() {
     let test_file = daemon.module_path().join("time_test.txt");
     create_test_file(&test_file, b"time test");
 
+    // Backdate source file to a known past time to ensure mtime differs from "now"
+    let past_time = FileTime::from_unix_time(1_600_000_000, 0); // 2020-09-13
+    set_file_mtime(&test_file, past_time).expect("backdate source mtime");
+
     // Get original mtime
     let original_metadata = fs::metadata(&test_file).expect("read metadata");
     let original_mtime = original_metadata.modified().expect("get mtime");
-
-    // Wait a bit to ensure time difference
-    thread::sleep(Duration::from_millis(100));
 
     let dest_root = tempdir().expect("create dest dir");
 

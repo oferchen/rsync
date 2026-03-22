@@ -249,8 +249,6 @@ impl Default for BatchMetadataContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
-    use std::time::Duration;
 
     #[test]
     fn batch_context_new_creates_empty_cache() {
@@ -431,8 +429,11 @@ mod tests {
         let dest = temp.path().join("dest.txt");
 
         fs::write(&source, b"source").expect("write source");
-        thread::sleep(Duration::from_millis(10));
         fs::write(&dest, b"dest").expect("write dest");
+
+        // Backdate source to a known time so it differs from dest without sleeping
+        let past = FileTime::from_unix_time(1_600_000_000, 0);
+        filetime::set_file_mtime(&source, past).expect("backdate source");
 
         let source_meta = fs::metadata(&source).expect("source metadata");
 
@@ -460,8 +461,11 @@ mod tests {
         let dest = temp.path().join("dest.txt");
 
         fs::write(&source, b"source").expect("write source");
-        thread::sleep(Duration::from_millis(10));
         fs::write(&dest, b"dest").expect("write dest");
+
+        // Backdate source so it has a distinct mtime from dest
+        let past = FileTime::from_unix_time(1_600_000_000, 0);
+        filetime::set_file_mtime(&source, past).expect("backdate source");
 
         let source_meta = fs::metadata(&source).expect("source metadata");
         let dest_meta_before = fs::metadata(&dest).expect("dest metadata before");
@@ -677,8 +681,11 @@ mod tests {
         let dest = temp.path().join("dest.txt");
 
         fs::write(&source, b"source").expect("write source");
-        thread::sleep(Duration::from_millis(10));
         fs::write(&dest, b"dest").expect("write dest");
+
+        // Backdate source so it has a distinct mtime from dest
+        let past = FileTime::from_unix_time(1_600_000_000, 0);
+        filetime::set_file_mtime(&source, past).expect("backdate source");
 
         // Set permissions on source
         let perms = PermissionsExt::from_mode(0o755);
