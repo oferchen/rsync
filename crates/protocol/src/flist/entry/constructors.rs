@@ -1,3 +1,5 @@
+// upstream: flist.c:make_file() - creates file_struct from stat data
+
 use std::path::PathBuf;
 
 use super::FileEntry;
@@ -41,19 +43,21 @@ impl FileEntry {
         }
     }
 
-    /// Creates a new regular file entry.
+    /// Creates a new regular file entry with `S_IFREG` mode.
     #[must_use]
     pub fn new_file(name: PathBuf, size: u64, permissions: u32) -> Self {
         Self::new_with_type(name, size, FileType::Regular, permissions, None)
     }
 
-    /// Creates a new directory entry.
+    /// Creates a new directory entry with `S_IFDIR` mode and zero size.
     #[must_use]
     pub fn new_directory(name: PathBuf, permissions: u32) -> Self {
         Self::new_with_type(name, 0, FileType::Directory, permissions, None)
     }
 
-    /// Creates a new symlink entry.
+    /// Creates a new symlink entry with `S_IFLNK` mode and 0o777 permissions.
+    ///
+    /// Symlinks always have 0o777 permissions per POSIX convention.
     #[must_use]
     pub fn new_symlink(name: PathBuf, target: PathBuf) -> Self {
         Self::new_with_type(name, 0, FileType::Symlink, 0o777, Some(target))

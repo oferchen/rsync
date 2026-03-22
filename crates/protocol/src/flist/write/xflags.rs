@@ -2,6 +2,10 @@
 //!
 //! Computes compressed flags that indicate which fields differ from the
 //! previous entry, enabling delta compression of the file list.
+//!
+//! # Upstream Reference
+//!
+//! See `flist.c:send_file_entry()` lines 475-550 for the xflags calculation.
 
 use super::super::entry::FileEntry;
 use super::super::flags::{
