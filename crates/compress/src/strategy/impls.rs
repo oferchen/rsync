@@ -8,7 +8,7 @@ use std::io::{self, Write};
 use crate::zstd::{self, CountingZstdEncoder};
 
 #[cfg(feature = "lz4")]
-use crate::lz4::{CountingLz4Encoder, frame};
+use crate::lz4::raw;
 
 /// No compression strategy - passes data through unchanged.
 ///
@@ -144,10 +144,18 @@ impl CompressionStrategy for ZstdStrategy {
     }
 }
 
-/// LZ4 compression strategy.
+/// LZ4 compression strategy using raw block format for wire compatibility.
 ///
-/// Provides fast compression with moderate compression ratios.
+/// Uses raw LZ4 blocks with rsync's 2-byte wire protocol header, matching
+/// upstream rsync 3.4.1's `token.c` implementation. This differs from the
+/// frame format (which includes magic bytes and checksums) - raw blocks are
+/// required for interoperability with upstream rsync.
+///
 /// Only available when the `lz4` feature is enabled.
+///
+/// # Upstream Reference
+///
+/// `token.c:send_deflated_token()` - wire format definition.
 #[cfg(feature = "lz4")]
 #[derive(Clone, Copy, Debug)]
 pub struct Lz4Strategy {
@@ -179,17 +187,23 @@ impl Default for Lz4Strategy {
 #[cfg(feature = "lz4")]
 impl CompressionStrategy for Lz4Strategy {
     fn compress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
-        let initial_len = output.len();
-        let mut encoder = CountingLz4Encoder::with_sink(output, self.level);
-        encoder.write(input)?;
-        let (returned_output, _bytes_written) = encoder.finish_into_inner()?;
-
-        let final_len = returned_output.len();
-        Ok(final_len - initial_len)
+        let compressed = raw::compress_block_to_vec(input).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+        })?;
+        let len = compressed.len();
+        output.extend_from_slice(&compressed);
+        Ok(len)
     }
 
     fn decompress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
-        frame::decompress_into(input, output)
+        // Allocate output buffer based on raw module's safety limit.
+        // The raw header encodes compressed size; decompressed size is bounded
+        // by MAX_DECOMPRESSED_SIZE to prevent memory exhaustion.
+        let decompressed = raw::decompress_block_to_vec(input, raw::MAX_BLOCK_SIZE)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        let len = decompressed.len();
+        output.extend_from_slice(&decompressed);
+        Ok(len)
     }
 
     fn algorithm_kind(&self) -> CompressionAlgorithmKind {
