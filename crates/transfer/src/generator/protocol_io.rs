@@ -13,7 +13,7 @@
 use std::io::{self, Read, Write};
 use std::time::Instant;
 
-use logging::debug_log;
+use logging::{PhaseTimer, debug_log};
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum, create_ndx_codec};
 use protocol::wire::SignatureBlock;
@@ -246,6 +246,7 @@ impl GeneratorContext {
     /// - `flist.c:2192` - `send_file_list()` main entry point
     /// - `flist.c:2518` - `write_int(f, io_error)` end marker with SAFE_FILE_LIST
     pub fn send_file_list<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<usize> {
+        let _t = PhaseTimer::new("file-list-send");
         // upstream: stats.flist_xfertime
         self.timing.flist_xfer_start = Some(Instant::now());
 
