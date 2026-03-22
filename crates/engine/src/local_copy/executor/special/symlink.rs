@@ -19,6 +19,11 @@ use ::metadata::{MetadataOptions, apply_symlink_metadata_with_options};
 use super::super::{is_device, is_fifo};
 use super::{device::copy_device, fifo::copy_fifo};
 
+/// Returns `true` when a symlink target stays within the transfer tree.
+///
+/// Rejects absolute paths, empty targets, and targets whose `..` components
+/// would escape above the directory depth implied by `link_relative`.
+/// // upstream: clientserver.c - safe symlink checking
 pub(crate) fn symlink_target_is_safe(target: &Path, link_relative: &Path) -> bool {
     if target.as_os_str().is_empty() || target.has_root() {
         return false;
@@ -85,6 +90,13 @@ pub(crate) fn symlink_target_is_safe(target: &Path, link_relative: &Path) -> boo
     true
 }
 
+/// Copies a symbolic link from source to destination.
+///
+/// Handles `--safe-links`, `--copy-unsafe-links`, `--munge-links`, hard-link
+/// deduplication, and dry-run mode. When `--copy-unsafe-links` is active and
+/// the target is unsafe, the link target is copied as a regular entry instead.
+///
+/// // upstream: receiver.c:recv_files() - symlink handling
 pub(crate) fn copy_symlink(
     context: &mut CopyContext,
     source: &Path,
@@ -434,12 +446,16 @@ pub(crate) fn copy_symlink(
     Ok(())
 }
 
+/// Creates a symbolic link at `destination` pointing to `target`.
 #[cfg(unix)]
 pub(crate) fn create_symlink(target: &Path, _source: &Path, destination: &Path) -> io::Result<()> {
     use std::os::unix::fs::symlink;
     symlink(target, destination)
 }
 
+/// Creates a symbolic link at `destination` pointing to `target` (Windows variant).
+///
+/// Uses `symlink_dir` when the source is a directory, `symlink_file` otherwise.
 #[cfg(windows)]
 pub(crate) fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Result<()> {
     use std::os::windows::fs::{symlink_dir, symlink_file};
@@ -454,8 +470,6 @@ pub(crate) fn create_symlink(target: &Path, source: &Path, destination: &Path) -
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ==================== symlink_target_is_safe tests ====================
 
     #[test]
     fn safe_simple_relative_target() {

@@ -6,6 +6,8 @@ use crate::local_copy::{
     CopyContext, LocalCopyAction, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
 };
 
+/// Checks `--update` and `--ignore-existing` conditions and returns `true`
+/// if the file should be skipped.
 pub(super) fn handle_existing_skips(
     context: &mut CopyContext,
     destination: &Path,
