@@ -6,7 +6,6 @@
 use rayon::prelude::*;
 use std::io;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 
 /// Result of a parallel operation on multiple items.
@@ -129,35 +128,43 @@ impl ParallelExecutor {
         U: Send,
         F: Fn(&T) -> io::Result<U> + Sync,
     {
-        let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
-
-        let run = |errors: &Arc<std::sync::Mutex<Vec<(usize, io::Error)>>>| -> Vec<U> {
+        let run = || -> (Vec<U>, Vec<(usize, io::Error)>) {
             items
                 .par_iter()
                 .enumerate()
-                .filter_map(|(idx, item)| match process_fn(item) {
-                    Ok(result) => Some(result),
-                    Err(e) => {
-                        errors.lock().unwrap().push((idx, e));
-                        None
-                    }
-                })
-                .collect()
+                .fold(
+                    || (Vec::new(), Vec::new()),
+                    |(mut successes, mut errors), (idx, item)| {
+                        match process_fn(item) {
+                            Ok(result) => successes.push(result),
+                            Err(e) => errors.push((idx, e)),
+                        }
+                        (successes, errors)
+                    },
+                )
+                .reduce(
+                    || (Vec::new(), Vec::new()),
+                    |(mut s1, mut e1), (s2, e2)| {
+                        s1.extend(s2);
+                        e1.extend(e2);
+                        (s1, e1)
+                    },
+                )
         };
 
-        let successes = if self.thread_count > 0 {
+        let (successes, errors) = if self.thread_count > 0 {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(self.thread_count)
                 .build()
                 .expect("failed to build rayon thread pool");
-            pool.install(|| run(&errors))
+            pool.install(run)
         } else {
-            run(&errors)
+            run()
         };
 
         ParallelResult {
             successes,
-            errors: Arc::try_unwrap(errors).unwrap().into_inner().unwrap(),
+            errors,
             bytes_processed: 0,
         }
     }
@@ -172,41 +179,48 @@ impl ParallelExecutor {
         U: Send,
         F: Fn(&Path) -> io::Result<(U, u64)> + Sync,
     {
-        let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let bytes = Arc::new(AtomicU64::new(0));
+        let bytes = AtomicU64::new(0);
 
-        let run = |errors: &Arc<std::sync::Mutex<Vec<(usize, io::Error)>>>,
-                   bytes: &Arc<AtomicU64>|
-         -> Vec<U> {
+        let run = || -> (Vec<U>, Vec<(usize, io::Error)>) {
             paths
                 .par_iter()
                 .enumerate()
-                .filter_map(|(idx, path)| match process_fn(path.as_ref()) {
-                    Ok((result, file_bytes)) => {
-                        bytes.fetch_add(file_bytes, AtomicOrdering::Relaxed);
-                        Some(result)
-                    }
-                    Err(e) => {
-                        errors.lock().unwrap().push((idx, e));
-                        None
-                    }
-                })
-                .collect()
+                .fold(
+                    || (Vec::new(), Vec::new()),
+                    |(mut successes, mut errors), (idx, path)| {
+                        match process_fn(path.as_ref()) {
+                            Ok((result, file_bytes)) => {
+                                bytes.fetch_add(file_bytes, AtomicOrdering::Relaxed);
+                                successes.push(result);
+                            }
+                            Err(e) => errors.push((idx, e)),
+                        }
+                        (successes, errors)
+                    },
+                )
+                .reduce(
+                    || (Vec::new(), Vec::new()),
+                    |(mut s1, mut e1), (s2, e2)| {
+                        s1.extend(s2);
+                        e1.extend(e2);
+                        (s1, e1)
+                    },
+                )
         };
 
-        let successes = if self.thread_count > 0 {
+        let (successes, errors) = if self.thread_count > 0 {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(self.thread_count)
                 .build()
                 .expect("failed to build rayon thread pool");
-            pool.install(|| run(&errors, &bytes))
+            pool.install(run)
         } else {
-            run(&errors, &bytes)
+            run()
         };
 
         ParallelResult {
             successes,
-            errors: Arc::try_unwrap(errors).unwrap().into_inner().unwrap(),
+            errors,
             bytes_processed: bytes.load(AtomicOrdering::Relaxed),
         }
     }
@@ -290,26 +304,32 @@ pub trait ParallelFileOps: ParallelIterator {
         Self: Sized,
         Self::Item: Send,
     {
-        let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let counter = Arc::new(AtomicUsize::new(0));
+        let counter = AtomicUsize::new(0);
 
-        let successes: Vec<T> = self
-            .map(|item| {
-                let idx = counter.fetch_add(1, AtomicOrdering::Relaxed);
-                match f(item) {
-                    Ok(result) => Some(result),
-                    Err(e) => {
-                        errors.lock().unwrap().push((idx, e));
-                        None
+        let (successes, errors) = self
+            .fold(
+                || (Vec::new(), Vec::new()),
+                |(mut successes, mut errors), item| {
+                    let idx = counter.fetch_add(1, AtomicOrdering::Relaxed);
+                    match f(item) {
+                        Ok(result) => successes.push(result),
+                        Err(e) => errors.push((idx, e)),
                     }
-                }
-            })
-            .flatten()
-            .collect();
+                    (successes, errors)
+                },
+            )
+            .reduce(
+                || (Vec::new(), Vec::new()),
+                |(mut s1, mut e1), (s2, e2)| {
+                    s1.extend(s2);
+                    e1.extend(e2);
+                    (s1, e1)
+                },
+            );
 
         ParallelResult {
             successes,
-            errors: Arc::try_unwrap(errors).unwrap().into_inner().unwrap(),
+            errors,
             bytes_processed: 0,
         }
     }
