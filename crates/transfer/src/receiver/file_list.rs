@@ -123,7 +123,7 @@ impl ReceiverContext {
             if ndx > NDX_FLIST_OFFSET {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("expected NDX_FLIST_OFFSET or NDX_FLIST_EOF, got {ndx}"),
+                    format!("expected NDX_FLIST_OFFSET or NDX_FLIST_EOF, got {ndx} {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()),
                 ));
             }
 
