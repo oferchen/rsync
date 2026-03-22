@@ -353,6 +353,12 @@ fn execute_with_delete_respects_dry_run() {
     fs::create_dir_all(&dest_root).expect("create dest root");
     fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
     fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+    // Backdate dest so quick-check (same size + mtime) does not skip the file
+    let one_hour_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    filetime::set_file_mtime(dest_root.join("keep.txt"), one_hour_ago)
+        .expect("backdate dest mtime");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -1110,6 +1116,12 @@ fn execute_dry_run_with_existing_destination_reports_no_creation() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("pre-create dest");
     fs::write(dest_root.join("file.txt"), b"old content").expect("write existing");
+    // Backdate dest so quick-check (same size + mtime) does not skip the file
+    let one_hour_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    filetime::set_file_mtime(dest_root.join("file.txt"), one_hour_ago)
+        .expect("backdate dest mtime");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());

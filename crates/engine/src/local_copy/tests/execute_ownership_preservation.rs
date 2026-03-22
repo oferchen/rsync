@@ -855,6 +855,11 @@ fn owner_preserved_with_existing_destination() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"new content").expect("write source");
     fs::write(&destination, b"old content").expect("write dest");
+    // Backdate dest so quick-check (same size + mtime) does not skip the file
+    let one_hour_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    filetime::set_file_mtime(&destination, one_hour_ago).expect("backdate dest mtime");
 
     let source_uid = 16000;
     let dest_uid = 17000;
