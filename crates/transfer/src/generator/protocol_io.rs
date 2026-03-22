@@ -34,7 +34,7 @@ impl GeneratorContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
 
-        // Skip ID lists for INC_RECURSE (handled inline) or when numeric_ids is set
+        // upstream: flist.c:2513-2514 - skip for INC_RECURSE or numeric_ids
         if inc_recurse || self.config.flags.numeric_ids {
             return Ok(());
         }
@@ -45,17 +45,16 @@ impl GeneratorContext {
 
         let protocol_version = self.protocol.as_u8();
 
-        // Send UID list if preserving ownership
+        // upstream: uidlist.c:408 - send_uid_list()
         if self.config.flags.owner {
             self.uid_list.write(writer, id0_names, protocol_version)?;
         }
 
-        // Send GID list if preserving group
+        // upstream: uidlist.c:412 - send_gid_list()
         if self.config.flags.group {
             self.gid_list.write(writer, id0_names, protocol_version)?;
         }
 
-        // Flush to prevent deadlock: receiver waits for ID lists before proceeding
         writer.flush()
     }
 
@@ -219,7 +218,7 @@ impl GeneratorContext {
 
     /// Sends the file list to the receiver.
     pub fn send_file_list<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<usize> {
-        // Track timing for flist_xfertime statistic (upstream stats.flist_xfertime)
+        // upstream: stats.flist_xfertime
         self.timing.flist_xfer_start = Some(Instant::now());
 
         let mut flist_writer = self.build_flist_writer();
@@ -235,7 +234,7 @@ impl GeneratorContext {
             flist_writer.write_entry(writer, entry)?;
         }
 
-        // Write end marker with io_error if any (SAFE_FILE_LIST support)
+        // upstream: flist.c:2518 - write io_error with end marker (SAFE_FILE_LIST)
         let io_error_for_end = if self.io_error != 0 {
             Some(self.io_error)
         } else {
@@ -244,11 +243,10 @@ impl GeneratorContext {
         flist_writer.write_end(writer, io_error_for_end)?;
         writer.flush()?;
 
-        // Cache the writer so send_extra_file_lists() inherits the compression
-        // state (prev_name, prev_mode, etc.), matching upstream's static variables.
+        // upstream: flist.c:send_file_entry() uses static variables - cache writer
+        // to preserve compression state across sub-lists.
         self.incremental.flist_writer_cache = Some(flist_writer);
 
-        // Record end time for flist_xfertime statistic
         self.timing.flist_xfer_end = Some(Instant::now());
 
         Ok(self.file_list.len())
