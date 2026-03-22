@@ -131,7 +131,10 @@ pub struct ReceiverContext {
 }
 
 impl ReceiverContext {
-    /// Creates a new receiver context from handshake result and config.
+    /// Creates a new receiver context from a completed handshake and server config.
+    ///
+    /// Initializes protocol state, INC_RECURSE NDX offset, and empty file list.
+    /// Execute the transfer via [`run`](Self::run).
     #[must_use]
     pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
         // upstream: flist.c:2923 - ndx_start = inc_recurse ? 1 : 0

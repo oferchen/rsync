@@ -55,10 +55,14 @@ pub use self::delta::generate_delta_from_signature;
 pub use self::item_flags::ItemFlags;
 pub use self::protocol_io::{calculate_duration_ms, read_signature_blocks};
 
-/// I/O error flags for file list building (upstream rsync.h:168-170).
+/// I/O error flags for file list building and transfer.
 ///
-/// These flags are OR'd together to track different types of errors that
-/// occur during file list building and transfer.
+/// Bitfield constants OR'd together to track error categories. Propagated to the
+/// client summary and mapped to rsync exit codes via [`to_exit_code`].
+///
+/// # Upstream Reference
+///
+/// - `rsync.h:168-170` - `IOERR_GENERAL`, `IOERR_VANISHED`, `IOERR_DEL_LIMIT`
 pub mod io_error_flags {
     /// General I/O error occurred during file operations.
     /// Must be 1 for backward compatibility with upstream rsync.
@@ -252,7 +256,11 @@ pub struct GeneratorContext {
 }
 
 impl GeneratorContext {
-    /// Creates a new generator context from handshake result and config.
+    /// Creates a new generator context from a completed handshake and server config.
+    ///
+    /// Initializes protocol state, INC_RECURSE NDX offset, and empty file list.
+    /// Call [`build_file_list`](Self::build_file_list) to populate entries, then
+    /// [`run`](Self::run) to execute the transfer.
     #[must_use]
     pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
         // upstream: flist.c:2923 — ndx_start = inc_recurse ? 1 : 0
@@ -592,21 +600,26 @@ struct TransferLoopResult {
 ///
 /// Returned inside [`crate::ServerStats::Generator`] after a successful send.
 /// Contains file counts, byte totals, and file-list timing metrics.
+///
+/// # Upstream Reference
+///
+/// - `main.c:356-384` - `handle_stats()` sends/receives these statistics
+/// - `sender.c:462` - `total_written` accumulated during `send_files()`
 #[derive(Debug, Clone, Default)]
 pub struct GeneratorStats {
     /// Number of files in the sent file list.
     pub files_listed: usize,
-    /// Number of files actually transferred.
+    /// Number of files actually transferred (delta or whole-file).
     pub files_transferred: usize,
-    /// Total bytes sent.
+    /// Total bytes sent to the receiver (delta data + literals).
     pub bytes_sent: u64,
-    /// Total bytes read from network.
+    /// Total bytes read from the receiver (signatures, NDX requests).
     pub bytes_read: u64,
-    /// File list build time in milliseconds.
+    /// File list build time in milliseconds (upstream: `stats.flist_buildtime`).
     pub flist_buildtime_ms: u64,
-    /// File list transfer time in milliseconds.
+    /// File list transfer time in milliseconds (upstream: `stats.flist_xfertime`).
     pub flist_xfertime_ms: u64,
-    /// Accumulated deletion statistics from the receiver.
+    /// Accumulated deletion statistics from the receiver via `NDX_DEL_STATS`.
     pub delete_stats: DeleteStats,
     /// Accumulated I/O error flags from file list building and transfer.
     ///
@@ -623,9 +636,14 @@ pub struct GeneratorStats {
 
 /// Returns `true` when the I/O error indicates an early connection close.
 ///
-/// During dry-run (and sometimes at phase boundaries), the upstream daemon may
-/// close the socket before the sender finishes the goodbye handshake. These
-/// error kinds all represent "peer went away" rather than a protocol error.
+/// During dry-run and at phase boundaries, the upstream daemon may close the
+/// socket before the sender finishes the goodbye handshake. These error kinds
+/// all represent "peer went away" rather than a protocol error.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:225-232` - tolerant error handling for dry-run
+/// - `main.c:875-906` - `read_final_goodbye()` with early close tolerance
 fn is_early_close_error(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),

@@ -1,4 +1,15 @@
 //! Delta generation, file streaming, and checksum computation.
+//!
+//! Provides the core delta pipeline for the generator (sender) role:
+//! signature reconstruction from wire format, delta script generation via
+//! [`DeltaGenerator`], whole-file streaming with inline checksumming, and
+//! compressed token encoding for wire transmission.
+//!
+//! # Upstream Reference
+//!
+//! - `match.c` - Block matching and delta generation
+//! - `sender.c:354-430` - File transfer with delta or whole-file paths
+//! - `token.c` - Token encoding with optional compression
 
 use std::fs;
 use std::io::{self, Read, Seek, Write};
@@ -32,41 +43,17 @@ pub(super) struct StreamResult {
 
 /// Generates a delta script from a received signature.
 ///
-/// Reconstructs the signature from wire format blocks, creates an index,
-/// and uses DeltaGenerator to produce the delta.
+/// Reconstructs the signature from wire format blocks, builds a hash index
+/// for O(1) block lookup, and runs the rolling-checksum delta algorithm
+/// against the source file.
 ///
-/// # Arguments
+/// Takes ownership of `sig_blocks` via the config to avoid cloning strong_sum
+/// data, which can be expensive for files with many signature blocks.
 ///
-/// * `source` - Reader for the source file to generate delta from
-/// * `config` - Delta generator configuration (takes ownership of sig_blocks)
+/// # Upstream Reference
 ///
-/// # Returns
-///
-/// Returns a `DeltaScript` containing copy and literal operations.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - `block_length` or `strong_sum_length` is zero
-/// - Signature index creation fails
-/// - Delta generation fails
-/// - I/O errors occur while reading the source
-///
-/// # Examples
-///
-/// ```ignore
-/// use std::fs::File;
-/// use transfer::{DeltaGeneratorConfig, generate_delta_from_signature};
-///
-/// let source_file = File::open("source.txt")?;
-/// let config = DeltaGeneratorConfig::new(2048, sig_blocks, 16, protocol);
-/// let delta = generate_delta_from_signature(source_file, config)?;
-/// ```
-///
-/// # Performance
-///
-/// Takes ownership of `sig_blocks` via the config to avoid cloning strong_sum data,
-/// which can be expensive for files with many signature blocks.
+/// - `sender.c:389-430` - delta generation path after `receive_sums()`
+/// - `match.c:hash_search()` - rolling checksum block matching
 pub fn generate_delta_from_signature<R: Read>(
     source: R,
     config: DeltaGeneratorConfig<'_>,
