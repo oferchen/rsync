@@ -28,7 +28,7 @@ use rayon::prelude::*;
 
 use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
-use crate::local_copy::buffer_pool::{global_buffer_pool, BufferPool};
+use crate::local_copy::buffer_pool::{BufferPool, global_buffer_pool};
 use crate::signature::SignatureAlgorithm;
 
 /// Precomputed checksum for a file.

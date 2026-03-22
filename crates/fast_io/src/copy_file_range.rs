@@ -170,14 +170,11 @@ fn try_io_uring_copy(source: &File, destination: &File, length: u64) -> io::Resu
         let want = ((length - total_copied) as usize).min(buf_size);
 
         // Submit read from source
-        let read_entry = io_uring::opcode::Read::new(
-            io_uring::types::Fd(src_fd),
-            buf.as_mut_ptr(),
-            want as u32,
-        )
-        .offset(src_offset)
-        .build()
-        .user_data(0);
+        let read_entry =
+            io_uring::opcode::Read::new(io_uring::types::Fd(src_fd), buf.as_mut_ptr(), want as u32)
+                .offset(src_offset)
+                .build()
+                .user_data(0);
 
         // SAFETY: fd is valid (borrowed from &File), buffer outlives the operation,
         // and we wait for completion before accessing the buffer.
@@ -698,13 +695,9 @@ mod tests {
         let mut dest = NamedTempFile::new().unwrap();
         let mut buffer = vec![0u8; 256 * 1024];
 
-        let copied = copy_file_contents_buffered(
-            source.as_file(),
-            dest.as_file(),
-            size as u64,
-            &mut buffer,
-        )
-        .unwrap();
+        let copied =
+            copy_file_contents_buffered(source.as_file(), dest.as_file(), size as u64, &mut buffer)
+                .unwrap();
 
         assert_eq!(copied, size as u64);
         dest.seek(SeekFrom::Start(0)).unwrap();

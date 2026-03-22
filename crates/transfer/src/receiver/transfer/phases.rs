@@ -88,7 +88,11 @@ impl ReceiverContext {
         if ndx != -1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("expected NDX_DONE (-1) from sender during {context}, got {ndx} {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()),
+                format!(
+                    "expected NDX_DONE (-1) from sender during {context}, got {ndx} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                ),
             ));
         }
         Ok(())
@@ -117,7 +121,11 @@ impl ReceiverContext {
             if goodbye_echo != -1 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("expected goodbye NDX_DONE echo (-1) from sender, got {goodbye_echo} {}{}", crate::role_trailer::error_location!(), crate::role_trailer::receiver()),
+                    format!(
+                        "expected goodbye NDX_DONE echo (-1) from sender, got {goodbye_echo} {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    ),
                 ));
             }
 

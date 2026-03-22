@@ -230,8 +230,8 @@ mod tests {
 
     #[test]
     fn backpressure_bounded() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::{Duration, Instant};
 
         // Queue of capacity 2 - sender must spin-wait when full.

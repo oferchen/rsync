@@ -12,4 +12,6 @@ mod low_level;
 mod types;
 
 pub use low_level::{link_anonymous_tmpfile, o_tmpfile_available, open_anonymous_tmpfile};
-pub use types::{AnonymousTempFile, OTmpfileSupport, TempFileResult, o_tmpfile_probe, open_temp_file};
+pub use types::{
+    AnonymousTempFile, OTmpfileSupport, TempFileResult, o_tmpfile_probe, open_temp_file,
+};

@@ -412,9 +412,7 @@ fn fcopyfile_impl(src: &Path, dst: &Path) -> io::Result<()> {
     // values above which outlive the call. NULL state is explicitly allowed
     // by the fcopyfile API. Errors are returned via the function return value
     // and errno.
-    let ret = unsafe {
-        libc::fcopyfile(src_fd, dst_fd, std::ptr::null_mut(), libc::COPYFILE_DATA)
-    };
+    let ret = unsafe { libc::fcopyfile(src_fd, dst_fd, std::ptr::null_mut(), libc::COPYFILE_DATA) };
 
     if ret == 0 {
         Ok(())
@@ -702,7 +700,10 @@ mod tests {
             .expect("copy succeeds");
 
         let dst_content = std::fs::read(&dst).expect("read destination");
-        assert_eq!(dst_content, content, "binary data must be preserved exactly");
+        assert_eq!(
+            dst_content, content,
+            "binary data must be preserved exactly"
+        );
     }
 
     #[test]
@@ -724,9 +725,7 @@ mod tests {
         std::fs::write(&dst, b"old content").expect("write old content");
 
         let copier = DefaultPlatformCopy::new();
-        copier
-            .copy_file(&src, &dst, 11)
-            .expect("copy succeeds");
+        copier.copy_file(&src, &dst, 11).expect("copy succeeds");
 
         let dst_content = std::fs::read(&dst).expect("read destination");
         assert_eq!(dst_content, b"new content");
