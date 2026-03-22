@@ -1,6 +1,37 @@
 // Integration tests for partial file transfer functionality.
 
-use std::env;
+/// Scoped helper that sets or removes an environment variable and restores the
+/// previous value when dropped.
+struct PartialEnvGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+#[allow(unsafe_code)]
+impl PartialEnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+#[allow(unsafe_code)]
+impl Drop for PartialEnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.previous.take() {
+            unsafe {
+                std::env::set_var(self.key, value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+}
 
 #[test]
 fn partial_mode_delete_does_not_preserve_temp_files() {
@@ -26,14 +57,8 @@ fn partial_mode_partial_dir_preserves_in_separate_directory() {
 
 #[test]
 fn partial_mode_respects_rsync_partial_dir_env() {
-    // Safety: This test is single-threaded and we restore the environment after
-    unsafe {
-        env::set_var("RSYNC_PARTIAL_DIR", "/tmp/test-partial");
-    }
+    let _guard = PartialEnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/test-partial");
     let mode = PartialMode::from_options(true, None);
-    unsafe {
-        env::remove_var("RSYNC_PARTIAL_DIR");
-    }
 
     assert!(matches!(mode, PartialMode::PartialDir(_)));
     assert_eq!(
@@ -44,14 +69,8 @@ fn partial_mode_respects_rsync_partial_dir_env() {
 
 #[test]
 fn partial_mode_explicit_dir_overrides_env_var() {
-    // Safety: This test is single-threaded and we restore the environment after
-    unsafe {
-        env::set_var("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
-    }
+    let _guard = PartialEnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/env-partial");
     let mode = PartialMode::from_options(true, Some("/tmp/explicit-partial".into()));
-    unsafe {
-        env::remove_var("RSYNC_PARTIAL_DIR");
-    }
 
     assert_eq!(
         mode.partial_dir_path(),
