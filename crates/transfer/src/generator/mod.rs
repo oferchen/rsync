@@ -106,6 +106,11 @@ pub mod io_error_flags {
 ///
 /// References entries in `GeneratorContext::file_list` by range rather than
 /// storing cloned entries, avoiding double allocation.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:send_extra_file_list()` - sends one directory's entries as a sub-list
+/// - `flist.c:2931` - `ndx_start = prev->ndx_start + prev->used + 1`
 #[derive(Debug)]
 struct PendingSegment {
     /// Global NDX of the parent directory.
@@ -130,6 +135,15 @@ struct SegmentClassification {
 }
 
 /// Timing and byte-count statistics collected during the transfer.
+///
+/// Tracks timestamps for file list build and transfer phases, plus total
+/// bytes read from the network. Used to compute `flist_buildtime` and
+/// `flist_xfertime` statistics sent to the client (protocol >= 29).
+///
+/// # Upstream Reference
+///
+/// - `main.c:356-384` - `handle_stats()` sends build/xfer times
+/// - `flist.c:2192` - `stats.flist_buildtime` timing
 #[derive(Debug)]
 struct TransferTiming {
     /// When file list building started (for flist_buildtime statistic).
@@ -158,6 +172,11 @@ impl TransferTiming {
 }
 
 /// Mutable state for INC_RECURSE segmented file list sending.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2534-2545` - INC_RECURSE sub-list and NDX_FLIST_EOF dispatch
+/// - `flist.c:send_file_entry()` - static variables cached via `flist_writer_cache`
 #[derive(Debug)]
 struct IncrementalState {
     /// Pending file list segments for incremental recursion (INC_RECURSE).
@@ -586,7 +605,13 @@ impl GeneratorContext {
 
 /// Result from the transfer loop phase of the generator.
 ///
-/// Contains statistics from processing file transfer requests.
+/// Contains statistics and codec state from processing file transfer requests.
+/// The codec state is preserved so the goodbye handshake can continue with
+/// the same delta-encoded NDX sequence.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:send_files()` - produces these statistics during the main loop
 #[derive(Debug, Clone)]
 struct TransferLoopResult {
     /// Number of files actually transferred.
@@ -641,7 +666,13 @@ pub struct GeneratorStats {
 ///
 /// During dry-run and at phase boundaries, the upstream daemon may close the
 /// socket before the sender finishes the goodbye handshake. These error kinds
-/// all represent "peer went away" rather than a protocol error.
+/// all represent "peer went away" rather than a protocol error:
+///
+/// - `ConnectionReset` - TCP RST from peer
+/// - `UnexpectedEof` - clean close mid-read
+/// - `BrokenPipe` - write to closed socket
+/// - `WouldBlock` - non-blocking socket with no data
+/// - `ConnectionAborted` - connection terminated by peer
 ///
 /// # Upstream Reference
 ///

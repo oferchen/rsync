@@ -399,6 +399,10 @@ impl ReceiverContext {
 }
 
 /// Shared configuration produced by [`ReceiverContext::setup_transfer`].
+///
+/// Groups the checksum, metadata, and ACL state that is common to all
+/// transfer modes (sync, pipelined, incremental). Passed to the pipeline
+/// loop and the redo pass.
 struct PipelineSetup {
     dest_dir: PathBuf,
     metadata_opts: metadata::MetadataOptions,
