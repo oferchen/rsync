@@ -11,10 +11,6 @@ use std::path::Path;
 use filters::{FilterRule, FilterSet};
 use proptest::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Generators
-// ---------------------------------------------------------------------------
-
 /// Generates a single path segment without slashes - lowercase letters and digits.
 fn path_segment() -> impl Strategy<Value = String> {
     proptest::collection::vec(
@@ -67,10 +63,6 @@ fn relative_path() -> impl Strategy<Value = String> {
     proptest::collection::vec(path_segment(), 1..5).prop_map(|segs| segs.join("/"))
 }
 
-// ---------------------------------------------------------------------------
-// Property: Include rules match what they should, exclude rules exclude
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
@@ -121,10 +113,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Property: First-match-wins semantics
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
@@ -166,10 +154,6 @@ proptest! {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Property: Anchored patterns only match at root
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -226,10 +210,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Property: Directory-only patterns (trailing `/`)
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
@@ -272,10 +252,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Property: Single-star `*` does not cross path separators
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
@@ -307,10 +283,6 @@ proptest! {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Property: Double-star `**` matches across path separators
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -351,10 +323,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Property: Empty filter chain includes everything
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
@@ -385,10 +353,6 @@ proptest! {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Property: Order sensitivity - swapping include/exclude changes results
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -442,10 +406,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Property: Catch-all exclude blocks everything, catch-all include is no-op
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
@@ -475,10 +435,6 @@ proptest! {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Property: Anchored + directory-only combined
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -516,10 +472,6 @@ proptest! {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Property: Clear rule resets the chain
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
