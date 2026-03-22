@@ -20,6 +20,17 @@
 //! mechanism for the current platform. Callers can also inject custom implementations
 //! for testing or specialized behavior.
 //!
+//! # Standalone Functions
+//!
+//! In addition to the trait, two standalone functions are provided for direct
+//! access to macOS copy primitives:
+//!
+//! - [`try_clonefile`] - Uses `clonefile(2)` for APFS copy-on-write reflinks.
+//! - [`try_fcopyfile`] - Uses `fcopyfile(3)` for kernel-accelerated file copies.
+//!
+//! Both return `ErrorKind::Unsupported` on non-macOS platforms, enabling callers
+//! to build a fallback chain without `#[cfg]` branching at every call site.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -221,9 +232,69 @@ impl PlatformCopy for DefaultPlatformCopy {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Standalone public functions
+// ===========================================================================
+
+/// Attempts a copy-on-write clone using `clonefile(2)`.
+///
+/// On APFS, `clonefile` creates an instant reflink where source and destination
+/// share storage blocks until either file is modified. The operation is O(1)
+/// regardless of file size.
+///
+/// # Constraints
+///
+/// - Source and destination must be on the same APFS volume.
+/// - Destination must not already exist (`clonefile` does not overwrite).
+/// - Only regular files and directories are supported.
+///
+/// # Platform Support
+///
+/// - **macOS**: Calls `clonefile(2)` with flags=0 (follows symlinks).
+/// - **Other platforms**: Returns `ErrorKind::Unsupported`.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The platform does not support `clonefile` (non-macOS)
+/// - Source does not exist or is not readable
+/// - Destination already exists
+/// - Cross-filesystem (different mount points)
+/// - Filesystem does not support CoW (e.g., HFS+)
+pub fn try_clonefile(src: &Path, dst: &Path) -> io::Result<()> {
+    clonefile_impl(src, dst)
+}
+
+/// Copies a file using `fcopyfile(3)` with kernel-accelerated transfer.
+///
+/// `fcopyfile` operates on open file descriptors and copies file data using
+/// the `COPYFILE_DATA` flag. The kernel may use server-side copy, CoW, or
+/// optimized buffer transfer internally depending on the filesystem.
+///
+/// Unlike `clonefile`, this function:
+/// - Works across different filesystems
+/// - Works on non-APFS volumes (HFS+, NFS, SMB)
+/// - Overwrites the destination (caller must create/truncate the destination file)
+///
+/// # Platform Support
+///
+/// - **macOS**: Opens both files and calls `fcopyfile(3)` with `COPYFILE_DATA`.
+/// - **Other platforms**: Returns `ErrorKind::Unsupported`.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The platform does not support `fcopyfile` (non-macOS)
+/// - Source does not exist or is not readable
+/// - Destination cannot be created or written to
+/// - I/O error during the kernel copy
+pub fn try_fcopyfile(src: &Path, dst: &Path) -> io::Result<()> {
+    fcopyfile_impl(src, dst)
+}
+
+// ===========================================================================
 // Linux implementation
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 /// Linux: try `copy_file_range` for large files, fall back to `std::fs::copy`.
 #[cfg(target_os = "linux")]
@@ -255,6 +326,10 @@ fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<Copy
     Ok(CopyResult::new(bytes, CopyMethod::StandardCopy))
 }
 
+// ===========================================================================
+// macOS implementation
+// ===========================================================================
+
 /// macOS: try `clonefile` (CoW) first, then fall back to `std::fs::copy`.
 ///
 /// On APFS, `clonefile` creates an instant copy-on-write clone sharing storage
@@ -263,7 +338,7 @@ fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<Copy
 #[cfg(target_os = "macos")]
 fn platform_copy_impl(src: &Path, dst: &Path, _size_hint: u64) -> io::Result<CopyResult> {
     // Try CoW clone first (instant, zero data copied)
-    match try_clonefile_raw(src, dst) {
+    match clonefile_impl(src, dst) {
         Ok(()) => {
             return Ok(CopyResult::new(0, CopyMethod::Clonefile));
         }
@@ -281,11 +356,11 @@ fn platform_copy_impl(src: &Path, dst: &Path, _size_hint: u64) -> io::Result<Cop
 
 /// macOS `clonefile` FFI wrapper.
 ///
+/// Used by both `platform_copy_impl` and the standalone `try_clonefile` function.
 /// Isolated from the engine's `clonefile` module to avoid circular dependencies.
-/// Uses the same syscall but through `fast_io`'s own FFI boundary.
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
-fn try_clonefile_raw(src: &Path, dst: &Path) -> io::Result<()> {
+fn clonefile_impl(src: &Path, dst: &Path) -> io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
@@ -302,7 +377,9 @@ fn try_clonefile_raw(src: &Path, dst: &Path) -> io::Result<()> {
         )
     })?;
 
-    // SAFETY: Valid C strings passed to clonefile. Errors returned via errno.
+    // SAFETY: Both pointers are valid, null-terminated C strings derived from
+    // OsStr. The clonefile syscall is safe to call with valid path arguments.
+    // Errors are returned via errno and converted to io::Error.
     let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
 
     if ret == 0 {
@@ -311,6 +388,44 @@ fn try_clonefile_raw(src: &Path, dst: &Path) -> io::Result<()> {
         Err(io::Error::last_os_error())
     }
 }
+
+/// macOS `fcopyfile` FFI wrapper.
+///
+/// Uses `fcopyfile(3)` with `COPYFILE_DATA` to perform a kernel-accelerated
+/// data-only copy between open file descriptors.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn fcopyfile_impl(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::fs::File;
+    use std::os::fd::AsRawFd;
+
+    let src_file = File::open(src)?;
+    let dst_file = File::create(dst)?;
+
+    let src_fd = src_file.as_raw_fd();
+    let dst_fd = dst_file.as_raw_fd();
+
+    // fcopyfile(from_fd, to_fd, state, flags)
+    // state=NULL means no progress callbacks or custom state.
+    // COPYFILE_DATA copies only the data fork, not metadata.
+    // SAFETY: Both file descriptors are valid and open, owned by the File
+    // values above which outlive the call. NULL state is explicitly allowed
+    // by the fcopyfile API. Errors are returned via the function return value
+    // and errno.
+    let ret = unsafe {
+        libc::fcopyfile(src_fd, dst_fd, std::ptr::null_mut(), libc::COPYFILE_DATA)
+    };
+
+    if ret == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+// ===========================================================================
+// Windows implementation
+// ===========================================================================
 
 /// Windows: try `CopyFileExW` with optional no-buffering, fall back to `std::fs::copy`.
 #[cfg(target_os = "windows")]
@@ -370,6 +485,10 @@ fn try_copy_file_ex(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Resul
     }
 }
 
+// ===========================================================================
+// Generic fallback
+// ===========================================================================
+
 /// Fallback for platforms without specialized copy optimizations.
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn platform_copy_impl(src: &Path, dst: &Path, _size_hint: u64) -> io::Result<CopyResult> {
@@ -377,9 +496,29 @@ fn platform_copy_impl(src: &Path, dst: &Path, _size_hint: u64) -> io::Result<Cop
     Ok(CopyResult::new(bytes, CopyMethod::StandardCopy))
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Non-macOS stubs for standalone functions
+// ===========================================================================
+
+#[cfg(not(target_os = "macos"))]
+fn clonefile_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "clonefile is only available on macOS",
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn fcopyfile_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "fcopyfile is only available on macOS",
+    ))
+}
+
+// ===========================================================================
 // Reflink support detection
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 /// macOS supports reflink via `clonefile` on APFS.
 #[cfg(target_os = "macos")]
@@ -393,9 +532,9 @@ fn platform_supports_reflink() -> bool {
     false
 }
 
-// ---------------------------------------------------------------------------
+// ===========================================================================
 // Preferred method selection
-// ---------------------------------------------------------------------------
+// ===========================================================================
 
 /// Linux: prefer `copy_file_range` for files >= 64KB.
 #[cfg(target_os = "linux")]
@@ -441,6 +580,19 @@ mod tests {
         file.write_all(content).expect("write source");
         path
     }
+
+    fn setup_test_files(
+        dir: &Path,
+        name: &str,
+        content: &[u8],
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let src = dir.join(format!("{name}_src.txt"));
+        let dst = dir.join(format!("{name}_dst.txt"));
+        std::fs::write(&src, content).expect("write source file");
+        (src, dst)
+    }
+
+    // --- PlatformCopy trait tests ---
 
     #[test]
     fn copy_result_new_and_accessors() {
@@ -660,5 +812,174 @@ mod tests {
             "PlatformCopy and std::fs::copy must produce identical output"
         );
         assert_eq!(content1, content, "both must match source");
+    }
+
+    // --- Standalone clonefile/fcopyfile tests ---
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn clonefile_returns_unsupported_on_non_macos() {
+        let temp = TempDir::new().expect("create temp dir");
+        let (src, dst) = setup_test_files(temp.path(), "clone_stub", b"data");
+
+        let err = try_clonefile(&src, &dst).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn fcopyfile_returns_unsupported_on_non_macos() {
+        let temp = TempDir::new().expect("create temp dir");
+        let (src, dst) = setup_test_files(temp.path(), "fcopy_stub", b"data");
+
+        let err = try_fcopyfile(&src, &dst).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clonefile_copies_data() {
+        let temp = TempDir::new().expect("create temp dir");
+        let content = b"hello from clonefile";
+        let (src, dst) = setup_test_files(temp.path(), "clone_data", content);
+
+        // clonefile requires destination does not exist
+        let _ = std::fs::remove_file(&dst);
+
+        match try_clonefile(&src, &dst) {
+            Ok(()) => {
+                let result = std::fs::read(&dst).expect("read cloned file");
+                assert_eq!(result, content);
+            }
+            Err(e) => {
+                // APFS not available (e.g., HFS+ volume) - acceptable in test
+                assert_ne!(
+                    e.kind(),
+                    io::ErrorKind::Unsupported,
+                    "macOS should never return Unsupported"
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clonefile_fails_when_dst_exists() {
+        let temp = TempDir::new().expect("create temp dir");
+        let (src, dst) = setup_test_files(temp.path(), "clone_exists", b"data");
+
+        // Create destination so clonefile fails
+        std::fs::write(&dst, b"existing").expect("write dst");
+
+        let result = try_clonefile(&src, &dst);
+        assert!(result.is_err(), "clonefile should fail when dst exists");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clonefile_fails_on_missing_source() {
+        let temp = TempDir::new().expect("create temp dir");
+        let src = temp.path().join("nonexistent.txt");
+        let dst = temp.path().join("dst.txt");
+
+        let result = try_clonefile(&src, &dst);
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fcopyfile_copies_data() {
+        let temp = TempDir::new().expect("create temp dir");
+        let content = b"hello from fcopyfile";
+        let (src, dst) = setup_test_files(temp.path(), "fcopy_data", content);
+
+        try_fcopyfile(&src, &dst).expect("fcopyfile should succeed");
+
+        let result = std::fs::read(&dst).expect("read copied file");
+        assert_eq!(result, content);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fcopyfile_overwrites_destination() {
+        let temp = TempDir::new().expect("create temp dir");
+        let content = b"new content";
+        let (src, dst) = setup_test_files(temp.path(), "fcopy_overwrite", content);
+
+        // Pre-populate destination
+        std::fs::write(&dst, b"old content").expect("write old dst");
+
+        try_fcopyfile(&src, &dst).expect("fcopyfile should succeed");
+
+        let result = std::fs::read(&dst).expect("read copied file");
+        assert_eq!(result, content);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fcopyfile_fails_on_missing_source() {
+        let temp = TempDir::new().expect("create temp dir");
+        let src = temp.path().join("nonexistent.txt");
+        let dst = temp.path().join("dst.txt");
+
+        let result = try_fcopyfile(&src, &dst);
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fcopyfile_copies_empty_file() {
+        let temp = TempDir::new().expect("create temp dir");
+        let (src, dst) = setup_test_files(temp.path(), "fcopy_empty", b"");
+
+        try_fcopyfile(&src, &dst).expect("fcopyfile should succeed for empty file");
+
+        let result = std::fs::read(&dst).expect("read copied file");
+        assert!(result.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fcopyfile_copies_large_file() {
+        let temp = TempDir::new().expect("create temp dir");
+        let content = vec![0xAB_u8; 1024 * 1024]; // 1MB
+        let src = temp.path().join("fcopy_large_src.bin");
+        let dst = temp.path().join("fcopy_large_dst.bin");
+        std::fs::write(&src, &content).expect("write large source");
+
+        try_fcopyfile(&src, &dst).expect("fcopyfile should succeed for large file");
+
+        let result = std::fs::read(&dst).expect("read large copied file");
+        assert_eq!(result.len(), content.len());
+        assert_eq!(result, content);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parity_fcopyfile_vs_std_copy() {
+        let temp = TempDir::new().expect("create temp dir");
+
+        let mut content = Vec::new();
+        content.extend_from_slice(b"ASCII text\n");
+        content.extend_from_slice(&[0x00, 0xFF, 0xAA, 0x55]);
+        content.extend_from_slice("Unicode: \u{1F980}\u{1F99E}".as_bytes());
+
+        let src = temp.path().join("parity_src.bin");
+        std::fs::write(&src, &content).expect("write source");
+
+        let dst_fcopy = temp.path().join("parity_fcopy.bin");
+        try_fcopyfile(&src, &dst_fcopy).expect("fcopyfile should succeed");
+
+        let dst_std = temp.path().join("parity_std.bin");
+        std::fs::copy(&src, &dst_std).expect("std::fs::copy should succeed");
+
+        let result_fcopy = std::fs::read(&dst_fcopy).expect("read fcopyfile result");
+        let result_std = std::fs::read(&dst_std).expect("read std::fs::copy result");
+
+        assert_eq!(
+            result_fcopy, result_std,
+            "fcopyfile and std::fs::copy must produce identical output"
+        );
+        assert_eq!(result_fcopy, content);
     }
 }
