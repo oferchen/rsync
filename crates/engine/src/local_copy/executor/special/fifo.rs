@@ -1,3 +1,10 @@
+//! FIFO (named pipe) copy with hard-link deduplication.
+//!
+//! Recreates FIFOs at the destination using `mkfifo(3)`, with optional
+//! hard-link deduplication to earlier FIFOs.
+//!
+//! // upstream: receiver.c - FIFO handling, syscall.c:do_mknod()
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

@@ -1,3 +1,9 @@
+//! Filesystem hole punching via `fallocate(PUNCH_HOLE)`.
+//!
+//! On Linux, uses `fallocate(2)` with `FALLOC_FL_PUNCH_HOLE` to deallocate
+//! blocks for zero-filled regions. Falls back to writing explicit zeros on
+//! platforms without hole-punch support.
+
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;

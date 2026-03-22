@@ -1,3 +1,9 @@
+//! Zero-run detection in data buffers for sparse file writing.
+//!
+//! Scans byte buffers to identify contiguous zero regions that can be
+//! represented as filesystem holes, using 16-byte `u128` aligned reads
+//! for throughput on the hot path.
+
 use super::{SPARSE_WRITE_SIZE, SparseRegion};
 
 /// Detects sparse (zero-filled) regions in data buffers.

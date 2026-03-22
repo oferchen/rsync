@@ -1,3 +1,8 @@
+//! Directory entry reading, sorting, and file type classification.
+//!
+//! Provides parallel metadata prefetching for directory traversal and
+//! helper predicates for identifying special file types (devices, FIFOs).
+
 use std::cmp::Ordering;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -130,6 +135,11 @@ fn read_directory_entries_sorted_parallel(
     Ok(entries)
 }
 
+/// Compares two filenames using platform-native byte ordering.
+///
+/// On Unix, uses raw byte comparison for consistency with C `strcmp`.
+/// On Windows, uses wide-character comparison via `encode_wide`.
+// upstream: flist.c:file_compare() - filename ordering
 fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
     #[cfg(unix)]
     {

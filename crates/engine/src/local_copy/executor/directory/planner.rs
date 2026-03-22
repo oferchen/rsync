@@ -1,3 +1,9 @@
+//! Directory entry planning and action classification.
+//!
+//! Determines how each directory entry should be handled (copy, skip, link)
+//! based on file type, filter rules, and command-line options. Mirrors the
+//! decision logic in upstream `flist.c:make_file()` and `flist.c:flist_sort_and_clean()`.
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,8 +16,29 @@ use crate::local_copy::{
 use super::super::{non_empty_path, symlink_target_is_safe};
 use super::support::{DirectoryEntry, is_device, is_fifo};
 
+/// Action to take for a directory entry during recursive copy.
+// upstream: generator.c:recv_generator() - entry dispatch
 #[derive(Clone, Copy)]
 pub(crate) enum EntryAction {
+    /// Entry excluded by filter rules.
+    SkipExcluded,
+    /// Entry is a non-regular file type that is not being preserved.
+    SkipNonRegular,
+    /// Entry is on a different filesystem and `--one-file-system` is active.
+    SkipMountPoint,
+    /// Recurse into the directory.
+    CopyDirectory,
+    /// Copy the regular file.
+    CopyFile,
+    /// Recreate the symbolic link.
+    CopySymlink,
+    /// Recreate the FIFO (named pipe).
+    CopyFifo,
+    /// Recreate the device node.
+    CopyDevice,
+    /// Copy a device node as a regular file (`--copy-devices`).
+    CopyDeviceAsFile,
+}
     SkipExcluded,
     SkipNonRegular,
     SkipMountPoint,
@@ -23,6 +50,7 @@ pub(crate) enum EntryAction {
     CopyDeviceAsFile,
 }
 
+/// A directory entry paired with its planned action and computed relative path.
 pub(crate) struct PlannedEntry<'a> {
     pub(crate) entry: &'a DirectoryEntry,
     pub(crate) relative: PathBuf,
@@ -31,6 +59,7 @@ pub(crate) struct PlannedEntry<'a> {
 }
 
 impl<'a> PlannedEntry<'a> {
+    /// Returns the effective metadata, preferring the override when present.
     pub(crate) fn metadata(&self) -> &fs::Metadata {
         self.metadata_override
             .as_ref()
@@ -38,6 +67,7 @@ impl<'a> PlannedEntry<'a> {
     }
 }
 
+/// Result of planning all entries in a directory for the recursive copy.
 pub(crate) struct DirectoryPlan<'a> {
     pub(crate) planned_entries: Vec<PlannedEntry<'a>>,
     /// Names of entries to keep when deleting extraneous files.
@@ -134,6 +164,13 @@ fn decide_entry_action(
     ))
 }
 
+/// Plans actions for all entries in a directory.
+///
+/// Iterates over pre-sorted directory entries, applies filter rules,
+/// resolves symlinks when `--copy-links` or `--copy-dirlinks` is active,
+/// and determines the appropriate action for each entry.
+///
+/// // upstream: flist.c:send_directory() - builds file list from directory
 pub(crate) fn plan_directory_entries<'a>(
     context: &mut CopyContext,
     entries: &'a [DirectoryEntry],
@@ -317,6 +354,9 @@ pub(crate) fn plan_directory_entries<'a>(
     })
 }
 
+/// Applies pre-transfer deletions when `--delete-before` is active.
+///
+/// // upstream: generator.c:do_delete_pass() - pre-transfer deletion
 pub(crate) fn apply_pre_transfer_deletions(
     context: &mut CopyContext,
     destination: &Path,

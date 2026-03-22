@@ -1,3 +1,9 @@
+//! Dry-run file copy simulation.
+//!
+//! Records what would happen during a real transfer without performing any
+//! I/O. Produces the same [`LocalCopyRecord`] events so that itemized
+//! output (`-i`) and statistics match a real run.
+
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
