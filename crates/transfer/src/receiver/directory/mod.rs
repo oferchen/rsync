@@ -28,6 +28,8 @@ fn normalize_filename_for_compare(name: &std::ffi::OsStr) -> std::ffi::OsString 
 /// Tracks directories that failed to create.
 ///
 /// Children of failed directories are skipped during incremental processing.
+/// Mirrors upstream rsync's behavior where `mkdir` failures cause the entire
+/// subtree to be skipped rather than producing cascading permission errors.
 #[derive(Debug, Default)]
 pub(in crate::receiver) struct FailedDirectories {
     /// Failed directory paths (normalized, no trailing slash).

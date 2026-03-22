@@ -604,6 +604,11 @@ impl<R: Read> Iterator for IncrementalFileListReceiver<R> {
 /// Must be called after `sort_file_list()` and before any code that inspects
 /// `hlink_first()` to decide leader vs follower (transfer, quick-check, hardlink
 /// creation).
+///
+/// # Upstream Reference
+///
+/// - `hlink.c:match_hard_links()` - post-sort leader/follower assignment
+/// - `hlink.c:idev_find()` - two-level (dev, ino) hashtable lookup
 fn match_hard_links(entries: &mut [FileEntry]) {
     // Collect the first sorted position for each hardlink group.
     // Key: hardlink_idx (gnum), Value: index into entries slice.
