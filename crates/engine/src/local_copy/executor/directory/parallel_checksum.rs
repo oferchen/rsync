@@ -28,7 +28,7 @@ use rayon::prelude::*;
 
 use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
-use crate::local_copy::buffer_pool::BufferPool;
+use crate::local_copy::buffer_pool::{global_buffer_pool, BufferPool};
 use crate::signature::SignatureAlgorithm;
 
 /// Precomputed checksum for a file.
@@ -89,10 +89,7 @@ pub(crate) fn prefetch_checksums(
     pairs: &[FilePair],
     algorithm: SignatureAlgorithm,
 ) -> HashMap<PathBuf, ChecksumPrefetchResult> {
-    // Create a buffer pool sized for parallel operations
-    // Use num_cpus or a reasonable default to limit memory usage
-    let num_threads = rayon::current_num_threads();
-    let buffer_pool = Arc::new(BufferPool::new(num_threads));
+    let buffer_pool = global_buffer_pool();
 
     let results: Vec<_> = pairs
         .par_iter()
