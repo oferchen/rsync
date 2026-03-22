@@ -1,10 +1,13 @@
-/// Caches frequently emitted legacy daemon messages to avoid repeated
-/// allocations while serving clients.
+/// Caches frequently emitted legacy daemon protocol messages to avoid
+/// repeated allocations while serving clients.
 ///
 /// The helper implements a small flyweight that retains canonical
 /// representations of the `@RSYNCD: OK` and `@RSYNCD: EXIT` responses. Dynamic
 /// messages fall back to [`format_legacy_daemon_message`], ensuring formatting
 /// parity with upstream rsync without duplicating string construction logic.
+///
+/// upstream: clientserver.c - the daemon sends `@RSYNCD: OK\n` and
+/// `@RSYNCD: EXIT\n` as protocol bookends around every module interaction.
 #[derive(Debug)]
 struct LegacyMessageCache {
     ok: Box<[u8]>,

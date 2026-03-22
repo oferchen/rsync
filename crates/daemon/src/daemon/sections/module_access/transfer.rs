@@ -1,4 +1,12 @@
 // Transfer execution - stream setup, handshake building, and transfer lifecycle.
+//
+// Handles the final phase of a module request: validating the module path,
+// applying chroot and privilege restrictions, spawning the name converter,
+// running pre/post-xfer exec hooks, and invoking the Rust transfer engine.
+//
+// upstream: clientserver.c - after `rsync_module()` completes authentication
+// and argument parsing, it calls `chdir(lp_path())`, `chroot(".")`,
+// `setgid()`/`setuid()`, and then enters the transfer pipeline.
 
 /// Validates that the module path exists.
 ///

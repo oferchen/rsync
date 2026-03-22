@@ -1,6 +1,13 @@
 // Client argument reading and server configuration building.
 //
-// upstream: io.c:1292, options.c:2737-2980, clientserver.c:1059-1073
+// After the daemon sends `@RSYNCD: OK`, the client transmits its command-line
+// arguments (the same arguments that `server_options()` would produce for an
+// SSH-mode server invocation). The daemon parses these to configure the
+// transfer engine with the correct flags, paths, and options.
+//
+// upstream: io.c:1292 - `read_args()` reads null/newline-terminated arguments.
+// options.c:2737-2980 - `server_options()` emits the long-form options.
+// clientserver.c:1059-1073 - two-phase secluded-args reading.
 
 /// Reads client arguments sent after module approval.
 ///
