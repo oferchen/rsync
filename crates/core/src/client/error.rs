@@ -238,11 +238,20 @@ pub(crate) fn compile_filter_error(pattern: &str, error: &dyn fmt::Display) -> C
 
 #[cold]
 pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {
-    let code = ExitCode::PartialTransfer;
+    // upstream: main.c:1338-1345 - NotFound maps to RERR_VANISHED (24),
+    // all other I/O errors map to RERR_PARTIAL (23).
+    let code = if error.kind() == io::ErrorKind::NotFound {
+        ExitCode::Vanished
+    } else {
+        ExitCode::PartialTransfer
+    };
     let path_display = path.display();
-    let text = format!("failed to {action} '{path_display}': {error}");
-    // Mirror upstream: use PartialTransfer (23) for file I/O errors
-    // Upstream uses exit code 23 broadly for any transfer errors
+    // upstream: flist.c:1289 - vanished files produce "file has vanished" warning
+    let text = if error.kind() == io::ErrorKind::NotFound {
+        format!("file has vanished: '{path_display}'")
+    } else {
+        format!("failed to {action} '{path_display}': {error}")
+    };
     let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
     ClientError::with_code(code, message)
 }
