@@ -7,6 +7,7 @@
 
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
+#[cfg(feature = "concurrent-sessions")]
 use std::sync::Arc;
 use std::time::Duration;
 
