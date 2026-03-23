@@ -810,7 +810,7 @@ mod tests {
 
         let mut compressor = Compress::new(level, false);
         let mut out = vec![0u8; input.len() * 2 + 128];
-        let mut total_out;
+        let total_out;
 
         // Feed input with Z_NO_FLUSH (matches upstream chunk feeding)
         let mut consumed = 0;
@@ -914,7 +914,7 @@ mod tests {
         use flate2::{Compress, Decompress, FlushCompress, FlushDecompress};
 
         let mut compressor = Compress::new(Compression::default(), false);
-        let mut out = vec![0u8; 64];
+        let mut out = [0u8; 64];
 
         // Feed nothing, just sync-flush
         loop {
