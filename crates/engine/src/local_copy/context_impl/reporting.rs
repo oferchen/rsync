@@ -91,7 +91,7 @@ impl<'a> CopyContext<'a> {
         relative: Option<PathBuf>,
         keep: Vec<OsString>,
     ) {
-        self.deferred_deletions.push(DeferredDeletion {
+        self.deferred_ops.deletions.push(DeferredDeletion {
             destination,
             relative,
             keep,
@@ -102,10 +102,10 @@ impl<'a> CopyContext<'a> {
         if !self.deletions_allowed() {
             // I/O errors occurred and --ignore-errors is not set;
             // suppress deletions to prevent data loss.
-            self.deferred_deletions.clear();
+            self.deferred_ops.deletions.clear();
             return Ok(());
         }
-        let pending = std::mem::take(&mut self.deferred_deletions);
+        let pending = std::mem::take(&mut self.deferred_ops.deletions);
         for entry in pending {
             self.enforce_timeout()?;
             let relative = entry.relative.as_deref();
@@ -123,20 +123,21 @@ impl<'a> CopyContext<'a> {
         if self.mode.is_dry_run() || existed_before {
             return;
         }
-        self.created_entries.push(CreatedEntry {
+        self.deferred_ops.created_entries.push(CreatedEntry {
             path: path.to_path_buf(),
             kind,
         });
     }
 
     pub(crate) fn last_created_entry_path(&self) -> Option<&Path> {
-        self.created_entries
+        self.deferred_ops
+            .created_entries
             .last()
             .map(|entry| entry.path.as_path())
     }
 
     pub(crate) fn pop_last_created_entry(&mut self) {
-        self.created_entries.pop();
+        self.deferred_ops.created_entries.pop();
     }
 
     pub(super) fn rollback_on_error(&mut self, error: &LocalCopyError) {
@@ -146,7 +147,7 @@ impl<'a> CopyContext<'a> {
     }
 
     pub(super) fn rollback_created_entries(&mut self) {
-        while let Some(entry) = self.created_entries.pop() {
+        while let Some(entry) = self.deferred_ops.created_entries.pop() {
             match entry.kind {
                 CreatedEntryKind::Directory => {
                     let _ = fs::remove_dir(&entry.path);
