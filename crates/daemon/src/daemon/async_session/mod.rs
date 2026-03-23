@@ -31,9 +31,8 @@ mod listener;
 mod session;
 mod shutdown;
 
+#[cfg(test)]
 pub use listener::AsyncDaemonListener;
-pub use session::AsyncSession;
-pub use shutdown::AsyncDaemonError;
 
 #[cfg(test)]
 mod tests {
