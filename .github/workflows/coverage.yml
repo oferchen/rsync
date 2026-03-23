@@ -1,0 +1,94 @@
+name: Coverage
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.github/workflows/coverage.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.github/workflows/coverage.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "full"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+
+jobs:
+  coverage:
+    name: llvm-cov
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-coverage-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install cargo-llvm-cov and cargo-nextest
+        uses: taiki-e/install-action@d4422f254e595ee762a758628fe4f16ce050fa2e # v2
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+
+      - name: Generate LCOV coverage report
+        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info
+
+      - name: Generate HTML coverage report
+        run: cargo llvm-cov report --html --output-dir coverage-html
+
+      - name: Create step summary
+        run: |
+          set -euo pipefail
+          SUMMARY=$(cargo llvm-cov report 2>&1)
+          TOTAL_LINE=$(echo "$SUMMARY" | grep '^TOTAL' || true)
+          if [ -n "$TOTAL_LINE" ]; then
+            # Extract region and line coverage percentages
+            LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /%/) last=$i; print last}' | tr -d '%')
+            printf '## Coverage Report\n\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '| Metric | Value |\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '|--------|-------|\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '| **Line Coverage** | **%s%%** |\n\n' "$LINE_PCT" >> "$GITHUB_STEP_SUMMARY"
+            printf '<details>\n<summary>Full report</summary>\n\n```\n%s\n```\n</details>\n' "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '## Coverage Report\n\n```\n%s\n```\n' "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload LCOV artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lcov-report
+          path: lcov.info
+          retention-days: 30
+
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-html
+          path: coverage-html/
+          retention-days: 30
