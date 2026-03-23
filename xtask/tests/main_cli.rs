@@ -1,5 +1,5 @@
 use std::io;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::str;
 use std::time::{Duration, Instant};
 
@@ -31,6 +31,8 @@ fn spawn_with_timeout(mut command: Command, timeout: Duration) -> io::Result<Out
 fn run_xtask(args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
     command.args(args);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
     spawn_with_timeout(command, Duration::from_secs(60))
         .unwrap_or_else(|error| panic!("failed to run xtask: {error}"))
 }

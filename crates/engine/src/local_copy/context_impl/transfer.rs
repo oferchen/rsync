@@ -282,9 +282,11 @@ impl<'a> CopyContext<'a> {
 
         // Fast path: use copy_file_range for simple whole-file copies.
         // Requires no sparse detection, no compression, no bandwidth limiter.
-        // Uses the caller's buffer pool buffer for the read/write fallback
-        // path, avoiding a per-file 256KB Vec allocation for small files.
-        if !sparse && !compress && self.limiter.is_none() {
+        // Disabled for append mode (initial_bytes > 0) because copy_file_range
+        // and io_uring on Linux do not reliably respect the seeked file position
+        // when both source and destination have been seeked to non-zero offsets.
+        // upstream: receiver.c - append path uses standard read/write loop.
+        if !sparse && !compress && self.limiter.is_none() && initial_bytes == 0 {
             let copied = fast_io::copy_file_range::copy_file_contents_buffered(
                 reader,
                 writer,

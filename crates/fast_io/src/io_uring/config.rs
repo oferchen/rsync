@@ -164,7 +164,7 @@ impl IoUringConfig {
     /// `EPERM` / `ENOMEM`. This two-step approach means callers can
     /// optimistically request SQPOLL without needing privilege checks
     /// upfront - the fallback is transparent.
-    pub(super) fn build_ring(&self) -> io::Result<RawIoUring> {
+    pub(crate) fn build_ring(&self) -> io::Result<RawIoUring> {
         if self.sqpoll {
             let mut builder = io_uring::IoUring::builder();
             builder.setup_sqpoll(self.sqpoll_idle_ms);

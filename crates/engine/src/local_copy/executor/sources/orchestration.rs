@@ -86,7 +86,18 @@ pub(crate) fn copy_sources(
                     multiple_sources,
                 );
                 if let Err(error) = result {
-                    if error.is_io_error() && context.options().delete_extraneous() {
+                    if error.is_vanished_error() {
+                        // upstream: flist.c:1289 - vanished files produce a warning
+                        // and set IOERR_VANISHED, but transfer continues.
+                        eprintln!("file has vanished: {}", source.path().display());
+                        context.record_io_error();
+                        if first_io_error.is_none() {
+                            first_io_error = Some(error);
+                        }
+                    } else if error.is_io_error() {
+                        // upstream: rsync continues transferring remaining sources
+                        // when individual entries fail with I/O errors, regardless
+                        // of whether --delete is active.
                         context.record_io_error();
                         if first_io_error.is_none() {
                             first_io_error = Some(error);

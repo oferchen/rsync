@@ -1354,7 +1354,7 @@ mod pipelined_error_tests {
     impl Read for FailingReader {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             if self.position >= self.fail_at {
-                return Err(io::Error::new(io::ErrorKind::Other, "simulated error"));
+                return Err(io::Error::other("simulated error"));
             }
             let remaining = self.data.len() - self.position;
             let to_read = buf.len().min(remaining).min(self.fail_at - self.position);

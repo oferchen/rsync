@@ -98,12 +98,15 @@ impl WorkQueueSender {
     }
 }
 
-impl WorkQueueReceiver {
+impl IntoIterator for WorkQueueReceiver {
+    type Item = DeltaWork;
+    type IntoIter = WorkQueueIter;
+
     /// Converts the receiver into an iterator suitable for `par_bridge()`.
     ///
     /// The returned iterator yields items until the sender is dropped and the
     /// queue is drained.
-    pub fn into_iter(self) -> WorkQueueIter {
+    fn into_iter(self) -> WorkQueueIter {
         WorkQueueIter { rx: self.rx }
     }
 }
