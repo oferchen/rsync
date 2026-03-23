@@ -211,7 +211,7 @@ mod stress {
                 }
                 // Also add a file at each intermediate level for variety.
                 for level in 0..4usize {
-                    let parts: Vec<&str> = ["l1", "l2", "l3", "l4"];
+                    let parts: Vec<&str> = vec!["l1", "l2", "l3", "l4"];
                     let intermediate: String = if level == 0 {
                         format!("branch_{top}")
                     } else {
