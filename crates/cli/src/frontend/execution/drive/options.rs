@@ -142,7 +142,6 @@ where
                 name_overridden = true;
             }
 
-            // Apply info flags to verbosity config
             for info_arg in info_args {
                 if let Some(s) = info_arg.to_str() {
                     for token in s.split(',') {
@@ -194,7 +193,6 @@ where
                 .map(|(name, level)| OsString::from(format!("{name}{level}")))
                 .collect();
 
-            // Apply debug flags to verbosity config
             for debug_arg in debug_args {
                 if let Some(s) = debug_arg.to_str() {
                     for token in s.split(',') {
@@ -503,14 +501,12 @@ where
     Out: Write,
     Err: Write,
 {
-    // Parse output format template
     let out_format_template =
         match parse_out_format_template(stderr, inputs.out_format, inputs.itemize_changes) {
             Ok(template) => template,
             Err(code) => return SettingsOutcome::Exit(code),
         };
 
-    // Parse info flags for display settings
     let info_result = match parse_info_settings(
         stdout,
         stderr,
@@ -524,13 +520,11 @@ where
         Err(code) => return SettingsOutcome::Exit(code),
     };
 
-    // Parse debug flags
     let debug_flags_list = match parse_debug_settings(stdout, stderr, inputs.debug) {
         Ok(flags) => flags,
         Err(code) => return SettingsOutcome::Exit(code),
     };
 
-    // Parse size and bandwidth limits
     let limits = match parse_size_limits(
         stderr,
         SizeLimitsInputs {
@@ -547,7 +541,6 @@ where
         Err(code) => return SettingsOutcome::Exit(code),
     };
 
-    // Parse compression settings
     let compression = match parse_compression_settings(
         stderr,
         inputs.compress_flag,
@@ -560,7 +553,6 @@ where
         Err(code) => return SettingsOutcome::Exit(code),
     };
 
-    // Parse log file settings
     let log = match parse_log_settings(stderr, inputs.log_file, inputs.log_file_format) {
         Ok(result) => result,
         Err(code) => return SettingsOutcome::Exit(code),

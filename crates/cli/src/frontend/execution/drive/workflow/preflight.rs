@@ -16,11 +16,11 @@ use std::path::{Path, PathBuf};
 use super::super::super::{
     parse_bind_address_argument, parse_protocol_version_arg, parse_timeout_argument,
 };
-// Import needed when acl/xattr features aren't fully supported (non-unix or feature disabled)
 #[cfg(any(not(all(unix, feature = "acl")), not(all(unix, feature = "xattr"))))]
 use super::super::messages::fail_with_custom_fallback;
 use super::super::messages::fail_with_message;
 
+/// Rejects `--password-file=-` combined with `--files-from=-` since both read stdin.
 pub(crate) fn validate_stdin_sources_conflict<Err>(
     password_file: &Option<PathBuf>,
     files_from: &[OsString],
@@ -47,6 +47,7 @@ where
     }
 }
 
+/// Parses the `--protocol` argument into a [`ProtocolVersion`].
 pub(crate) fn resolve_desired_protocol<Err>(
     protocol: Option<&OsString>,
     stderr: &mut MessageSink<Err>,
@@ -63,6 +64,7 @@ where
     }
 }
 
+/// Parses a timeout argument into a [`TransferTimeout`].
 pub(crate) fn resolve_timeout<Err>(
     value: Option<&OsString>,
     stderr: &mut MessageSink<Err>,
@@ -79,6 +81,7 @@ where
     }
 }
 
+/// Prints help or version text if requested, returning the exit code.
 pub(crate) fn maybe_print_help_or_version<Out>(
     show_help: bool,
     show_version: bool,
@@ -109,6 +112,7 @@ where
     }
 }
 
+/// Parses the `--address` argument into a [`BindAddress`].
 pub(crate) fn resolve_bind_address<Err>(
     value: Option<&OsString>,
     stderr: &mut MessageSink<Err>,
@@ -125,6 +129,7 @@ where
     }
 }
 
+/// Validates that requested ACL/xattr features are available on this platform.
 pub(crate) fn validate_feature_support<Err>(
     preserve_acls: bool,
     xattrs: Option<bool>,
@@ -133,7 +138,6 @@ pub(crate) fn validate_feature_support<Err>(
 where
     Err: Write,
 {
-    // ACL support requires both Unix and the acl feature
     #[cfg(not(all(unix, feature = "acl")))]
     if preserve_acls {
         let message =
@@ -145,7 +149,6 @@ where
     #[cfg(all(unix, feature = "acl"))]
     let _ = preserve_acls;
 
-    // xattr support requires both Unix and the xattr feature
     #[cfg(not(all(unix, feature = "xattr")))]
     if xattrs.unwrap_or(false) {
         let message = rsync_error!(1, "extended attributes are not supported on this client")
@@ -157,7 +160,6 @@ where
     #[cfg(all(unix, feature = "xattr"))]
     let _ = xattrs;
 
-    // Suppress unused warning when both features are enabled on Unix
     #[cfg(all(unix, feature = "acl", feature = "xattr"))]
     let _ = stderr;
 

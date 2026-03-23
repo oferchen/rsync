@@ -13,6 +13,7 @@ use crate::frontend::{
     execution::render_module_list, password::load_optional_password, write_message,
 };
 
+/// Inputs for attempting a daemon module listing request.
 pub(super) struct ModuleListingInputs<'a> {
     pub file_list_operands: &'a [OsString],
     pub remainder: &'a [OsString],
@@ -29,6 +30,9 @@ pub(super) struct ModuleListingInputs<'a> {
     pub blocking_io: Option<bool>,
 }
 
+/// Checks whether the operands request a daemon module listing, and if so, performs it.
+///
+/// Returns `Some(exit_code)` if a listing was attempted, `None` if transfer should proceed.
 pub(super) fn maybe_handle_module_listing<Out, Err>(
     stdout: &mut Out,
     stderr: &mut MessageSink<Err>,
