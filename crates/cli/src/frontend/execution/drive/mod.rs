@@ -23,6 +23,7 @@ pub(crate) fn render_missing_operands_stdout(program_name: ProgramName) -> Strin
     workflow::render_missing_operands_stdout(program_name)
 }
 
+/// Selects stdout or stderr as the output writer based on `use_stderr`.
 pub(crate) fn with_output_writer<'a, Out, Err, R>(
     stdout: &'a mut Out,
     stderr: &'a mut MessageSink<Err>,

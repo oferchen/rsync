@@ -33,6 +33,7 @@ use std::os::unix::fs::OpenOptionsExt;
 
 use crate::frontend::execution::{parse_stop_after_argument, parse_stop_at_argument};
 
+/// Main entry point for CLI-driven transfers: parses all arguments, builds config, and runs.
 pub(crate) fn execute<Out, Err>(
     parsed: ParsedArgs,
     stdout: &mut Out,
@@ -206,21 +207,17 @@ where
     let human_readable_setting = human_readable;
     let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Disabled);
     let human_readable_enabled = human_readable_mode.is_enabled();
-    // Parse stderr mode (defaults to Errors if unspecified or invalid)
     let stderr_mode_setting = stderr_mode
         .as_ref()
         .and_then(|s| s.to_str())
         .and_then(StderrMode::from_str)
         .unwrap_or_default();
 
-    // --stderr=all routes all output to stderr (supersedes --msgs2stderr).
-    // --stderr=errors/client keeps the --msgs2stderr flag behaviour.
     let msgs_to_stderr_enabled = match stderr_mode_setting {
         StderrMode::All => true,
         StderrMode::Errors | StderrMode::Client => msgs_to_stderr_option.unwrap_or(false),
     };
 
-    // Initialize verbosity system from -v level (--info/--debug flags applied later in derive_settings)
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
     logging::init(verbosity_config);
 
@@ -413,7 +410,6 @@ where
 
     let implied_dirs = implied_dirs_option.unwrap_or(true);
 
-    // Create batch configuration if batch mode was requested
     let batch_config = if let Some(ref path) = write_batch {
         Some(BatchConfig::new(
             BatchMode::Write,
@@ -480,8 +476,6 @@ where
         transfer_operands.extend(remainder);
     }
 
-    // Only validate local-only options if we're NOT accessing a daemon (rsync:// or ::)
-    // Options like --protocol, --password-file are valid for daemon access
     let is_daemon_transfer = transfer_operands.iter().any(|op| operand_is_remote(op));
     if !is_daemon_transfer {
         if let Some(exit_code) = validation::validate_local_only_options(
@@ -745,6 +739,7 @@ where
     )
 }
 
+/// Opens a log file for appending, creating it if it does not exist.
 fn open_log_file(path: &PathBuf) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.create(true).append(true);

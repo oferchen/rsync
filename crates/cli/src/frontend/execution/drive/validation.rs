@@ -8,17 +8,25 @@ use protocol::ProtocolVersion;
 
 use super::messages::fail_with_message;
 
+/// Error message when `--rsync-path` is used without a remote connection.
 pub(crate) const RSYNC_PATH_REMOTE_ONLY_MESSAGE: &str =
     "the --rsync-path option may only be used with remote connections";
+/// Error message when `--remote-option` is used without a remote connection.
 pub(crate) const REMOTE_OPTION_REMOTE_ONLY_MESSAGE: &str =
     "the --remote-option option may only be used with remote connections";
+/// Error message when `--protocol` is used without a daemon connection.
 pub(crate) const PROTOCOL_DAEMON_ONLY_MESSAGE: &str =
     "the --protocol option may only be used when accessing an rsync daemon";
+/// Error message when `--password-file` is used without a daemon connection.
 pub(crate) const PASSWORD_FILE_DAEMON_ONLY_MESSAGE: &str =
     "the --password-file option may only be used when accessing an rsync daemon";
+/// Error message when `--connect-program` is used without a daemon connection.
 pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
     "the --connect-program option may only be used when accessing an rsync daemon";
 
+/// Rejects options that are only valid for remote or daemon transfers.
+///
+/// Returns `Some(exit_code)` if a forbidden option was detected, `None` otherwise.
 pub(super) fn validate_local_only_options<Err>(
     desired_protocol: Option<ProtocolVersion>,
     password_file: Option<&PathBuf>,
@@ -68,6 +76,7 @@ where
     None
 }
 
+/// Emits an error for a local-only option violation and returns the exit code.
 fn reject_local_only_option<Err>(stderr: &mut MessageSink<Err>, text: &'static str) -> i32
 where
     Err: Write,
