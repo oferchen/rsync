@@ -268,16 +268,30 @@ impl DestinationWriteGuard {
     /// - The destination cannot be removed
     /// - Permission is denied
     pub fn commit(mut self) -> Result<(), LocalCopyError> {
-        match &mut self.strategy {
+        // Extract values from strategy before calling methods on self,
+        // to avoid borrowing self.strategy and self simultaneously.
+        enum CommitAction {
+            Named(PathBuf),
+            #[cfg(target_os = "linux")]
+            Anonymous(Option<std::fs::File>),
+        }
+
+        let action = match &mut self.strategy {
             GuardStrategy::NamedTempFile {
                 temp_path,
                 preserve_on_error: _,
-            } => {
-                self.commit_named_temp_file(temp_path.clone())?;
+            } => CommitAction::Named(temp_path.clone()),
+            #[cfg(target_os = "linux")]
+            GuardStrategy::Anonymous { file } => CommitAction::Anonymous(file.take()),
+        };
+
+        match action {
+            CommitAction::Named(temp_path) => {
+                self.commit_named_temp_file(temp_path)?;
             }
             #[cfg(target_os = "linux")]
-            GuardStrategy::Anonymous { file } => {
-                self.commit_anonymous(file.take())?;
+            CommitAction::Anonymous(file) => {
+                self.commit_anonymous(file)?;
             }
         }
         self.committed = true;
