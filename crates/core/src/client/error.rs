@@ -528,14 +528,29 @@ mod tests {
             assert!(msg.contains(parse_error));
         }
 
+        /// upstream: main.c:1338-1345 - non-NotFound I/O errors map to
+        /// RERR_PARTIAL (exit code 23).
         #[test]
-        fn io_error_uses_correct_code() {
-            let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        fn io_error_non_notfound_uses_partial_transfer_code() {
+            let io_err = io::Error::new(ErrorKind::PermissionDenied, "permission denied");
             let error = io_error("read", Path::new("/test/file.txt"), io_err);
 
             assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
             let msg = error.to_string();
             assert!(msg.contains("failed to read"));
+            assert!(msg.contains("/test/file.txt"));
+        }
+
+        /// upstream: main.c:1338-1345 - NotFound I/O errors map to
+        /// RERR_VANISHED (exit code 24).
+        #[test]
+        fn io_error_notfound_uses_vanished_code() {
+            let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+            let error = io_error("read", Path::new("/test/file.txt"), io_err);
+
+            assert_eq!(error.exit_code(), ExitCode::Vanished.as_i32());
+            let msg = error.to_string();
+            assert!(msg.contains("file has vanished"));
             assert!(msg.contains("/test/file.txt"));
         }
 
