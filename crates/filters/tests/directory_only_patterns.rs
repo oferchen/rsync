@@ -169,9 +169,12 @@ fn directory_only_with_other_patterns() {
 
     // Include directory
     assert!(set.allows(Path::new("src"), true));
-    assert!(set.allows(Path::new("src/main.rs"), false));
+    // upstream: directory-only include does NOT include file contents
+    assert!(!set.allows(Path::new("src/main.rs"), false));
 }
 
+/// upstream: `--include 'important/' --exclude '**'` includes the directory
+/// entry but NOT its file contents. Files must match their own rules.
 #[test]
 fn include_directory_only() {
     let rules = [FilterRule::include("important/"), FilterRule::exclude("**")];
@@ -179,7 +182,8 @@ fn include_directory_only() {
 
     // Directory included
     assert!(set.allows(Path::new("important"), true));
-    assert!(set.allows(Path::new("important/file.txt"), false));
+    // Files inside are NOT included by directory-only rule
+    assert!(!set.allows(Path::new("important/file.txt"), false));
     // File with same name excluded
     assert!(!set.allows(Path::new("important"), false));
 }

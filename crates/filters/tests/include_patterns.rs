@@ -155,6 +155,9 @@ fn include_multiple_extensions() {
 }
 
 /// Verifies basic directory include pattern.
+///
+/// upstream: `--include 'src/' --exclude '*'` includes the directory entry
+/// but NOT its contents. Files inside must match their own rules.
 #[test]
 fn include_directory_pattern() {
     let rules = [FilterRule::include("src/"), FilterRule::exclude("*")];
@@ -163,16 +166,40 @@ fn include_directory_pattern() {
     // Directory should be included
     assert!(set.allows(Path::new("src"), true));
 
-    // Contents of directory should be included
-    assert!(set.allows(Path::new("src/main.rs"), false));
-    assert!(set.allows(Path::new("src/lib.rs"), false));
-    assert!(set.allows(Path::new("src/utils/mod.rs"), false));
+    // upstream: files inside are NOT included by the directory-only rule -
+    // they fall through to --exclude '*' and get excluded
+    assert!(!set.allows(Path::new("src/main.rs"), false));
+    assert!(!set.allows(Path::new("src/lib.rs"), false));
+    assert!(!set.allows(Path::new("src/utils/mod.rs"), false));
 
     // File with same name should be excluded (directory pattern)
     assert!(!set.allows(Path::new("src"), false));
 }
 
+/// Verifies that including a directory AND its contents requires explicit rules.
+///
+/// upstream: to include a directory and all its contents, use both
+/// `--include 'src/' --include 'src/**'` or `--include 'src/***'`.
+#[test]
+fn include_directory_with_contents() {
+    let rules = [
+        FilterRule::include("src/"),
+        FilterRule::include("src/**"),
+        FilterRule::exclude("*"),
+    ];
+    let set = FilterSet::from_rules(rules).unwrap();
+
+    assert!(set.allows(Path::new("src"), true));
+    assert!(set.allows(Path::new("src/main.rs"), false));
+    assert!(set.allows(Path::new("src/lib.rs"), false));
+    assert!(set.allows(Path::new("src/utils/mod.rs"), false));
+    assert!(!set.allows(Path::new("src"), false));
+}
+
 /// Verifies nested directory include pattern.
+///
+/// upstream: anchored directory-only pattern includes the directory but
+/// not its file contents.
 #[test]
 fn include_nested_directory_pattern() {
     let rules = [
@@ -183,14 +210,20 @@ fn include_nested_directory_pattern() {
 
     // The nested directory path
     assert!(set.allows(Path::new("packages/core"), true));
-    assert!(set.allows(Path::new("packages/core/src"), true));
-    assert!(set.allows(Path::new("packages/core/src/index.ts"), false));
+
+    // upstream: subdirectories and files inside are NOT included -
+    // they fall through to --exclude '*'
+    assert!(!set.allows(Path::new("packages/core/src"), true));
+    assert!(!set.allows(Path::new("packages/core/src/index.ts"), false));
 
     // Other packages excluded
     assert!(!set.allows(Path::new("packages/utils"), true));
 }
 
 /// Verifies wildcard in directory pattern.
+///
+/// upstream: `--include 'test*/' --exclude '*'` includes matching
+/// directories but not their file contents.
 #[test]
 fn include_wildcard_directory_pattern() {
     let rules = [FilterRule::include("test*/"), FilterRule::exclude("*")];
@@ -199,12 +232,16 @@ fn include_wildcard_directory_pattern() {
     assert!(set.allows(Path::new("tests"), true));
     assert!(set.allows(Path::new("testing"), true));
     assert!(set.allows(Path::new("test_fixtures"), true));
-    assert!(set.allows(Path::new("tests/unit.rs"), false));
+    // Files inside are NOT included by the directory-only rule
+    assert!(!set.allows(Path::new("tests/unit.rs"), false));
 
     assert!(!set.allows(Path::new("src"), true));
 }
 
 /// Verifies multiple directory patterns.
+///
+/// upstream: directory-only includes only include the directory entries,
+/// not their file contents.
 #[test]
 fn include_multiple_directories() {
     let rules = [
@@ -218,13 +255,17 @@ fn include_multiple_directories() {
     assert!(set.allows(Path::new("src"), true));
     assert!(set.allows(Path::new("tests"), true));
     assert!(set.allows(Path::new("docs"), true));
-    assert!(set.allows(Path::new("src/main.rs"), false));
+    // Files inside are excluded by --exclude '*'
+    assert!(!set.allows(Path::new("src/main.rs"), false));
 
     assert!(!set.allows(Path::new("target"), true));
     assert!(!set.allows(Path::new("node_modules"), true));
 }
 
 /// Verifies directory pattern at any depth (unanchored).
+///
+/// upstream: directory-only includes match the directory at any depth
+/// but do not include file contents.
 #[test]
 fn include_directory_any_depth() {
     let rules = [FilterRule::include("fixtures/"), FilterRule::exclude("*")];
@@ -234,7 +275,8 @@ fn include_directory_any_depth() {
     assert!(set.allows(Path::new("fixtures"), true));
     assert!(set.allows(Path::new("tests/fixtures"), true));
     assert!(set.allows(Path::new("packages/app/tests/fixtures"), true));
-    assert!(set.allows(Path::new("fixtures/data.json"), false));
+    // Files inside are excluded by --exclude '*'
+    assert!(!set.allows(Path::new("fixtures/data.json"), false));
 }
 
 /// Verifies anchored include pattern at root.
@@ -252,6 +294,9 @@ fn include_anchored_at_root() {
 }
 
 /// Verifies anchored include pattern with directory.
+///
+/// upstream: anchored directory-only include matches the directory entry
+/// but not its file contents.
 #[test]
 fn include_anchored_directory() {
     let rules = [FilterRule::include("/src/"), FilterRule::exclude("*")];
@@ -259,9 +304,10 @@ fn include_anchored_directory() {
 
     // Root src directory
     assert!(set.allows(Path::new("src"), true));
-    assert!(set.allows(Path::new("src/main.rs"), false));
+    // Files inside are NOT included by directory-only rule
+    assert!(!set.allows(Path::new("src/main.rs"), false));
 
-    // Nested src directories should NOT match
+    // Nested src directories should NOT match (anchored)
     assert!(!set.allows(Path::new("crates/lib/src"), true));
 }
 
@@ -379,6 +425,8 @@ fn include_middle_double_star() {
 }
 
 /// Verifies double-star with directory pattern.
+///
+/// upstream: directory-only include does not include file contents.
 #[test]
 fn include_double_star_directory() {
     let rules = [
@@ -389,7 +437,8 @@ fn include_double_star_directory() {
 
     assert!(set.allows(Path::new("node_modules"), true));
     assert!(set.allows(Path::new("packages/app/node_modules"), true));
-    assert!(set.allows(Path::new("node_modules/lodash"), false));
+    // Files inside are NOT included by directory-only rule
+    assert!(!set.allows(Path::new("node_modules/lodash"), false));
 
     // File named node_modules should not match
     assert!(!set.allows(Path::new("node_modules"), false));
@@ -446,6 +495,9 @@ fn include_overrides_exclude_first_match() {
 }
 
 /// Verifies include directory exception within excluded parent.
+///
+/// upstream: directory-only include only includes the directory entry.
+/// To include both the dir and its contents, add an explicit contents rule.
 #[test]
 fn include_directory_exception() {
     let rules = [
@@ -456,7 +508,9 @@ fn include_directory_exception() {
 
     // Doc directory is included (first rule)
     assert!(set.allows(Path::new("target/doc"), true));
-    assert!(set.allows(Path::new("target/doc/index.html"), false));
+    // Files inside are NOT included by directory-only rule -
+    // they fall through to exclude("target/") descendant match
+    assert!(!set.allows(Path::new("target/doc/index.html"), false));
 
     // Other target contents are excluded (second rule)
     assert!(!set.allows(Path::new("target/debug"), true));
@@ -713,7 +767,8 @@ fn multiple_includes_directories() {
     assert!(set.allows(Path::new("tests"), true));
     assert!(set.allows(Path::new("benches"), true));
     assert!(set.allows(Path::new("examples"), true));
-    assert!(set.allows(Path::new("src/main.rs"), false));
+    // Files inside are NOT included by directory-only rules
+    assert!(!set.allows(Path::new("src/main.rs"), false));
 
     assert!(!set.allows(Path::new("target"), true));
     assert!(!set.allows(Path::new("node_modules"), true));

@@ -357,6 +357,9 @@ fn anchored_unanchored_interaction() {
 }
 
 /// Verifies directory-only and file patterns interact correctly.
+///
+/// upstream: directory-only include patterns only include the directory
+/// entry, not its contents. Contents must match their own rules.
 #[test]
 fn directory_file_pattern_interaction() {
     let rules = [
@@ -373,32 +376,39 @@ fn directory_file_pattern_interaction() {
     // output file excluded (first rule doesn't match file, second does)
     assert!(!set.allows(Path::new("output"), false));
 
-    // output contents included via directory rule
-    assert!(set.allows(Path::new("output/data.bin"), false));
+    // upstream: output contents NOT included by directory-only rule -
+    // they match exclude("output") descendant pattern output/**
+    assert!(!set.allows(Path::new("output/data.bin"), false));
 
     // logs directory included
     assert!(set.allows(Path::new("logs"), true));
 
-    // logs/ (rule 3) generates logs/** which matches all files under logs
-    // So tmp files are included by rule 3 before rule 4 can exclude them
-    assert!(set.allows(Path::new("logs/app.tmp"), false));
-    assert!(set.allows(Path::new("logs/debug/trace.tmp"), false));
+    // upstream: logs/ directory-only include does NOT include contents.
+    // tmp files match exclude("logs/**/*.tmp") rule
+    assert!(!set.allows(Path::new("logs/app.tmp"), false));
+    assert!(!set.allows(Path::new("logs/debug/trace.tmp"), false));
 
-    // logs non-tmp files also included by rule 3
+    // logs non-tmp files: no rule matches, default is allow
     assert!(set.allows(Path::new("logs/app.log"), false));
 }
 
 /// Verifies Rust project filter pattern.
+///
+/// upstream: to include a directory AND its contents, use both
+/// `include("dir/")` and `include("dir/**")`.
 #[test]
 fn rust_project_filter() {
     let rules = [
         // Include specific files first
         FilterRule::include("/Cargo.toml"),
         FilterRule::include("/Cargo.lock"),
-        // Include source directories
+        // Include source directories and their contents
         FilterRule::include("src/"),
+        FilterRule::include("src/**"),
         FilterRule::include("tests/"),
+        FilterRule::include("tests/**"),
         FilterRule::include("benches/"),
+        FilterRule::include("benches/**"),
         // Exclude generated and build artifacts
         FilterRule::exclude("/target/"),
         FilterRule::exclude("**/*.rs.bk"),
@@ -416,19 +426,19 @@ fn rust_project_filter() {
     // Cargo.lock protected
     assert!(!set.allows_deletion(Path::new("Cargo.lock"), false));
 
-    // Source files included
+    // Source files included via src/** rule
     assert!(set.allows(Path::new("src/main.rs"), false));
     assert!(set.allows(Path::new("src/lib/mod.rs"), false));
 
-    // Tests included
+    // Tests included via tests/** rule
     assert!(set.allows(Path::new("tests/integration.rs"), false));
 
     // Target excluded
     assert!(!set.allows(Path::new("target/debug/app"), false));
 
-    // Backup files: src/ rule matches first (includes src/**), so included
-    // despite exclude rule coming later. With first-match-wins, to exclude
-    // backups, the exclude rule must come before src/ include.
+    // Backup files: src/** matches first (includes all under src/),
+    // so included despite exclude rule coming later. To exclude backups,
+    // the exclude rule must come before src/** include.
     assert!(set.allows(Path::new("src/main.rs.bk"), false));
 
     // Other root files excluded
@@ -436,6 +446,9 @@ fn rust_project_filter() {
 }
 
 /// Verifies JavaScript project filter pattern.
+///
+/// upstream: to include a directory AND its contents, use both
+/// `include("dir/")` and `include("dir/**")`.
 #[test]
 fn javascript_project_filter() {
     let rules = [
@@ -444,8 +457,9 @@ fn javascript_project_filter() {
         FilterRule::include("package-lock.json"),
         FilterRule::include("*.config.js"),
         FilterRule::include("*.config.ts"),
-        // Include source
+        // Include source directory and contents
         FilterRule::include("src/"),
+        FilterRule::include("src/**"),
         // Exclude node_modules everywhere
         FilterRule::exclude("**/node_modules/"),
         // Exclude build output
@@ -471,14 +485,13 @@ fn javascript_project_filter() {
     assert!(set.allows(Path::new("jest.config.js"), false));
     assert!(set.allows(Path::new("vite.config.ts"), false));
 
-    // Source files included
+    // Source files included via src/** rule
     assert!(set.allows(Path::new("src/index.ts"), false));
     assert!(set.allows(Path::new("src/components/App.tsx"), false));
 
     // Node modules excluded at root
     assert!(!set.allows(Path::new("node_modules/react"), true));
-    // But src/ (rule 5) generates src/** which matches src/node_modules first
-    // For exclusion to work, node_modules exclude must come before src/ include
+    // src/** matches before node_modules exclude - rule ordering matters
     assert!(set.allows(Path::new("src/node_modules/local-pkg"), true));
 
     // Build output excluded
@@ -494,15 +507,20 @@ fn javascript_project_filter() {
 }
 
 /// Verifies monorepo filter pattern.
+///
+/// upstream: to include a directory AND its contents, use both
+/// `include("dir/")` and `include("dir/**")`.
 #[test]
 fn monorepo_filter() {
     let rules = [
         // Include workspace root files
         FilterRule::include("/package.json"),
         FilterRule::include("/pnpm-workspace.yaml"),
-        // Include specific packages
+        // Include specific packages and their contents
         FilterRule::include("packages/core/"),
+        FilterRule::include("packages/core/**"),
         FilterRule::include("packages/utils/"),
+        FilterRule::include("packages/utils/**"),
         // Exclude other packages
         FilterRule::exclude("packages/*/"),
         // Exclude node_modules everywhere
@@ -518,19 +536,17 @@ fn monorepo_filter() {
     // Root files included
     assert!(set.allows(Path::new("package.json"), false));
 
-    // Core and utils packages included
+    // Core and utils package contents included via explicit ** rules
     assert!(set.allows(Path::new("packages/core/src/index.ts"), false));
     assert!(set.allows(Path::new("packages/utils/lib/helpers.ts"), false));
 
     // Other packages excluded
     assert!(!set.allows(Path::new("packages/web/src/App.tsx"), false));
 
-    // packages/core/ (rule 3) generates packages/core/** which matches first
-    // For exclusion to work, node_modules exclude must come before package includes
+    // packages/core/** matches before node_modules exclude - rule ordering
     assert!(set.allows(Path::new("packages/core/node_modules/pkg"), false));
 
-    // packages/utils/ (rule 4) generates packages/utils/** which matches first
-    // For dist exclusion to work, it must come before package includes
+    // packages/utils/** matches before dist exclude - rule ordering
     assert!(set.allows(Path::new("packages/utils/dist/index.js"), false));
 }
 
