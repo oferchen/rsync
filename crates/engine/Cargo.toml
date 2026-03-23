@@ -125,3 +125,7 @@ harness = false
 [[bench]]
 name = "local_copy_bench"
 harness = false
+
+[[bench]]
+name = "buffer_pool_benchmark"
+harness = false
