@@ -3,17 +3,27 @@
 //! Prevents CI hangs by enforcing a wall-clock deadline on each test. If the
 //! closure does not complete within the specified duration, the test panics
 //! with a descriptive message rather than blocking the CI pipeline forever.
+//!
+//! This module is only used by Unix-specific test modules (permission-denied
+//! error recovery, signal handling). The entire contents are gated with
+//! `#[cfg(unix)]` to avoid dead-code warnings when this file is compiled as
+//! a standalone test binary on Windows.
 
+#[cfg(unix)]
 use std::sync::mpsc;
+#[cfg(unix)]
 use std::thread;
+#[cfg(unix)]
 use std::time::Duration;
 
 /// Timeout for local (non-network) integration tests.
+#[cfg(unix)]
 #[allow(dead_code)]
 pub const LOCAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Timeout for SSH-based integration tests, which need extra time for
 /// connection setup, key exchange, and potential retries.
+#[cfg(unix)]
 #[allow(dead_code)]
 pub const SSH_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -24,6 +34,7 @@ pub const SSH_TIMEOUT: Duration = Duration::from_secs(120);
 /// deadline. If the deadline expires, the calling thread panics. The spawned
 /// worker thread is intentionally left detached - the test process will exit
 /// on the panic and the OS reclaims the thread.
+#[cfg(unix)]
 pub fn run_with_timeout<F>(timeout: Duration, f: F)
 where
     F: FnOnce() + Send + 'static,
