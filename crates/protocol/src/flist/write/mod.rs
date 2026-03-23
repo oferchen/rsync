@@ -94,6 +94,13 @@ pub struct FileListWriter {
     use_varint_flags: bool,
     /// Cached: whether safe file list mode is enabled (computed once at construction).
     use_safe_file_list: bool,
+    /// Wire NDX start of the current flist segment.
+    ///
+    /// Used to distinguish abbreviated vs unabbreviated hardlink followers.
+    /// Abbreviated followers (leader in same segment, idx >= first_ndx) have
+    /// metadata skipped on wire. Unabbreviated followers carry full metadata.
+    /// upstream: flist.c:send_file_entry() line 572
+    first_ndx: i32,
 }
 
 impl FileListWriter {
@@ -111,6 +118,7 @@ impl FileListWriter {
             iconv: None,
             use_varint_flags: false,
             use_safe_file_list: protocol.safe_file_list_always_enabled(),
+            first_ndx: 0,
         }
     }
 
@@ -129,6 +137,7 @@ impl FileListWriter {
             use_varint_flags: compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
             use_safe_file_list: compat_flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
                 || protocol.safe_file_list_always_enabled(),
+            first_ndx: 0,
         }
     }
 
@@ -261,12 +270,40 @@ impl FileListWriter {
         self.use_safe_file_list
     }
 
+    /// Sets the wire NDX start of the current flist segment.
+    ///
+    /// Must be called before writing entries in each flist segment so that
+    /// abbreviated vs unabbreviated hardlink followers are distinguished
+    /// correctly on the wire.
+    /// upstream: flist.c:send_file_entry() uses `first_ndx` parameter
+    pub fn set_first_ndx(&mut self, first_ndx: i32) {
+        self.first_ndx = first_ndx;
+    }
+
+    /// Returns true if this is an abbreviated hardlink follower whose metadata
+    /// should be skipped on the wire.
+    ///
+    /// An abbreviated follower has its leader in the SAME flist segment
+    /// (`hardlink_idx >= first_ndx`), so metadata is omitted. Unabbreviated
+    /// followers (leader in a previous segment) carry full metadata.
+    /// upstream: flist.c:send_file_entry() line 572
+    #[inline]
+    fn is_abbreviated_follower(&self, entry: &FileEntry, xflags: u32) -> bool {
+        if !self.is_hardlink_follower(xflags) {
+            return false;
+        }
+        match entry.hardlink_idx() {
+            Some(idx) => (idx as i32) >= self.first_ndx,
+            None => false,
+        }
+    }
+
     /// Writes a file entry to the stream.
     ///
     /// Wire format order (matching upstream rsync flist.c send_file_entry):
     /// 1. Flags
     /// 2. Name (with prefix compression)
-    /// 3. Hardlink index (if follower) - then STOP for followers
+    /// 3. Hardlink index (if follower) - then STOP for abbreviated followers
     /// 4. File size
     /// 5. Mtime (if not XMIT_SAME_TIME)
     /// 6. Nsec (if XMIT_MOD_NSEC)
@@ -304,19 +341,19 @@ impl FileListWriter {
         self.write_name(writer, &name, same_len, suffix_len, xflags)?;
 
         // Step 6: Write hardlink index (MUST come immediately after name)
-        // For hardlink followers, this is the only field written after the name.
-        // Upstream rsync does "goto the_end" after writing the index for followers.
         self.write_hardlink_idx(writer, entry, xflags)?;
 
-        // Step 7+: Write metadata (unless this is a hardlink follower)
-        // Hardlink followers have their metadata copied from the leader entry,
-        // so we skip writing size, mtime, mode, uid, gid, symlink, and rdev.
-        if !self.is_hardlink_follower(xflags) {
+        // Step 7+: Write metadata unless this is an abbreviated hardlink follower.
+        // Abbreviated followers (leader in same flist segment) have metadata
+        // copied from the leader. Unabbreviated followers (leader in a previous
+        // segment) carry full metadata on the wire.
+        // upstream: flist.c:send_file_entry() line 572
+        let abbreviated = self.is_abbreviated_follower(entry, xflags);
+        if !abbreviated {
             // Step 7: Write metadata (size, mtime, nsec, crtime, mode, atime, uid, gid)
             self.write_metadata(writer, entry, xflags)?;
 
             // Step 8: Write device numbers (if applicable)
-            // Also write dummy rdev for special files (FIFOs, sockets) in protocol < 31
             self.write_rdev(writer, entry, xflags)?;
 
             // Step 9: Write symlink target (if applicable)
@@ -326,13 +363,13 @@ impl FileListWriter {
             self.write_hardlink_dev_ino(writer, entry, xflags)?;
         }
 
-        // Step 10: Write checksum if always_checksum mode is enabled
-        // Upstream: always_checksum && (S_ISREG(mode) || protocol_version < 28)
-        if !self.is_hardlink_follower(xflags) {
+        // Write checksum if always_checksum mode is enabled
+        // upstream: always_checksum && (S_ISREG(mode) || protocol_version < 28)
+        if !abbreviated {
             self.write_checksum(writer, entry)?;
         }
 
-        // Step 11: Update state
+        // Update state
         self.state.update(
             &name,
             entry.mode(),
@@ -341,7 +378,7 @@ impl FileListWriter {
             entry.gid().unwrap_or(0),
         );
 
-        // Step 12: Update statistics
+        // Update statistics
         self.update_stats(entry);
 
         Ok(())

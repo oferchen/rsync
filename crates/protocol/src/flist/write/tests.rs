@@ -869,6 +869,33 @@ fn is_hardlink_follower_helper() {
 }
 
 #[test]
+fn abbreviated_vs_unabbreviated_hardlink_follower() {
+    let mut writer = FileListWriter::new(test_protocol()).with_preserve_hard_links(true);
+    writer.set_first_ndx(100);
+
+    let xflags_follower = (XMIT_HLINKED as u32) << 8;
+
+    // Follower with idx >= first_ndx is abbreviated (metadata skipped)
+    let mut entry_same_seg = FileEntry::new_file("f1".into(), 100, 0o644);
+    entry_same_seg.set_hardlink_idx(150);
+    assert!(writer.is_abbreviated_follower(&entry_same_seg, xflags_follower));
+
+    // Follower with idx < first_ndx is unabbreviated (full metadata on wire)
+    let mut entry_prev_seg = FileEntry::new_file("f2".into(), 100, 0o644);
+    entry_prev_seg.set_hardlink_idx(50);
+    assert!(!writer.is_abbreviated_follower(&entry_prev_seg, xflags_follower));
+
+    // Follower with idx == first_ndx is abbreviated
+    let mut entry_boundary = FileEntry::new_file("f3".into(), 100, 0o644);
+    entry_boundary.set_hardlink_idx(100);
+    assert!(writer.is_abbreviated_follower(&entry_boundary, xflags_follower));
+
+    // Leader is never abbreviated
+    let xflags_leader = ((XMIT_HLINKED as u32) << 8) | ((XMIT_HLINK_FIRST as u32) << 8);
+    assert!(!writer.is_abbreviated_follower(&entry_same_seg, xflags_leader));
+}
+
+#[test]
 fn checksum_round_trip() {
     use super::super::read::FileListReader;
     use std::io::Cursor;

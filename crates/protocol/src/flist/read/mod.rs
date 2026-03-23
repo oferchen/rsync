@@ -101,6 +101,13 @@ pub struct FileListReader {
     /// are rejected. When true, leading slashes are stripped instead.
     /// upstream: flist.c:757 `!relative_paths && *thisname == '/'`
     relative_paths: bool,
+    /// Wire NDX start of the current flist segment.
+    ///
+    /// Used to distinguish abbreviated vs unabbreviated hardlink followers.
+    /// Abbreviated followers (leader in same segment, idx >= ndx_start) have
+    /// metadata skipped on wire. Unabbreviated followers carry full metadata.
+    /// upstream: flist.c:recv_file_entry() line 793
+    ndx_start: i32,
     /// Interner for deduplicating parent directory paths across file entries.
     ///
     /// When many entries share the same parent directory, the interner ensures
@@ -157,6 +164,7 @@ impl FileListReader {
             flist_csum_len: 0,
             iconv: None,
             relative_paths: false,
+            ndx_start: 0,
             dirname_interner: PathInterner::new(),
             io_error: 0,
             acl_cache: AclCache::new(),
@@ -191,6 +199,7 @@ impl FileListReader {
             flist_csum_len: 0,
             iconv: None,
             relative_paths: false,
+            ndx_start: 0,
             dirname_interner: PathInterner::new(),
             io_error: 0,
             acl_cache: AclCache::new(),
@@ -392,14 +401,31 @@ impl FileListReader {
         &mut self.xattr_cache
     }
 
-    /// Returns true if this entry is a hardlink follower (metadata was skipped on wire).
+    /// Sets the wire NDX start of the current flist segment.
     ///
-    /// A hardlink follower has XMIT_HLINKED set but NOT XMIT_HLINK_FIRST.
-    /// Such entries reference another entry in the file list, so their metadata
-    /// (size, mtime, mode, uid, gid, symlink, rdev) was omitted from the wire.
+    /// Must be called before reading entries in each flist segment so that
+    /// abbreviated vs unabbreviated hardlink followers are distinguished
+    /// correctly on the wire.
+    /// upstream: flist.c:recv_file_entry() uses `flist->ndx_start`
+    pub fn set_ndx_start(&mut self, ndx_start: i32) {
+        self.ndx_start = ndx_start;
+    }
+
+    /// Returns true if this is an abbreviated hardlink follower whose metadata
+    /// was skipped on the wire (leader is in the same flist segment).
+    ///
+    /// Unabbreviated followers (leader in a previous flist segment) carry full
+    /// metadata on the wire and must NOT skip reading it.
+    /// upstream: flist.c:recv_file_entry() line 793
     #[inline]
-    fn is_hardlink_follower(&self, flags: FileFlags) -> bool {
-        flags.hlinked() && !flags.hlink_first()
+    pub(crate) fn is_abbreviated_follower(&self, flags: FileFlags, hardlink_idx: Option<u32>) -> bool {
+        if !flags.hlinked() || flags.hlink_first() {
+            return false;
+        }
+        match hardlink_idx {
+            Some(idx) => (idx as i32) >= self.ndx_start,
+            None => false,
+        }
     }
 
     /// Reads the next file entry from the stream.
@@ -463,8 +489,13 @@ impl FileListReader {
         // Step 4+: Read metadata (unless this is a hardlink follower)
         // Hardlink followers have their metadata copied from the leader entry,
         // so we skip reading size, mtime, mode, uid, gid, symlink, and rdev.
+        // Step 4+: Read metadata unless this is an abbreviated hardlink follower.
+        // Abbreviated followers (leader in same flist segment) have metadata
+        // copied from the leader. Unabbreviated followers (leader in a previous
+        // segment) carry full metadata on the wire.
+        // upstream: flist.c:recv_file_entry() line 793
         let (size, metadata, link_target, rdev, hardlink_dev_ino, checksum) =
-            if self.is_hardlink_follower(flags) {
+            if self.is_abbreviated_follower(flags, hardlink_idx) {
                 (
                     0u64,
                     MetadataResult {
