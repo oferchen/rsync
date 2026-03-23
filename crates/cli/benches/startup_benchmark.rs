@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo bench -p cli -- startup`
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use cli::test_utils::parse_args;
 

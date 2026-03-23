@@ -5,11 +5,11 @@
 use std::net::IpAddr;
 use std::path::Path;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use daemon::auth::{
-    compute_auth_response, verify_client_response, ChallengeGenerator, DaemonAuthDigest,
-    SecretsFile,
+    ChallengeGenerator, DaemonAuthDigest, SecretsFile, compute_auth_response,
+    verify_client_response,
 };
 use daemon::rsyncd_config::RsyncdConfig;
 

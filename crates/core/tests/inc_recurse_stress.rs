@@ -20,7 +20,7 @@ mod stress {
     use std::path::Path;
     use std::time::Duration;
 
-    use core::client::{run_client, ClientConfig};
+    use core::client::{ClientConfig, run_client};
     use tempfile::tempdir;
 
     use super::test_timeout::run_with_timeout;

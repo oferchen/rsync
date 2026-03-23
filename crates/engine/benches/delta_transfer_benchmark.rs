@@ -9,14 +9,14 @@
 //! 4. End-to-end delta transfer - full signature -> match -> delta -> apply pipeline
 
 use std::io::Cursor;
-use std::num::{NonZeroU32, NonZeroU8};
+use std::num::{NonZeroU8, NonZeroU32};
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-use matching::{apply_delta, generate_delta, DeltaSignatureIndex};
+use matching::{DeltaSignatureIndex, apply_delta, generate_delta};
 use protocol::ProtocolVersion;
 use signature::{
-    calculate_signature_layout, generate_file_signature, SignatureAlgorithm, SignatureLayoutParams,
+    SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
 };
 
 /// File sizes used across benchmark groups.
