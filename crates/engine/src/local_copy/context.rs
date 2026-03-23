@@ -80,13 +80,11 @@ pub(crate) struct CopyContext<'a> {
     observer: Option<&'a mut dyn LocalCopyRecordHandler>,
     dir_merge_ephemeral: Rc<RefCell<FilterSegmentStack>>,
     dir_merge_marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
-    deferred_deletions: Vec<DeferredDeletion>,
-    deferred_updates: Vec<DeferredUpdate>,
+    deferred_ops: DeferredOperationQueue,
     timeout: Option<Duration>,
     stop_deadline: Option<Instant>,
     stop_at: Option<SystemTime>,
     last_progress: Instant,
-    created_entries: Vec<CreatedEntry>,
     destination_root: PathBuf,
     /// Number of leading path components in `relative` that represent the
     /// transfer root name (e.g. the source directory name when copying
@@ -113,11 +111,6 @@ pub(crate) struct CopyContext<'a> {
     /// Eliminates redundant `statx` syscalls when many files share the
     /// same parent (e.g. 10K files in one directory → 1 stat instead of 10K).
     verified_parents: HashSet<PathBuf>,
-    /// Staging directories (`.~tmp~`) created by `--delay-updates` that should
-    /// be removed (rmdir) after all deferred updates are committed.
-    ///
-    /// upstream: receiver.c — `handle_partial_dir(partialptr, PDIR_DELETE)`
-    delay_staging_dirs: HashSet<PathBuf>,
     /// Protocol flist encoder for batch mode.
     ///
     /// When batch mode is active, file entries are encoded using the protocol
@@ -234,6 +227,24 @@ impl<'a> MatchedBlock<'a> {
             .index()
             .saturating_mul(self.canonical_length as u64)
     }
+}
+
+/// Groups deferred filesystem operations that execute after file content transfers.
+///
+/// Three tiers of deferred work:
+/// 1. Deletions - directory cleanup with exclusion lists
+/// 2. Updates - metadata/permission application to finalized files
+/// 3. Created entries - tracking for RAII rollback on timeout errors
+#[derive(Default)]
+pub(crate) struct DeferredOperationQueue {
+    /// Pending directory deletions with keep-lists.
+    pub(crate) deletions: Vec<DeferredDeletion>,
+    /// Pending metadata/permission updates for transferred files.
+    pub(crate) updates: Vec<DeferredUpdate>,
+    /// Staging directories (`.~tmp~`) created by `--delay-updates` for cleanup.
+    pub(crate) delay_staging_dirs: HashSet<PathBuf>,
+    /// Newly created paths tracked for rollback on timeout errors.
+    pub(crate) created_entries: Vec<CreatedEntry>,
 }
 
 struct DeferredDeletion {
