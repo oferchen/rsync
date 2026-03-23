@@ -46,6 +46,8 @@ use compress::zlib::CompressionLevel;
 use filters::FilterRule;
 use protocol::flist::FileListWriter;
 
+/// Aggregated result of a local copy operation, containing the transfer
+/// summary, optional per-file event records, and the destination root path.
 pub(crate) struct CopyOutcome {
     summary: LocalCopySummary,
     events: Option<Vec<LocalCopyRecord>>,
@@ -53,10 +55,12 @@ pub(crate) struct CopyOutcome {
 }
 
 impl CopyOutcome {
+    /// Consumes the outcome and returns only the transfer summary.
     pub(super) fn into_summary(self) -> LocalCopySummary {
         self.summary
     }
 
+    /// Consumes the outcome and returns both the summary and a detailed report.
     pub(super) fn into_summary_and_report(self) -> (LocalCopySummary, LocalCopyReport) {
         let summary = self.summary;
         let records = self.events.unwrap_or_default();
@@ -67,6 +71,11 @@ impl CopyOutcome {
     }
 }
 
+/// Mutable execution context threaded through every stage of a local copy.
+///
+/// Holds transfer options, progress tracking, filter state, deferred
+/// operations, and the buffer pool. Created once per `local_copy()` call
+/// and consumed to produce a [`CopyOutcome`].
 pub(crate) struct CopyContext<'a> {
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
@@ -133,6 +142,10 @@ pub(crate) struct MetadataPathContext<'a> {
     pub(crate) destination_previously_existed: bool,
 }
 
+/// Parameters for the metadata-and-finalize step after writing a file.
+///
+/// Bundles the source metadata, option flags, and platform-specific handles
+/// needed by [`CopyContext::apply_metadata_and_finalize`].
 pub(crate) struct FinalizeMetadataParams<'a> {
     metadata: &'a fs::Metadata,
     metadata_options: MetadataOptions,
@@ -180,6 +193,8 @@ impl<'a> FinalizeMetadataParams<'a> {
     }
 }
 
+/// Byte-level statistics from a single file copy (literal and optional
+/// compressed sizes).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FileCopyOutcome {
     literal_bytes: u64,
@@ -187,6 +202,7 @@ pub(crate) struct FileCopyOutcome {
 }
 
 impl FileCopyOutcome {
+    /// Creates a new outcome with the given literal and optional compressed byte counts.
     const fn new(literal_bytes: u64, compressed_bytes: Option<u64>) -> Self {
         Self {
             literal_bytes,
@@ -194,10 +210,12 @@ impl FileCopyOutcome {
         }
     }
 
+    /// Returns the number of literal (unmatched) bytes transferred.
     pub(crate) const fn literal_bytes(self) -> u64 {
         self.literal_bytes
     }
 
+    /// Returns the compressed byte count, if compression was used.
     pub(crate) const fn compressed_bytes(self) -> Option<u64> {
         self.compressed_bytes
     }
@@ -250,6 +268,7 @@ pub(crate) struct DeferredOperationQueue {
     pub(crate) created_entries: Vec<CreatedEntry>,
 }
 
+/// A directory deletion deferred until after the transfer phase completes.
 pub(crate) struct DeferredDeletion {
     pub(crate) destination: PathBuf,
     pub(crate) relative: Option<PathBuf>,
@@ -267,6 +286,8 @@ pub(crate) struct OwnedPathContext {
     pub(crate) destination_previously_existed: bool,
 }
 
+/// A file update deferred for `--delay-updates` mode, holding the write guard
+/// and metadata needed to commit the staged file to its final location.
 pub(crate) struct DeferredUpdate {
     guard: DestinationWriteGuard,
     metadata: fs::Metadata,
@@ -306,12 +327,15 @@ impl DeferredUpdate {
     }
 }
 
+/// A filesystem entry created during the transfer, tracked for rollback on
+/// timeout or error.
 #[derive(Clone, Debug)]
 pub(crate) struct CreatedEntry {
     pub(crate) path: PathBuf,
     pub(crate) kind: CreatedEntryKind,
 }
 
+/// The type of filesystem entry created during a transfer.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum CreatedEntryKind {
     File,
@@ -328,6 +352,8 @@ include!("context_impl/transfer.rs");
 include!("context_impl/delta_transfer.rs");
 include!("context_impl/reporting.rs");
 
+/// Shared references to the layered filter stacks, used by
+/// [`DirectoryFilterGuard`] to push and pop per-directory filter rules.
 #[derive(Clone)]
 struct DirectoryFilterHandles {
     layers: Rc<RefCell<FilterSegmentLayers>>,
@@ -336,6 +362,11 @@ struct DirectoryFilterHandles {
     marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
 }
 
+/// RAII guard that reverts per-directory filter rules when dropped.
+///
+/// Pushing dir-merge rules into the layered filter stacks yields this guard.
+/// On drop, all rules pushed for the directory are popped, restoring the
+/// filter state to what it was before entering the directory.
 pub(crate) struct DirectoryFilterGuard {
     handles: DirectoryFilterHandles,
     indices: Vec<usize>,
@@ -361,6 +392,7 @@ impl DirectoryFilterGuard {
         }
     }
 
+    /// Returns `true` if the directory was excluded by a filter rule.
     pub(crate) const fn is_excluded(&self) -> bool {
         self.excluded
     }
@@ -400,8 +432,6 @@ impl Drop for DirectoryFilterGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ==================== FileCopyOutcome tests ====================
 
     #[test]
     fn file_copy_outcome_new_stores_values() {
@@ -455,8 +485,6 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
-
-    // ==================== CreatedEntryKind tests ====================
 
     #[test]
     fn created_entry_kind_file_debug() {
@@ -516,8 +544,6 @@ mod tests {
         assert!(matches!(copied, CreatedEntryKind::Directory));
     }
 
-    // ==================== CreatedEntry tests ====================
-
     #[test]
     fn created_entry_debug_contains_path() {
         let entry = CreatedEntry {
@@ -540,8 +566,6 @@ mod tests {
         assert_eq!(cloned.path, PathBuf::from("/some/path"));
         assert!(matches!(cloned.kind, CreatedEntryKind::Symlink));
     }
-
-    // ==================== DeferredDeletion tests ====================
 
     #[test]
     fn deferred_deletion_creation() {
