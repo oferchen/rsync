@@ -349,7 +349,7 @@ impl DestinationWriteGuard {
             LocalCopyError::io(
                 "finalise anonymous temp file",
                 &self.final_path,
-                io::Error::new(io::ErrorKind::Other, "anonymous fd already consumed"),
+                io::Error::other("anonymous fd already consumed"),
             )
         })?;
         // Remove existing destination so linkat does not fail with EEXIST.
