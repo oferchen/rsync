@@ -29,7 +29,7 @@ use super::super::super::append::{AppendMode, determine_append_mode};
 use super::super::super::comparison::{
     CopyComparison, build_delta_signature, files_checksum_match, should_skip_copy,
 };
-use super::super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
+use super::super::super::guard::remove_incomplete_destination;
 use super::super::super::preallocate::maybe_preallocate_destination;
 use super::TransferFlags;
 use super::finalize::finalize_guard_and_metadata;
