@@ -20,8 +20,8 @@ use super::super::session_registry::{SessionId, SessionRegistry, SessionState};
 #[cfg(feature = "concurrent-sessions")]
 use super::super::connection_pool::{ConnectionId, ConnectionPool};
 
-use super::shutdown::AsyncDaemonError;
 use super::listener::ListenerConfig;
+use super::shutdown::AsyncDaemonError;
 
 /// An async daemon session.
 pub struct AsyncSession {
