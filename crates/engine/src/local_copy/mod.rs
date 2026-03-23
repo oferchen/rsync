@@ -118,6 +118,7 @@ pub use skip_compress::{SkipCompressList, SkipCompressParseError};
 pub(crate) use compressor::ActiveCompressor;
 pub(crate) use context::{
     CopyContext, CopyOutcome, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams,
+    MetadataPathContext, OwnedPathContext,
 };
 
 #[allow(unused_imports)]
