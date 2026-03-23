@@ -789,8 +789,7 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Per-token compression flush tests against upstream wire format
+    // Per-token compression flush tests against upstream wire format.
     //
     // Upstream rsync (token.c) uses a persistent deflate stream across an
     // entire file transfer. Between tokens it issues Z_SYNC_FLUSH so that
@@ -800,8 +799,7 @@ mod tests {
     // mechanics produce correct, independently decompressible segments and
     // that token boundaries survive a roundtrip.
     //
-    // Reference: upstream token.c lines 433-454 (Z_SYNC_FLUSH + marker strip).
-    // -----------------------------------------------------------------------
+    // upstream: token.c lines 433-454 (Z_SYNC_FLUSH + marker strip).
 
     /// Compresses `input` with raw deflate and Z_SYNC_FLUSH, returning the
     /// compressed bytes *including* the trailing sync marker.
