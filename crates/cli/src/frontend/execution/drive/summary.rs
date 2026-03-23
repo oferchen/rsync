@@ -26,6 +26,7 @@ pub(crate) struct LogFileConfig {
     pub(crate) format: OutFormat,
 }
 
+/// Inputs for driving a client transfer and rendering its output.
 pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) config: ClientConfig,
     pub(crate) msgs_to_stderr: bool,
@@ -163,6 +164,7 @@ where
     }
 }
 
+/// Parameters for writing transfer output to a log file.
 struct EmitLogOutputParams<'a> {
     summary: &'a ClientSummary,
     log: &'a mut LogFileConfig,
@@ -174,6 +176,7 @@ struct EmitLogOutputParams<'a> {
     human_readable_mode: HumanReadableMode,
 }
 
+/// Writes the transfer summary to the configured log file.
 fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
     let EmitLogOutputParams {
         summary,
