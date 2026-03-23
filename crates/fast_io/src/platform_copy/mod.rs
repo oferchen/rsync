@@ -46,10 +46,10 @@
 //! println!("Copied {} bytes via {:?}", result.bytes_copied, result.method);
 //! ```
 
-mod types;
 mod dispatch;
 #[cfg(test)]
 mod tests;
+mod types;
 
 use std::io;
 use std::path::Path;

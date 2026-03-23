@@ -131,7 +131,10 @@ fn default_platform_copy_preserves_binary_data() {
         .expect("copy succeeds");
 
     let dst_content = std::fs::read(&dst).expect("read destination");
-    assert_eq!(dst_content, content, "binary data must be preserved exactly");
+    assert_eq!(
+        dst_content, content,
+        "binary data must be preserved exactly"
+    );
 }
 
 #[test]
@@ -153,9 +156,7 @@ fn default_platform_copy_overwrites_destination() {
     std::fs::write(&dst, b"old content").expect("write old content");
 
     let copier = DefaultPlatformCopy::new();
-    copier
-        .copy_file(&src, &dst, 11)
-        .expect("copy succeeds");
+    copier.copy_file(&src, &dst, 11).expect("copy succeeds");
 
     let dst_content = std::fs::read(&dst).expect("read destination");
     assert_eq!(dst_content, b"new content");

@@ -10,11 +10,7 @@ use super::types::{CopyMethod, CopyResult};
 
 /// Linux: try `copy_file_range` for large files, fall back to `std::fs::copy`.
 #[cfg(target_os = "linux")]
-pub(super) fn platform_copy_impl(
-    src: &Path,
-    dst: &Path,
-    size_hint: u64,
-) -> io::Result<CopyResult> {
+pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<CopyResult> {
     use std::fs::File;
 
     // Threshold below which copy_file_range overhead exceeds benefit
@@ -72,11 +68,7 @@ pub(super) fn platform_copy_impl(
 
 /// Windows: try `CopyFileExW` with optional no-buffering, fall back to `std::fs::copy`.
 #[cfg(target_os = "windows")]
-pub(super) fn platform_copy_impl(
-    src: &Path,
-    dst: &Path,
-    size_hint: u64,
-) -> io::Result<CopyResult> {
+pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<CopyResult> {
     /// Threshold above which `COPY_FILE_NO_BUFFERING` is used (4MB).
     const NO_BUFFERING_THRESHOLD: u64 = 4 * 1024 * 1024;
 
@@ -162,9 +154,7 @@ pub(super) fn fcopyfile_impl(src: &Path, dst: &Path) -> io::Result<()> {
     // values above which outlive the call. NULL state is explicitly allowed
     // by the fcopyfile API. Errors are returned via the function return value
     // and errno.
-    let ret = unsafe {
-        libc::fcopyfile(src_fd, dst_fd, std::ptr::null_mut(), libc::COPYFILE_DATA)
-    };
+    let ret = unsafe { libc::fcopyfile(src_fd, dst_fd, std::ptr::null_mut(), libc::COPYFILE_DATA) };
 
     if ret == 0 {
         Ok(())
@@ -191,11 +181,7 @@ pub(super) fn fcopyfile_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
 
 /// Windows `CopyFileExW` FFI wrapper.
 #[cfg(target_os = "windows")]
-pub(super) fn try_copy_file_ex(
-    src: &Path,
-    dst: &Path,
-    use_no_buffering: bool,
-) -> io::Result<u64> {
+pub(super) fn try_copy_file_ex(src: &Path, dst: &Path, use_no_buffering: bool) -> io::Result<u64> {
     use std::os::windows::ffi::OsStrExt;
 
     let src_wide: Vec<u16> = src
