@@ -5,6 +5,7 @@ use logging_sink::MessageSink;
 
 use crate::frontend::write_message;
 
+/// Writes a message to stderr, falling back to a plain string on failure.
 pub(super) fn emit_message_with_fallback<Err>(
     message: &Message,
     fallback: &str,
@@ -17,6 +18,7 @@ pub(super) fn emit_message_with_fallback<Err>(
     }
 }
 
+/// Emits an error message to stderr and returns the associated exit code.
 pub(super) fn fail_with_message<Err>(message: Message, stderr: &mut MessageSink<Err>) -> i32
 where
     Err: Write,
@@ -28,6 +30,7 @@ where
 }
 
 #[cfg(any(not(all(unix, feature = "acl")), not(all(unix, feature = "xattr"))))]
+/// Emits an error message with a caller-supplied fallback string and returns the exit code.
 pub(super) fn fail_with_custom_fallback<Err>(
     message: Message,
     fallback: String,
