@@ -51,25 +51,20 @@
 //! run_client_with_observer(config, Some(&mut observer))?;
 //! ```
 
+mod batch;
+mod filters;
+
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
 use std::time::Duration;
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use engine::batch::{BatchStats, BatchWriter};
-use engine::local_copy::{
-    DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyExecution,
-    LocalCopyOptions, LocalCopyPlan,
-};
-use filters::FilterRule as EngineFilterRule;
+use engine::local_copy::{FilterProgram, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 
-use super::config::{BandwidthLimit, ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec};
-use super::error::{
-    ClientError, compile_filter_error, map_local_copy_error, missing_operands_error,
-};
+use super::config::{BandwidthLimit, ClientConfig, DeleteMode};
+use super::error::{ClientError, map_local_copy_error, missing_operands_error};
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::remote;
 use super::summary::ClientSummary;
@@ -189,48 +184,10 @@ fn run_client_internal(
 
     // Handle batch mode configuration
     let batch_writer = if let Some(batch_cfg) = config.batch_config() {
-        if batch_cfg.is_read_mode() {
-            // upstream: main.c:1464-1473 — reject remote destinations with --read-batch
-            let has_remote_dest = config.transfer_args().iter().any(|arg| {
-                let s = arg.to_string_lossy();
-                s.starts_with("rsync://") || s.contains("::") || remote::operand_is_remote(arg)
-            });
-            if has_remote_dest {
-                use crate::message::Role;
-                use crate::rsync_error;
-                return Err(ClientError::new(
-                    super::FEATURE_UNAVAILABLE_EXIT_CODE,
-                    rsync_error!(
-                        super::FEATURE_UNAVAILABLE_EXIT_CODE,
-                        "remote destination is not allowed with --read-batch"
-                    )
-                    .with_role(Role::Client),
-                ));
-            }
-            // Replay the batch file instead of performing a normal transfer
-            return replay_batch(batch_cfg, &config);
+        if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
+            return result;
         }
-
-        // For write modes, create the BatchWriter
-        match BatchWriter::new((*batch_cfg).clone()) {
-            Ok(writer) => {
-                // Wrap in Arc<Mutex<...>> for thread-safe shared access
-                Some(Arc::new(Mutex::new(writer)))
-            }
-            Err(e) => {
-                use crate::message::Role;
-                use crate::rsync_error;
-                let msg = format!(
-                    "failed to create batch file '{}': {}",
-                    batch_cfg.batch_file_path().display(),
-                    e
-                );
-                return Err(ClientError::new(
-                    1,
-                    rsync_error!(1, "{}", msg).with_role(Role::Client),
-                ));
-            }
-        }
+        Some(batch::create_batch_writer(batch_cfg)?)
     } else {
         None
     };
@@ -281,54 +238,12 @@ fn run_client_internal(
         }
     }
 
-    let filter_program = compile_filter_program(config.filter_rules())?;
+    let filter_program = filters::compile_filter_program(config.filter_rules())?;
     let mut options = build_local_copy_options(&config, filter_program);
 
     // Attach batch writer to options if in batch write mode
     let batch_writer_for_options = if let Some(ref writer) = batch_writer {
-        // Determine preserve_xattrs conditionally based on feature
-        #[cfg(all(unix, feature = "xattr"))]
-        let preserve_xattrs = config.preserve_xattrs();
-        #[cfg(not(all(unix, feature = "xattr")))]
-        let preserve_xattrs = false;
-
-        // Write batch header with stream flags before starting transfer
-        let batch_flags = engine::batch::BatchFlags {
-            recurse: config.recursive(),
-            preserve_uid: config.preserve_owner(),
-            preserve_gid: config.preserve_group(),
-            preserve_links: config.links(),
-            preserve_hard_links: config.preserve_hard_links(),
-            always_checksum: config.checksum(),
-            xfer_dirs: config.dirs(),
-            do_compression: config.compress(),
-            preserve_xattrs,
-            inplace: config.inplace(),
-            append: config.append(),
-            append_verify: config.append_verify(),
-            ..Default::default()
-        };
-
-        {
-            let mut w = writer.lock().map_err(|_| {
-                use crate::message::Role;
-                use crate::rsync_error;
-                ClientError::new(
-                    1,
-                    rsync_error!(1, "batch writer lock poisoned").with_role(Role::Client),
-                )
-            })?;
-            if let Err(e) = w.write_header(batch_flags) {
-                use crate::message::Role;
-                use crate::rsync_error;
-                let msg = format!("failed to write batch header: {e}");
-                return Err(ClientError::new(
-                    1,
-                    rsync_error!(1, "{}", msg).with_role(Role::Client),
-                ));
-            }
-        }
-
+        batch::write_batch_header(writer, &config)?;
         Some(writer.clone())
     } else {
         None
@@ -380,65 +295,7 @@ fn run_client_internal(
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {
-        // Write trailing stats and close the batch file
-        {
-            let mut writer = writer_arc.lock().map_err(|_| {
-                use crate::message::Role;
-                use crate::rsync_error;
-                ClientError::new(
-                    1,
-                    rsync_error!(1, "batch writer lock poisoned").with_role(Role::Client),
-                )
-            })?;
-
-            // upstream: main.c:374-383 - write_varlong30(batch_fd, stats.total_read, 3)
-            let proto = batch_cfg.protocol_version;
-            let stats = BatchStats {
-                total_read: summary.bytes_received() as i64,
-                total_written: summary.bytes_sent() as i64,
-                total_size: summary.total_source_bytes() as i64,
-                flist_buildtime: if proto >= 29 {
-                    Some(summary.file_list_generation_time().as_millis() as i64)
-                } else {
-                    None
-                },
-                flist_xfertime: if proto >= 29 {
-                    Some(summary.file_list_transfer_time().as_millis() as i64)
-                } else {
-                    None
-                },
-            };
-            if let Err(e) = writer.write_stats(&stats) {
-                use crate::message::Role;
-                use crate::rsync_error;
-                let msg = format!("failed to write batch stats: {e}");
-                return Err(ClientError::new(
-                    1,
-                    rsync_error!(1, "{}", msg).with_role(Role::Client),
-                ));
-            }
-
-            if let Err(e) = writer.flush() {
-                use crate::message::Role;
-                use crate::rsync_error;
-                let msg = format!("failed to flush batch file: {e}");
-                return Err(ClientError::new(
-                    1,
-                    rsync_error!(1, "{}", msg).with_role(Role::Client),
-                ));
-            }
-        } // Drop the lock and BatchWriter will be cleaned up by Drop impl
-
-        // Generate the .sh replay script
-        if let Err(e) = engine::batch::script::generate_script(batch_cfg) {
-            use crate::message::Role;
-            use crate::rsync_error;
-            let msg = format!("failed to generate batch script: {e}");
-            return Err(ClientError::new(
-                1,
-                rsync_error!(1, "{}", msg).with_role(Role::Client),
-            ));
-        }
+        batch::finalize_batch(writer_arc, batch_cfg, &summary)?;
     }
 
     Ok(summary)
@@ -687,94 +544,4 @@ pub fn build_local_copy_options(
     filter_program: Option<FilterProgram>,
 ) -> LocalCopyOptions {
     LocalCopyOptionsBuilder::new(config, filter_program).build()
-}
-
-fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgram>, ClientError> {
-    if rules.is_empty() {
-        return Ok(None);
-    }
-
-    let mut entries = Vec::new();
-    for rule in rules {
-        match rule.kind() {
-            FilterRuleKind::Include => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::include(rule.pattern().to_owned())
-                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
-                    .with_perishable(rule.is_perishable())
-                    .with_xattr_only(rule.is_xattr_only()),
-            )),
-            FilterRuleKind::Exclude => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::exclude(rule.pattern().to_owned())
-                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
-                    .with_perishable(rule.is_perishable())
-                    .with_xattr_only(rule.is_xattr_only()),
-            )),
-            FilterRuleKind::Clear => entries.push(FilterProgramEntry::Clear),
-            FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::protect(rule.pattern().to_owned())
-                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
-                    .with_perishable(rule.is_perishable()),
-            )),
-            FilterRuleKind::Risk => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::risk(rule.pattern().to_owned())
-                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
-                    .with_perishable(rule.is_perishable()),
-            )),
-            FilterRuleKind::DirMerge => {
-                entries.push(FilterProgramEntry::DirMerge(DirMergeRule::new(
-                    rule.pattern().to_owned(),
-                    rule.dir_merge_options().cloned().unwrap_or_default(),
-                )))
-            }
-            FilterRuleKind::ExcludeIfPresent => entries.push(FilterProgramEntry::ExcludeIfPresent(
-                ExcludeIfPresentRule::new(rule.pattern().to_owned()),
-            )),
-        }
-    }
-
-    FilterProgram::new(entries)
-        .map(Some)
-        .map_err(|error| compile_filter_error(error.pattern(), &error))
-}
-
-/// Replay a batch file to reconstruct the transfer at the destination.
-///
-/// Delegates to [`batch::replay::replay`] for the actual delta-application
-/// logic, then wraps the result in a [`ClientSummary`].
-fn replay_batch(
-    batch_cfg: &engine::batch::BatchConfig,
-    config: &ClientConfig,
-) -> Result<ClientSummary, ClientError> {
-    use crate::message::Role;
-    use crate::rsync_error;
-
-    // upstream: main.c - with --read-batch the destination is the last
-    // (and typically only) operand, e.g. `rsync --read-batch=FILE dest/`
-    let dest_root = config
-        .transfer_args()
-        .last()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let result = engine::batch::replay::replay(batch_cfg, &dest_root, config.verbosity().into())
-        .map_err(|e| {
-            let msg = format!("batch replay failed: {e}");
-            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-        })?;
-
-    #[cfg(feature = "tracing")]
-    {
-        if result.recurse {
-            tracing::info!("Batch mode enabled: recurse");
-        }
-        tracing::info!(
-            file_count = result.file_count,
-            total_size = result.total_size,
-            "Batch replay complete"
-        );
-    }
-    let _ = &result;
-
-    use engine::local_copy::LocalCopySummary;
-    Ok(ClientSummary::from_summary(LocalCopySummary::default()))
 }
