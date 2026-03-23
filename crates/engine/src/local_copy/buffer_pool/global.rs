@@ -110,8 +110,8 @@ mod tests {
 
     // NOTE: Because `OnceLock` is process-wide, tests that call
     // `init_global_buffer_pool` or `global_buffer_pool` share state.
-    // We use a separate test binary / integration-style tests below
-    // that exercise the API without conflicting initialization.
+    // Nextest serializes these via the `global-pool-serial` test-group
+    // in `.config/nextest.toml` (max-threads = 1).
 
     #[test]
     fn config_default_matches_hardware_parallelism() {
