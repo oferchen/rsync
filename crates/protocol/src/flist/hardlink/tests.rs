@@ -1,169 +1,6 @@
-//! Hardlink tracking and deduplication for rsync protocol.
-//!
-//! During file list building and reception, hardlinks are identified by their
-//! (device, inode) pairs. This module provides a table structure to track
-//! hardlinks and assign unique indices for wire protocol transmission.
-//!
-//! Uses [`FxHashMap`] for fast lookups with integer-based keys.
-//!
-//! # Upstream Reference
-//!
-//! - `hlink.c:match_hlinkinfo()` - Hardlink matching logic
-//! - `hlink.c:init_hard_links()` - Hardlink table initialization
-//! - Protocol 30+ uses indices into a hardlink list
-
-use rustc_hash::FxHashMap;
-
-/// Device and inode pair identifying a unique file.
-///
-/// // upstream: hlink.c struct idev - dev/ino pair for hardlink tracking
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub struct DevIno {
-    /// Device number.
-    pub dev: u64,
-    /// Inode number.
-    pub ino: u64,
-}
-
-impl DevIno {
-    /// Creates a new device/inode pair.
-    #[must_use]
-    pub const fn new(dev: u64, ino: u64) -> Self {
-        Self { dev, ino }
-    }
-}
-
-/// Entry in the hardlink table tracking the first occurrence and link count.
-///
-/// // upstream: hlink.c struct hlink - tracks first file and nlink count
-#[derive(Debug, Clone)]
-pub struct HardlinkEntry {
-    /// Index of the first file in the hardlink group.
-    pub first_ndx: u32,
-    /// Number of files in this hardlink group.
-    pub link_count: u32,
-}
-
-impl HardlinkEntry {
-    /// Creates a new hardlink entry.
-    #[must_use]
-    pub const fn new(first_ndx: u32) -> Self {
-        Self {
-            first_ndx,
-            link_count: 1,
-        }
-    }
-}
-
-/// Result of looking up a hardlink in the table.
-///
-/// Determines whether a file is the first occurrence (leader) or a subsequent
-/// link (follower) in a hardlink group.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum HardlinkLookup {
-    /// This is the first occurrence of this file - assign a new index.
-    First(u32),
-    /// This is a subsequent occurrence - link to the first index.
-    LinkTo(u32),
-}
-
-/// Table for tracking hardlinks by (dev, ino) pairs.
-///
-/// Used during file list building to deduplicate hardlinked files and assign
-/// consistent indices for wire protocol transmission.
-///
-/// # Example
-///
-/// ```
-/// use protocol::flist::{HardlinkTable, DevIno};
-///
-/// let mut table = HardlinkTable::new();
-///
-/// // First occurrence of a file
-/// let result1 = table.find_or_insert(DevIno::new(0, 12345), 0);
-/// assert!(matches!(result1, protocol::flist::HardlinkLookup::First(0)));
-///
-/// // Second occurrence (hardlink) - links back to first
-/// let result2 = table.find_or_insert(DevIno::new(0, 12345), 1);
-/// assert!(matches!(result2, protocol::flist::HardlinkLookup::LinkTo(0)));
-/// ```
-#[derive(Debug, Default)]
-pub struct HardlinkTable {
-    /// Map from (dev, ino) to hardlink entry.
-    entries: FxHashMap<DevIno, HardlinkEntry>,
-}
-
-impl HardlinkTable {
-    /// Creates a new empty hardlink table.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates a hardlink table with preallocated capacity.
-    #[must_use]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            entries: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
-        }
-    }
-
-    /// Looks up or inserts a hardlink entry.
-    ///
-    /// If this (dev, ino) pair is already in the table, returns `LinkTo` with
-    /// the index of the first occurrence. Otherwise, inserts a new entry and
-    /// returns `First` with the given file index.
-    ///
-    /// # Arguments
-    ///
-    /// * `dev_ino` - Device and inode pair identifying the file
-    /// * `file_ndx` - Index of this file in the file list
-    ///
-    /// # Returns
-    ///
-    /// - `HardlinkLookup::First(ndx)` if this is the first occurrence
-    /// - `HardlinkLookup::LinkTo(ndx)` if this links to a previous occurrence
-    pub fn find_or_insert(&mut self, dev_ino: DevIno, file_ndx: u32) -> HardlinkLookup {
-        match self.entries.get_mut(&dev_ino) {
-            Some(entry) => {
-                entry.link_count += 1;
-                HardlinkLookup::LinkTo(entry.first_ndx)
-            }
-            None => {
-                self.entries.insert(dev_ino, HardlinkEntry::new(file_ndx));
-                HardlinkLookup::First(file_ndx)
-            }
-        }
-    }
-
-    /// Looks up a hardlink entry without modifying the table.
-    ///
-    /// Returns the entry if found, or `None` if the (dev, ino) pair is not in the table.
-    pub fn get(&self, dev_ino: &DevIno) -> Option<&HardlinkEntry> {
-        self.entries.get(dev_ino)
-    }
-
-    /// Returns the number of unique hardlink groups in the table.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Returns true if the table is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// Clears all entries from the table.
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod basic {
+    use crate::flist::hardlink::{DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable};
 
     #[test]
     fn dev_ino_new() {
@@ -286,8 +123,8 @@ mod tests {
 /// - Hash collisions occur in the underlying FxHashMap
 /// - Large numbers of hardlinks stress the table
 #[cfg(test)]
-mod collision_tests {
-    use super::*;
+mod collision {
+    use crate::flist::hardlink::{DevIno, HardlinkLookup, HardlinkTable};
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -486,8 +323,8 @@ mod collision_tests {
 
 /// Tests for edge cases with large numbers of hardlinks.
 #[cfg(test)]
-mod large_scale_tests {
-    use super::*;
+mod large_scale {
+    use crate::flist::hardlink::{DevIno, HardlinkLookup, HardlinkTable};
 
     /// Test handling of many hardlinks to a single file.
     ///
@@ -667,8 +504,8 @@ mod large_scale_tests {
 
 /// Tests for concurrent/interleaved access patterns.
 #[cfg(test)]
-mod interleaved_access_tests {
-    use super::*;
+mod interleaved_access {
+    use crate::flist::hardlink::{DevIno, HardlinkLookup, HardlinkTable};
 
     /// Test interleaved inserts and lookups.
     ///
