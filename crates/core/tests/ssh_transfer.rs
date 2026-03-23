@@ -340,7 +340,7 @@ fn ssh_connection_failure_exit_code() {
     run_with_timeout(SSH_TIMEOUT, || {
         let temp = tempdir().expect("tempdir");
         let src_dir = temp.path().join("src");
-        let dst_dir = temp.path().join("dst");
+        let _dst_dir = temp.path().join("dst");
         fs::create_dir_all(&src_dir).expect("create src dir");
 
         touch(&src_dir.join("data.txt"), b"data");
@@ -462,7 +462,7 @@ fn retry_logic_stops_on_persistent_failure() {
         // happens to be classified as transient.
         let count = attempts.load(Ordering::SeqCst);
         assert!(
-            count >= 1 && count <= MAX_SSH_RETRIES,
+            (1..=MAX_SSH_RETRIES).contains(&count),
             "expected 1..={MAX_SSH_RETRIES} attempts, got {count}"
         );
     });

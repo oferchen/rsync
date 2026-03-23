@@ -9,6 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 /// Timeout for local (non-network) integration tests.
+#[allow(dead_code)]
 pub const LOCAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Timeout for SSH-based integration tests, which need extra time for
