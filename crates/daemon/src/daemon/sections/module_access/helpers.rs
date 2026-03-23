@@ -343,7 +343,7 @@ fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
     // upstream: exclude.c:212-213 - XFLG_DIR2WILD3 applies only to
     // directory-only exclude rules (BITS_SETnUNSET(FILTRULE_DIRECTORY, FILTRULE_INCLUDE)).
     if directory_only && !is_include {
-        let wild3_pattern = format!("{}***", pattern);
+        let wild3_pattern = format!("{pattern}***");
         let mut rule = FilterRuleWireFormat::exclude(wild3_pattern);
         rule.anchored = anchored;
         rule.directory_only = false;
