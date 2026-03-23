@@ -14,6 +14,7 @@ pub const LOCAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Timeout for SSH-based integration tests, which need extra time for
 /// connection setup, key exchange, and potential retries.
+#[allow(dead_code)]
 pub const SSH_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Runs `f` on a dedicated thread, panicking if it does not complete within
