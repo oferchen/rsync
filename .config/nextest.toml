@@ -32,3 +32,13 @@ retries = 2
 
 [test-groups.ssh-serial]
 max-threads = 1
+
+# Buffer pool global singleton tests share a process-wide OnceLock.
+# Parallel execution causes init_global_buffer_pool to see already-initialized
+# state from another test, leading to non-deterministic failures.
+[[profile.default.overrides]]
+filter = "test(global_pool)"
+test-group = "global-pool-serial"
+
+[test-groups.global-pool-serial]
+max-threads = 1
