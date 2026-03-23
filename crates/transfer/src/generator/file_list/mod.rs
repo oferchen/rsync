@@ -32,7 +32,7 @@ use protocol::flist::{FileEntry, compare_file_entries};
 
 use super::GeneratorContext;
 
-#[cfg(unix)]
+#[cfg(all(unix, test))]
 pub(super) use self::entry::rdev_to_major_minor;
 
 impl GeneratorContext {

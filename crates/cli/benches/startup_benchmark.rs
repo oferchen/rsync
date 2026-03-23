@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo bench -p cli -- startup`
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use cli::test_utils::parse_args;
 
@@ -13,13 +13,7 @@ use cli::test_utils::parse_args;
 fn bench_parse_avz_delete(c: &mut Criterion) {
     c.bench_function("parse_avz_delete", |b| {
         b.iter(|| {
-            let result = parse_args(black_box([
-                "oc-rsync",
-                "-avz",
-                "--delete",
-                "src/",
-                "dst/",
-            ]));
+            let result = parse_args(black_box(["oc-rsync", "-avz", "--delete", "src/", "dst/"]));
             black_box(result).ok();
         });
     });
@@ -73,9 +67,7 @@ fn bench_parse_backup_flags(c: &mut Criterion) {
 fn bench_parse_dry_run(c: &mut Criterion) {
     c.bench_function("parse_dry_run", |b| {
         b.iter(|| {
-            let result = parse_args(black_box([
-                "oc-rsync", "--dry-run", "-r", "src/", "dst/",
-            ]));
+            let result = parse_args(black_box(["oc-rsync", "--dry-run", "-r", "src/", "dst/"]));
             black_box(result).ok();
         });
     });

@@ -20,7 +20,7 @@ mod stress {
     use std::path::Path;
     use std::time::Duration;
 
-    use core::client::{ClientConfig, run_client};
+    use core::client::{run_client, ClientConfig};
     use tempfile::tempdir;
 
     use super::test_timeout::run_with_timeout;
@@ -123,8 +123,8 @@ mod stress {
                 for file_idx in 0..2usize {
                     let global_idx = depth * 2 + file_idx;
                     let rel = format!("{dir}/file_{file_idx}.dat");
-                    let actual = fs::read(dest.join(&rel))
-                        .unwrap_or_else(|e| panic!("read {rel}: {e}"));
+                    let actual =
+                        fs::read(dest.join(&rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"));
                     let expected = unique_content(global_idx);
                     assert_eq!(
                         actual, expected,
@@ -174,8 +174,8 @@ mod stress {
             // Spot-check content at boundaries and middle.
             for i in [0, 1, 499, 500, 998, 999] {
                 let name = format!("wide/item_{i:04}.dat");
-                let actual = fs::read(dest.join(&name))
-                    .unwrap_or_else(|e| panic!("read {name}: {e}"));
+                let actual =
+                    fs::read(dest.join(&name)).unwrap_or_else(|e| panic!("read {name}: {e}"));
                 assert_eq!(
                     actual,
                     unique_content(i),
@@ -215,10 +215,7 @@ mod stress {
                     let intermediate: String = if level == 0 {
                         format!("branch_{top}")
                     } else {
-                        format!(
-                            "branch_{top}/{}",
-                            parts[..level].join("/")
-                        )
+                        format!("branch_{top}/{}", parts[..level].join("/"))
                     };
                     let idx = 200 + top * 4 + level;
                     touch(
@@ -243,8 +240,8 @@ mod stress {
                 for f in [0, 10, 19] {
                     let global_idx = top * 20 + f;
                     let rel = format!("{leaf}/data_{f:02}.bin");
-                    let actual = fs::read(dest.join(&rel))
-                        .unwrap_or_else(|e| panic!("read {rel}: {e}"));
+                    let actual =
+                        fs::read(dest.join(&rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"));
                     assert_eq!(
                         actual,
                         unique_content(global_idx),
@@ -344,8 +341,8 @@ mod stress {
             // Verify new files exist with correct content.
             for f in [0, 25, 49] {
                 let rel = format!("dir_new/file_{f:03}.dat");
-                let actual = fs::read(dest.join(&rel))
-                    .unwrap_or_else(|e| panic!("read {rel}: {e}"));
+                let actual =
+                    fs::read(dest.join(&rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"));
                 assert_eq!(
                     actual,
                     unique_content(600 + f),
