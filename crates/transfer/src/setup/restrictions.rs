@@ -168,7 +168,7 @@ pub fn apply_protocol_restrictions(
 mod tests {
     use super::*;
 
-    fn proto(version: u32) -> ProtocolVersion {
+    fn proto(version: u8) -> ProtocolVersion {
         ProtocolVersion::try_from(version).unwrap()
     }
 

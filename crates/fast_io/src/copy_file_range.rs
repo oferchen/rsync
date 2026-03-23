@@ -156,7 +156,7 @@ fn try_io_uring_copy(source: &File, destination: &File, length: u64) -> io::Resu
     }
 
     let config = IoUringConfig::default();
-    let ring = config.build_ring()?;
+    let mut ring = config.build_ring()?;
 
     let src_fd = source.as_raw_fd();
     let dst_fd = destination.as_raw_fd();

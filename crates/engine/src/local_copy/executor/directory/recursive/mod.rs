@@ -218,10 +218,10 @@ pub(crate) fn copy_directory_recursive(
                     first_entry_io_error = Some(error);
                 }
             }
-            Err(error) if error.is_io_error() && context.options().delete_extraneous() => {
-                // Record the I/O error so deletions can be suppressed unless
-                // --ignore-errors is set, but continue processing remaining
-                // entries so the deletion phase can still execute.
+            Err(error) if error.is_io_error() => {
+                // upstream: rsync continues transferring remaining entries when
+                // individual files fail with I/O errors (permission denied, etc.),
+                // regardless of whether --delete is active.
                 context.record_io_error();
                 if first_entry_io_error.is_none() {
                     first_entry_io_error = Some(error);

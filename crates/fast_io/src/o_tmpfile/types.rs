@@ -190,8 +190,10 @@ mod tests {
         #[test]
         fn open_returns_unsupported() {
             let dir = tempdir().expect("tempdir");
-            let err = AnonymousTempFile::open(dir.path()).expect_err("should fail");
-            assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+            match AnonymousTempFile::open(dir.path()) {
+                Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::Unsupported),
+                Ok(_) => panic!("should fail on non-Linux"),
+            }
         }
 
         #[test]

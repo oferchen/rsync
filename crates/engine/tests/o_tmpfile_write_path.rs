@@ -8,7 +8,9 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use engine::local_copy::{DestinationWriteGuard, remove_existing_destination};
+use engine::local_copy::DestinationWriteGuard;
+#[cfg(target_os = "linux")]
+use engine::local_copy::remove_existing_destination;
 use fast_io::o_tmpfile::{
     AnonymousTempFile, OTmpfileSupport, TempFileResult, o_tmpfile_probe, open_temp_file,
 };
@@ -327,8 +329,11 @@ mod non_linux {
     #[test]
     fn anonymous_temp_file_open_returns_unsupported() {
         let dir = tempdir().expect("tempdir");
-        let err = AnonymousTempFile::open(dir.path()).expect_err("should fail on non-Linux");
-        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        let result = AnonymousTempFile::open(dir.path());
+        match result {
+            Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::Unsupported),
+            Ok(_) => panic!("should fail on non-Linux"),
+        }
     }
 
     #[test]

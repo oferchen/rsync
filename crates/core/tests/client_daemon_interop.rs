@@ -24,7 +24,6 @@ mod common;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::thread;
 use std::time::Duration;
 
 use filetime::{FileTime, set_file_mtime};
