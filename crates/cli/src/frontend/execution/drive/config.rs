@@ -251,32 +251,24 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .stop_at(inputs.stop_deadline)
         .iconv(inputs.iconv.clone());
 
-    // Configure custom remote shell if specified
     if let Some(ref shell_spec) = inputs.remote_shell {
         match ssh::parse_remote_shell(shell_spec) {
             Ok(args) => {
                 builder = builder.set_remote_shell(args);
             }
-            Err(_e) => {
-                // Invalid remote shell specification - this should have been caught
-                // during argument validation, but handle it gracefully here.
-                // Silently ignore since validation should have caught this earlier.
-            }
+            Err(_e) => {}
         }
     }
 
-    // Configure custom remote rsync path if specified
     if let Some(ref path) = inputs.rsync_path {
         builder = builder.set_rsync_path(path.clone());
     }
 
-    // Configure early-input file if specified
     builder = builder.early_input(inputs.early_input.clone());
     builder = builder
         .prefer_aes_gcm(inputs.prefer_aes_gcm)
         .protect_args(inputs.protect_args);
 
-    // Configure batch mode if specified
     if let Some(batch_cfg) = inputs.batch_config {
         builder = builder.batch_config(Some(batch_cfg));
     }

@@ -21,10 +21,6 @@ trait MappingParser<M> {
     ) -> Result<M, core::message::Message>;
 }
 
-// ---------------------------------------------------------------------------
-// Unix implementations
-// ---------------------------------------------------------------------------
-
 #[cfg(unix)]
 struct UnixUserMappingParser;
 
@@ -69,10 +65,6 @@ impl MappingParser<GroupMapping> for UnixGroupMappingParser {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Windows implementations
-// ---------------------------------------------------------------------------
-
 #[cfg(windows)]
 struct UnsupportedUserMappingParser;
 
@@ -112,10 +104,6 @@ impl MappingParser<GroupMapping> for UnsupportedGroupMappingParser {
         .with_role(core::message::Role::Client))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Public entry points
-// ---------------------------------------------------------------------------
 
 /// Parses a `--usermap` specification into a [`UserMapping`].
 pub(super) fn parse_user_mapping(

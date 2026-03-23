@@ -8,6 +8,7 @@ use std::io::Write;
 
 use super::super::messages::fail_with_message;
 
+/// Validates that at least one transfer operand is present, printing help if not.
 pub(crate) fn ensure_transfer_operands_present<Out, Err>(
     transfer_operands: &[OsString],
     program_name: ProgramName,
@@ -33,6 +34,7 @@ where
     }
 }
 
+/// Renders the help text shown when no operands are provided.
 pub(crate) fn render_missing_operands_stdout(program_name: ProgramName) -> String {
     render_help(program_name)
 }
