@@ -84,13 +84,11 @@ impl<'a> CopyContext<'a> {
             observer,
             dir_merge_ephemeral: Rc::new(RefCell::new(dir_merge_ephemeral)),
             dir_merge_marker_ephemeral: Rc::new(RefCell::new(dir_merge_marker_ephemeral)),
-            deferred_deletions: Vec::new(),
-            deferred_updates: Vec::new(),
+            deferred_ops: DeferredOperationQueue::default(),
             timeout,
             stop_deadline,
             stop_at: stop_at_wallclock,
             last_progress: Instant::now(),
-            created_entries: Vec::new(),
             destination_root,
             safety_depth_offset: 0,
             use_buffer_pool: true,
@@ -99,7 +97,6 @@ impl<'a> CopyContext<'a> {
             checksum_cache: None,
             io_errors_occurred: false,
             verified_parents: HashSet::new(),
-            delay_staging_dirs: HashSet::new(),
             batch_flist_writer,
         }
     }
@@ -359,13 +356,13 @@ impl<'a> CopyContext<'a> {
                 .file_name()
                 .is_some_and(|name| name == super::options::staging::DELAY_UPDATES_PARTIAL_DIR)
             {
-                self.delay_staging_dirs.insert(parent.to_path_buf());
+                self.deferred_ops.delay_staging_dirs.insert(parent.to_path_buf());
             }
         }
         let metadata = update.metadata.clone();
         let destination = update.destination.clone();
         self.record_hard_link(&metadata, destination.as_path());
-        self.deferred_updates.push(update);
+        self.deferred_ops.updates.push(update);
     }
 
     pub(super) fn commit_deferred_update_for(
@@ -373,18 +370,19 @@ impl<'a> CopyContext<'a> {
         destination: &Path,
     ) -> Result<(), LocalCopyError> {
         if let Some(index) = self
-            .deferred_updates
+            .deferred_ops
+            .updates
             .iter()
             .position(|update| update.destination.as_path() == destination)
         {
-            let update = self.deferred_updates.swap_remove(index);
+            let update = self.deferred_ops.updates.swap_remove(index);
             self.finalize_deferred_update(update)?;
         }
         Ok(())
     }
 
     pub(super) fn flush_deferred_updates(&mut self) -> Result<(), LocalCopyError> {
-        let updates = std::mem::take(&mut self.deferred_updates);
+        let updates = std::mem::take(&mut self.deferred_ops.updates);
         for update in updates {
             self.finalize_deferred_update(update)?;
         }
@@ -394,7 +392,7 @@ impl<'a> CopyContext<'a> {
         // committed here and those committed early via `commit_deferred_update_for`.
         //
         // upstream: receiver.c -- handle_partial_dir(partialptr, PDIR_DELETE)
-        let dirs = std::mem::take(&mut self.delay_staging_dirs);
+        let dirs = std::mem::take(&mut self.deferred_ops.delay_staging_dirs);
         for dir in &dirs {
             let _ = fs::remove_dir(dir);
         }
