@@ -43,7 +43,7 @@ mod stress {
         // Vary size by embedding index-proportional padding.
         let padding_len = (index % 256) + 1;
         let mut buf = payload.into_bytes();
-        buf.extend(std::iter::repeat(b'#').take(padding_len));
+        buf.extend(std::iter::repeat_n(b'#', padding_len));
         buf
     }
 
