@@ -284,6 +284,18 @@ impl<'a> Parser<'a> {
             "filter" => {
                 builder.filter.push(value.to_string());
             }
+            "exclude from" => {
+                builder.exclude_from = Some(PathBuf::from(value));
+            }
+            "include from" => {
+                builder.include_from = Some(PathBuf::from(value));
+            }
+            "incoming chmod" => {
+                builder.incoming_chmod = Some(value.to_string());
+            }
+            "outgoing chmod" => {
+                builder.outgoing_chmod = Some(value.to_string());
+            }
             "timeout" => {
                 builder.timeout = Some(value.parse().map_err(|_| {
                     ConfigError::parse_error(self.path, self.line_number, "invalid timeout value")
@@ -392,6 +404,10 @@ struct ModuleBuilder {
     exclude: Vec<String>,
     include: Vec<String>,
     filter: Vec<String>,
+    exclude_from: Option<PathBuf>,
+    include_from: Option<PathBuf>,
+    incoming_chmod: Option<String>,
+    outgoing_chmod: Option<String>,
     timeout: Option<u32>,
     max_verbosity: Option<i32>,
     use_chroot: Option<bool>,
@@ -447,6 +463,10 @@ impl ModuleBuilder {
             exclude: self.exclude,
             include: self.include,
             filter: self.filter,
+            exclude_from: self.exclude_from,
+            include_from: self.include_from,
+            incoming_chmod: self.incoming_chmod,
+            outgoing_chmod: self.outgoing_chmod,
             timeout: self.timeout,
             max_verbosity: self.max_verbosity.unwrap_or(1),
             use_chroot: self.use_chroot.unwrap_or(true),
