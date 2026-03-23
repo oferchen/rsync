@@ -14,6 +14,7 @@ use ::metadata::MetadataOptions;
 
 use crate::local_copy::{
     CopyContext, DeferredUpdate, FinalizeMetadataParams, LocalCopyError, LocalCopyExecution,
+    MetadataPathContext, OwnedPathContext,
 };
 
 use super::super::super::guard::DestinationWriteGuard;
@@ -52,11 +53,13 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
                 metadata.clone(),
                 metadata_options,
                 mode,
-                source.to_path_buf(),
-                relative_for_removal,
+                OwnedPathContext {
+                    source: source.to_path_buf(),
+                    relative: relative_for_removal,
+                    file_type,
+                    destination_previously_existed,
+                },
                 destination_path,
-                file_type,
-                destination_previously_existed,
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
                 #[cfg(all(unix, feature = "acl"))]
@@ -77,10 +80,12 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
                 metadata,
                 metadata_options,
                 mode,
-                source,
-                relative_for_removal.as_deref(),
-                file_type,
-                destination_previously_existed,
+                MetadataPathContext {
+                    source,
+                    relative: relative_for_removal.as_deref(),
+                    file_type,
+                    destination_previously_existed,
+                },
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
                 #[cfg(all(unix, feature = "acl"))]
@@ -100,10 +105,12 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
             metadata,
             metadata_options,
             mode,
-            source,
-            relative,
-            file_type,
-            destination_previously_existed,
+            MetadataPathContext {
+                source,
+                relative,
+                file_type,
+                destination_previously_existed,
+            },
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
             #[cfg(all(unix, feature = "acl"))]

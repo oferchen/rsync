@@ -175,10 +175,7 @@ impl<'a> CopyContext<'a> {
             metadata,
             metadata_options,
             mode,
-            source,
-            relative,
-            file_type,
-            destination_previously_existed,
+            path_context,
             #[cfg(unix)]
             fd,
             #[cfg(all(unix, feature = "xattr"))]
@@ -186,6 +183,13 @@ impl<'a> CopyContext<'a> {
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls,
         } = params;
+
+        let MetadataPathContext {
+            source,
+            relative,
+            file_type,
+            destination_previously_existed,
+        } = path_context;
 
         self.register_created_path(
             destination,
@@ -534,11 +538,8 @@ impl<'a> CopyContext<'a> {
             metadata,
             metadata_options,
             mode,
-            source,
-            relative,
+            path_context,
             destination,
-            file_type,
-            destination_previously_existed,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
             #[cfg(all(unix, feature = "acl"))]
@@ -546,7 +547,7 @@ impl<'a> CopyContext<'a> {
         } = update;
 
         #[cfg(not(any(all(unix, feature = "xattr"), all(unix, feature = "acl"))))]
-        let _ = &source;
+        let _ = &path_context.source;
 
         guard.commit()?;
 
@@ -556,10 +557,12 @@ impl<'a> CopyContext<'a> {
                 metadata: &metadata,
                 metadata_options,
                 mode,
-                source: source.as_path(),
-                relative: relative.as_deref(),
-                file_type,
-                destination_previously_existed,
+                path_context: MetadataPathContext {
+                    source: path_context.source.as_path(),
+                    relative: path_context.relative.as_deref(),
+                    file_type: path_context.file_type,
+                    destination_previously_existed: path_context.destination_previously_existed,
+                },
                 #[cfg(unix)]
                 fd: None, // No fd available for deferred updates
                 #[cfg(all(unix, feature = "xattr"))]

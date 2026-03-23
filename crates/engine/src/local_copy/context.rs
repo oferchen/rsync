@@ -127,14 +127,24 @@ pub(crate) struct CopyContext<'a> {
     batch_flist_writer: Option<FileListWriter>,
 }
 
+/// Path and type context for metadata finalization.
+///
+/// Groups the source path, optional relative path, file type, and whether the
+/// destination previously existed - all describing the "where and what" of the
+/// entry being finalized. Extracted from [`FinalizeMetadataParams`] to reduce
+/// parameter count.
+pub(crate) struct MetadataPathContext<'a> {
+    pub(crate) source: &'a Path,
+    pub(crate) relative: Option<&'a Path>,
+    pub(crate) file_type: fs::FileType,
+    pub(crate) destination_previously_existed: bool,
+}
+
 pub(crate) struct FinalizeMetadataParams<'a> {
     metadata: &'a fs::Metadata,
     metadata_options: MetadataOptions,
     mode: LocalCopyExecution,
-    source: &'a Path,
-    relative: Option<&'a Path>,
-    file_type: fs::FileType,
-    destination_previously_existed: bool,
+    path_context: MetadataPathContext<'a>,
 
     #[cfg(unix)]
     fd: Option<std::os::fd::BorrowedFd<'a>>,
@@ -147,15 +157,11 @@ pub(crate) struct FinalizeMetadataParams<'a> {
 }
 
 impl<'a> FinalizeMetadataParams<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         metadata: &'a fs::Metadata,
         metadata_options: MetadataOptions,
         mode: LocalCopyExecution,
-        source: &'a Path,
-        relative: Option<&'a Path>,
-        file_type: fs::FileType,
-        destination_previously_existed: bool,
+        path_context: MetadataPathContext<'a>,
         #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
         #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
     ) -> Self {
@@ -163,10 +169,7 @@ impl<'a> FinalizeMetadataParams<'a> {
             metadata,
             metadata_options,
             mode,
-            source,
-            relative,
-            file_type,
-            destination_previously_existed,
+            path_context,
             #[cfg(unix)]
             fd: None,
             #[cfg(all(unix, feature = "xattr"))]
@@ -242,16 +245,24 @@ struct DeferredDeletion {
     keep: Vec<OsString>,
 }
 
+/// Owned path and type context for deferred metadata finalization.
+///
+/// Owned equivalent of [`MetadataPathContext`] for storing in [`DeferredUpdate`]
+/// where the paths must outlive the original references.
+pub(crate) struct OwnedPathContext {
+    pub(crate) source: PathBuf,
+    pub(crate) relative: Option<PathBuf>,
+    pub(crate) file_type: fs::FileType,
+    pub(crate) destination_previously_existed: bool,
+}
+
 pub(crate) struct DeferredUpdate {
     guard: DestinationWriteGuard,
     metadata: fs::Metadata,
     metadata_options: MetadataOptions,
     mode: LocalCopyExecution,
-    source: PathBuf,
-    relative: Option<PathBuf>,
+    path_context: OwnedPathContext,
     destination: PathBuf,
-    file_type: fs::FileType,
-    destination_previously_existed: bool,
     #[cfg(all(unix, feature = "xattr"))]
     preserve_xattrs: bool,
     #[cfg(all(unix, feature = "acl"))]
@@ -259,17 +270,13 @@ pub(crate) struct DeferredUpdate {
 }
 
 impl DeferredUpdate {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         guard: DestinationWriteGuard,
         metadata: fs::Metadata,
         metadata_options: MetadataOptions,
         mode: LocalCopyExecution,
-        source: PathBuf,
-        relative: Option<PathBuf>,
+        path_context: OwnedPathContext,
         destination: PathBuf,
-        file_type: fs::FileType,
-        destination_previously_existed: bool,
         #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
         #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
     ) -> Self {
@@ -278,11 +285,8 @@ impl DeferredUpdate {
             metadata,
             metadata_options,
             mode,
-            source,
-            relative,
+            path_context,
             destination,
-            file_type,
-            destination_previously_existed,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
             #[cfg(all(unix, feature = "acl"))]
