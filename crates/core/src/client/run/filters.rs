@@ -9,7 +9,7 @@ use engine::local_copy::{DirMergeRule, ExcludeIfPresentRule, FilterProgram, Filt
 use filters::FilterRule as EngineFilterRule;
 
 use super::super::config::{FilterRuleKind, FilterRuleSpec};
-use super::super::error::{compile_filter_error, ClientError};
+use super::super::error::{ClientError, compile_filter_error};
 
 pub(crate) fn compile_filter_program(
     rules: &[FilterRuleSpec],

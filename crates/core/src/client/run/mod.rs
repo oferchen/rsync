@@ -64,7 +64,7 @@ use tracing::instrument;
 use engine::local_copy::{FilterProgram, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 
 use super::config::{BandwidthLimit, ClientConfig, DeleteMode};
-use super::error::{map_local_copy_error, missing_operands_error, ClientError};
+use super::error::{ClientError, map_local_copy_error, missing_operands_error};
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::remote;
 use super::summary::ClientSummary;
