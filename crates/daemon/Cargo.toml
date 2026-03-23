@@ -69,5 +69,5 @@ xattr = "1.6"
 exacl = { workspace = true }
 
 [[bench]]
-name = "daemon_bench"
+name = "daemon_benchmark"
 harness = false
