@@ -11,6 +11,10 @@ on:
       - 'scripts/**'
       - 'tools/**'
 
+concurrency:
+  group: ci-skip-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

@@ -285,13 +285,13 @@ mod tests {
 
     #[test]
     fn whole_file_strategy_default() {
-        let strategy = WholeFileStrategy::default();
+        let strategy = WholeFileStrategy;
         assert_eq!(strategy.kind(), DeltaWorkKind::WholeFile);
     }
 
     #[test]
     fn delta_transfer_strategy_default() {
-        let strategy = DeltaTransferStrategy::default();
+        let strategy = DeltaTransferStrategy;
         assert_eq!(strategy.kind(), DeltaWorkKind::Delta);
     }
 }

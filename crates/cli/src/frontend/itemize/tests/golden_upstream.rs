@@ -23,7 +23,7 @@ fn golden_direction_sent() {
         .with_update_type(UpdateType::Sent)
         .with_file_type(FileType::RegularFile)
         .with_checksum_changed(true);
-    assert_eq!(change.format(), "<f.c.......");
+    assert_eq!(change.format(), "<fc........");
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn golden_direction_received() {
         .with_update_type(UpdateType::Received)
         .with_file_type(FileType::RegularFile)
         .with_checksum_changed(true);
-    assert_eq!(change.format(), ">f.c.......");
+    assert_eq!(change.format(), ">fc........");
 }
 
 #[test]

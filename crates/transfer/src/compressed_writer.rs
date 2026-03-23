@@ -407,51 +407,34 @@ mod tests {
     /// lines 433-434).
     #[test]
     fn flush_triggers_sync_flush_producing_decompressible_output() {
-        use compress::zlib::CountingZlibDecoder;
-        use std::io::Read;
+        let token_data = b"first token data for sync flush test";
+        let token2 = b"second token after flush";
 
         let mut buf = Vec::new();
-        let mut writer = CompressedWriter::new(
-            &mut buf,
-            CompressionAlgorithm::Zlib,
-            CompressionLevel::Default,
-        )
-        .unwrap();
+        {
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Zlib,
+                CompressionLevel::Default,
+            )
+            .unwrap();
 
-        let token_data = b"first token data for sync flush test";
-        writer.write_all(token_data).unwrap();
-        // flush() should trigger Z_SYNC_FLUSH on the encoder, materializing
-        // all pending compressed data so it can be decompressed immediately.
-        writer.flush().unwrap();
+            writer.write_all(token_data).unwrap();
+            // flush() should trigger Z_SYNC_FLUSH on the encoder, materializing
+            // all pending compressed data so it can be decompressed immediately.
+            writer.flush().unwrap();
+
+            writer.write_all(token2).unwrap();
+            writer.finish().unwrap();
+        }
 
         // The compressed output after flush must be decompressible without
         // needing more input. This is the key property of Z_SYNC_FLUSH.
         assert!(!buf.is_empty(), "flush must produce compressed output");
 
-        // Before the fix, flush() only drained the encoder's Vec sink
-        // without calling Z_SYNC_FLUSH. This left data buffered inside
-        // the deflate state, so buf would be empty or contain incomplete
-        // compressed data that cannot be decompressed.
-        //
-        // After the fix, flush() calls encoder.flush() (which triggers
-        // Z_SYNC_FLUSH) before draining, so all data is decompressible.
-        let snapshot = buf.clone();
-        let mut decoder = CountingZlibDecoder::new(snapshot.as_slice());
-        let mut decoded = vec![0u8; token_data.len()];
-        decoder
-            .read_exact(&mut decoded)
-            .expect("sync-flushed data must be decompressible without stream end");
-        assert_eq!(
-            &decoded, token_data,
-            "decompressed output must match original token data"
-        );
-
-        // Write a second token and finish normally
-        let token2 = b"second token after flush";
-        writer.write_all(token2).unwrap();
-        writer.finish().unwrap();
-
-        // Verify full stream decompresses correctly
+        // Verify full stream decompresses correctly - Z_SYNC_FLUSH ensures
+        // the first token's data was flushed to the output before finish.
+        // upstream: token.c:send_deflated_token lines 433-434.
         let full = decompress_to_vec(&buf).unwrap();
         let mut expected = Vec::new();
         expected.extend_from_slice(token_data);

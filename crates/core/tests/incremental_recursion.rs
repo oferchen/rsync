@@ -164,6 +164,8 @@ fn symlinks_within_incremental_directories() {
             .expect("symlink same dir");
         std::os::unix::fs::symlink("sub/deep.txt", source.join("dir1/link_to_deep"))
             .expect("symlink to deep");
+        // Parent directory must exist before creating symlink
+        fs::create_dir_all(source.join("dir2/nested")).expect("create dir2/nested");
         std::os::unix::fs::symlink("../../dir1/real.txt", source.join("dir2/nested/link_up"))
             .expect("symlink upward");
         std::os::unix::fs::symlink("dir1/sub", source.join("link_to_subdir"))

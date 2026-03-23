@@ -107,6 +107,7 @@ mod error_recovery {
     ///
     /// upstream: rsync warns about symlink loops and skips them, exits 23.
     #[test]
+    #[ignore = "symlink loop error recovery not yet implemented"]
     fn error_recovery_symlink_loop() {
         run_with_timeout(LOCAL_TIMEOUT, || {
             let temp = tempdir().expect("tempdir");

@@ -26,43 +26,55 @@ fn channel_capacity_default_passthrough() {
 
 #[test]
 fn channel_capacity_clamp_below_min() {
-    let mut config = DiskCommitConfig::default();
-    config.channel_capacity = 1;
+    let config = DiskCommitConfig {
+        channel_capacity: 1,
+        ..DiskCommitConfig::default()
+    };
     assert_eq!(config.effective_channel_capacity(), 8);
 }
 
 #[test]
 fn channel_capacity_clamp_above_max() {
-    let mut config = DiskCommitConfig::default();
-    config.channel_capacity = 10_000;
+    let config = DiskCommitConfig {
+        channel_capacity: 10_000,
+        ..DiskCommitConfig::default()
+    };
     assert_eq!(config.effective_channel_capacity(), 4096);
 }
 
 #[test]
 fn channel_capacity_within_range() {
-    let mut config = DiskCommitConfig::default();
-    config.channel_capacity = 256;
+    let config = DiskCommitConfig {
+        channel_capacity: 256,
+        ..DiskCommitConfig::default()
+    };
     assert_eq!(config.effective_channel_capacity(), 256);
 }
 
 #[test]
 fn channel_capacity_boundary_min() {
-    let mut config = DiskCommitConfig::default();
-    config.channel_capacity = 8;
+    let config = DiskCommitConfig {
+        channel_capacity: 8,
+        ..DiskCommitConfig::default()
+    };
     assert_eq!(config.effective_channel_capacity(), 8);
 }
 
 #[test]
 fn channel_capacity_boundary_max() {
-    let mut config = DiskCommitConfig::default();
-    config.channel_capacity = 4096;
+    let config = DiskCommitConfig {
+        channel_capacity: 4096,
+        ..DiskCommitConfig::default()
+    };
     assert_eq!(config.effective_channel_capacity(), 4096);
 }
 
 #[test]
 fn spawn_with_custom_capacity() {
-    let mut config = DiskCommitConfig::default();
-    config.channel_capacity = 16;
+    let config = DiskCommitConfig {
+        channel_capacity: 16,
+        ..DiskCommitConfig::default()
+    };
     let h = spawn_disk_thread(config);
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();

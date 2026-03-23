@@ -228,12 +228,13 @@ mod exit_code_3_file_select {
             "/nonexistent/path/that/does/not/exist/anywhere",
             dest_dir.to_str().unwrap(),
         ]);
-        // Note: Upstream rsync returns 23 (partial) for this case
-        // Our implementation should match upstream behavior
+        // upstream: main.c:1338-1345 - ENOENT maps to RERR_VANISHED (24),
+        // but may also return 3 (file select) or 23 (partial) depending on
+        // where the error is caught.
         let code = output.status.code().unwrap_or(-1);
         assert!(
-            code == 3 || code == 23,
-            "Nonexistent source should return 3 (file select) or 23 (partial), got {code}"
+            code == 3 || code == 23 || code == 24,
+            "Nonexistent source should return 3, 23, or 24, got {code}"
         );
     }
 
@@ -1100,11 +1101,13 @@ mod binary_exit_codes {
             dest_dir.to_str().unwrap(),
         ]);
 
-        // May return 3 (file select) or 23 (partial) depending on implementation
+        // upstream: main.c:1338-1345 - ENOENT maps to RERR_VANISHED (24),
+        // but may also return 3 (file select) or 23 (partial) depending on
+        // where the error is caught.
         let code = output.status.code().unwrap_or(-1);
         assert!(
-            code == 3 || code == 23,
-            "Nonexistent source should return 3 or 23, got {code}"
+            code == 3 || code == 23 || code == 24,
+            "Nonexistent source should return 3, 23, or 24, got {code}"
         );
     }
 
@@ -1119,10 +1122,12 @@ mod binary_exit_codes {
             dest_dir.to_str().unwrap(),
         ]);
 
+        // upstream: main.c:1338-1345 - ENOENT maps to RERR_VANISHED (24),
+        // but may also return 3 (file select) or 23 (partial).
         let code = output.status.code().unwrap_or(-1);
         assert!(
-            code == 3 || code == 23,
-            "Nonexistent source directory should return 3 or 23, got {code}"
+            code == 3 || code == 23 || code == 24,
+            "Nonexistent source directory should return 3, 23, or 24, got {code}"
         );
     }
 
