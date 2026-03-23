@@ -20,7 +20,7 @@ use super::super::session_registry::{SessionId, SessionRegistry, SessionState};
 #[cfg(feature = "concurrent-sessions")]
 use super::super::connection_pool::{ConnectionId, ConnectionPool};
 
-use super::AsyncDaemonError;
+use super::shutdown::AsyncDaemonError;
 use super::listener::ListenerConfig;
 
 /// An async daemon session.
