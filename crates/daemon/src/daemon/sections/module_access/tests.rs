@@ -978,17 +978,18 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
 
-        // Order: filter, include, exclude, include_from, exclude_from
+        // upstream: clientserver.c:874-893 - order is:
+        // filter, include_from, include, exclude_from, exclude
         assert_eq!(rules.len(), 5);
         assert_eq!(rules[0].pattern, "*.tmp");
         assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rules[1].pattern, "*.toml");
+        assert_eq!(rules[1].pattern, "*.rs");
         assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Include);
-        assert_eq!(rules[2].pattern, "*.bak");
-        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rules[3].pattern, "*.rs");
-        assert_eq!(rules[3].rule_type, protocol::filters::RuleType::Include);
-        assert_eq!(rules[4].pattern, "*.log");
+        assert_eq!(rules[2].pattern, "*.toml");
+        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[3].pattern, "*.log");
+        assert_eq!(rules[3].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[4].pattern, "*.bak");
         assert_eq!(rules[4].rule_type, protocol::filters::RuleType::Exclude);
     }
 
@@ -1005,9 +1006,25 @@ mod module_access_tests {
     }
 
     #[test]
-    fn build_daemon_filter_rules_directory_only_pattern() {
+    fn build_daemon_filter_rules_directory_only_exclude_gets_dir2wild3() {
+        // upstream: exclude.c:211-217 - XFLG_DIR2WILD3 converts directory-only
+        // exclude patterns from "dir/" to "dir/***" and clears FILTRULE_DIRECTORY.
         let module = ModuleRuntime::from(ModuleDefinition {
             exclude: vec!["cache/".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "cache/***");
+        assert!(!rules[0].directory_only);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_directory_only_include_keeps_slash() {
+        // upstream: exclude.c:213 - DIR2WILD3 only applies to exclude rules,
+        // not include rules (BITS_SETnUNSET(FILTRULE_DIRECTORY, FILTRULE_INCLUDE)).
+        let module = ModuleRuntime::from(ModuleDefinition {
+            include: vec!["cache/".to_string()],
             ..Default::default()
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
@@ -1062,8 +1079,16 @@ mod module_access_tests {
     }
 
     #[test]
-    fn build_pattern_rule_directory_only() {
+    fn build_pattern_rule_directory_only_exclude_dir2wild3() {
+        // upstream: exclude.c:211-217 - XFLG_DIR2WILD3 transforms dir/ to dir/***
         let rule = build_pattern_rule("build/", false);
+        assert!(!rule.directory_only);
+        assert_eq!(rule.pattern, "build/***");
+    }
+
+    #[test]
+    fn build_pattern_rule_directory_only_include_preserved() {
+        let rule = build_pattern_rule("build/", true);
         assert!(rule.directory_only);
         assert_eq!(rule.pattern, "build/");
     }
