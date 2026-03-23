@@ -1,4 +1,5 @@
 impl<'a> CopyContext<'a> {
+    /// Records a skip event for a non-regular file (e.g. socket, unknown type).
     pub(super) fn record_skipped_non_regular(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
             self.record(LocalCopyRecord::new(
@@ -12,6 +13,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records a skip event for a directory (when `-r` is not enabled).
     pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
             self.record(LocalCopyRecord::new(
@@ -25,6 +27,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records a skip event for a mount-point boundary (`--one-file-system`).
     pub(super) fn record_skipped_mount_point(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
             self.record(LocalCopyRecord::new(
@@ -38,6 +41,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records a skip event for a symlink rejected by `--safe-links`.
     pub(super) fn record_skipped_unsafe_symlink(
         &mut self,
         relative: Option<&Path>,
@@ -57,12 +61,14 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records the elapsed time spent generating the file list.
     pub(super) const fn record_file_list_generation(&mut self, elapsed: Duration) {
         if !elapsed.is_zero() {
             self.summary.record_file_list_generation(elapsed);
         }
     }
 
+    /// Records a file list entry and accumulates its wire-encoded size.
     pub(super) fn record_file_list_entry(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
             let size = encoded_path_len(path);
@@ -70,6 +76,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records the elapsed time spent transferring the file list over the wire.
     #[allow(dead_code)]
     pub(super) const fn record_file_list_transfer(&mut self, elapsed: Duration) {
         if !elapsed.is_zero() {
@@ -77,6 +84,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Consumes the context and returns the final [`CopyOutcome`].
     pub(super) fn into_outcome(self) -> CopyOutcome {
         CopyOutcome {
             summary: self.summary,
@@ -85,6 +93,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Queues a directory for deferred deletion (processed after the transfer).
     pub(super) fn defer_deletion(
         &mut self,
         destination: PathBuf,
@@ -98,6 +107,7 @@ impl<'a> CopyContext<'a> {
         });
     }
 
+    /// Executes all queued deferred deletions, unless I/O errors suppress them.
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
         if !self.deletions_allowed() {
             // I/O errors occurred and --ignore-errors is not set;
@@ -114,6 +124,7 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Tracks a newly created filesystem entry for rollback on timeout.
     pub(super) fn register_created_path(
         &mut self,
         path: &Path,
@@ -129,6 +140,7 @@ impl<'a> CopyContext<'a> {
         });
     }
 
+    /// Returns the path of the most recently created entry, if any.
     pub(crate) fn last_created_entry_path(&self) -> Option<&Path> {
         self.deferred_ops
             .created_entries
@@ -136,16 +148,20 @@ impl<'a> CopyContext<'a> {
             .map(|entry| entry.path.as_path())
     }
 
+    /// Removes the most recently created entry from the rollback tracker.
     pub(crate) fn pop_last_created_entry(&mut self) {
         self.deferred_ops.created_entries.pop();
     }
 
+    /// Rolls back created entries if the error is a timeout.
     pub(super) fn rollback_on_error(&mut self, error: &LocalCopyError) {
         if matches!(error.kind(), LocalCopyErrorKind::Timeout { .. }) {
             self.rollback_created_entries();
         }
     }
 
+    /// Removes all entries created during the transfer (files, dirs, symlinks,
+    /// etc.) in reverse order.
     pub(super) fn rollback_created_entries(&mut self) {
         while let Some(entry) = self.deferred_ops.created_entries.pop() {
             match entry.kind {
@@ -164,6 +180,8 @@ impl<'a> CopyContext<'a> {
     }
 }
 
+/// Returns the wire-encoded byte length of a path (platform-aware, with null
+/// terminator).
 fn encoded_path_len(path: &Path) -> usize {
     const NULL_TERMINATOR: usize = 1;
 
