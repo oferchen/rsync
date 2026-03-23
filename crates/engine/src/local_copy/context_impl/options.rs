@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 
 impl<'a> CopyContext<'a> {
+    /// Builds a [`MetadataOptions`] snapshot from the current copy options.
     pub(super) fn metadata_options(&self) -> MetadataOptions {
         MetadataOptions::new()
             .preserve_owner(self.options.preserve_owner())
@@ -243,6 +244,9 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Ensures the parent directory exists, creating it if `--implied-dirs` or
+    /// `--mkpath` is enabled, or replacing a non-directory obstacle when
+    /// `--force` is set.
     pub(super) fn prepare_parent_directory(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         if parent.as_os_str().is_empty() {
             return Ok(());
@@ -361,6 +365,8 @@ impl<'a> CopyContext<'a> {
         self.options.compress_enabled()
     }
 
+    /// Returns whether compression should be used for this file, considering
+    /// the skip-compress suffix list.
     pub(super) fn should_compress(&self, relative: &Path) -> bool {
         self.compress_enabled() && !self.options.should_skip_compress(relative)
     }
@@ -431,6 +437,8 @@ impl<'a> CopyContext<'a> {
         self.options.preserve_xattrs()
     }
 
+    /// Evaluates filter rules to determine whether the entry is allowed for
+    /// transfer. Returns `true` if the entry passes all filters.
     pub(super) fn allows(&self, relative: &Path, is_dir: bool) -> bool {
         if let Some(program) = &self.filter_program {
             let layers = self.dir_merge_layers.borrow();
@@ -472,6 +480,8 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Evaluates filter rules to determine whether a destination entry may be
+    /// deleted. Respects `--delete-excluded` when enabled.
     pub(super) fn allows_deletion(&self, relative: &Path, is_dir: bool) -> bool {
         let delete_excluded = self.options.delete_excluded_enabled();
         if let Some(program) = &self.filter_program {
