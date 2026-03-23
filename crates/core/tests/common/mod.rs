@@ -23,8 +23,11 @@ use tempfile::{TempDir, tempdir};
 /// Default timeout for daemon readiness checks.
 const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Polling interval for TCP readiness probe.
-const READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Initial polling interval for TCP readiness probe (exponential backoff).
+const READY_POLL_INITIAL: Duration = Duration::from_millis(10);
+
+/// Maximum polling interval for TCP readiness probe (exponential backoff cap).
+const READY_POLL_MAX: Duration = Duration::from_millis(200);
 
 /// Upstream rsync binary paths (relative to workspace root).
 #[allow(dead_code)]
@@ -256,10 +259,12 @@ numeric ids = yes
 
     /// Wait for daemon to accept TCP connections.
     ///
-    /// Polls with exponential backoff starting at `READY_POLL_INTERVAL`.
-    /// Returns error if timeout is reached before daemon is ready.
+    /// Polls with exponential backoff starting at `READY_POLL_INITIAL`,
+    /// doubling each iteration up to `READY_POLL_MAX`. This reduces
+    /// wasted time on fast startups while avoiding busy-spinning on slow CI.
     fn wait_ready(&self, timeout: Duration) -> io::Result<()> {
         let start = Instant::now();
+        let mut delay = READY_POLL_INITIAL;
         loop {
             if start.elapsed() > timeout {
                 let log = self
@@ -276,7 +281,10 @@ numeric ids = yes
 
             match TcpStream::connect(format!("127.0.0.1:{}", self.port)) {
                 Ok(_) => return Ok(()),
-                Err(_) => thread::sleep(READY_POLL_INTERVAL),
+                Err(_) => {
+                    thread::sleep(delay);
+                    delay = (delay * 2).min(READY_POLL_MAX);
+                }
             }
         }
     }
