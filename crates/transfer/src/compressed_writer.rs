@@ -407,9 +407,6 @@ mod tests {
     /// lines 433-434).
     #[test]
     fn flush_triggers_sync_flush_producing_decompressible_output() {
-        use compress::zlib::CountingZlibDecoder;
-        use std::io::Read;
-
         let token_data = b"first token data for sync flush test";
         let token2 = b"second token after flush";
 
