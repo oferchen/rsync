@@ -1,4 +1,7 @@
 impl<'a> CopyContext<'a> {
+    /// Creates a new copy context from the execution mode, options, and
+    /// optional event observer. Initialises the bandwidth limiter, filter
+    /// program, buffer pool, and deferred-sync strategy.
     pub(super) fn new(
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
@@ -43,7 +46,6 @@ impl<'a> CopyContext<'a> {
             let proto_version = guard.config().protocol_version;
             let compat_flags_val = guard.config().compat_flags;
             drop(guard);
-            // Protocol version from batch config is i32; convert to u8 for ProtocolVersion
             let protocol = protocol::ProtocolVersion::try_from(proto_version as u8)
                 .unwrap_or(protocol::ProtocolVersion::NEWEST);
             // upstream: io.c:start_write_batch() - compat_flags are written to the batch
@@ -101,10 +103,13 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records that forward progress was made, resetting the timeout clock.
     pub(super) fn register_progress(&mut self) {
         self.last_progress = Instant::now();
     }
 
+    /// Returns an error if the inactivity timeout or wall-clock deadline has
+    /// been exceeded.
     pub(super) fn enforce_timeout(&mut self) -> Result<(), LocalCopyError> {
         if let Some(limit) = self.timeout
             && self.last_progress.elapsed() > limit
@@ -120,28 +125,35 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Returns the execution mode (real or dry-run).
     pub(super) const fn mode(&self) -> LocalCopyExecution {
         self.mode
     }
 
+    /// Returns a reference to the full set of copy options.
     pub(super) const fn options(&self) -> &LocalCopyOptions {
         &self.options
     }
 
+    /// Returns whether `--one-file-system` (`-x`) is enabled.
     pub(super) const fn one_file_system_enabled(&self) -> bool {
         self.options.one_file_system_enabled()
     }
 
+    /// Returns the `--one-file-system` nesting level (0, 1, or 2).
     pub(super) const fn one_file_system_level(&self) -> u8 {
         self.options.one_file_system_level()
     }
 
+    /// Records a hard-link source if `--hard-links` is enabled.
     pub(super) fn record_hard_link(&mut self, metadata: &fs::Metadata, destination: &Path) {
         if self.options.hard_links_enabled() {
             self.hard_links.record(metadata, destination);
         }
     }
 
+    /// Returns the existing hard-link target for a file, if one was previously
+    /// recorded with the same inode/device.
     pub(super) fn existing_hard_link_target(&self, metadata: &fs::Metadata) -> Option<PathBuf> {
         if self.options.hard_links_enabled() {
             self.hard_links.existing_target(metadata)
@@ -150,10 +162,12 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Returns whether `--delay-updates` is enabled.
     pub(super) const fn delay_updates_enabled(&self) -> bool {
         self.options.delay_updates_enabled()
     }
 
+    /// Returns the root destination directory for the transfer.
     pub(super) fn destination_root(&self) -> &Path {
         &self.destination_root
     }
@@ -273,6 +287,8 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Searches `--link-dest` directories for a file matching the source,
+    /// returning the first candidate that passes the quick-check comparison.
     pub(super) fn link_dest_target(
         &self,
         relative: &Path,
@@ -323,6 +339,8 @@ impl<'a> CopyContext<'a> {
         Ok(None)
     }
 
+    /// Returns the configured `--link-dest` / `--copy-dest` / `--compare-dest`
+    /// reference directories.
     pub(super) fn reference_directories(&self) -> &[ReferenceDirectory] {
         self.options.reference_directories()
     }
@@ -352,6 +370,8 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Queues a deferred update for `--delay-updates` and records the hard-link
+    /// source. The staging directory is tracked for cleanup after commit.
     pub(super) fn register_deferred_update(&mut self, update: DeferredUpdate) {
         // Track the `.~tmp~` staging directory for cleanup after all updates
         // are committed.
@@ -369,6 +389,8 @@ impl<'a> CopyContext<'a> {
         self.deferred_ops.updates.push(update);
     }
 
+    /// Commits a single deferred update matching the given destination path,
+    /// if one exists in the queue.
     pub(super) fn commit_deferred_update_for(
         &mut self,
         destination: &Path,
@@ -385,6 +407,8 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Commits all remaining deferred updates and removes empty staging
+    /// directories.
     pub(super) fn flush_deferred_updates(&mut self) -> Result<(), LocalCopyError> {
         let updates = std::mem::take(&mut self.deferred_ops.updates);
         for update in updates {
@@ -404,6 +428,8 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Renames or copies an existing destination entry to the backup location
+    /// when `--backup` is enabled.
     pub(super) fn backup_existing_entry(
         &mut self,
         destination: &Path,
@@ -461,6 +487,8 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Forcibly removes a destination entry (backing it up first if needed),
+    /// and records the deletion in the summary.
     pub(super) fn force_remove_destination(
         &mut self,
         destination: &Path,
@@ -527,6 +555,8 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Commits a single deferred update: moves the staged file to its final
+    /// path and applies metadata.
     pub(super) fn finalize_deferred_update(
         &mut self,
         update: DeferredUpdate,
@@ -571,14 +601,17 @@ impl<'a> CopyContext<'a> {
         )
     }
 
+    /// Returns the configured delete timing (before, during, after, or delay).
     pub(super) const fn delete_timing(&self) -> Option<DeleteTiming> {
         self.options.delete_timing()
     }
 
+    /// Returns the `--min-size` limit, if set.
     pub(super) const fn min_file_size_limit(&self) -> Option<u64> {
         self.options.min_file_size_limit()
     }
 
+    /// Returns the `--max-size` limit, if set.
     pub(super) const fn max_file_size_limit(&self) -> Option<u64> {
         self.options.max_file_size_limit()
     }
