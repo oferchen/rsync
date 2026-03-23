@@ -247,10 +247,10 @@ pub(crate) struct DeferredOperationQueue {
     pub(crate) created_entries: Vec<CreatedEntry>,
 }
 
-struct DeferredDeletion {
-    destination: PathBuf,
-    relative: Option<PathBuf>,
-    keep: Vec<OsString>,
+pub(crate) struct DeferredDeletion {
+    pub(crate) destination: PathBuf,
+    pub(crate) relative: Option<PathBuf>,
+    pub(crate) keep: Vec<OsString>,
 }
 
 pub(crate) struct DeferredUpdate {
@@ -303,9 +303,9 @@ impl DeferredUpdate {
 }
 
 #[derive(Clone, Debug)]
-struct CreatedEntry {
-    path: PathBuf,
-    kind: CreatedEntryKind,
+pub(crate) struct CreatedEntry {
+    pub(crate) path: PathBuf,
+    pub(crate) kind: CreatedEntryKind,
 }
 
 #[derive(Clone, Copy, Debug)]
