@@ -15,6 +15,10 @@ include!("server_runtime/connection_counter.rs");
 
 include!("server_runtime/workers.rs");
 
+include!("server_runtime/reload.rs");
+
+include!("server_runtime/connection.rs");
+
 include!("server_runtime/accept_loop.rs");
 
 #[cfg(test)]
