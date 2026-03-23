@@ -307,11 +307,13 @@ fn deferred_updates_flush_commits_pending_files() {
         metadata.clone(),
         metadata_options,
         LocalCopyExecution::Apply,
-        source,
-        Some(std::path::PathBuf::from("file.txt")),
+        OwnedPathContext {
+            source,
+            relative: Some(std::path::PathBuf::from("file.txt")),
+            file_type: metadata.file_type(),
+            destination_previously_existed: false,
+        },
         final_path,
-        metadata.file_type(),
-        false,
         #[cfg(all(unix, feature = "xattr"))]
         context.xattrs_enabled(),
         #[cfg(all(unix, feature = "acl"))]
