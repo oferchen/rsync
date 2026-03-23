@@ -74,3 +74,8 @@ base64 = "0.22"
 libc = "0.2"
 apple-fs = { path = "../apple-fs" }
 serial_test = "3.1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "startup_benchmark"
+harness = false
