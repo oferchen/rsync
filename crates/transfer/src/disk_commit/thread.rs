@@ -14,9 +14,6 @@ use super::config::DiskCommitConfig;
 use super::process::{process_file, process_whole_file};
 use super::writer::WRITE_BUF_SIZE;
 
-// Channel capacity is now configurable via DiskCommitConfig::channel_capacity.
-// See config.rs for DEFAULT_CHANNEL_CAPACITY and clamping bounds.
-
 /// Channels and handle returned by [`spawn_disk_thread`].
 pub struct DiskThreadHandle {
     /// Send `FileMessage` items to the disk thread.
