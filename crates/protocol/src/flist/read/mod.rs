@@ -418,7 +418,11 @@ impl FileListReader {
     /// metadata on the wire and must NOT skip reading it.
     /// upstream: flist.c:recv_file_entry() line 793
     #[inline]
-    pub(crate) fn is_abbreviated_follower(&self, flags: FileFlags, hardlink_idx: Option<u32>) -> bool {
+    pub(crate) fn is_abbreviated_follower(
+        &self,
+        flags: FileFlags,
+        hardlink_idx: Option<u32>,
+    ) -> bool {
         if !flags.hlinked() || flags.hlink_first() {
             return false;
         }
