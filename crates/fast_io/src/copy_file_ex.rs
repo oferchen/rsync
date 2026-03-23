@@ -85,7 +85,6 @@ pub const NO_BUFFERING_THRESHOLD: u64 = 4 * 1024 * 1024;
 ///     Err(e) => eprintln!("Copy failed: {e}"),
 /// }
 /// ```
-#[must_use]
 pub fn try_copy_file_ex(src: &Path, dst: &Path) -> io::Result<u64> {
     try_copy_file_ex_impl(src, dst)
 }

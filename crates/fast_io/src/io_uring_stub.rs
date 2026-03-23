@@ -690,7 +690,7 @@ mod tests {
     use super::*;
     use crate::IoUringPolicy;
     use crate::traits::{FileReader, FileWriter};
-    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::io::{Read, Write};
     use tempfile::{NamedTempFile, tempdir};
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1043,18 +1043,16 @@ mod tests {
         };
 
         let reader_result = socket_reader_from_fd(fd_b, 8192, IoUringPolicy::Enabled);
-        assert!(reader_result.is_err());
-        assert_eq!(
-            reader_result.unwrap_err().kind(),
-            io::ErrorKind::Unsupported
-        );
+        match reader_result {
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::Unsupported),
+            Ok(_) => panic!("expected Unsupported error for reader"),
+        }
 
         let writer_result = socket_writer_from_fd(fd_a, 8192, IoUringPolicy::Enabled);
-        assert!(writer_result.is_err());
-        assert_eq!(
-            writer_result.unwrap_err().kind(),
-            io::ErrorKind::Unsupported
-        );
+        match writer_result {
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::Unsupported),
+            Ok(_) => panic!("expected Unsupported error for writer"),
+        }
 
         unsafe {
             libc::close(fd_a);

@@ -130,7 +130,14 @@ impl fmt::Display for SourceLocation {
 /// ```
 #[must_use]
 pub fn file_basename(path: &str) -> &str {
-    let last_sep = path.rfind('/').or_else(|| path.rfind('\\'));
+    let last_fwd = path.rfind('/');
+    let last_back = path.rfind('\\');
+    let last_sep = match (last_fwd, last_back) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
     match last_sep {
         Some(pos) => &path[pos + 1..],
         None => path,

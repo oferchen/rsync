@@ -7,6 +7,7 @@
 //!
 //! These tests require Unix chmod semantics and are gated with `#[cfg(unix)]`.
 
+#[cfg(unix)]
 mod test_timeout;
 
 #[cfg(unix)]

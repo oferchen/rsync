@@ -175,6 +175,12 @@ impl Lz4Strategy {
     pub const fn with_default_level() -> Self {
         Self::new(CompressionLevel::Default)
     }
+
+    /// Returns the configured compression level.
+    #[must_use]
+    pub const fn level(&self) -> CompressionLevel {
+        self.level
+    }
 }
 
 #[cfg(feature = "lz4")]
