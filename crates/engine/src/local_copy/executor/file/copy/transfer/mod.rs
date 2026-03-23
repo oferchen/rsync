@@ -11,11 +11,13 @@
 //! - `finalize` - guard commit and metadata application
 //! - `open` - source file opening with `O_NOATIME` support
 //! - `special` - non-regular files copied as empty regular files
+//! - `write_strategy` - write strategy selection (append, inplace, direct, temp-file)
 
 mod execute;
 mod finalize;
 mod open;
 mod special;
+mod write_strategy;
 
 pub(super) use execute::execute_transfer;
 #[cfg(test)]
