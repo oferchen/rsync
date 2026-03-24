@@ -318,7 +318,9 @@ fn include_anchored_multi_component() {
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.allows(Path::new("src/bin"), true));
-    assert!(set.allows(Path::new("src/bin/main.rs"), false));
+    // upstream: directory-only include does NOT include file contents -
+    // they fall through to --exclude '*'
+    assert!(!set.allows(Path::new("src/bin/main.rs"), false));
 
     assert!(!set.allows(Path::new("other/src/bin"), true));
 }
