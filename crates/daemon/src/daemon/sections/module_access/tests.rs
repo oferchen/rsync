@@ -1227,4 +1227,26 @@ mod module_access_tests {
         let args: Vec<String> = vec![];
         assert!(!has_secluded_args_flag(&args));
     }
+
+    #[test]
+    fn secluded_args_not_in_capability_string() {
+        // The 's' in `.iLsfxCIvu` is SYMLINK_ICONV, not secluded-args.
+        // `-e` consumes the rest as its parameter, so scanning must stop at 'e'.
+        // upstream: options.c uses popt which knows `-e` takes an argument.
+        let args: Vec<String> = vec!["--server", "-vlogDtpre.iLsfxCIvu", "."]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(!has_secluded_args_flag(&args));
+    }
+
+    #[test]
+    fn secluded_args_before_e_in_compact_flags() {
+        // `-s` appearing before `-e` in compact flags should still be detected.
+        let args: Vec<String> = vec!["--server", "-vlogDtprse.iLfxCIvu", "."]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(has_secluded_args_flag(&args));
+    }
 }
