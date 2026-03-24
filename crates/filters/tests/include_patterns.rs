@@ -948,7 +948,8 @@ fn include_paths_with_spaces() {
 
     assert!(set.allows(Path::new("my file.txt"), false));
     assert!(set.allows(Path::new("folder with spaces"), true));
-    assert!(set.allows(Path::new("folder with spaces/data.txt"), false));
+    // upstream: directory-only include does NOT include file contents
+    assert!(!set.allows(Path::new("folder with spaces/data.txt"), false));
 }
 
 /// Verifies include pattern case sensitivity.
