@@ -155,6 +155,10 @@ pub struct ModuleConfig {
     pub(crate) exclude: Vec<String>,
     pub(crate) include: Vec<String>,
     pub(crate) filter: Vec<String>,
+    pub(crate) exclude_from: Option<PathBuf>,
+    pub(crate) include_from: Option<PathBuf>,
+    pub(crate) incoming_chmod: Option<String>,
+    pub(crate) outgoing_chmod: Option<String>,
     pub(crate) timeout: Option<u32>,
     pub(crate) max_verbosity: i32,
     pub(crate) use_chroot: bool,
@@ -271,6 +275,36 @@ impl ModuleConfig {
     /// any client-side filters. Upstream: `loadparm.c` - `filter` parameter.
     pub fn filter(&self) -> &[String] {
         &self.filter
+    }
+
+    /// Returns the path to a file containing exclude patterns, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `exclude from` parameter.
+    pub fn exclude_from(&self) -> Option<&Path> {
+        self.exclude_from.as_deref()
+    }
+
+    /// Returns the path to a file containing include patterns, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `include from` parameter.
+    pub fn include_from(&self) -> Option<&Path> {
+        self.include_from.as_deref()
+    }
+
+    /// Returns the incoming chmod specification, if configured.
+    ///
+    /// Applied to files received by the daemon (push transfers).
+    /// Upstream: `loadparm.c` - `incoming chmod` parameter.
+    pub fn incoming_chmod(&self) -> Option<&str> {
+        self.incoming_chmod.as_deref()
+    }
+
+    /// Returns the outgoing chmod specification, if configured.
+    ///
+    /// Applied to files sent by the daemon (pull transfers).
+    /// Upstream: `loadparm.c` - `outgoing chmod` parameter.
+    pub fn outgoing_chmod(&self) -> Option<&str> {
+        self.outgoing_chmod.as_deref()
     }
 
     /// Returns the I/O timeout in seconds, if specified.

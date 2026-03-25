@@ -36,9 +36,9 @@ const FILE_SIZES: &[(&str, usize)] = &[
 /// Similarity levels for delta computation benchmarks.
 /// The value is the percentage of bytes that are *changed* (not similar).
 const SIMILARITY_LEVELS: &[(&str, u8)] = &[
-    ("90pct_similar", 10),  // 10% changed = 90% similar
-    ("50pct_similar", 50),  // 50% changed = 50% similar
-    ("0pct_similar", 100),  // 100% changed = 0% similar
+    ("90pct_similar", 10), // 10% changed = 90% similar
+    ("50pct_similar", 50), // 50% changed = 50% similar
+    ("0pct_similar", 100), // 100% changed = 0% similar
 ];
 
 /// Creates a deterministic data buffer of the given size.
@@ -99,54 +99,46 @@ fn bench_signature_generation(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         // MD4 (legacy protocol default)
-        group.bench_with_input(
-            BenchmarkId::new("md4", label),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let params = SignatureLayoutParams::new(
-                        data.len() as u64,
-                        None,
-                        ProtocolVersion::NEWEST,
-                        NonZeroU8::new(16).unwrap(),
-                    );
-                    let layout = calculate_signature_layout(params).expect("layout");
-                    black_box(
-                        generate_file_signature(
-                            black_box(data.as_slice()),
-                            layout,
-                            SignatureAlgorithm::Md4,
-                        )
-                        .expect("signature"),
+        group.bench_with_input(BenchmarkId::new("md4", label), &data, |b, data| {
+            b.iter(|| {
+                let params = SignatureLayoutParams::new(
+                    data.len() as u64,
+                    None,
+                    ProtocolVersion::NEWEST,
+                    NonZeroU8::new(16).unwrap(),
+                );
+                let layout = calculate_signature_layout(params).expect("layout");
+                black_box(
+                    generate_file_signature(
+                        black_box(data.as_slice()),
+                        layout,
+                        SignatureAlgorithm::Md4,
                     )
-                });
-            },
-        );
+                    .expect("signature"),
+                )
+            });
+        });
 
         // XXH3 (modern fast path)
-        group.bench_with_input(
-            BenchmarkId::new("xxh3", label),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let params = SignatureLayoutParams::new(
-                        data.len() as u64,
-                        None,
-                        ProtocolVersion::NEWEST,
-                        NonZeroU8::new(8).unwrap(),
-                    );
-                    let layout = calculate_signature_layout(params).expect("layout");
-                    black_box(
-                        generate_file_signature(
-                            black_box(data.as_slice()),
-                            layout,
-                            SignatureAlgorithm::Xxh3 { seed: 0 },
-                        )
-                        .expect("signature"),
+        group.bench_with_input(BenchmarkId::new("xxh3", label), &data, |b, data| {
+            b.iter(|| {
+                let params = SignatureLayoutParams::new(
+                    data.len() as u64,
+                    None,
+                    ProtocolVersion::NEWEST,
+                    NonZeroU8::new(8).unwrap(),
+                );
+                let layout = calculate_signature_layout(params).expect("layout");
+                black_box(
+                    generate_file_signature(
+                        black_box(data.as_slice()),
+                        layout,
+                        SignatureAlgorithm::Xxh3 { seed: 0 },
                     )
-                });
-            },
-        );
+                    .expect("signature"),
+                )
+            });
+        });
     }
 
     group.finish();
@@ -265,8 +257,8 @@ fn bench_end_to_end(c: &mut Criterion) {
                         .expect("index");
 
                         // Step 3: Compute delta script against modified file
-                        let script = generate_delta(black_box(modified.as_slice()), &index)
-                            .expect("delta");
+                        let script =
+                            generate_delta(black_box(modified.as_slice()), &index).expect("delta");
 
                         // Step 4: Apply delta to reconstruct the target
                         let mut cursor = Cursor::new(basis.as_slice());

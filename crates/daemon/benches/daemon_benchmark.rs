@@ -272,70 +272,58 @@ fn bench_module_access_check(c: &mut Criterion) {
         let target_user = format!("user_{target_idx}");
         let client_ip = format!("192.168.{}.42", target_idx % 256);
 
-        group.bench_function(
-            BenchmarkId::new("full_check", module_count),
-            |b| {
-                b.iter(|| {
-                    // Step 1: Look up module by name
-                    let module = config.get_module(&target_module).unwrap();
+        group.bench_function(BenchmarkId::new("full_check", module_count), |b| {
+            b.iter(|| {
+                // Step 1: Look up module by name
+                let module = config.get_module(&target_module).unwrap();
 
-                    // Step 2: Check if the module requires authentication
-                    let requires_auth = !module.auth_users().is_empty();
-                    assert!(requires_auth);
+                // Step 2: Check if the module requires authentication
+                let requires_auth = !module.auth_users().is_empty();
+                assert!(requires_auth);
 
-                    // Step 3: Verify the user is in the auth_users list
-                    let user_authorized = module.auth_users().iter().any(|u| u == &target_user);
-                    assert!(user_authorized);
+                // Step 3: Verify the user is in the auth_users list
+                let user_authorized = module.auth_users().iter().any(|u| u == &target_user);
+                assert!(user_authorized);
 
-                    // Step 4: Check host ACL patterns against client IP
-                    let host_allowed = module.hosts_allow().iter().any(|pattern| {
-                        // CIDR prefix match simulation via string comparison
-                        let prefix = pattern.trim_end_matches("0/24");
-                        client_ip.starts_with(prefix)
-                    });
-                    assert!(host_allowed);
-
-                    // Step 5: Look up password in secrets file
-                    let password = secrets.lookup(&target_user);
-                    assert!(password.is_some());
-
-                    (module, user_authorized, host_allowed, password)
+                // Step 4: Check host ACL patterns against client IP
+                let host_allowed = module.hosts_allow().iter().any(|pattern| {
+                    // CIDR prefix match simulation via string comparison
+                    let prefix = pattern.trim_end_matches("0/24");
+                    client_ip.starts_with(prefix)
                 });
-            },
-        );
+                assert!(host_allowed);
+
+                // Step 5: Look up password in secrets file
+                let password = secrets.lookup(&target_user);
+                assert!(password.is_some());
+
+                (module, user_authorized, host_allowed, password)
+            });
+        });
 
         // Benchmark access denied path (user not in auth_users)
-        group.bench_function(
-            BenchmarkId::new("denied_user", module_count),
-            |b| {
-                b.iter(|| {
-                    let module = config.get_module(&target_module).unwrap();
-                    let user_authorized = module
-                        .auth_users()
-                        .iter()
-                        .any(|u| u == "unauthorized_user");
-                    assert!(!user_authorized);
-                    user_authorized
-                });
-            },
-        );
+        group.bench_function(BenchmarkId::new("denied_user", module_count), |b| {
+            b.iter(|| {
+                let module = config.get_module(&target_module).unwrap();
+                let user_authorized = module.auth_users().iter().any(|u| u == "unauthorized_user");
+                assert!(!user_authorized);
+                user_authorized
+            });
+        });
 
         // Benchmark access denied path (host not in hosts_allow)
-        group.bench_function(
-            BenchmarkId::new("denied_host", module_count),
-            |b| {
-                let denied_ip = "10.99.99.99";
-                b.iter(|| {
-                    let module = config.get_module(&target_module).unwrap();
-                    let host_allowed = module.hosts_allow().iter().any(|pattern| {
-                        let prefix = pattern.trim_end_matches("0/24");
-                        denied_ip.starts_with(prefix)
-                    });
-                    assert!(!host_allowed);
-                    host_allowed
+        group.bench_function(BenchmarkId::new("denied_host", module_count), |b| {
+            let denied_ip = "10.99.99.99";
+            b.iter(|| {
+                let module = config.get_module(&target_module).unwrap();
+                let host_allowed = module.hosts_allow().iter().any(|pattern| {
+                    let prefix = pattern.trim_end_matches("0/24");
+                    denied_ip.starts_with(prefix)
                 });
-            },
-        );
+                assert!(!host_allowed);
+                host_allowed
+            });
+        });
     }
 
     group.finish();

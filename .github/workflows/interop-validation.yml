@@ -305,7 +305,7 @@ jobs:
           version: ${{ env.CACHE_VERSION }}
 
       - name: Cache upstream rsync
-        id: cache-rsync
+        id: cache-rsync-filters
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -316,7 +316,7 @@ jobs:
             upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
 
       - name: Build upstream rsync binaries
-        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        if: steps.cache-rsync-filters.outputs.cache-hit != 'true'
         run: bash tools/ci/run_interop.sh build-only
 
       - name: Build oc-rsync
@@ -337,6 +337,65 @@ jobs:
           echo "- \`--include/--exclude\` precedence" >> $GITHUB_STEP_SUMMARY
           echo "- \`--filter 'merge .rsync-filter'\` merge file" >> $GITHUB_STEP_SUMMARY
           echo "- \`--delete --exclude '*.keep'\` delete with filters" >> $GITHUB_STEP_SUMMARY
+
+  validate-inc-recurse:
+    name: INC_RECURSE Interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: inc-recurse
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync-inc-recurse
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync-inc-recurse.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Run INC_RECURSE interop tests
+        run: bash tests/inc_recurse_interop_test.sh
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## INC_RECURSE Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tests incremental recursion compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scenarios tested:" >> $GITHUB_STEP_SUMMARY
+          echo "- oc-rsync push deep tree (5 levels)" >> $GITHUB_STEP_SUMMARY
+          echo "- upstream client with --rsync-path=oc-rsync" >> $GITHUB_STEP_SUMMARY
+          echo "- Incremental update (add files, re-sync)" >> $GITHUB_STEP_SUMMARY
+          echo "- Delete propagation with --delete" >> $GITHUB_STEP_SUMMARY
+          echo "- Large directory count (100 dirs, 1000 files)" >> $GITHUB_STEP_SUMMARY
 
   regenerate-goldens:
     name: Regenerate Golden Files (Manual)

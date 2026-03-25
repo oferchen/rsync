@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 
 use crate::role_trailer::error_location;
 
-use super::super::io_error_flags;
 use super::super::GeneratorContext;
+use super::super::io_error_flags;
 
 impl GeneratorContext {
     /// Recursively walks a path and adds entries to the file list.
@@ -26,11 +26,7 @@ impl GeneratorContext {
     /// to create the destination directory and properly set its attributes.
     ///
     /// See flist.c:send_file_list() which adds "." for the top-level directory.
-    pub(in crate::generator) fn walk_path(
-        &mut self,
-        base: &Path,
-        path: PathBuf,
-    ) -> io::Result<()> {
+    pub(in crate::generator) fn walk_path(&mut self, base: &Path, path: PathBuf) -> io::Result<()> {
         // upstream: flist.c:readlink_stat() - resolve symlinks based on flags:
         // --copy-links: follow ALL symlinks (stat instead of lstat)
         // --copy-unsafe-links: follow only UNSAFE symlinks (stat if target escapes tree)
@@ -240,10 +236,8 @@ impl GeneratorContext {
         if self.config.flags.copy_unsafe_links && meta.file_type().is_symlink() {
             let target = std::fs::read_link(path)?;
             let relative = path.strip_prefix(base).unwrap_or(path);
-            if super::super::super::symlink_safety::is_unsafe_symlink(
-                target.as_os_str(),
-                relative,
-            ) {
+            if super::super::super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative)
+            {
                 return std::fs::metadata(path);
             }
         }

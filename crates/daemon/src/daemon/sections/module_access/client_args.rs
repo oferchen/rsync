@@ -73,6 +73,10 @@ fn read_client_arguments<R: BufRead>(
 /// 28/29 clients (rsync 3.0.x, 3.1.x) commonly bundle `-s` into compact
 /// flag strings.
 ///
+/// The `-e` option consumes the rest of the string as its parameter (the
+/// capability string, e.g. `.iLsfxCIvu`). Characters after `e` must NOT be
+/// treated as flags - the `s` in `sfxCIvu` is SYMLINK_ICONV, not secluded-args.
+///
 /// upstream: options.c:792 - `{secluded-args, 's', POPT_ARG_VAL, &protect_args, 1}`
 fn has_secluded_args_flag(args: &[String]) -> bool {
     args.iter().any(|a| {
@@ -81,10 +85,20 @@ fn has_secluded_args_flag(args: &[String]) -> bool {
         }
         // Check for `-s` bundled in compact flag strings like `-logDtprs`.
         // A compact flag string starts with `-` but not `--`, and contains
-        // single-character flags.
+        // single-character flags. Stop scanning at `e` since `-e` consumes
+        // the remainder as its parameter (the capability string).
+        // upstream: options.c uses popt which knows `-e` takes an argument.
         if let Some(rest) = a.strip_prefix('-') {
             if !rest.starts_with('-') && rest.len() > 1 {
-                return rest.contains('s');
+                for ch in rest.chars() {
+                    if ch == 'e' {
+                        // `-e` consumes the rest as its argument
+                        return false;
+                    }
+                    if ch == 's' {
+                        return true;
+                    }
+                }
             }
         }
         false
