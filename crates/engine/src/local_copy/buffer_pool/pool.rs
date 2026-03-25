@@ -46,7 +46,18 @@ use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 #[derive(Debug)]
 pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// Lock-free bounded queue of available buffers.
+    ///
+    /// `ArrayQueue` requires non-zero capacity, so the actual queue is
+    /// created with `max(1, requested_capacity)`. The `requested_capacity`
+    /// field tracks the caller's intent - when zero, `return_buffer`
+    /// deallocates immediately instead of pushing onto the queue.
     buffers: ArrayQueue<Vec<u8>>,
+    /// Caller-requested maximum number of buffers to retain.
+    ///
+    /// May be zero, meaning the pool never retains returned buffers
+    /// (every allocation is fresh). Distinct from `buffers.capacity()`
+    /// which is always >= 1 due to `ArrayQueue`'s invariant.
+    requested_capacity: usize,
     /// Size of each buffer in bytes.
     buffer_size: usize,
     /// Allocation strategy for creating and disposing of buffers.
@@ -74,7 +85,10 @@ impl BufferPool {
     #[must_use]
     pub fn new(max_buffers: usize) -> Self {
         Self {
-            buffers: ArrayQueue::new(max_buffers),
+            // ArrayQueue requires capacity >= 1; clamp here, enforce
+            // zero-capacity semantics via `requested_capacity` in return_buffer.
+            buffers: ArrayQueue::new(max_buffers.max(1)),
+            requested_capacity: max_buffers,
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
             memory_cap: None,
@@ -87,12 +101,14 @@ impl BufferPool {
     ///
     /// # Arguments
     ///
-    /// * `max_buffers` - Maximum number of buffers to retain.
+    /// * `max_buffers` - Maximum number of buffers to retain. Pass `0` for a
+    ///   pool that never retains buffers (every acquire allocates fresh).
     /// * `buffer_size` - Size of each buffer in bytes.
     #[must_use]
     pub fn with_buffer_size(max_buffers: usize, buffer_size: usize) -> Self {
         Self {
-            buffers: ArrayQueue::new(max_buffers),
+            buffers: ArrayQueue::new(max_buffers.max(1)),
+            requested_capacity: max_buffers,
             buffer_size,
             allocator: DefaultAllocator,
             memory_cap: None,
@@ -115,7 +131,8 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn with_allocator(max_buffers: usize, buffer_size: usize, allocator: A) -> Self {
         Self {
-            buffers: ArrayQueue::new(max_buffers),
+            buffers: ArrayQueue::new(max_buffers.max(1)),
+            requested_capacity: max_buffers,
             buffer_size,
             allocator,
             memory_cap: None,
@@ -280,6 +297,13 @@ impl<A: BufferAllocator> BufferPool<A> {
     pub(super) fn return_buffer(&self, mut buffer: Vec<u8>) {
         let returned_len = buffer.len();
 
+        // Zero-capacity pool: never retain buffers - deallocate immediately.
+        if self.requested_capacity == 0 {
+            self.allocator.deallocate(buffer);
+            self.track_return(returned_len);
+            return;
+        }
+
         if buffer.capacity() < self.buffer_size {
             // Small adaptive buffer - replace with fresh allocation at pool size.
             buffer = Vec::with_capacity(self.buffer_size);
@@ -310,9 +334,11 @@ impl<A: BufferAllocator> BufferPool<A> {
     }
 
     /// Returns the maximum number of buffers the pool will retain.
+    ///
+    /// Returns `0` for a zero-capacity pool (never retains buffers).
     #[must_use]
     pub fn max_buffers(&self) -> usize {
-        self.buffers.capacity()
+        self.requested_capacity
     }
 
     /// Returns the size of each buffer in bytes.

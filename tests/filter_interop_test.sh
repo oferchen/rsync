@@ -172,7 +172,7 @@ test_include_exclude_precedence() {
 # =========================================================================
 
 test_filter_merge_file() {
-    local test_name="--filter 'merge .rsync-filter' merge file"
+    local test_name="--filter 'dir-merge .rsync-filter' per-directory merge file"
 
     log_test "$test_name"
     TESTS_RUN=$((TESTS_RUN + 1))
@@ -188,8 +188,8 @@ test_filter_merge_file() {
 - *.o
 FILTER
 
-    log_info "Running upstream rsync with --filter 'merge .rsync-filter'..."
-    if ! "$UPSTREAM_RSYNC" -av --filter 'merge .rsync-filter' \
+    log_info "Running upstream rsync with --filter 'dir-merge .rsync-filter'..."
+    if ! "$UPSTREAM_RSYNC" -av --filter 'dir-merge .rsync-filter' \
         "$work_dir/src/" "$work_dir/dest_upstream/" > "$work_dir/upstream.log" 2>&1; then
         log_error "$test_name: upstream rsync failed"
         cat "$work_dir/upstream.log" >&2
@@ -197,8 +197,8 @@ FILTER
         return 0
     fi
 
-    log_info "Running oc-rsync with --filter 'merge .rsync-filter'..."
-    if ! "$OC_RSYNC" -av --filter 'merge .rsync-filter' \
+    log_info "Running oc-rsync with --filter 'dir-merge .rsync-filter'..."
+    if ! "$OC_RSYNC" -av --filter 'dir-merge .rsync-filter' \
         "$work_dir/src/" "$work_dir/dest_oc/" > "$work_dir/oc.log" 2>&1; then
         log_error "$test_name: oc-rsync failed"
         cat "$work_dir/oc.log" >&2
