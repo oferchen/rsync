@@ -252,6 +252,16 @@ impl GeneratorContext {
 
         let mut flist_writer = self.build_flist_writer();
 
+        // Set first_ndx so the writer can distinguish abbreviated vs
+        // unabbreviated hardlink followers (leader in same vs previous segment).
+        // upstream: flist.c:send_file_entry() uses first_ndx parameter
+        let initial_ndx_start = self
+            .incremental
+            .ndx_segments
+            .first()
+            .map_or(0, |&(_, ndx_start)| ndx_start);
+        flist_writer.set_first_ndx(initial_ndx_start);
+
         // When INC_RECURSE, only send initial segment entries; the rest
         // are sent via send_extra_file_lists() during the transfer loop.
         let entries_to_send = if let Some(count) = self.incremental.initial_segment_count {
@@ -333,6 +343,11 @@ impl GeneratorContext {
 
             // Write NDX_FLIST_OFFSET - dir_ndx to signal a new sub-list
             ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
+
+            // Set first_ndx so abbreviated vs unabbreviated followers are
+            // correctly distinguished for this segment.
+            // upstream: flist.c:send_file_entry() line 572
+            flist_writer.set_first_ndx(seg_ndx_start);
 
             // Write file entries from the reordered file_list
             let end = segment.flist_start + segment.count;

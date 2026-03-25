@@ -90,13 +90,12 @@ fn test_negotiate_proto30_md5_zlib() {
 }
 
 #[test]
-#[cfg(feature = "zstd")]
-fn test_negotiate_proto32_zstd() {
+fn test_negotiate_proto32_zlibx() {
     let protocol = ProtocolVersion::try_from(32).unwrap();
 
-    // Simulate remote choosing md5 and zstd
-    // Format: vstring(len) + string, so len byte + "md5" + len byte + "zstd"
-    let client_response = b"\x03md5\x04zstd";
+    // Remote sends zlibx - we support it (our preferred compression).
+    // Zstd/lz4 are no longer advertised because per-token decoders are not implemented.
+    let client_response = b"\x03md5\x05zlibx";
     let mut stdin = &client_response[..];
     let mut stdout = Vec::new();
 
@@ -104,16 +103,14 @@ fn test_negotiate_proto32_zstd() {
         negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
 
     assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
-    assert_eq!(result.compression, CompressionAlgorithm::Zstd);
+    assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
 }
 
 #[test]
-#[cfg(not(feature = "zstd"))]
 fn test_negotiate_proto32_zlib() {
     let protocol = ProtocolVersion::try_from(32).unwrap();
 
-    // Simulate remote choosing md5 and zlib (zstd not available in this build)
-    // Format: vstring(len) + string, so len byte + "md5" + len byte + "zlib"
+    // Remote sends zlib - always supported regardless of feature flags.
     let client_response = b"\x03md5\x04zlib";
     let mut stdin = &client_response[..];
     let mut stdout = Vec::new();
@@ -333,7 +330,8 @@ fn test_daemon_client_sends_and_reads() {
     // Client also sends its lists in bidirectional exchange
     let protocol = ProtocolVersion::try_from(31).unwrap();
 
-    let server_lists = b"\x0Exxh128 md5 md4\x0Ezstd zlib none";
+    // Server sends "zlibx zlib none" - zstd/lz4 no longer advertised.
+    let server_lists = b"\x0Exxh128 md5 md4\x0Fzlibx zlib none";
     let mut stdin = &server_lists[..];
     let mut stdout = Vec::new();
 
@@ -350,6 +348,7 @@ fn test_daemon_client_sends_and_reads() {
 
     // Client should select first from server's list that it supports
     assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+    assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
 
     // Client should also send (bidirectional)
     assert!(
@@ -455,11 +454,11 @@ fn test_daemon_client_selects_fallback_algorithm() {
 }
 
 #[test]
-#[cfg(feature = "zstd")]
-fn test_negotiate_ssh_mode_zstd() {
-    // SSH mode (is_daemon_mode=false) - bidirectional exchange
+fn test_negotiate_ssh_mode_zlibx() {
+    // SSH mode (is_daemon_mode=false) - bidirectional exchange.
+    // Remote sends zlibx which we support.
     let protocol = ProtocolVersion::try_from(31).unwrap();
-    let client_response = b"\x06xxh128\x04zstd";
+    let client_response = b"\x06xxh128\x05zlibx";
     let mut stdin = &client_response[..];
     let mut stdout = Vec::new();
 
@@ -475,14 +474,13 @@ fn test_negotiate_ssh_mode_zstd() {
     .unwrap();
 
     assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
-    assert_eq!(result.compression, CompressionAlgorithm::Zstd);
+    assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
 }
 
 #[test]
-#[cfg(not(feature = "zstd"))]
 fn test_negotiate_ssh_mode_zlib() {
-    // SSH mode (is_daemon_mode=false) - bidirectional exchange
-    // Without zstd feature, remote's zstd preference is ignored, falls back to zlib
+    // SSH mode (is_daemon_mode=false) - bidirectional exchange.
+    // Remote sends zlib - always supported.
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let client_response = b"\x06xxh128\x04zlib";
     let mut stdin = &client_response[..];
@@ -529,26 +527,17 @@ fn test_choose_checksum_empty_list() {
 }
 
 #[test]
-#[cfg(feature = "zstd")]
-fn test_choose_compression_first_match_wins_zstd() {
+fn test_choose_compression_first_match_wins_zlib_fallback() {
+    // Remote offers zstd and lz4 first, but we only support zlibx/zlib/none.
+    // The first entry in the remote list that we also support is "zlib".
     let client_list = "zstd lz4 zlib none";
     let result = choose_compression_algorithm(client_list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::Zstd);
+    assert_eq!(result, CompressionAlgorithm::Zlib);
 }
 
 #[test]
-#[cfg(all(not(feature = "zstd"), feature = "lz4"))]
-fn test_choose_compression_first_match_wins_lz4() {
-    // Without zstd, first match should be lz4
-    let client_list = "zstd lz4 zlib none";
-    let result = choose_compression_algorithm(client_list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::Lz4);
-}
-
-#[test]
-#[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
-fn test_choose_compression_first_match_wins_zlib() {
-    // Without zstd or lz4, first match should be zlibx (always available)
+fn test_choose_compression_first_match_wins_zlibx() {
+    // Remote offers zstd, lz4, then zlibx - first match we support is "zlibx".
     let client_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(client_list).unwrap();
     assert_eq!(result, CompressionAlgorithm::ZlibX);
@@ -2088,29 +2077,25 @@ fn capability_fallback_graceful_checksum_degradation() {
 }
 
 /// Tests graceful degradation from modern to legacy compression.
+///
+/// We only support zlibx/zlib/none - zstd/lz4 per-token decoders are not
+/// implemented. When a remote offers zstd/lz4 first, we skip them and
+/// select the first algorithm we actually support.
 #[test]
 fn capability_fallback_graceful_compression_degradation() {
-    // Simulate negotiating with increasingly legacy servers
+    // Remote offers zstd/lz4 first - we skip them, pick zlibx
+    let modern_list = "zstd lz4 zlibx zlib none";
+    assert_eq!(
+        choose_compression_algorithm(modern_list).unwrap(),
+        CompressionAlgorithm::ZlibX
+    );
 
-    // Modern server: has zstd
-    #[cfg(feature = "zstd")]
-    {
-        let modern_list = "zstd lz4 zlibx zlib none";
-        assert_eq!(
-            choose_compression_algorithm(modern_list).unwrap(),
-            CompressionAlgorithm::Zstd
-        );
-    }
-
-    // Server without zstd: use lz4 if available
-    #[cfg(feature = "lz4")]
-    {
-        let no_zstd_list = "lz4 zlibx zlib none";
-        assert_eq!(
-            choose_compression_algorithm(no_zstd_list).unwrap(),
-            CompressionAlgorithm::LZ4
-        );
-    }
+    // Remote offers lz4 first without zstd - we skip lz4, pick zlibx
+    let no_zstd_list = "lz4 zlibx zlib none";
+    assert_eq!(
+        choose_compression_algorithm(no_zstd_list).unwrap(),
+        CompressionAlgorithm::ZlibX
+    );
 
     // Server with only zlib variants
     let zlib_only = "zlibx zlib none";

@@ -30,7 +30,7 @@ impl GeneratorContext {
     /// - `flist.c:add_dirs_to_tree()` - organizes dirs into traversal tree
     /// - `flist.c:send_extra_file_list()` - sends one segment per directory
     /// - `flist.c:recv_file_list()` - `ndx_start = cur_flist->ndx_start + cur_flist->used`
-    pub(super) fn partition_file_list_for_inc_recurse(&mut self) {
+    pub(in crate::generator) fn partition_file_list_for_inc_recurse(&mut self) {
         if !self.inc_recurse() || self.file_list.is_empty() {
             return;
         }

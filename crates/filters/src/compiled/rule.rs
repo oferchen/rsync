@@ -354,4 +354,33 @@ mod tests {
         // "dir/important" doesn't match anchored pattern, negate inverts: true
         assert!(compiled.matches(Path::new("dir/important"), false));
     }
+
+    /// Verifies `--include '*/'` matches directories but NOT files inside them.
+    ///
+    /// upstream: `--include '*/' --exclude '*'` should only include directory
+    /// entries, not their file contents. Files must match their own rules.
+    #[test]
+    fn include_dir_wildcard_does_not_match_file_descendants() {
+        let rule = FilterRule {
+            action: FilterAction::Include,
+            pattern: "*/".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // Directories should match
+        assert!(compiled.matches(Path::new("subdir"), true));
+        assert!(compiled.matches(Path::new("deep/nested"), true));
+
+        // Files should NOT match - even inside directories
+        assert!(!compiled.matches(Path::new("file.txt"), false));
+        assert!(!compiled.matches(Path::new("subdir/debug.log"), false));
+        assert!(!compiled.matches(Path::new("subdir/report.csv"), false));
+    }
 }

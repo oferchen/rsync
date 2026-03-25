@@ -218,15 +218,17 @@ fn explicit_include_then_exclude_with_cvs() {
     let rules = vec![FilterRule::include("src/"), FilterRule::exclude("*.tmp")];
     let set = FilterSet::from_rules_with_cvs(rules, false).unwrap();
 
-    // Include src directory
+    // upstream: `include src/` matches the directory itself, not descendants.
+    // `src/main.rs` falls through all rules without matching - default allow.
     assert!(set.allows(Path::new("src/main.rs"), false));
 
-    // src/ (rule 1) generates src/** which matches first (first-match-wins)
-    // For exclusion to work, exclude must come before include
-    assert!(set.allows(Path::new("src/test.tmp"), false));
+    // `src/test.tmp` falls through `include src/` (no descendant matcher for
+    // include rules) and hits `exclude *.tmp` - first-match-wins excludes it.
+    assert!(!set.allows(Path::new("src/test.tmp"), false));
 
-    // src/ includes everything under src/, even .o files
-    assert!(set.allows(Path::new("src/lib.o"), false));
+    // `src/lib.o` falls through both explicit rules and hits the CVS
+    // `exclude *.o` pattern - excluded.
+    assert!(!set.allows(Path::new("src/lib.o"), false));
 }
 
 #[test]

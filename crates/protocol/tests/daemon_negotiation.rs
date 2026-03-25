@@ -52,18 +52,13 @@ fn read_vstring(reader: &mut impl Read) -> std::io::Result<String> {
 
 /// Generates the algorithm list data that a peer would send during negotiation.
 /// This is what the remote side's write_vstring calls produce.
+///
+/// Only zlibx/zlib/none are advertised - zstd/lz4 per-token decoders are not
+/// implemented, so those algorithms are not included regardless of feature flags.
 fn generate_peer_data(send_compression: bool) -> Vec<u8> {
     let mut data = Vec::new();
     write_vstring(&mut data, "xxh128 xxh3 xxh64 md5 md4 sha1 none").unwrap();
     if send_compression {
-        // Match the supported_compressions() list from capabilities.rs
-        #[cfg(all(feature = "zstd", feature = "lz4"))]
-        write_vstring(&mut data, "zstd lz4 zlibx zlib none").unwrap();
-        #[cfg(all(feature = "zstd", not(feature = "lz4")))]
-        write_vstring(&mut data, "zstd zlibx zlib none").unwrap();
-        #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
-        write_vstring(&mut data, "lz4 zlibx zlib none").unwrap();
-        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
         write_vstring(&mut data, "zlibx zlib none").unwrap();
     }
     data

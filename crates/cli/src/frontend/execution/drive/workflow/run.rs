@@ -453,19 +453,26 @@ where
     }
 
     // Build transfer operands early so we can check if this is a daemon transfer.
-    // When --files-from is active, the source dir from `remainder` serves only as
-    // a base directory for resolving file list entries (already done above). It must
-    // not appear as a separate source operand - only the resolved file entries and
-    // the destination are transfer operands.
     // upstream: main.c:780-790 - source dir is chdir target, not a transfer source
+    let has_remote_operand = remainder.iter().any(|op| operand_is_remote(op));
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
     if files_from_active && !file_list_operands.is_empty() {
-        // File entries (resolved with ./ marker) are the sources.
-        // Only the destination from remainder is appended - the source
-        // dir served only as the base for resolving entries.
-        transfer_operands.append(&mut file_list_operands);
-        if let Some(dest) = remainder.last() {
-            transfer_operands.push(dest.clone());
+        if has_remote_operand {
+            // Daemon transfer with --files-from: pass the source directory and
+            // destination as operands. The generator reads the file list from
+            // files_from_path and uses the source dir as base_dir for resolving
+            // relative filenames. Individual file entries must NOT be operands -
+            // they corrupt the generator's base_dir derivation (paths.first()).
+            // upstream: main.c:1292-1339 - client_run() uses argv[0] as chdir
+            // target, filesfrom_fd is a separate channel.
+            transfer_operands.extend(remainder);
+        } else {
+            // Local copy with --files-from: file entries are the source operands.
+            // The source dir served only as the base for resolving entries.
+            transfer_operands.append(&mut file_list_operands);
+            if let Some(dest) = remainder.last() {
+                transfer_operands.push(dest.clone());
+            }
         }
     } else {
         // No --files-from, or --files-from with empty list: use the

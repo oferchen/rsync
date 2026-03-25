@@ -421,10 +421,11 @@ fn include_parent_exclude_child() {
     assert!(set.allows(Path::new("src/main.rs"), false));
     assert!(set.allows(Path::new("src"), true));
 
-    // src/ (rule 1) generates src/** which matches src/build first
-    // For exclusion to work, exclude must come before include
-    assert!(set.allows(Path::new("src/build"), true));
-    assert!(set.allows(Path::new("src/build/output.o"), false));
+    // upstream: `include src/` matches the directory `src` itself, not
+    // descendants.  `src/build` falls through to `exclude src/build/`
+    // which matches - first-match-wins excludes it.
+    assert!(!set.allows(Path::new("src/build"), true));
+    assert!(!set.allows(Path::new("src/build/output.o"), false));
 }
 
 #[test]

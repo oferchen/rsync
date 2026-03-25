@@ -31,12 +31,8 @@ mod listener;
 mod session;
 mod shutdown;
 
-pub use listener::{
-    AsyncDaemonListener, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_MAX_CONNECTIONS, DEFAULT_READ_TIMEOUT,
-    ListenerConfig,
-};
-pub use session::{AsyncIpLimiter, AsyncRateLimiter, AsyncSession, SessionResult};
-pub use shutdown::AsyncDaemonError;
+#[cfg(test)]
+pub use listener::AsyncDaemonListener;
 
 #[cfg(test)]
 mod tests {
@@ -45,6 +41,8 @@ mod tests {
     //! which conflicts with our local 'core' crate that shadows the built-in core crate.
 
     use super::*;
+    use listener::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_MAX_CONNECTIONS, ListenerConfig};
+    use session::{AsyncRateLimiter, SessionResult};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 

@@ -35,6 +35,14 @@ impl ReceiverContext {
     /// (unless using incremental recursion). See upstream `recv_id_list()` in uidlist.c.
     pub fn receive_file_list<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
         let mut flist_reader = self.build_flist_reader();
+
+        // Set ndx_start so the reader can distinguish abbreviated vs
+        // unabbreviated hardlink followers (leader in same vs previous segment).
+        // upstream: flist.c:recv_file_entry() uses flist->ndx_start
+        let &(_flat_start, initial_ndx_start) =
+            self.ndx_segments.last().expect("initial segment exists");
+        flist_reader.set_ndx_start(initial_ndx_start);
+
         let mut count = 0;
 
         // upstream: flist.c:recv_file_list() - reads entries until end marker
@@ -133,6 +141,16 @@ impl ReceiverContext {
 
             let dir_ndx = NDX_FLIST_OFFSET - ndx;
             let flat_start = self.file_list.len();
+
+            // Compute seg_ndx_start BEFORE reading entries so the reader can
+            // distinguish abbreviated vs unabbreviated hardlink followers.
+            // upstream: flist.c:recv_file_entry() uses flist->ndx_start
+            let &(prev_flat_start, prev_ndx_start) =
+                self.ndx_segments.last().expect("initial segment exists");
+            let prev_used = (flat_start - prev_flat_start) as i32;
+            let seg_ndx_start = prev_ndx_start + prev_used + 1;
+            flist_reader.set_ndx_start(seg_ndx_start);
+
             let mut segment_count = 0;
 
             while let Some(entry) = flist_reader.read_entry(reader)? {
@@ -141,13 +159,7 @@ impl ReceiverContext {
             }
 
             // upstream: flist.c:1646 - leader GNUM is readdir-order wire NDX,
-            // assigned before sorting. Compute sub-list ndx_start first so we can
-            // stamp leaders with their readdir-order wire NDX before sorting.
-            let &(prev_flat_start, prev_ndx_start) =
-                self.ndx_segments.last().expect("initial segment exists");
-            let prev_used = (flat_start - prev_flat_start) as i32;
-            let seg_ndx_start = prev_ndx_start + prev_used + 1;
-
+            // assigned before sorting.
             if self.config.flags.hard_links {
                 for (i, entry) in self.file_list[flat_start..].iter_mut().enumerate() {
                     if entry.flags().hlink_first() {

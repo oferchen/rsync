@@ -217,40 +217,26 @@ fn parse_daemon_dont_compress(value: &str) -> Option<SkipCompressList> {
 /// 4. `include_from` - read from file, one pattern per line (include)
 /// 5. `exclude_from` - read from file, one pattern per line (exclude)
 ///
-/// The order matches upstream: filter, include, exclude, include_from, exclude_from.
+/// The order matches upstream: filter, include_from, include, exclude_from, exclude.
+///
+/// upstream: clientserver.c:874-893 - `rsync_module()` builds `daemon_filter_list`.
 fn build_daemon_filter_rules(
     module: &ModuleRuntime,
 ) -> Result<Vec<FilterRuleWireFormat>, io::Error> {
     let mut rules = Vec::new();
 
     // 1. filter rules - full filter syntax (e.g., "- *.tmp", "+ *.rs")
-    // upstream: parse_filter_str(&daemon_filter_list, lp_filter(i), rule, FILTRULE_WORD_SPLIT)
-    // Each element in the Vec is one complete filter rule from a `filter =` line.
+    // upstream: clientserver.c:874 - parse_filter_str(&daemon_filter_list, lp_filter(i),
+    //           rule_template(FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3)
     for filter_str in &module.filter {
         if let Some(rule) = parse_daemon_filter_token(filter_str.trim()) {
             rules.push(rule);
         }
     }
 
-    // 2. include rules - bare patterns, word-split on whitespace
-    // upstream: parse_filter_str(&daemon_filter_list, lp_include(i), rule,
-    //           FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT)
-    for include_str in &module.include {
-        for pattern in include_str.split_whitespace() {
-            rules.push(build_pattern_rule(pattern, true));
-        }
-    }
-
-    // 3. exclude rules - bare patterns, word-split on whitespace
-    // upstream: parse_filter_str(&daemon_filter_list, lp_exclude(i), rule, FILTRULE_WORD_SPLIT)
-    for exclude_str in &module.exclude {
-        for pattern in exclude_str.split_whitespace() {
-            rules.push(build_pattern_rule(pattern, false));
-        }
-    }
-
-    // 4. include_from - read patterns from file, one per line
-    // upstream: parse_filter_file(&daemon_filter_list, lp_include_from(i), rule, 0)
+    // 2. include_from - read patterns from file, one per line
+    // upstream: clientserver.c:878 - parse_filter_file(&daemon_filter_list, lp_include_from(i),
+    //           rule_template(FILTRULE_INCLUDE), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
     if let Some(ref path) = module.include_from {
         let patterns = read_patterns_from_file(path)?;
         for pattern in patterns {
@@ -258,12 +244,31 @@ fn build_daemon_filter_rules(
         }
     }
 
-    // 5. exclude_from - read patterns from file, one per line
-    // upstream: parse_filter_file(&daemon_filter_list, lp_exclude_from(i), rule, 0)
+    // 3. include rules - bare patterns, word-split on whitespace
+    // upstream: clientserver.c:882 - parse_filter_str(&daemon_filter_list, lp_include(i),
+    //           rule_template(FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | ...)
+    for include_str in &module.include {
+        for pattern in include_str.split_whitespace() {
+            rules.push(build_pattern_rule(pattern, true));
+        }
+    }
+
+    // 4. exclude_from - read patterns from file, one per line
+    // upstream: clientserver.c:887 - parse_filter_file(&daemon_filter_list, lp_exclude_from(i),
+    //           rule_template(0), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
     if let Some(ref path) = module.exclude_from {
         let patterns = read_patterns_from_file(path)?;
         for pattern in patterns {
             rules.push(build_pattern_rule(&pattern, false));
+        }
+    }
+
+    // 5. exclude rules - bare patterns, word-split on whitespace
+    // upstream: clientserver.c:891 - parse_filter_str(&daemon_filter_list, lp_exclude(i),
+    //           rule_template(FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
+    for exclude_str in &module.exclude {
+        for pattern in exclude_str.split_whitespace() {
+            rules.push(build_pattern_rule(pattern, false));
         }
     }
 
@@ -324,15 +329,26 @@ fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
 /// Constructs a `FilterRuleWireFormat` from a pattern string.
 ///
 /// Handles anchored patterns (leading `/`) and directory-only patterns
-/// (trailing `/`) matching upstream rsync's pattern interpretation.
-/// The pattern is preserved as-is in the wire format - the `anchored` and
-/// `directory_only` flags are set for metadata but the pattern itself retains
-/// its original form.
+/// (trailing `/`). For daemon exclude rules on directory-only patterns,
+/// applies the `XFLG_DIR2WILD3` transformation: the trailing `/` is replaced
+/// with `/***` to recursively exclude the directory and all its contents.
+///
+/// upstream: exclude.c:211-217 - when `XFLG_DIR2WILD3` is set and the rule is
+/// a directory-only exclude (not include), the `FILTRULE_DIRECTORY` flag is
+/// cleared and `/***` is appended to the pattern.
 fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
     let anchored = pattern.starts_with('/');
     let directory_only = pattern.ends_with('/');
 
-    if is_include {
+    // upstream: exclude.c:212-213 - XFLG_DIR2WILD3 applies only to
+    // directory-only exclude rules (BITS_SETnUNSET(FILTRULE_DIRECTORY, FILTRULE_INCLUDE)).
+    if directory_only && !is_include {
+        let wild3_pattern = format!("{pattern}***");
+        let mut rule = FilterRuleWireFormat::exclude(wild3_pattern);
+        rule.anchored = anchored;
+        rule.directory_only = false;
+        rule
+    } else if is_include {
         let mut rule = FilterRuleWireFormat::include(pattern.to_string());
         rule.anchored = anchored;
         rule.directory_only = directory_only;
