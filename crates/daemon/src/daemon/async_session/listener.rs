@@ -18,8 +18,8 @@ use super::super::session_registry::SessionRegistry;
 #[cfg(feature = "concurrent-sessions")]
 use super::super::connection_pool::ConnectionPool;
 
-use super::session::handle_async_session;
-use super::{AsyncDaemonError, AsyncSession};
+use super::session::{AsyncSession, handle_async_session};
+use super::shutdown::AsyncDaemonError;
 
 /// Default maximum number of concurrent connections.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 200;

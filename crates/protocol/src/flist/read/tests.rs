@@ -249,19 +249,25 @@ fn read_flags_returns_io_error_in_varint_mode() {
 }
 
 #[test]
-fn is_hardlink_follower_helper() {
+fn is_abbreviated_follower_helper() {
     use crate::flist::flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED};
 
-    let reader = FileListReader::new(test_protocol()).with_preserve_hard_links(true);
+    let mut reader = FileListReader::new(test_protocol()).with_preserve_hard_links(true);
+    reader.set_ndx_start(100);
 
     let flags_none = FileFlags::new(0, 0);
-    assert!(!reader.is_hardlink_follower(flags_none));
+    assert!(!reader.is_abbreviated_follower(flags_none, Some(150)));
 
     let flags_leader = FileFlags::new(0, XMIT_HLINKED | XMIT_HLINK_FIRST);
-    assert!(!reader.is_hardlink_follower(flags_leader));
+    assert!(!reader.is_abbreviated_follower(flags_leader, Some(150)));
 
     let flags_follower = FileFlags::new(0, XMIT_HLINKED);
-    assert!(reader.is_hardlink_follower(flags_follower));
+    // Follower with idx >= ndx_start is abbreviated
+    assert!(reader.is_abbreviated_follower(flags_follower, Some(150)));
+    // Follower with idx < ndx_start is unabbreviated
+    assert!(!reader.is_abbreviated_follower(flags_follower, Some(50)));
+    // Follower with no idx is not abbreviated
+    assert!(!reader.is_abbreviated_follower(flags_follower, None));
 }
 
 #[test]

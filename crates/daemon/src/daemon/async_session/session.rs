@@ -7,6 +7,7 @@
 
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
+#[cfg(feature = "concurrent-sessions")]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,8 +21,8 @@ use super::super::session_registry::{SessionId, SessionRegistry, SessionState};
 #[cfg(feature = "concurrent-sessions")]
 use super::super::connection_pool::{ConnectionId, ConnectionPool};
 
-use super::AsyncDaemonError;
 use super::listener::ListenerConfig;
+use super::shutdown::AsyncDaemonError;
 
 /// An async daemon session.
 pub struct AsyncSession {

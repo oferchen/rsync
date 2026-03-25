@@ -56,12 +56,13 @@ impl CompiledRule {
         }
 
         let mut descendant_patterns = HashSet::new();
-        if directory_only
-            || matches!(
-                action,
-                FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-            )
-        {
+        // upstream: exclude.c - excluding a directory excludes its contents,
+        // but including a directory does NOT include its contents (they must
+        // match their own rules). Only Exclude/Protect/Risk get descendants.
+        if matches!(
+            action,
+            FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
+        ) {
             descendant_patterns.insert(format!("{core_pattern}/**"));
             if !anchored {
                 descendant_patterns.insert(format!("**/{core_pattern}/**"));
@@ -140,6 +141,58 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.perishable);
+    }
+
+    /// Verifies that `--include '*/'` does NOT generate descendant matchers.
+    ///
+    /// upstream: Including a directory means "include the directory entry" -
+    /// it does NOT mean "include everything inside it". Files inside must
+    /// match their own rules. Only Exclude/Protect/Risk get descendants.
+    #[test]
+    fn include_directory_only_has_no_descendant_matchers() {
+        let rule = FilterRule {
+            action: FilterAction::Include,
+            pattern: "*/".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+        assert!(compiled.directory_only);
+        // Include dirs should NOT match descendants - files inside must
+        // match their own include/exclude rules independently.
+        assert!(
+            compiled.descendant_matchers.is_empty(),
+            "include directory-only rules must not have descendant matchers"
+        );
+    }
+
+    /// Verifies that `--exclude '*/'` DOES generate descendant matchers.
+    ///
+    /// upstream: Excluding a directory excludes all of its contents.
+    #[test]
+    fn exclude_directory_only_has_descendant_matchers() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "*/".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+        assert!(compiled.directory_only);
+        assert!(
+            !compiled.descendant_matchers.is_empty(),
+            "exclude directory-only rules must have descendant matchers"
+        );
     }
 
     #[test]

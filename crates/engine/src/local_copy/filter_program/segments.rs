@@ -226,12 +226,13 @@ impl CompiledRule {
         }
 
         let mut descendant_patterns = HashSet::new();
-        if directory_only
-            || matches!(
-                action,
-                FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-            )
-        {
+        // upstream: exclude.c - excluding a directory excludes its contents,
+        // but including a directory does NOT include its contents (they must
+        // match their own rules). Only Exclude/Protect/Risk get descendants.
+        if matches!(
+            action,
+            FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
+        ) {
             descendant_patterns.insert(format!("{core_pattern}/**"));
             if !anchored {
                 descendant_patterns.insert(format!("**/{core_pattern}/**"));
@@ -286,16 +287,24 @@ fn compile_patterns(
     Ok(matchers)
 }
 
+/// Normalizes a pattern by stripping leading `/` (anchored) and trailing `/`
+/// (directory-only).
+///
+/// A pattern is anchored if it starts with `/` or contains `/` anywhere in the
+/// core pattern. This mirrors upstream rsync's `exclude.c:parse_filter_str()`
+/// where `FILTRULE_ABS_PATH` is set for patterns containing path separators.
 fn normalise_pattern(pattern: &str) -> (bool, bool, String) {
-    let anchored = pattern.starts_with('/');
+    let starts_with_slash = pattern.starts_with('/');
     let directory_only = pattern.ends_with('/');
     let mut core = pattern;
-    if anchored {
+    if starts_with_slash {
         core = &core[1..];
     }
     if directory_only && !core.is_empty() {
         core = &core[..core.len() - 1];
     }
+    let has_internal_slash = core.contains('/');
+    let anchored = starts_with_slash || has_internal_slash;
     (anchored, directory_only, core.to_owned())
 }
 
@@ -398,6 +407,41 @@ mod tests {
             .push_rule(FilterRule::protect("important/".to_owned()))
             .unwrap();
         assert!(!segment.is_empty());
+    }
+
+    /// Verifies `--include '*/'` does not match files inside directories.
+    ///
+    /// upstream: Including a directory means "include the directory entry" -
+    /// it does NOT mean "include everything inside it". Files inside must
+    /// match their own rules. Only Exclude/Protect/Risk get descendants.
+    #[test]
+    fn include_directory_only_no_descendant_match() {
+        let rule = CompiledRule::new(FilterRule::include("*/".to_owned())).unwrap();
+        // Directories match
+        assert!(rule.matches(Path::new("subdir"), true));
+        // Files do NOT match - even inside directories
+        assert!(!rule.matches(Path::new("file.txt"), false));
+        assert!(!rule.matches(Path::new("subdir/debug.log"), false));
+        assert!(!rule.matches(Path::new("subdir/report.csv"), false));
+    }
+
+    /// Verifies `--exclude '*/'` DOES match files inside excluded directories.
+    #[test]
+    fn exclude_directory_only_has_descendant_match() {
+        let rule = CompiledRule::new(FilterRule::exclude("*/".to_owned())).unwrap();
+        // Directories match
+        assert!(rule.matches(Path::new("subdir"), true));
+        // Files inside excluded directories also match via descendants
+        assert!(rule.matches(Path::new("subdir/debug.log"), false));
+    }
+
+    /// Verifies patterns with internal `/` are treated as anchored.
+    #[test]
+    fn normalise_pattern_internal_slash_anchors() {
+        let (anchored, directory_only, core) = normalise_pattern("src/lib/");
+        assert!(anchored);
+        assert!(directory_only);
+        assert_eq!(core, "src/lib");
     }
 
     #[test]

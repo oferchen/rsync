@@ -339,8 +339,8 @@ fn directory_only_pattern_order() {
 
     // build/output/ included (first rule matches for directories)
     assert!(set.allows(Path::new("build/output"), true));
-    // build/output/file.bin also included (descendant matching)
-    assert!(set.allows(Path::new("build/output/file.bin"), false));
+    // upstream: directory-only include does NOT include file contents
+    assert!(!set.allows(Path::new("build/output/file.bin"), false));
     // build/ excluded (second rule)
     assert!(!set.allows(Path::new("build"), true));
     // build/other.bin excluded (descendant of excluded dir)
