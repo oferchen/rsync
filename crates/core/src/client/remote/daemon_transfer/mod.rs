@@ -23,12 +23,17 @@ mod orchestration;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+use std::sync::{Arc, Mutex};
+
+use engine::batch::BatchWriter;
+
 use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error};
 use super::super::module_list::{apply_socket_options, connect_direct, resolve_connect_timeout};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
+use super::batch_support::build_batch_context;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 
 use connection::{DaemonTransferRequest, perform_daemon_handshake};
@@ -51,6 +56,7 @@ use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments}
 pub fn run_daemon_transfer(
     config: &ClientConfig,
     _observer: Option<&mut dyn ClientProgressObserver>,
+    batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
     if args.len() < 2 {
@@ -123,12 +129,16 @@ pub fn run_daemon_transfer(
     let daemon_is_sender = matches!(role, RemoteRole::Receiver);
     send_daemon_arguments(&mut stream, config, &request, protocol, daemon_is_sender)?;
 
+    let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
+
     // Protocol is already negotiated via @RSYNCD text exchange (not binary 4-byte).
     // upstream: compat.c:599 - when remote_protocol != 0, setup_protocol skips
     // the binary exchange.
     match role {
-        RemoteRole::Receiver => run_pull_transfer(config, stream, &local_paths, protocol),
-        RemoteRole::Sender => run_push_transfer(config, stream, &local_paths, protocol),
+        RemoteRole::Receiver => {
+            run_pull_transfer(config, stream, &local_paths, protocol, batch_ctx)
+        }
+        RemoteRole::Sender => run_push_transfer(config, stream, &local_paths, protocol, batch_ctx),
         RemoteRole::Proxy => {
             unreachable!("Proxy transfers via daemon are rejected earlier")
         }
