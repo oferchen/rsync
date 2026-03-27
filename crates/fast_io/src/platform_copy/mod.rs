@@ -7,11 +7,11 @@
 //!
 //! # Platform Optimization Chain
 //!
-//! | Platform | Primary | Fallback |
-//! |----------|---------|----------|
-//! | Linux | `copy_file_range` (zero-copy, kernel 4.5+) | buffered read/write |
-//! | macOS | `clonefile` (CoW, APFS) then `copyfile` | `std::fs::copy` |
-//! | Windows | `CopyFileExW` (optional no-buffering) | `std::fs::copy` |
+//! | Platform | Primary | Secondary | Fallback |
+//! |----------|---------|-----------|----------|
+//! | Linux | `FICLONE` (CoW reflink, Btrfs/XFS) | `copy_file_range` (zero-copy) | `std::fs::copy` |
+//! | macOS | `clonefile` (CoW, APFS) | `copyfile` | `std::fs::copy` |
+//! | Windows | `CopyFileExW` (optional no-buffering) | | `std::fs::copy` |
 //!
 //! # Design
 //!
@@ -60,7 +60,7 @@ pub use types::{CopyMethod, CopyResult, PlatformCopy};
 ///
 /// Selects the best available copy mechanism for the current platform:
 ///
-/// - **Linux**: `copy_file_range` for files >= 64KB, buffered read/write for smaller files
+/// - **Linux**: `FICLONE` (CoW reflink) then `copy_file_range` then `std::fs::copy`
 /// - **macOS**: `clonefile` (CoW) with `std::fs::copy` fallback
 /// - **Windows**: `CopyFileExW` with `COPY_FILE_NO_BUFFERING` for files > 4MB
 ///
@@ -88,6 +88,37 @@ impl PlatformCopy for DefaultPlatformCopy {
     fn preferred_method(&self, size: u64) -> CopyMethod {
         dispatch::platform_preferred_method(size)
     }
+}
+
+/// Attempts a copy-on-write clone using Linux `FICLONE` ioctl.
+///
+/// On Btrfs, XFS (with reflink enabled), and bcachefs, `FICLONE` creates an
+/// instant reflink where source and destination share storage blocks until
+/// either file is modified. The operation is O(1) regardless of file size.
+///
+/// Uses `rustix::fs::ioctl_ficlone` internally - fully safe, no raw FFI.
+///
+/// # Constraints
+///
+/// - Source and destination must be on the same filesystem.
+/// - The filesystem must support reflinks.
+/// - Only regular files are supported.
+///
+/// # Platform Support
+///
+/// - **Linux**: Calls `FICLONE` ioctl via rustix.
+/// - **Other platforms**: Returns `ErrorKind::Unsupported`.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The platform does not support `FICLONE` (non-Linux)
+/// - The filesystem does not support reflinks (ext4, tmpfs, NFS, FUSE)
+/// - Cross-filesystem (source and destination on different mounts)
+/// - Source does not exist or is not readable
+/// - I/O error during the clone operation
+pub fn try_ficlone(src: &Path, dst: &Path) -> io::Result<()> {
+    dispatch::try_ficlone_impl(src, dst)
 }
 
 /// Attempts a copy-on-write clone using `clonefile(2)`.
