@@ -125,9 +125,23 @@ pub(in crate::local_copy) fn execute_transfer(
     // clonefile() creates an instant copy-on-write clone on APFS, avoiding all
     // read/write I/O. Conditions: new file (no existing dest), whole-file mode,
     // no append/inplace/partial/delay-updates/temp-dir/compression/sparse/limiter,
-    // no copy-dest override. After cloning, metadata is normalized to match what
-    // a normal open()-created file would produce, so finalize_guard_and_metadata
-    // works identically regardless of whether clonefile or read/write was used.
+    // no copy-dest override, no xattr filter rules (clonefile copies all xattrs
+    // verbatim, so selective xattr filtering cannot be applied after cloning).
+    // After cloning, metadata is normalized to match what open()-created files
+    // produce, so finalize_guard_and_metadata works identically for both paths.
+    #[cfg(target_os = "macos")]
+    let has_xattr_filter_rules = {
+        #[cfg(all(unix, feature = "xattr"))]
+        {
+            context
+                .filter_program()
+                .is_some_and(|p| p.has_xattr_rules())
+        }
+        #[cfg(not(all(unix, feature = "xattr")))]
+        {
+            false
+        }
+    };
     #[cfg(target_os = "macos")]
     if existing_metadata.is_none()
         && whole_file_enabled
@@ -139,6 +153,7 @@ pub(in crate::local_copy) fn execute_transfer(
         && !context.has_bandwidth_limiter()
         && !context.delay_updates_enabled()
         && context.temp_directory_path().is_none()
+        && !has_xattr_filter_rules
     {
         if let Ok(()) = crate::local_copy::clonefile::try_clonefile(source, destination) {
             let start = Instant::now();
