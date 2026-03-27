@@ -374,10 +374,10 @@ impl CompressedTokenEncoder {
             writer.write_all(&[((n >> 8) & 0xFF) as u8])?;
         }
 
-        // Update to where the decoder's rx_token will be after emitting these tokens.
-        // A run from run_start to last_token emits (last_token - run_start + 1) tokens,
-        // and the decoder advances rx_token after each, ending at last_token + 1.
-        self.last_run_end = self.last_token + 1;
+        // upstream: token.c:398 - last_run_end tracks the last token emitted.
+        // The decoder's rx_token stays at the last returned value (no post-increment),
+        // so last_run_end = last_token (not last_token + 1).
+        self.last_run_end = self.last_token;
         Ok(())
     }
 

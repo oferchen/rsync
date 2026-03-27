@@ -236,7 +236,9 @@ impl GeneratorContext {
                     checksum_algorithm,
                     self.checksum_seed,
                     self.compat_flags.as_ref(),
-                );
+                    source_path,
+                    block_length,
+                )?;
                 let delta_total_bytes = delta_script.total_bytes();
                 let wire_ops = script_to_wire_delta(delta_script);
                 let compression = self.file_compression(source_path);
