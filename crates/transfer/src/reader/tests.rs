@@ -690,7 +690,7 @@ fn batch_recorder_roundtrip_writer_reader_capture_same_data() {
     // End-to-end: write data through MultiplexWriter with recorder,
     // read back through MultiplexReader with recorder, verify both
     // recorders captured identical pre-mux / post-demux data.
-    use super::multiplex::MultiplexWriter;
+    use crate::writer::multiplex::MultiplexWriter;
 
     let mut wire = Vec::new();
 

@@ -14,7 +14,7 @@
 
 mod counting;
 mod msg_info;
-mod multiplex;
+pub(crate) mod multiplex;
 mod server;
 
 pub use self::counting::CountingWriter;

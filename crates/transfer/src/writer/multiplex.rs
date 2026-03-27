@@ -39,7 +39,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// `IO_BUFFER_SIZE` (32KB) in `rsync.h`, but we use 64KB to compensate for
     /// `MSG_DATA` frame headers (4 bytes per frame) and to batch ~2 wire chunks
     /// per flush for better syscall efficiency.
-    pub(super) fn new(inner: W) -> Self {
+    pub(crate) fn new(inner: W) -> Self {
         Self {
             inner,
             buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),

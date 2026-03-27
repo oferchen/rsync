@@ -560,7 +560,8 @@ fn multiplex_writer_batch_recorder_captures_vectored_write() {
     mux.batch_recorder = Some(recorder_buf.clone());
 
     let bufs = [IoSlice::new(b"chunk1"), IoSlice::new(b"chunk2")];
-    mux.write_vectored(&bufs).unwrap();
+    let n = mux.write_vectored(&bufs).unwrap();
+    assert_eq!(n, 12, "all bytes written");
     mux.flush().unwrap();
 
     let recorded = recorder_buf.lock().unwrap();
