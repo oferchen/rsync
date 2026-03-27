@@ -1,5 +1,6 @@
 use super::*;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
+use std::sync::{Arc, Mutex};
 
 use compress::algorithm::CompressionAlgorithm;
 
@@ -568,4 +569,154 @@ fn multiplex_reader_redo_and_no_send_interleaved() {
 
     assert_eq!(mux.redo_indices, vec![3]);
     assert_eq!(mux.no_send_indices, vec![7]);
+}
+
+// =========================================================================
+// Batch recorder tests
+// =========================================================================
+
+#[test]
+fn multiplex_reader_batch_recorder_captures_demuxed_data() {
+    // Verify that the batch recorder captures post-demux MSG_DATA payloads.
+    // upstream: io.c:read_buf() tees data to batch_fd after demultiplexing.
+    let payload = b"hello batch reader";
+    let mut stream = Vec::new();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, payload).unwrap();
+
+    let mut mux = MultiplexReader::new(Cursor::new(stream));
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    mux.batch_recorder = Some(recorder_buf.clone());
+
+    let mut buf = vec![0u8; 64];
+    let n = mux.read(&mut buf).unwrap();
+    assert_eq!(&buf[..n], payload);
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, payload,
+        "recorder should capture exact demuxed bytes"
+    );
+}
+
+#[test]
+fn multiplex_reader_batch_recorder_skips_control_messages() {
+    // Verify that control messages (MSG_IO_ERROR) are NOT recorded -
+    // only MSG_DATA payloads go to the batch recorder.
+    let mut stream = Vec::new();
+    // Send an IO_ERROR control message followed by a DATA payload
+    protocol::send_msg(
+        &mut stream,
+        protocol::MessageCode::IoError,
+        &1i32.to_le_bytes(),
+    )
+    .unwrap();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"data").unwrap();
+
+    let mut mux = MultiplexReader::new(Cursor::new(stream));
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    mux.batch_recorder = Some(recorder_buf.clone());
+
+    let mut buf = vec![0u8; 64];
+    let n = mux.read(&mut buf).unwrap();
+    assert_eq!(&buf[..n], b"data");
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, b"data",
+        "recorder should only contain MSG_DATA payloads"
+    );
+}
+
+#[test]
+fn multiplex_reader_batch_recorder_multiple_reads() {
+    // Verify that multiple reads accumulate correctly in the recorder.
+    let mut stream = Vec::new();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"first").unwrap();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"second").unwrap();
+
+    let mut mux = MultiplexReader::new(Cursor::new(stream));
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    mux.batch_recorder = Some(recorder_buf.clone());
+
+    let mut buf = vec![0u8; 64];
+    let n1 = mux.read(&mut buf).unwrap();
+    let n2 = mux.read(&mut buf).unwrap();
+
+    assert!(n1 > 0);
+    assert!(n2 > 0);
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(&*recorded, b"firstsecond");
+}
+
+#[test]
+fn server_reader_set_batch_recorder_multiplex() {
+    let mut stream = Vec::new();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"test").unwrap();
+
+    let reader = ServerReader::new_plain(Cursor::new(stream));
+    let mut mux_reader = reader.activate_multiplex().unwrap();
+
+    let recorder: Arc<Mutex<dyn Write + Send>> = Arc::new(Mutex::new(Vec::<u8>::new()));
+    mux_reader.set_batch_recorder(recorder);
+}
+
+#[test]
+fn server_reader_pending_batch_recorder_propagates_on_activate() {
+    // Verify that a batch recorder set in Plain mode gets propagated
+    // to the MultiplexReader when activate_multiplex() is called.
+    let mut stream = Vec::new();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"propagated").unwrap();
+
+    let mut reader = ServerReader::new_plain(Cursor::new(stream));
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorder: Arc<Mutex<dyn Write + Send>> = recorder_buf.clone();
+    reader.set_batch_recorder(recorder);
+
+    // Activate multiplex - recorder should propagate
+    let mut mux_reader = reader.activate_multiplex().unwrap();
+
+    let mut buf = vec![0u8; 64];
+    let n = mux_reader.read(&mut buf).unwrap();
+    assert_eq!(&buf[..n], b"propagated");
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(&*recorded, b"propagated");
+}
+
+#[test]
+fn batch_recorder_roundtrip_writer_reader_capture_same_data() {
+    // End-to-end: write data through MultiplexWriter with recorder,
+    // read back through MultiplexReader with recorder, verify both
+    // recorders captured identical pre-mux / post-demux data.
+    use super::multiplex::MultiplexWriter;
+
+    let mut wire = Vec::new();
+
+    // Writer side: record pre-mux data
+    let write_recorder: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        let mut mux_writer = MultiplexWriter::new(&mut wire);
+        mux_writer.batch_recorder = Some(write_recorder.clone());
+        mux_writer.write_all(b"roundtrip test data").unwrap();
+        mux_writer.flush().unwrap();
+    }
+
+    // Reader side: record post-demux data
+    let read_recorder: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut mux_reader = MultiplexReader::new(Cursor::new(wire));
+    mux_reader.batch_recorder = Some(read_recorder.clone());
+
+    let mut buf = vec![0u8; 64];
+    let n = mux_reader.read(&mut buf).unwrap();
+    assert_eq!(&buf[..n], b"roundtrip test data");
+
+    let write_recorded = write_recorder.lock().unwrap();
+    let read_recorded = read_recorder.lock().unwrap();
+    assert_eq!(
+        &*write_recorded, &*read_recorded,
+        "writer and reader recorders should capture identical data"
+    );
+    assert_eq!(&*write_recorded, b"roundtrip test data");
 }

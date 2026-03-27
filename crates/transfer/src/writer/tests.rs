@@ -1,4 +1,5 @@
 use std::io::{self, IoSlice, Write};
+use std::sync::{Arc, Mutex};
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
@@ -517,4 +518,101 @@ fn mut_ref_delegates_msg_info() {
     let writer: &mut ServerWriter<&mut Vec<u8>> = &mut server;
     writer.send_msg_info(b"ref test").unwrap();
     assert!(!buf.is_empty());
+}
+
+// =========================================================================
+// Batch recorder tests
+// =========================================================================
+
+#[test]
+fn multiplex_writer_batch_recorder_captures_write_data() {
+    // Verify that the batch recorder captures pre-mux data written via write().
+    // upstream: io.c:write_buf() tees data to batch_fd before multiplex framing.
+    let mut wire = Vec::new();
+    let mut mux = MultiplexWriter::new(&mut wire);
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    mux.batch_recorder = Some(recorder_buf.clone());
+
+    let data = b"hello batch world";
+    mux.write_all(data).unwrap();
+    mux.flush().unwrap();
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, data,
+        "recorder should capture exact pre-mux bytes"
+    );
+
+    // Wire should have multiplex framing (header + data), so longer than raw data
+    assert!(
+        wire.len() > data.len(),
+        "wire should include MSG_DATA framing"
+    );
+}
+
+#[test]
+fn multiplex_writer_batch_recorder_captures_vectored_write() {
+    let mut wire = Vec::new();
+    let mut mux = MultiplexWriter::new(&mut wire);
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    mux.batch_recorder = Some(recorder_buf.clone());
+
+    let bufs = [IoSlice::new(b"chunk1"), IoSlice::new(b"chunk2")];
+    mux.write_vectored(&bufs).unwrap();
+    mux.flush().unwrap();
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(&*recorded, b"chunk1chunk2");
+}
+
+#[test]
+fn multiplex_writer_no_recorder_still_works() {
+    // Verify normal operation without a recorder attached.
+    let mut wire = Vec::new();
+    let mut mux = MultiplexWriter::new(&mut wire);
+
+    mux.write_all(b"no recorder").unwrap();
+    mux.flush().unwrap();
+
+    assert!(!wire.is_empty());
+}
+
+#[test]
+fn server_writer_set_batch_recorder_multiplex() {
+    let buf = Vec::new();
+    let mut writer = ServerWriter::new_plain(buf).activate_multiplex().unwrap();
+
+    let recorder: Arc<Mutex<dyn Write + Send>> = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let result = writer.set_batch_recorder(recorder);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn server_writer_set_batch_recorder_plain_fails() {
+    let buf = Vec::new();
+    let mut writer = ServerWriter::new_plain(buf);
+
+    let recorder: Arc<Mutex<dyn Write + Send>> = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let result = writer.set_batch_recorder(recorder);
+    assert!(result.is_err());
+}
+
+#[test]
+fn server_writer_batch_recorder_captures_through_server_write() {
+    let mut wire = Vec::new();
+    let mut writer = ServerWriter::new_plain(&mut wire)
+        .activate_multiplex()
+        .unwrap();
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorder: Arc<Mutex<dyn Write + Send>> = recorder_buf.clone();
+    writer.set_batch_recorder(recorder).unwrap();
+
+    writer.write_all(b"server data").unwrap();
+    writer.flush().unwrap();
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(&*recorded, b"server data");
 }
