@@ -47,13 +47,15 @@
 //! The crate selects the best available I/O mechanism at runtime, falling back
 //! through increasingly portable options:
 //!
-//! 1. **io_uring** - Linux 5.6+, `io_uring` feature enabled, kernel not blocking
+//! 1. **`FICLONE`** - Linux 4.5+, Btrfs/XFS/bcachefs. Instant copy-on-write
+//!    reflink clone. O(1) regardless of file size.
+//! 2. **io_uring** - Linux 5.6+, `io_uring` feature enabled, kernel not blocking
 //!    the syscalls via seccomp. Batches multiple reads/writes into a single
 //!    `io_uring_enter` syscall.
-//! 2. **`copy_file_range`** - Linux 4.5+ for same-filesystem, 5.3+ for
+//! 3. **`copy_file_range`** - Linux 4.5+ for same-filesystem, 5.3+ for
 //!    cross-filesystem. Zero-copy file-to-file transfer in kernel space.
-//! 3. **`sendfile`** - Linux. Zero-copy file-to-socket transfer.
-//! 4. **Standard buffered I/O** - All platforms. Uses `BufReader`/`BufWriter`
+//! 4. **`sendfile`** - Linux. Zero-copy file-to-socket transfer.
+//! 5. **Standard buffered I/O** - All platforms. Uses `BufReader`/`BufWriter`
 //!    with 64 KB default buffers.
 //!
 //! Each mechanism independently falls back to standard I/O on failure (e.g.,
@@ -106,6 +108,7 @@ pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
     CopyMethod, CopyResult, DefaultPlatformCopy, PlatformCopy, try_clonefile, try_fcopyfile,
+    try_ficlone,
 };
 pub use traits::{FileReader, FileWriter};
 
