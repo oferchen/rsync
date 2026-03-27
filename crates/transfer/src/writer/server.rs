@@ -4,6 +4,7 @@
 //! transitions where the global I/O buffer state is modified at runtime.
 
 use std::io::{self, IoSlice, Write};
+use std::sync::{Arc, Mutex};
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
@@ -194,6 +195,30 @@ impl<W: Write> ServerWriter<W> {
     /// I/O operation fails.
     pub fn send_redo(&mut self, ndx: i32) -> io::Result<()> {
         self.send_message(MessageCode::Redo, &ndx.to_le_bytes())
+    }
+
+    /// Attaches a batch recorder to the multiplex writer.
+    ///
+    /// All data written through the `Write` trait (pre-multiplex framing) is
+    /// copied to the recorder. Must be called after multiplex activation.
+    ///
+    /// upstream: `io.c` `write_batch_monitor_out` activates the tee inside
+    /// `write_buf()` to record pre-mux data to the batch file.
+    pub fn set_batch_recorder(&mut self, recorder: Arc<Mutex<dyn Write + Send>>) -> io::Result<()> {
+        match self {
+            Self::Multiplex(mux) => {
+                mux.batch_recorder = Some(recorder);
+                Ok(())
+            }
+            Self::Compressed(compressed) => {
+                compressed.inner_mut().batch_recorder = Some(recorder);
+                Ok(())
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "batch recorder requires multiplex mode",
+            )),
+        }
     }
 
     /// Writes raw bytes directly to the underlying stream, bypassing multiplexing.
