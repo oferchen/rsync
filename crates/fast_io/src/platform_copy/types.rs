@@ -10,6 +10,13 @@ use std::path::Path;
 /// Callers can use this for logging, statistics, or adaptive strategy selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CopyMethod {
+    /// Linux `FICLONE` ioctl - instant copy-on-write clone.
+    ///
+    /// Creates a reflink on filesystems that support it (Btrfs, XFS with
+    /// reflink enabled, bcachefs). Zero data copied - source and destination
+    /// share storage blocks until either is modified. Available on Linux 4.5+.
+    Ficlone,
+
     /// Linux `copy_file_range` syscall - zero-copy in kernel space.
     ///
     /// Available on Linux 4.5+ (same-filesystem) and 5.3+ (cross-filesystem).
@@ -41,6 +48,7 @@ pub enum CopyMethod {
 impl fmt::Display for CopyMethod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            CopyMethod::Ficlone => write!(f, "ficlone"),
             CopyMethod::CopyFileRange => write!(f, "copy_file_range"),
             CopyMethod::Clonefile => write!(f, "clonefile"),
             CopyMethod::Copyfile => write!(f, "copyfile"),
@@ -80,7 +88,7 @@ impl CopyResult {
     pub fn is_zero_copy(&self) -> bool {
         matches!(
             self.method,
-            CopyMethod::CopyFileRange | CopyMethod::Clonefile
+            CopyMethod::Ficlone | CopyMethod::CopyFileRange | CopyMethod::Clonefile
         )
     }
 }
