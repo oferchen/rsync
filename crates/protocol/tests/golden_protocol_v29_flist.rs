@@ -51,19 +51,13 @@ fn golden_v29_regular_file_entry() {
 
     writer.write_entry(&mut buf, &entry).unwrap();
 
-    // Flags byte: first entry has no compression state, so mode/time differ.
-    // XMIT_TOP_DIR(0x01) is NOT set (regular file, not dir).
-    // XMIT_SAME_MODE(0x02) is NOT set (first entry, mode differs from default 0).
-    // XMIT_SAME_TIME(0x80) is NOT set (first entry, mtime differs from default 0).
-    // XMIT_SAME_NAME(0x20) is NOT set (no shared prefix).
-    // XMIT_LONG_NAME(0x40) is NOT set (name < 256 bytes).
-    // For protocol 28-29, when xflags==0 and !is_dir, XMIT_TOP_DIR is set
-    // to avoid zero flags (upstream: flist.c line 550).
+    // Flags byte: with default PreserveFlags (uid=false, gid=false), upstream
+    // sets XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473).
+    // xflags = 0x18 (non-zero), so no XMIT_TOP_DIR substitution needed.
     let flags = buf[0];
     assert_eq!(
-        flags & 0x01,
-        0x01,
-        "XMIT_TOP_DIR set to avoid zero flags for non-dir"
+        flags, 0x18,
+        "XMIT_SAME_UID | XMIT_SAME_GID when preserve_uid/gid not set"
     );
 
     // Name: suffix_len=9 ("hello.txt"), no same_len byte since XMIT_SAME_NAME is off.
@@ -120,40 +114,29 @@ fn golden_v29_directory_entry() {
 
     writer.write_entry(&mut buf, &entry).unwrap();
 
-    // Flags: for first directory without top_dir flag, xflags == 0.
-    // Protocol 28-29: xflags==0 for directories is valid (the zero-avoidance
-    // only applies to non-directories). But actually, with no matching previous
-    // state, the flags should be 0. For directories, 0 flags are allowed,
-    // so we get XMIT_EXTENDED_FLAGS set to encode the zero.
-    // Actually for proto 28-29: if (xflags & 0xFF00) != 0 OR xflags == 0,
-    // then XMIT_EXTENDED_FLAGS is set and 2-byte encoding is used.
-    let flags_lo = buf[0];
-    let flags_hi = buf[1];
-    assert_eq!(
-        flags_lo & 0x04,
-        0x04,
-        "XMIT_EXTENDED_FLAGS set for zero-flags dir"
-    );
-    assert_eq!(flags_hi, 0x00, "extended flags byte is zero");
+    // Flags: with default PreserveFlags (uid=false, gid=false), upstream sets
+    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473).
+    // xflags = 0x18 (non-zero, no extended flags), so single-byte encoding.
+    assert_eq!(buf[0], 0x18, "XMIT_SAME_UID | XMIT_SAME_GID");
 
     // Name: "mydir" = 5 bytes
-    assert_eq!(buf[2], 5, "name suffix length");
-    assert_eq!(&buf[3..8], b"mydir", "name bytes");
+    assert_eq!(buf[1], 5, "name suffix length");
+    assert_eq!(&buf[2..7], b"mydir", "name bytes");
 
     // Size: 0 as 4-byte LE
-    assert_eq!(&buf[8..12], &0_i32.to_le_bytes(), "dir size is 0");
+    assert_eq!(&buf[7..11], &0_i32.to_le_bytes(), "dir size is 0");
 
     // Mtime: 1_700_000_000
-    assert_eq!(&buf[12..16], &1_700_000_000_u32.to_le_bytes(), "dir mtime");
+    assert_eq!(&buf[11..15], &1_700_000_000_u32.to_le_bytes(), "dir mtime");
 
     // Mode: 0o040755 (S_IFDIR | 0755) as 4-byte LE
     assert_eq!(
-        &buf[16..20],
+        &buf[15..19],
         &(0o040755_i32).to_le_bytes(),
         "dir mode 0o040755"
     );
 
-    assert_eq!(buf.len(), 20, "total directory entry length");
+    assert_eq!(buf.len(), 19, "total directory entry length");
 }
 
 // ---------------------------------------------------------------------------
@@ -177,9 +160,9 @@ fn golden_v29_symlink_entry() {
 
     writer.write_entry(&mut buf, &entry).unwrap();
 
-    // Flags: XMIT_TOP_DIR set to avoid zero flags (non-dir)
+    // Flags: XMIT_SAME_UID | XMIT_SAME_GID when preserve_uid/gid not set
     let flags = buf[0];
-    assert_eq!(flags & 0x01, 0x01, "XMIT_TOP_DIR set for non-dir");
+    assert_eq!(flags, 0x18, "XMIT_SAME_UID | XMIT_SAME_GID");
 
     // Name: "link" = 4 bytes
     assert_eq!(buf[1], 4, "name suffix length");
@@ -270,8 +253,9 @@ fn golden_v29_uid_encoding() {
     writer.write_entry(&mut buf, &entry).unwrap();
 
     // Layout: flags(1) + name_len(1) + name(5) + size(4) + mtime(4) + mode(4) + uid(4)
-    // flags: XMIT_TOP_DIR(0x01) to avoid zero
-    assert_eq!(buf[0] & 0x01, 0x01, "XMIT_TOP_DIR set");
+    // flags: XMIT_SAME_GID(0x10) since !preserve_gid is true (flist.c:473)
+    // XMIT_SAME_UID NOT set (preserve_uid=true, first entry, uid != prev_uid)
+    assert_eq!(buf[0], 0x10, "XMIT_SAME_GID set");
 
     // UID at offset 19 (after mode at offset 15..19)
     let uid_offset = 1 + 1 + 5 + 4 + 4 + 4; // = 19

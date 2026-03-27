@@ -12,7 +12,7 @@
 //! - `token.c` - Token encoding with optional compression
 
 use std::fs;
-use std::io::{self, Read, Seek, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use logging::debug_log;
@@ -254,30 +254,58 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
 
 /// Computes the file transfer checksum from delta script data.
 ///
-/// Hashes all literal bytes from the delta script for whole-file verification.
+/// Hashes ALL bytes described by the delta script - both literal data and
+/// block-reference data read from the source file. Upstream rsync feeds every
+/// byte that will appear in the reconstructed file through `sum_update()`,
+/// including matched-block data read back from the source via `map_ptr()`.
 ///
 /// # Upstream Reference
 ///
 /// - `match.c:370` - `sum_init(xfer_sum_nni, checksum_seed)`
-/// - `match.c:411` - `sum_update()` on each data chunk
+/// - `match.c:383-385` - `sum_update()` on literal data
+/// - `match.c:matched():131-135` - `sum_update()` on matched block data
 /// - `checksum.c:686` - `sum_end(char *sum)` finalizes into caller buffer
 pub(super) fn compute_file_checksum(
     script: &DeltaScript,
     algorithm: ChecksumAlgorithm,
     _seed: i32,
     _compat_flags: Option<&protocol::CompatibilityFlags>,
-) -> ([u8; ChecksumVerifier::MAX_DIGEST_LEN], usize) {
+    source_path: &Path,
+    block_length: u32,
+) -> io::Result<([u8; ChecksumVerifier::MAX_DIGEST_LEN], usize)> {
     let mut verifier = ChecksumVerifier::for_algorithm(algorithm);
 
+    // Lazily open source file only when Copy tokens are present.
+    let mut source_file: Option<fs::File> = None;
+    let mut read_buf = Vec::new();
+
     for token in script.tokens() {
-        if let DeltaToken::Literal(data) = token {
-            verifier.update(data);
+        match token {
+            DeltaToken::Literal(data) => {
+                verifier.update(data);
+            }
+            DeltaToken::Copy { index, len } => {
+                // upstream: match.c:matched() - re-reads block data from source
+                // and feeds it through sum_update() for whole-file checksum.
+                let file = match source_file.as_mut() {
+                    Some(f) => f,
+                    None => {
+                        source_file = Some(fs::File::open(source_path)?);
+                        source_file.as_mut().unwrap()
+                    }
+                };
+                let offset = *index * u64::from(block_length);
+                file.seek(SeekFrom::Start(offset))?;
+                read_buf.resize(*len, 0);
+                file.read_exact(&mut read_buf)?;
+                verifier.update(&read_buf);
+            }
         }
     }
 
     let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     let len = verifier.finalize_into(&mut buf);
-    (buf, len)
+    Ok((buf, len))
 }
 
 /// Converts engine delta script to wire protocol delta operations.
@@ -371,7 +399,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
                             let len = *length as usize;
                             see_buf.clear();
                             see_buf.resize(len, 0);
-                            file.seek(io::SeekFrom::Start(source_offset))?;
+                            file.seek(SeekFrom::Start(source_offset))?;
                             file.read_exact(&mut see_buf)?;
                             encoder.see_token(&see_buf)?;
                         }
