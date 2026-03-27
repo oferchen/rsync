@@ -96,6 +96,7 @@
 //! [`delta_transfer`] module documentation.
 
 use std::io::{self, Read, Write};
+use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -203,6 +204,29 @@ pub use pipeline::{
 };
 pub use progress::{TransferProgressCallback, TransferProgressEvent};
 
+/// Batch recording configuration for protocol stream teeing.
+///
+/// When provided to `run_server_with_handshake`, enables post-demux (reader) or
+/// pre-mux (writer) protocol stream recording to a batch file. The transfer crate
+/// has no dependency on the batch crate - this struct uses generic trait objects.
+///
+/// upstream: `io.c:start_write_batch()` activates `write_batch_monitor_in` (receiver)
+/// or `write_batch_monitor_out` (sender) after writing the batch header.
+pub struct BatchRecording {
+    /// Callback invoked after `setup_protocol` with negotiated values.
+    ///
+    /// Receives (protocol_version, compat_flags, checksum_seed) so the caller can
+    /// write the batch header with the correct negotiated values.
+    pub on_setup_complete:
+        Box<dyn FnOnce(i32, Option<protocol::CompatibilityFlags>, i32) -> io::Result<()> + Send>,
+    /// Recorder for the multiplex layer. Receives demuxed data (reads) or
+    /// pre-mux data (writes) depending on `is_sender`.
+    pub recorder: Arc<Mutex<dyn Write + Send>>,
+    /// True when the local side is the sender (tee outgoing data via writer).
+    /// False for receiver (tee incoming data via reader).
+    pub is_sender: bool,
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -275,7 +299,7 @@ pub fn run_server_stdio(
 ) -> ServerResult {
     // Perform protocol handshake
     let handshake = perform_handshake(stdin, stdout)?;
-    run_server_with_handshake(config, handshake, stdin, stdout, progress)
+    run_server_with_handshake(config, handshake, stdin, stdout, progress, None)
 }
 
 /// Executes the native server with a pre-negotiated protocol version.
@@ -297,13 +321,14 @@ pub fn run_server_stdio(
 /// - Multiplex activation fails
 /// - Sending the MSG_IO_TIMEOUT message fails (for daemon mode)
 /// - The receiver or generator role encounters a transfer error
-#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress), fields(role = ?config.role, protocol = %handshake.protocol)))]
+#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress, batch), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake<W: Write>(
     mut config: ServerConfig,
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
     mut stdout: W,
     progress: Option<&mut dyn TransferProgressCallback>,
+    batch: Option<BatchRecording>,
 ) -> ServerResult {
     // upstream: setup_protocol() skips binary exchange when remote_protocol != 0
     // (already set by @RSYNCD greeting or SSH handshake).
@@ -465,8 +490,25 @@ pub fn run_server_with_handshake<W: Write>(
         writer.send_message(MessageCode::IoTimeout, &timeout_bytes)?;
     }
 
+    // upstream: io.c:start_write_batch() - activate batch recording after setup
+    // but before file list data flows. The callback writes the batch header with
+    // negotiated protocol values, then the recorder is attached at the multiplex layer.
+    let mut chained_reader = reader;
+    if let Some(batch_recording) = batch {
+        (batch_recording.on_setup_complete)(
+            i32::from(handshake.protocol),
+            setup_result.compat_flags,
+            handshake.checksum_seed,
+        )?;
+
+        if batch_recording.is_sender {
+            writer.set_batch_recorder(batch_recording.recorder)?;
+        } else {
+            chained_reader.set_batch_recorder(batch_recording.recorder);
+        }
+    }
+
     // Input multiplex activation deferred to each role after reading filter list.
-    let chained_reader = reader;
 
     match config.role {
         ServerRole::Receiver => {

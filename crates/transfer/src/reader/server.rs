@@ -1,4 +1,5 @@
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+use std::sync::{Arc, Mutex};
 
 use compress::algorithm::CompressionAlgorithm;
 
@@ -11,7 +12,17 @@ use crate::compressed_reader::CompressedReader;
 /// We achieve the same by wrapping the reader and delegating based on mode.
 #[allow(private_interfaces)]
 #[allow(clippy::large_enum_variant)]
-pub enum ServerReader<R: Read> {
+pub struct ServerReader<R: Read> {
+    inner: ServerReaderInner<R>,
+    /// Batch recorder held until multiplex activation, then applied to the
+    /// `MultiplexReader`. Stored here because the reader starts in Plain mode
+    /// and transitions to Multiplex later.
+    pending_batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
+}
+
+#[allow(private_interfaces)]
+#[allow(clippy::large_enum_variant)]
+enum ServerReaderInner<R: Read> {
     /// Plain mode - read data directly without demultiplexing.
     Plain(R),
     /// Multiplex mode - extract data from MSG_DATA frames.
@@ -23,19 +34,55 @@ pub enum ServerReader<R: Read> {
 impl<R: Read> ServerReader<R> {
     /// Creates a new plain-mode reader.
     #[inline]
-    pub const fn new_plain(reader: R) -> Self {
-        Self::Plain(reader)
+    pub fn new_plain(reader: R) -> Self {
+        Self {
+            inner: ServerReaderInner::Plain(reader),
+            pending_batch_recorder: None,
+        }
+    }
+
+    /// Registers a batch recorder to be attached when multiplex mode activates.
+    ///
+    /// If multiplex is already active, attaches immediately. Otherwise stores
+    /// the recorder until `activate_multiplex` is called.
+    ///
+    /// upstream: `io.c` `write_batch_monitor_in` activates the tee inside
+    /// `read_buf()` to record post-demux data to the batch file.
+    pub fn set_batch_recorder(&mut self, recorder: Arc<Mutex<dyn Write + Send>>) {
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => {
+                mux.batch_recorder = Some(recorder);
+            }
+            ServerReaderInner::Compressed(compressed) => {
+                compressed.get_mut().batch_recorder = Some(recorder);
+            }
+            ServerReaderInner::Plain(_) => {
+                self.pending_batch_recorder = Some(recorder);
+            }
+        }
     }
 
     /// Activates multiplex mode, wrapping the reader in a demultiplexer.
+    ///
+    /// If a batch recorder was previously registered via `set_batch_recorder`,
+    /// it is attached to the new `MultiplexReader` automatically.
     pub fn activate_multiplex(self) -> io::Result<Self> {
-        match self {
-            Self::Plain(reader) => Ok(Self::Multiplex(MultiplexReader::new(reader))),
-            Self::Multiplex(_) => Err(io::Error::new(
+        match self.inner {
+            ServerReaderInner::Plain(reader) => {
+                let mut mux = MultiplexReader::new(reader);
+                if let Some(recorder) = self.pending_batch_recorder {
+                    mux.batch_recorder = Some(recorder);
+                }
+                Ok(Self {
+                    inner: ServerReaderInner::Multiplex(mux),
+                    pending_batch_recorder: None,
+                })
+            }
+            ServerReaderInner::Multiplex(_) => Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "multiplex already active",
             )),
-            Self::Compressed(_) => Err(io::Error::new(
+            ServerReaderInner::Compressed(_) => Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "compression already active",
             )),
@@ -54,16 +101,19 @@ impl<R: Read> ServerReader<R> {
     /// - Compression is already active
     /// - The compression algorithm is not supported in this build
     pub fn activate_compression(self, algorithm: CompressionAlgorithm) -> io::Result<Self> {
-        match self {
-            Self::Multiplex(mux) => {
+        match self.inner {
+            ServerReaderInner::Multiplex(mux) => {
                 let compressed = CompressedReader::new(mux, algorithm)?;
-                Ok(Self::Compressed(compressed))
+                Ok(Self {
+                    inner: ServerReaderInner::Compressed(compressed),
+                    pending_batch_recorder: None,
+                })
             }
-            Self::Plain(_) => Err(io::Error::new(
+            ServerReaderInner::Plain(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "compression requires multiplex mode first",
             )),
-            Self::Compressed(_) => Err(io::Error::new(
+            ServerReaderInner::Compressed(_) => Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "compression already active",
             )),
@@ -73,7 +123,10 @@ impl<R: Read> ServerReader<R> {
     /// Returns true if multiplex mode is active.
     #[inline]
     pub const fn is_multiplexed(&self) -> bool {
-        matches!(self, Self::Multiplex(_) | Self::Compressed(_))
+        matches!(
+            self.inner,
+            ServerReaderInner::Multiplex(_) | ServerReaderInner::Compressed(_)
+        )
     }
 
     /// Attempts to borrow exactly `len` bytes from the internal frame buffer.
@@ -85,8 +138,8 @@ impl<R: Read> ServerReader<R> {
     ///
     /// Callers should fall back to `Read::read_exact()` when this returns `None`.
     pub fn try_borrow_exact(&mut self, len: usize) -> io::Result<Option<&[u8]>> {
-        match self {
-            Self::Multiplex(mux) => mux.try_borrow_exact(len),
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.try_borrow_exact(len),
             _ => Ok(None),
         }
     }
@@ -105,10 +158,10 @@ impl<R: Read> ServerReader<R> {
     /// - `io.c:1521-1528`: receiver accumulates `io_error |= val` and forwards
     ///   via `send_msg_int(MSG_IO_ERROR, val)` when `am_receiver`.
     pub fn take_io_error(&mut self) -> i32 {
-        match self {
-            Self::Multiplex(mux) => mux.take_io_error(),
-            Self::Compressed(compressed) => compressed.get_mut().take_io_error(),
-            Self::Plain(_) => 0,
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.take_io_error(),
+            ServerReaderInner::Compressed(compressed) => compressed.get_mut().take_io_error(),
+            ServerReaderInner::Plain(_) => 0,
         }
     }
 
@@ -127,10 +180,12 @@ impl<R: Read> ServerReader<R> {
     ///   on the generator side, or forwards to the generator if on the receiver side.
     /// - `sender.c:367-368`: sender sends `MSG_NO_SEND` for protocol >= 30 when file open fails.
     pub fn take_no_send_indices(&mut self) -> Vec<i32> {
-        match self {
-            Self::Multiplex(mux) => mux.take_no_send_indices(),
-            Self::Compressed(compressed) => compressed.get_mut().take_no_send_indices(),
-            Self::Plain(_) => Vec::new(),
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.take_no_send_indices(),
+            ServerReaderInner::Compressed(compressed) => {
+                compressed.get_mut().take_no_send_indices()
+            }
+            ServerReaderInner::Plain(_) => Vec::new(),
         }
     }
 
@@ -149,20 +204,20 @@ impl<R: Read> ServerReader<R> {
     ///   on the generator side, pushing the NDX to `redo_list`.
     /// - `receiver.c:970-974`: receiver sends `send_msg_int(MSG_REDO, ndx)` on checksum failure.
     pub fn take_redo_indices(&mut self) -> Vec<i32> {
-        match self {
-            Self::Multiplex(mux) => mux.take_redo_indices(),
-            Self::Compressed(compressed) => compressed.get_mut().take_redo_indices(),
-            Self::Plain(_) => Vec::new(),
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.take_redo_indices(),
+            ServerReaderInner::Compressed(compressed) => compressed.get_mut().take_redo_indices(),
+            ServerReaderInner::Plain(_) => Vec::new(),
         }
     }
 }
 
 impl<R: Read> Read for ServerReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            Self::Plain(r) => r.read(buf),
-            Self::Multiplex(r) => r.read(buf),
-            Self::Compressed(r) => r.read(buf),
+        match &mut self.inner {
+            ServerReaderInner::Plain(r) => r.read(buf),
+            ServerReaderInner::Multiplex(r) => r.read(buf),
+            ServerReaderInner::Compressed(r) => r.read(buf),
         }
     }
 }

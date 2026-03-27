@@ -191,6 +191,15 @@ impl BatchWriter {
     pub const fn config(&self) -> &BatchConfig {
         &self.config
     }
+
+    /// Get a mutable reference to the batch configuration.
+    ///
+    /// Used to update protocol-negotiated values (protocol version, compat
+    /// flags, checksum seed) after the handshake completes but before writing
+    /// the batch header.
+    pub fn config_mut(&mut self) -> &mut BatchConfig {
+        &mut self.config
+    }
 }
 
 impl Drop for BatchWriter {
