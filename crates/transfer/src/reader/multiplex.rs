@@ -87,15 +87,6 @@ impl<R: Read> MultiplexReader<R> {
         std::mem::take(&mut self.redo_indices)
     }
 
-    /// Returns the exit code from a `MSG_ERROR_EXIT` message, if received.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `io.c:1663-1701`: MSG_ERROR_EXIT handler calls `_exit_cleanup(val)`.
-    pub(super) fn take_error_exit(&mut self) -> Option<i32> {
-        self.error_exit_code.take()
-    }
-
     /// Returns an error if MSG_ERROR_EXIT has been received.
     ///
     /// Called after dispatching non-DATA messages to abort the read loop,
