@@ -1021,7 +1021,9 @@ fn execute_does_not_preserve_permissions_by_default() {
     fs::write(&source, b"perms").expect("write source");
 
     let mut perms = fs::metadata(&source).expect("source metadata").permissions();
-    perms.set_mode(0o600);
+    // Use 0o777 so any non-zero umask produces a visibly different mode,
+    // proving that permissions are not preserved by default.
+    perms.set_mode(0o777);
     fs::set_permissions(&source, perms).expect("set source perms");
 
     let operands = vec![
@@ -1037,8 +1039,8 @@ fn execute_does_not_preserve_permissions_by_default() {
     assert_eq!(summary.files_copied(), 1);
 
     let dest_perms = fs::metadata(&destination).expect("dest metadata").permissions();
-    // Default permissions should be different from 0o600
-    assert_ne!(dest_perms.mode() & 0o777, 0o600);
+    // Default options do not preserve permissions - dest gets umask-applied mode
+    assert_ne!(dest_perms.mode() & 0o777, 0o777);
 }
 
 #[cfg(unix)]

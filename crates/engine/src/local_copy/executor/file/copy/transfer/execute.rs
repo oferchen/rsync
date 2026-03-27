@@ -125,7 +125,9 @@ pub(in crate::local_copy) fn execute_transfer(
     // clonefile() creates an instant copy-on-write clone on APFS, avoiding all
     // read/write I/O. Conditions: new file (no existing dest), whole-file mode,
     // no append/inplace/partial/delay-updates/temp-dir/compression/sparse/limiter,
-    // no copy-dest override.
+    // no copy-dest override. After cloning, metadata is normalized to match what
+    // a normal open()-created file would produce, so finalize_guard_and_metadata
+    // works identically regardless of whether clonefile or read/write was used.
     #[cfg(target_os = "macos")]
     if existing_metadata.is_none()
         && whole_file_enabled
@@ -187,8 +189,15 @@ pub(in crate::local_copy) fn execute_transfer(
                 .with_creation(true),
             );
 
-            // Apply metadata (clonefile preserves source metadata, but rsync
-            // may need to set different permissions/ownership/times)
+            // Normalize cloned metadata to match what open()-created files have.
+            // clonefile() preserves source metadata verbatim. Without this,
+            // finalize_guard_and_metadata skips corrections when preservation is
+            // disabled (e.g. --no-perms, --no-times), leaving source metadata
+            // instead of umask/current-time defaults.
+            // upstream: rsync creates files via open() then applies metadata -
+            // clonefile must produce identical results.
+            normalize_cloned_metadata(destination, metadata, &metadata_options)?;
+
             finalize_guard_and_metadata(
                 context,
                 None,
@@ -627,4 +636,53 @@ fn try_skip_up_to_date(
     );
 
     Ok(true)
+}
+
+/// Normalizes a clonefile'd destination to match open()-created file defaults.
+///
+/// `clonefile()` preserves the source's exact metadata (permissions, mtime).
+/// When the user has not requested preservation of these attributes (e.g.
+/// `--no-perms`, `--no-times`), `finalize_guard_and_metadata` will skip
+/// corrections because it assumes the file already has process-default metadata.
+/// This function bridges that gap by resetting metadata to what `open()` would
+/// produce, so the finalize step works identically for both paths.
+///
+/// - Permissions: reset to `source_mode & ~umask` (matching `open()` behavior)
+/// - Timestamps: reset mtime to current time (matching newly created files)
+#[cfg(target_os = "macos")]
+fn normalize_cloned_metadata(
+    destination: &Path,
+    source_metadata: &fs::Metadata,
+    options: &::metadata::MetadataOptions,
+) -> Result<(), LocalCopyError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // When permissions are being preserved, finalize_guard_and_metadata will set
+    // them from the source - clonefile already did this, so no correction needed.
+    // When NOT preserving, reset to umask-applied mode (what open() would give).
+    if !options.permissions() {
+        // rustix provides a safe umask API (internally wraps the syscall).
+        // Read current umask by setting a dummy value, then restore.
+        let current_umask = rustix::process::umask(rustix::fs::Mode::empty());
+        rustix::process::umask(current_umask);
+        let umask_bits = u32::from(current_umask.bits());
+        let source_mode = source_metadata.permissions().mode() & 0o7777;
+        let default_mode = source_mode & !umask_bits;
+        fs::set_permissions(destination, PermissionsExt::from_mode(default_mode))
+            .map_err(|e| LocalCopyError::io("normalize cloned permissions", destination, e))?;
+    }
+
+    // When timestamps are being preserved, finalize will apply source mtime.
+    // When NOT preserving, reset to current time (what a newly created file has).
+    if !options.times() {
+        let now = std::time::SystemTime::now();
+        let file = fs::File::options()
+            .write(true)
+            .open(destination)
+            .map_err(|e| LocalCopyError::io("open for mtime reset", destination, e))?;
+        file.set_modified(now)
+            .map_err(|e| LocalCopyError::io("normalize cloned mtime", destination, e))?;
+    }
+
+    Ok(())
 }

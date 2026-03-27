@@ -36,7 +36,10 @@ fn transfer_request_with_no_perms_overrides_archive() {
     let source = tmp.path().join("source-no-perms.txt");
     let destination = tmp.path().join("dest-no-perms.txt");
     std::fs::write(&source, b"data").expect("write source");
-    std::fs::set_permissions(&source, PermissionsExt::from_mode(0o600)).expect("set perms");
+    // Use 0o777 so that any non-zero umask will produce a different mode,
+    // proving that --no-perms applies umask-based defaults instead of
+    // preserving the source permissions.
+    std::fs::set_permissions(&source, PermissionsExt::from_mode(0o777)).expect("set perms");
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -51,7 +54,11 @@ fn transfer_request_with_no_perms_overrides_archive() {
     assert!(stderr.is_empty());
 
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
-    assert_ne!(metadata.permissions().mode() & 0o777, 0o600);
+    assert_ne!(
+        metadata.permissions().mode() & 0o777,
+        0o777,
+        "without --perms, destination should have umask-applied permissions"
+    );
 }
 
 // Archive mode includes Unix-specific options (preserve permissions, ownership)
@@ -59,14 +66,18 @@ fn transfer_request_with_no_perms_overrides_archive() {
 #[test]
 fn transfer_request_with_no_times_overrides_archive() {
     use filetime::{FileTime, set_file_times};
+    use std::time::SystemTime;
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("source-no-times.txt");
     let destination = tmp.path().join("dest-no-times.txt");
     std::fs::write(&source, b"data").expect("write source");
-    let mtime = FileTime::from_unix_time(1_700_100_000, 0);
-    set_file_times(&source, mtime, mtime).expect("set times");
+    // Set source mtime to a date far in the past (year 2014)
+    let old_mtime = FileTime::from_unix_time(1_400_000_000, 0);
+    set_file_times(&source, old_mtime, old_mtime).expect("set times");
+
+    let before_transfer = SystemTime::now();
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -80,7 +91,12 @@ fn transfer_request_with_no_times_overrides_archive() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
+    // With --no-times, the destination mtime should be recent (file creation
+    // time), not the old 2014 timestamp from the source.
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
-    assert_ne!(dest_mtime, mtime);
+    let dest_mtime = metadata.modified().expect("modified time");
+    assert!(
+        dest_mtime >= before_transfer,
+        "with --no-times, mtime should be recent, not preserved from source"
+    );
 }
