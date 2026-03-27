@@ -33,6 +33,9 @@ pub(crate) struct MultiplexReader<R> {
     /// File indices received via `MSG_REDO` from the receiver.
     /// upstream: io.c:1514-1519, receiver.c:970-974
     pub(super) redo_indices: Vec<i32>,
+    /// Exit code from MSG_ERROR_EXIT. When set, the remote has requested
+    /// immediate termination. upstream: io.c:1663-1701 calls _exit_cleanup().
+    pub(super) error_exit_code: Option<i32>,
 }
 
 /// Default buffer capacity for `MultiplexReader`.
@@ -51,6 +54,7 @@ impl<R: Read> MultiplexReader<R> {
             io_error: 0,
             no_send_indices: Vec::new(),
             redo_indices: Vec::new(),
+            error_exit_code: None,
         }
     }
 
@@ -81,6 +85,30 @@ impl<R: Read> MultiplexReader<R> {
     /// - `receiver.c:970-974`: receiver sends `MSG_REDO` when `!redoing`.
     pub(super) fn take_redo_indices(&mut self) -> Vec<i32> {
         std::mem::take(&mut self.redo_indices)
+    }
+
+    /// Returns the exit code from a `MSG_ERROR_EXIT` message, if received.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1663-1701`: MSG_ERROR_EXIT handler calls `_exit_cleanup(val)`.
+    pub(super) fn take_error_exit(&mut self) -> Option<i32> {
+        self.error_exit_code.take()
+    }
+
+    /// Returns an error if MSG_ERROR_EXIT has been received.
+    ///
+    /// Called after dispatching non-DATA messages to abort the read loop,
+    /// matching upstream's NORETURN `_exit_cleanup(val)` behavior.
+    fn check_error_exit(&self) -> io::Result<()> {
+        if let Some(code) = self.error_exit_code {
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("remote error exit (code {code})"),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     /// Handles a `MSG_IO_ERROR` payload by accumulating the error flags.
@@ -154,12 +182,28 @@ impl<R: Read> MultiplexReader<R> {
             protocol::MessageCode::Error
             | protocol::MessageCode::ErrorXfer
             | protocol::MessageCode::ErrorSocket
-            | protocol::MessageCode::ErrorUtf8
-            | protocol::MessageCode::ErrorExit => {
+            | protocol::MessageCode::ErrorUtf8 => {
                 // upstream: log.c:rwrite() - FERROR* to stderr
                 if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                     eprint!("{msg}");
                 }
+            }
+            protocol::MessageCode::ErrorExit => {
+                // upstream: io.c:1663-1701 - MSG_ERROR_EXIT carries a 4-byte
+                // exit code. Upon receipt, upstream calls _exit_cleanup(val)
+                // which is NORETURN. We propagate it as an io::Error so the
+                // transfer loop can abort cleanly.
+                let exit_code = if self.buffer.len() == 4 {
+                    i32::from_le_bytes([
+                        self.buffer[0],
+                        self.buffer[1],
+                        self.buffer[2],
+                        self.buffer[3],
+                    ])
+                } else {
+                    0
+                };
+                self.error_exit_code = Some(exit_code);
             }
             protocol::MessageCode::IoError => {
                 // upstream: io.c:1521-1526
@@ -203,6 +247,7 @@ impl<R: Read> MultiplexReader<R> {
                 if self.dispatch_message(code) {
                     break;
                 }
+                self.check_error_exit()?;
             }
         }
 
@@ -254,6 +299,7 @@ impl<R: Read> Read for MultiplexReader<R> {
                 self.pos = to_copy;
                 return Ok(to_copy);
             }
+            self.check_error_exit()?;
         }
     }
 }
