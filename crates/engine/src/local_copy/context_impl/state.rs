@@ -168,6 +168,7 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Returns whether a bandwidth limiter is active.
+    #[cfg(target_os = "macos")]
     pub(super) const fn has_bandwidth_limiter(&self) -> bool {
         self.limiter.is_some()
     }
