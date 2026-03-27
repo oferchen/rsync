@@ -674,14 +674,27 @@ fn normalize_cloned_metadata(
 
     // When timestamps are being preserved, finalize will apply source mtime.
     // When NOT preserving, reset to current time (what a newly created file has).
+    // Use utimensat via rustix to set mtime without needing write access -
+    // clonefile may produce a read-only destination (e.g. source mode 0o444).
     if !options.times() {
-        let now = std::time::SystemTime::now();
-        let file = fs::File::options()
-            .write(true)
-            .open(destination)
-            .map_err(|e| LocalCopyError::io("open for mtime reset", destination, e))?;
-        file.set_modified(now)
-            .map_err(|e| LocalCopyError::io("normalize cloned mtime", destination, e))?;
+        let now = rustix::fs::Timestamps {
+            last_access: rustix::fs::Timespec {
+                tv_sec: 0,
+                tv_nsec: rustix::fs::UTIME_OMIT,
+            },
+            last_modification: rustix::fs::Timespec {
+                tv_sec: 0,
+                tv_nsec: rustix::fs::UTIME_NOW,
+            },
+        };
+        rustix::fs::utimensat(rustix::fs::CWD, destination, &now, rustix::fs::AtFlags::empty())
+            .map_err(|e| {
+                LocalCopyError::io(
+                    "normalize cloned mtime",
+                    destination,
+                    std::io::Error::from_raw_os_error(e.raw_os_error()),
+                )
+            })?;
     }
 
     Ok(())
