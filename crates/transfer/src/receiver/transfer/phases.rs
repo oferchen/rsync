@@ -14,7 +14,8 @@ use std::io::{self, Read, Write};
 
 use protocol::CompatibilityFlags;
 use protocol::codec::{
-    NdxCodec, NdxCodecEnum, ProtocolCodec, create_ndx_codec, create_protocol_codec,
+    NDX_DEL_STATS, NDX_DONE, NdxCodec, NdxCodecEnum, ProtocolCodec, create_ndx_codec,
+    create_protocol_codec,
 };
 
 use crate::receiver::ReceiverContext;
@@ -117,12 +118,22 @@ impl ReceiverContext {
         writer.flush()?;
 
         if self.protocol.supports_extended_goodbye() {
-            let goodbye_echo = ndx_read_codec.read_ndx(reader)?;
-            if goodbye_echo != -1 {
+            // upstream: main.c:875-906 read_final_goodbye() — the sender may
+            // send NDX_DEL_STATS before the NDX_DONE echo. Loop to skip it.
+            loop {
+                let ndx = ndx_read_codec.read_ndx(reader)?;
+                if ndx == NDX_DONE {
+                    break;
+                }
+                if ndx == NDX_DEL_STATS {
+                    // Consume the 5 varints of deletion statistics
+                    let _stats = protocol::stats::DeleteStats::read_from(reader)?;
+                    continue;
+                }
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "expected goodbye NDX_DONE echo (-1) from sender, got {goodbye_echo} {}{}",
+                        "expected goodbye NDX_DONE echo (-1) from sender, got {ndx} {}{}",
                         crate::role_trailer::error_location!(),
                         crate::role_trailer::receiver()
                     ),

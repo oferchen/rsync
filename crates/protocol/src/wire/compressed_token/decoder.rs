@@ -151,12 +151,14 @@ impl CompressedTokenDecoder {
             return Ok(CompressedToken::Literal(data));
         }
 
-        // upstream: r_running - emit pending run tokens
+        // upstream: token.c:618-622 r_running - emit pending run tokens.
+        // Upstream increments rx_token BEFORE returning, so run tokens
+        // are run_start+1, run_start+2, etc. (run_start itself was the
+        // initial token returned without increment).
         if self.rx_run > 0 {
             self.rx_run -= 1;
-            let token = self.rx_token;
             self.rx_token += 1;
-            return Ok(CompressedToken::BlockMatch(token as u32));
+            return Ok(CompressedToken::BlockMatch(self.rx_token as u32));
         }
 
         // Read next flag (or re-process saved flag)
@@ -246,7 +248,10 @@ impl CompressedTokenDecoder {
             return Ok(CompressedToken::End);
         }
 
-        // upstream: token.c lines 588-598 - parse token encoding
+        // upstream: token.c:588-599 - parse token encoding.
+        // rx_token is NOT incremented after the initial return; only r_running
+        // increments before returning. This keeps rx_token at the last returned
+        // value, matching the encoder's last_run_end = last_token convention.
         if flag & TOKEN_REL != 0 {
             let rel = (flag & 0x3F) as i32;
             self.rx_token += rel;
@@ -258,9 +263,7 @@ impl CompressedTokenDecoder {
                 self.rx_run = u16::from_le_bytes(run_buf) as i32;
             }
 
-            let token = self.rx_token;
-            self.rx_token += 1;
-            Ok(CompressedToken::BlockMatch(token as u32))
+            Ok(CompressedToken::BlockMatch(self.rx_token as u32))
         } else if flag & 0xE0 == TOKEN_LONG {
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf)?;
@@ -272,9 +275,7 @@ impl CompressedTokenDecoder {
                 self.rx_run = u16::from_le_bytes(run_buf) as i32;
             }
 
-            let token = self.rx_token;
-            self.rx_token += 1;
-            Ok(CompressedToken::BlockMatch(token as u32))
+            Ok(CompressedToken::BlockMatch(self.rx_token as u32))
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,
