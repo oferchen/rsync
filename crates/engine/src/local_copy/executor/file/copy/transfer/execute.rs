@@ -121,6 +121,99 @@ pub(in crate::local_copy) fn execute_transfer(
         );
     }
 
+    // Fast path: macOS clonefile for new whole-file copies.
+    // clonefile() creates an instant copy-on-write clone on APFS, avoiding all
+    // read/write I/O. Conditions: new file (no existing dest), whole-file mode,
+    // no append/inplace/partial/delay-updates/temp-dir/compression/sparse/limiter,
+    // no copy-dest override.
+    #[cfg(target_os = "macos")]
+    if existing_metadata.is_none()
+        && whole_file_enabled
+        && !inplace_enabled
+        && !partial_enabled
+        && !use_sparse_writes
+        && !compress_enabled
+        && copy_source_override.is_none()
+        && !context.has_bandwidth_limiter()
+        && !context.delay_updates_enabled()
+        && context.temp_directory_path().is_none()
+    {
+        if let Ok(()) = crate::local_copy::clonefile::try_clonefile(source, destination) {
+            let start = Instant::now();
+            debug_log!(
+                Send,
+                1,
+                "cloned {}: {} bytes (CoW)",
+                record_path.display(),
+                file_size
+            );
+
+            // Batch capture for whole-file clones
+            context.capture_batch_whole_file(source, file_size)?;
+            context.finalize_batch_file_delta()?;
+
+            context.register_created_path(
+                destination,
+                CreatedEntryKind::File,
+                destination_previously_existed,
+            );
+            context.record_hard_link(metadata, destination);
+            context
+                .summary_mut()
+                .record_file(file_size, file_size, None);
+            context.summary_mut().record_elapsed(start.elapsed());
+
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
+            let change_set = LocalCopyChangeSet::for_file(
+                metadata,
+                existing_metadata,
+                &metadata_options,
+                destination_previously_existed,
+                true,
+                flags.xattrs_enabled(),
+                flags.acls_enabled(),
+            );
+            context.record(
+                LocalCopyRecord::new(
+                    record_path.to_path_buf(),
+                    LocalCopyAction::DataCopied,
+                    file_size,
+                    total_bytes,
+                    start.elapsed(),
+                    Some(metadata_snapshot),
+                )
+                .with_change_set(change_set)
+                .with_creation(true),
+            );
+
+            // Apply metadata (clonefile preserves source metadata, but rsync
+            // may need to set different permissions/ownership/times)
+            finalize_guard_and_metadata(
+                context,
+                None,
+                destination,
+                metadata,
+                metadata_options,
+                mode,
+                source,
+                record_path,
+                relative,
+                file_type,
+                destination_previously_existed,
+                false,
+                &mut None,
+                #[cfg(all(unix, feature = "xattr"))]
+                preserve_xattrs,
+                #[cfg(all(unix, feature = "acl"))]
+                preserve_acls,
+            )?;
+
+            return Ok(());
+        }
+        // clonefile failed (cross-device, non-APFS, etc.) - fall through to normal copy
+    }
+
     // Open source and determine append mode
     let mut reader = open_source_file(source, context.open_noatime_enabled())
         .map_err(|error| LocalCopyError::io("copy file", source, error))?;
