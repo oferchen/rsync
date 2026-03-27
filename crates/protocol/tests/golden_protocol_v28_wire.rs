@@ -35,16 +35,9 @@ fn golden_v28_regular_file_first_entry() {
     // File: "hello.txt", size=42, mode=0o100644, mtime=1700000000
     // No preserve_uid/gid, no checksum mode.
     //
-    // Expected wire format:
-    //   flags: single byte (XMIT_TOP_DIR=0x01 because xflags==0 for non-dir,
-    //          upstream sets XMIT_TOP_DIR to avoid zero flags for non-dirs)
-    //   name_len: 1 byte = 9 (suffix_len, no XMIT_SAME_NAME, no XMIT_LONG_NAME)
-    //   name: "hello.txt" (9 bytes)
-    //   size: write_longint(42) = 4 bytes LE [0x2A, 0x00, 0x00, 0x00]
-    //   mtime: 4 bytes unsigned LE = 1700000000 = 0x6553F100
-    //          LE: [0x00, 0xF1, 0x53, 0x65]
-    //   mode: to_wire_mode(0o100644) = 0o100644 = 33188 = 0x000081A4
-    //         LE: [0xA4, 0x81, 0x00, 0x00]
+    // With default PreserveFlags (uid=false, gid=false), upstream sets
+    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473).
+    // xflags = 0x18 (non-zero), so no XMIT_TOP_DIR substitution needed.
 
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(proto28());
@@ -56,8 +49,8 @@ fn golden_v28_regular_file_first_entry() {
 
     #[rustfmt::skip]
     let expected: &[u8] = &[
-        // flags: XMIT_TOP_DIR (0x01) - set to avoid zero flags for non-dir
-        0x01,
+        // flags: XMIT_SAME_UID (0x08) | XMIT_SAME_GID (0x10) = 0x18
+        0x18,
         // name suffix length (1 byte, no XMIT_LONG_NAME)
         0x09,
         // name: "hello.txt"
@@ -158,12 +151,12 @@ fn golden_v28_regular_file_large_size() {
 #[test]
 fn golden_v28_directory_first_entry() {
     // Directory: "mydir", mode=0o40755, mtime=1700000000
-    // For directories, xflags=0 is valid (no XMIT_TOP_DIR substitution).
-    // But upstream sets XMIT_EXTENDED_FLAGS when xflags==0 for dirs,
-    // writing a two-byte flag header.
+    // With default PreserveFlags (uid=false, gid=false), upstream sets
+    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473:
+    // `!preserve_uid` is true). This gives xflags=0x18 (single-byte encoding).
     //
     // Expected wire format:
-    //   flags: 2 bytes [0x04, 0x00] (XMIT_EXTENDED_FLAGS + empty extended byte)
+    //   flags: 1 byte = 0x18 (XMIT_SAME_UID | XMIT_SAME_GID)
     //   name_len: 1 byte = 5
     //   name: "mydir"
     //   size: write_longint(0) = 4-byte LE [0x00, 0x00, 0x00, 0x00]
@@ -181,8 +174,8 @@ fn golden_v28_directory_first_entry() {
 
     #[rustfmt::skip]
     let expected: &[u8] = &[
-        // flags: XMIT_EXTENDED_FLAGS (0x04) + extended byte (0x00)
-        0x04, 0x00,
+        // flags: XMIT_SAME_UID (0x08) | XMIT_SAME_GID (0x10) = 0x18
+        0x18,
         // name suffix length
         0x05,
         // name: "mydir"
@@ -235,21 +228,9 @@ fn golden_v28_symlink_entry() {
     // When preserve_links is set, symlink target is written after mode.
     // Target length uses write_varint30_int(proto=28) = write_int (4-byte LE).
     //
-    // Note: mtime must be set to a non-zero value to avoid XMIT_SAME_TIME
-    // being set (prev_mtime defaults to 0), which would omit the mtime field
-    // and change the flags byte from XMIT_TOP_DIR (0x01) to XMIT_SAME_TIME (0x80).
-    //
-    // Expected wire format:
-    //   flags: 0x01 (XMIT_TOP_DIR, avoiding zero for non-dir)
-    //   name_len: 1 byte = 4
-    //   name: "link"
-    //   size: write_longint(0) = 4-byte LE
-    //   mtime: 4-byte unsigned LE = 1700000000 = 0x6553F100
-    //          LE: [0x00, 0xF1, 0x53, 0x65]
-    //   mode: to_wire_mode(0o120777) = 0o120777 = 41471 = 0x0000A1FF
-    //         LE: [0xFF, 0xA1, 0x00, 0x00]
-    //   symlink_len: write_int(6) = [0x06, 0x00, 0x00, 0x00]
-    //   symlink_target: "target" (6 bytes)
+    // With default PreserveFlags (uid=false, gid=false), upstream sets
+    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473).
+    // xflags = 0x18 (non-zero), so no XMIT_TOP_DIR substitution needed.
 
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(proto28()).with_preserve_links(true);
@@ -261,8 +242,8 @@ fn golden_v28_symlink_entry() {
 
     #[rustfmt::skip]
     let expected: &[u8] = &[
-        // flags: XMIT_TOP_DIR (0x01) - set to avoid zero flags for non-dir
-        0x01,
+        // flags: XMIT_SAME_UID (0x08) | XMIT_SAME_GID (0x10) = 0x18
+        0x18,
         // name suffix length
         0x04,
         // name: "link"
@@ -514,9 +495,10 @@ fn golden_v28_name_compression() {
     // Second entry should be shorter due to name compression
     let second_bytes = &buf[first_len..];
 
-    // Flags for second entry: XMIT_SAME_NAME(0x20) | XMIT_SAME_TIME(0x80) | XMIT_SAME_MODE(0x02) = 0xA2
+    // Flags for second entry: XMIT_SAME_NAME(0x20) | XMIT_SAME_TIME(0x80) | XMIT_SAME_MODE(0x02)
+    // | XMIT_SAME_UID(0x08) | XMIT_SAME_GID(0x10) = 0xBA
     assert_eq!(
-        second_bytes[0], 0xA2,
+        second_bytes[0], 0xBA,
         "second entry flags should have SAME_NAME|SAME_TIME|SAME_MODE"
     );
 
@@ -554,14 +536,15 @@ fn golden_v28_flags_single_byte_non_dir() {
     e2.set_mtime(1_000_000_001, 0);
     writer.write_entry(&mut buf, &e2).unwrap();
 
-    // Second entry flags: XMIT_SAME_MODE (0x02) - single byte
-    assert_eq!(buf[first_len], 0x02);
+    // Second entry flags: XMIT_SAME_MODE (0x02) | XMIT_SAME_UID (0x08) | XMIT_SAME_GID (0x10)
+    // upstream: !preserve_uid sets SAME_UID unconditionally (flist.c:463)
+    assert_eq!(buf[first_len], 0x1A);
 }
 
 #[test]
 fn golden_v28_flags_two_byte_directory_zero() {
-    // Directory with xflags=0 gets two-byte encoding:
-    // XMIT_EXTENDED_FLAGS (0x04) + extended byte (0x00).
+    // Directory with default PreserveFlags (uid=false, gid=false):
+    // upstream sets XMIT_SAME_UID | XMIT_SAME_GID = 0x18 (single-byte encoding).
     let protocol = proto28();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
@@ -570,9 +553,8 @@ fn golden_v28_flags_two_byte_directory_zero() {
     entry.set_mtime(1_000_000_000, 0);
     writer.write_entry(&mut buf, &entry).unwrap();
 
-    // First two bytes are the flags
-    assert_eq!(buf[0], 0x04, "primary byte must be XMIT_EXTENDED_FLAGS");
-    assert_eq!(buf[1], 0x00, "extended byte must be zero");
+    // Single byte: XMIT_SAME_UID (0x08) | XMIT_SAME_GID (0x10) = 0x18
+    assert_eq!(buf[0], 0x18, "flags must be XMIT_SAME_UID | XMIT_SAME_GID");
 }
 
 // ---------------------------------------------------------------------------

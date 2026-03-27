@@ -49,7 +49,7 @@ impl FileListWriter {
     /// |------|-----|---------|
     /// | `XMIT_SAME_RDEV_MAJOR` | 8 | Same rdev major (protocol 28+, devices/specials) |
     /// | `XMIT_NO_CONTENT_DIR` | 8 | Directory has no content (protocol 30+, directories) |
-    /// | `XMIT_HLINKED` | 9 | Entry is a hardlink (protocol 30+) |
+    /// | `XMIT_HLINKED` | 9 | Entry is a hardlink (protocol 28+) |
     /// | `XMIT_SAME_DEV_PRE30` | 10 | Same hardlink device (protocol 28-29) |
     /// | `XMIT_RDEV_MINOR_8_PRE30` | 10 | Rdev minor fits in byte (protocol 28-29) |
     /// | `XMIT_USER_NAME_FOLLOWS` | 11 | User name follows UID (protocol 30+) |
@@ -106,14 +106,19 @@ impl FileListWriter {
         }
 
         // UID comparison
+        // upstream: flist.c:463 - set XMIT_SAME_UID when !preserve_uid OR
+        // (uid matches previous AND not the first entry). The *lastname guard
+        // prevents false "same" on the first entry where prev_uid is zero.
         let entry_uid = entry.uid().unwrap_or(0);
-        if self.preserve.uid && entry_uid == self.state.prev_uid() {
+        let not_first_entry = !self.state.prev_name().is_empty();
+        if !self.preserve.uid || (entry_uid == self.state.prev_uid() && not_first_entry) {
             xflags |= XMIT_SAME_UID as u32;
         }
 
         // GID comparison
+        // upstream: flist.c:473 - same pattern as UID
         let entry_gid = entry.gid().unwrap_or(0);
-        if self.preserve.gid && entry_gid == self.state.prev_gid() {
+        if !self.preserve.gid || (entry_gid == self.state.prev_gid() && not_first_entry) {
             xflags |= XMIT_SAME_GID as u32;
         }
 
@@ -137,34 +142,38 @@ impl FileListWriter {
     fn calculate_device_flags(&self, entry: &FileEntry) -> u32 {
         let mut xflags: u32 = 0;
 
+        let is_device = entry.is_device();
+        let is_special = entry.is_special();
+
         // upstream: flist.c:send_file_entry() checks preserve_devices for
         // IS_DEVICE and preserve_specials for IS_SPECIAL separately
-        let needs_rdev = (self.preserve.devices && entry.is_device())
-            || (self.preserve.specials && entry.is_special() && self.protocol.as_u8() < 31);
+        let needs_rdev = (self.preserve.devices && is_device)
+            || (self.preserve.specials && is_special && self.protocol.as_u8() < 31);
 
         if !needs_rdev {
             return xflags;
         }
 
-        let major = if entry.is_device() {
-            entry.rdev_major().unwrap_or(0)
-        } else {
-            0 // Dummy rdev for special files
-        };
-
-        if major == self.state.prev_rdev_major() {
+        if is_special {
+            // upstream: flist.c:450-460 - special files don't need a real rdev.
+            // Set XMIT_SAME_RDEV_MAJOR unconditionally for efficiency, and
+            // also XMIT_RDEV_MINOR_8_PRE30 for protocol 28-29.
             xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
-        }
-
-        // Set XMIT_RDEV_MINOR_8_PRE30 flag if minor fits in byte (protocol 28-29)
-        if self.protocol.as_u8() >= 28 && self.protocol.as_u8() < 30 {
-            let minor = if entry.is_device() {
-                entry.rdev_minor().unwrap_or(0)
-            } else {
-                0
-            };
-            if minor <= 0xFF {
+            if self.protocol.as_u8() >= 28 && self.protocol.as_u8() < 30 {
                 xflags |= (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8;
+            }
+        } else {
+            // Device files: compare major with previous
+            let major = entry.rdev_major().unwrap_or(0);
+            if major == self.state.prev_rdev_major() {
+                xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
+            }
+            // Set XMIT_RDEV_MINOR_8_PRE30 flag if minor fits in byte (protocol 28-29)
+            if self.protocol.as_u8() >= 28 && self.protocol.as_u8() < 30 {
+                let minor = entry.rdev_minor().unwrap_or(0);
+                if minor <= 0xFF {
+                    xflags |= (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8;
+                }
             }
         }
 
@@ -194,6 +203,9 @@ impl FileListWriter {
         } else if self.protocol.as_u8() >= 28 {
             // Protocol 28-29: Use XMIT_SAME_DEV_PRE30 for hardlink dev compression
             if let Some(dev) = entry.hardlink_dev() {
+                // upstream: flist.c:530 - XMIT_HLINKED set for ALL hardlink entries,
+                // not just protocol 30+. Protocol 28-29 also sets this flag.
+                xflags |= (XMIT_HLINKED as u32) << 8;
                 if dev == self.state.prev_hardlink_dev() {
                     xflags |= (XMIT_SAME_DEV_PRE30 as u32) << 8;
                 }

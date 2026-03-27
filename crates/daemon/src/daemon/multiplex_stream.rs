@@ -133,12 +133,29 @@ impl<R: Read> Read for MultiplexReader<R> {
                 protocol::MessageCode::Error
                 | protocol::MessageCode::ErrorXfer
                 | protocol::MessageCode::ErrorSocket
-                | protocol::MessageCode::ErrorUtf8
-                | protocol::MessageCode::ErrorExit => {
+                | protocol::MessageCode::ErrorUtf8 => {
                     // upstream: log.c:rwrite() — FERROR* to stderr
                     if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                         eprint!("{}", msg);
                     }
+                }
+                protocol::MessageCode::ErrorExit => {
+                    // upstream: io.c:1663-1701 — MSG_ERROR_EXIT carries a
+                    // 4-byte exit code and triggers _exit_cleanup(val).
+                    let exit_code = if self.buffer.len() == 4 {
+                        i32::from_le_bytes([
+                            self.buffer[0],
+                            self.buffer[1],
+                            self.buffer[2],
+                            self.buffer[3],
+                        ])
+                    } else {
+                        0
+                    };
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        format!("remote error exit (code {exit_code})"),
+                    ));
                 }
                 _ => {
                     // Other message types (Redo, Stats, etc.): continue reading

@@ -55,8 +55,13 @@ impl FileListWriter {
             }
         } else {
             // Protocol < 28: single byte
-            let flags_to_write = if xflags == 0 && !is_dir {
-                XMIT_LONG_NAME as u32
+            // upstream: flist.c:559-562 - dirs use XMIT_LONG_NAME, non-dirs use XMIT_TOP_DIR
+            let flags_to_write = if (xflags & 0xFF) == 0 {
+                if is_dir {
+                    xflags | XMIT_LONG_NAME as u32
+                } else {
+                    xflags | XMIT_TOP_DIR as u32
+                }
             } else {
                 xflags
             };

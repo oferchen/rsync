@@ -215,26 +215,26 @@ fn golden_tokenrun_rel_from_10_count_2() {
 #[test]
 fn golden_two_token_rel_accumulating() {
     let data = [
-        TOKEN_REL | 5,  // rx_token=0+5=5, returns 5, rx_token becomes 6
-        TOKEN_REL | 10, // rx_token=6+10=16, returns 16
+        TOKEN_REL | 5,  // rx_token=0+5=5, returns 5 (no post-increment)
+        TOKEN_REL | 10, // rx_token=5+10=15, returns 15
         END_FLAG,
     ];
     let (_, blocks) = decode_all(&data);
-    assert_eq!(blocks, vec![5, 16]);
+    assert_eq!(blocks, vec![5, 15]);
 }
 
 /// TOKEN_REL followed by TOKENRUN_REL to test mixed relative encodings.
 #[test]
 fn golden_token_rel_then_tokenrun_rel() {
     let data = [
-        TOKEN_REL | 3,    // rx_token=0+3=3, returns 3, rx_token=4
-        TOKENRUN_REL | 2, // rx_token=4+2=6, run_count=3, returns 6,7,8
+        TOKEN_REL | 3,    // rx_token=0+3=3, returns 3 (no post-increment)
+        TOKENRUN_REL | 2, // rx_token=3+2=5, run_count=3, returns 5,6,7,8
         3,
         0, // n=3 (LE 16-bit)
         END_FLAG,
     ];
     let (_, blocks) = decode_all(&data);
-    assert_eq!(blocks, vec![3, 6, 7, 8, 9]);
+    assert_eq!(blocks, vec![3, 5, 6, 7, 8]);
 }
 
 /// DEFLATED_DATA header format: first byte = 0x40 | (len >> 8),
@@ -471,9 +471,9 @@ fn encoder_consecutive_large_offset_uses_tokenrun_long() {
 }
 
 /// Non-consecutive blocks produce separate token encodings.
-/// Blocks 0, then 5: first run is 0 (relative), second is 5 (relative to last_run_end=1).
-/// After first run: last_run_end = 0 + 1 = 1 (last_token + 1).
-/// Second run: r = 5 - 1 = 4 which fits in 6 bits.
+/// Blocks 0, then 5: first run is 0 (relative), second is 5 (relative to last_run_end=0).
+/// After first run: last_run_end = 0 (last_token, matching upstream token.c:398).
+/// Second run: r = 5 - 0 = 5 which fits in 6 bits.
 #[test]
 fn encoder_non_consecutive_blocks_separate_tokens() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
@@ -484,8 +484,8 @@ fn encoder_non_consecutive_blocks_separate_tokens() {
 
     // First run: TOKEN_REL | 0 = 0x80
     assert_eq!(output[0], TOKEN_REL);
-    // Second run: TOKEN_REL | 4 = 0x84 (r = 5 - 1 = 4)
-    assert_eq!(output[1], TOKEN_REL | 4);
+    // Second run: TOKEN_REL | 5 = 0x85 (r = 5 - 0 = 5)
+    assert_eq!(output[1], TOKEN_REL | 5);
     assert_eq!(output[2], END_FLAG);
 }
 
@@ -870,21 +870,21 @@ fn protocol_version_30_and_31_both_produce_valid_wire_format() {
 fn golden_rx_token_accumulation_chain() {
     // Build a chain of 5 relative tokens:
     // Initial rx_token = 0
-    // Token 1: TOKEN_REL | 0  -> block 0, rx_token = 1
-    // Token 2: TOKEN_REL | 0  -> block 1, rx_token = 2
-    // Token 3: TOKEN_REL | 3  -> block 5, rx_token = 6
-    // Token 4: TOKEN_REL | 0  -> block 6, rx_token = 7
-    // Token 5: TOKEN_REL | 10 -> block 17, rx_token = 18
+    // Token 1: TOKEN_REL | 0  -> rx_token=0+0=0, returns 0 (no post-increment)
+    // Token 2: TOKEN_REL | 2  -> rx_token=0+2=2, returns 2
+    // Token 3: TOKEN_REL | 3  -> rx_token=2+3=5, returns 5
+    // Token 4: TOKEN_REL | 1  -> rx_token=5+1=6, returns 6
+    // Token 5: TOKEN_REL | 10 -> rx_token=6+10=16, returns 16
     let data = [
         TOKEN_REL | 0,  // block 0
-        TOKEN_REL | 0,  // block 1
+        TOKEN_REL | 2,  // block 2
         TOKEN_REL | 3,  // block 5
-        TOKEN_REL | 0,  // block 6
-        TOKEN_REL | 10, // block 17
+        TOKEN_REL | 1,  // block 6
+        TOKEN_REL | 10, // block 16
         END_FLAG,
     ];
     let (_, blocks) = decode_all(&data);
-    assert_eq!(blocks, vec![0, 1, 5, 6, 17]);
+    assert_eq!(blocks, vec![0, 2, 5, 6, 16]);
 }
 
 /// Verify upstream's run count interpretation: when a TOKENRUN is received,
