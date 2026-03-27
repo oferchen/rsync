@@ -33,6 +33,7 @@ fn copy_result_new_and_accessors() {
 
 #[test]
 fn copy_result_is_zero_copy() {
+    assert!(CopyResult::new(0, CopyMethod::Ficlone).is_zero_copy());
     assert!(CopyResult::new(0, CopyMethod::CopyFileRange).is_zero_copy());
     assert!(CopyResult::new(0, CopyMethod::Clonefile).is_zero_copy());
     assert!(!CopyResult::new(0, CopyMethod::Copyfile).is_zero_copy());
@@ -42,6 +43,7 @@ fn copy_result_is_zero_copy() {
 
 #[test]
 fn copy_method_display() {
+    assert_eq!(CopyMethod::Ficlone.to_string(), "ficlone");
     assert_eq!(CopyMethod::CopyFileRange.to_string(), "copy_file_range");
     assert_eq!(CopyMethod::Clonefile.to_string(), "clonefile");
     assert_eq!(CopyMethod::Copyfile.to_string(), "copyfile");
@@ -54,10 +56,12 @@ fn copy_method_equality_and_hash() {
     use std::collections::HashSet;
 
     let mut set = HashSet::new();
+    set.insert(CopyMethod::Ficlone);
     set.insert(CopyMethod::CopyFileRange);
     set.insert(CopyMethod::Clonefile);
     set.insert(CopyMethod::StandardCopy);
-    assert_eq!(set.len(), 3);
+    assert_eq!(set.len(), 4);
+    assert!(set.contains(&CopyMethod::Ficlone));
     assert!(set.contains(&CopyMethod::CopyFileRange));
 }
 
@@ -170,8 +174,14 @@ fn supports_reflink_platform_specific() {
     #[cfg(target_os = "macos")]
     assert!(supports, "macOS should report reflink support");
 
-    #[cfg(not(target_os = "macos"))]
-    assert!(!supports, "non-macOS should not report reflink support");
+    #[cfg(target_os = "linux")]
+    assert!(supports, "Linux should report reflink support (FICLONE)");
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    assert!(
+        !supports,
+        "other platforms should not report reflink support"
+    );
 }
 
 #[test]
@@ -183,7 +193,7 @@ fn preferred_method_small_file() {
     assert_eq!(method, CopyMethod::Clonefile);
 
     #[cfg(target_os = "linux")]
-    assert_eq!(method, CopyMethod::StandardCopy);
+    assert_eq!(method, CopyMethod::Ficlone);
 
     #[cfg(target_os = "windows")]
     assert_eq!(method, CopyMethod::StandardCopy);
@@ -198,7 +208,7 @@ fn preferred_method_large_file() {
     assert_eq!(method, CopyMethod::Clonefile);
 
     #[cfg(target_os = "linux")]
-    assert_eq!(method, CopyMethod::CopyFileRange);
+    assert_eq!(method, CopyMethod::Ficlone);
 
     #[cfg(target_os = "windows")]
     assert_eq!(method, CopyMethod::CopyFileEx);
@@ -242,6 +252,91 @@ fn parity_default_vs_std_fs_copy() {
         "PlatformCopy and std::fs::copy must produce identical output"
     );
     assert_eq!(content1, content, "both must match source");
+}
+
+// --- Standalone ficlone tests ---
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn ficlone_returns_unsupported_on_non_linux() {
+    let temp = TempDir::new().expect("create temp dir");
+    let (src, dst) = setup_test_files(temp.path(), "ficlone_stub", b"data");
+
+    let err = try_ficlone(&src, &dst).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn ficlone_graceful_fallback_on_tmpfs() {
+    // tmpfs does not support reflinks - FICLONE should fail with EOPNOTSUPP.
+    // The platform_copy_impl dispatch chain handles this transparently.
+    let temp = TempDir::new().expect("create temp dir");
+    let (src, dst) = setup_test_files(temp.path(), "ficlone_tmpfs", b"test data");
+
+    // Direct FICLONE call - expected to fail on tmpfs/ext4
+    let result = try_ficlone(&src, &dst);
+    // We don't assert success because CI may run on any filesystem.
+    // On Btrfs/XFS: Ok(()), on ext4/tmpfs: Err(EOPNOTSUPP or similar).
+    // The key test is that it doesn't panic and returns a clean result.
+    match result {
+        Ok(()) => {
+            // FICLONE succeeded - verify data integrity
+            let content = std::fs::read(&dst).expect("read ficlone result");
+            assert_eq!(content, b"test data");
+        }
+        Err(e) => {
+            // Expected on non-reflink filesystems
+            let raw = e.raw_os_error().unwrap_or(0);
+            // EOPNOTSUPP (95), EXDEV (18), EINVAL (22) are all acceptable
+            assert!(
+                [95, 18, 22].contains(&raw) || e.kind() == io::ErrorKind::Unsupported,
+                "unexpected FICLONE error: {e} (raw: {raw})"
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn ficlone_fails_on_missing_source() {
+    let temp = TempDir::new().expect("create temp dir");
+    let src = temp.path().join("nonexistent.txt");
+    let dst = temp.path().join("dst.txt");
+
+    let result = try_ficlone(&src, &dst);
+    assert!(result.is_err());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn platform_copy_falls_through_ficlone_failure() {
+    // Verify the full dispatch chain works: FICLONE fails on tmpfs/ext4,
+    // falls through to copy_file_range or std::fs::copy.
+    let temp = TempDir::new().expect("create temp dir");
+    let content = b"fallback test content";
+    let src = setup_source(temp.path(), "ficlone_fallback_src.txt", content);
+    let dst = temp.path().join("ficlone_fallback_dst.txt");
+
+    let copier = DefaultPlatformCopy::new();
+    let result = copier
+        .copy_file(&src, &dst, content.len() as u64)
+        .expect("copy should succeed via fallback");
+
+    let dst_content = std::fs::read(&dst).expect("read destination");
+    assert_eq!(dst_content, content);
+
+    // On non-Btrfs, should have fallen back past FICLONE
+    // (method will be CopyFileRange or StandardCopy, not Ficlone)
+    // On Btrfs, Ficlone is also valid
+    assert!(
+        matches!(
+            result.method,
+            CopyMethod::Ficlone | CopyMethod::CopyFileRange | CopyMethod::StandardCopy
+        ),
+        "unexpected copy method: {:?}",
+        result.method
+    );
 }
 
 // --- Standalone clonefile/fcopyfile tests ---

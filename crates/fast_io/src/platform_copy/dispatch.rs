@@ -8,10 +8,26 @@ use std::path::Path;
 
 use super::types::{CopyMethod, CopyResult};
 
-/// Linux: try `copy_file_range` for large files, fall back to `std::fs::copy`.
+/// Linux: try `FICLONE` (instant CoW), then `copy_file_range`, then `std::fs::copy`.
+///
+/// The dispatch chain prioritizes zero-data-copy methods:
+/// 1. `FICLONE` ioctl - instant reflink on Btrfs/XFS/bcachefs (same device only)
+/// 2. `copy_file_range` - zero-copy in kernel space (files >= 64KB)
+/// 3. `std::fs::copy` - portable buffered fallback
 #[cfg(target_os = "linux")]
 pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<CopyResult> {
     use std::fs::File;
+
+    // Try FICLONE first - instant CoW clone, O(1) regardless of file size.
+    // Opens both files because FICLONE operates on file descriptors.
+    // upstream: does not use FICLONE, this is an oc-rsync optimization.
+    match try_ficlone_impl(src, dst) {
+        Ok(()) => return Ok(CopyResult::new(0, CopyMethod::Ficlone)),
+        Err(_) => {
+            // FICLONE failed (unsupported fs, cross-device, etc.) - fall through
+            let _ = std::fs::remove_file(dst);
+        }
+    }
 
     // Threshold below which copy_file_range overhead exceeds benefit
     // (matches copy_file_range module constant)
@@ -218,26 +234,61 @@ pub(super) fn try_copy_file_ex(src: &Path, dst: &Path, use_no_buffering: bool) -
     }
 }
 
+/// Linux `FICLONE` ioctl wrapper using `rustix::fs::ioctl_ficlone`.
+///
+/// Creates the destination file, then attempts a reflink clone from the source.
+/// On success, source and destination share storage blocks (copy-on-write).
+/// On failure, the caller is responsible for cleaning up the destination.
+#[cfg(target_os = "linux")]
+pub(super) fn try_ficlone_impl(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::fs::File;
+    use std::os::fd::AsFd;
+
+    let source = File::open(src)?;
+    let destination = File::create(dst)?;
+
+    // rustix::fs::ioctl_ficlone is fully safe - it uses AsFd/BorrowedFd
+    // for compile-time fd validity, and wraps the FICLONE ioctl internally.
+    rustix::fs::ioctl_ficlone(destination.as_fd(), source.as_fd())
+        .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()))
+}
+
+/// Stub for non-Linux platforms where FICLONE is unavailable.
+#[cfg(not(target_os = "linux"))]
+pub(super) fn try_ficlone_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "FICLONE is only available on Linux",
+    ))
+}
+
 /// macOS supports reflink via `clonefile` on APFS.
 #[cfg(target_os = "macos")]
 pub(super) fn platform_supports_reflink() -> bool {
     true
 }
 
-/// Linux does not yet expose reflink through this trait (FICLONE ioctl planned).
-#[cfg(not(target_os = "macos"))]
+/// Linux supports reflink via `FICLONE` ioctl on Btrfs, XFS (reflink enabled),
+/// and bcachefs. Returns `true` as a capability indicator - individual clone
+/// operations may still fail on unsupported filesystems (ext4, tmpfs, NFS).
+#[cfg(target_os = "linux")]
+pub(super) fn platform_supports_reflink() -> bool {
+    true
+}
+
+/// Windows does not yet expose reflink (ReFS FSCTL_DUPLICATE_EXTENTS planned).
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) fn platform_supports_reflink() -> bool {
     false
 }
 
-/// Linux: prefer `copy_file_range` for files >= 64KB.
+/// Linux: prefer `FICLONE` (instant CoW) regardless of size.
+///
+/// FICLONE is O(1) and free when the filesystem supports it. The actual
+/// dispatch falls back to `copy_file_range` then standard copy at runtime.
 #[cfg(target_os = "linux")]
-pub(super) fn platform_preferred_method(size: u64) -> CopyMethod {
-    if size >= 64 * 1024 {
-        CopyMethod::CopyFileRange
-    } else {
-        CopyMethod::StandardCopy
-    }
+pub(super) fn platform_preferred_method(_size: u64) -> CopyMethod {
+    CopyMethod::Ficlone
 }
 
 /// macOS: prefer `clonefile` regardless of size (instant CoW).
