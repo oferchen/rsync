@@ -199,7 +199,7 @@ fn run_client_internal(
 
     if has_daemon_url {
         // Daemon data transfer via rsync:// URLs
-        return remote::run_daemon_transfer(&config, observer);
+        return remote::run_daemon_transfer(&config, observer, batch_writer);
     }
 
     let has_remote = config
@@ -208,7 +208,16 @@ fn run_client_internal(
         .any(|arg| remote::operand_is_remote(arg));
 
     if has_remote {
-        return remote::run_ssh_transfer(&config, observer);
+        let summary = remote::run_ssh_transfer(&config, observer, batch_writer.clone())?;
+
+        // Finalize batch file if batch mode was active
+        if let Some(ref writer_arc) = batch_writer
+            && let Some(batch_cfg) = config.batch_config()
+        {
+            batch::finalize_batch(writer_arc, batch_cfg, &summary)?;
+        }
+
+        return Ok(summary);
     }
 
     // Local copy path

@@ -23,6 +23,10 @@ mod orchestration;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+use std::sync::{Arc, Mutex};
+
+use engine::batch::BatchWriter;
+
 use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error};
@@ -51,6 +55,7 @@ use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments}
 pub fn run_daemon_transfer(
     config: &ClientConfig,
     _observer: Option<&mut dyn ClientProgressObserver>,
+    _batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
     if args.len() < 2 {

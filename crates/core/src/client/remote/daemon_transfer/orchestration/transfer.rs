@@ -101,6 +101,7 @@ pub(crate) fn run_push_transfer(
         &mut reader,
         &mut stream,
         None,
+        None,
     );
 
     match result {
@@ -194,7 +195,7 @@ fn run_server_with_handshake_over_stream(
         .try_clone()
         .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
 
-    crate::server::run_server_with_handshake(config, handshake, &mut reader, stream, progress)
+    crate::server::run_server_with_handshake(config, handshake, &mut reader, stream, progress, None)
         .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
 }
 

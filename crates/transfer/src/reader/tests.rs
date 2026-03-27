@@ -7,7 +7,7 @@ use compress::algorithm::CompressionAlgorithm;
 fn server_reader_new_plain() {
     let data = vec![1, 2, 3, 4, 5];
     let reader = ServerReader::new_plain(Cursor::new(data));
-    assert!(matches!(reader, ServerReader::Plain(_)));
+    assert!(!reader.is_multiplexed());
 }
 
 #[test]
@@ -17,7 +17,7 @@ fn server_reader_activate_multiplex() {
     let result = reader.activate_multiplex();
     assert!(result.is_ok());
     let multiplexed = result.unwrap();
-    assert!(matches!(multiplexed, ServerReader::Multiplex(_)));
+    assert!(multiplexed.is_multiplexed());
 }
 
 #[test]

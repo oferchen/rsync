@@ -1,4 +1,5 @@
 use std::io::{self, Read, Write};
+use std::sync::{Arc, Mutex};
 
 /// Reader that automatically demultiplexes incoming messages.
 ///
@@ -12,6 +13,10 @@ use std::io::{self, Read, Write};
 /// When `MSG_NO_SEND` frames are received, the 4-byte little-endian file index
 /// is accumulated into an internal queue. Callers drain the queue via
 /// [`MultiplexReader::take_no_send_indices`].
+///
+/// When a `batch_recorder` is attached, all demuxed `MSG_DATA` payloads are
+/// copied to the recorder. This mirrors upstream rsync's `write_batch_monitor_in`
+/// in `io.c:read_buf()` which tees data after demultiplexing.
 ///
 /// # Upstream Reference
 ///
@@ -36,6 +41,9 @@ pub(crate) struct MultiplexReader<R> {
     /// Exit code from MSG_ERROR_EXIT. When set, the remote has requested
     /// immediate termination. upstream: io.c:1663-1701 calls _exit_cleanup().
     pub(super) error_exit_code: Option<i32>,
+    /// Optional recorder for batch mode - captures post-demux data.
+    /// upstream: `io.c` `write_batch_monitor_in` + `safe_write(batch_fd, buf, len)`
+    pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
 }
 
 /// Default buffer capacity for `MultiplexReader`.
@@ -51,6 +59,7 @@ impl<R: Read> MultiplexReader<R> {
             inner,
             buffer: Vec::with_capacity(MULTIPLEX_READER_BUFFER_CAPACITY),
             pos: 0,
+            batch_recorder: None,
             io_error: 0,
             no_send_indices: Vec::new(),
             redo_indices: Vec::new(),
@@ -267,6 +276,14 @@ impl<R: Read> Read for MultiplexReader<R> {
                 self.pos = 0;
             }
 
+            // upstream: io.c:read_buf() - tee post-demux data to batch_fd
+            if let Some(ref recorder) = self.batch_recorder {
+                let mut rec = recorder
+                    .lock()
+                    .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
+                rec.write_all(&buf[..to_copy])?;
+            }
+
             return Ok(to_copy);
         }
 
@@ -288,6 +305,15 @@ impl<R: Read> Read for MultiplexReader<R> {
                 let to_copy = self.buffer.len().min(buf.len());
                 buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
                 self.pos = to_copy;
+
+                // upstream: io.c:read_buf() - tee post-demux data to batch_fd
+                if let Some(ref recorder) = self.batch_recorder {
+                    let mut rec = recorder
+                        .lock()
+                        .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
+                    rec.write_all(&buf[..to_copy])?;
+                }
+
                 return Ok(to_copy);
             }
             self.check_error_exit()?;

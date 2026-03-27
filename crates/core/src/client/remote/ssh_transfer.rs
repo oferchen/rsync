@@ -18,11 +18,13 @@
 //! - `options.c:server_options()` - Remote `--server` argument construction
 
 use std::ffi::{OsStr, OsString};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+use engine::batch::BatchWriter;
 use rsync_io::ssh::{SshCommand, SshConnection, parse_ssh_operand};
 
 use super::super::config::ClientConfig;
@@ -132,6 +134,7 @@ type SshInvocationResult = (
 pub fn run_ssh_transfer(
     config: &ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
+    batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
     if args.len() < 2 {
@@ -161,7 +164,7 @@ pub fn run_ssh_transfer(
                 config,
                 &stdin_args,
             )?;
-            run_push_transfer(config, connection, &local_sources, observer)
+            run_push_transfer(config, connection, &local_sources, observer, batch_writer)
         }
         TransferSpec::Pull {
             remote_sources,
@@ -177,7 +180,7 @@ pub fn run_ssh_transfer(
                 config,
                 &stdin_args,
             )?;
-            run_pull_transfer(config, connection, &[local_dest], observer)
+            run_pull_transfer(config, connection, &[local_dest], observer, batch_writer)
         }
         TransferSpec::Proxy {
             remote_sources,
@@ -325,6 +328,7 @@ fn run_pull_transfer(
     connection: SshConnection,
     local_paths: &[String],
     observer: Option<&mut dyn ClientProgressObserver>,
+    batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     // Build server config for receiver role with client_mode enabled.
     // client_mode = true tells the server flow to send the filter list at the
@@ -338,12 +342,15 @@ fn run_pull_transfer(
     })?;
     server_config.stop_at = config.stop_at();
 
+    let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
+
     let start = Instant::now();
     let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
-    let server_stats = run_server_over_ssh_connection(server_config, connection, progress)?;
+    let server_stats =
+        run_server_over_ssh_connection(server_config, connection, progress, batch_ctx)?;
     let elapsed = start.elapsed();
 
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
@@ -358,6 +365,7 @@ fn run_push_transfer(
     connection: SshConnection,
     local_paths: &[String],
     observer: Option<&mut dyn ClientProgressObserver>,
+    batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     // Build server config for generator (sender) role with client_mode enabled.
     // client_mode = true ensures the filter list is sent at the correct point
@@ -370,12 +378,15 @@ fn run_push_transfer(
     })?;
     server_config.stop_at = config.stop_at();
 
+    let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
+
     let start = Instant::now();
     let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
-    let server_stats = run_server_over_ssh_connection(server_config, connection, progress)?;
+    let server_stats =
+        run_server_over_ssh_connection(server_config, connection, progress, batch_ctx)?;
     let elapsed = start.elapsed();
 
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
@@ -505,10 +516,125 @@ pub(super) fn format_stderr_context(stderr_bytes: &[u8]) -> String {
     format!("\nSSH stderr:\n{trimmed}")
 }
 
+/// Batch recording context passed through the SSH transfer chain.
+///
+/// Bundles the `BatchWriter` with pre-computed stream flags from `ClientConfig`,
+/// since the inner functions only receive `ServerConfig` which lacks batch flag info.
+struct BatchContext {
+    writer: Arc<Mutex<BatchWriter>>,
+    flags: engine::batch::BatchFlags,
+}
+
+/// Builds a [`BatchContext`] from a `ClientConfig` and `BatchWriter`.
+///
+/// Pre-computes batch stream flags from the client configuration so they are
+/// available after the handshake when only `ServerConfig` is accessible.
+fn build_batch_context(config: &ClientConfig, writer: Arc<Mutex<BatchWriter>>) -> BatchContext {
+    #[cfg(all(unix, feature = "xattr"))]
+    let preserve_xattrs = config.preserve_xattrs();
+    #[cfg(not(all(unix, feature = "xattr")))]
+    let preserve_xattrs = false;
+
+    let flags = engine::batch::BatchFlags {
+        recurse: config.recursive(),
+        preserve_uid: config.preserve_owner(),
+        preserve_gid: config.preserve_group(),
+        preserve_links: config.links(),
+        preserve_hard_links: config.preserve_hard_links(),
+        always_checksum: config.checksum(),
+        xfer_dirs: config.dirs(),
+        do_compression: config.compress(),
+        preserve_xattrs,
+        inplace: config.inplace(),
+        append: config.append(),
+        append_verify: config.append_verify(),
+        ..Default::default()
+    };
+
+    BatchContext { writer, flags }
+}
+
+/// Builds a `BatchRecording` for `run_server_with_handshake`.
+///
+/// Creates the callback that writes the batch header with negotiated protocol
+/// values (available only after `setup_protocol`), and provides the recorder
+/// that gets attached at the multiplex layer for demuxed/pre-mux teeing.
+///
+/// upstream: `main.c:client_run()` calls `start_write_batch()` after
+/// `setup_protocol()`. `start_write_batch` writes protocol_version,
+/// compat_flags, checksum_seed, then activates the tee monitor.
+fn build_batch_recording(
+    batch_ctx: &BatchContext,
+    is_sender: bool,
+) -> crate::server::BatchRecording {
+    let writer_for_header = batch_ctx.writer.clone();
+    let flags = batch_ctx.flags;
+
+    // The recorder wraps BatchWriter::write_data as a plain Write impl.
+    // This adapts the batch crate's API to the generic Arc<Mutex<dyn Write + Send>>
+    // expected by the multiplex layer.
+    let recorder: Arc<Mutex<dyn std::io::Write + Send>> = Arc::new(Mutex::new(BatchWriteAdapter {
+        inner: batch_ctx.writer.clone(),
+    }));
+
+    crate::server::BatchRecording {
+        on_setup_complete: Box::new(move |protocol_version, compat_flags, checksum_seed| {
+            let mut bw = writer_for_header
+                .lock()
+                .map_err(|_| std::io::Error::other("batch writer lock poisoned"))?;
+            let cfg = bw.config_mut();
+            cfg.protocol_version = protocol_version;
+            cfg.compat_flags = compat_flags.map(|f| f.bits() as i32);
+            cfg.checksum_seed = checksum_seed;
+            bw.write_header(flags)
+                .map_err(|e| std::io::Error::other(format!("failed to write batch header: {e}")))
+        }),
+        recorder,
+        is_sender,
+    }
+}
+
+/// Adapts `BatchWriter::write_data` to the `std::io::Write` trait.
+///
+/// The multiplex recorder expects `Arc<Mutex<dyn Write + Send>>`, but
+/// `BatchWriter` uses its own `write_data` method. This adapter bridges
+/// the two interfaces without coupling the transfer crate to the batch crate.
+struct BatchWriteAdapter {
+    inner: Arc<Mutex<BatchWriter>>,
+}
+
+impl std::io::Write for BatchWriteAdapter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut bw = self
+            .inner
+            .lock()
+            .map_err(|_| std::io::Error::other("batch writer lock poisoned"))?;
+        bw.write_data(buf)
+            .map_err(|e| std::io::Error::other(format!("batch write failed: {e}")))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut bw = self
+            .inner
+            .lock()
+            .map_err(|_| std::io::Error::other("batch writer lock poisoned"))?;
+        bw.flush()
+            .map_err(|e| std::io::Error::other(format!("batch flush failed: {e}")))
+    }
+}
+
 /// Runs server over an SSH connection using split read/write halves.
 ///
 /// This uses [`SshConnection::split`] to obtain separate reader and writer handles,
 /// avoiding the need for unsafe aliased mutable references.
+///
+/// When `batch_writer` is provided, the handshake is performed first, then the
+/// batch header is written with negotiated protocol info, and the appropriate
+/// I/O side is wrapped with a tee to record protocol bytes to the batch file.
+///
+/// upstream: `io.c:start_write_batch()` activates the tee after handshake,
+/// recording either incoming (receiver) or outgoing (sender) protocol data.
 ///
 /// After the transfer completes, the SSH child process is waited on and its exit
 /// status is mapped to an rsync exit code. The worst (highest) exit code from the
@@ -518,13 +644,27 @@ fn run_server_over_ssh_connection(
     config: ServerConfig,
     connection: SshConnection,
     progress: Option<&mut dyn crate::server::TransferProgressCallback>,
+    batch_ctx: Option<BatchContext>,
 ) -> Result<crate::server::ServerStats, ClientError> {
     let (mut reader, mut writer, child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
 
-    let transfer_result =
-        crate::server::run_server_stdio(config, &mut reader, &mut writer, progress);
+    let batch_recording = batch_ctx.as_ref().map(|ctx| {
+        let is_sender = config.role == ServerRole::Generator;
+        build_batch_recording(ctx, is_sender)
+    });
+
+    let handshake = crate::server::perform_handshake(&mut reader, &mut writer)
+        .map_err(|e| invalid_argument_error(&format!("handshake failed: {e}"), 5))?;
+    let transfer_result = crate::server::run_server_with_handshake(
+        config,
+        handshake,
+        &mut reader,
+        &mut writer,
+        progress,
+        batch_recording,
+    );
 
     // Close the writer to signal EOF to the remote process, allowing it to exit.
     drop(writer);

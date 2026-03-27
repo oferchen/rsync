@@ -5,6 +5,7 @@
 //! compensate for frame headers and batch approximately 2 wire chunks per flush.
 
 use std::io::{self, IoSlice, Write};
+use std::sync::{Arc, Mutex};
 
 use protocol::{MessageCode, MessageHeader};
 
@@ -12,11 +13,19 @@ use protocol::{MessageCode, MessageHeader};
 ///
 /// Buffers writes to avoid sending tiny multiplex frames for every write call.
 /// Mirrors upstream rsync's `iobuf_out` buffering pattern in `io.c`.
+///
+/// When a `batch_recorder` is attached, all data written through the `Write`
+/// trait (pre-multiplex framing) is copied to the recorder. This mirrors
+/// upstream rsync's `write_batch_monitor_out` in `io.c:write_buf()` which
+/// tees data before multiplex framing is applied.
 pub(crate) struct MultiplexWriter<W> {
     inner: W,
     buffer: Vec<u8>,
     /// Buffer size matching upstream rsync's IO_BUFFER_SIZE pattern.
     buffer_size: usize,
+    /// Optional recorder for batch mode - captures pre-mux data.
+    /// upstream: `io.c` `write_batch_monitor_out` + `safe_write(batch_fd, buf, len)`
+    pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
 }
 
 /// Default buffer size - 64KB to batch ~2 wire chunks per flush.
@@ -35,6 +44,7 @@ impl<W: Write> MultiplexWriter<W> {
             inner,
             buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             buffer_size: DEFAULT_BUFFER_SIZE,
+            batch_recorder: None,
         }
     }
 
@@ -76,6 +86,14 @@ impl<W: Write> Write for MultiplexWriter<W> {
             return Ok(0);
         }
 
+        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd
+        if let Some(ref recorder) = self.batch_recorder {
+            let mut rec = recorder
+                .lock()
+                .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
+            rec.write_all(buf)?;
+        }
+
         if self.buffer.len() + buf.len() > self.buffer_size {
             self.flush_buffer()?;
         }
@@ -105,6 +123,16 @@ impl<W: Write> Write for MultiplexWriter<W> {
 
         if total_len == 0 {
             return Ok(0);
+        }
+
+        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd
+        if let Some(ref recorder) = self.batch_recorder {
+            let mut rec = recorder
+                .lock()
+                .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
+            for buf in bufs {
+                rec.write_all(buf)?;
+            }
         }
 
         // Fast path: if everything fits in remaining buffer space, copy all at once
