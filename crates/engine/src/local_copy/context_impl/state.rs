@@ -167,6 +167,12 @@ impl<'a> CopyContext<'a> {
         self.options.delay_updates_enabled()
     }
 
+    /// Returns whether a bandwidth limiter is active.
+    #[cfg(target_os = "macos")]
+    pub(super) const fn has_bandwidth_limiter(&self) -> bool {
+        self.limiter.is_some()
+    }
+
     /// Returns the root destination directory for the transfer.
     pub(super) fn destination_root(&self) -> &Path {
         &self.destination_root

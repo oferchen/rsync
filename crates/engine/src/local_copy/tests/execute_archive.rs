@@ -725,7 +725,9 @@ fn archive_no_perms_skips_permission_preservation() {
         b"restricted",
         test_helpers::TEST_TIMESTAMP,
     );
-    test_helpers::set_permissions(&ctx.source.join("restricted.txt"), 0o600);
+    // Use 0o777 so any non-zero umask produces a visibly different mode,
+    // proving that permissions are not preserved from the source.
+    test_helpers::set_permissions(&ctx.source.join("restricted.txt"), 0o777);
 
     // archive but with perms disabled
     let options = test_helpers::presets::archive_options().permissions(false);
@@ -735,12 +737,12 @@ fn archive_no_perms_skips_permission_preservation() {
         .expect("copy");
 
     let dest_perms = test_helpers::get_permissions(&ctx.dest.join("restricted.txt"));
-    // With perms disabled, the destination will get umask-based permissions,
-    // not the source's 0o600
+    // With perms disabled, the destination gets umask-applied permissions,
+    // not the source's exact 0o777.
     assert_ne!(
         dest_perms & 0o777,
-        0o600,
-        "with perms disabled, mode should not be exactly 0o600"
+        0o777,
+        "with perms disabled, mode should not be exactly 0o777"
     );
 }
 
