@@ -122,39 +122,47 @@ pub(in crate::local_copy) fn execute_transfer(
     }
 
     // Fast path: macOS clonefile for new whole-file copies.
-    // clonefile() creates an instant copy-on-write clone on APFS, avoiding all
-    // read/write I/O. Conditions: new file (no existing dest), whole-file mode,
-    // no append/inplace/partial/delay-updates/temp-dir/compression/sparse/limiter,
-    // no copy-dest override, no xattr filter rules (clonefile copies all xattrs
-    // verbatim, so selective xattr filtering cannot be applied after cloning).
-    // After cloning, metadata is normalized to match what open()-created files
-    // produce, so finalize_guard_and_metadata works identically for both paths.
+    // clonefile() creates a CoW clone on APFS, avoiding all read/write I/O.
+    // Because clonefile copies source metadata and extended attributes verbatim,
+    // it is only safe when all metadata will either be preserved by finalize or
+    // corrected by normalize_cloned_metadata. The eligibility check below
+    // centralizes all conditions that would make clonefile produce incorrect
+    // results, so finalize_guard_and_metadata works identically for both paths.
     #[cfg(target_os = "macos")]
-    let has_xattr_filter_rules = {
-        #[cfg(all(unix, feature = "xattr"))]
-        {
-            context
-                .filter_program()
-                .is_some_and(|p| p.has_xattr_rules())
-        }
-        #[cfg(not(all(unix, feature = "xattr")))]
-        {
-            false
-        }
+    let clonefile_eligible = {
+        // Transfer mode: new file, whole-file, no conflicting options
+        let transfer_ok = existing_metadata.is_none()
+            && whole_file_enabled
+            && !inplace_enabled
+            && !partial_enabled
+            && !use_sparse_writes
+            && !compress_enabled
+            && copy_source_override.is_none()
+            && !context.has_bandwidth_limiter()
+            && !context.delay_updates_enabled()
+            && context.temp_directory_path().is_none();
+
+        // Extended attributes: clonefile copies all xattrs verbatim, so skip
+        // when (a) xattr filters need selective copy, or (b) xattrs are disabled
+        // entirely (source xattrs would leak to destination).
+        let xattr_ok = {
+            #[cfg(all(unix, feature = "xattr"))]
+            {
+                let has_filter_rules = context
+                    .filter_program()
+                    .is_some_and(|p| p.has_xattr_rules());
+                flags.xattrs_enabled() && !has_filter_rules
+            }
+            #[cfg(not(all(unix, feature = "xattr")))]
+            {
+                true
+            }
+        };
+
+        transfer_ok && xattr_ok
     };
     #[cfg(target_os = "macos")]
-    if existing_metadata.is_none()
-        && whole_file_enabled
-        && !inplace_enabled
-        && !partial_enabled
-        && !use_sparse_writes
-        && !compress_enabled
-        && copy_source_override.is_none()
-        && !context.has_bandwidth_limiter()
-        && !context.delay_updates_enabled()
-        && context.temp_directory_path().is_none()
-        && !has_xattr_filter_rules
-    {
+    if clonefile_eligible {
         if let Ok(()) = crate::local_copy::clonefile::try_clonefile(source, destination) {
             let start = Instant::now();
             debug_log!(
