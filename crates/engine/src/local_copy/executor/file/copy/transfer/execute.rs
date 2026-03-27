@@ -687,14 +687,19 @@ fn normalize_cloned_metadata(
                 tv_nsec: rustix::fs::UTIME_NOW,
             },
         };
-        rustix::fs::utimensat(rustix::fs::CWD, destination, &now, rustix::fs::AtFlags::empty())
-            .map_err(|e| {
-                LocalCopyError::io(
-                    "normalize cloned mtime",
-                    destination,
-                    std::io::Error::from_raw_os_error(e.raw_os_error()),
-                )
-            })?;
+        rustix::fs::utimensat(
+            rustix::fs::CWD,
+            destination,
+            &now,
+            rustix::fs::AtFlags::empty(),
+        )
+        .map_err(|e| {
+            LocalCopyError::io(
+                "normalize cloned mtime",
+                destination,
+                std::io::Error::from_raw_os_error(e.raw_os_error()),
+            )
+        })?;
     }
 
     Ok(())
