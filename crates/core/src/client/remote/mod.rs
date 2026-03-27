@@ -20,6 +20,7 @@
 //! - `clientserver.c:start_daemon_client()` - Daemon URL dispatch
 //! - `options.c:server_options()` - Server flag string generation
 
+pub(crate) mod batch_support;
 pub mod daemon_transfer;
 pub(crate) mod flags;
 pub mod invocation;

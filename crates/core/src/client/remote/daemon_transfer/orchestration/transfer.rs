@@ -12,9 +12,9 @@ use super::server_config::{build_server_config_for_generator, build_server_confi
 use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
 use crate::client::error::{ClientError, invalid_argument_error, socket_error};
+use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
 use crate::client::remote::flags;
 use crate::client::summary::ClientSummary;
-
 use crate::server::handshake::HandshakeResult;
 
 /// Executes a pull transfer (remote to local).
@@ -33,6 +33,7 @@ pub(crate) fn run_pull_transfer(
     mut stream: TcpStream,
     local_paths: &[String],
     protocol: ProtocolVersion,
+    batch_ctx: Option<BatchContext>,
 ) -> Result<ClientSummary, ClientError> {
     configure_transfer_socket(&stream, config)?;
 
@@ -53,9 +54,19 @@ pub(crate) fn run_pull_transfer(
         server_config.connection.files_from_data = Some(data);
     }
 
+    // Pull: local side is Receiver, batch records incoming data (is_sender=false)
+    let batch_recording = batch_ctx
+        .as_ref()
+        .map(|ctx| build_batch_recording(ctx, false));
+
     let start = Instant::now();
-    let server_stats =
-        run_server_with_handshake_over_stream(server_config, handshake, &mut stream, None)?;
+    let server_stats = run_server_with_handshake_over_stream(
+        server_config,
+        handshake,
+        &mut stream,
+        None,
+        batch_recording,
+    )?;
     let elapsed = start.elapsed();
 
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
@@ -77,6 +88,7 @@ pub(crate) fn run_push_transfer(
     mut stream: TcpStream,
     local_paths: &[String],
     protocol: ProtocolVersion,
+    batch_ctx: Option<BatchContext>,
 ) -> Result<ClientSummary, ClientError> {
     configure_transfer_socket(&stream, config)?;
 
@@ -87,6 +99,12 @@ pub(crate) fn run_push_transfer(
 
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let dry_run = config.dry_run();
+
+    // Push: local side is Generator (sender), batch records outgoing data (is_sender=true)
+    let batch_recording = batch_ctx
+        .as_ref()
+        .map(|ctx| build_batch_recording(ctx, true));
+
     let start = Instant::now();
 
     // Call the server directly (not the error-wrapping helper) so we can
@@ -101,7 +119,7 @@ pub(crate) fn run_push_transfer(
         &mut reader,
         &mut stream,
         None,
-        None,
+        batch_recording,
     );
 
     match result {
@@ -190,13 +208,21 @@ fn run_server_with_handshake_over_stream(
     handshake: HandshakeResult,
     stream: &mut TcpStream,
     progress: Option<&mut dyn crate::server::TransferProgressCallback>,
+    batch: Option<crate::server::BatchRecording>,
 ) -> Result<crate::server::ServerStats, ClientError> {
     let mut reader = stream
         .try_clone()
         .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
 
-    crate::server::run_server_with_handshake(config, handshake, &mut reader, stream, progress, None)
-        .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
+    crate::server::run_server_with_handshake(
+        config,
+        handshake,
+        &mut reader,
+        stream,
+        progress,
+        batch,
+    )
+    .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
 }
 
 /// Reads the `--files-from` source and serializes it into the wire format
