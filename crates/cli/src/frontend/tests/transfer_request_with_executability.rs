@@ -36,7 +36,11 @@ fn transfer_request_with_executability_preserves_execute_bits() {
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
     let mode = metadata.permissions().mode() & 0o777;
     // Execute bits should be set (source has execute bits)
-    assert_ne!(mode & 0o111, 0, "execute bits should be preserved from source");
+    assert_ne!(
+        mode & 0o111,
+        0,
+        "execute bits should be preserved from source"
+    );
     // Non-execute bits should remain from destination, not source
     assert_ne!(
         mode & 0o666,
