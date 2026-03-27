@@ -681,7 +681,9 @@ fn normalize_cloned_metadata(
         let current_umask = rustix::process::umask(rustix::fs::Mode::empty());
         rustix::process::umask(current_umask);
         let umask_bits = u32::from(current_umask.bits());
-        let source_mode = source_metadata.permissions().mode() & 0o7777;
+        // Mask to 0o777 - open() never sets special bits (setuid/setgid/sticky).
+        // upstream: rsync uses open(dest, O_CREAT, mode & 0777) for new files.
+        let source_mode = source_metadata.permissions().mode() & 0o777;
         let default_mode = source_mode & !umask_bits;
         fs::set_permissions(destination, PermissionsExt::from_mode(default_mode))
             .map_err(|e| LocalCopyError::io("normalize cloned permissions", destination, e))?;
