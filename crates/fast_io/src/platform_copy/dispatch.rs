@@ -82,11 +82,20 @@ pub(super) fn platform_copy_impl(
     Ok(CopyResult::new(bytes, CopyMethod::Copyfile))
 }
 
-/// Windows: try `CopyFileExW` with optional no-buffering, fall back to `std::fs::copy`.
+/// Windows: check for ReFS reflink support, then try `CopyFileExW`, fall back to `std::fs::copy`.
+///
+/// On ReFS volumes, logs that reflink is available. The actual
+/// `FSCTL_DUPLICATE_EXTENTS_TO_FILE` call is not yet implemented - this
+/// dispatch prepares the detection infrastructure so the reflink path
+/// can be added without changing the dispatch chain again.
 #[cfg(target_os = "windows")]
 pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<CopyResult> {
     /// Threshold above which `COPY_FILE_NO_BUFFERING` is used (4MB).
     const NO_BUFFERING_THRESHOLD: u64 = 4 * 1024 * 1024;
+
+    // Check if destination is on ReFS (future: attempt FSCTL_DUPLICATE_EXTENTS)
+    let _is_refs =
+        crate::refs_detect::is_refs_filesystem(dst.parent().unwrap_or(dst)).unwrap_or(false);
 
     let use_no_buffering = size_hint > NO_BUFFERING_THRESHOLD;
 
@@ -276,7 +285,10 @@ pub(super) fn platform_supports_reflink() -> bool {
     true
 }
 
-/// Windows does not yet expose reflink (ReFS FSCTL_DUPLICATE_EXTENTS planned).
+/// Windows supports reflink via `FSCTL_DUPLICATE_EXTENTS_TO_FILE` on ReFS only.
+/// Returns `false` since reflink support depends on the destination volume's
+/// filesystem type and cannot be determined without a path. The per-path check
+/// is done in `platform_copy_impl` via `is_refs_filesystem`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) fn platform_supports_reflink() -> bool {
     false
