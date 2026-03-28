@@ -270,9 +270,7 @@ impl FilterChain {
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
         // Check per-directory scopes from innermost to outermost
         for scope in self.scopes.iter().rev() {
-            if !scope.filter_set.is_empty()
-                && has_matching_rule(&scope.filter_set, path, is_dir)
-            {
+            if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
                 return scope.filter_set.allows(path, is_dir);
             }
         }
@@ -290,9 +288,7 @@ impl FilterChain {
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
         // Check per-directory scopes from innermost to outermost
         for scope in self.scopes.iter().rev() {
-            if !scope.filter_set.is_empty()
-                && has_matching_rule(&scope.filter_set, path, is_dir)
-            {
+            if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
                 return scope.filter_set.allows_deletion(path, is_dir);
             }
         }
