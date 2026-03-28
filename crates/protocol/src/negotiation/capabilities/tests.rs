@@ -2083,19 +2083,23 @@ fn capability_fallback_graceful_checksum_degradation() {
 /// select the first algorithm we actually support.
 #[test]
 fn capability_fallback_graceful_compression_degradation() {
-    // Remote offers zstd/lz4 first - we skip them, pick zlibx
+    // Remote offers zstd/lz4 first - we pick the best we support
     let modern_list = "zstd lz4 zlibx zlib none";
-    assert_eq!(
-        choose_compression_algorithm(modern_list).unwrap(),
-        CompressionAlgorithm::ZlibX
-    );
+    let result = choose_compression_algorithm(modern_list).unwrap();
+    #[cfg(feature = "zstd")]
+    assert_eq!(result, CompressionAlgorithm::Zstd);
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(not(any(feature = "zstd", feature = "lz4")))]
+    assert_eq!(result, CompressionAlgorithm::ZlibX);
 
-    // Remote offers lz4 first without zstd - we skip lz4, pick zlibx
+    // Remote offers lz4 first without zstd
     let no_zstd_list = "lz4 zlibx zlib none";
-    assert_eq!(
-        choose_compression_algorithm(no_zstd_list).unwrap(),
-        CompressionAlgorithm::ZlibX
-    );
+    let result = choose_compression_algorithm(no_zstd_list).unwrap();
+    #[cfg(feature = "lz4")]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(not(feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::ZlibX);
 
     // Server with only zlib variants
     let zlib_only = "zlibx zlib none";

@@ -387,10 +387,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
 
     match encoder {
         Some(mut encoder) => {
-            let is_zlib = matches!(
-                compression,
-                Some(CompressionAlgorithm::Zlib)
-            );
+            let is_zlib = matches!(compression, Some(CompressionAlgorithm::Zlib));
 
             // For CPRES_ZLIB dictionary sync we need to re-read matched block
             // data from the source file. Track the cumulative offset as we
