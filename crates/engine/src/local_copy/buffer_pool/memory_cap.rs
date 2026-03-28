@@ -134,11 +134,20 @@ impl MemoryCap {
     }
 
     /// Records that `size` bytes have been returned and wakes waiters.
+    ///
+    /// Acquires the backpressure mutex before notifying to prevent lost
+    /// wakeups. Without the lock, a notification can fire between a
+    /// waiter's `outstanding.load()` check and their `condvar.wait()`
+    /// call, causing the waiter to sleep indefinitely.
     pub(super) fn track_return(&self, size: usize) {
         self.outstanding.fetch_sub(size, Ordering::Release);
-        // Wake all blocked acquirers so they can re-check the capacity.
-        // With CAS-based reservation in the slow path, only one will
-        // succeed at reserving, but all must be woken to re-evaluate.
+        // Lock the mutex so any slow-path waiter that has seen stale
+        // `outstanding` but hasn't entered `wait()` yet will do so
+        // before we notify. This is the textbook condvar pattern.
+        let _guard = self
+            .backpressure
+            .lock()
+            .expect("backpressure mutex poisoned");
         self.returned.notify_all();
     }
 }

@@ -2083,7 +2083,8 @@ fn capability_fallback_graceful_checksum_degradation() {
 /// select the first algorithm we actually support.
 #[test]
 fn capability_fallback_graceful_compression_degradation() {
-    // Remote offers zstd/lz4 first - we skip them, pick zlibx
+    // Remote offers zstd/lz4 first - we skip them (not yet interop-validated),
+    // pick zlibx as first common algorithm.
     let modern_list = "zstd lz4 zlibx zlib none";
     assert_eq!(
         choose_compression_algorithm(modern_list).unwrap(),
@@ -2455,4 +2456,25 @@ fn capability_fallback_all_protocol_versions() {
             );
         }
     }
+}
+
+#[test]
+fn supported_compressions_does_not_advertise_zstd_lz4() {
+    // Zstd/lz4 codecs are wired but not yet interop-validated with upstream
+    // rsync. They must NOT appear in the auto-negotiation list until interop
+    // testing confirms wire compatibility.
+    let list = supported_compressions();
+    assert!(!list.contains(&"zstd"), "zstd must not be auto-negotiated");
+    assert!(!list.contains(&"lz4"), "lz4 must not be auto-negotiated");
+    assert!(list.contains(&"zlibx"));
+    assert!(list.contains(&"zlib"));
+    assert!(list.contains(&"none"));
+}
+
+#[test]
+fn negotiate_skips_zstd_lz4_picks_zlibx() {
+    // When peer offers zstd/lz4, we skip them and pick zlibx
+    let list = "zstd lz4 zlibx zlib none";
+    let result = choose_compression_algorithm(list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::ZlibX);
 }

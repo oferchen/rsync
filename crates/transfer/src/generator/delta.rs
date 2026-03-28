@@ -28,6 +28,27 @@ use super::super::delta_config::DeltaGeneratorConfig;
 use super::super::shared::ChecksumFactory;
 use crate::role_trailer::error_location;
 
+/// Creates a `CompressedTokenEncoder` for the given compression algorithm.
+///
+/// Returns `None` for algorithms that don't use per-token compression.
+/// upstream: token.c dispatches on `do_compression` to select the codec.
+fn create_token_encoder(algo: CompressionAlgorithm) -> io::Result<Option<CompressedTokenEncoder>> {
+    match algo {
+        CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX => {
+            let mut enc = CompressedTokenEncoder::default();
+            if algo == CompressionAlgorithm::ZlibX {
+                enc.set_zlibx(true);
+            }
+            Ok(Some(enc))
+        }
+        #[cfg(feature = "zstd")]
+        CompressionAlgorithm::Zstd => Ok(Some(CompressedTokenEncoder::new_zstd(3)?)),
+        #[cfg(feature = "lz4")]
+        CompressionAlgorithm::LZ4 => Ok(Some(CompressedTokenEncoder::new_lz4())),
+        _ => Ok(None),
+    }
+}
+
 /// Soft warning threshold for whole-file transfers (8 GB).
 ///
 /// Files of any size can be transferred, but very large whole-file transfers
@@ -189,10 +210,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
 
     let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
 
-    let use_compression = matches!(
-        compression,
-        Some(CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX)
-    );
+    let mut encoder = compression.map(create_token_encoder).transpose()?.flatten();
 
     // Read buffer sized for fewer syscalls (up to 256KB per read).
     // Buffer is reused across files — no allocation after the first large file.
@@ -202,9 +220,8 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     let mut total_bytes: u64 = 0;
     let mut remaining = file_size;
 
-    if use_compression {
+    if let Some(ref mut encoder) = encoder {
         buf.resize(read_size, 0);
-        let mut encoder = CompressedTokenEncoder::default();
         while remaining > 0 {
             let to_read = buf.len().min(remaining as usize);
             source.read_exact(&mut buf[..to_read])?;
@@ -360,18 +377,18 @@ pub(super) fn write_delta_with_compression<W: Write>(
     compression: Option<CompressionAlgorithm>,
     source_path: &Path,
 ) -> io::Result<()> {
-    match compression {
-        Some(algo @ (CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX)) => {
-            let is_zlibx = algo == CompressionAlgorithm::ZlibX;
-            let mut encoder = CompressedTokenEncoder::default();
-            encoder.set_zlibx(is_zlibx);
+    let encoder = compression.map(create_token_encoder).transpose()?.flatten();
+
+    match encoder {
+        Some(mut encoder) => {
+            let is_zlib = matches!(compression, Some(CompressionAlgorithm::Zlib));
 
             // For CPRES_ZLIB dictionary sync we need to re-read matched block
             // data from the source file. Track the cumulative offset as we
             // process tokens sequentially (they describe the source file in
             // order). Upstream: token.c:send_deflated_token() lines 463-484.
             let needs_dict_sync =
-                !is_zlibx && ops.iter().any(|op| matches!(op, DeltaOp::Copy { .. }));
+                is_zlib && ops.iter().any(|op| matches!(op, DeltaOp::Copy { .. }));
             let mut source_file = if needs_dict_sync {
                 Some(io::BufReader::new(fs::File::open(source_path)?))
             } else {
@@ -392,7 +409,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
                     } => {
                         encoder.send_block_match(writer, *block_index)?;
 
-                        // upstream: token.c:463-484 — feed block data to the
+                        // upstream: token.c:463-484 - feed block data to the
                         // compressor dictionary so the deflate stream stays in
                         // sync with what the receiver sees.
                         if let Some(ref mut file) = source_file {
@@ -412,6 +429,6 @@ pub(super) fn write_delta_with_compression<W: Write>(
             Ok(())
         }
         // No compression or unsupported algorithm - use plain format
-        _ => write_token_stream(writer, ops),
+        None => write_token_stream(writer, ops),
     }
 }
