@@ -10,25 +10,18 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 
 /// Returns supported compression algorithms in preference order for negotiation.
 ///
-/// Preference order matches upstream rsync 3.4.1: zstd > lz4 > zlibx > zlib > none.
-/// Zstd and lz4 are feature-gated and only advertised when compiled with the
-/// corresponding feature flag. Wire-level interop with upstream rsync 3.4.1 is
-/// validated by `tests/compress_interop_test.sh`.
+/// Only advertises algorithms with validated upstream interop. Zstd and lz4
+/// per-token codecs are implemented (`wire/compressed_token/zstd_codec.rs`,
+/// `lz4_codec.rs`) but NOT yet advertised because wire-level interop with
+/// upstream rsync 3.4.1 shows frame descriptor mismatches. They can still be
+/// used when explicitly requested via `--compress=zstd` or `--compress=lz4`.
 ///
 /// # Upstream reference
 ///
 /// upstream: compat.c:534-544 `negotiate_the_strings()` - both sides exchange
 /// their supported algorithm lists and pick the first common entry.
 pub(super) fn supported_compressions() -> Vec<&'static str> {
-    let mut algos = Vec::with_capacity(5);
-    #[cfg(feature = "zstd")]
-    algos.push("zstd");
-    #[cfg(feature = "lz4")]
-    algos.push("lz4");
-    algos.push("zlibx");
-    algos.push("zlib");
-    algos.push("none");
-    algos
+    vec!["zlibx", "zlib", "none"]
 }
 
 /// Checksum algorithm negotiated between rsync peers.

@@ -2081,22 +2081,15 @@ fn capability_fallback_graceful_checksum_degradation() {
 /// Without feature flags, negotiation degrades gracefully to zlibx.
 #[test]
 fn capability_compression_negotiation_preference() {
-    // Remote offers full modern list - we pick the best we support.
+    // Remote offers full modern list - we only support zlibx/zlib/none in
+    // auto-negotiation (zstd/lz4 not yet interop-validated).
     let modern_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(modern_list).unwrap();
-    #[cfg(feature = "zstd")]
-    assert_eq!(result, CompressionAlgorithm::Zstd);
-    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
-    assert_eq!(result, CompressionAlgorithm::LZ4);
-    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
-    // Remote offers lz4 first without zstd
+    // Remote offers lz4 first without zstd - still falls back to zlibx.
     let no_zstd_list = "lz4 zlibx zlib none";
     let result = choose_compression_algorithm(no_zstd_list).unwrap();
-    #[cfg(feature = "lz4")]
-    assert_eq!(result, CompressionAlgorithm::LZ4);
-    #[cfg(not(feature = "lz4"))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
     // Server with only zlib variants
@@ -2460,58 +2453,22 @@ fn capability_fallback_all_protocol_versions() {
 }
 
 #[test]
-fn supported_compressions_advertises_feature_gated_codecs() {
-    // Zstd and lz4 are advertised when their feature flags are enabled.
-    // Wire-level interop is validated by tests/compress_interop_test.sh.
+fn supported_compressions_does_not_advertise_zstd_lz4() {
+    // Zstd and lz4 codecs are implemented but NOT advertised in
+    // auto-negotiation until wire-level interop is validated.
     let list = supported_compressions();
-    #[cfg(feature = "zstd")]
-    assert!(
-        list.contains(&"zstd"),
-        "zstd must be advertised when feature enabled"
-    );
-    #[cfg(not(feature = "zstd"))]
-    assert!(
-        !list.contains(&"zstd"),
-        "zstd must not appear without feature"
-    );
-    #[cfg(feature = "lz4")]
-    assert!(
-        list.contains(&"lz4"),
-        "lz4 must be advertised when feature enabled"
-    );
-    #[cfg(not(feature = "lz4"))]
-    assert!(
-        !list.contains(&"lz4"),
-        "lz4 must not appear without feature"
-    );
+    assert!(!list.contains(&"zstd"));
+    assert!(!list.contains(&"lz4"));
     assert!(list.contains(&"zlibx"));
     assert!(list.contains(&"zlib"));
     assert!(list.contains(&"none"));
 }
 
-#[cfg(feature = "zstd")]
 #[test]
-fn negotiate_picks_zstd_when_both_support_it() {
-    // When peer offers zstd and we support it, zstd wins (highest preference).
-    let list = "zstd lz4 zlibx zlib none";
-    let result = choose_compression_algorithm(list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::Zstd);
-}
-
-#[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
-#[test]
-fn negotiate_picks_zlibx_without_zstd_lz4_features() {
-    // Without zstd/lz4 features, negotiation falls back to zlibx.
+fn negotiate_skips_zstd_lz4_picks_zlibx() {
+    // Even when the remote offers zstd/lz4, we skip them and pick zlibx
+    // because they're not in our supported list yet.
     let list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(list).unwrap();
     assert_eq!(result, CompressionAlgorithm::ZlibX);
-}
-
-#[cfg(all(feature = "lz4", not(feature = "zstd")))]
-#[test]
-fn negotiate_picks_lz4_without_zstd() {
-    // Without zstd but with lz4, lz4 is selected when peer offers both.
-    let list = "zstd lz4 zlibx zlib none";
-    let result = choose_compression_algorithm(list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::LZ4);
 }
