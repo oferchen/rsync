@@ -98,8 +98,11 @@ fn test_generator_for_path(
 
 /// Parses filter rules and applies them to a generator context.
 fn apply_filters(ctx: &mut GeneratorContext, wire_rules: Vec<FilterRuleWireFormat>) {
-    let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
-    ctx.filters = Some(filter_set);
+    let (filter_set, merge_configs) = ctx.parse_received_filters(&wire_rules).unwrap();
+    ctx.filter_chain = ::filters::FilterChain::new(filter_set);
+    for config in merge_configs {
+        ctx.filter_chain.add_merge_config(config);
+    }
 }
 
 /// Creates a temporary directory with the specified files.
@@ -238,8 +241,9 @@ fn build_and_send_round_trip() {
 fn parse_received_filters_empty() {
     let (_handshake, ctx) = test_generator();
 
-    let filter_set = ctx.parse_received_filters(&[]).unwrap();
+    let (filter_set, merge_configs) = ctx.parse_received_filters(&[]).unwrap();
     assert!(filter_set.is_empty());
+    assert!(merge_configs.is_empty());
 }
 
 #[test]
@@ -247,7 +251,7 @@ fn parse_received_filters_single_exclude() {
     let (_handshake, ctx) = test_generator();
 
     let wire_rules = vec![FilterRuleWireFormat::exclude("*.log".to_owned())];
-    let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
+    let (filter_set, _) = ctx.parse_received_filters(&wire_rules).unwrap();
     assert!(!filter_set.is_empty());
 }
 
@@ -261,7 +265,7 @@ fn parse_received_filters_multiple_rules() {
         FilterRuleWireFormat::exclude("temp/".to_owned()).with_directory_only(true),
     ];
 
-    let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
+    let (filter_set, _) = ctx.parse_received_filters(&wire_rules).unwrap();
     assert!(!filter_set.is_empty());
 }
 
@@ -290,7 +294,7 @@ fn parse_received_filters_clear_rule() {
         FilterRuleWireFormat::include("*.txt".to_owned()),
     ];
 
-    let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
+    let (filter_set, _) = ctx.parse_received_filters(&wire_rules).unwrap();
     // Clear rule should have removed previous rules
     assert!(!filter_set.is_empty()); // Only the include rule remains
 }
@@ -385,7 +389,7 @@ fn filter_application_no_filters_includes_all() {
     let base_path = temp_dir.path();
 
     let (_handshake, mut ctx) = test_generator_for_path(base_path, false);
-    // No filters set (ctx.filters remains None)
+    // No filters set (filter_chain is empty)
 
     let count = build_file_list_for(&mut ctx, base_path);
 
@@ -2203,4 +2207,219 @@ mod files_from {
                 .unwrap();
         assert_eq!(result, vec!["file.txt", "other.txt"]);
     }
+}
+
+// ==================== Per-directory merge filter tests ====================
+
+#[test]
+fn generator_skips_files_matching_per_directory_merge_rules() {
+    // Create directory structure with a .rsync-filter file that excludes *.log
+    let temp_dir = TempDir::new().unwrap();
+    let base = temp_dir.path();
+    fs::write(base.join("keep.txt"), b"keep").unwrap();
+    fs::write(base.join("skip.log"), b"skip").unwrap();
+    fs::write(base.join(".rsync-filter"), "- *.log\n").unwrap();
+
+    let (_handshake, mut ctx) = test_generator_for_path(base, false);
+
+    // Set up a DirMergeConfig for .rsync-filter
+    ctx.filter_chain
+        .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter"));
+
+    let count = build_file_list_for(&mut ctx, base);
+
+    // Should have "." + "keep.txt" + ".rsync-filter" but not "skip.log"
+    let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+    assert!(
+        !names.iter().any(|n| n.contains("skip.log")),
+        "skip.log should be excluded by .rsync-filter, got: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.contains("keep.txt")),
+        "keep.txt should be included, got: {names:?}"
+    );
+    assert!(count >= 2); // At least "." and "keep.txt"
+}
+
+#[test]
+fn generator_nested_directories_cascading_merge_rules() {
+    // Root has .rsync-filter excluding *.bak
+    // Subdir has .rsync-filter excluding *.tmp
+    let temp_dir = TempDir::new().unwrap();
+    let base = temp_dir.path();
+    fs::write(base.join(".rsync-filter"), "- *.bak\n").unwrap();
+    fs::write(base.join("root.txt"), b"root").unwrap();
+    fs::write(base.join("root.bak"), b"bak").unwrap();
+
+    let sub = base.join("sub");
+    fs::create_dir(&sub).unwrap();
+    fs::write(sub.join(".rsync-filter"), "- *.tmp\n").unwrap();
+    fs::write(sub.join("sub.txt"), b"sub").unwrap();
+    fs::write(sub.join("sub.tmp"), b"tmp").unwrap();
+    fs::write(sub.join("sub.bak"), b"bak2").unwrap();
+
+    let (_handshake, mut ctx) = test_generator_for_path(base, true);
+    ctx.filter_chain
+        .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter"));
+
+    let _count = build_file_list_for(&mut ctx, base);
+    let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+
+    // root.bak excluded by root .rsync-filter
+    assert!(
+        !names.iter().any(|n| n.ends_with("root.bak")),
+        "root.bak should be excluded: {names:?}"
+    );
+
+    // sub/sub.tmp excluded by sub/.rsync-filter
+    assert!(
+        !names.iter().any(|n| n.ends_with("sub.tmp")),
+        "sub.tmp should be excluded: {names:?}"
+    );
+
+    // sub/sub.bak excluded by root .rsync-filter (inherited)
+    assert!(
+        !names.iter().any(|n| n.ends_with("sub.bak")),
+        "sub.bak should be excluded by inherited rule: {names:?}"
+    );
+
+    // root.txt and sub/sub.txt should be present
+    assert!(
+        names.iter().any(|n| n.ends_with("root.txt")),
+        "root.txt should be included: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.ends_with("sub.txt")),
+        "sub.txt should be included: {names:?}"
+    );
+}
+
+#[test]
+fn generator_merge_filters_properly_scoped() {
+    // Dir A has .rsync-filter excluding *.a
+    // Dir B has no .rsync-filter
+    // Rules from A should not affect B
+    let temp_dir = TempDir::new().unwrap();
+    let base = temp_dir.path();
+
+    let dir_a = base.join("a");
+    fs::create_dir(&dir_a).unwrap();
+    fs::write(dir_a.join(".rsync-filter"), "- *.a\n").unwrap();
+    fs::write(dir_a.join("file.a"), b"excluded").unwrap();
+    fs::write(dir_a.join("file.txt"), b"included").unwrap();
+
+    let dir_b = base.join("b");
+    fs::create_dir(&dir_b).unwrap();
+    fs::write(dir_b.join("file.a"), b"should-be-included").unwrap();
+    fs::write(dir_b.join("file.txt"), b"also-included").unwrap();
+
+    let (_handshake, mut ctx) = test_generator_for_path(base, true);
+    ctx.filter_chain
+        .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter"));
+
+    let _count = build_file_list_for(&mut ctx, base);
+    let names: Vec<String> = ctx
+        .file_list()
+        .iter()
+        .map(|e| e.path().display().to_string())
+        .collect();
+
+    // a/file.a should be excluded by a/.rsync-filter
+    assert!(
+        !names.iter().any(|n| n == "a/file.a"),
+        "a/file.a should be excluded by a/.rsync-filter: {names:?}"
+    );
+
+    // b/file.a should NOT be excluded (no merge file in b)
+    assert!(
+        names.iter().any(|n| n == "b/file.a"),
+        "b/file.a should be included (rules from a don't affect b): {names:?}"
+    );
+}
+
+#[test]
+fn generator_merge_filter_exclude_self() {
+    // .rsync-filter excludes itself when exclude_self is set
+    let temp_dir = TempDir::new().unwrap();
+    let base = temp_dir.path();
+    fs::write(base.join(".rsync-filter"), "- *.bak\n").unwrap();
+    fs::write(base.join("file.txt"), b"keep").unwrap();
+
+    let (_handshake, mut ctx) = test_generator_for_path(base, false);
+    ctx.filter_chain
+        .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter").with_exclude_self(true));
+
+    let _count = build_file_list_for(&mut ctx, base);
+    let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+
+    // .rsync-filter itself should be excluded
+    assert!(
+        !names.contains(&".rsync-filter"),
+        ".rsync-filter should be excluded when exclude_self is true: {names:?}"
+    );
+
+    // file.txt should remain
+    assert!(
+        names.contains(&"file.txt"),
+        "file.txt should be present: {names:?}"
+    );
+}
+
+#[test]
+fn generator_no_merge_configs_unchanged_behavior() {
+    // With no merge configs, behavior should be identical to before
+    let temp_dir = create_test_files(&[("file1.txt", b"data1"), ("file2.log", b"data2")]);
+    let base = temp_dir.path();
+
+    let (_handshake, mut ctx) = test_generator_for_path(base, false);
+    // No merge configs added - filter_chain is empty
+
+    let count = build_file_list_for(&mut ctx, base);
+
+    // Should have "." + 2 files = 3 entries
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn parse_received_filters_extracts_dir_merge_config() {
+    let (_handshake, ctx) = test_generator();
+
+    // Construct a DirMerge wire rule by modifying an exclude rule's type
+    let mut dir_merge_rule = FilterRuleWireFormat::exclude(".rsync-filter".to_owned());
+    dir_merge_rule.rule_type = protocol::filters::RuleType::DirMerge;
+    dir_merge_rule.exclude_from_merge = true;
+
+    let wire_rules = vec![
+        FilterRuleWireFormat::exclude("*.bak".to_owned()),
+        dir_merge_rule,
+    ];
+
+    let (filter_set, merge_configs) = ctx.parse_received_filters(&wire_rules).unwrap();
+
+    // The exclude rule should be in the filter set
+    assert!(!filter_set.is_empty());
+
+    // The DirMerge rule should produce a DirMergeConfig
+    assert_eq!(merge_configs.len(), 1);
+    assert_eq!(merge_configs[0].filename(), ".rsync-filter");
+    assert!(merge_configs[0].excludes_self());
+    assert!(merge_configs[0].inherits()); // default
+}
+
+#[test]
+fn parse_received_filters_dir_merge_no_inherit() {
+    let (_handshake, ctx) = test_generator();
+
+    let mut dir_merge_rule = FilterRuleWireFormat::exclude(".exclude".to_owned());
+    dir_merge_rule.rule_type = protocol::filters::RuleType::DirMerge;
+    dir_merge_rule.no_inherit = true;
+
+    let wire_rules = vec![dir_merge_rule];
+
+    let (filter_set, merge_configs) = ctx.parse_received_filters(&wire_rules).unwrap();
+
+    assert!(filter_set.is_empty());
+    assert_eq!(merge_configs.len(), 1);
+    assert_eq!(merge_configs[0].filename(), ".exclude");
+    assert!(!merge_configs[0].inherits());
 }
