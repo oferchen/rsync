@@ -103,6 +103,16 @@ pub mod io_error_flags {
     }
 }
 
+/// Minimum file count lookahead before the sender emits the next incremental
+/// sub-list. The sender accumulates at least this many unsent entries before
+/// flushing a new segment to the receiver, amortizing per-segment overhead.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:46` - `#define MIN_FILECNT_LOOKAHEAD 1000`
+/// - `sender.c:send_files()` line 250 - `send_extra_file_list(f, MIN_FILECNT_LOOKAHEAD)`
+pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
+
 /// A pending file list sub-segment for incremental recursion sending.
 ///
 /// References entries in `GeneratorContext::file_list` by range rather than
@@ -122,17 +132,31 @@ struct PendingSegment {
     count: usize,
 }
 
-/// Classification of a directory's children for incremental recursion.
+/// A file list index tagged with an optional directory node ID.
 ///
-/// Groups the original file list indices belonging to a single directory
-/// segment, along with the directory's NDX used as parent reference when
-/// sending the segment over the wire.
+/// During classification, directory entries are tagged with their internal
+/// node ID so the reorder phase can assign wire `dir_ndx` values via dense
+/// Vec lookup instead of name-based HashMap probes.
+#[derive(Debug, Clone, Copy)]
+struct TaggedIndex {
+    /// Index into the original (pre-reorder) file list.
+    file_idx: usize,
+    /// For directory entries: the internal node ID for tree building.
+    /// `None` for regular files and the "." root entry.
+    node_id: Option<usize>,
+}
+
+/// Per-directory segment with tagged child entries for incremental recursion.
+///
+/// Groups children belonging to a single directory, along with the directory's
+/// internal node ID. The final wire `dir_ndx` is computed during reordering
+/// to match the upstream receiver's `dir_flist` growth order.
 #[derive(Debug)]
-struct SegmentClassification {
-    /// Directory NDX assigned to this directory.
-    dir_ndx: usize,
-    /// Original file list indices of entries belonging to this directory.
-    child_indices: Vec<usize>,
+struct DirSegment {
+    /// Internal node ID for tree building (NOT the wire dir_ndx).
+    node_id: usize,
+    /// Tagged entries belonging to this directory.
+    children: Vec<TaggedIndex>,
 }
 
 /// Timing and byte-count statistics collected during the transfer.
@@ -172,6 +196,55 @@ impl TransferTiming {
     }
 }
 
+/// Cursor-based scheduler that yields pending segments on demand.
+///
+/// Controls *when* sub-lists are sent during the transfer loop using
+/// upstream's `MIN_FILECNT_LOOKAHEAD` throttling heuristic. The transfer
+/// loop calls `next_if_needed()` at top and bottom of each iteration,
+/// matching upstream `sender.c:227,261`.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:227,261` - checks `inc_recurse` at top/bottom of send loop
+/// - `flist.c:2498` - `send_extra_file_list()` uses `MIN_FILECNT_LOOKAHEAD`
+#[derive(Debug)]
+struct SegmentScheduler {
+    segments: Vec<PendingSegment>,
+    cursor: usize,
+}
+
+impl SegmentScheduler {
+    /// Creates a scheduler that will yield segments in order.
+    fn new(segments: Vec<PendingSegment>) -> Self {
+        Self {
+            segments,
+            cursor: 0,
+        }
+    }
+
+    /// Returns the next segment if the lookahead heuristic indicates we should send.
+    ///
+    /// Yields when `remaining_in_current` drops below `MIN_FILECNT_LOOKAHEAD`,
+    /// matching upstream's throttling in `flist.c:2498-2510`.
+    fn next_if_needed(&mut self, remaining_in_current: usize) -> Option<&PendingSegment> {
+        if self.cursor >= self.segments.len() {
+            return None;
+        }
+        if remaining_in_current < MIN_FILECNT_LOOKAHEAD {
+            let seg = &self.segments[self.cursor];
+            self.cursor += 1;
+            Some(seg)
+        } else {
+            None
+        }
+    }
+
+    /// Returns a slice of all remaining unconsumed segments.
+    fn remaining(&self) -> &[PendingSegment] {
+        &self.segments[self.cursor..]
+    }
+}
+
 /// Mutable state for INC_RECURSE segmented file list sending.
 ///
 /// # Upstream Reference
@@ -184,7 +257,7 @@ struct IncrementalState {
     ///
     /// When INC_RECURSE is negotiated, the initial `send_file_list()` sends
     /// only top-level entries. Remaining per-directory segments are queued here
-    /// and drained by `send_extra_file_lists()` during the transfer loop.
+    /// and consumed by `SegmentScheduler` during the transfer loop.
     pending_segments: Vec<PendingSegment>,
     /// Whether all incremental file list segments have been sent.
     flist_eof_sent: bool,
@@ -193,12 +266,12 @@ struct IncrementalState {
     /// Upstream rsync uses `static` variables in `send_file_entry()` that persist
     /// across `send_file_list()` calls. This field preserves the same state
     /// (prev_name, prev_mode, prev_uid, prev_gid) between `send_file_list()`
-    /// and `send_extra_file_lists()`.
+    /// and `encode_and_send_segment()`.
     flist_writer_cache: Option<protocol::flist::FileListWriter>,
     /// Number of entries in the initial segment when INC_RECURSE is active.
     ///
     /// When set, `send_file_list()` only sends the first `initial_segment_count`
-    /// entries. The remaining entries are sent via `send_extra_file_lists()`.
+    /// entries. The remaining entries are sent via the segment scheduler.
     initial_segment_count: Option<usize>,
     /// Segment boundary table for mapping wire NDX values to flat array indices.
     ///
@@ -319,16 +392,19 @@ impl GeneratorContext {
 
     /// Converts a wire NDX value to a flat file list array index.
     ///
+    /// Uses `partition_point` for O(log n) lookup, matching `flat_to_wire_ndx`.
+    ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:424` — `i = ndx - cur_flist->ndx_start`
+    /// - `rsync.c:424` - `i = ndx - cur_flist->ndx_start`
     fn wire_to_flat_ndx(&self, wire_ndx: i32) -> usize {
-        for &(flat_start, ndx_start) in self.incremental.ndx_segments.iter().rev() {
-            if wire_ndx >= ndx_start {
-                return flat_start + (wire_ndx - ndx_start) as usize;
-            }
-        }
-        wire_ndx as usize
+        let seg_idx = self
+            .incremental
+            .ndx_segments
+            .partition_point(|&(_, ndx_start)| ndx_start <= wire_ndx)
+            .saturating_sub(1);
+        let (flat_start, ndx_start) = self.incremental.ndx_segments[seg_idx];
+        flat_start + (wire_ndx - ndx_start) as usize
     }
 
     /// Converts a flat file list array index to a wire NDX value.
