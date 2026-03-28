@@ -211,7 +211,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
 
     let mut encoder = compression
-        .map(|algo| create_token_encoder(algo))
+        .map(create_token_encoder)
         .transpose()?
         .flatten();
 
@@ -381,7 +381,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
     source_path: &Path,
 ) -> io::Result<()> {
     let encoder = compression
-        .map(|algo| create_token_encoder(algo))
+        .map(create_token_encoder)
         .transpose()?
         .flatten();
 
