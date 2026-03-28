@@ -2465,13 +2465,25 @@ fn supported_compressions_advertises_feature_gated_codecs() {
     // Wire-level interop is validated by tests/compress_interop_test.sh.
     let list = supported_compressions();
     #[cfg(feature = "zstd")]
-    assert!(list.contains(&"zstd"), "zstd must be advertised when feature enabled");
+    assert!(
+        list.contains(&"zstd"),
+        "zstd must be advertised when feature enabled"
+    );
     #[cfg(not(feature = "zstd"))]
-    assert!(!list.contains(&"zstd"), "zstd must not appear without feature");
+    assert!(
+        !list.contains(&"zstd"),
+        "zstd must not appear without feature"
+    );
     #[cfg(feature = "lz4")]
-    assert!(list.contains(&"lz4"), "lz4 must be advertised when feature enabled");
+    assert!(
+        list.contains(&"lz4"),
+        "lz4 must be advertised when feature enabled"
+    );
     #[cfg(not(feature = "lz4"))]
-    assert!(!list.contains(&"lz4"), "lz4 must not appear without feature");
+    assert!(
+        !list.contains(&"lz4"),
+        "lz4 must not appear without feature"
+    );
     assert!(list.contains(&"zlibx"));
     assert!(list.contains(&"zlib"));
     assert!(list.contains(&"none"));
