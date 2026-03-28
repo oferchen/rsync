@@ -78,7 +78,11 @@ mod tests {
         let results = batch_stat_dir_entries(paths, false);
         assert_eq!(results.len(), 5);
         for r in &results {
-            assert!(r.metadata.is_ok(), "stat should succeed for {}", r.path.display());
+            assert!(
+                r.metadata.is_ok(),
+                "stat should succeed for {}",
+                r.path.display()
+            );
         }
     }
 
@@ -99,7 +103,11 @@ mod tests {
         let results = batch_stat_dir_entries(paths, false);
         assert_eq!(results.len(), count);
         for r in &results {
-            assert!(r.metadata.is_ok(), "stat should succeed for {}", r.path.display());
+            assert!(
+                r.metadata.is_ok(),
+                "stat should succeed for {}",
+                r.path.display()
+            );
         }
     }
 

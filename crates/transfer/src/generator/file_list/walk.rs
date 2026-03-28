@@ -274,7 +274,9 @@ impl GeneratorContext {
                     // upstream: flist.c:215 - follow unsafe symlinks when
                     // --copy-unsafe-links. The batch used lstat, so we need
                     // to re-stat symlinks whose target escapes the tree.
-                    if !follow && self.config.flags.copy_unsafe_links && meta.file_type().is_symlink()
+                    if !follow
+                        && self.config.flags.copy_unsafe_links
+                        && meta.file_type().is_symlink()
                     {
                         if let Ok(target) = std::fs::read_link(&path) {
                             let relative = path.strip_prefix(base).unwrap_or(&path);
