@@ -1298,7 +1298,7 @@ fn test_registered_buffer_write_read_roundtrip() {
             w.write_all(&data).unwrap();
             w.flush().unwrap();
         }
-        Err(_) => return,
+        Err(_) => (),
     }
 
     // Read back
@@ -1308,7 +1308,7 @@ fn test_registered_buffer_write_read_roundtrip() {
             assert_eq!(read_back.len(), data.len());
             assert_eq!(read_back, data);
         }
-        Err(_) => return,
+        Err(_) => (),
     }
 }
 
@@ -1333,7 +1333,7 @@ fn test_registered_buffer_disabled_still_works() {
             w.write_all(&data).unwrap();
             w.flush().unwrap();
         }
-        Err(_) => return,
+        Err(_) => (),
     }
 
     match IoUringReader::open(&path, &config) {
@@ -1341,6 +1341,6 @@ fn test_registered_buffer_disabled_still_works() {
             let read_back = r.read_all().unwrap();
             assert_eq!(read_back, data);
         }
-        Err(_) => return,
+        Err(_) => (),
     }
 }
