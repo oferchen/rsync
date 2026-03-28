@@ -103,6 +103,16 @@ pub mod io_error_flags {
     }
 }
 
+/// Minimum file count lookahead before the sender emits the next incremental
+/// sub-list. The sender accumulates at least this many unsent entries before
+/// flushing a new segment to the receiver, amortizing per-segment overhead.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:46` - `#define MIN_FILECNT_LOOKAHEAD 1000`
+/// - `sender.c:send_files()` line 250 - `send_extra_file_list(f, MIN_FILECNT_LOOKAHEAD)`
+pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
+
 /// A pending file list sub-segment for incremental recursion sending.
 ///
 /// References entries in `GeneratorContext::file_list` by range rather than
@@ -122,17 +132,31 @@ struct PendingSegment {
     count: usize,
 }
 
-/// Classification of a directory's children for incremental recursion.
+/// A file list index tagged with an optional directory node ID.
 ///
-/// Groups the original file list indices belonging to a single directory
-/// segment, along with the directory's NDX used as parent reference when
-/// sending the segment over the wire.
+/// During classification, directory entries are tagged with their internal
+/// node ID so the reorder phase can assign wire `dir_ndx` values via dense
+/// Vec lookup instead of name-based HashMap probes.
+#[derive(Debug, Clone, Copy)]
+struct TaggedIndex {
+    /// Index into the original (pre-reorder) file list.
+    file_idx: usize,
+    /// For directory entries: the internal node ID for tree building.
+    /// `None` for regular files and the "." root entry.
+    node_id: Option<usize>,
+}
+
+/// Per-directory segment with tagged child entries for incremental recursion.
+///
+/// Groups children belonging to a single directory, along with the directory's
+/// internal node ID. The final wire `dir_ndx` is computed during reordering
+/// to match the upstream receiver's `dir_flist` growth order.
 #[derive(Debug)]
-struct SegmentClassification {
-    /// Directory NDX assigned to this directory.
-    dir_ndx: usize,
-    /// Original file list indices of entries belonging to this directory.
-    child_indices: Vec<usize>,
+struct DirSegment {
+    /// Internal node ID for tree building (NOT the wire dir_ndx).
+    node_id: usize,
+    /// Tagged entries belonging to this directory.
+    children: Vec<TaggedIndex>,
 }
 
 /// Timing and byte-count statistics collected during the transfer.
