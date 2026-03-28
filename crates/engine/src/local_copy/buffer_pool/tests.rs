@@ -13,18 +13,17 @@ fn test_acquire_returns_buffer() {
 fn test_buffer_reuse() {
     let pool = BufferPool::new(4);
 
-    // Acquire and release a buffer
+    // Acquire and release a buffer.
     {
         let mut buffer = pool.acquire();
         buffer[0] = 42;
     }
 
-    // Pool should have one buffer
-    assert_eq!(pool.available(), 1);
+    // Buffer was returned to TLS (first return on this thread goes to
+    // the thread-local cache, not the central pool).
 
-    // Acquire again - should get the reused buffer with correct length
+    // Acquire again - should get the reused buffer from TLS with correct length.
     let buffer = pool.acquire();
-    assert_eq!(pool.available(), 0);
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
 }
 
@@ -306,20 +305,17 @@ fn adaptive_size_medium_equals_default_buffer() {
 #[test]
 fn acquire_adaptive_from_uses_pool_for_medium_files() {
     // For files in the medium range, the adaptive size matches the pool's
-    // default buffer size, so the buffer should come from the pool.
+    // default buffer size, so the buffer should be reused via TLS.
     let pool = Arc::new(BufferPool::new(4));
 
-    // Pre-populate the pool with a buffer
+    // Pre-populate TLS with a buffer (first return goes to TLS).
     {
         let _buffer = BufferPool::acquire_from(Arc::clone(&pool));
-        // buffer is returned on drop
     }
-    assert_eq!(pool.available(), 1);
 
-    // Acquire adaptively for a medium file -- should reuse the pooled buffer
+    // Acquire adaptively for a medium file - should reuse via TLS fast path.
     let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 10 * 1024 * 1024);
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
-    assert_eq!(pool.available(), 0); // was taken from pool
 }
 
 #[test]
@@ -345,19 +341,17 @@ fn acquire_adaptive_from_allocates_large_buffer_for_large_file() {
 
 #[test]
 fn acquire_adaptive_from_returns_buffer_to_pool() {
-    // Verify that adaptively-sized buffers are still returned to the pool
-    // (resized to pool default) when dropped.
+    // Verify that adaptively-sized buffers are returned and resized to
+    // pool default. First return goes to TLS, so verify via re-acquire.
     let pool = Arc::new(BufferPool::new(4));
-    assert_eq!(pool.available(), 0);
 
     {
         let _buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 1024);
         // tiny buffer is active
     }
-    // After drop, buffer should be returned and resized to pool default
-    assert_eq!(pool.available(), 1);
+    // Buffer returned to TLS (resized to pool default).
 
-    // Next acquire from pool should get a buffer of the default size
+    // Next acquire should get the resized buffer from TLS.
     let buffer = BufferPool::acquire_from(Arc::clone(&pool));
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
 }
@@ -370,18 +364,18 @@ fn acquire_adaptive_from_large_buffer_returns_resized() {
         let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 100 * 1024 * 1024);
         assert_eq!(buffer.len(), ADAPTIVE_BUFFER_LARGE);
     }
-    assert_eq!(pool.available(), 1);
+    // Buffer returned to TLS (resized to pool default).
 
-    // The returned buffer should be at the pool's default size
+    // Re-acquire should get the resized buffer from TLS.
     let buffer = BufferPool::acquire_from(Arc::clone(&pool));
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
 }
 
 #[test]
 fn pool_reuses_buffers_under_sequential_pressure() {
-    // Allocate and return many buffers sequentially.
-    // The pool should reuse buffers so that at most max_buffers
-    // are retained, regardless of how many iterations run.
+    // Allocate and return many buffers sequentially on one thread.
+    // With TLS, the single buffer cycles through the thread-local cache
+    // on every iteration - the central pool may not be touched at all.
     let pool = Arc::new(BufferPool::new(4));
 
     for _ in 0..1_000 {
@@ -389,10 +383,8 @@ fn pool_reuses_buffers_under_sequential_pressure() {
         buf[0] = 0xAB;
     }
 
-    // After all guards are dropped the pool holds at most max_buffers.
+    // Central pool holds at most max_buffers. The hot buffer lives in TLS.
     assert!(pool.available() <= 4);
-    // At least one buffer was returned (proves reuse path was exercised).
-    assert!(pool.available() >= 1);
 }
 
 #[test]
@@ -429,7 +421,9 @@ fn empty_pool_allocates_fresh_buffer() {
 
 #[test]
 fn drop_returns_buffer_to_pool() {
-    // Explicitly verify the BufferGuard Drop impl returns the buffer.
+    // Verify the BufferGuard Drop impl returns the buffer for reuse.
+    // First return on a thread goes to TLS, so we verify reuse via
+    // a subsequent acquire rather than pool.available().
     let pool = Arc::new(BufferPool::new(4));
     assert_eq!(pool.available(), 0);
 
@@ -437,7 +431,11 @@ fn drop_returns_buffer_to_pool() {
     assert_eq!(pool.available(), 0);
 
     drop(guard);
-    assert_eq!(pool.available(), 1);
+    // Buffer is in TLS, not central pool.
+
+    // Verify reuse: next acquire should get the buffer from TLS.
+    let buf = BufferPool::acquire_from(Arc::clone(&pool));
+    assert_eq!(buf.len(), COPY_BUFFER_SIZE);
 }
 
 #[test]
@@ -450,7 +448,11 @@ fn borrowed_guard_drop_returns_buffer_to_pool() {
     assert_eq!(pool.available(), 0);
 
     drop(guard);
-    assert_eq!(pool.available(), 1);
+    // Buffer is in TLS, not central pool.
+
+    // Verify reuse: next acquire should get the buffer from TLS.
+    let buf = pool.acquire();
+    assert_eq!(buf.len(), COPY_BUFFER_SIZE);
 }
 
 #[test]
@@ -591,8 +593,8 @@ fn adaptive_buffers_returned_under_concurrent_pressure() {
         h.join().expect("thread panicked");
     }
 
-    // Under the elastic pool, concurrent returns may briefly push above
-    // the soft capacity. The pool drains back naturally on subsequent acquires.
+    // With TLS + Mutex<Vec>, concurrent returns go through each thread's
+    // TLS slot first, then to the central pool (exact capacity under lock).
     // The important invariant is that all retained buffers have the correct size.
 
     // Every buffer in the pool should now be at the default size.
@@ -604,8 +606,9 @@ fn adaptive_buffers_returned_under_concurrent_pressure() {
 
 #[test]
 fn repeated_acquire_release_cycle_reuses_same_buffers() {
-    // Verify the pool actually recycles buffers by checking that
-    // the pool count stabilizes rather than growing.
+    // Verify the pool actually recycles buffers by checking that the
+    // buffer count stabilizes. With TLS, one buffer lives in thread-local
+    // cache and the rest in the central pool.
     let pool = Arc::new(BufferPool::new(2));
 
     // First cycle - buffers are freshly allocated.
@@ -613,24 +616,26 @@ fn repeated_acquire_release_cycle_reuses_same_buffers() {
         let _a = BufferPool::acquire_from(Arc::clone(&pool));
         let _b = BufferPool::acquire_from(Arc::clone(&pool));
     }
-    assert_eq!(pool.available(), 2);
+    // Drop order: _b first (reverse decl), then _a.
+    // _b → TLS, _a → TLS full → central pool.
+    assert_eq!(pool.available(), 1);
 
-    // Second cycle - buffers should come from the pool.
+    // Second cycle - _a comes from TLS, _b from central pool.
     {
         let _a = BufferPool::acquire_from(Arc::clone(&pool));
         assert_eq!(pool.available(), 1);
         let _b = BufferPool::acquire_from(Arc::clone(&pool));
         assert_eq!(pool.available(), 0);
     }
-    // All returned.
-    assert_eq!(pool.available(), 2);
+    // All returned: 1 in TLS + 1 in central.
+    assert_eq!(pool.available(), 1);
 
-    // After 100 more cycles the pool still holds exactly max_buffers.
+    // After 100 more cycles the central pool still holds 1 (+ 1 in TLS).
     for _ in 0..100 {
         let _a = BufferPool::acquire_from(Arc::clone(&pool));
         let _b = BufferPool::acquire_from(Arc::clone(&pool));
     }
-    assert_eq!(pool.available(), 2);
+    assert_eq!(pool.available(), 1);
 }
 
 #[test]
@@ -654,24 +659,37 @@ fn zero_capacity_pool_never_retains_buffers() {
 
 #[test]
 fn single_capacity_pool_reuses_one_buffer() {
-    // A pool with capacity 1 should cycle a single buffer.
+    // A pool with capacity 1. With TLS, effective single-thread capacity
+    // is 1 (TLS) + 1 (central) = 2 retained buffers.
     let pool = Arc::new(BufferPool::new(1));
 
     {
         let _buf = BufferPool::acquire_from(Arc::clone(&pool));
     }
-    assert_eq!(pool.available(), 1);
-
-    // Acquire two simultaneously - second must be a fresh allocation.
-    let a = BufferPool::acquire_from(Arc::clone(&pool));
-    assert_eq!(pool.available(), 0);
-    let b = BufferPool::acquire_from(Arc::clone(&pool));
+    // Buffer went to TLS, central pool is empty.
     assert_eq!(pool.available(), 0);
 
+    // Acquire two simultaneously.
+    let a = BufferPool::acquire_from(Arc::clone(&pool)); // from TLS
+    assert_eq!(pool.available(), 0);
+    let b = BufferPool::acquire_from(Arc::clone(&pool)); // fresh alloc
+    assert_eq!(pool.available(), 0);
+
+    // Drop both: a → TLS, b → TLS full → central (cap=1, accepts).
     drop(a);
-    assert_eq!(pool.available(), 1);
-    // Dropping b exceeds capacity - it should be discarded.
     drop(b);
+    assert_eq!(pool.available(), 1);
+
+    // Acquire 3: a from TLS, b from central, c fresh.
+    let a = BufferPool::acquire_from(Arc::clone(&pool));
+    let b = BufferPool::acquire_from(Arc::clone(&pool));
+    let c = BufferPool::acquire_from(Arc::clone(&pool));
+    assert_eq!(pool.available(), 0);
+
+    // Drop all 3: a → TLS, b → central (cap=1), c → TLS full + central full → dealloc.
+    drop(a);
+    drop(b);
+    drop(c);
     assert_eq!(pool.available(), 1);
 }
 
@@ -726,18 +744,24 @@ fn with_allocator_uses_custom_allocator() {
 
 #[test]
 fn custom_allocator_deallocate_called_on_overflow() {
-    // Pool with capacity 1 - second returned buffer triggers deallocate.
+    // Pool with capacity 1. With TLS, need 3 returns to trigger overflow:
+    // 1st → TLS, 2nd → central (cap=1), 3rd → TLS full + central full → dealloc.
     let pool = Arc::new(BufferPool::with_allocator(1, 512, TrackingAllocator::new()));
 
     let a = BufferPool::acquire_from(Arc::clone(&pool));
     let b = BufferPool::acquire_from(Arc::clone(&pool));
-    assert_eq!(pool.allocator().alloc_count(), 2);
+    let c = BufferPool::acquire_from(Arc::clone(&pool));
+    assert_eq!(pool.allocator().alloc_count(), 3);
 
-    drop(a); // returned to pool (pool was empty)
+    drop(a); // → TLS
+    assert_eq!(pool.available(), 0);
+    assert_eq!(pool.allocator().dealloc_count(), 0);
+
+    drop(b); // TLS full → central (cap=1, accepts)
     assert_eq!(pool.available(), 1);
     assert_eq!(pool.allocator().dealloc_count(), 0);
 
-    drop(b); // pool is full - deallocate is called
+    drop(c); // TLS full, central full → deallocate
     assert_eq!(pool.available(), 1);
     assert_eq!(pool.allocator().dealloc_count(), 1);
 }
@@ -756,7 +780,7 @@ fn custom_allocator_with_arc_guards() {
         assert_eq!(buf[0], 0xAB);
     }
 
-    assert_eq!(pool.available(), 1);
+    // Buffer returned to TLS, not central pool.
     assert_eq!(pool.allocator().alloc_count(), 1);
 }
 
@@ -1102,19 +1126,20 @@ fn concurrent_throughput_recording() {
 }
 
 #[test]
-fn elastic_pool_absorbs_concurrent_burst_returns() {
-    // Validates the elastic pool design: when many threads return buffers
-    // simultaneously, the SegQueue absorbs the burst rather than dropping
-    // buffers. After the burst, buffers are available for reuse.
+fn concurrent_burst_returns_respect_capacity() {
+    // Validates the Mutex<Vec> + TLS design: when many threads return
+    // buffers simultaneously, the central pool retains at most
+    // soft_capacity (exact, under lock). Each thread also retains one
+    // buffer in TLS.
     use std::sync::Barrier;
 
     let thread_count = 32;
-    let pool = Arc::new(BufferPool::new(4));
+    let soft_cap = 4;
+    let pool = Arc::new(BufferPool::new(soft_cap));
     let barrier = Arc::new(Barrier::new(thread_count));
 
     // Each thread acquires a buffer, waits at the barrier, then drops it.
-    // This forces all returns to happen near-simultaneously - exactly the
-    // burst pattern that defeated the old ArrayQueue-based pool.
+    // This forces all returns to happen near-simultaneously.
     let handles: Vec<_> = (0..thread_count)
         .map(|_| {
             let pool = Arc::clone(&pool);
@@ -1131,33 +1156,139 @@ fn elastic_pool_absorbs_concurrent_burst_returns() {
         h.join().expect("thread panicked");
     }
 
-    // The pool should have retained buffers. With the old ArrayQueue(4),
-    // many burst returns would hit a full queue and deallocate. With elastic
-    // SegQueue, the soft cap still limits retention but concurrent returns
-    // that pass the capacity check before others increment pool_len may
-    // push beyond the soft cap - which is the desired behavior.
+    // Central pool has at most soft_capacity (exact enforcement under Mutex).
+    // Each thread's TLS slot also holds one buffer but those are invisible
+    // to available(). TLS buffers are reclaimed when threads exit.
     let available = pool.available();
     assert!(
-        available >= 1 && available <= thread_count,
-        "expected 1..={thread_count} buffers, got {available}"
+        available <= soft_cap,
+        "expected <= {soft_cap} buffers in central pool, got {available}"
     );
 
-    // Verify that acquiring from the pool reuses buffers (no fresh allocation
-    // needed for at least one acquire).
-    let _buf = BufferPool::acquire_from(Arc::clone(&pool));
-    assert!(pool.available() < available);
+    // Verify reuse: acquiring from the pool gets a buffer (from central
+    // pool since the spawned threads' TLS slots are gone).
+    if available > 0 {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+        assert!(pool.available() < available);
+    }
 }
 
 #[test]
-fn elastic_pool_drains_to_soft_capacity() {
-    // After a burst that pushes above soft capacity, sequential returns
-    // should stop retaining once the pool reaches soft capacity.
+fn sequential_returns_respect_soft_capacity() {
+    // Sequential returns on a single thread: first goes to TLS, rest go
+    // to central pool up to soft_capacity. Excess is deallocated.
     let pool = BufferPool::new(2);
 
     // Acquire 8 buffers, then drop them one at a time.
     let buffers: Vec<_> = (0..8).map(|_| pool.acquire()).collect();
     drop(buffers);
 
-    // Sequential returns respect the soft cap.
+    // 1st → TLS, 2nd → central (1), 3rd → central (2=cap), 4th-8th → dealloc.
     assert_eq!(pool.available(), 2);
+}
+
+// --- Thread-local cache tests ---
+
+#[test]
+fn tls_absorbs_first_return() {
+    // First buffer returned on a thread goes to TLS, not central pool.
+    let pool = Arc::new(BufferPool::new(4));
+
+    {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+    // Buffer is in TLS - central pool is empty.
+    assert_eq!(pool.available(), 0);
+
+    // But re-acquiring on the same thread gets it from TLS.
+    let buf = BufferPool::acquire_from(Arc::clone(&pool));
+    assert_eq!(buf.len(), COPY_BUFFER_SIZE);
+}
+
+#[test]
+fn tls_overflow_routes_to_central_pool() {
+    // Second return on same thread (TLS occupied) routes to central pool.
+    let pool = Arc::new(BufferPool::new(4));
+
+    let a = BufferPool::acquire_from(Arc::clone(&pool));
+    let b = BufferPool::acquire_from(Arc::clone(&pool));
+
+    drop(a); // → TLS
+    assert_eq!(pool.available(), 0);
+
+    drop(b); // TLS full → central pool
+    assert_eq!(pool.available(), 1);
+}
+
+#[test]
+fn tls_provides_fast_path_acquire() {
+    // Acquire-return-acquire cycle on same thread hits TLS both times.
+    let pool = Arc::new(BufferPool::with_allocator(
+        4,
+        1024,
+        TrackingAllocator::new(),
+    ));
+
+    // First acquire: fresh allocation.
+    {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+    assert_eq!(pool.allocator().alloc_count(), 1);
+
+    // Second acquire: from TLS (no new allocation).
+    {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+    assert_eq!(pool.allocator().alloc_count(), 1);
+}
+
+#[test]
+fn tls_wrong_size_buffer_discarded() {
+    // A buffer in TLS from a different-sized pool config is discarded.
+    let pool_a = Arc::new(BufferPool::with_buffer_size(4, 1024));
+    let pool_b = Arc::new(BufferPool::with_buffer_size(4, 2048));
+
+    // Store a 1024-byte buffer in TLS via pool_a.
+    {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool_a));
+    }
+
+    // Acquire from pool_b (expects 2048). TLS buffer is wrong size -
+    // should be discarded and a fresh 2048-byte buffer allocated.
+    let buf = BufferPool::acquire_from(Arc::clone(&pool_b));
+    assert_eq!(buf.len(), 2048);
+}
+
+#[test]
+fn tls_per_thread_isolation() {
+    // Each thread has its own TLS slot. Verify buffers don't leak between threads.
+    use std::sync::Barrier;
+
+    let pool = Arc::new(BufferPool::with_buffer_size(2, 1024));
+    let barrier = Arc::new(Barrier::new(2));
+
+    let handles: Vec<_> = (0..2)
+        .map(|id| {
+            let pool = Arc::clone(&pool);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                // Each thread acquires and returns a buffer.
+                {
+                    let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
+                    buf[0] = id as u8;
+                }
+                // Buffer is now in this thread's TLS.
+
+                barrier.wait();
+
+                // Re-acquire: should get own buffer from TLS, not other thread's.
+                let buf = BufferPool::acquire_from(pool);
+                assert_eq!(buf[0], id as u8);
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
 }
