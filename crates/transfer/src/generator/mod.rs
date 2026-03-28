@@ -42,6 +42,7 @@ mod transfer;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use ::filters::FilterChain;
 use protocol::codec::NdxCodecEnum;
 use protocol::flist::FileEntry;
 use protocol::idlist::IdList;
@@ -247,8 +248,16 @@ pub struct GeneratorContext {
     ///
     /// **Invariant**: `file_list[i]` corresponds to `full_paths[i]` for all valid indices.
     full_paths: Vec<PathBuf>,
-    /// Filter rules received from client.
-    filters: Option<filters::FilterSet>,
+    /// Per-directory scoped filter chain for file list building and deletion.
+    ///
+    /// Combines global filter rules (from command-line or wire) with per-directory
+    /// merge files (`.rsync-filter`). During `walk_path()`, the chain pushes/pops
+    /// scoped rules as directories are entered and left.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `exclude.c:push_local_filters()` / `pop_local_filters()`
+    filter_chain: FilterChain,
     /// Negotiated checksum and compression algorithms from Protocol 30+ capability negotiation.
     /// None for protocols < 30 or when negotiation was skipped.
     negotiated_algorithms: Option<NegotiationResult>,
@@ -295,7 +304,7 @@ impl GeneratorContext {
             config,
             file_list: Vec::new(),
             full_paths: Vec::new(),
-            filters: None,
+            filter_chain: FilterChain::empty(),
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
@@ -418,6 +427,14 @@ impl GeneratorContext {
             writer = writer.with_iconv(converter.clone());
         }
         writer
+    }
+
+    /// Returns a reference to the filter chain for external use.
+    ///
+    /// The receiver may need the filter chain for deletion filtering.
+    #[must_use]
+    pub fn filter_chain(&self) -> &FilterChain {
+        &self.filter_chain
     }
 
     /// Returns the generated file list.
