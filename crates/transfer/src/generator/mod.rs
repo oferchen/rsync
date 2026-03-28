@@ -243,7 +243,6 @@ impl SegmentScheduler {
     fn remaining(&self) -> &[PendingSegment] {
         &self.segments[self.cursor..]
     }
-
 }
 
 /// Mutable state for INC_RECURSE segmented file list sending.
