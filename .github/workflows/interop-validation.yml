@@ -60,7 +60,7 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
           version: ${{ env.CACHE_VERSION }}
 
       - name: Cache upstream rsync
@@ -121,7 +121,7 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
           version: ${{ env.CACHE_VERSION }}
 
       - name: Cache upstream rsync
@@ -182,7 +182,7 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
           version: ${{ env.CACHE_VERSION }}
 
       - name: Cache upstream rsync
@@ -245,7 +245,7 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
           version: ${{ env.CACHE_VERSION }}
 
       - name: Cache upstream rsync
@@ -301,7 +301,7 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
           version: ${{ env.CACHE_VERSION }}
 
       - name: Cache upstream rsync
@@ -338,6 +338,64 @@ jobs:
           echo "- \`--filter 'merge .rsync-filter'\` merge file" >> $GITHUB_STEP_SUMMARY
           echo "- \`--delete --exclude '*.keep'\` delete with filters" >> $GITHUB_STEP_SUMMARY
 
+  validate-compress:
+    name: Compression Codec Interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: compress
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync-compress
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-compress-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-compress-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync-compress.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Run compress interop tests
+        run: bash tests/compress_interop_test.sh
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Compression Codec Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tests compression codec compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Codecs tested:" >> $GITHUB_STEP_SUMMARY
+          echo "- zlibx (baseline, default \`-z\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- zstd (\`--compress=zstd\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- lz4 (\`--compress=lz4\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- Auto-negotiation (protocol picks best common codec)" >> $GITHUB_STEP_SUMMARY
+
   validate-inc-recurse:
     name: INC_RECURSE Interop
     runs-on: ubuntu-latest
@@ -359,7 +417,7 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
           version: ${{ env.CACHE_VERSION }}
 
       - name: Cache upstream rsync
@@ -420,7 +478,7 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
           version: ${{ env.CACHE_VERSION }}
 
       - name: Cache upstream rsync
