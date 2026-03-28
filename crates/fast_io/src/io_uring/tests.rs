@@ -1164,3 +1164,169 @@ fn test_empty_file_roundtrip_via_policy() {
     let data = reader.read_all().unwrap();
     assert!(data.is_empty());
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Registered buffer configuration tests
+// ────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_config_register_buffers_defaults() {
+    let config = IoUringConfig::default();
+    assert!(config.register_buffers);
+    assert_eq!(config.registered_buffer_count, 8);
+}
+
+#[test]
+fn test_config_presets_register_buffers() {
+    let large = IoUringConfig::for_large_files();
+    assert!(large.register_buffers);
+    assert_eq!(large.registered_buffer_count, 16);
+
+    let small = IoUringConfig::for_small_files();
+    assert!(small.register_buffers);
+    assert_eq!(small.registered_buffer_count, 8);
+}
+
+#[test]
+fn test_config_register_buffers_disabled() {
+    let config = IoUringConfig {
+        register_buffers: false,
+        ..IoUringConfig::default()
+    };
+    assert!(!config.register_buffers);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Registered buffer group tests (require io_uring availability)
+// ────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_registered_buffer_group_via_writer() {
+    // Verify that writer creation with register_buffers=true succeeds and
+    // produces correct output (proving the WRITE_FIXED path is functional
+    // or falls back gracefully).
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("reg_buf_writer.bin");
+    let config = IoUringConfig {
+        register_buffers: true,
+        registered_buffer_count: 4,
+        ..IoUringConfig::default()
+    };
+
+    if !is_io_uring_available() {
+        return;
+    }
+
+    match IoUringWriter::create(&path, &config) {
+        Ok(mut w) => {
+            let data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
+            w.write_all(&data).unwrap();
+            w.flush().unwrap();
+            let read_back = std::fs::read(&path).unwrap();
+            assert_eq!(read_back, data);
+        }
+        Err(_) => {
+            // Ring creation failed (seccomp, etc.) - acceptable.
+        }
+    }
+}
+
+#[test]
+fn test_registered_buffer_group_via_reader() {
+    // Verify that reader with register_buffers=true reads correctly (proving
+    // the READ_FIXED path is functional or falls back gracefully).
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("reg_buf_reader.bin");
+    let data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
+    std::fs::write(&path, &data).unwrap();
+
+    let config = IoUringConfig {
+        register_buffers: true,
+        registered_buffer_count: 4,
+        ..IoUringConfig::default()
+    };
+
+    if !is_io_uring_available() {
+        return;
+    }
+
+    match IoUringReader::open(&path, &config) {
+        Ok(mut r) => {
+            let read_back = r.read_all().unwrap();
+            assert_eq!(read_back, data);
+        }
+        Err(_) => {
+            // Ring creation failed - acceptable.
+        }
+    }
+}
+
+#[test]
+fn test_registered_buffer_write_read_roundtrip() {
+    // End-to-end test: write with WRITE_FIXED, read back with READ_FIXED.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("reg_buf_roundtrip.bin");
+    let data: Vec<u8> = (0..128000).map(|i| (i % 256) as u8).collect();
+
+    let config = IoUringConfig {
+        register_buffers: true,
+        registered_buffer_count: 8,
+        ..IoUringConfig::default()
+    };
+
+    if !is_io_uring_available() {
+        return;
+    }
+
+    // Write
+    match IoUringWriter::create(&path, &config) {
+        Ok(mut w) => {
+            w.write_all(&data).unwrap();
+            w.flush().unwrap();
+        }
+        Err(_) => return,
+    }
+
+    // Read back
+    match IoUringReader::open(&path, &config) {
+        Ok(mut r) => {
+            let read_back = r.read_all().unwrap();
+            assert_eq!(read_back.len(), data.len());
+            assert_eq!(read_back, data);
+        }
+        Err(_) => return,
+    }
+}
+
+#[test]
+fn test_registered_buffer_disabled_still_works() {
+    // With register_buffers=false, regular Read/Write path must still work.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("reg_buf_disabled.bin");
+    let data: Vec<u8> = (0..32768).map(|i| (i % 256) as u8).collect();
+
+    let config = IoUringConfig {
+        register_buffers: false,
+        ..IoUringConfig::default()
+    };
+
+    if !is_io_uring_available() {
+        return;
+    }
+
+    match IoUringWriter::create(&path, &config) {
+        Ok(mut w) => {
+            w.write_all(&data).unwrap();
+            w.flush().unwrap();
+        }
+        Err(_) => return,
+    }
+
+    match IoUringReader::open(&path, &config) {
+        Ok(mut r) => {
+            let read_back = r.read_all().unwrap();
+            assert_eq!(read_back, data);
+        }
+        Err(_) => return,
+    }
+}

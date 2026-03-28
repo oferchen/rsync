@@ -1,4 +1,8 @@
 //! io_uring-based file reader with batched read support.
+//!
+//! When registered buffers are available, reads use `IORING_OP_READ_FIXED`
+//! which avoids per-SQE `get_user_pages()` overhead. Falls back to regular
+//! `IORING_OP_READ` when registration is unavailable or all slots are busy.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -9,6 +13,9 @@ use io_uring::{IoUring as RawIoUring, opcode};
 
 use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd};
 use super::config::IoUringConfig;
+use super::registered_buffers::{
+    RegisteredBufferGroup, RegisteredBufferSlotInfo, submit_read_fixed_batch,
+};
 use crate::traits::FileReader;
 
 /// A file reader using io_uring for async I/O.
@@ -16,6 +23,10 @@ use crate::traits::FileReader;
 /// Provides both single-operation (`read_at`) and batched (`read_all_batched`)
 /// interfaces. The batched path submits up to `sq_entries` concurrent reads per
 /// `submit_and_wait` call, dramatically reducing syscall count for large files.
+///
+/// When [`RegisteredBufferGroup`] is available, the reader uses
+/// `IORING_OP_READ_FIXED` for batched reads, eliminating kernel-side page
+/// pinning overhead on each operation.
 pub struct IoUringReader {
     ring: RawIoUring,
     file: File,
@@ -25,6 +36,8 @@ pub struct IoUringReader {
     sq_entries: u32,
     /// Fixed-file slot index, or `NO_FIXED_FD` when not registered.
     fixed_fd_slot: i32,
+    /// Optional registered buffer group for `READ_FIXED` operations.
+    registered_buffers: Option<RegisteredBufferGroup>,
 }
 
 impl IoUringReader {
@@ -32,7 +45,8 @@ impl IoUringReader {
     ///
     /// When `config.register_files` is true, the fd is registered with the
     /// ring via `IORING_REGISTER_FILES`, eliminating per-op file-table
-    /// lookups in the kernel.
+    /// lookups in the kernel. When `config.register_buffers` is true,
+    /// page-aligned buffers are registered for `READ_FIXED` operations.
     ///
     /// # Errors
     ///
@@ -56,6 +70,16 @@ impl IoUringReader {
             NO_FIXED_FD
         };
 
+        let registered_buffers = if config.register_buffers {
+            RegisteredBufferGroup::try_new(
+                &ring,
+                config.buffer_size,
+                config.registered_buffer_count,
+            )
+        } else {
+            None
+        };
+
         Ok(Self {
             ring,
             file,
@@ -64,6 +88,7 @@ impl IoUringReader {
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
             fixed_fd_slot,
+            registered_buffers,
         })
     }
 
@@ -114,6 +139,10 @@ impl IoUringReader {
 
     /// Reads the entire file into a vector using batched io_uring submissions.
     ///
+    /// When registered buffers are available, uses `READ_FIXED` to eliminate
+    /// per-SQE page pinning overhead. Falls back to regular `Read` SQEs
+    /// when registration is unavailable.
+    ///
     /// Divides the file into `buffer_size` chunks and submits up to `sq_entries`
     /// reads per `submit_and_wait` call. For a 1 MB file with 64 KB buffers and
     /// 64 SQ entries, this completes in a single syscall instead of 16.
@@ -124,6 +153,37 @@ impl IoUringReader {
         }
 
         let mut output = vec![0u8; size];
+
+        // Try READ_FIXED path when registered buffers are available.
+        if let Some(ref reg) = self.registered_buffers {
+            let slot_count = reg.available().min(self.sq_entries as usize);
+            if slot_count > 0 {
+                let slots: Vec<_> = (0..slot_count).filter_map(|_| reg.checkout()).collect();
+                if !slots.is_empty() {
+                    let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
+                    let slot_infos: Vec<RegisteredBufferSlotInfo> = slots
+                        .iter()
+                        .map(|s| RegisteredBufferSlotInfo {
+                            ptr: s.as_mut_ptr(),
+                            buf_index: s.buf_index(),
+                            buffer_size: s.buffer_size(),
+                        })
+                        .collect();
+
+                    let _ = submit_read_fixed_batch(
+                        &mut self.ring,
+                        fd,
+                        &mut output,
+                        0,
+                        &slot_infos,
+                        self.fixed_fd_slot,
+                    )?;
+                    return Ok(output);
+                }
+            }
+        }
+
+        // Fallback: regular Read SQEs.
         let chunk_size = self.buffer_size;
         let max_batch = self.sq_entries as usize;
         let total_chunks = size.div_ceil(chunk_size);

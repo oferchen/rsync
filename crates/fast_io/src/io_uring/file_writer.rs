@@ -1,4 +1,8 @@
 //! io_uring-based file writer with buffered batched writes.
+//!
+//! When registered buffers are available, flushes use `IORING_OP_WRITE_FIXED`
+//! which avoids per-SQE `get_user_pages()` overhead. Falls back to regular
+//! `IORING_OP_WRITE` when registration is unavailable or all slots are busy.
 
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom, Write};
@@ -9,6 +13,9 @@ use io_uring::{IoUring as RawIoUring, opcode};
 
 use super::batching::{maybe_fixed_file, sqe_fd, submit_write_batch, try_register_fd};
 use super::config::IoUringConfig;
+use super::registered_buffers::{
+    RegisteredBufferGroup, RegisteredBufferSlotInfo, submit_write_fixed_batch,
+};
 use crate::traits::FileWriter;
 
 /// A file writer using io_uring for async I/O.
@@ -16,6 +23,10 @@ use crate::traits::FileWriter;
 /// Incoming writes are buffered internally. On `flush()` (or when the buffer
 /// fills), the buffered data is submitted as a batch of write SQEs -- up to
 /// `sq_entries` concurrent writes per `submit_and_wait` call.
+///
+/// When [`RegisteredBufferGroup`] is available, the writer uses
+/// `IORING_OP_WRITE_FIXED` for flushes, eliminating kernel-side page pinning
+/// overhead on each operation.
 pub struct IoUringWriter {
     ring: RawIoUring,
     file: File,
@@ -26,6 +37,8 @@ pub struct IoUringWriter {
     sq_entries: u32,
     /// Fixed-file slot index, or `NO_FIXED_FD` when not registered.
     fixed_fd_slot: i32,
+    /// Optional registered buffer group for `WRITE_FIXED` operations.
+    registered_buffers: Option<RegisteredBufferGroup>,
 }
 
 impl IoUringWriter {
@@ -40,6 +53,15 @@ impl IoUringWriter {
         let file = File::create(path)?;
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
+        let registered_buffers = if config.register_buffers {
+            RegisteredBufferGroup::try_new(
+                &ring,
+                config.buffer_size,
+                config.registered_buffer_count,
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
             ring,
@@ -50,6 +72,7 @@ impl IoUringWriter {
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
             fixed_fd_slot,
+            registered_buffers,
         })
     }
 
@@ -57,6 +80,15 @@ impl IoUringWriter {
     pub fn from_file(file: File, config: &IoUringConfig) -> io::Result<Self> {
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
+        let registered_buffers = if config.register_buffers {
+            RegisteredBufferGroup::try_new(
+                &ring,
+                config.buffer_size,
+                config.registered_buffer_count,
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
             ring,
@@ -67,6 +99,7 @@ impl IoUringWriter {
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
             fixed_fd_slot,
+            registered_buffers,
         })
     }
 
@@ -81,6 +114,9 @@ impl IoUringWriter {
         sq_entries: u32,
         fixed_fd_slot: i32,
     ) -> Self {
+        // Attempt buffer registration with default count.
+        let registered_buffers = RegisteredBufferGroup::try_new(&ring, buffer_capacity, 8);
+
         Self {
             ring,
             file,
@@ -90,6 +126,7 @@ impl IoUringWriter {
             buffer_size: buffer_capacity,
             sq_entries,
             fixed_fd_slot,
+            registered_buffers,
         }
     }
 
@@ -103,6 +140,15 @@ impl IoUringWriter {
         file.set_len(size)?;
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
+        let registered_buffers = if config.register_buffers {
+            RegisteredBufferGroup::try_new(
+                &ring,
+                config.buffer_size,
+                config.registered_buffer_count,
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
             ring,
@@ -113,6 +159,7 @@ impl IoUringWriter {
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
             fixed_fd_slot,
+            registered_buffers,
         })
     }
 
@@ -158,10 +205,47 @@ impl IoUringWriter {
 
     /// Writes all of `data` starting at `offset` using batched SQEs.
     ///
-    /// Splits `data` into `buffer_size` chunks and submits up to `sq_entries`
-    /// writes per `submit_and_wait` call, handling short writes via resubmission.
+    /// Uses `WRITE_FIXED` when registered buffers are available, falling back
+    /// to regular `IORING_OP_WRITE` otherwise. Splits `data` into chunks and
+    /// submits up to `sq_entries` writes per `submit_and_wait` call.
     pub fn write_all_batched(&mut self, data: &[u8], offset: u64) -> io::Result<()> {
         let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
+
+        // Try WRITE_FIXED path.
+        if let Some(ref reg) = self.registered_buffers {
+            let slot_count = reg.available().min(self.sq_entries as usize);
+            if slot_count > 0 {
+                let slots: Vec<_> = (0..slot_count).filter_map(|_| reg.checkout()).collect();
+                if !slots.is_empty() {
+                    let slot_infos: Vec<RegisteredBufferSlotInfo> = slots
+                        .iter()
+                        .map(|s| RegisteredBufferSlotInfo {
+                            ptr: s.as_mut_ptr(),
+                            buf_index: s.buf_index(),
+                            buffer_size: s.buffer_size(),
+                        })
+                        .collect();
+
+                    let written = submit_write_fixed_batch(
+                        &mut self.ring,
+                        fd,
+                        data,
+                        offset,
+                        &slot_infos,
+                        self.fixed_fd_slot,
+                    )?;
+                    if written != data.len() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "batched write_fixed incomplete",
+                        ));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
+        // Fallback: regular Write.
         let written = submit_write_batch(
             &mut self.ring,
             fd,
@@ -182,9 +266,9 @@ impl IoUringWriter {
 
     /// Flushes the internal buffer to disk using batched writes.
     ///
-    /// Passes the buffer slice directly to the batched writer without
-    /// allocating a copy — the SQEs reference the buffer in place and
-    /// the kernel completes all writes before we reset `buffer_pos`.
+    /// When registered buffers are available, uses `IORING_OP_WRITE_FIXED` to
+    /// avoid per-SQE page pinning. Falls back to regular `IORING_OP_WRITE` when
+    /// registration is unavailable or all slots are busy.
     fn flush_buffer(&mut self) -> io::Result<()> {
         if self.buffer_pos == 0 {
             return Ok(());
@@ -194,7 +278,37 @@ impl IoUringWriter {
         let len = self.buffer_pos;
         let offset = self.bytes_written;
 
-        // Submit directly from the internal buffer — no allocation.
+        // Try WRITE_FIXED path when registered buffers are available.
+        if let Some(ref reg) = self.registered_buffers {
+            let slot_count = reg.available().min(self.sq_entries as usize);
+            if slot_count > 0 {
+                let slots: Vec<_> = (0..slot_count).filter_map(|_| reg.checkout()).collect();
+                if !slots.is_empty() {
+                    let slot_infos: Vec<RegisteredBufferSlotInfo> = slots
+                        .iter()
+                        .map(|s| RegisteredBufferSlotInfo {
+                            ptr: s.as_mut_ptr(),
+                            buf_index: s.buf_index(),
+                            buffer_size: s.buffer_size(),
+                        })
+                        .collect();
+
+                    let written = submit_write_fixed_batch(
+                        &mut self.ring,
+                        fd,
+                        &self.buffer[..len],
+                        offset,
+                        &slot_infos,
+                        self.fixed_fd_slot,
+                    )?;
+                    self.bytes_written += written as u64;
+                    self.buffer_pos = 0;
+                    return Ok(());
+                }
+            }
+        }
+
+        // Fallback: submit directly from the internal buffer using regular Write.
         // Safety: the buffer is not modified until submit_write_batch returns,
         // and the kernel only reads from these pointers during submit_and_wait.
         let written = submit_write_batch(

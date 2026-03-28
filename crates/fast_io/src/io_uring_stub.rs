@@ -41,6 +41,10 @@ pub struct IoUringConfig {
     pub sqpoll: bool,
     /// SQPOLL idle timeout in ms (no-op on non-Linux).
     pub sqpoll_idle_ms: u32,
+    /// Whether to register fixed buffers (no-op on non-Linux).
+    pub register_buffers: bool,
+    /// Number of fixed buffers to register (no-op on non-Linux).
+    pub registered_buffer_count: usize,
 }
 
 impl Default for IoUringConfig {
@@ -52,6 +56,8 @@ impl Default for IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            register_buffers: true,
+            registered_buffer_count: 8,
         }
     }
 }
@@ -67,6 +73,8 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            register_buffers: true,
+            registered_buffer_count: 16,
         }
     }
 
@@ -80,9 +88,103 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            register_buffers: true,
+            registered_buffer_count: 8,
         }
     }
 }
+
+/// Stub module for registered buffer types (not available on this platform).
+pub mod registered_buffers {
+    use std::io;
+
+    /// Stub registered buffer group (not available on this platform).
+    ///
+    /// On non-Linux platforms, buffer registration always returns `None` from
+    /// `try_new` and `Unsupported` from `new`.
+    #[derive(Debug)]
+    pub struct RegisteredBufferGroup {
+        _private: (),
+    }
+
+    impl RegisteredBufferGroup {
+        /// Always returns an `Unsupported` error on this platform.
+        pub fn new(_ring: &(), _buffer_size: usize, _count: usize) -> io::Result<Self> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring buffer registration is not available on this platform",
+            ))
+        }
+
+        /// Always returns `None` on this platform.
+        #[must_use]
+        pub fn try_new(_ring: &(), _buffer_size: usize, _count: usize) -> Option<Self> {
+            None
+        }
+
+        /// Returns the number of buffers (always 0).
+        #[must_use]
+        pub fn count(&self) -> usize {
+            0
+        }
+
+        /// Returns the buffer size (always 0).
+        #[must_use]
+        pub fn buffer_size(&self) -> usize {
+            0
+        }
+
+        /// Returns the number of available slots (always 0).
+        #[must_use]
+        pub fn available(&self) -> usize {
+            0
+        }
+
+        /// Always returns `None` on this platform.
+        #[must_use]
+        pub fn checkout(&self) -> Option<RegisteredBufferSlot<'_>> {
+            None
+        }
+
+        /// No-op on this platform.
+        pub fn unregister(&self, _ring: &()) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Stub registered buffer slot (not available on this platform).
+    pub struct RegisteredBufferSlot<'a> {
+        _phantom: std::marker::PhantomData<&'a ()>,
+    }
+
+    impl RegisteredBufferSlot<'_> {
+        /// Returns the buffer index (always 0).
+        #[must_use]
+        pub fn buf_index(&self) -> u16 {
+            0
+        }
+
+        /// Returns a null mutable pointer.
+        #[must_use]
+        pub fn as_mut_ptr(&self) -> *mut u8 {
+            std::ptr::null_mut()
+        }
+
+        /// Returns a null pointer.
+        #[must_use]
+        pub fn as_ptr(&self) -> *const u8 {
+            std::ptr::null()
+        }
+
+        /// Returns the buffer size (always 0).
+        #[must_use]
+        pub fn buffer_size(&self) -> usize {
+            0
+        }
+    }
+}
+
+pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};
 
 /// Stub io_uring reader (not available on this platform).
 ///
@@ -700,6 +802,38 @@ mod tests {
     #[test]
     fn io_uring_unavailable_on_stub_platform() {
         assert!(!is_io_uring_available());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Registered buffer stubs
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn registered_buffer_group_try_new_returns_none() {
+        let result = RegisteredBufferGroup::try_new(&(), 4096, 4);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn registered_buffer_group_new_returns_unsupported() {
+        let result = RegisteredBufferGroup::new(&(), 4096, 4);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn config_has_register_buffers_fields() {
+        let config = IoUringConfig::default();
+        assert!(config.register_buffers);
+        assert_eq!(config.registered_buffer_count, 8);
+
+        let large = IoUringConfig::for_large_files();
+        assert!(large.register_buffers);
+        assert_eq!(large.registered_buffer_count, 16);
+
+        let small = IoUringConfig::for_small_files();
+        assert!(small.register_buffers);
+        assert_eq!(small.registered_buffer_count, 8);
     }
 
     #[test]
