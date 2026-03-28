@@ -25,11 +25,12 @@ use super::delta::{
 };
 use super::item_flags::ItemFlags;
 use super::protocol_io::calculate_duration_ms;
-use crate::role_trailer::error_location;
-
-use super::{GeneratorContext, GeneratorStats, TransferLoopResult, is_early_close_error};
+use super::{
+    GeneratorContext, GeneratorStats, SegmentScheduler, TransferLoopResult, is_early_close_error,
+};
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::receiver::SumHead;
+use crate::role_trailer::error_location;
 
 impl GeneratorContext {
     /// Runs the main file transfer loop, reading NDX requests from receiver.
@@ -70,10 +71,37 @@ impl GeneratorContext {
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
 
+        // INC_RECURSE: create scheduler and wire encoding state for lazy sub-list sending.
+        // upstream: sender.c:227,261 - interleaves sub-list sending with file transfers.
+        let inc_recurse = self.inc_recurse();
+        let mut scheduler =
+            SegmentScheduler::new(std::mem::take(&mut self.incremental.pending_segments));
+        let mut flist_writer = self
+            .incremental
+            .flist_writer_cache
+            .take()
+            .unwrap_or_else(|| self.build_flist_writer());
+        let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut segments_sent: usize = 0;
+
         // upstream: sender.c - dry-run skips data transfer; daemon may close early
         let tolerant = self.config.flags.dry_run;
 
         loop {
+            // upstream: sender.c:227 - send extra file lists at top of loop
+            if inc_recurse {
+                let remaining = self.file_list.len().saturating_sub(files_transferred);
+                while let Some(seg) = scheduler.next_if_needed(remaining) {
+                    self.encode_and_send_segment(
+                        &mut *writer,
+                        seg,
+                        &mut flist_writer,
+                        &mut flist_ndx_codec,
+                    )?;
+                    segments_sent += 1;
+                }
+            }
+
             // upstream: io.c perform_io() flushes buffered output while waiting
             // for input via select(). Our Read/Write traits are independent, so
             // we must explicitly flush before blocking on read to prevent deadlock
@@ -292,6 +320,20 @@ impl GeneratorContext {
                 cb.on_file_transferred(&event);
             }
 
+            // upstream: sender.c:261 - send extra file lists at bottom of loop
+            if inc_recurse {
+                let remaining = self.file_list.len().saturating_sub(files_transferred);
+                while let Some(seg) = scheduler.next_if_needed(remaining) {
+                    self.encode_and_send_segment(
+                        &mut *writer,
+                        seg,
+                        &mut flist_writer,
+                        &mut flist_ndx_codec,
+                    )?;
+                    segments_sent += 1;
+                }
+            }
+
             // Check deadline at file boundary after sending each file.
             // Upstream rsync (io.c:825) hard-exits via exit_cleanup(RERR_TIMEOUT).
             // We return an error to match: the sender cannot gracefully stop because
@@ -304,6 +346,23 @@ impl GeneratorContext {
                 }
             }
         }
+
+        // Flush any remaining INC_RECURSE segments and send NDX_FLIST_EOF.
+        if inc_recurse && !self.incremental.flist_eof_sent {
+            for seg in scheduler.remaining() {
+                self.encode_and_send_segment(
+                    &mut *writer,
+                    seg,
+                    &mut flist_writer,
+                    &mut flist_ndx_codec,
+                )?;
+                segments_sent += 1;
+            }
+            self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
+        }
+
+        // Cache flist_writer back for potential reuse (e.g., phase 2).
+        self.incremental.flist_writer_cache = Some(flist_writer);
 
         // Send final NDX_DONE.
         // During dry-run the upstream daemon may have already closed the connection,
@@ -567,20 +626,15 @@ impl GeneratorContext {
         // Step 5: Send io_error flag for protocol < 30
         self.send_io_error_flag(writer)?;
 
-        // Step 6: Send incremental file list segments and NDX_FLIST_EOF.
-        // Sub-lists are sent before the transfer loop (not interleaved) because
-        // we eagerly scanned all files upfront. This simplifies the receiver —
-        // it reads all sub-lists before entering its transfer loop.
-        self.send_extra_file_lists(writer)?;
-        self.send_flist_eof_if_inc_recurse(writer)?;
-
-        // Step 7: Run main transfer loop
+        // Step 6: Run main transfer loop
+        // INC_RECURSE sub-lists are sent lazily inside the loop via
+        // SegmentScheduler, matching upstream sender.c:227,261 cadence.
         let transfer_result = {
             let _t = PhaseTimer::new("generator-transfer-loop");
             self.run_transfer_loop(reader, writer, &mut progress)?
         };
 
-        // Step 8: Handle goodbye handshake
+        // Step 7: Handle goodbye handshake
         //
         // No stats are sent here. Upstream client-sender calls handle_stats(-1)
         // which is a no-op (main.c:360-384). Stats are only written by the
