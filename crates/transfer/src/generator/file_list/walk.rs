@@ -70,6 +70,17 @@ impl GeneratorContext {
             ));
             self.push_file_item(dot_entry, path.clone());
 
+            // upstream: exclude.c:push_local_filters() - read per-directory
+            // merge files when entering the root transfer directory.
+            let guard = self.filter_chain.enter_directory(&path).map_err(|e| {
+                io::Error::other(format!(
+                    "filter chain error in \"{}\": {e} {}{}",
+                    path.display(),
+                    error_location!(),
+                    crate::role_trailer::sender()
+                ))
+            })?;
+
             match std::fs::read_dir(&path) {
                 Ok(entries) => {
                     for entry in entries {
@@ -105,6 +116,9 @@ impl GeneratorContext {
                     self.record_io_error(&e);
                 }
             }
+
+            // upstream: exclude.c:pop_local_filters() - restore filter state
+            self.filter_chain.leave_directory(guard);
             return Ok(());
         }
 
@@ -122,11 +136,10 @@ impl GeneratorContext {
         }
 
         // upstream: flist.c:1332 - is_excluded() applied during make_file()
-        if let Some(ref filters) = self.filters {
-            let is_dir = metadata.is_dir();
-            if !filters.allows(&relative, is_dir) {
-                return Ok(());
-            }
+        // FilterChain evaluates per-directory scoped rules (innermost first)
+        // then global rules. If no rules are configured, allows() returns true.
+        if !self.filter_chain.allows(&relative, metadata.is_dir()) {
+            return Ok(());
         }
 
         // upstream: generator.c:1547 - skip unsafe symlinks when --safe-links.
@@ -183,9 +196,31 @@ impl GeneratorContext {
             None
         };
 
+        // Keep a clone of the path before moving it into the file list,
+        // needed for enter_directory() if this is a directory we'll recurse into.
+        let dir_path = if dir_entries.is_some() {
+            Some(path.clone())
+        } else {
+            None
+        };
+
         self.push_file_item(entry, path);
 
         if let Some(entries) = dir_entries {
+            // Safety: dir_path is always Some when dir_entries is Some
+            let dir_path = dir_path.unwrap();
+
+            // upstream: exclude.c:push_local_filters() - read per-directory
+            // merge files when entering a subdirectory during recursive walk.
+            let guard = self.filter_chain.enter_directory(&dir_path).map_err(|e| {
+                io::Error::other(format!(
+                    "filter chain error in \"{}\": {e} {}{}",
+                    dir_path.display(),
+                    error_location!(),
+                    crate::role_trailer::sender()
+                ))
+            })?;
+
             for dir_entry in entries {
                 match dir_entry {
                     Ok(de) => {
@@ -204,6 +239,9 @@ impl GeneratorContext {
                     }
                 }
             }
+
+            // upstream: exclude.c:pop_local_filters() - restore filter state
+            self.filter_chain.leave_directory(guard);
         }
 
         Ok(())
