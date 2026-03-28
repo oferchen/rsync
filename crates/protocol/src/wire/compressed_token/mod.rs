@@ -38,6 +38,7 @@
 
 mod decoder;
 mod encoder;
+mod zlib_codec;
 
 #[cfg(test)]
 mod tests;
