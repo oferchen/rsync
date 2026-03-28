@@ -693,8 +693,6 @@ mod tests {
 
     #[test]
     fn read_fixed_write_fixed_roundtrip() {
-        use std::io::Write;
-
         let ring = match RawIoUring::new(64) {
             Ok(r) => r,
             Err(_) => return,
