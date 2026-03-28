@@ -2456,3 +2456,40 @@ fn capability_fallback_all_protocol_versions() {
         }
     }
 }
+
+#[cfg(feature = "zstd")]
+#[test]
+fn supported_compressions_includes_zstd() {
+    let list = supported_compressions();
+    assert!(list.contains(&"zstd"), "zstd should be advertised");
+    // zstd should be preferred over zlibx
+    let zstd_pos = list.iter().position(|&s| s == "zstd").unwrap();
+    let zlibx_pos = list.iter().position(|&s| s == "zlibx").unwrap();
+    assert!(zstd_pos < zlibx_pos, "zstd should be preferred over zlibx");
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn supported_compressions_includes_lz4() {
+    let list = supported_compressions();
+    assert!(list.contains(&"lz4"), "lz4 should be advertised");
+    let lz4_pos = list.iter().position(|&s| s == "lz4").unwrap();
+    let zlibx_pos = list.iter().position(|&s| s == "zlibx").unwrap();
+    assert!(lz4_pos < zlibx_pos, "lz4 should be preferred over zlibx");
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn negotiate_zstd_compression() {
+    let list = "zstd zlibx zlib none";
+    let result = choose_compression_algorithm(list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::Zstd);
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn negotiate_lz4_compression() {
+    let list = "lz4 zlibx zlib none";
+    let result = choose_compression_algorithm(list).unwrap();
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+}

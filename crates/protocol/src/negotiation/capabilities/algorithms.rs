@@ -10,26 +10,30 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 
 /// Returns supported compression algorithms in preference order.
 ///
-/// This list is based on upstream rsync 3.4.1's default order, but only includes
-/// algorithms with fully implemented per-token decoders. Upstream rsync uses
-/// per-token compression (token.c), not stream-level compression - each algorithm
-/// needs a complete `CompressedTokenDecoder` implementation before it can be
-/// advertised here.
+/// Matches upstream rsync 3.4.1's preference order: zstd > lz4 > zlibx > zlib.
+/// Only includes algorithms with fully implemented per-token codecs. Each
+/// algorithm needs a complete `CompressedTokenEncoder`/`CompressedTokenDecoder`
+/// pair before it can be advertised here.
 ///
-/// Currently only zlibx and zlib have working token decoders. Zstd and lz4 token
-/// decoders are not yet implemented - advertising them causes protocol desync
-/// because the receiver falls back to plain token reading while the sender
-/// compresses with the negotiated algorithm.
+/// Zstd and lz4 are feature-gated - they are only advertised when the
+/// corresponding feature flag is enabled at compile time.
 ///
 /// # Upstream reference
 ///
 /// upstream: compat.c:534-544 `negotiate_the_strings()` - both sides exchange
 /// their supported algorithm lists and pick the first common entry.
 pub(super) fn supported_compressions() -> Vec<&'static str> {
-    // Only advertise algorithms with working per-token compression.
     // upstream: token.c dispatches on do_compression to select the codec.
-    // Zstd/lz4 token decoders are not yet implemented (see task #1098).
-    vec!["zlibx", "zlib", "none"]
+    // Order matches upstream preference: zstd > lz4 > zlibx > zlib > none
+    let mut v = Vec::with_capacity(5);
+    #[cfg(feature = "zstd")]
+    v.push("zstd");
+    #[cfg(feature = "lz4")]
+    v.push("lz4");
+    v.push("zlibx");
+    v.push("zlib");
+    v.push("none");
+    v
 }
 
 /// Checksum algorithm negotiated between rsync peers.
