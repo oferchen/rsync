@@ -33,6 +33,13 @@ pub enum CopyMethod {
     /// resource forks natively.
     Copyfile,
 
+    /// Windows ReFS `FSCTL_DUPLICATE_EXTENTS_TO_FILE` - block-level CoW clone.
+    ///
+    /// Creates a copy-on-write clone on ReFS volumes. Only available on Windows
+    /// Server 2016+ or Windows 10+ with ReFS-formatted volumes. O(1) regardless
+    /// of file size when both files are on the same ReFS volume.
+    ReFsReflink,
+
     /// Windows `CopyFileExW` API - with optional `COPY_FILE_NO_BUFFERING`.
     ///
     /// Bypasses system cache for large files (> 4MB), reducing memory pressure.
@@ -52,6 +59,7 @@ impl fmt::Display for CopyMethod {
             CopyMethod::CopyFileRange => write!(f, "copy_file_range"),
             CopyMethod::Clonefile => write!(f, "clonefile"),
             CopyMethod::Copyfile => write!(f, "copyfile"),
+            CopyMethod::ReFsReflink => write!(f, "ReFS reflink"),
             CopyMethod::CopyFileEx => write!(f, "CopyFileExW"),
             CopyMethod::StandardCopy => write!(f, "standard copy"),
         }
@@ -88,7 +96,10 @@ impl CopyResult {
     pub fn is_zero_copy(&self) -> bool {
         matches!(
             self.method,
-            CopyMethod::Ficlone | CopyMethod::CopyFileRange | CopyMethod::Clonefile
+            CopyMethod::Ficlone
+                | CopyMethod::CopyFileRange
+                | CopyMethod::Clonefile
+                | CopyMethod::ReFsReflink
         )
     }
 }
