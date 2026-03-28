@@ -94,8 +94,8 @@ pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::
     const NO_BUFFERING_THRESHOLD: u64 = 4 * 1024 * 1024;
 
     // Check if destination is on ReFS (future: attempt FSCTL_DUPLICATE_EXTENTS)
-    let _is_refs = crate::refs_detect::is_refs_filesystem(dst.parent().unwrap_or(dst))
-        .unwrap_or(false);
+    let _is_refs =
+        crate::refs_detect::is_refs_filesystem(dst.parent().unwrap_or(dst)).unwrap_or(false);
 
     let use_no_buffering = size_hint > NO_BUFFERING_THRESHOLD;
 
