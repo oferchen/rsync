@@ -116,6 +116,18 @@ pub struct IoUringConfig {
     /// Idle timeout (ms) for the SQPOLL kernel thread before it goes to sleep.
     /// Only relevant when `sqpoll` is true. Default: 1000ms.
     pub sqpoll_idle_ms: u32,
+    /// Whether to register fixed buffers for `READ_FIXED`/`WRITE_FIXED` operations.
+    ///
+    /// When enabled, a [`RegisteredBufferGroup`](super::RegisteredBufferGroup) is
+    /// created alongside the ring, pinning page-aligned buffers in kernel memory.
+    /// This eliminates per-SQE `get_user_pages()` overhead - a significant win for
+    /// high-throughput sequential I/O.
+    ///
+    /// Falls back silently to regular `Read`/`Write` opcodes if registration fails.
+    pub register_buffers: bool,
+    /// Number of fixed buffers to register. Only relevant when `register_buffers`
+    /// is true. Capped at 1024 by the kernel. Default: 8.
+    pub registered_buffer_count: usize,
 }
 
 impl Default for IoUringConfig {
@@ -127,6 +139,8 @@ impl Default for IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            register_buffers: true,
+            registered_buffer_count: 8,
         }
     }
 }
@@ -142,6 +156,8 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            register_buffers: true,
+            registered_buffer_count: 16,
         }
     }
 
@@ -155,6 +171,8 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            register_buffers: true,
+            registered_buffer_count: 8,
         }
     }
 
