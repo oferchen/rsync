@@ -13,6 +13,14 @@
 //! Use [`BufferPool::acquire_adaptive_from`] to acquire a buffer sized to match
 //! the file being transferred.
 //!
+//! # EMA Throughput Tracking
+//!
+//! When enabled via [`BufferPool::with_throughput_tracking`], the pool maintains
+//! an Exponential Moving Average of observed transfer throughput and can recommend
+//! dynamic buffer sizes via [`BufferPool::recommended_buffer_size`]. This targets
+//! ~10 ms of data per buffer, balancing syscall overhead against memory waste.
+//! The [`ThroughputTracker`] is lock-free and zero-cost when not enabled.
+//!
 //! # Design
 //!
 //! The pool uses [`crossbeam_queue::ArrayQueue`], a bounded, lock-free MPMC
@@ -77,11 +85,14 @@ mod global;
 mod guard;
 mod memory_cap;
 mod pool;
+/// EMA-based throughput tracker for dynamic buffer sizing.
+pub mod throughput;
 
 pub use allocator::{BufferAllocator, DefaultAllocator};
 pub use global::{GlobalBufferPoolConfig, global_buffer_pool, init_global_buffer_pool};
 pub use guard::{BorrowedBufferGuard, BufferGuard};
 pub use pool::BufferPool;
+pub use throughput::ThroughputTracker;
 
 use super::COPY_BUFFER_SIZE;
 
