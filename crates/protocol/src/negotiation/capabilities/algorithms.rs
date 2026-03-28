@@ -25,14 +25,11 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 pub(super) fn supported_compressions() -> Vec<&'static str> {
     // upstream: token.c dispatches on do_compression to select the codec.
     // Order matches upstream preference: zstd > lz4 > zlibx > zlib > none
-    let mut v = Vec::with_capacity(5);
-    #[cfg(feature = "zstd")]
-    v.push("zstd");
+    let mut v = vec!["zlibx", "zlib", "none"];
     #[cfg(feature = "lz4")]
-    v.push("lz4");
-    v.push("zlibx");
-    v.push("zlib");
-    v.push("none");
+    v.insert(0, "lz4");
+    #[cfg(feature = "zstd")]
+    v.insert(0, "zstd");
     v
 }
 
