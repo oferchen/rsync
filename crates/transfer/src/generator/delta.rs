@@ -210,10 +210,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
 
     let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
 
-    let mut encoder = compression
-        .map(create_token_encoder)
-        .transpose()?
-        .flatten();
+    let mut encoder = compression.map(create_token_encoder).transpose()?.flatten();
 
     // Read buffer sized for fewer syscalls (up to 256KB per read).
     // Buffer is reused across files — no allocation after the first large file.
@@ -380,10 +377,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
     compression: Option<CompressionAlgorithm>,
     source_path: &Path,
 ) -> io::Result<()> {
-    let encoder = compression
-        .map(create_token_encoder)
-        .transpose()?
-        .flatten();
+    let encoder = compression.map(create_token_encoder).transpose()?.flatten();
 
     match encoder {
         Some(mut encoder) => {
