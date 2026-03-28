@@ -2293,8 +2293,8 @@ run_comprehensive_interop_case() {
     "protocol-30|-av --protocol=30|basic"
     "protocol-31|-av --protocol=31|basic"
     "compress-delta|-avz --no-whole-file -I|delta"
-    "compress-zstd|-av --compress=zstd|compress"
-    "compress-lz4|-av --compress=lz4|compress"
+    # zstd/lz4 interop scenarios omitted until wire format is validated.
+    # Use tests/compress_interop_test.sh for compression-specific testing.
     "devices|-avD|basic"
     "acls|-avA|acls"
     "compare-dest|-av --compare-dest=compare_ref|compare-dest"
