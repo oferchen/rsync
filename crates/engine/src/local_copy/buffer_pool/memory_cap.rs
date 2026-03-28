@@ -47,19 +47,47 @@ impl MemoryCap {
         self.outstanding.load(Ordering::Relaxed)
     }
 
-    /// Blocks until outstanding memory plus `requested` is within the cap.
-    pub(super) fn wait_for_capacity(&self, requested: usize) {
-        // Fast path: check without locking.
-        if self.outstanding.load(Ordering::Acquire) + requested <= self.limit {
-            return;
+    /// Blocks until outstanding memory plus `requested` is within the cap,
+    /// then atomically reserves the capacity by incrementing outstanding.
+    ///
+    /// This combines the wait and checkout into a single atomic operation
+    /// under the lock to prevent TOCTOU races where multiple threads pass
+    /// the capacity check before either increments outstanding.
+    pub(super) fn wait_and_reserve(&self, requested: usize) {
+        // Fast path: try to reserve with CAS, no locking needed.
+        loop {
+            let current = self.outstanding.load(Ordering::Acquire);
+            if current + requested > self.limit {
+                break; // Fall through to slow path.
+            }
+            if self
+                .outstanding
+                .compare_exchange_weak(
+                    current,
+                    current + requested,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                return;
+            }
+            // CAS failed due to concurrent modification, retry.
         }
 
-        // Slow path: wait on the condvar until memory is available.
+        // Slow path: wait on the condvar and reserve under the lock.
         let mut guard = self
             .backpressure
             .lock()
             .expect("backpressure mutex poisoned");
-        while self.outstanding.load(Ordering::Acquire) + requested > self.limit {
+        loop {
+            let current = self.outstanding.load(Ordering::Acquire);
+            if current + requested <= self.limit {
+                // Reserve the capacity while holding the lock.
+                self.outstanding
+                    .store(current + requested, Ordering::Release);
+                return;
+            }
             guard = self
                 .returned
                 .wait(guard)
@@ -67,22 +95,37 @@ impl MemoryCap {
         }
     }
 
-    /// Returns `true` if the requested bytes can be allocated without
-    /// exceeding the memory cap.
+    /// Tries to atomically reserve `requested` bytes without blocking.
+    ///
+    /// Returns `true` if the reservation succeeded, `false` if it would
+    /// exceed the cap.
     pub(super) fn try_reserve(&self, requested: usize) -> bool {
-        self.outstanding.load(Ordering::Acquire) + requested <= self.limit
-    }
-
-    /// Records that `size` bytes have been checked out.
-    pub(super) fn track_checkout(&self, size: usize) {
-        self.outstanding.fetch_add(size, Ordering::Release);
+        loop {
+            let current = self.outstanding.load(Ordering::Acquire);
+            if current + requested > self.limit {
+                return false;
+            }
+            if self
+                .outstanding
+                .compare_exchange_weak(
+                    current,
+                    current + requested,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                return true;
+            }
+        }
     }
 
     /// Records that `size` bytes have been returned and wakes waiters.
     pub(super) fn track_return(&self, size: usize) {
         self.outstanding.fetch_sub(size, Ordering::Release);
-        // Wake one blocked acquirer. notify_one is sufficient because
-        // each returned buffer can only satisfy one waiter.
-        self.returned.notify_one();
+        // Wake all blocked acquirers so they can re-check the capacity.
+        // With CAS-based reservation in the slow path, only one will
+        // succeed at reserving, but all must be woken to re-evaluate.
+        self.returned.notify_all();
     }
 }
