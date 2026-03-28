@@ -597,7 +597,7 @@ fn encoder_default_uses_default_compression_and_protocol_31() {
 #[test]
 fn decoder_default_works() {
     let decoder = CompressedTokenDecoder::default();
-    assert!(!decoder.initialized);
+    assert!(!decoder.initialized());
 }
 
 #[test]
