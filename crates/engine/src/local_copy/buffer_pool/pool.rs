@@ -11,6 +11,7 @@ use crossbeam_queue::ArrayQueue;
 use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::guard::{BorrowedBufferGuard, BufferGuard};
 use super::memory_cap::MemoryCap;
+use super::throughput::ThroughputTracker;
 use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 
 /// A thread-safe, lock-free pool of reusable I/O buffers.
@@ -64,6 +65,13 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     allocator: A,
     /// Optional hard memory cap with backpressure.
     memory_cap: Option<MemoryCap>,
+    /// Optional throughput tracker for dynamic buffer sizing.
+    ///
+    /// When present, the pool tracks transfer throughput via EMA and uses
+    /// it to recommend buffer sizes via [`recommended_buffer_size`](Self::recommended_buffer_size).
+    /// The tracker is only allocated when explicitly enabled via
+    /// [`with_throughput_tracking`](Self::with_throughput_tracking).
+    throughput: Option<ThroughputTracker>,
 }
 
 impl BufferPool {
@@ -92,6 +100,7 @@ impl BufferPool {
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
             memory_cap: None,
+            throughput: None,
         }
     }
 
@@ -112,6 +121,7 @@ impl BufferPool {
             buffer_size,
             allocator: DefaultAllocator,
             memory_cap: None,
+            throughput: None,
         }
     }
 }
@@ -136,6 +146,7 @@ impl<A: BufferAllocator> BufferPool<A> {
             buffer_size,
             allocator,
             memory_cap: None,
+            throughput: None,
         }
     }
 
@@ -158,6 +169,73 @@ impl<A: BufferAllocator> BufferPool<A> {
     pub fn with_memory_cap(mut self, max_bytes: usize) -> Self {
         self.memory_cap = Some(MemoryCap::new(max_bytes));
         self
+    }
+
+    /// Enables throughput tracking with the default EMA smoothing factor.
+    ///
+    /// When enabled, the pool maintains an EMA-based throughput estimate
+    /// that can be queried via [`recommended_buffer_size`](Self::recommended_buffer_size).
+    /// Callers record transfer samples via [`record_transfer`](Self::record_transfer)
+    /// and the pool recommends a buffer size that targets ~10 ms of data
+    /// per buffer, clamped between 4 KiB and 256 KiB (or memory_cap / 4).
+    ///
+    /// Throughput tracking is zero-cost when not enabled - no atomic
+    /// operations or memory overhead are incurred.
+    #[must_use]
+    pub fn with_throughput_tracking(mut self) -> Self {
+        self.throughput = Some(ThroughputTracker::new());
+        self
+    }
+
+    /// Enables throughput tracking with a custom EMA smoothing factor.
+    ///
+    /// See [`with_throughput_tracking`](Self::with_throughput_tracking) for details.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `alpha` is not in `(0.0, 1.0]`.
+    #[must_use]
+    pub fn with_throughput_tracking_alpha(mut self, alpha: f64) -> Self {
+        self.throughput = Some(ThroughputTracker::with_alpha(alpha));
+        self
+    }
+
+    /// Records a transfer sample for throughput tracking.
+    ///
+    /// No-op if throughput tracking is not enabled. This method is safe
+    /// to call from any thread.
+    pub fn record_transfer(&self, bytes: usize, duration: std::time::Duration) {
+        if let Some(tracker) = &self.throughput {
+            tracker.record_transfer(bytes, duration);
+        }
+    }
+
+    /// Returns a recommended buffer size based on observed throughput.
+    ///
+    /// When throughput tracking is enabled, uses the EMA estimate to compute
+    /// a buffer size targeting ~10 ms of data. The result is clamped between
+    /// 4 KiB and the lesser of 256 KiB or `memory_cap / 4`.
+    ///
+    /// When tracking is disabled, returns the pool's configured `buffer_size`.
+    #[must_use]
+    pub fn recommended_buffer_size(&self) -> usize {
+        match &self.throughput {
+            Some(tracker) => {
+                let max = self
+                    .memory_cap
+                    .as_ref()
+                    .map(|cap| cap.limit() / 4)
+                    .unwrap_or(super::throughput::MAX_BUFFER_SIZE);
+                tracker.recommended_buffer_size(max)
+            }
+            None => self.buffer_size,
+        }
+    }
+
+    /// Returns a reference to the throughput tracker, if enabled.
+    #[must_use]
+    pub fn throughput_tracker(&self) -> Option<&ThroughputTracker> {
+        self.throughput.as_ref()
     }
 
     /// Acquires a buffer from the pool using an Arc reference.
@@ -406,6 +484,9 @@ impl Default for BufferPool<DefaultAllocator> {
         let max_buffers = std::thread::available_parallelism()
             .map(std::num::NonZero::get)
             .unwrap_or(4);
+        // Default pool does not enable throughput tracking for zero overhead.
+        // Callers that want dynamic buffer sizing should chain
+        // `.with_throughput_tracking()`.
         Self::new(max_buffers)
     }
 }

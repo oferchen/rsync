@@ -489,6 +489,13 @@ pub(in crate::local_copy) fn execute_transfer(
         outcome.literal_bytes(),
         elapsed.as_secs_f64()
     );
+
+    // Record throughput sample for EMA-based dynamic buffer sizing.
+    if context.use_buffer_pool() {
+        let pool = context.buffer_pool();
+        pool.record_transfer(outcome.literal_bytes() as usize, elapsed);
+    }
+
     let compressed_bytes = outcome.compressed_bytes();
     context
         .summary_mut()
