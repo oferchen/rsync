@@ -8,29 +8,22 @@ use std::io;
 pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
     &["xxh128", "xxh3", "xxh64", "md5", "md4", "sha1", "none"];
 
-/// Returns supported compression algorithms in preference order.
+/// Returns supported compression algorithms in preference order for negotiation.
 ///
-/// Matches upstream rsync 3.4.1's preference order: zstd > lz4 > zlibx > zlib.
-/// Only includes algorithms with fully implemented per-token codecs. Each
-/// algorithm needs a complete `CompressedTokenEncoder`/`CompressedTokenDecoder`
-/// pair before it can be advertised here.
-///
-/// Zstd and lz4 are feature-gated - they are only advertised when the
-/// corresponding feature flag is enabled at compile time.
+/// Only includes algorithms validated for interoperability with upstream rsync.
+/// Zstd and lz4 per-token codecs are implemented but NOT yet advertised during
+/// auto-negotiation because wire-level interop with upstream rsync 3.4.1 has
+/// not been validated. They can still be used when explicitly requested via
+/// `--compress=zstd` or `--compress=lz4`.
 ///
 /// # Upstream reference
 ///
 /// upstream: compat.c:534-544 `negotiate_the_strings()` - both sides exchange
 /// their supported algorithm lists and pick the first common entry.
 pub(super) fn supported_compressions() -> Vec<&'static str> {
-    // upstream: token.c dispatches on do_compression to select the codec.
-    // Order matches upstream preference: zstd > lz4 > zlibx > zlib > none
-    let mut v = vec!["zlibx", "zlib", "none"];
-    #[cfg(feature = "lz4")]
-    v.insert(0, "lz4");
-    #[cfg(feature = "zstd")]
-    v.insert(0, "zstd");
-    v
+    // Only advertise algorithms with validated upstream interop.
+    // Zstd/lz4 codecs are wired but not yet interop-tested.
+    vec!["zlibx", "zlib", "none"]
 }
 
 /// Checksum algorithm negotiated between rsync peers.
