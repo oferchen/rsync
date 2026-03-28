@@ -261,6 +261,8 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
             if buffer.len() == pool.buffer_size {
+                // Re-reserve memory that was released by return_buffer's track_return.
+                pool.wait_and_reserve_memory(pool.buffer_size);
                 return BufferGuard {
                     buffer: Some(buffer),
                     pool,
@@ -289,6 +291,14 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
             if buffer.len() == pool.buffer_size {
+                // Re-reserve memory that was released by return_buffer's track_return.
+                if !pool.try_reserve_memory(pool.buffer_size) {
+                    // Cap reached since we returned - put the buffer back in TLS.
+                    if let Some(buf) = thread_local_cache::try_store(buffer) {
+                        pool.allocator.deallocate(buf);
+                    }
+                    return None;
+                }
                 return Some(BufferGuard {
                     buffer: Some(buffer),
                     pool,
@@ -347,6 +357,8 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
             if buffer.len() == self.buffer_size {
+                // Re-reserve memory that was released by return_buffer's track_return.
+                self.wait_and_reserve_memory(self.buffer_size);
                 return BorrowedBufferGuard {
                     buffer: Some(buffer),
                     pool: self,
@@ -373,6 +385,14 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
             if buffer.len() == self.buffer_size {
+                // Re-reserve memory that was released by return_buffer's track_return.
+                if !self.try_reserve_memory(self.buffer_size) {
+                    // Cap reached since we returned - put the buffer back in TLS.
+                    if let Some(buf) = thread_local_cache::try_store(buffer) {
+                        self.allocator.deallocate(buf);
+                    }
+                    return None;
+                }
                 return Some(BorrowedBufferGuard {
                     buffer: Some(buffer),
                     pool: self,
