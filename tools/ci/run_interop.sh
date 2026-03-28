@@ -333,9 +333,8 @@ build_upstream_from_source() {
   if grep -q -- "--disable-xxhash" <<<"$configure_help"; then
     configure_args+=("--disable-xxhash")
   fi
-  if grep -q -- "--disable-lz4" <<<"$configure_help"; then
-    configure_args+=("--disable-lz4")
-  fi
+  # Do NOT disable lz4 or zstd - needed for compression interop tests.
+  # Both libraries are installed via APT (libzstd-dev, liblz4-dev).
   if grep -q -- "--disable-md2man" <<<"$configure_help"; then
     configure_args+=("--disable-md2man")
   fi
@@ -2294,6 +2293,8 @@ run_comprehensive_interop_case() {
     "protocol-30|-av --protocol=30|basic"
     "protocol-31|-av --protocol=31|basic"
     "compress-delta|-avz --no-whole-file -I|delta"
+    # zstd/lz4 interop scenarios omitted until wire format is validated.
+    # Use tests/compress_interop_test.sh for compression-specific testing.
     "devices|-avD|basic"
     "acls|-avA|acls"
     "compare-dest|-av --compare-dest=compare_ref|compare-dest"
