@@ -80,9 +80,9 @@ pub enum TokenReader {
 impl TokenReader {
     /// Creates a token reader based on the negotiated compression algorithm.
     ///
-    /// Returns `Plain` when compression is `None` or an algorithm that does
-    /// not use token-level compression. Returns `Compressed` for `Zlib` and
-    /// `ZlibX` which use the compressed token wire format.
+    /// Returns `Plain` when compression is `None` or an unsupported algorithm.
+    /// Returns `Compressed` for algorithms with per-token codec support:
+    /// `Zlib`, `ZlibX`, and (feature-gated) `Zstd` and `LZ4`.
     ///
     /// # Arguments
     ///
@@ -97,6 +97,13 @@ impl TokenReader {
                 }
                 Self::Compressed(decoder)
             }
+            #[cfg(feature = "zstd")]
+            Some(CompressionAlgorithm::Zstd) => {
+                // unwrap: zstd decoder creation only fails on OOM-level conditions
+                Self::Compressed(CompressedTokenDecoder::new_zstd().expect("zstd decoder init"))
+            }
+            #[cfg(feature = "lz4")]
+            Some(CompressionAlgorithm::LZ4) => Self::Compressed(CompressedTokenDecoder::new_lz4()),
             _ => Self::Plain,
         }
     }
@@ -380,5 +387,19 @@ mod tests {
         let mut cursor = Cursor::new(Vec::<u8>::new());
         let result = reader.read_token(&mut cursor);
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn new_returns_compressed_for_zstd() {
+        let reader = TokenReader::new(Some(CompressionAlgorithm::Zstd));
+        assert!(reader.is_compressed());
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn new_returns_compressed_for_lz4() {
+        let reader = TokenReader::new(Some(CompressionAlgorithm::LZ4));
+        assert!(reader.is_compressed());
     }
 }
