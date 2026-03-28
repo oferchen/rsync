@@ -11,7 +11,11 @@ use std::io::{self, Write};
 
 use compress::zlib::CompressionLevel;
 
+#[cfg(feature = "lz4")]
+use super::lz4_codec::Lz4TokenEncoder;
 use super::zlib_codec::ZlibTokenEncoder;
+#[cfg(feature = "zstd")]
+use super::zstd_codec::ZstdTokenEncoder;
 
 /// Encoder state for sending compressed tokens.
 ///
@@ -39,14 +43,17 @@ pub struct CompressedTokenEncoder {
 
 enum EncoderInner {
     Zlib(ZlibTokenEncoder),
+    #[cfg(feature = "zstd")]
+    Zstd(ZstdTokenEncoder),
+    #[cfg(feature = "lz4")]
+    Lz4(Lz4TokenEncoder),
 }
 
 impl CompressedTokenEncoder {
     /// Creates a new zlib encoder with the specified compression level and protocol version.
     ///
     /// This constructor creates a zlib/zlibx encoder, matching the original rsync
-    /// compression behavior. Use [`for_algorithm`](Self::for_algorithm) to select
-    /// a specific compression algorithm.
+    /// compression behavior.
     #[must_use]
     pub fn new(level: CompressionLevel, protocol_version: u32) -> Self {
         Self {
@@ -54,10 +61,37 @@ impl CompressedTokenEncoder {
         }
     }
 
+    /// Creates a new zstd encoder with the specified compression level.
+    ///
+    /// upstream: token.c:send_zstd_token()
+    #[cfg(feature = "zstd")]
+    pub fn new_zstd(level: i32) -> io::Result<Self> {
+        Ok(Self {
+            inner: EncoderInner::Zstd(ZstdTokenEncoder::new(level)?),
+        })
+    }
+
+    /// Creates a new LZ4 encoder.
+    ///
+    /// upstream: token.c:send_compressed_token() (SUPPORT_LZ4)
+    #[cfg(feature = "lz4")]
+    #[must_use]
+    pub fn new_lz4() -> Self {
+        Self {
+            inner: EncoderInner::Lz4(Lz4TokenEncoder::new()),
+        }
+    }
+
     /// Resets the encoder for a new file.
     pub fn reset(&mut self) {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.reset(),
+            #[cfg(feature = "zstd")]
+            EncoderInner::Zstd(enc) => {
+                let _ = enc.reset();
+            }
+            #[cfg(feature = "lz4")]
+            EncoderInner::Lz4(enc) => enc.reset(),
         }
     }
 
@@ -68,6 +102,10 @@ impl CompressedTokenEncoder {
     pub fn send_literal<W: Write>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<()> {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.send_literal(writer, data),
+            #[cfg(feature = "zstd")]
+            EncoderInner::Zstd(enc) => enc.send_literal(writer, data),
+            #[cfg(feature = "lz4")]
+            EncoderInner::Lz4(enc) => enc.send_literal(writer, data),
         }
     }
 
@@ -82,6 +120,10 @@ impl CompressedTokenEncoder {
     ) -> io::Result<()> {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.send_block_match(writer, block_index),
+            #[cfg(feature = "zstd")]
+            EncoderInner::Zstd(enc) => enc.send_block_match(writer, block_index),
+            #[cfg(feature = "lz4")]
+            EncoderInner::Lz4(enc) => enc.send_block_match(writer, block_index),
         }
     }
 
@@ -89,6 +131,10 @@ impl CompressedTokenEncoder {
     pub fn finish<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.finish(writer),
+            #[cfg(feature = "zstd")]
+            EncoderInner::Zstd(enc) => enc.finish(writer),
+            #[cfg(feature = "lz4")]
+            EncoderInner::Lz4(enc) => enc.finish(writer),
         }
     }
 
@@ -98,16 +144,24 @@ impl CompressedTokenEncoder {
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.see_token(data),
+            #[cfg(feature = "zstd")]
+            EncoderInner::Zstd(enc) => enc.see_token(data),
+            #[cfg(feature = "lz4")]
+            EncoderInner::Lz4(enc) => enc.see_token(data),
         }
     }
 
     /// Configures zlibx mode for this encoder.
     ///
     /// When `true`, [`Self::see_token`] becomes a no-op, matching upstream
-    /// rsync's CPRES_ZLIBX behaviour.
+    /// rsync's CPRES_ZLIBX behaviour. No-op for non-zlib algorithms.
     pub fn set_zlibx(&mut self, zlibx: bool) {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.set_zlibx(zlibx),
+            #[cfg(feature = "zstd")]
+            EncoderInner::Zstd(_) => {}
+            #[cfg(feature = "lz4")]
+            EncoderInner::Lz4(_) => {}
         }
     }
 }

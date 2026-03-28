@@ -38,7 +38,11 @@
 
 mod decoder;
 mod encoder;
+#[cfg(feature = "lz4")]
+mod lz4_codec;
 mod zlib_codec;
+#[cfg(feature = "zstd")]
+mod zstd_codec;
 
 #[cfg(test)]
 mod tests;

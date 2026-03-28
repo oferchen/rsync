@@ -8,7 +8,11 @@
 use std::io::{self, Read};
 
 use super::CompressedToken;
+#[cfg(feature = "lz4")]
+use super::lz4_codec::Lz4TokenDecoder;
 use super::zlib_codec::ZlibTokenDecoder;
+#[cfg(feature = "zstd")]
+use super::zstd_codec::ZstdTokenDecoder;
 
 /// Decoder state for receiving compressed tokens.
 ///
@@ -41,6 +45,10 @@ pub struct CompressedTokenDecoder {
 
 enum DecoderInner {
     Zlib(ZlibTokenDecoder),
+    #[cfg(feature = "zstd")]
+    Zstd(ZstdTokenDecoder),
+    #[cfg(feature = "lz4")]
+    Lz4(Lz4TokenDecoder),
 }
 
 impl Default for CompressedTokenDecoder {
@@ -61,10 +69,37 @@ impl CompressedTokenDecoder {
         }
     }
 
+    /// Creates a new zstd decoder.
+    ///
+    /// upstream: token.c:recv_zstd_token()
+    #[cfg(feature = "zstd")]
+    pub fn new_zstd() -> io::Result<Self> {
+        Ok(Self {
+            inner: DecoderInner::Zstd(ZstdTokenDecoder::new()?),
+        })
+    }
+
+    /// Creates a new LZ4 decoder.
+    ///
+    /// upstream: token.c:recv_compressed_token() (SUPPORT_LZ4)
+    #[cfg(feature = "lz4")]
+    #[must_use]
+    pub fn new_lz4() -> Self {
+        Self {
+            inner: DecoderInner::Lz4(Lz4TokenDecoder::new()),
+        }
+    }
+
     /// Resets the decoder for a new file.
     pub fn reset(&mut self) {
         match &mut self.inner {
             DecoderInner::Zlib(dec) => dec.reset(),
+            #[cfg(feature = "zstd")]
+            DecoderInner::Zstd(dec) => {
+                let _ = dec.reset();
+            }
+            #[cfg(feature = "lz4")]
+            DecoderInner::Lz4(dec) => dec.reset(),
         }
     }
 
@@ -75,6 +110,10 @@ impl CompressedTokenDecoder {
     pub fn recv_token<R: Read>(&mut self, reader: &mut R) -> io::Result<CompressedToken> {
         match &mut self.inner {
             DecoderInner::Zlib(dec) => dec.recv_token(reader),
+            #[cfg(feature = "zstd")]
+            DecoderInner::Zstd(dec) => dec.recv_token(reader),
+            #[cfg(feature = "lz4")]
+            DecoderInner::Lz4(dec) => dec.recv_token(reader),
         }
     }
 
@@ -84,15 +123,23 @@ impl CompressedTokenDecoder {
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         match &mut self.inner {
             DecoderInner::Zlib(dec) => dec.see_token(data),
+            #[cfg(feature = "zstd")]
+            DecoderInner::Zstd(dec) => dec.see_token(data),
+            #[cfg(feature = "lz4")]
+            DecoderInner::Lz4(dec) => dec.see_token(data),
         }
     }
 
     /// Configures zlibx mode for this decoder.
     ///
-    /// When `true`, [`Self::see_token`] becomes a no-op.
+    /// When `true`, [`Self::see_token`] becomes a no-op. No-op for non-zlib algorithms.
     pub fn set_zlibx(&mut self, zlibx: bool) {
         match &mut self.inner {
             DecoderInner::Zlib(dec) => dec.set_zlibx(zlibx),
+            #[cfg(feature = "zstd")]
+            DecoderInner::Zstd(_) => {}
+            #[cfg(feature = "lz4")]
+            DecoderInner::Lz4(_) => {}
         }
     }
 
@@ -101,6 +148,10 @@ impl CompressedTokenDecoder {
     pub fn initialized(&self) -> bool {
         match &self.inner {
             DecoderInner::Zlib(dec) => dec.initialized,
+            #[cfg(feature = "zstd")]
+            DecoderInner::Zstd(dec) => dec.initialized,
+            #[cfg(feature = "lz4")]
+            DecoderInner::Lz4(dec) => dec.initialized,
         }
     }
 }
