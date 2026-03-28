@@ -90,7 +90,7 @@ impl<'a> RegisteredBufferSlot<'a> {
     /// Callers must ensure writes stay within `buffer_size()` bounds.
     #[inline]
     #[must_use]
-    pub fn as_mut_ptr(&self) -> *mut u8 {
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
         self.group.buffers[self.index as usize]
     }
 
@@ -127,8 +127,7 @@ impl<'a> RegisteredBufferSlot<'a> {
     ///
     /// The caller must ensure no other references to this buffer memory exist.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn as_mut_slice(&self, len: usize) -> &mut [u8] {
+    pub unsafe fn as_mut_slice(&mut self, len: usize) -> &mut [u8] {
         debug_assert!(len <= self.group.buffer_size);
         let clamped = len.min(self.group.buffer_size);
         unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), clamped) }
@@ -642,8 +641,8 @@ mod tests {
         assert_eq!(group.available(), 0);
 
         // Verify buffer pointers are non-null and unique.
-        let ptrs: Vec<*mut u8> = [&s0, &s1b, &s2, &s3]
-            .iter()
+        let ptrs: Vec<*mut u8> = [&mut s0, &mut s1b, &mut s2, &mut s3]
+            .iter_mut()
             .map(|s| s.as_mut_ptr())
             .collect();
         for p in &ptrs {
@@ -677,7 +676,7 @@ mod tests {
             Err(_) => return,
         };
 
-        let slot = group.checkout().expect("checkout");
+        let mut slot = group.checkout().expect("checkout");
 
         // Write a pattern into the buffer.
         let pattern = b"hello io_uring registered buffers!";
@@ -710,9 +709,9 @@ mod tests {
         std::fs::write(&path, &test_data).unwrap();
 
         // Collect slot info for batch operations.
-        let checked_out: Vec<_> = (0..4).filter_map(|_| group.checkout()).collect();
+        let mut checked_out: Vec<_> = (0..4).filter_map(|_| group.checkout()).collect();
         let slot_infos: Vec<RegisteredBufferSlotInfo> = checked_out
-            .iter()
+            .iter_mut()
             .map(|s| RegisteredBufferSlotInfo {
                 ptr: s.as_mut_ptr(),
                 buf_index: s.buf_index(),

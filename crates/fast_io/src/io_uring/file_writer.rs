@@ -215,10 +215,10 @@ impl IoUringWriter {
         if let Some(ref reg) = self.registered_buffers {
             let slot_count = reg.available().min(self.sq_entries as usize);
             if slot_count > 0 {
-                let slots: Vec<_> = (0..slot_count).filter_map(|_| reg.checkout()).collect();
+                let mut slots: Vec<_> = (0..slot_count).filter_map(|_| reg.checkout()).collect();
                 if !slots.is_empty() {
                     let slot_infos: Vec<RegisteredBufferSlotInfo> = slots
-                        .iter()
+                        .iter_mut()
                         .map(|s| RegisteredBufferSlotInfo {
                             ptr: s.as_mut_ptr(),
                             buf_index: s.buf_index(),
@@ -282,10 +282,10 @@ impl IoUringWriter {
         if let Some(ref reg) = self.registered_buffers {
             let slot_count = reg.available().min(self.sq_entries as usize);
             if slot_count > 0 {
-                let slots: Vec<_> = (0..slot_count).filter_map(|_| reg.checkout()).collect();
+                let mut slots: Vec<_> = (0..slot_count).filter_map(|_| reg.checkout()).collect();
                 if !slots.is_empty() {
                     let slot_infos: Vec<RegisteredBufferSlotInfo> = slots
-                        .iter()
+                        .iter_mut()
                         .map(|s| RegisteredBufferSlotInfo {
                             ptr: s.as_mut_ptr(),
                             buf_index: s.buf_index(),
