@@ -1,6 +1,6 @@
 //! Protocol I/O operations for the generator role.
 //!
-//! Handles file list transmission (`send_file_list`, `send_extra_file_lists`),
+//! Handles file list transmission (`send_file_list`, `encode_and_send_segment`),
 //! UID/GID name mapping lists (`send_id_lists`), signature block reading from
 //! the receiver, and NDX + iflags wire encoding.
 //!
@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use logging::{PhaseTimer, debug_log};
 use protocol::CompatibilityFlags;
-use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum, create_ndx_codec};
+use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::wire::SignatureBlock;
 
 use crate::role_trailer::error_location;
@@ -195,41 +195,6 @@ impl GeneratorContext {
         writer.send_message(protocol::MessageCode::Info, line.as_bytes())
     }
 
-    /// Sends NDX_FLIST_EOF if incremental recursion is enabled.
-    ///
-    /// This signals to the receiver that there are no more incremental file lists.
-    /// For a simple (non-recursive directory) transfer, `send_dir_ndx` is -1, so we
-    /// always send `NDX_FLIST_EOF` when INC_RECURSE is enabled.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:2534-2545` in `send_file_list()`:
-    ///   ```c
-    ///   if (inc_recurse) {
-    ///       if (send_dir_ndx < 0) {
-    ///           write_ndx(f, NDX_FLIST_EOF);
-    ///           flist_eof = 1;
-    ///       }
-    ///   }
-    ///   ```
-    pub(super) fn send_flist_eof_if_inc_recurse<W: Write>(
-        &mut self,
-        writer: &mut W,
-    ) -> io::Result<()> {
-        if self.incremental.flist_eof_sent {
-            return Ok(());
-        }
-        if let Some(flags) = self.compat_flags
-            && flags.contains(CompatibilityFlags::INC_RECURSE)
-        {
-            let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
-            ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
-            writer.flush()?;
-            self.incremental.flist_eof_sent = true;
-        }
-        Ok(())
-    }
-
     /// Sends the file list to the receiver.
     ///
     /// Encodes file entries using the configured `FileListWriter`, writes them to
@@ -237,7 +202,8 @@ impl GeneratorContext {
     /// building, and caches the writer for INC_RECURSE sub-list continuation.
     ///
     /// When INC_RECURSE is active, only the initial segment is sent here; remaining
-    /// per-directory segments are dispatched by [`send_extra_file_lists`](Self::send_extra_file_lists).
+    /// per-directory segments are dispatched by `encode_and_send_segment` via the
+    /// `SegmentScheduler` during the transfer loop.
     ///
     /// Returns the total file list length (all segments).
     ///
@@ -263,7 +229,7 @@ impl GeneratorContext {
         flist_writer.set_first_ndx(initial_ndx_start);
 
         // When INC_RECURSE, only send initial segment entries; the rest
-        // are sent via send_extra_file_lists() during the transfer loop.
+        // are sent via the SegmentScheduler during the transfer loop.
         let entries_to_send = if let Some(count) = self.incremental.initial_segment_count {
             &self.file_list[..count]
         } else {
@@ -291,84 +257,82 @@ impl GeneratorContext {
         Ok(self.file_list.len())
     }
 
-    /// Sends pending file list segments during the transfer loop.
+    /// Encodes and sends a single file list sub-segment to the wire.
     ///
-    /// Called before reading each NDX request from the receiver. Since we eagerly
-    /// scanned all files, this sends all pending segments at once on the first call.
-    /// Subsequent calls are no-ops.
+    /// Wire format per upstream `flist.c:send_extra_file_list()`:
+    /// 1. Write `NDX_FLIST_OFFSET - parent_dir_ndx` (varint)
+    /// 2. Write file entries for this segment
+    /// 3. Write end-of-list marker (0 byte)
+    /// 4. Update NDX translation table
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:send_files()` line 250: `send_extra_file_list(f, MIN_FILECNT_LOOKAHEAD)`
-    /// - `flist.c:send_extra_file_list()` — sends one directory's entries
-    pub(super) fn send_extra_file_lists<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        if !self.inc_recurse()
-            || self.incremental.flist_eof_sent
-            || self.incremental.pending_segments.is_empty()
-        {
+    /// - `flist.c:send_extra_file_list()` - sends one directory's entries
+    /// - `flist.c:2931` - `ndx_start = prev->ndx_start + prev->used + 1`
+    pub(super) fn encode_and_send_segment<W: Write>(
+        &mut self,
+        writer: &mut W,
+        segment: &super::PendingSegment,
+        flist_writer: &mut protocol::flist::FileListWriter,
+        ndx_codec: &mut NdxCodecEnum,
+    ) -> io::Result<()> {
+        if segment.count == 0 {
             return Ok(());
         }
 
-        // Reuse the cached writer from send_file_list() to preserve compression
-        // state across sub-lists, matching upstream's static variables in
-        // send_file_entry() (prev_name, prev_mode, prev_uid, prev_gid).
-        let mut flist_writer = self
+        // Compute ndx_start for this sub-list.
+        // upstream: flist.c:2931 - flist->ndx_start = prev->ndx_start + prev->used + 1
+        let &(prev_flat_start, prev_ndx_start) = self
             .incremental
-            .flist_writer_cache
-            .take()
-            .unwrap_or_else(|| self.build_flist_writer());
+            .ndx_segments
+            .last()
+            .expect("initial segment exists");
+        let prev_used = (segment.flist_start - prev_flat_start) as i32;
+        let seg_ndx_start = prev_ndx_start + prev_used + 1;
+        self.incremental
+            .ndx_segments
+            .push((segment.flist_start, seg_ndx_start));
 
-        // Send all pending segments. Since we eagerly scanned, send them all at once
-        // (upstream uses MIN_FILECNT_LOOKAHEAD=1000 for throttling with lazy scanning).
-        let segments = std::mem::take(&mut self.incremental.pending_segments);
-        let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
+        // Signal new sub-list to receiver.
+        ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
 
-        for segment in &segments {
-            if segment.count == 0 {
-                continue;
-            }
+        // Set first_ndx so abbreviated vs unabbreviated followers are
+        // correctly distinguished for this segment.
+        // upstream: flist.c:send_file_entry() line 572
+        flist_writer.set_first_ndx(seg_ndx_start);
 
-            // Build ndx_segments entry for this sub-list.
-            // upstream: flist.c:2931 — flist->ndx_start = prev->ndx_start + prev->used + 1
-            let &(prev_flat_start, prev_ndx_start) = self
-                .incremental
-                .ndx_segments
-                .last()
-                .expect("initial segment exists");
-            let prev_used = (segment.flist_start - prev_flat_start) as i32;
-            let seg_ndx_start = prev_ndx_start + prev_used + 1;
-            self.incremental
-                .ndx_segments
-                .push((segment.flist_start, seg_ndx_start));
-
-            // Write NDX_FLIST_OFFSET - dir_ndx to signal a new sub-list
-            ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
-
-            // Set first_ndx so abbreviated vs unabbreviated followers are
-            // correctly distinguished for this segment.
-            // upstream: flist.c:send_file_entry() line 572
-            flist_writer.set_first_ndx(seg_ndx_start);
-
-            // Write file entries from the reordered file_list
-            let end = segment.flist_start + segment.count;
-            for entry in &self.file_list[segment.flist_start..end] {
-                flist_writer.write_entry(writer, entry)?;
-            }
-
-            // Write end-of-flist marker (zero byte)
-            flist_writer.write_end(writer, None)?;
-
-            debug_log!(
-                Flist,
-                2,
-                "sent sub-list for dir_ndx={}, {} entries (ndx_start={})",
-                segment.parent_dir_ndx,
-                segment.count,
-                seg_ndx_start
-            );
+        // Write file entries from the reordered file_list.
+        let end = segment.flist_start + segment.count;
+        for entry in &self.file_list[segment.flist_start..end] {
+            flist_writer.write_entry(writer, entry)?;
         }
 
-        // All segments sent — send NDX_FLIST_EOF
+        // End-of-flist marker (zero byte).
+        flist_writer.write_end(writer, None)?;
+
+        debug_log!(
+            Flist,
+            2,
+            "sent sub-list for dir_ndx={}, {} entries (ndx_start={})",
+            segment.parent_dir_ndx,
+            segment.count,
+            seg_ndx_start
+        );
+
+        Ok(())
+    }
+
+    /// Sends `NDX_FLIST_EOF` and flushes, marking incremental sending as complete.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2534-2545` - NDX_FLIST_EOF dispatch
+    pub(super) fn send_flist_eof<W: Write>(
+        &mut self,
+        writer: &mut W,
+        ndx_codec: &mut NdxCodecEnum,
+        segments_sent: usize,
+    ) -> io::Result<()> {
         ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
         writer.flush()?;
         self.incremental.flist_eof_sent = true;
@@ -376,9 +340,8 @@ impl GeneratorContext {
             Flist,
             2,
             "sent NDX_FLIST_EOF, all {} sub-lists dispatched",
-            segments.len()
+            segments_sent
         );
-
         Ok(())
     }
 }
