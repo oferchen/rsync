@@ -1293,22 +1293,16 @@ fn test_registered_buffer_write_read_roundtrip() {
     }
 
     // Write
-    match IoUringWriter::create(&path, &config) {
-        Ok(mut w) => {
-            w.write_all(&data).unwrap();
-            w.flush().unwrap();
-        }
-        Err(_) => (),
+    if let Ok(mut w) = IoUringWriter::create(&path, &config) {
+        w.write_all(&data).unwrap();
+        w.flush().unwrap();
     }
 
     // Read back
-    match IoUringReader::open(&path, &config) {
-        Ok(mut r) => {
-            let read_back = r.read_all().unwrap();
-            assert_eq!(read_back.len(), data.len());
-            assert_eq!(read_back, data);
-        }
-        Err(_) => (),
+    if let Ok(mut r) = IoUringReader::open(&path, &config) {
+        let read_back = r.read_all().unwrap();
+        assert_eq!(read_back.len(), data.len());
+        assert_eq!(read_back, data);
     }
 }
 
@@ -1328,19 +1322,13 @@ fn test_registered_buffer_disabled_still_works() {
         return;
     }
 
-    match IoUringWriter::create(&path, &config) {
-        Ok(mut w) => {
-            w.write_all(&data).unwrap();
-            w.flush().unwrap();
-        }
-        Err(_) => (),
+    if let Ok(mut w) = IoUringWriter::create(&path, &config) {
+        w.write_all(&data).unwrap();
+        w.flush().unwrap();
     }
 
-    match IoUringReader::open(&path, &config) {
-        Ok(mut r) => {
-            let read_back = r.read_all().unwrap();
-            assert_eq!(read_back, data);
-        }
-        Err(_) => (),
+    if let Ok(mut r) = IoUringReader::open(&path, &config) {
+        let read_back = r.read_all().unwrap();
+        assert_eq!(read_back, data);
     }
 }
