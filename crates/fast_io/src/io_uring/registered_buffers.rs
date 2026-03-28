@@ -127,6 +127,7 @@ impl<'a> RegisteredBufferSlot<'a> {
     ///
     /// The caller must ensure no other references to this buffer memory exist.
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn as_mut_slice(&self, len: usize) -> &mut [u8] {
         debug_assert!(len <= self.group.buffer_size);
         let clamped = len.min(self.group.buffer_size);
@@ -214,10 +215,9 @@ impl RegisteredBufferGroup {
             for ptr in &buffers {
                 unsafe { alloc::dealloc(*ptr, layout) };
             }
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("IORING_REGISTER_BUFFERS failed: {e}"),
-            ));
+            return Err(io::Error::other(format!(
+                "IORING_REGISTER_BUFFERS failed: {e}"
+            )));
         }
 
         // Initialize free bitset - all slots start as free (bit = 1).
@@ -389,18 +389,18 @@ pub(super) fn submit_read_fixed_batch(
         let n_sqes = remaining.div_ceil(chunk_size).min(slots.len());
         let mut submitted = 0u32;
 
-        for i in 0..n_sqes {
+        for (i, slot) in slots.iter().enumerate().take(n_sqes) {
             let offset_in_output = total_read + i * chunk_size;
             let want = chunk_size.min(total - offset_in_output);
             let file_offset = base_offset + offset_in_output as u64;
 
-            let entry = ReadFixed::new(fd, slots[i].ptr, want as u32, slots[i].buf_index)
+            let entry = ReadFixed::new(fd, slot.ptr, want as u32, slot.buf_index)
                 .offset(file_offset)
                 .build()
                 .user_data(i as u64);
             let entry = maybe_fixed_file(entry, fixed_fd_slot);
 
-            // Safety: the registered buffer at slots[i] is valid and pinned for
+            // Safety: the registered buffer at slot is valid and pinned for
             // the duration of this submit_and_wait cycle.
             unsafe {
                 ring.submission()
@@ -491,18 +491,18 @@ pub(super) fn submit_write_fixed_batch(
         let n_sqes = remaining.div_ceil(chunk_size).min(slots.len());
         let mut submitted = 0u32;
 
-        for i in 0..n_sqes {
+        for (i, slot) in slots.iter().enumerate().take(n_sqes) {
             let src_start = total_written + i * chunk_size;
             let want = chunk_size.min(total - src_start);
             let file_offset = base_offset + src_start as u64;
 
             // Copy data into registered buffer.
-            // Safety: registered buffer at slots[i] is valid and large enough.
+            // Safety: registered buffer at slot is valid and large enough.
             unsafe {
-                ptr::copy_nonoverlapping(data[src_start..].as_ptr(), slots[i].ptr, want);
+                ptr::copy_nonoverlapping(data[src_start..].as_ptr(), slot.ptr, want);
             }
 
-            let entry = WriteFixed::new(fd, slots[i].ptr, want as u32, slots[i].buf_index)
+            let entry = WriteFixed::new(fd, slot.ptr, want as u32, slot.buf_index)
                 .offset(file_offset)
                 .build()
                 .user_data(i as u64);
