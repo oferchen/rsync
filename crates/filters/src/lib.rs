@@ -99,6 +99,8 @@
 //! - [`globset`] for the glob matching primitives used internally.
 
 mod action;
+/// Per-directory scoped filter chain with push/pop semantics.
+pub mod chain;
 mod compiled;
 /// CVS exclusion patterns for rsync's `--cvs-exclude` (`-C`) option.
 pub mod cvs;
@@ -112,6 +114,7 @@ mod rule;
 mod set;
 
 pub use action::FilterAction;
+pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
 pub use cvs::{DEFAULT_CVSIGNORE, default_patterns as cvs_default_patterns};
 pub use error::FilterError;
 pub use merge::{MergeFileError, parse_rules, read_rules, read_rules_recursive};
