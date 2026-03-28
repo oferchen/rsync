@@ -36,6 +36,7 @@ fn copy_result_is_zero_copy() {
     assert!(CopyResult::new(0, CopyMethod::Ficlone).is_zero_copy());
     assert!(CopyResult::new(0, CopyMethod::CopyFileRange).is_zero_copy());
     assert!(CopyResult::new(0, CopyMethod::Clonefile).is_zero_copy());
+    assert!(CopyResult::new(0, CopyMethod::ReFsReflink).is_zero_copy());
     assert!(!CopyResult::new(0, CopyMethod::Copyfile).is_zero_copy());
     assert!(!CopyResult::new(0, CopyMethod::CopyFileEx).is_zero_copy());
     assert!(!CopyResult::new(0, CopyMethod::StandardCopy).is_zero_copy());
@@ -47,6 +48,7 @@ fn copy_method_display() {
     assert_eq!(CopyMethod::CopyFileRange.to_string(), "copy_file_range");
     assert_eq!(CopyMethod::Clonefile.to_string(), "clonefile");
     assert_eq!(CopyMethod::Copyfile.to_string(), "copyfile");
+    assert_eq!(CopyMethod::ReFsReflink.to_string(), "ReFS reflink");
     assert_eq!(CopyMethod::CopyFileEx.to_string(), "CopyFileExW");
     assert_eq!(CopyMethod::StandardCopy.to_string(), "standard copy");
 }
@@ -59,10 +61,12 @@ fn copy_method_equality_and_hash() {
     set.insert(CopyMethod::Ficlone);
     set.insert(CopyMethod::CopyFileRange);
     set.insert(CopyMethod::Clonefile);
+    set.insert(CopyMethod::ReFsReflink);
     set.insert(CopyMethod::StandardCopy);
-    assert_eq!(set.len(), 4);
+    assert_eq!(set.len(), 5);
     assert!(set.contains(&CopyMethod::Ficlone));
     assert!(set.contains(&CopyMethod::CopyFileRange));
+    assert!(set.contains(&CopyMethod::ReFsReflink));
 }
 
 #[test]
