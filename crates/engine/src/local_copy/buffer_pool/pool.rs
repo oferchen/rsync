@@ -1,33 +1,41 @@
 //! Core [`BufferPool`] implementation.
 //!
-//! Provides the thread-safe, lock-free buffer pool backed by
-//! [`crossbeam_queue::ArrayQueue`]. See the [module-level documentation](super)
-//! for design rationale and usage patterns.
+//! Provides the thread-safe buffer pool backed by `Mutex<Vec<Vec<u8>>>` with
+//! a thread-local single-slot cache for zero-synchronization acquire/return
+//! on the hot path. See the [module-level documentation](super) for design
+//! rationale and usage patterns.
 
 use std::sync::Arc;
-
-use crossbeam_queue::ArrayQueue;
+use std::sync::Mutex;
 
 use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::guard::{BorrowedBufferGuard, BufferGuard};
 use super::memory_cap::MemoryCap;
+use super::thread_local_cache;
 use super::throughput::ThroughputTracker;
 use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 
-/// A thread-safe, lock-free pool of reusable I/O buffers.
+/// A thread-safe pool of reusable I/O buffers with a two-level cache.
 ///
 /// Reduces allocation overhead during file copy operations by maintaining
-/// a bounded set of buffers that can be reused across operations. Internally
-/// backed by [`crossbeam_queue::ArrayQueue`], all acquire and return
-/// operations are lock-free CAS loops with no mutex overhead.
+/// a set of buffers that can be reused across operations. Uses a two-level
+/// architecture:
 ///
-/// # Capacity
+/// 1. **Thread-local fast path** - a single-slot `thread_local!` cache per
+///    thread provides zero-synchronization acquire/return for the common
+///    case where each rayon worker holds one buffer at a time.
 ///
-/// The pool has a maximum capacity to prevent unbounded memory growth.
-/// When the pool is full, returning a buffer simply drops it.
-/// When the pool is empty, acquiring allocates a fresh buffer rather than
-/// blocking. This non-blocking guarantee means contention only affects
-/// allocation frequency, never caller latency.
+/// 2. **Central pool** - a `Mutex<Vec<Vec<u8>>>` stores overflow buffers.
+///    Only accessed when the thread-local slot misses (empty on acquire,
+///    occupied on return).
+///
+/// # Capacity Enforcement
+///
+/// The pool has a soft maximum capacity (`max_buffers`). Under normal
+/// operation, the central pool retains at most `max_buffers` buffers.
+/// The capacity check is exact under the Mutex lock - no TOCTOU race.
+/// Thread-local cached buffers do not count against this limit since
+/// they are conceptually "in use" by their thread.
 ///
 /// # Memory Cap
 ///
@@ -39,26 +47,26 @@ use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 ///
 /// # Buffer Lifecycle
 ///
-/// 1. **Acquire** - pop a buffer from the queue, or allocate if empty.
+/// 1. **Acquire** - check thread-local slot, then pop from central pool,
+///    then allocate fresh.
 /// 2. **Use** - caller reads/writes through the RAII guard's `Deref`/`DerefMut`.
 /// 3. **Return** - guard's `Drop` impl passes the buffer back via
-///    [`return_buffer`](Self::return_buffer), which restores its length to
-///    the pool default (without zeroing) and pushes it onto the queue.
+///    [`return_buffer`](Self::return_buffer), which tries the thread-local
+///    slot first, then the central pool.
 #[derive(Debug)]
 pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
-    /// Lock-free bounded queue of available buffers.
+    /// Central pool of available buffers, protected by a Mutex.
     ///
-    /// `ArrayQueue` requires non-zero capacity, so the actual queue is
-    /// created with `max(1, requested_capacity)`. The `requested_capacity`
-    /// field tracks the caller's intent - when zero, `return_buffer`
-    /// deallocates immediately instead of pushing onto the queue.
-    buffers: ArrayQueue<Vec<u8>>,
-    /// Caller-requested maximum number of buffers to retain.
+    /// Only accessed when the thread-local cache misses. Under the typical
+    /// rayon workload (one buffer per worker per file), this Mutex sees
+    /// near-zero contention because the thread-local cache absorbs the
+    /// hot path.
+    buffers: Mutex<Vec<Vec<u8>>>,
+    /// Soft maximum number of buffers to retain in the central pool.
     ///
-    /// May be zero, meaning the pool never retains returned buffers
-    /// (every allocation is fresh). Distinct from `buffers.capacity()`
-    /// which is always >= 1 due to `ArrayQueue`'s invariant.
-    requested_capacity: usize,
+    /// Enforced exactly under the Mutex lock. Thread-local cached buffers
+    /// are not counted. Returns `0` for a zero-capacity pool (never retains).
+    soft_capacity: usize,
     /// Size of each buffer in bytes.
     buffer_size: usize,
     /// Allocation strategy for creating and disposing of buffers.
@@ -75,15 +83,15 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
 }
 
 impl BufferPool {
-    /// Creates a new buffer pool with the specified maximum capacity.
+    /// Creates a new buffer pool with the specified soft capacity.
     ///
     /// Uses [`DefaultAllocator`] for buffer creation. To supply a custom
     /// allocator, use [`with_allocator`](Self::with_allocator).
     ///
     /// # Arguments
     ///
-    /// * `max_buffers` - Maximum number of buffers to retain. Excess buffers
-    ///   are dropped when returned to the pool.
+    /// * `max_buffers` - Soft maximum number of buffers to retain in the
+    ///   central pool. Thread-local cached buffers are additional.
     ///
     /// # Example
     ///
@@ -93,10 +101,8 @@ impl BufferPool {
     #[must_use]
     pub fn new(max_buffers: usize) -> Self {
         Self {
-            // ArrayQueue requires capacity >= 1; clamp here, enforce
-            // zero-capacity semantics via `requested_capacity` in return_buffer.
-            buffers: ArrayQueue::new(max_buffers.max(1)),
-            requested_capacity: max_buffers,
+            buffers: Mutex::new(Vec::with_capacity(max_buffers)),
+            soft_capacity: max_buffers,
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
             memory_cap: None,
@@ -110,14 +116,13 @@ impl BufferPool {
     ///
     /// # Arguments
     ///
-    /// * `max_buffers` - Maximum number of buffers to retain. Pass `0` for a
-    ///   pool that never retains buffers (every acquire allocates fresh).
+    /// * `max_buffers` - Soft maximum number of buffers to retain.
     /// * `buffer_size` - Size of each buffer in bytes.
     #[must_use]
     pub fn with_buffer_size(max_buffers: usize, buffer_size: usize) -> Self {
         Self {
-            buffers: ArrayQueue::new(max_buffers.max(1)),
-            requested_capacity: max_buffers,
+            buffers: Mutex::new(Vec::with_capacity(max_buffers)),
+            soft_capacity: max_buffers,
             buffer_size,
             allocator: DefaultAllocator,
             memory_cap: None,
@@ -141,8 +146,8 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn with_allocator(max_buffers: usize, buffer_size: usize, allocator: A) -> Self {
         Self {
-            buffers: ArrayQueue::new(max_buffers.max(1)),
-            requested_capacity: max_buffers,
+            buffers: Mutex::new(Vec::with_capacity(max_buffers)),
+            soft_capacity: max_buffers,
             buffer_size,
             allocator,
             memory_cap: None,
@@ -243,9 +248,9 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// This is the preferred method when the pool is part of a larger struct
     /// that needs to be mutably borrowed while the buffer is in use.
     ///
-    /// Returns a pooled buffer if available, otherwise allocates a new one
-    /// via the pool's [`BufferAllocator`]. The returned [`BufferGuard`]
-    /// automatically returns the buffer to the pool when dropped.
+    /// Checks the thread-local cache first (zero synchronization). On miss,
+    /// pops from the central pool or allocates fresh. The returned
+    /// [`BufferGuard`] automatically returns the buffer to the pool on drop.
     ///
     /// If a memory cap is configured and the outstanding memory equals or
     /// exceeds the cap, this method blocks until a buffer is returned by
@@ -253,11 +258,22 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// for a non-blocking alternative.
     #[must_use]
     pub fn acquire_from(pool: Arc<Self>) -> BufferGuard<A> {
+        // Fast path: check thread-local cache.
+        if let Some(buffer) = thread_local_cache::try_take() {
+            if buffer.len() == pool.buffer_size {
+                // Re-reserve memory that was released by return_buffer's track_return.
+                pool.wait_and_reserve_memory(pool.buffer_size);
+                return BufferGuard {
+                    buffer: Some(buffer),
+                    pool,
+                };
+            }
+            // Wrong size (from a different pool config) - discard and allocate fresh.
+            pool.allocator.deallocate(buffer);
+        }
+
         pool.wait_and_reserve_memory(pool.buffer_size);
-        let buffer = pool
-            .buffers
-            .pop()
-            .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
+        let buffer = pool.pop_buffer();
 
         BufferGuard {
             buffer: Some(buffer),
@@ -272,13 +288,29 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// [`acquire_from`](Self::acquire_from).
     #[must_use]
     pub fn try_acquire_from(pool: Arc<Self>) -> Option<BufferGuard<A>> {
+        // Fast path: check thread-local cache.
+        if let Some(buffer) = thread_local_cache::try_take() {
+            if buffer.len() == pool.buffer_size {
+                // Re-reserve memory that was released by return_buffer's track_return.
+                if !pool.try_reserve_memory(pool.buffer_size) {
+                    // Cap reached since we returned - put the buffer back in TLS.
+                    if let Some(buf) = thread_local_cache::try_store(buffer) {
+                        pool.allocator.deallocate(buf);
+                    }
+                    return None;
+                }
+                return Some(BufferGuard {
+                    buffer: Some(buffer),
+                    pool,
+                });
+            }
+            pool.allocator.deallocate(buffer);
+        }
+
         if !pool.try_reserve_memory(pool.buffer_size) {
             return None;
         }
-        let buffer = pool
-            .buffers
-            .pop()
-            .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
+        let buffer = pool.pop_buffer();
 
         Some(BufferGuard {
             buffer: Some(buffer),
@@ -289,20 +321,20 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// Acquires a buffer sized adaptively for the given file size.
     ///
     /// Uses [`adaptive_buffer_size`] to choose the buffer length. If the
-    /// adaptive size matches the pool's default buffer size, a pooled buffer
-    /// is returned when available. Otherwise a fresh buffer of the adaptive
-    /// size is allocated (it will still be returned to the pool on drop,
-    /// where its length is restored to the pool's default).
+    /// adaptive size matches the pool's default buffer size, the thread-local
+    /// cache and central pool are checked. Otherwise a fresh buffer of the
+    /// adaptive size is allocated (it will still be returned to the pool on
+    /// drop, where its length is restored to the pool's default).
     #[must_use]
     pub fn acquire_adaptive_from(pool: Arc<Self>, file_size: u64) -> BufferGuard<A> {
         let desired = adaptive_buffer_size(file_size);
 
         if desired == pool.buffer_size {
-            // Fast path: adaptive size matches pool default - reuse pooled buffers.
+            // Fast path: adaptive size matches pool default - check TLS and pool.
             return Self::acquire_from(pool);
         }
 
-        // Slow path: non-standard size - allocate a fresh buffer.
+        // Slow path: non-standard size - allocate fresh, skip TLS.
         // On drop the guard will pass it through `return_buffer` which
         // resizes it to the pool default before returning it.
         pool.wait_and_reserve_memory(desired);
@@ -322,11 +354,21 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// Blocks if a memory cap is configured and the cap is reached.
     #[must_use]
     pub fn acquire(&self) -> BorrowedBufferGuard<'_, A> {
+        // Fast path: check thread-local cache.
+        if let Some(buffer) = thread_local_cache::try_take() {
+            if buffer.len() == self.buffer_size {
+                // Re-reserve memory that was released by return_buffer's track_return.
+                self.wait_and_reserve_memory(self.buffer_size);
+                return BorrowedBufferGuard {
+                    buffer: Some(buffer),
+                    pool: self,
+                };
+            }
+            self.allocator.deallocate(buffer);
+        }
+
         self.wait_and_reserve_memory(self.buffer_size);
-        let buffer = self
-            .buffers
-            .pop()
-            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
+        let buffer = self.pop_buffer();
 
         BorrowedBufferGuard {
             buffer: Some(buffer),
@@ -340,13 +382,29 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// is at or above the cap.
     #[must_use]
     pub fn try_acquire(&self) -> Option<BorrowedBufferGuard<'_, A>> {
+        // Fast path: check thread-local cache.
+        if let Some(buffer) = thread_local_cache::try_take() {
+            if buffer.len() == self.buffer_size {
+                // Re-reserve memory that was released by return_buffer's track_return.
+                if !self.try_reserve_memory(self.buffer_size) {
+                    // Cap reached since we returned - put the buffer back in TLS.
+                    if let Some(buf) = thread_local_cache::try_store(buffer) {
+                        self.allocator.deallocate(buf);
+                    }
+                    return None;
+                }
+                return Some(BorrowedBufferGuard {
+                    buffer: Some(buffer),
+                    pool: self,
+                });
+            }
+            self.allocator.deallocate(buffer);
+        }
+
         if !self.try_reserve_memory(self.buffer_size) {
             return None;
         }
-        let buffer = self
-            .buffers
-            .pop()
-            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
+        let buffer = self.pop_buffer();
 
         Some(BorrowedBufferGuard {
             buffer: Some(buffer),
@@ -361,8 +419,9 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// overwrites the buffer via [`Read::read`] before consuming data (see
     /// `transfer.rs` and `parallel_checksum.rs`).
     ///
-    /// If the pool is at capacity, the buffer is disposed via
-    /// [`BufferAllocator::deallocate`].
+    /// The return path tries the thread-local cache first (zero sync). If
+    /// the slot is occupied, falls through to the central pool. If the
+    /// central pool is at capacity, the buffer is deallocated.
     ///
     /// When a memory cap is configured, outstanding bytes are decremented
     /// and any threads blocked in `acquire` are notified.
@@ -371,7 +430,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         let returned_len = buffer.len();
 
         // Zero-capacity pool: never retain buffers - deallocate immediately.
-        if self.requested_capacity == 0 {
+        if self.soft_capacity == 0 {
             self.allocator.deallocate(buffer);
             self.track_return(returned_len);
             return;
@@ -389,29 +448,44 @@ impl<A: BufferAllocator> BufferPool<A> {
         // #1 CPU hotspot (26% of runtime per flamegraph profiling).
         unsafe { buffer.set_len(self.buffer_size) };
 
-        // ArrayQueue::push returns Err when full - dispose via the allocator.
-        if let Err(buffer) = self.buffers.push(buffer) {
-            self.allocator.deallocate(buffer);
+        // Fast path: try thread-local cache first (zero synchronization).
+        if let Some(buffer) = thread_local_cache::try_store(buffer) {
+            // TLS slot occupied - route to central pool.
+            let mut pool = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
+            if pool.len() >= self.soft_capacity {
+                self.allocator.deallocate(buffer);
+            } else {
+                pool.push(buffer);
+            }
         }
 
         // Release outstanding memory and wake blocked acquirers.
         self.track_return(returned_len);
     }
 
-    /// Returns the number of buffers currently in the pool.
-    ///
-    /// This is primarily useful for testing and monitoring.
-    #[must_use]
-    pub fn available(&self) -> usize {
-        self.buffers.len()
+    /// Pops a buffer from the central pool, or allocates a new one if empty.
+    fn pop_buffer(&self) -> Vec<u8> {
+        let mut pool = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
+        pool.pop()
+            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size))
     }
 
-    /// Returns the maximum number of buffers the pool will retain.
+    /// Returns the number of buffers currently in the central pool.
     ///
+    /// Does not include the thread-local cached buffer (at most one per
+    /// thread). Primarily useful for testing and monitoring.
+    #[must_use]
+    pub fn available(&self) -> usize {
+        self.buffers.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    /// Returns the soft maximum number of buffers the central pool will retain.
+    ///
+    /// Thread-local cached buffers are additional (at most one per thread).
     /// Returns `0` for a zero-capacity pool (never retains buffers).
     #[must_use]
     pub fn max_buffers(&self) -> usize {
-        self.requested_capacity
+        self.soft_capacity
     }
 
     /// Returns the size of each buffer in bytes.
@@ -484,9 +558,6 @@ impl Default for BufferPool<DefaultAllocator> {
         let max_buffers = std::thread::available_parallelism()
             .map(std::num::NonZero::get)
             .unwrap_or(4);
-        // Default pool does not enable throughput tracking for zero overhead.
-        // Callers that want dynamic buffer sizing should chain
-        // `.with_throughput_tracking()`.
         Self::new(max_buffers)
     }
 }
