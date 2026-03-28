@@ -1,7 +1,9 @@
 //! Filesystem walking and directory scanning for the generator role.
 //!
 //! Implements recursive directory traversal, symlink resolution, and
-//! filter application during file list construction.
+//! filter application during file list construction. Directory children
+//! are batch-stat'd in parallel via [`super::batch_stat`] when the entry
+//! count exceeds the parallel threshold.
 //!
 //! # Upstream Reference
 //!
@@ -15,6 +17,7 @@ use crate::role_trailer::error_location;
 
 use super::super::GeneratorContext;
 use super::super::io_error_flags;
+use super::batch_stat::{StatResult, batch_stat_dir_entries};
 
 impl GeneratorContext {
     /// Recursively walks a path and adds entries to the file list.
@@ -34,30 +37,26 @@ impl GeneratorContext {
         let metadata = match self.resolve_symlink_metadata(&path, base) {
             Ok(m) => m,
             Err(e) => {
-                // upstream: flist.c:1286-1294 - log vanished warning or general error
-                if e.kind() == io::ErrorKind::NotFound {
-                    eprintln!(
-                        "file has vanished: {} {}{}",
-                        path.display(),
-                        error_location!(),
-                        crate::role_trailer::generator()
-                    );
-                } else {
-                    // upstream: flist.c:1290 - rsyserr(FERROR_XFER, ...) for non-ENOENT
-                    eprintln!(
-                        "rsync: link_stat \"{}\" failed: {} ({}) {}{}",
-                        path.display(),
-                        e,
-                        e.raw_os_error().unwrap_or(0),
-                        error_location!(),
-                        crate::role_trailer::sender()
-                    );
-                }
+                self.log_stat_error(&path, &e);
                 self.record_io_error(&e);
                 return Ok(());
             }
         };
 
+        self.walk_path_with_metadata(base, path, metadata)
+    }
+
+    /// Walks a path with pre-resolved metadata, skipping the initial stat call.
+    ///
+    /// This is the inner implementation shared by [`walk_path`] (which resolves
+    /// metadata itself) and the batched-stat path (which pre-resolves metadata
+    /// for all directory children in parallel before processing them).
+    fn walk_path_with_metadata(
+        &mut self,
+        base: &Path,
+        path: PathBuf,
+        metadata: std::fs::Metadata,
+    ) -> io::Result<()> {
         let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
         // upstream: flist.c:2287 - always emit "." with XMIT_TOP_DIR for the
@@ -81,41 +80,7 @@ impl GeneratorContext {
                 ))
             })?;
 
-            match std::fs::read_dir(&path) {
-                Ok(entries) => {
-                    for entry in entries {
-                        match entry {
-                            Ok(entry) => {
-                                self.walk_path(base, entry.path())?;
-                            }
-                            Err(e) => {
-                                // upstream: flist.c - rsyserr for readdir() failures
-                                eprintln!(
-                                    "rsync: readdir \"{}\" failed: {} ({}) {}{}",
-                                    path.display(),
-                                    e,
-                                    e.raw_os_error().unwrap_or(0),
-                                    error_location!(),
-                                    crate::role_trailer::sender()
-                                );
-                                self.record_io_error(&e);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    // upstream: flist.c - rsyserr for opendir() failures
-                    eprintln!(
-                        "rsync: opendir \"{}\" failed: {} ({}) {}{}",
-                        path.display(),
-                        e,
-                        e.raw_os_error().unwrap_or(0),
-                        error_location!(),
-                        crate::role_trailer::sender()
-                    );
-                    self.record_io_error(&e);
-                }
-            }
+            self.scan_directory_batched(base, &path)?;
 
             // upstream: exclude.c:pop_local_filters() - restore filter state
             self.filter_chain.leave_directory(guard);
@@ -175,7 +140,7 @@ impl GeneratorContext {
 
         // upstream: flist.c:send_file_list() - scan directory before recording entry
         let should_recurse = metadata.is_dir() && self.config.flags.recursive;
-        let dir_entries = if should_recurse {
+        let dir_read = if should_recurse {
             match std::fs::read_dir(&path) {
                 Ok(entries) => Some(entries),
                 Err(e) => {
@@ -198,7 +163,7 @@ impl GeneratorContext {
 
         // Keep a clone of the path before moving it into the file list,
         // needed for enter_directory() if this is a directory we'll recurse into.
-        let dir_path = if dir_entries.is_some() {
+        let dir_path = if dir_read.is_some() {
             Some(path.clone())
         } else {
             None
@@ -206,8 +171,8 @@ impl GeneratorContext {
 
         self.push_file_item(entry, path);
 
-        if let Some(entries) = dir_entries {
-            // Safety: dir_path is always Some when dir_entries is Some
+        if let Some(entries) = dir_read {
+            // Safety: dir_path is always Some when dir_read is Some
             let dir_path = dir_path.unwrap();
 
             // upstream: exclude.c:push_local_filters() - read per-directory
@@ -221,30 +186,152 @@ impl GeneratorContext {
                 ))
             })?;
 
-            for dir_entry in entries {
-                match dir_entry {
-                    Ok(de) => {
-                        self.walk_path(base, de.path())?;
-                    }
-                    Err(e) => {
-                        // upstream: flist.c - rsyserr for readdir() failures
-                        eprintln!(
-                            "rsync: readdir failed: {} ({}) {}{}",
-                            e,
-                            e.raw_os_error().unwrap_or(0),
-                            error_location!(),
-                            crate::role_trailer::sender()
-                        );
-                        self.record_io_error(&e);
-                    }
-                }
-            }
+            // Collect directory entries, then batch-stat and process
+            self.process_dir_entries_batched(base, &dir_path, entries)?;
 
             // upstream: exclude.c:pop_local_filters() - restore filter state
             self.filter_chain.leave_directory(guard);
         }
 
         Ok(())
+    }
+
+    /// Reads a directory and batch-stats its children before recursive processing.
+    ///
+    /// Collects all `DirEntry` paths from `read_dir()`, resolves their metadata
+    /// in parallel via [`batch_stat_dir_entries`], then processes each child
+    /// through [`walk_path_with_metadata`]. Entries whose stat fails are logged
+    /// and recorded as I/O errors without aborting the traversal.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_directory()` - reads directory and stats each child
+    fn scan_directory_batched(&mut self, base: &Path, dir_path: &Path) -> io::Result<()> {
+        match std::fs::read_dir(dir_path) {
+            Ok(entries) => self.process_dir_entries_batched(base, dir_path, entries),
+            Err(e) => {
+                // upstream: flist.c - rsyserr for opendir() failures
+                eprintln!(
+                    "rsync: opendir \"{}\" failed: {} ({}) {}{}",
+                    dir_path.display(),
+                    e,
+                    e.raw_os_error().unwrap_or(0),
+                    error_location!(),
+                    crate::role_trailer::sender()
+                );
+                self.record_io_error(&e);
+                Ok(())
+            }
+        }
+    }
+
+    /// Collects paths from a `ReadDir` iterator, batch-stats them, and recurses.
+    ///
+    /// For entries where `--copy-unsafe-links` requires re-stat (symlinks escaping
+    /// the transfer tree), the corrected metadata is resolved after the batch.
+    fn process_dir_entries_batched(
+        &mut self,
+        base: &Path,
+        dir_path: &Path,
+        entries: std::fs::ReadDir,
+    ) -> io::Result<()> {
+        // Phase 1: collect child paths from readdir
+        let mut child_paths = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(de) => child_paths.push(de.path()),
+                Err(e) => {
+                    // upstream: flist.c - rsyserr for readdir() failures
+                    eprintln!(
+                        "rsync: readdir \"{}\" failed: {} ({}) {}{}",
+                        dir_path.display(),
+                        e,
+                        e.raw_os_error().unwrap_or(0),
+                        error_location!(),
+                        crate::role_trailer::sender()
+                    );
+                    self.record_io_error(&e);
+                }
+            }
+        }
+
+        if child_paths.is_empty() {
+            return Ok(());
+        }
+
+        // Phase 2: determine stat mode and batch-resolve metadata.
+        // --copy-links: follow all symlinks (fs::metadata)
+        // default: lstat (fs::symlink_metadata)
+        // --copy-unsafe-links needs post-batch fixup for unsafe symlinks
+        let follow = self.config.flags.copy_links;
+        let stat_results = batch_stat_dir_entries(child_paths, follow);
+
+        // Phase 3: process each (path, metadata) pair
+        for result in stat_results {
+            let StatResult { path, metadata } = result;
+            match metadata {
+                Ok(mut meta) => {
+                    // upstream: flist.c:215 - follow unsafe symlinks when
+                    // --copy-unsafe-links. The batch used lstat, so we need
+                    // to re-stat symlinks whose target escapes the tree.
+                    if !follow
+                        && self.config.flags.copy_unsafe_links
+                        && meta.file_type().is_symlink()
+                    {
+                        if let Ok(target) = std::fs::read_link(&path) {
+                            let relative = path.strip_prefix(base).unwrap_or(&path);
+                            if super::super::super::symlink_safety::is_unsafe_symlink(
+                                target.as_os_str(),
+                                relative,
+                            ) {
+                                match std::fs::metadata(&path) {
+                                    Ok(followed) => meta = followed,
+                                    Err(e) => {
+                                        self.log_stat_error(&path, &e);
+                                        self.record_io_error(&e);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    self.walk_path_with_metadata(base, path, meta)?;
+                }
+                Err(e) => {
+                    self.log_stat_error(&path, &e);
+                    self.record_io_error(&e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Logs a stat failure with the appropriate upstream error format.
+    ///
+    /// Distinguishes between vanished files (ENOENT) and general stat errors,
+    /// matching upstream `flist.c:1286-1294` error reporting.
+    fn log_stat_error(&self, path: &Path, e: &io::Error) {
+        if e.kind() == io::ErrorKind::NotFound {
+            // upstream: flist.c:1286-1294 - log vanished warning
+            eprintln!(
+                "file has vanished: {} {}{}",
+                path.display(),
+                error_location!(),
+                crate::role_trailer::generator()
+            );
+        } else {
+            // upstream: flist.c:1290 - rsyserr(FERROR_XFER, ...) for non-ENOENT
+            eprintln!(
+                "rsync: link_stat \"{}\" failed: {} ({}) {}{}",
+                path.display(),
+                e,
+                e.raw_os_error().unwrap_or(0),
+                error_location!(),
+                crate::role_trailer::sender()
+            );
+        }
     }
 
     /// Resolves symlink metadata following upstream `flist.c:readlink_stat()`.

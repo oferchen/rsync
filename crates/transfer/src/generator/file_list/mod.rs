@@ -6,6 +6,7 @@
 //!
 //! # Submodules
 //!
+//! - `batch_stat` - Parallel metadata resolution for directory children
 //! - `walk` - Recursive directory traversal and symlink resolution
 //! - `entry` - `FileEntry` construction from filesystem metadata
 //! - `hardlinks` - Hardlink index assignment and UID/GID collection
@@ -17,6 +18,7 @@
 //! - `flist.c:1456` - `send_file_entry()` per-file encoding
 //! - `hlink.c:match_hard_links()` - post-sort hardlink index assignment
 
+mod batch_stat;
 mod entry;
 mod hardlinks;
 mod inc_recurse;
