@@ -622,11 +622,11 @@ mod tests {
         assert_eq!(group.available(), 4);
 
         // Check out all 4 slots.
-        let s0 = group.checkout().expect("slot 0");
+        let mut s0 = group.checkout().expect("slot 0");
         assert_eq!(group.available(), 3);
         let s1 = group.checkout().expect("slot 1");
-        let s2 = group.checkout().expect("slot 2");
-        let s3 = group.checkout().expect("slot 3");
+        let mut s2 = group.checkout().expect("slot 2");
+        let mut s3 = group.checkout().expect("slot 3");
         assert_eq!(group.available(), 0);
 
         // No more slots available.
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(group.available(), 1);
 
         // Check out again.
-        let s1b = group.checkout().expect("slot 1 reacquired");
+        let mut s1b = group.checkout().expect("slot 1 reacquired");
         assert_eq!(group.available(), 0);
 
         // Verify buffer pointers are non-null and unique.
