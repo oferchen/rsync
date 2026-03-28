@@ -38,6 +38,7 @@
 //! - **Zero-copy file transfer** using `copy_file_range` for file-to-file copies
 //! - **Zero-copy socket send** using `sendfile` for file-to-socket transfers
 //! - **Windows optimized copy** using `CopyFileExW` with optional no-buffering
+//! - **ReFS detection** for Windows reflink via `FSCTL_DUPLICATE_EXTENTS_TO_FILE`
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
 //! - **Platform copy trait** abstracting `copy_file_range`, `clonefile`, `CopyFileExW`
 //! - **Cached sorting** with Schwartzian transform
@@ -80,6 +81,7 @@ pub mod copy_file_ex;
 pub mod copy_file_range;
 pub mod o_tmpfile;
 pub mod platform_copy;
+pub mod refs_detect;
 pub mod sendfile;
 pub mod syscall_batch;
 
@@ -111,6 +113,8 @@ pub use platform_copy::{
     try_ficlone,
 };
 pub use traits::{FileReader, FileWriter};
+
+pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 
 pub use mmap_reader::MmapReader;
 pub use o_tmpfile::{
