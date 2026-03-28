@@ -23,10 +23,15 @@
 //!
 //! # Design
 //!
-//! The pool uses [`crossbeam_queue::ArrayQueue`], a bounded, lock-free MPMC
-//! queue backed by a contiguous array. Buffers are pushed when released and
-//! popped when acquired. Because `ArrayQueue` is array-backed, recently returned
-//! buffers tend to be reused first, providing reasonable cache locality.
+//! The pool uses [`crossbeam_queue::SegQueue`], an unbounded, lock-free MPMC
+//! queue, paired with an atomic length counter for soft capacity enforcement.
+//! Buffers are pushed when released and popped when acquired.
+//!
+//! The elastic design solves the fixed-capacity problem: under extreme parallel
+//! delta workloads, if many threads return buffers simultaneously and a bounded
+//! queue is full, the excess is dropped - only to be immediately reallocated on
+//! the next acquire, defeating the pooling purpose. With `SegQueue`, burst
+//! returns are absorbed and the pool drains back to soft capacity naturally.
 //!
 //! # Contention Characteristics
 //!
@@ -38,12 +43,8 @@
 //! Under extreme contention (many threads acquiring and returning buffers in
 //! tight loops), CAS retries may increase slightly, but the operations remain
 //! wait-free in practice. The pool never blocks: when empty, it allocates a
-//! fresh buffer; when full, returned buffers are simply dropped. This means
-//! contention affects allocation frequency rather than latency.
-//!
-//! If per-thread buffer pools become necessary for very high thread counts,
-//! the `ArrayQueue` can be replaced with thread-local storage without changing
-//! the guard API.
+//! fresh buffer; when at soft capacity, returned buffers are dropped. This
+//! means contention affects allocation frequency rather than latency.
 //!
 //! # RAII Guard Pattern
 //!

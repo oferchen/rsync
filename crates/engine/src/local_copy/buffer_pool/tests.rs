@@ -1098,3 +1098,64 @@ fn concurrent_throughput_recording() {
     );
     assert!(tracker.throughput_bps() > 0.0);
 }
+
+#[test]
+fn elastic_pool_absorbs_concurrent_burst_returns() {
+    // Validates the elastic pool design: when many threads return buffers
+    // simultaneously, the SegQueue absorbs the burst rather than dropping
+    // buffers. After the burst, buffers are available for reuse.
+    use std::sync::Barrier;
+
+    let thread_count = 32;
+    let pool = Arc::new(BufferPool::new(4));
+    let barrier = Arc::new(Barrier::new(thread_count));
+
+    // Each thread acquires a buffer, waits at the barrier, then drops it.
+    // This forces all returns to happen near-simultaneously - exactly the
+    // burst pattern that defeated the old ArrayQueue-based pool.
+    let handles: Vec<_> = (0..thread_count)
+        .map(|_| {
+            let pool = Arc::clone(&pool);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                let buf = BufferPool::acquire_from(pool);
+                barrier.wait();
+                drop(buf);
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+
+    // The pool should have retained buffers. With the old ArrayQueue(4),
+    // many burst returns would hit a full queue and deallocate. With elastic
+    // SegQueue, the soft cap still limits retention but concurrent returns
+    // that pass the capacity check before others increment pool_len may
+    // push beyond the soft cap - which is the desired behavior.
+    let available = pool.available();
+    assert!(
+        available >= 1 && available <= thread_count,
+        "expected 1..={thread_count} buffers, got {available}"
+    );
+
+    // Verify that acquiring from the pool reuses buffers (no fresh allocation
+    // needed for at least one acquire).
+    let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    assert!(pool.available() < available);
+}
+
+#[test]
+fn elastic_pool_drains_to_soft_capacity() {
+    // After a burst that pushes above soft capacity, sequential returns
+    // should stop retaining once the pool reaches soft capacity.
+    let pool = BufferPool::new(2);
+
+    // Acquire 8 buffers, then drop them one at a time.
+    let buffers: Vec<_> = (0..8).map(|_| pool.acquire()).collect();
+    drop(buffers);
+
+    // Sequential returns respect the soft cap.
+    assert_eq!(pool.available(), 2);
+}

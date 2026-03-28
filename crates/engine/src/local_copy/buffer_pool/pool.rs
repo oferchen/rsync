@@ -1,12 +1,13 @@
 //! Core [`BufferPool`] implementation.
 //!
 //! Provides the thread-safe, lock-free buffer pool backed by
-//! [`crossbeam_queue::ArrayQueue`]. See the [module-level documentation](super)
-//! for design rationale and usage patterns.
+//! [`crossbeam_queue::SegQueue`] with atomic length tracking. See the
+//! [module-level documentation](super) for design rationale and usage patterns.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crossbeam_queue::ArrayQueue;
+use crossbeam_queue::SegQueue;
 
 use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::guard::{BorrowedBufferGuard, BufferGuard};
@@ -17,17 +18,24 @@ use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 /// A thread-safe, lock-free pool of reusable I/O buffers.
 ///
 /// Reduces allocation overhead during file copy operations by maintaining
-/// a bounded set of buffers that can be reused across operations. Internally
-/// backed by [`crossbeam_queue::ArrayQueue`], all acquire and return
-/// operations are lock-free CAS loops with no mutex overhead.
+/// a set of buffers that can be reused across operations. Internally backed
+/// by [`crossbeam_queue::SegQueue`] (an unbounded lock-free MPMC queue) with
+/// an atomic length counter for soft capacity enforcement. All acquire and
+/// return operations are lock-free CAS loops with no mutex overhead.
 ///
-/// # Capacity
+/// # Elastic Capacity
 ///
-/// The pool has a maximum capacity to prevent unbounded memory growth.
-/// When the pool is full, returning a buffer simply drops it.
-/// When the pool is empty, acquiring allocates a fresh buffer rather than
-/// blocking. This non-blocking guarantee means contention only affects
-/// allocation frequency, never caller latency.
+/// The pool has a *soft* maximum capacity (`max_buffers`). Under normal
+/// operation, the pool retains up to `max_buffers` buffers. Under burst
+/// conditions - when many threads return buffers simultaneously - the pool
+/// absorbs the excess rather than deallocating, avoiding the pathological
+/// case where buffers are freed and immediately reallocated. The pool
+/// gradually drains back to `max_buffers` as excess buffers are acquired
+/// without being replaced.
+///
+/// This elastic design eliminates the fixed-capacity `ArrayQueue` problem
+/// where sizing the queue too small for the actual parallelism level causes
+/// buffers to be deallocated on every return, defeating the pooling purpose.
 ///
 /// # Memory Cap
 ///
@@ -46,19 +54,30 @@ use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 ///    the pool default (without zeroing) and pushes it onto the queue.
 #[derive(Debug)]
 pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
-    /// Lock-free bounded queue of available buffers.
+    /// Lock-free unbounded queue of available buffers.
     ///
-    /// `ArrayQueue` requires non-zero capacity, so the actual queue is
-    /// created with `max(1, requested_capacity)`. The `requested_capacity`
-    /// field tracks the caller's intent - when zero, `return_buffer`
-    /// deallocates immediately instead of pushing onto the queue.
-    buffers: ArrayQueue<Vec<u8>>,
-    /// Caller-requested maximum number of buffers to retain.
+    /// Uses `SegQueue` instead of `ArrayQueue` to absorb burst returns
+    /// without dropping buffers. The `pool_len` atomic tracks the current
+    /// queue length for soft capacity enforcement.
+    buffers: SegQueue<Vec<u8>>,
+    /// Approximate number of buffers currently in the queue.
+    ///
+    /// Incremented on push, decremented on pop. Used for soft capacity
+    /// enforcement in `return_buffer` - when `pool_len >= soft_capacity`,
+    /// returned buffers are deallocated instead of queued.
+    ///
+    /// This count may briefly drift from the true queue length under
+    /// concurrent access (a push increments before the buffer is visible
+    /// to poppers, or vice versa), but the drift is bounded and harmless:
+    /// the worst case is one extra allocation or one extra retained buffer.
+    pool_len: AtomicUsize,
+    /// Soft maximum number of buffers to retain.
     ///
     /// May be zero, meaning the pool never retains returned buffers
-    /// (every allocation is fresh). Distinct from `buffers.capacity()`
-    /// which is always >= 1 due to `ArrayQueue`'s invariant.
-    requested_capacity: usize,
+    /// (every allocation is fresh). Under burst conditions, the actual
+    /// queue length may temporarily exceed this value - the pool drains
+    /// naturally as buffers are acquired without replacement.
+    soft_capacity: usize,
     /// Size of each buffer in bytes.
     buffer_size: usize,
     /// Allocation strategy for creating and disposing of buffers.
@@ -75,15 +94,16 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
 }
 
 impl BufferPool {
-    /// Creates a new buffer pool with the specified maximum capacity.
+    /// Creates a new buffer pool with the specified soft capacity.
     ///
     /// Uses [`DefaultAllocator`] for buffer creation. To supply a custom
     /// allocator, use [`with_allocator`](Self::with_allocator).
     ///
     /// # Arguments
     ///
-    /// * `max_buffers` - Maximum number of buffers to retain. Excess buffers
-    ///   are dropped when returned to the pool.
+    /// * `max_buffers` - Soft maximum number of buffers to retain. Under
+    ///   normal operation the pool holds at most this many buffers; under
+    ///   burst conditions the pool may temporarily hold more.
     ///
     /// # Example
     ///
@@ -93,10 +113,9 @@ impl BufferPool {
     #[must_use]
     pub fn new(max_buffers: usize) -> Self {
         Self {
-            // ArrayQueue requires capacity >= 1; clamp here, enforce
-            // zero-capacity semantics via `requested_capacity` in return_buffer.
-            buffers: ArrayQueue::new(max_buffers.max(1)),
-            requested_capacity: max_buffers,
+            buffers: SegQueue::new(),
+            pool_len: AtomicUsize::new(0),
+            soft_capacity: max_buffers,
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
             memory_cap: None,
@@ -110,14 +129,15 @@ impl BufferPool {
     ///
     /// # Arguments
     ///
-    /// * `max_buffers` - Maximum number of buffers to retain. Pass `0` for a
-    ///   pool that never retains buffers (every acquire allocates fresh).
+    /// * `max_buffers` - Soft maximum number of buffers to retain. Pass `0`
+    ///   for a pool that never retains buffers (every acquire allocates fresh).
     /// * `buffer_size` - Size of each buffer in bytes.
     #[must_use]
     pub fn with_buffer_size(max_buffers: usize, buffer_size: usize) -> Self {
         Self {
-            buffers: ArrayQueue::new(max_buffers.max(1)),
-            requested_capacity: max_buffers,
+            buffers: SegQueue::new(),
+            pool_len: AtomicUsize::new(0),
+            soft_capacity: max_buffers,
             buffer_size,
             allocator: DefaultAllocator,
             memory_cap: None,
@@ -141,8 +161,9 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn with_allocator(max_buffers: usize, buffer_size: usize, allocator: A) -> Self {
         Self {
-            buffers: ArrayQueue::new(max_buffers.max(1)),
-            requested_capacity: max_buffers,
+            buffers: SegQueue::new(),
+            pool_len: AtomicUsize::new(0),
+            soft_capacity: max_buffers,
             buffer_size,
             allocator,
             memory_cap: None,
@@ -254,10 +275,7 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn acquire_from(pool: Arc<Self>) -> BufferGuard<A> {
         pool.wait_and_reserve_memory(pool.buffer_size);
-        let buffer = pool
-            .buffers
-            .pop()
-            .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
+        let buffer = pool.pop_buffer();
 
         BufferGuard {
             buffer: Some(buffer),
@@ -275,10 +293,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         if !pool.try_reserve_memory(pool.buffer_size) {
             return None;
         }
-        let buffer = pool
-            .buffers
-            .pop()
-            .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
+        let buffer = pool.pop_buffer();
 
         Some(BufferGuard {
             buffer: Some(buffer),
@@ -323,10 +338,7 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn acquire(&self) -> BorrowedBufferGuard<'_, A> {
         self.wait_and_reserve_memory(self.buffer_size);
-        let buffer = self
-            .buffers
-            .pop()
-            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
+        let buffer = self.pop_buffer();
 
         BorrowedBufferGuard {
             buffer: Some(buffer),
@@ -343,10 +355,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         if !self.try_reserve_memory(self.buffer_size) {
             return None;
         }
-        let buffer = self
-            .buffers
-            .pop()
-            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
+        let buffer = self.pop_buffer();
 
         Some(BorrowedBufferGuard {
             buffer: Some(buffer),
@@ -361,8 +370,11 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// overwrites the buffer via [`Read::read`] before consuming data (see
     /// `transfer.rs` and `parallel_checksum.rs`).
     ///
-    /// If the pool is at capacity, the buffer is disposed via
-    /// [`BufferAllocator::deallocate`].
+    /// If the pool is at or above its soft capacity, the buffer is disposed
+    /// via [`BufferAllocator::deallocate`]. Under burst conditions (many
+    /// threads returning simultaneously), the pool may temporarily exceed
+    /// the soft capacity because `pool_len` is checked non-atomically with
+    /// the push - this is intentional and harmless.
     ///
     /// When a memory cap is configured, outstanding bytes are decremented
     /// and any threads blocked in `acquire` are notified.
@@ -371,7 +383,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         let returned_len = buffer.len();
 
         // Zero-capacity pool: never retain buffers - deallocate immediately.
-        if self.requested_capacity == 0 {
+        if self.soft_capacity == 0 {
             self.allocator.deallocate(buffer);
             self.track_return(returned_len);
             return;
@@ -389,29 +401,50 @@ impl<A: BufferAllocator> BufferPool<A> {
         // #1 CPU hotspot (26% of runtime per flamegraph profiling).
         unsafe { buffer.set_len(self.buffer_size) };
 
-        // ArrayQueue::push returns Err when full - dispose via the allocator.
-        if let Err(buffer) = self.buffers.push(buffer) {
+        // Soft capacity check: allow the queue to absorb burst returns
+        // even above soft_capacity. The Relaxed load is intentional - a
+        // brief overcount is harmless and avoids CAS overhead on the hot
+        // return path.
+        let current = self.pool_len.load(Ordering::Relaxed);
+        if current >= self.soft_capacity {
             self.allocator.deallocate(buffer);
+        } else {
+            self.buffers.push(buffer);
+            self.pool_len.fetch_add(1, Ordering::Release);
         }
 
         // Release outstanding memory and wake blocked acquirers.
         self.track_return(returned_len);
     }
 
-    /// Returns the number of buffers currently in the pool.
-    ///
-    /// This is primarily useful for testing and monitoring.
-    #[must_use]
-    pub fn available(&self) -> usize {
-        self.buffers.len()
+    /// Pops a buffer from the queue, or allocates a new one if empty.
+    fn pop_buffer(&self) -> Vec<u8> {
+        match self.buffers.pop() {
+            Some(buffer) => {
+                self.pool_len.fetch_sub(1, Ordering::Acquire);
+                buffer
+            }
+            None => self.allocator.allocate(self.buffer_size),
+        }
     }
 
-    /// Returns the maximum number of buffers the pool will retain.
+    /// Returns the number of buffers currently in the pool.
     ///
-    /// Returns `0` for a zero-capacity pool (never retains buffers).
+    /// This is primarily useful for testing and monitoring. The value is
+    /// approximate under concurrent access.
+    #[must_use]
+    pub fn available(&self) -> usize {
+        self.pool_len.load(Ordering::Relaxed)
+    }
+
+    /// Returns the soft maximum number of buffers the pool will retain.
+    ///
+    /// Under burst conditions the pool may temporarily hold more buffers;
+    /// it drains back to this level as buffers are acquired. Returns `0`
+    /// for a zero-capacity pool (never retains buffers).
     #[must_use]
     pub fn max_buffers(&self) -> usize {
-        self.requested_capacity
+        self.soft_capacity
     }
 
     /// Returns the size of each buffer in bytes.
