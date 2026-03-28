@@ -57,7 +57,7 @@ impl MemoryCap {
         // Fast path: try to reserve with CAS, no locking needed.
         loop {
             let current = self.outstanding.load(Ordering::Acquire);
-            if current + requested > self.limit {
+            if current.saturating_add(requested) > self.limit {
                 break; // Fall through to slow path.
             }
             if self
@@ -75,18 +75,31 @@ impl MemoryCap {
             // CAS failed due to concurrent modification, retry.
         }
 
-        // Slow path: wait on the condvar and reserve under the lock.
+        // Slow path: wait on the condvar and reserve with CAS.
+        // The mutex serializes waiters against each other, but the fast path
+        // can still succeed concurrently (lockless), so we must use CAS here
+        // too - a plain store would clobber a concurrent fast-path increment.
         let mut guard = self
             .backpressure
             .lock()
             .expect("backpressure mutex poisoned");
         loop {
             let current = self.outstanding.load(Ordering::Acquire);
-            if current + requested <= self.limit {
-                // Reserve the capacity while holding the lock.
-                self.outstanding
-                    .store(current + requested, Ordering::Release);
-                return;
+            if current.saturating_add(requested) <= self.limit {
+                if self
+                    .outstanding
+                    .compare_exchange(
+                        current,
+                        current + requested,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    return;
+                }
+                // CAS failed - fast path grabbed it; re-check without waiting.
+                continue;
             }
             guard = self
                 .returned
@@ -102,7 +115,7 @@ impl MemoryCap {
     pub(super) fn try_reserve(&self, requested: usize) -> bool {
         loop {
             let current = self.outstanding.load(Ordering::Acquire);
-            if current + requested > self.limit {
+            if current.saturating_add(requested) > self.limit {
                 return false;
             }
             if self
