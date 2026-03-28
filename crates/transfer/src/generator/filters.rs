@@ -1,18 +1,24 @@
 //! Filter rule handling and `--files-from` path resolution.
 //!
 //! Receives filter rules from the client (server mode) or applies config-provided
-//! rules (client mode), converts wire format to [`FilterSet`], and resolves
-//! `--files-from` filenames to filesystem paths for file list building.
+//! rules (client mode), converts wire format to [`FilterSet`] and [`FilterChain`],
+//! and resolves `--files-from` filenames to filesystem paths for file list building.
+//!
+//! Per-directory merge rules (`DirMerge`) are extracted into [`DirMergeConfig`]
+//! entries and registered on the [`FilterChain`]. During `walk_path()`, the chain
+//! reads merge files from each directory and pushes/pops scoped rules.
 //!
 //! # Upstream Reference
 //!
 //! - `main.c:1258` - `recv_filter_list()` in server mode
 //! - `flist.c:2240-2264` - `--files-from` filename reading and resolution
+//! - `exclude.c:push_local_filters()` - per-directory merge file loading
 
 use std::io::{self, Read};
 use std::path::PathBuf;
 
 pub use ::filters::FilterSet;
+use filters::{DirMergeConfig, FilterChain};
 use logging::info_log;
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 
@@ -26,6 +32,8 @@ impl GeneratorContext {
     ///
     /// In server mode, we receive filter rules from the client before building
     /// the file list. In client mode, we already sent filters in mod.rs.
+    /// DirMerge rules are extracted and registered on the filter chain for
+    /// per-directory merge file processing during the file walk.
     ///
     /// # Upstream Reference
     ///
@@ -38,11 +46,14 @@ impl GeneratorContext {
         if self.config.connection.client_mode {
             // Client mode: apply filters from config for local file list building.
             // Filter rules were already sent to the daemon in mod.rs.
-            // upstream: flist.c:1332 — is_excluded() applied during make_file()
+            // upstream: flist.c:1332 - is_excluded() applied during make_file()
             if !self.config.connection.filter_rules.is_empty() {
-                let filter_set =
+                let (filter_set, merge_configs) =
                     self.parse_received_filters(&self.config.connection.filter_rules.clone())?;
-                self.filters = Some(filter_set);
+                self.filter_chain = FilterChain::new(filter_set);
+                for config in merge_configs {
+                    self.filter_chain.add_merge_config(config);
+                }
             }
             return Ok(());
         }
@@ -50,7 +61,7 @@ impl GeneratorContext {
         // Server mode: read filter list from client (MULTIPLEXED for protocol >= 30)
         let wire_rules = read_filter_list(reader, self.protocol)?;
 
-        // upstream: clientserver.c:rsync_module() — daemon_filter_list is applied
+        // upstream: clientserver.c:rsync_module() - daemon_filter_list is applied
         // on top of client filters. Daemon rules take precedence (prepended).
         let daemon_rules = &self.config.daemon_filter_rules;
         let combined = if daemon_rules.is_empty() {
@@ -63,10 +74,13 @@ impl GeneratorContext {
             combined
         };
 
-        // Convert wire format to FilterSet
+        // Convert wire format to FilterChain
         if !combined.is_empty() {
-            let filter_set = self.parse_received_filters(&combined)?;
-            self.filters = Some(filter_set);
+            let (filter_set, merge_configs) = self.parse_received_filters(&combined)?;
+            self.filter_chain = FilterChain::new(filter_set);
+            for config in merge_configs {
+                self.filter_chain.add_merge_config(config);
+            }
         }
 
         Ok(())
@@ -98,7 +112,7 @@ impl GeneratorContext {
         };
 
         // Determine base directory: use the first positional arg (source dir).
-        // upstream: flist.c:2240-2244 — change_dir(argv[0]) before reading filenames.
+        // upstream: flist.c:2240-2244 - change_dir(argv[0]) before reading filenames.
         let base_dir = original_paths
             .first()
             .cloned()
@@ -107,16 +121,16 @@ impl GeneratorContext {
         let filenames = if files_from_path == "-" {
             // Read from protocol stream (stdin). The client forwards the file
             // list as NUL-separated entries with a double-NUL terminator.
-            // upstream: main.c:681 — filesfrom_fd = STDIN_FILENO
+            // upstream: main.c:681 - filesfrom_fd = STDIN_FILENO
             protocol::read_files_from_stream(reader)?
         } else {
             // Read from a local file on the server.
-            // upstream: main.c:675-679 — open(files_from, O_RDONLY)
+            // upstream: main.c:675-679 - open(files_from, O_RDONLY)
             let from0 = self.config.file_selection.from0;
             read_files_from_local_path(&files_from_path, from0)?
         };
 
-        // upstream: flist.c:2240-2264 — chdir to argv[0] then read relative
+        // upstream: flist.c:2240-2264 - chdir to argv[0] then read relative
         // filenames. We keep the base_dir separate and return fully resolved
         // paths so that build_file_list_with_base() can reconstruct correct
         // relative names by stripping the base prefix.
@@ -144,15 +158,24 @@ impl GeneratorContext {
         Ok(resolved)
     }
 
-    /// Converts wire format rules to FilterSet.
+    /// Converts wire format rules to a global `FilterSet` and per-directory `DirMergeConfig` list.
     ///
-    /// Maps the wire protocol representation to the filters crate's `FilterSet`
-    /// for use during file walking.
+    /// Maps the wire protocol representation to the filters crate's types. Include,
+    /// Exclude, Protect, Risk, and Clear rules are compiled into a single `FilterSet`.
+    /// DirMerge rules are extracted into `DirMergeConfig` entries for registration
+    /// on the `FilterChain`. Merge rules (non-directory) are skipped since their
+    /// contents are pre-expanded by the client before transmission.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `exclude.c:parse_filter_file()` - filter list construction
+    /// - `exclude.c:push_local_filters()` - DirMerge rules drive per-dir scanning
     pub(super) fn parse_received_filters(
         &self,
         wire_rules: &[FilterRuleWireFormat],
-    ) -> io::Result<FilterSet> {
+    ) -> io::Result<(FilterSet, Vec<DirMergeConfig>)> {
         let mut rules = Vec::with_capacity(wire_rules.len());
+        let mut merge_configs = Vec::new();
 
         for wire_rule in wire_rules {
             // Convert wire RuleType to FilterRule
@@ -169,21 +192,18 @@ impl GeneratorContext {
                     );
                     continue;
                 }
-                RuleType::Merge | RuleType::DirMerge => {
-                    // Merge rules require per-directory filter file loading during file walking.
-                    // Implementation requires:
-                    // 1. Store merge rule specs (filename, options like inherit/exclude_self)
-                    // 2. During build_file_list(), check each directory for the merge file
-                    // 3. Parse merge file contents using engine::local_copy::dir_merge parsing
-                    // 4. Inject parsed rules into the active FilterSet for that subtree
-                    // 5. Pop rules when leaving directories (if no_inherit is set)
-                    //
-                    // See crates/engine/src/local_copy/dir_merge/ for the local copy implementation
-                    // that can be adapted for server mode. The challenge is that FilterSet is
-                    // currently immutable after construction.
-                    //
-                    // For now, clients can pre-expand merge rules before transmission, or use
-                    // local copy mode which fully supports merge rules.
+                RuleType::DirMerge => {
+                    // upstream: exclude.c - dir-merge rules register a per-directory
+                    // merge file that is read during walk_path(). The FilterChain
+                    // handles reading and scoping.
+                    let config = wire_rule_to_dir_merge_config(wire_rule);
+                    merge_configs.push(config);
+                    continue;
+                }
+                RuleType::Merge => {
+                    // Merge (non-directory) rules are pre-expanded by the client
+                    // before transmission - their contents are inlined as regular
+                    // include/exclude rules. Skip the merge directive itself.
                     continue;
                 }
             };
@@ -216,7 +236,7 @@ impl GeneratorContext {
             rules.push(rule);
         }
 
-        FilterSet::from_rules(rules).map_err(|e| {
+        let filter_set = FilterSet::from_rules(rules).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -225,8 +245,49 @@ impl GeneratorContext {
                     crate::role_trailer::sender()
                 ),
             )
-        })
+        })?;
+
+        Ok((filter_set, merge_configs))
     }
+}
+
+/// Converts a wire-format DirMerge rule into a `DirMergeConfig`.
+///
+/// Maps wire protocol modifier flags to the corresponding `DirMergeConfig`
+/// builder methods. The pattern field contains the merge filename.
+///
+/// # Upstream Reference
+///
+/// - `exclude.c:parse_filter_str()` - modifier flag parsing for dir-merge rules
+fn wire_rule_to_dir_merge_config(wire_rule: &FilterRuleWireFormat) -> DirMergeConfig {
+    let mut config = DirMergeConfig::new(&wire_rule.pattern);
+
+    // `n` modifier: no-inherit (rules apply only in the containing directory)
+    if wire_rule.no_inherit {
+        config = config.with_inherit(false);
+    }
+
+    // `e` modifier: exclude the merge file itself from transfer
+    if wire_rule.exclude_from_merge {
+        config = config.with_exclude_self(true);
+    }
+
+    // `s` modifier: sender-side only
+    if wire_rule.sender_side {
+        config = config.with_sender_only(true);
+    }
+
+    // `r` modifier: receiver-side only
+    if wire_rule.receiver_side {
+        config = config.with_receiver_only(true);
+    }
+
+    // `p` modifier: perishable
+    if wire_rule.perishable {
+        config = config.with_perishable(true);
+    }
+
+    config
 }
 
 /// Reads a `--files-from` list from a local file path on the server.
@@ -259,7 +320,7 @@ pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<
             if trimmed.is_empty() {
                 continue;
             }
-            // upstream: flist.c:2266 — comments with '#' or ';' prefix
+            // upstream: flist.c:2266 - comments with '#' or ';' prefix
             // only when not using --from0
             if trimmed.starts_with('#') || trimmed.starts_with(';') {
                 continue;

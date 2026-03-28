@@ -4,7 +4,7 @@
 //! scans destination directories for entries absent from the source list, and
 //! removes them. Parallel scanning via `map_blocking` when directory count
 //! exceeds threshold. Respects `--max-delete` via an atomic counter shared
-//! across workers.
+//! across workers, and `FilterChain::allows_deletion()` for protect/risk rules.
 
 use std::fs;
 use std::io;
@@ -25,7 +25,8 @@ impl ReceiverContext {
     ///
     /// Uses tokio `spawn_blocking` + semaphore for parallel directory scanning when
     /// directory count exceeds threshold. When `max_delete` is set, an atomic counter
-    /// enforces the deletion limit across all parallel workers.
+    /// enforces the deletion limit across all parallel workers. Protect/risk filter
+    /// rules are evaluated via `FilterChain::allows_deletion()` before each deletion.
     ///
     /// Returns `(stats, limit_exceeded)` where `limit_exceeded` is true when deletions
     /// were stopped due to `--max-delete`.
@@ -35,6 +36,7 @@ impl ReceiverContext {
     /// - `generator.c:delete_in_dir()` - scans one directory, removes unlisted entries
     /// - `generator.c:do_delete_pass()` - full tree walk deletion sweep
     /// - `main.c:1367` - `deletion_count >= max_delete` check
+    /// - `exclude.c:check_filter()` - is_excluded() before deletion
     pub(in crate::receiver) fn delete_extraneous_files<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
@@ -82,8 +84,13 @@ impl ReceiverContext {
         // upstream: main.c:1367 - deletion_count >= max_delete
         let deletions_performed = Arc::new(AtomicU64::new(0));
 
-        // Share directory children map across workers.
+        // Share directory children map and filter chain across workers.
+        // The filter chain clone captures the global rules snapshot for
+        // allows_deletion() checks. Per-directory merge files are not
+        // re-read during deletion (upstream also only evaluates the
+        // pre-loaded filter list in delete_in_dir).
         let dir_children = Arc::new(dir_children);
+        let filter_chain = Arc::new(self.filter_chain.clone());
         let dest_dir_owned = dest_dir.to_path_buf();
 
         // Collect deleted relative paths for post-parallel itemize emission.
@@ -122,6 +129,16 @@ impl ReceiverContext {
                         continue;
                     }
 
+                    // upstream: generator.c:delete_in_dir() - is_excluded()
+                    // check before deletion. allows_deletion() evaluates
+                    // protect/risk rules from the global filter chain.
+                    let rel_for_filter = dir_relative.join(&name);
+                    let file_type = entry.file_type().ok();
+                    let is_dir_for_filter = file_type.as_ref().is_some_and(|ft| ft.is_dir());
+                    if !filter_chain.allows_deletion(&rel_for_filter, is_dir_for_filter) {
+                        continue;
+                    }
+
                     // Check max_delete limit before each deletion.
                     if let Some(limit) = max_delete {
                         let current = deletions_performed.load(Ordering::Relaxed);
@@ -132,7 +149,6 @@ impl ReceiverContext {
                     }
 
                     let path = dest_path.join(&name);
-                    let file_type = entry.file_type().ok();
                     let is_dir = file_type.as_ref().is_some_and(|ft| ft.is_dir());
                     let is_symlink = file_type.as_ref().is_some_and(|ft| ft.is_symlink());
 

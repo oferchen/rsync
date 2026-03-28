@@ -43,6 +43,7 @@ use std::num::NonZeroU8;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use filters::FilterChain;
 use protocol::acl::AclCache;
 use protocol::flist::{FileEntry, FileListReader};
 use protocol::idlist::IdList;
@@ -128,6 +129,16 @@ pub struct ReceiverContext {
     uid_list: IdList,
     /// GID mappings from remote to local IDs.
     gid_list: IdList,
+    /// Per-directory scoped filter chain for deletion protection.
+    ///
+    /// Used by `delete_extraneous_files()` to check `allows_deletion()` before
+    /// removing destination files not present in the sender's file list. Rules
+    /// include global protect/risk rules and per-directory merge file rules.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:delete_in_dir()` - `is_excluded()` check before deletion
+    filter_chain: FilterChain,
 }
 
 impl ReceiverContext {
@@ -154,6 +165,7 @@ impl ReceiverContext {
             flist_reader_cache: None,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
+            filter_chain: FilterChain::empty(),
         }
     }
 
@@ -346,6 +358,20 @@ impl ReceiverContext {
     const fn should_read_filter_list(&self) -> bool {
         let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
         !self.config.connection.client_mode && receiver_wants_list
+    }
+
+    /// Sets the per-directory filter chain for deletion filtering.
+    ///
+    /// Called after receiving the filter list from the sender, before the
+    /// deletion pass. The chain is used by `delete_extraneous_files()`.
+    pub fn set_filter_chain(&mut self, chain: FilterChain) {
+        self.filter_chain = chain;
+    }
+
+    /// Returns a reference to the per-directory filter chain.
+    #[must_use]
+    pub fn filter_chain(&self) -> &FilterChain {
+        &self.filter_chain
     }
 
     /// Returns whether itemize emission should be active.
