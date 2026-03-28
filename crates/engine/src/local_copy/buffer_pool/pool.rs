@@ -175,13 +175,12 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// for a non-blocking alternative.
     #[must_use]
     pub fn acquire_from(pool: Arc<Self>) -> BufferGuard<A> {
-        pool.wait_for_memory_capacity(pool.buffer_size);
+        pool.wait_and_reserve_memory(pool.buffer_size);
         let buffer = pool
             .buffers
             .pop()
             .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
 
-        pool.track_checkout(buffer.len());
         BufferGuard {
             buffer: Some(buffer),
             pool,
@@ -203,7 +202,6 @@ impl<A: BufferAllocator> BufferPool<A> {
             .pop()
             .unwrap_or_else(|| pool.allocator.allocate(pool.buffer_size));
 
-        pool.track_checkout(buffer.len());
         Some(BufferGuard {
             buffer: Some(buffer),
             pool,
@@ -229,9 +227,8 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Slow path: non-standard size - allocate a fresh buffer.
         // On drop the guard will pass it through `return_buffer` which
         // resizes it to the pool default before returning it.
-        pool.wait_for_memory_capacity(desired);
+        pool.wait_and_reserve_memory(desired);
         let buffer = pool.allocator.allocate(desired);
-        pool.track_checkout(buffer.len());
         BufferGuard {
             buffer: Some(buffer),
             pool,
@@ -247,13 +244,12 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// Blocks if a memory cap is configured and the cap is reached.
     #[must_use]
     pub fn acquire(&self) -> BorrowedBufferGuard<'_, A> {
-        self.wait_for_memory_capacity(self.buffer_size);
+        self.wait_and_reserve_memory(self.buffer_size);
         let buffer = self
             .buffers
             .pop()
             .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
 
-        self.track_checkout(buffer.len());
         BorrowedBufferGuard {
             buffer: Some(buffer),
             pool: self,
@@ -274,7 +270,6 @@ impl<A: BufferAllocator> BufferPool<A> {
             .pop()
             .unwrap_or_else(|| self.allocator.allocate(self.buffer_size));
 
-        self.track_checkout(buffer.len());
         Some(BorrowedBufferGuard {
             buffer: Some(buffer),
             pool: self,
@@ -371,29 +366,24 @@ impl<A: BufferAllocator> BufferPool<A> {
         self.memory_cap.as_ref().map(|cap| cap.limit())
     }
 
-    /// Blocks until outstanding memory is below the cap.
+    /// Atomically waits for and reserves `requested` bytes of capacity.
     ///
-    /// No-op when no memory cap is configured.
-    fn wait_for_memory_capacity(&self, requested: usize) {
+    /// When a memory cap is configured, blocks until outstanding memory
+    /// plus `requested` is within the cap, then atomically increments
+    /// outstanding. No-op when no cap is configured.
+    fn wait_and_reserve_memory(&self, requested: usize) {
         if let Some(cap) = &self.memory_cap {
-            cap.wait_for_capacity(requested);
+            cap.wait_and_reserve(requested);
         }
     }
 
-    /// Returns `true` if the requested bytes can be allocated without
-    /// exceeding the memory cap. Returns `true` unconditionally when no
-    /// cap is configured.
+    /// Tries to atomically reserve `requested` bytes without blocking.
+    ///
+    /// Returns `true` unconditionally when no cap is configured.
     fn try_reserve_memory(&self, requested: usize) -> bool {
         match &self.memory_cap {
             Some(cap) => cap.try_reserve(requested),
             None => true,
-        }
-    }
-
-    /// Records that `size` bytes have been checked out.
-    fn track_checkout(&self, size: usize) {
-        if let Some(cap) = &self.memory_cap {
-            cap.track_checkout(size);
         }
     }
 
