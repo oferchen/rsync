@@ -21,10 +21,10 @@
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn name_to_rid(name: &str) -> Option<u32> {
-    use windows::Win32::Foundation::PSID;
-    use windows::Win32::Security::Authorization::GetSidSubAuthority;
-    use windows::Win32::Security::Authorization::GetSidSubAuthorityCount;
-    use windows::Win32::Security::{LookupAccountNameW, SID_NAME_USE, SidTypeUser};
+    use windows::Win32::Security::{
+        GetSidSubAuthority, GetSidSubAuthorityCount, LookupAccountNameW, PSID, SID_NAME_USE,
+        SidTypeUser,
+    };
     use windows::core::PCWSTR;
 
     let name_wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
@@ -40,9 +40,9 @@ pub fn name_to_rid(name: &str) -> Option<u32> {
         let _ = LookupAccountNameW(
             PCWSTR::null(),
             PCWSTR(name_wide.as_ptr()),
-            PSID(std::ptr::null_mut()),
+            None,
             &mut sid_size,
-            windows::core::PWSTR(std::ptr::null_mut()),
+            None,
             &mut domain_size,
             &mut sid_type,
         );
@@ -61,9 +61,9 @@ pub fn name_to_rid(name: &str) -> Option<u32> {
         LookupAccountNameW(
             PCWSTR::null(),
             PCWSTR(name_wide.as_ptr()),
-            PSID(sid_buf.as_mut_ptr().cast()),
+            Some(PSID(sid_buf.as_mut_ptr().cast())),
             &mut sid_size,
-            windows::core::PWSTR(domain_buf.as_mut_ptr()),
+            Some(windows::core::PWSTR(domain_buf.as_mut_ptr())),
             &mut domain_size,
             &mut sid_type,
         )

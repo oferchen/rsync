@@ -135,10 +135,9 @@ pub fn drop_privileges_windows(
 #[allow(unsafe_code)]
 fn windows_impersonate(account_name: &str) -> io::Result<()> {
     use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::Security::Authentication::Identity::{
-        LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, LogonUserW,
+    use windows::Win32::Security::{
+        ImpersonateLoggedOnUser, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, LogonUserW,
     };
-    use windows::Win32::Security::ImpersonateLoggedOnUser;
     use windows::core::PCWSTR;
 
     // Split DOMAIN\user if present.
