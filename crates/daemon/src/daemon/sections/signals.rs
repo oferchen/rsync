@@ -1,7 +1,7 @@
 /// Shared atomic flags checked by the server accept loop.
 ///
-/// On Unix, signal handlers set these via `signal_hook`. On Windows,
-/// `SetConsoleCtrlHandler` sets them from a console control callback.
+/// Thin wrapper around `platform::signal::SignalFlags` that provides
+/// `pub(crate)` visibility within the daemon crate.
 ///
 /// upstream: main.c - signal handler setup for SIGPIPE, SIGHUP, SIGTERM,
 /// SIGUSR1, SIGUSR2.
@@ -22,6 +22,7 @@ pub(crate) struct SignalFlags {
 
 impl SignalFlags {
     /// Creates a new set of signal flags with all flags initially unset.
+    #[cfg(test)]
     fn new() -> Self {
         Self {
             reload_config: Arc::new(AtomicBool::new(false)),
@@ -32,85 +33,24 @@ impl SignalFlags {
     }
 }
 
-/// Registers Unix signal handlers via `signal_hook` and returns shared flags.
-///
-/// upstream: main.c - SIGACT() calls for SIGPIPE, SIGHUP, SIGTERM, SIGUSR1, SIGUSR2.
-#[cfg(unix)]
-pub(crate) fn register_signal_handlers() -> io::Result<SignalFlags> {
-    use signal_hook::consts::{SIGHUP, SIGINT, SIGPIPE, SIGTERM, SIGUSR1, SIGUSR2};
-
-    let flags = SignalFlags::new();
-
-    // upstream: main.c SIGACT(SIGPIPE, SIG_IGN) - prevent daemon termination
-    // on broken client sockets; errors surface as EPIPE io::Error instead.
-    let sigpipe_sink = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(SIGPIPE, Arc::clone(&sigpipe_sink))?;
-
-    signal_hook::flag::register(SIGHUP, Arc::clone(&flags.reload_config))?;
-    signal_hook::flag::register(SIGTERM, Arc::clone(&flags.shutdown))?;
-    signal_hook::flag::register(SIGINT, Arc::clone(&flags.shutdown))?;
-    signal_hook::flag::register(SIGUSR1, Arc::clone(&flags.graceful_exit))?;
-    signal_hook::flag::register(SIGUSR2, Arc::clone(&flags.progress_dump))?;
-
-    Ok(flags)
-}
-
-/// Registers Windows console control handlers via `SetConsoleCtrlHandler`.
-///
-/// Maps CTRL_C/CTRL_CLOSE to `shutdown` and CTRL_BREAK to `graceful_exit`.
-/// Broken pipes surface as I/O errors natively on Windows (no SIGPIPE).
-/// Config reload requires a named event (not yet implemented).
-#[cfg(windows)]
-pub(crate) fn register_signal_handlers() -> io::Result<SignalFlags> {
-    use windows::Win32::System::Console::{
-        CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler,
-    };
-
-    let flags = SignalFlags::new();
-
-    // OnceLock statics allow the extern "system" callback to access the flags.
-    static SHUTDOWN: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
-    static GRACEFUL: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
-
-    SHUTDOWN
-        .set(Arc::clone(&flags.shutdown))
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "signal handlers already registered"))?;
-    GRACEFUL
-        .set(Arc::clone(&flags.graceful_exit))
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "signal handlers already registered"))?;
-
-    unsafe extern "system" fn handler(ctrl_type: u32) -> windows::Win32::Foundation::BOOL {
-        match ctrl_type {
-            x if x == CTRL_C_EVENT.0 || x == CTRL_CLOSE_EVENT.0 => {
-                if let Some(flag) = SHUTDOWN.get() {
-                    flag.store(true, Ordering::Relaxed);
-                }
-                windows::Win32::Foundation::TRUE
-            }
-            x if x == CTRL_BREAK_EVENT.0 => {
-                if let Some(flag) = GRACEFUL.get() {
-                    flag.store(true, Ordering::Relaxed);
-                }
-                windows::Win32::Foundation::TRUE
-            }
-            _ => windows::Win32::Foundation::FALSE,
+impl From<platform::signal::SignalFlags> for SignalFlags {
+    fn from(pf: platform::signal::SignalFlags) -> Self {
+        Self {
+            reload_config: pf.reload_config,
+            shutdown: pf.shutdown,
+            graceful_exit: pf.graceful_exit,
+            progress_dump: pf.progress_dump,
         }
     }
-
-    unsafe { SetConsoleCtrlHandler(Some(handler), true) }.map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("SetConsoleCtrlHandler failed: {e}"),
-        )
-    })?;
-
-    Ok(flags)
 }
 
-/// No-op signal registration for platforms that are neither Unix nor Windows.
-#[cfg(all(not(unix), not(windows)))]
+/// Registers platform signal handlers and returns shared flags.
+///
+/// Delegates to `platform::signal::register_signal_handlers()`.
+///
+/// upstream: main.c - SIGACT() calls for SIGPIPE, SIGHUP, SIGTERM, SIGUSR1, SIGUSR2.
 pub(crate) fn register_signal_handlers() -> io::Result<SignalFlags> {
-    Ok(SignalFlags::new())
+    platform::signal::register_signal_handlers().map(SignalFlags::from)
 }
 
 #[cfg(test)]
@@ -164,14 +104,6 @@ mod signal_tests {
             !flags.shutdown.load(Ordering::Relaxed),
             "graceful_exit must not affect shutdown flag"
         );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_register_signal_handlers_succeeds() {
-        let flags = register_signal_handlers().expect("SetConsoleCtrlHandler should succeed");
-        assert!(!flags.shutdown.load(Ordering::Relaxed));
-        assert!(!flags.graceful_exit.load(Ordering::Relaxed));
     }
 
     #[test]

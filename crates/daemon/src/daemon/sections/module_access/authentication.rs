@@ -194,51 +194,11 @@ fn verify_secret_response(
 
 /// Checks that a secrets file has appropriately restrictive permissions.
 ///
-/// On Unix, verifies the file is not other-accessible (`mode & 0o006`).
-/// When the daemon runs as root, also verifies the file is owned by root.
+/// Delegates to `platform::secrets::check_secrets_file_permissions()`.
 ///
-/// upstream: authenticate.c - `(st.st_mode & 06) != 0` rejects other-accessible
-/// files; `st.st_uid != ROOT_UID` rejects non-root-owned files when running as root.
-#[cfg(unix)]
-#[allow(unsafe_code)]
+/// upstream: authenticate.c - permission checks for secrets files.
 fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
-    let metadata = fs::metadata(path)?;
-    let mode = metadata.permissions().mode();
-
-    // upstream: authenticate.c - reject if other-readable or other-writable
-    if (mode & 0o006) != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!(
-                "secrets file must not be other-accessible (see strict modes option): '{}'",
-                path.display()
-            ),
-        ));
-    }
-
-    // upstream: authenticate.c - when running as root, secrets must be owned by root
-    {
-        use std::os::unix::fs::MetadataExt;
-        // SAFETY: `getuid` is a trivial POSIX call with no arguments and no side effects.
-        let my_uid = unsafe { libc::getuid() };
-        if my_uid == 0 && metadata.uid() != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!(
-                    "secrets file must be owned by root when running as root (see strict modes option): '{}'",
-                    path.display()
-                ),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-/// No-op permission check on non-Unix platforms (matching upstream rsync).
-#[cfg(not(unix))]
-fn check_secrets_file_permissions(_path: &Path) -> io::Result<()> {
-    Ok(())
+    platform::secrets::check_secrets_file_permissions(path)
 }
 
 /// Sends an auth failure response to the client and closes the session.
