@@ -157,30 +157,26 @@ impl GeneratorContext {
         Ok(())
     }
 
-    /// Emits a MSG_INFO frame with itemize output when conditions are met.
+    /// Emits itemize output when conditions are met.
     ///
-    /// Sends the formatted itemize string (`"%i %n%L\n"`) as a MSG_INFO
-    /// multiplexed message to the client. This is only done when:
-    /// - The server is in daemon/SSH mode (not client mode)
-    /// - The client requested itemize output (`-i`/`--itemize-changes`)
-    /// - The file index is valid
+    /// In server mode (daemon/SSH), sends the formatted itemize string
+    /// (`"%i %n%L\n"`) as a MSG_INFO multiplexed message to the client.
+    /// In client mode, writes directly to the process stdout via the
+    /// itemize callback, matching upstream's `rwrite()` `FCLIENT` path.
     ///
     /// # Upstream Reference
     ///
     /// - `sender.c:287` - `maybe_log_item()` for non-transfer items
     /// - `sender.c:430` - `log_item()` after file transfer
-    /// - `log.c:330-340` - `rwrite()` converts FCLIENT/FINFO to `send_msg(MSG_INFO)`
-    ///   when `am_server` is true
+    /// - `log.c:330-340` - `rwrite()`: when `am_server`, sends MSG_INFO;
+    ///   when `!am_server`, writes to stdout (FCLIENT)
     pub(super) fn maybe_emit_itemize<W: Write>(
         &self,
         writer: &mut super::super::writer::ServerWriter<W>,
         iflags: &super::item_flags::ItemFlags,
         ndx: usize,
+        itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<()> {
-        // Only emit in server mode (daemon or SSH) when the client requested itemize
-        if self.config.connection.client_mode {
-            return Ok(());
-        }
         if !self.config.flags.info_flags.itemize {
             return Ok(());
         }
@@ -192,7 +188,16 @@ impl GeneratorContext {
         let ctx = self.itemize_context();
         // Generator role is always the sender side
         let line = super::itemize::format_itemize_line(iflags, entry, true, &ctx);
-        writer.send_message(protocol::MessageCode::Info, line.as_bytes())
+
+        if self.config.connection.client_mode {
+            // upstream: log.c:330-340 - when !am_server, rwrite() sends to FCLIENT (stdout)
+            if let Some(cb) = itemize_cb.as_mut() {
+                cb.on_itemize(&line);
+            }
+            Ok(())
+        } else {
+            writer.send_message(protocol::MessageCode::Info, line.as_bytes())
+        }
     }
 
     /// Sends the file list to the receiver.

@@ -369,14 +369,23 @@ impl FileListWriter {
             self.write_checksum(writer, entry)?;
         }
 
-        // Update state
-        self.state.update(
-            &name,
-            entry.mode(),
-            entry.mtime(),
-            entry.uid().unwrap_or(0),
-            entry.gid().unwrap_or(0),
-        );
+        // Update state.
+        // upstream: flist.c:send_file_entry() line 676 - at the_end label,
+        // only lastname is updated. The metadata state variables (modtime,
+        // mode, uid, gid) are NOT updated for abbreviated hardlink followers
+        // because the goto skips the metadata writes. The receiver's
+        // compression state only tracks values actually seen on the wire.
+        if abbreviated {
+            self.state.update_name(&name);
+        } else {
+            self.state.update(
+                &name,
+                entry.mode(),
+                entry.mtime(),
+                entry.uid().unwrap_or(0),
+                entry.gid().unwrap_or(0),
+            );
+        }
 
         // Update statistics
         self.update_stats(entry);

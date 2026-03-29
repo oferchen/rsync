@@ -227,7 +227,7 @@ fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirective, Messag
             .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
     }
 
-    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, trimmed, true) {
+    let (mut options, assume_cvsignore) = match parse_merge_modifiers(modifiers, trimmed, true) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
     };
@@ -240,6 +240,15 @@ fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirective, Messag
             let text = format!("filter rule '{trimmed}' is missing a file name after '{label}'");
             return Some(Err(rsync_error!(1, text).with_role(Role::Client)));
         }
+    }
+
+    // upstream: exclude.c - a leading '/' on the merge filename means the
+    // file is only looked for in the transfer root directory (anchor_root).
+    // Strip the '/' so Path::join() produces a relative path, and set the
+    // anchor_root flag on options instead.
+    if let Some(stripped) = path_text.strip_prefix('/') {
+        path_text = stripped;
+        options = options.anchor_root(true);
     }
 
     Some(Ok(FilterDirective::Rule(FilterRuleSpec::dir_merge(
@@ -599,6 +608,24 @@ mod tests {
     fn dir_merge_non_matching() {
         let result = parse_dir_merge_alias("other-command file");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn dir_merge_leading_slash_strips_and_sets_anchor_root() {
+        let result = parse_dir_merge_alias("dir-merge /.rsync-filter");
+        assert!(result.is_some());
+        let directive = result.unwrap().unwrap();
+        match directive {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::DirMerge);
+                // Leading '/' should be stripped from the pattern
+                assert_eq!(spec.pattern(), ".rsync-filter");
+                // anchor_root should be set via dir_merge_options
+                let opts = spec.dir_merge_options().unwrap();
+                assert!(opts.anchor_root_enabled());
+            }
+            _ => panic!("expected Rule directive"),
+        }
     }
 
     // ==================== parse_keyword_rule tests ====================
