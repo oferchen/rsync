@@ -1355,10 +1355,6 @@ KNOWN_FAILURES=(
 
 is_known_failure() {
   local direction=$1 name=$2 forced_proto=$3
-  # Protocol 28/29: forced-protocol daemon transfers not fully supported.
-  if [[ -n "$forced_proto" && "$forced_proto" -le 29 ]]; then
-    return 0
-  fi
   local key="${direction}:${name}"
   for kf in "${KNOWN_FAILURES[@]}"; do
     [[ "$kf" == "$key" ]] && return 0
