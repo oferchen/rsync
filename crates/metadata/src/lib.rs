@@ -98,13 +98,7 @@ mod chmod;
 pub mod copy_as;
 mod error;
 
-#[cfg(unix)]
 pub mod id_lookup;
-
-#[cfg(not(unix))]
-pub mod id_lookup_stub;
-#[cfg(not(unix))]
-pub use id_lookup_stub as id_lookup;
 
 #[cfg(unix)]
 mod mapping;

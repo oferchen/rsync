@@ -560,6 +560,7 @@ fn run_server_over_ssh_connection(
         &mut writer,
         progress,
         batch_recording,
+        None,
     );
 
     // Close the writer to signal EOF to the remote process, allowing it to exit.

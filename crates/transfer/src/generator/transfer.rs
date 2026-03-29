@@ -47,6 +47,7 @@ impl GeneratorContext {
         reader: &mut R,
         writer: &mut super::super::writer::ServerWriter<W>,
         progress: &mut Option<&mut dyn super::super::TransferProgressCallback>,
+        itemize: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<TransferLoopResult> {
         use super::super::shared::TransferDeadline;
         use super::delta::generate_delta_from_signature;
@@ -196,7 +197,7 @@ impl GeneratorContext {
 
             if !iflags.needs_transfer() {
                 // upstream: sender.c:287 — maybe_log_item() for non-transfer items
-                self.maybe_emit_itemize(writer, &iflags, ndx)?;
+                self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
                 continue;
             }
 
@@ -307,7 +308,7 @@ impl GeneratorContext {
             files_transferred += 1;
 
             // upstream: sender.c:430 — log_item(log_code, file, iflags, NULL)
-            self.maybe_emit_itemize(writer, &iflags, ndx)?;
+            self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
 
             if let Some(cb) = progress.as_mut() {
                 let event = super::super::TransferProgressEvent {
@@ -584,6 +585,7 @@ impl GeneratorContext {
         writer: &mut super::super::writer::ServerWriter<W>,
         paths: &[PathBuf],
         mut progress: Option<&mut dyn super::super::TransferProgressCallback>,
+        mut itemize: Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<GeneratorStats> {
         if self.should_activate_input_multiplex() {
             reader = reader.activate_multiplex().map_err(|e| {
@@ -631,7 +633,7 @@ impl GeneratorContext {
         // SegmentScheduler, matching upstream sender.c:227,261 cadence.
         let transfer_result = {
             let _t = PhaseTimer::new("generator-transfer-loop");
-            self.run_transfer_loop(reader, writer, &mut progress)?
+            self.run_transfer_loop(reader, writer, &mut progress, &mut itemize)?
         };
 
         // Step 7: Handle goodbye handshake

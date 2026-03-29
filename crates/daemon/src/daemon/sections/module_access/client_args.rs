@@ -454,6 +454,16 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
                     config.file_selection.files_from_path = Some(path.to_owned());
+                // upstream: options.c:773,963 - --log-format is the deprecated
+                // alias for --out-format. The server parses it to set
+                // stdout_format_has_i (options.c:2327-2331) which drives itemize
+                // emission. We only need the %i presence, not the full format.
+                } else if let Some(fmt) = arg.strip_prefix("--log-format=")
+                    .or_else(|| arg.strip_prefix("--out-format="))
+                {
+                    if fmt.contains("%i") {
+                        config.flags.info_flags.itemize = true;
+                    }
                 }
             }
         }
