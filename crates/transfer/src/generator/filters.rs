@@ -260,7 +260,17 @@ impl GeneratorContext {
 ///
 /// - `exclude.c:parse_filter_str()` - modifier flag parsing for dir-merge rules
 fn wire_rule_to_dir_merge_config(wire_rule: &FilterRuleWireFormat) -> DirMergeConfig {
-    let mut config = DirMergeConfig::new(&wire_rule.pattern);
+    // upstream: exclude.c - a leading '/' on the merge filename means the
+    // file is only looked for in the transfer root directory (anchor_root).
+    // Strip the '/' so Path::join() produces a relative path.
+    let (filename, anchor_root) = match wire_rule.pattern.strip_prefix('/') {
+        Some(stripped) => (stripped, true),
+        None => (wire_rule.pattern.as_str(), false),
+    };
+    let mut config = DirMergeConfig::new(filename);
+    if anchor_root {
+        config = config.with_anchor_root(true);
+    }
 
     // `n` modifier: no-inherit (rules apply only in the containing directory)
     if wire_rule.no_inherit {
@@ -328,5 +338,43 @@ pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<
             filenames.push(trimmed.to_owned());
         }
         Ok(filenames)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::filters::RuleType;
+
+    fn make_dir_merge_wire_rule(pattern: &str) -> FilterRuleWireFormat {
+        FilterRuleWireFormat {
+            rule_type: RuleType::DirMerge,
+            pattern: pattern.to_owned(),
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: false,
+            perishable: false,
+            negate: false,
+        }
+    }
+
+    #[test]
+    fn wire_rule_to_dir_merge_config_strips_leading_slash() {
+        let wire_rule = make_dir_merge_wire_rule("/.rsync-filter");
+        let config = wire_rule_to_dir_merge_config(&wire_rule);
+        assert_eq!(config.filename(), ".rsync-filter");
+    }
+
+    #[test]
+    fn wire_rule_to_dir_merge_config_no_slash() {
+        let wire_rule = make_dir_merge_wire_rule(".rsync-filter");
+        let config = wire_rule_to_dir_merge_config(&wire_rule);
+        assert_eq!(config.filename(), ".rsync-filter");
     }
 }
