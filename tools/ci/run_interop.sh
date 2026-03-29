@@ -1330,10 +1330,6 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # merge-filter: per-directory merge filters (.rsync-filter) not yet wired
-  # to generator walk_path - DirMerge infrastructure exists in engine but
-  # push_local_filters/pop_local_filters not implemented for remote transfers.
-  "oc:merge-filter"
   # --- upstream→oc (daemon receive) ---
   # protocol-31: upstream 3.0.9 does not support protocol 31.
   "up:protocol-31"
