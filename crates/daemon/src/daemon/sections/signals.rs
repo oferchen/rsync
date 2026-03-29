@@ -98,10 +98,65 @@ pub(crate) fn register_signal_handlers() -> io::Result<SignalFlags> {
     Ok(flags)
 }
 
-/// No-op signal registration for non-Unix platforms.
+/// Registers Windows console control handlers for graceful shutdown.
 ///
-/// Returns default flags that are never set by signal handlers.
-#[cfg(not(unix))]
+/// - **CTRL_C_EVENT** sets `shutdown` to `true` (equivalent to SIGTERM/SIGINT).
+/// - **CTRL_BREAK_EVENT** sets `graceful_exit` to `true` (equivalent to SIGUSR1).
+/// - **CTRL_CLOSE_EVENT** sets `shutdown` to `true` (console window closing).
+///
+/// SIGPIPE has no Windows equivalent (broken pipes surface as I/O errors
+/// natively). Config reload and progress dump require external signaling
+/// mechanisms (e.g., named events) which are not yet implemented.
+#[cfg(windows)]
+pub(crate) fn register_signal_handlers() -> io::Result<SignalFlags> {
+    use windows::Win32::System::Console::{
+        CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler,
+    };
+
+    let flags = SignalFlags::new();
+
+    // Store cloned Arcs in a static so the handler callback can access them.
+    // This is safe because the daemon process only calls this once.
+    static SHUTDOWN: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
+    static GRACEFUL: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
+
+    SHUTDOWN
+        .set(Arc::clone(&flags.shutdown))
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "signal handlers already registered"))?;
+    GRACEFUL
+        .set(Arc::clone(&flags.graceful_exit))
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "signal handlers already registered"))?;
+
+    unsafe extern "system" fn handler(ctrl_type: u32) -> windows::Win32::Foundation::BOOL {
+        match ctrl_type {
+            x if x == CTRL_C_EVENT.0 || x == CTRL_CLOSE_EVENT.0 => {
+                if let Some(flag) = SHUTDOWN.get() {
+                    flag.store(true, Ordering::Relaxed);
+                }
+                windows::Win32::Foundation::TRUE
+            }
+            x if x == CTRL_BREAK_EVENT.0 => {
+                if let Some(flag) = GRACEFUL.get() {
+                    flag.store(true, Ordering::Relaxed);
+                }
+                windows::Win32::Foundation::TRUE
+            }
+            _ => windows::Win32::Foundation::FALSE,
+        }
+    }
+
+    unsafe { SetConsoleCtrlHandler(Some(handler), true) }.map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("SetConsoleCtrlHandler failed: {e}"),
+        )
+    })?;
+
+    Ok(flags)
+}
+
+/// No-op signal registration for platforms that are neither Unix nor Windows.
+#[cfg(all(not(unix), not(windows)))]
 pub(crate) fn register_signal_handlers() -> io::Result<SignalFlags> {
     Ok(SignalFlags::new())
 }
@@ -157,6 +212,19 @@ mod signal_tests {
             !flags.shutdown.load(Ordering::Relaxed),
             "graceful_exit must not affect shutdown flag"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_register_signal_handlers_succeeds() {
+        // On Windows, SetConsoleCtrlHandler should succeed. Note: this test
+        // can only run once per process because OnceLock prevents re-registration.
+        // The generic `register_signal_handlers_succeeds` test covers this too.
+        let flags = register_signal_handlers();
+        assert!(flags.is_ok(), "Windows signal registration should succeed");
+        let flags = flags.unwrap();
+        assert!(!flags.shutdown.load(Ordering::Relaxed));
+        assert!(!flags.graceful_exit.load(Ordering::Relaxed));
     }
 
     #[test]

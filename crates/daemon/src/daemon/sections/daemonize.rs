@@ -15,6 +15,7 @@
 ///
 /// Uses `libc::fork()`, `libc::setsid()`, and file descriptor manipulation
 /// via the `libc` crate. Must be called before spawning threads.
+#[cfg(unix)]
 #[allow(unsafe_code)]
 fn become_daemon() -> Result<(), DaemonError> {
     // Fork -- parent exits, child continues.
@@ -38,6 +39,7 @@ fn become_daemon() -> Result<(), DaemonError> {
 }
 
 /// Redirects file descriptors 0, 1, 2 to `/dev/null`.
+#[cfg(unix)]
 #[allow(unsafe_code)]
 fn redirect_stdio_to_devnull() -> Result<(), DaemonError> {
     let dev_null = c"/dev/null";
@@ -61,6 +63,7 @@ fn redirect_stdio_to_devnull() -> Result<(), DaemonError> {
 }
 
 /// Creates a [`DaemonError`] for daemonization failures.
+#[cfg(unix)]
 fn daemonize_error(action: &str, error: io::Error) -> DaemonError {
     DaemonError::new(
         FEATURE_UNAVAILABLE_EXIT_CODE,
@@ -72,7 +75,7 @@ fn daemonize_error(action: &str, error: io::Error) -> DaemonError {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[allow(unsafe_code)]
 mod daemonize_tests {
     use super::*;
