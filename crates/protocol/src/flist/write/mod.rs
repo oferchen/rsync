@@ -19,12 +19,10 @@ use std::io::{self, Write};
 
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
-use crate::acl::{AclCache, RsyncAcl};
-use crate::acl::wire::send_acl;
+use crate::acl::{AclCache, RsyncAcl, send_acl};
 use crate::codec::{ProtocolCodecEnum, create_protocol_codec};
 use crate::iconv::FilenameConverter;
-use crate::xattr::XattrList;
-use crate::xattr::wire::send_xattr;
+use crate::xattr::{XattrList, send_xattr};
 
 use super::entry::FileEntry;
 use super::state::{FileListCompressionState, FileListStats};
