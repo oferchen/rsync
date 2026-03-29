@@ -316,4 +316,4 @@ jobs:
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.1' }}
-      timeout_minutes: 45
+      timeout_minutes: 30
