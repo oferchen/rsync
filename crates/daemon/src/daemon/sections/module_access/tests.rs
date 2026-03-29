@@ -822,7 +822,7 @@ mod module_access_tests {
     }
 
     #[test]
-    fn apply_long_form_args_parses_log_format_with_itemize_and_I() {
+    fn apply_long_form_args_parses_log_format_with_itemize_and_upper_i() {
         let args = vec!["--server".to_owned(), "--log-format=%i%I".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
         apply_long_form_args(&args, &mut config);
