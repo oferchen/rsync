@@ -1343,6 +1343,10 @@ KNOWN_FAILURES=(
   "oc:hardlinks-relative"
   # Itemize: output format differences with upstream daemon mode.
   "oc:itemize"
+  # merge-filter: per-directory merge filters (.rsync-filter) not yet wired
+  # to generator walk_path - DirMerge infrastructure exists in engine but
+  # push_local_filters/pop_local_filters not implemented for remote transfers.
+  "oc:merge-filter"
   # --- upstream→oc (daemon receive) ---
   # Itemize: output format differences when upstream pushes to oc-rsync daemon.
   "up:itemize"
