@@ -1336,10 +1336,6 @@ KNOWN_FAILURES=(
   # ACLs/xattrs: upstream daemon builds may not have ACL/xattr support enabled.
   "up:acls"
   "up:xattrs"
-
-  # --- standalone scenarios ---
-  "standalone:write-batch-read-batch"
-  "standalone:large-file-2gb"
 )
 
 is_known_failure() {
