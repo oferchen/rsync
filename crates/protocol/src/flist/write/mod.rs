@@ -340,7 +340,7 @@ impl FileListWriter {
     /// # Upstream Reference
     ///
     /// See `flist.c:send_file_entry()` lines 470-750 for the complete wire encoding.
-    pub fn write_entry<W: Write + ?Sized>(
+    pub fn write_entry<W: Write>(
         &mut self,
         writer: &mut W,
         entry: &FileEntry,
