@@ -46,11 +46,9 @@ bash "$interop_script" build-only 2>/dev/null || true
 ENTRIES=(
   "oc:acls|ACLs push to upstream daemon|daemon"
   "oc:xattrs|xattrs push to upstream daemon|daemon"
-  "oc:itemize|itemize push to upstream daemon|daemon"
   "up:protocol-31|protocol-31 pull from upstream 3.0.9|daemon"
   "up:acls|ACLs pull from upstream daemon|daemon"
   "up:xattrs|xattrs pull from upstream daemon|daemon"
-  "up:itemize|itemize pull from upstream daemon|daemon"
   "standalone:write-batch-read-batch|batch file roundtrip|standalone"
   "standalone:info-progress2|progress2 output|standalone"
   "standalone:large-file-2gb|large file transfer|standalone"
