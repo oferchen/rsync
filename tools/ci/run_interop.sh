@@ -1336,11 +1336,6 @@ KNOWN_FAILURES=(
   # to generator walk_path - DirMerge infrastructure exists in engine but
   # push_local_filters/pop_local_filters not implemented for remote transfers.
   "oc:merge-filter"
-  # hardlinks: oc-rsync client hardlink detection in daemon push mode not yet
-  # producing correct inode/device mapping for upstream daemon verification.
-  "oc:hardlinks"
-  "oc:hardlinks-relative"
-
   # --- upstream→oc (daemon receive) ---
   # protocol-31: upstream 3.0.9 does not support protocol 31.
   "up:protocol-31"
@@ -1352,10 +1347,7 @@ KNOWN_FAILURES=(
 
   # --- standalone scenarios ---
   "standalone:write-batch-read-batch"
-  "standalone:info-progress2"
   "standalone:large-file-2gb"
-  "standalone:file-vanished"
-  "standalone:iconv"
 )
 
 is_known_failure() {
