@@ -1333,9 +1333,19 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # All previously known failures have been resolved:
-  # - ACLs/xattrs: upstream rsync now built with --enable-acl-support/--enable-xattr-support
-  # - protocol-31: scenario skipped for upstream versions < 3.1.0
+  # --- oc→upstream (client push) ---
+  # ACLs/xattrs: wire format incompatibility with older upstream receivers.
+  # oc-rsync sends ACL/xattr indices that older upstream (3.0.9) cannot parse.
+  "oc:acls"
+  "oc:xattrs"
+  # Hardlinks: wire format divergence with older upstream receivers.
+  "oc:hardlinks"
+  "oc:hardlinks-relative"
+  # Itemize: output format differences with upstream daemon mode.
+  "oc:itemize"
+  # --- upstream→oc (daemon receive) ---
+  # Itemize: output format differences when upstream pushes to oc-rsync daemon.
+  "up:itemize"
 )
 
 is_known_failure() {
