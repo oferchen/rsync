@@ -202,7 +202,7 @@ pub use pipeline::{
     DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW, MIN_PIPELINE_WINDOW, PendingTransfer,
     PipelineConfig, PipelineState,
 };
-pub use progress::{TransferProgressCallback, TransferProgressEvent};
+pub use progress::{ItemizeCallback, TransferProgressCallback, TransferProgressEvent};
 
 /// Batch recording configuration for protocol stream teeing.
 ///
@@ -299,7 +299,7 @@ pub fn run_server_stdio(
 ) -> ServerResult {
     // Perform protocol handshake
     let handshake = perform_handshake(stdin, stdout)?;
-    run_server_with_handshake(config, handshake, stdin, stdout, progress, None)
+    run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
 }
 
 /// Executes the native server with a pre-negotiated protocol version.
@@ -321,7 +321,7 @@ pub fn run_server_stdio(
 /// - Multiplex activation fails
 /// - Sending the MSG_IO_TIMEOUT message fails (for daemon mode)
 /// - The receiver or generator role encounters a transfer error
-#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress, batch), fields(role = ?config.role, protocol = %handshake.protocol)))]
+#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress, batch, itemize), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake<W: Write>(
     mut config: ServerConfig,
     mut handshake: HandshakeResult,
@@ -329,6 +329,7 @@ pub fn run_server_with_handshake<W: Write>(
     mut stdout: W,
     progress: Option<&mut dyn TransferProgressCallback>,
     batch: Option<BatchRecording>,
+    itemize: Option<&mut dyn ItemizeCallback>,
 ) -> ServerResult {
     // upstream: setup_protocol() skips binary exchange when remote_protocol != 0
     // (already set by @RSYNCD greeting or SSH handshake).
@@ -527,7 +528,7 @@ pub fn run_server_with_handshake<W: Write>(
 
             let mut ctx = GeneratorContext::new(&handshake, config);
             // Pass reader by value - GeneratorContext::run now takes ownership and activates multiplex internally
-            let stats = ctx.run(chained_reader, &mut writer, &paths, progress)?;
+            let stats = ctx.run(chained_reader, &mut writer, &paths, progress, itemize)?;
 
             Ok(ServerStats::Generator(stats))
         }

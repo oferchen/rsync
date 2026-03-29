@@ -1330,8 +1330,6 @@ KNOWN_FAILURES=(
   # --enable-acl-support / --enable-xattr-support, causing connection reset.
   "oc:acls"
   "oc:xattrs"
-  # itemize: MSG_INFO forwarding not yet wired for daemon transfers.
-  "oc:itemize"
   # merge-filter: per-directory merge filters (.rsync-filter) not yet wired
   # to generator walk_path - DirMerge infrastructure exists in engine but
   # push_local_filters/pop_local_filters not implemented for remote transfers.

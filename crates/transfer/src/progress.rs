@@ -39,3 +39,25 @@ impl<F: FnMut(&TransferProgressEvent<'_>)> TransferProgressCallback for F {
         self(event);
     }
 }
+
+/// Callback trait for client-side itemize output.
+///
+/// When the client (not the server) generates files, itemize lines must be
+/// written directly to the process stdout rather than sent via MSG_INFO.
+/// Upstream rsync routes itemize through `rwrite()` which writes to `FCLIENT`
+/// (stdout) when `am_server` is false.
+///
+/// # Upstream Reference
+///
+/// - `log.c:330-340` - `rwrite()`: when `!am_server`, writes to stdout
+/// - `sender.c:287,430` - `maybe_log_item()` / `log_item()` after transfer
+pub trait ItemizeCallback {
+    /// Called with a pre-formatted itemize line (including trailing newline).
+    fn on_itemize(&mut self, line: &str);
+}
+
+impl<F: FnMut(&str)> ItemizeCallback for F {
+    fn on_itemize(&mut self, line: &str) {
+        self(line);
+    }
+}

@@ -113,6 +113,16 @@ pub(crate) fn run_push_transfer(
         .try_clone()
         .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
 
+    // upstream: log.c:330-340 - when !am_server, rwrite() sends itemize to
+    // FCLIENT (stdout). Build a callback that writes directly to process stdout.
+    let wants_itemize = config.itemize_changes();
+    let stdout_handle = std::io::stdout();
+    let mut itemize_cb = move |line: &str| {
+        use std::io::Write;
+        let mut out = stdout_handle.lock();
+        let _ = out.write_all(line.as_bytes());
+    };
+
     let result = crate::server::run_server_with_handshake(
         server_config,
         handshake,
@@ -120,6 +130,11 @@ pub(crate) fn run_push_transfer(
         &mut stream,
         None,
         batch_recording,
+        if wants_itemize {
+            Some(&mut itemize_cb as &mut dyn crate::server::ItemizeCallback)
+        } else {
+            None
+        },
     );
 
     match result {
@@ -221,6 +236,7 @@ fn run_server_with_handshake_over_stream(
         stream,
         progress,
         batch,
+        None,
     )
     .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
 }
