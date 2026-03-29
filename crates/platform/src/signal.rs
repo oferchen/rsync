@@ -110,23 +110,23 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
 
     // SAFETY: The handler function signature matches what SetConsoleCtrlHandler expects.
     // The OnceLock statics ensure the Arc references remain valid for the process lifetime.
-    unsafe extern "system" fn handler(ctrl_type: u32) -> windows::Win32::Foundation::BOOL {
+    unsafe extern "system" fn handler(ctrl_type: u32) -> windows::core::BOOL {
         use std::sync::atomic::Ordering;
 
         match ctrl_type {
-            x if x == CTRL_C_EVENT.0 || x == CTRL_CLOSE_EVENT.0 => {
+            x if x == CTRL_C_EVENT || x == CTRL_CLOSE_EVENT => {
                 if let Some(flag) = SHUTDOWN.get() {
                     flag.store(true, Ordering::Relaxed);
                 }
-                windows::Win32::Foundation::TRUE
+                windows::core::BOOL(1)
             }
-            x if x == CTRL_BREAK_EVENT.0 => {
+            x if x == CTRL_BREAK_EVENT => {
                 if let Some(flag) = GRACEFUL.get() {
                     flag.store(true, Ordering::Relaxed);
                 }
-                windows::Win32::Foundation::TRUE
+                windows::core::BOOL(1)
             }
-            _ => windows::Win32::Foundation::FALSE,
+            _ => windows::core::BOOL(0),
         }
     }
 
