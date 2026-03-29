@@ -2455,62 +2455,159 @@ fi
 
 failed=()
 
-for version in "${versions[@]}"; do
-  upstream_binary="${upstream_install_root}/${version}/bin/rsync"
-  if [[ ! -x "$upstream_binary" ]]; then
-    echo "Missing upstream rsync binary for version ${version}" >&2
-    failed+=("$version (missing binary)")
-    continue
-  fi
-
-  oc_port=$(allocate_ephemeral_port)
-  up_port=$(allocate_ephemeral_port)
-  echo "Running interoperability checks against upstream rsync ${version} (ports: oc=${oc_port} up=${up_port})"
-  if ! run_interop_case "$version" "$upstream_binary" "$oc_port" "$up_port"; then
-    failed+=("$version")
-  fi
-done
-
 # =====================================================================
-# Comprehensive interop tests: all protocols (28-32), all major options
+# Parallel version testing: basic + comprehensive tests run concurrently
+# for each upstream version. Each version runs in a subshell to isolate
+# mutable daemon PID globals. Results are collected via temp files.
 # =====================================================================
-echo ""
-echo "=== Comprehensive Interop Tests ==="
 
 comp_src="${workdir}/comp-source"
 setup_comprehensive_src "$comp_src"
 
-# Test each version at its native protocol with all scenarios
-for version in "${versions[@]}"; do
-  upstream_binary="${upstream_install_root}/${version}/bin/rsync"
-  if [[ ! -x "$upstream_binary" ]]; then
-    failed+=("${version}-comprehensive (missing)")
-    continue
-  fi
+# Directory for per-version failure results
+result_dir="${workdir}/parallel-results"
+mkdir -p "$result_dir"
 
-  oc_port=$(allocate_ephemeral_port)
-  up_port=$(allocate_ephemeral_port)
-  echo ""
-  echo "=== Comprehensive: upstream ${version} (native protocol) (ports: oc=${oc_port} up=${up_port}) ==="
-  if ! run_comprehensive_interop_case "$version" "$upstream_binary" \
-      "$oc_port" "$up_port"; then
-    failed+=("${version}-comprehensive")
+# Run all version tests (basic + comprehensive) in parallel subshells.
+# Each subshell gets its own copy of daemon PID globals, unique ports,
+# and unique temp directories. The read-only globals (comp_src, src,
+# oc_client, oc_binary, up_identity, hard_timeout) are inherited safely.
+version_pids=()
+for version in "${versions[@]}"; do
+  (
+    # Subshell: isolated daemon PID state
+    oc_pid=""
+    up_pid=""
+    oc_pid_file_current=""
+    up_pid_file_current=""
+    oc_port_current=""
+    up_port_current=""
+
+    version_failed=()
+    upstream_binary="${upstream_install_root}/${version}/bin/rsync"
+    if [[ ! -x "$upstream_binary" ]]; then
+      echo "Missing upstream rsync binary for version ${version}" >&2
+      version_failed+=("$version (missing binary)")
+      version_failed+=("${version}-comprehensive (missing)")
+    else
+      # Basic interop test
+      oc_port=$(allocate_ephemeral_port)
+      up_port=$(allocate_ephemeral_port)
+      echo "Running interoperability checks against upstream rsync ${version} (ports: oc=${oc_port} up=${up_port})"
+      if ! run_interop_case "$version" "$upstream_binary" "$oc_port" "$up_port"; then
+        version_failed+=("$version")
+      fi
+
+      # Comprehensive interop test
+      oc_port=$(allocate_ephemeral_port)
+      up_port=$(allocate_ephemeral_port)
+      echo ""
+      echo "=== Comprehensive: upstream ${version} (native protocol) (ports: oc=${oc_port} up=${up_port}) ==="
+      if ! run_comprehensive_interop_case "$version" "$upstream_binary" \
+          "$oc_port" "$up_port"; then
+        version_failed+=("${version}-comprehensive")
+      fi
+    fi
+
+    # Clean up any daemons started in this subshell
+    stop_oc_daemon
+    stop_upstream_daemon
+
+    # Write failures to a version-specific result file
+    if (( ${#version_failed[@]} > 0 )); then
+      printf '%s\n' "${version_failed[@]}" > "${result_dir}/${version}.failures"
+    fi
+  ) &
+  version_pids+=("$!")
+  echo "Launched version ${version} tests (PID: ${version_pids[-1]})"
+done
+
+echo ""
+echo "=== Waiting for ${#version_pids[@]} parallel version tests ==="
+
+# Wait for all version subshells and track which ones failed
+version_exit_failures=()
+for i in "${!versions[@]}"; do
+  version="${versions[$i]}"
+  pid="${version_pids[$i]}"
+  if ! wait "$pid"; then
+    # Subshell exited non-zero (e.g., set -e triggered)
+    version_exit_failures+=("${version}-subshell-error")
   fi
 done
 
+# Collect failures from result files
+for version in "${versions[@]}"; do
+  if [[ -f "${result_dir}/${version}.failures" ]]; then
+    while IFS= read -r failure; do
+      failed+=("$failure")
+    done < "${result_dir}/${version}.failures"
+  fi
+done
+for f in "${version_exit_failures[@]}"; do
+  failed+=("$f")
+done
+
+echo "=== Parallel version tests complete ==="
+
+# =====================================================================
 # Protocol version forcing tests: all 5 protocols via upstream 3.4.1
+# Run in parallel - each protocol uses unique ports and temp dirs.
+# =====================================================================
 newest_binary="${upstream_install_root}/3.4.1/bin/rsync"
 if [[ -x "$newest_binary" ]]; then
-  for proto in 28 29 30 31 32; do
-    oc_port=$(allocate_ephemeral_port)
-    up_port=$(allocate_ephemeral_port)
-    echo ""
-    echo "=== Protocol ${proto} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
-    if ! run_comprehensive_interop_case "3.4.1" "$newest_binary" \
-        "$oc_port" "$up_port" "--protocol=${proto}"; then
-      failed+=("proto${proto}")
+  proto_pids=()
+  protos=(28 29 30 31 32)
+  for proto in "${protos[@]}"; do
+    (
+      oc_pid=""
+      up_pid=""
+      oc_pid_file_current=""
+      up_pid_file_current=""
+      oc_port_current=""
+      up_port_current=""
+
+      oc_port=$(allocate_ephemeral_port)
+      up_port=$(allocate_ephemeral_port)
+      echo ""
+      echo "=== Protocol ${proto} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
+      proto_failed=false
+      if ! run_comprehensive_interop_case "3.4.1" "$newest_binary" \
+          "$oc_port" "$up_port" "--protocol=${proto}"; then
+        proto_failed=true
+      fi
+
+      stop_oc_daemon
+      stop_upstream_daemon
+
+      if [[ "$proto_failed" == "true" ]]; then
+        echo "proto${proto}" > "${result_dir}/proto${proto}.failures"
+      fi
+    ) &
+    proto_pids+=("$!")
+    echo "Launched protocol ${proto} tests (PID: ${proto_pids[-1]})"
+  done
+
+  echo ""
+  echo "=== Waiting for ${#proto_pids[@]} parallel protocol tests ==="
+
+  for i in "${!protos[@]}"; do
+    proto="${protos[$i]}"
+    pid="${proto_pids[$i]}"
+    if ! wait "$pid"; then
+      failed+=("proto${proto}-subshell-error")
     fi
   done
+
+  for proto in "${protos[@]}"; do
+    if [[ -f "${result_dir}/proto${proto}.failures" ]]; then
+      while IFS= read -r failure; do
+        failed+=("$failure")
+      done < "${result_dir}/proto${proto}.failures"
+    fi
+  done
+
+  echo "=== Parallel protocol tests complete ==="
 else
   echo "Skipping protocol forcing tests (3.4.1 binary unavailable)"
 fi
