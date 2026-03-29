@@ -157,6 +157,13 @@ impl BatchedFileListWriter {
         self
     }
 
+    /// Sets the checksum seed for xattr abbreviated value digests.
+    #[must_use]
+    pub fn with_checksum_seed(mut self, seed: i32) -> Self {
+        self.writer = self.writer.with_checksum_seed(seed);
+        self
+    }
+
     /// Enables checksum mode with the given checksum length.
     #[must_use]
     pub fn with_always_checksum(mut self, csum_len: usize) -> Self {
