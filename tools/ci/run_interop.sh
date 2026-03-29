@@ -338,6 +338,14 @@ build_upstream_from_source() {
   if grep -q -- "--disable-md2man" <<<"$configure_help"; then
     configure_args+=("--disable-md2man")
   fi
+  # Enable ACL and xattr support so interop tests can exercise -A and -X flags.
+  # The CI image installs libacl1-dev and libattr1-dev via APT.
+  if grep -q -- "--enable-acl-support" <<<"$configure_help"; then
+    configure_args+=("--enable-acl-support")
+  fi
+  if grep -q -- "--enable-xattr-support" <<<"$configure_help"; then
+    configure_args+=("--enable-xattr-support")
+  fi
 
   if ! ./configure "${configure_args[@]}" >"${build_log}" 2>&1; then
     echo "Upstream rsync ${version} configure failed; see ${build_log}" >&2
@@ -1325,17 +1333,9 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- oc→upstream (client push) ---
-  # ACLs/xattrs: upstream daemon may reject these capabilities if built without
-  # --enable-acl-support / --enable-xattr-support, causing connection reset.
-  "oc:acls"
-  "oc:xattrs"
-  # --- upstream→oc (daemon receive) ---
-  # protocol-31: upstream 3.0.9 does not support protocol 31.
-  "up:protocol-31"
-  # ACLs/xattrs: upstream daemon builds may not have ACL/xattr support enabled.
-  "up:acls"
-  "up:xattrs"
+  # All previously known failures have been resolved:
+  # - ACLs/xattrs: upstream rsync now built with --enable-acl-support/--enable-xattr-support
+  # - protocol-31: scenario skipped for upstream versions < 3.1.0
 )
 
 is_known_failure() {
@@ -2286,6 +2286,16 @@ run_comprehensive_interop_case() {
     "hardlinks-relative|-avHR|hardlinks-relative"
     "xattrs|-avX|xattrs"
   )
+
+  # Protocol-31 requires upstream rsync >= 3.1.0 (protocol 31 support).
+  # rsync 3.0.x only supports up to protocol 30, so --protocol=31 fails.
+  if [[ "${version}" == 3.0.* ]]; then
+    local -a filtered=()
+    for s in "${scenarios[@]}"; do
+      [[ "$s" != "protocol-31|"* ]] && filtered+=("$s")
+    done
+    scenarios=("${filtered[@]}")
+  fi
 
   # Incremental recursion only supported on protocol 30+
   local fp=""; [[ -n "$protocol_flag" ]] && fp="${protocol_flag##*=}"
