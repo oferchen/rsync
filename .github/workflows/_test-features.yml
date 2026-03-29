@@ -41,6 +41,10 @@ jobs:
             args: "-p daemon -p core -p engine --features tracing"
           - name: serde
             args: "-p logging -p protocol -p flist --features serde"
+          - name: incremental-flist
+            args: "-p transfer --features incremental-flist"
+          - name: compression
+            args: "-p compress -p protocol -p engine -p transfer --features zstd,lz4"
           - name: io_uring
             args: "-p transfer -p fast_io --features io_uring"
             linux_only: true
