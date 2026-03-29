@@ -809,6 +809,50 @@ mod module_access_tests {
         assert!(config.reference_directories.is_empty());
     }
 
+    // upstream: options.c:2750-2761 - server_options() sends --log-format=%i
+    // when the client uses -i/--itemize-changes. The daemon must parse this
+    // to set info_flags.itemize so the receiver emits MSG_INFO itemize frames.
+
+    #[test]
+    fn apply_long_form_args_parses_log_format_with_itemize() {
+        let args = vec!["--server".to_owned(), "--log-format=%i".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(config.flags.info_flags.itemize);
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_log_format_with_itemize_and_I() {
+        let args = vec!["--server".to_owned(), "--log-format=%i%I".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(config.flags.info_flags.itemize);
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_out_format_with_itemize() {
+        let args = vec!["--server".to_owned(), "--out-format=%i".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(config.flags.info_flags.itemize);
+    }
+
+    #[test]
+    fn apply_long_form_args_log_format_without_itemize() {
+        let args = vec!["--server".to_owned(), "--log-format=%o".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(!config.flags.info_flags.itemize);
+    }
+
+    #[test]
+    fn apply_long_form_args_log_format_x_no_itemize() {
+        let args = vec!["--server".to_owned(), "--log-format=X".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(!config.flags.info_flags.itemize);
+    }
+
     // Tests for parse_daemon_dont_compress
 
     #[test]

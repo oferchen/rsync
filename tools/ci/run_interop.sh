@@ -1342,8 +1342,6 @@ KNOWN_FAILURES=(
   # ACLs/xattrs: upstream daemon builds may not have ACL/xattr support enabled.
   "up:acls"
   "up:xattrs"
-  # itemize: MSG_INFO forwarding not yet wired for daemon transfers.
-  "up:itemize"
 
   # --- standalone scenarios ---
   "standalone:write-batch-read-batch"
