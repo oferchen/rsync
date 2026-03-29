@@ -340,11 +340,7 @@ impl FileListWriter {
     /// # Upstream Reference
     ///
     /// See `flist.c:send_file_entry()` lines 470-750 for the complete wire encoding.
-    pub fn write_entry<W: Write>(
-        &mut self,
-        writer: &mut W,
-        entry: &FileEntry,
-    ) -> io::Result<()> {
+    pub fn write_entry<W: Write>(&mut self, writer: &mut W, entry: &FileEntry) -> io::Result<()> {
         // Step 1: Get name bytes and apply encoding conversion
         let raw_name = entry.name_bytes();
         let name = self.apply_encoding_conversion(raw_name)?;
