@@ -8,8 +8,6 @@
 //! upstream: uidlist.c:110-193 - the name converter subprocess replaces
 //! getpwuid/getpwnam/getgrgid/getgrnam calls.
 
-#![allow(unsafe_code)]
-
 use std::cell::RefCell;
 
 /// External name-to-ID and ID-to-name conversion.
