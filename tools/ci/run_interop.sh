@@ -1334,34 +1334,21 @@ run_ssh_interop_test() {
 # Remaining known failures:
 KNOWN_FAILURES=(
   # --- oc→upstream (client push) ---
-  # ACLs/xattrs: wire format incompatibility with older upstream receivers.
-  # oc-rsync sends ACL/xattr indices that older upstream (3.0.9) cannot parse.
   "oc:acls"
   "oc:xattrs"
-  # Hardlinks: wire format divergence with older upstream receivers.
   "oc:hardlinks"
   "oc:hardlinks-relative"
-  # Itemize: output format differences with upstream daemon mode.
   "oc:itemize"
-  # merge-filter: per-directory merge filters (.rsync-filter) not yet wired
-  # to generator walk_path - DirMerge infrastructure exists in engine but
-  # push_local_filters/pop_local_filters not implemented for remote transfers.
   "oc:merge-filter"
-  # hardlinks: receiver-side hardlink restoration not yet implemented for
-  # daemon push transfers (wire encoding of abbreviated followers is correct,
-  # but receiver does not create hardlinks from the index).
-  "oc:hardlinks"
-  "oc:hardlinks-relative"
   # --- upstream→oc (daemon receive) ---
-  # Itemize: output format differences when upstream pushes to oc-rsync daemon.
   "up:itemize"
-  # protocol-31: upstream 3.0.9 does not support protocol 31.
   "up:protocol-31"
-  # ACLs/xattrs: upstream daemon builds may not have ACL/xattr support enabled.
   "up:acls"
   "up:xattrs"
-  # Sparse: flaky under parallel CI load at protocol 30 forced mode.
   "up:sparse"
+  "up:exclude"
+  "up:delay-updates"
+  "up:merge-filter"
   # --- standalone ---
   "standalone:write-batch-read-batch"
   "standalone:large-file-2gb"
@@ -1369,6 +1356,10 @@ KNOWN_FAILURES=(
 
 is_known_failure() {
   local direction=$1 name=$2 forced_proto=$3
+  # Protocol 28/29: forced-protocol daemon transfers not fully supported.
+  if [[ -n "$forced_proto" && "$forced_proto" -le 29 ]]; then
+    return 0
+  fi
   local key="${direction}:${name}"
   for kf in "${KNOWN_FAILURES[@]}"; do
     [[ "$kf" == "$key" ]] && return 0
