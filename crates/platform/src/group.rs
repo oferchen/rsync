@@ -156,12 +156,24 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg(not(unix))]
     #[test]
     fn non_unix_returns_none() {
-        #[cfg(not(unix))]
-        {
-            let result = lookup_group_members("staff");
-            assert!(result.unwrap().is_none());
-        }
+        let result = lookup_group_members("staff");
+        assert!(result.unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lookup_returns_vec_for_existing_group() {
+        // Both root and wheel are common system groups. At least one should
+        // exist. The member list may be empty but the result should be Some.
+        let root = lookup_group_members("root").unwrap();
+        let wheel = lookup_group_members("wheel").unwrap();
+        let staff = lookup_group_members("staff").unwrap();
+        assert!(
+            root.is_some() || wheel.is_some() || staff.is_some(),
+            "at least one of root/wheel/staff should exist on a Unix system"
+        );
     }
 }
