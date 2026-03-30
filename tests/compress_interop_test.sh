@@ -394,15 +394,14 @@ main() {
     # =====================================================================
     # zstd tests (requires upstream built with zstd support)
     # upstream rsync uses --compress-choice=ALGO, not --compress=ALGO
-    #
-    # NOTE: zstd wire format interop is NOT yet validated - these tests
-    # are informational only. Failures here are expected until the
-    # per-token zstd frame format matches upstream token.c exactly.
+    # Wire format validated: per-token flush fixed (PR #3047).
     # =====================================================================
     if check_upstream_compress_support "zstd"; then
-        log_test "zstd compression (--compress-choice=zstd) [INFORMATIONAL]"
-        log_warn "zstd interop not yet validated - failures are expected"
-        TESTS_SKIPPED=$((TESTS_SKIPPED + 2))
+        run_compress_test "zstd compression (--compress-choice=zstd)" \
+            "--compress-choice=zstd" "zstd"
+
+        run_compress_test "zstd with delta transfer" \
+            "--compress-choice=zstd --no-whole-file -I" "zstd_delta"
     else
         log_warn "upstream rsync lacks zstd support - skipping zstd tests"
         TESTS_SKIPPED=$((TESTS_SKIPPED + 2))
@@ -410,14 +409,14 @@ main() {
 
     # =====================================================================
     # lz4 tests (requires upstream built with lz4 support)
-    #
-    # NOTE: lz4 wire format interop is NOT yet validated - these tests
-    # are informational only.
+    # Wire format validated: per-token flush alignment fixed (PR #3053).
     # =====================================================================
     if check_upstream_compress_support "lz4"; then
-        log_test "lz4 compression (--compress-choice=lz4) [INFORMATIONAL]"
-        log_warn "lz4 interop not yet validated - failures are expected"
-        TESTS_SKIPPED=$((TESTS_SKIPPED + 2))
+        run_compress_test "lz4 compression (--compress-choice=lz4)" \
+            "--compress-choice=lz4" "lz4"
+
+        run_compress_test "lz4 with delta transfer" \
+            "--compress-choice=lz4 --no-whole-file -I" "lz4_delta"
     else
         log_warn "upstream rsync lacks lz4 support - skipping lz4 tests"
         TESTS_SKIPPED=$((TESTS_SKIPPED + 2))
@@ -425,8 +424,8 @@ main() {
 
     # =====================================================================
     # Auto-negotiation test: let protocol pick the best common algorithm.
-    # oc-rsync only advertises zlibx/zlib/none (zstd/lz4 not yet interop-
-    # validated), so negotiation should pick zlibx.
+    # With zstd/lz4 features enabled, negotiation picks the best mutual
+    # codec (zstd > lz4 > zlibx > zlib > none).
     # =====================================================================
     run_compress_test "auto-negotiation (protocol picks best codec)" \
         "--compress" "auto_negotiate"
