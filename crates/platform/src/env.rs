@@ -141,4 +141,45 @@ mod tests {
             env::remove_var(key);
         }
     }
+
+    #[test]
+    fn nested_guards_restore_in_reverse_order() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let key = "PLATFORM_ENV_TEST_NESTED";
+
+        #[allow(unsafe_code)]
+        unsafe {
+            env::remove_var(key);
+        }
+
+        {
+            let _outer = EnvGuard::set(key, OsStr::new("outer"));
+            assert_eq!(env::var(key).unwrap(), "outer");
+            {
+                let _inner = EnvGuard::set(key, OsStr::new("inner"));
+                assert_eq!(env::var(key).unwrap(), "inner");
+            }
+            assert_eq!(env::var(key).unwrap(), "outer");
+        }
+
+        assert!(env::var_os(key).is_none());
+    }
+
+    #[test]
+    fn remove_nonexistent_key_restores_to_absent() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let key = "PLATFORM_ENV_TEST_REMOVE_NONEXIST";
+
+        #[allow(unsafe_code)]
+        unsafe {
+            env::remove_var(key);
+        }
+
+        {
+            let _guard = EnvGuard::remove(key);
+            assert!(env::var_os(key).is_none());
+        }
+
+        assert!(env::var_os(key).is_none());
+    }
 }

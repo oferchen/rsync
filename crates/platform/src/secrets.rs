@@ -113,13 +113,49 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn group_readable_without_other_access_succeeds() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets");
+        std::fs::write(&path, "user:pass\n").unwrap();
+        // Mode 0o640: owner rw, group r, other none - upstream allows this
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(check_secrets_file_permissions(&path).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn other_readable_and_writable_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets");
+        std::fs::write(&path, "user:pass\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o606)).unwrap();
+        let result = check_secrets_file_permissions(&path);
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mode_0o600_is_valid() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets");
+        std::fs::write(&path, "user:pass\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(check_secrets_file_permissions(&path).is_ok());
+    }
+
+    #[cfg(not(unix))]
     #[test]
     fn non_unix_always_succeeds() {
-        #[cfg(not(unix))]
-        {
-            let result =
-                check_secrets_file_permissions(Path::new("C:\\nonexistent_secrets_xyz_99999"));
-            assert!(result.is_ok());
-        }
+        let result =
+            check_secrets_file_permissions(Path::new("C:\\nonexistent_secrets_xyz_99999"));
+        assert!(result.is_ok());
     }
 }
