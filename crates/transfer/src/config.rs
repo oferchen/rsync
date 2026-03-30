@@ -38,6 +38,18 @@ pub struct WriteConfig {
     pub inplace_partial: bool,
     /// Write data to device files instead of creating with mknod (`--write-devices`).
     pub write_devices: bool,
+    /// Delay file updates until the end of the transfer (`--delay-updates`).
+    ///
+    /// When enabled, files are first written to a temporary holding directory
+    /// and then moved into place at the end of the transfer. This makes the
+    /// update more atomic from the perspective of other processes reading the
+    /// destination tree.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2934-2935`: `--delay-updates` option handling
+    /// - `receiver.c`: deferred rename sweep at end of transfer
+    pub delay_updates: bool,
     /// Policy controlling io_uring usage for file I/O.
     pub io_uring_policy: fast_io::IoUringPolicy,
 }
@@ -49,6 +61,7 @@ impl Default for WriteConfig {
             inplace: false,
             inplace_partial: false,
             write_devices: false,
+            delay_updates: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
         }
     }

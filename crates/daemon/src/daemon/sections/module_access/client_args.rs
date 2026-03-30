@@ -359,6 +359,10 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             "--append" => {
                 config.flags.append = true;
             }
+            // upstream: options.c:2934-2935
+            "--delay-updates" => {
+                config.write.delay_updates = true;
+            }
             // upstream: options.c:2964-2965
             "--fsync" => {
                 config.write.fsync = true;
