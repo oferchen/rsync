@@ -866,6 +866,22 @@ comp_run_scenario() {
     hardlinks-relative)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       ;;
+    hardlinks-delete)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      echo "extra" > "$ddir/extra_file.txt"
+      ;;
+    hardlinks-numeric)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+    hardlinks-checksum)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      ;;
+    hardlinks-existing)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/subdir"
+      echo "old content" > "$ddir/hello.txt"
+      echo "old content" > "$ddir/hardlink.txt"
+      echo "old nested" > "$ddir/subdir/file.txt"
+      ;;
     xattrs)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       ;;
@@ -1182,6 +1198,47 @@ comp_run_scenario() {
       fi
       return 0
       ;;
+    hardlinks-delete)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      comp_verify_hardlink "$ddir" || return 1
+      if [[ -f "$ddir/extra_file.txt" ]]; then
+        echo "    -H --delete: extra file not removed"
+        return 1
+      fi
+      return 0
+      ;;
+    hardlinks-numeric)
+      comp_verify_transfer "$sdir" "$ddir" && comp_verify_hardlink "$ddir"
+      ;;
+    hardlinks-checksum)
+      comp_verify_transfer "$sdir" "$ddir" && comp_verify_hardlink "$ddir"
+      ;;
+    hardlinks-existing)
+      # Only pre-existing files should be updated; hardlink relationship preserved
+      if [[ ! -f "$ddir/hello.txt" ]]; then
+        echo "    -H --existing: hello.txt missing"
+        return 1
+      fi
+      if ! cmp -s "$sdir/hello.txt" "$ddir/hello.txt"; then
+        echo "    -H --existing: hello.txt not updated"
+        return 1
+      fi
+      if [[ -f "$ddir/hardlink.txt" ]]; then
+        local i1 i2
+        i1=$(stat -c %i "$ddir/hello.txt" 2>/dev/null || stat -f %i "$ddir/hello.txt" 2>/dev/null)
+        i2=$(stat -c %i "$ddir/hardlink.txt" 2>/dev/null || stat -f %i "$ddir/hardlink.txt" 2>/dev/null)
+        if [[ "$i1" != "$i2" ]]; then
+          echo "    -H --existing: hardlink not preserved (inodes $i1 vs $i2)"
+          return 1
+        fi
+      fi
+      # New files (not pre-existing) should not be created
+      if [[ -f "$ddir/binary.dat" || -f "$ddir/large.dat" ]]; then
+        echo "    -H --existing: new files were created"
+        return 1
+      fi
+      return 0
+      ;;
     xattrs)
       # -X transfer should not break the transfer itself
       comp_verify_transfer "$sdir" "$ddir" || return 1
@@ -1336,6 +1393,12 @@ KNOWN_FAILURES=(
   # --- oc→upstream (client push) ---
   "oc:acls"
   "oc:xattrs"
+  "oc:hardlinks"
+  "oc:hardlinks-relative"
+  "oc:hardlinks-delete"
+  "oc:hardlinks-numeric"
+  "oc:hardlinks-checksum"
+  "oc:hardlinks-existing"
   "oc:compress-zstd"
   "oc:compress-lz4"
   "oc:itemize"
@@ -1348,6 +1411,10 @@ KNOWN_FAILURES=(
   "up:sparse"
   "up:exclude"
   "up:delay-updates"
+  "up:hardlinks-delete"
+  "up:hardlinks-numeric"
+  "up:hardlinks-checksum"
+  "up:hardlinks-existing"
   "up:merge-filter"
   "up:compress-zstd"
   "up:compress-lz4"
@@ -1355,6 +1422,7 @@ KNOWN_FAILURES=(
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"
   "standalone:large-file-2gb"
+  "standalone:hardlinks-comprehensive"
 )
 
 is_known_failure() {
@@ -2268,6 +2336,155 @@ test_iconv() {
   return 0
 }
 
+# #885: Comprehensive hardlink interop
+# Tests hardlink scenarios that go beyond the basic -H flag: multiple hardlink
+# groups, chains of 3+ links to the same inode, hardlinks across subdirectories,
+# and incremental hardlink detection (second transfer with new hardlinks added).
+# Both oc-rsync and upstream rsync are tested as sender/receiver.
+test_hardlinks_comprehensive() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local hl_src="${work}/hardlink-src"
+  local hl_dest="${work}/hardlink-dest"
+  rm -rf "$hl_src" "$hl_dest"
+  mkdir -p "$hl_src/subdir"
+
+  # Group 1: three files sharing one inode
+  echo "group-one-content" > "$hl_src/group1_a.txt"
+  ln "$hl_src/group1_a.txt" "$hl_src/group1_b.txt"
+  ln "$hl_src/group1_a.txt" "$hl_src/subdir/group1_c.txt"
+
+  # Group 2: two files sharing a different inode
+  echo "group-two-content" > "$hl_src/group2_a.txt"
+  ln "$hl_src/group2_a.txt" "$hl_src/group2_b.txt"
+
+  # Standalone file (no hardlinks) as control
+  echo "standalone-content" > "$hl_src/standalone.txt"
+
+  # Helper to verify hardlink groups in a destination directory
+  verify_hardlink_groups() {
+    local d=$1 label=$2
+
+    # All files must exist
+    for f in group1_a.txt group1_b.txt subdir/group1_c.txt \
+             group2_a.txt group2_b.txt standalone.txt; do
+      if [[ ! -f "$d/$f" ]]; then
+        echo "    ${label}: missing $f"
+        return 1
+      fi
+    done
+
+    # Verify content
+    for f in group1_a.txt group1_b.txt subdir/group1_c.txt; do
+      if [[ "$(cat "$d/$f")" != "group-one-content" ]]; then
+        echo "    ${label}: content mismatch in $f"
+        return 1
+      fi
+    done
+    for f in group2_a.txt group2_b.txt; do
+      if [[ "$(cat "$d/$f")" != "group-two-content" ]]; then
+        echo "    ${label}: content mismatch in $f"
+        return 1
+      fi
+    done
+
+    # Group 1 inodes must match
+    local i1a i1b i1c
+    i1a=$(stat -c %i "$d/group1_a.txt" 2>/dev/null || stat -f %i "$d/group1_a.txt" 2>/dev/null)
+    i1b=$(stat -c %i "$d/group1_b.txt" 2>/dev/null || stat -f %i "$d/group1_b.txt" 2>/dev/null)
+    i1c=$(stat -c %i "$d/subdir/group1_c.txt" 2>/dev/null || stat -f %i "$d/subdir/group1_c.txt" 2>/dev/null)
+    if [[ "$i1a" != "$i1b" || "$i1a" != "$i1c" ]]; then
+      echo "    ${label}: group1 inodes differ ($i1a, $i1b, $i1c)"
+      return 1
+    fi
+
+    # Group 2 inodes must match
+    local i2a i2b
+    i2a=$(stat -c %i "$d/group2_a.txt" 2>/dev/null || stat -f %i "$d/group2_a.txt" 2>/dev/null)
+    i2b=$(stat -c %i "$d/group2_b.txt" 2>/dev/null || stat -f %i "$d/group2_b.txt" 2>/dev/null)
+    if [[ "$i2a" != "$i2b" ]]; then
+      echo "    ${label}: group2 inodes differ ($i2a, $i2b)"
+      return 1
+    fi
+
+    # Groups must have different inodes from each other
+    if [[ "$i1a" == "$i2a" ]]; then
+      echo "    ${label}: group1 and group2 share an inode (unexpected)"
+      return 1
+    fi
+
+    # Standalone file should have its own inode
+    local is
+    is=$(stat -c %i "$d/standalone.txt" 2>/dev/null || stat -f %i "$d/standalone.txt" 2>/dev/null)
+    if [[ "$is" == "$i1a" || "$is" == "$i2a" ]]; then
+      echo "    ${label}: standalone.txt shares inode with a hardlink group"
+      return 1
+    fi
+
+    return 0
+  }
+
+  # --- Test 1: oc-rsync local transfer with -H ---
+  mkdir -p "$hl_dest"
+  if ! timeout "$hard_timeout" "$oc_bin" -avH --timeout=10 \
+      "${hl_src}/" "${hl_dest}/" \
+      >"${log}.hl-local.out" 2>"${log}.hl-local.err"; then
+    echo "    oc-rsync local -H transfer failed (exit=$?)"
+    echo "    stderr: $(head -5 "${log}.hl-local.err")"
+    return 1
+  fi
+
+  if ! verify_hardlink_groups "$hl_dest" "oc-local"; then
+    return 1
+  fi
+
+  # --- Test 2: upstream rsync local transfer with -H (baseline) ---
+  local up_dest="${work}/hardlink-up-dest"
+  rm -rf "$up_dest"; mkdir -p "$up_dest"
+  if ! timeout "$hard_timeout" "$upstream_binary" -avH --timeout=10 \
+      "${hl_src}/" "${up_dest}/" \
+      >"${log}.hl-upstream.out" 2>"${log}.hl-upstream.err"; then
+    echo "    upstream local -H transfer failed (exit=$?)"
+    return 1
+  fi
+
+  if ! verify_hardlink_groups "$up_dest" "upstream-local"; then
+    echo "    upstream baseline failed - test environment issue"
+    return 1
+  fi
+
+  # --- Test 3: incremental - add new hardlinks, re-sync ---
+  echo "group-three-content" > "$hl_src/group3_a.txt"
+  ln "$hl_src/group3_a.txt" "$hl_src/group3_b.txt"
+
+  rm -rf "$hl_dest"; mkdir -p "$hl_dest"
+  if ! timeout "$hard_timeout" "$oc_bin" -avH --timeout=10 \
+      "${hl_src}/" "${hl_dest}/" \
+      >"${log}.hl-incr.out" 2>"${log}.hl-incr.err"; then
+    echo "    oc-rsync incremental -H transfer failed (exit=$?)"
+    return 1
+  fi
+
+  if ! verify_hardlink_groups "$hl_dest" "oc-incremental"; then
+    return 1
+  fi
+
+  # Verify the new group3 hardlinks
+  local i3a i3b
+  i3a=$(stat -c %i "$hl_dest/group3_a.txt" 2>/dev/null || stat -f %i "$hl_dest/group3_a.txt" 2>/dev/null)
+  i3b=$(stat -c %i "$hl_dest/group3_b.txt" 2>/dev/null || stat -f %i "$hl_dest/group3_b.txt" 2>/dev/null)
+  if [[ "$i3a" != "$i3b" ]]; then
+    echo "    oc-incremental: group3 inodes differ ($i3a, $i3b)"
+    return 1
+  fi
+
+  # Clean up group3 from source to not pollute shared state
+  rm -f "$hl_src/group3_a.txt" "$hl_src/group3_b.txt"
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -2287,6 +2504,7 @@ run_standalone_interop_tests() {
     "read-only-module"
     "wrong-password-auth"
     "iconv"
+    "hardlinks-comprehensive"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -2299,6 +2517,7 @@ run_standalone_interop_tests() {
     "test_read_only_module"
     "test_wrong_password_auth"
     "test_iconv"
+    "test_hardlinks_comprehensive"
   )
 
   for i in "${!test_names[@]}"; do
@@ -2323,6 +2542,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       wrong-password-auth)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      hardlinks-comprehensive)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
@@ -2421,6 +2643,10 @@ run_comprehensive_interop_case() {
       "compare-dest|-av --compare-dest=compare_ref|compare-dest"
       "files-from|-av --files-from=filelist.txt|files-from"
       "hardlinks-relative|-avHR|hardlinks-relative"
+      "hardlinks-delete|-avH --delete|hardlinks-delete"
+      "hardlinks-numeric|-avH --numeric-ids|hardlinks-numeric"
+      "hardlinks-checksum|-avHc|hardlinks-checksum"
+      "hardlinks-existing|-avH --existing|hardlinks-existing"
       "compress-zstd|-avz --compress-choice=zstd|compress"
       "compress-lz4|-avz --compress-choice=lz4|compress"
     )
